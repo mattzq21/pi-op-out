@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import App from "./App";
@@ -64,6 +64,25 @@ describe("Pi desktop", () => {
     expect(model.closest(".composer-bar")).toBeInTheDocument();
     expect(effort.closest(".composer-bar")).toBeInTheDocument();
     expect(document.querySelector(".chat-header select")).not.toBeInTheDocument();
+  });
+
+  it("captures editable keybinds in settings", async () => {
+    const user = userEvent.setup(); render(<App />);
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    await user.click(screen.getByRole("button", { name: /Keybinds/ }));
+    const terminalShortcut = screen.getByRole("textbox", { name: "Toggle terminal shortcut" });
+    expect(terminalShortcut).toHaveValue("Mod+J");
+    fireEvent.keyDown(terminalShortcut, { key: "t", ctrlKey: true, shiftKey: true });
+    expect(terminalShortcut).toHaveValue("Mod+Shift+T");
+  });
+
+  it("toggles the terminal with the default keybind", async () => {
+    render(<App />);
+    await screen.findByRole("textbox", { name: "Message Pi" });
+    fireEvent.keyDown(window, { key: "j", ctrlKey: true });
+    expect(await screen.findByRole("textbox", { name: "Terminal command" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "j", ctrlKey: true });
+    expect(await screen.findByRole("textbox", { name: "Message Pi" })).toBeInTheDocument();
   });
 
   it("discovers slash commands and attaches text context", async () => {

@@ -53,12 +53,24 @@ struct AppSettings {
     steering_mode: String,
     #[serde(default = "default_queue_mode")]
     follow_up_mode: String,
+    #[serde(default = "default_keybindings")]
+    keybindings: HashMap<String, String>,
     tools: Vec<Value>,
     skills: Vec<Value>,
     mcp_servers: Vec<Value>,
 }
 
 fn default_queue_mode() -> String { "one-at-a-time".into() }
+
+fn default_keybindings() -> HashMap<String, String> {
+    [
+        ("newConversation", "Mod+N"),
+        ("toggleConversations", "Mod+B"),
+        ("toggleTerminal", "Mod+J"),
+        ("focusComposer", "Mod+L"),
+        ("openSettings", "Mod+,"),
+    ].into_iter().map(|(action, shortcut)| (action.into(), shortcut.into())).collect()
+}
 
 fn home_dir() -> Result<PathBuf, String> {
     std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| "HOME is not set".into())
@@ -91,7 +103,7 @@ fn prepare_mcp_bridge(app: &AppHandle, settings: &AppSettings) -> Result<(PathBu
 
 fn default_settings() -> AppSettings {
     AppSettings {
-        theme: "system".into(), default_model: String::new(), default_thinking: "high".into(), auto_compaction: true, auto_retry: true, notifications: true, steering_mode: default_queue_mode(), follow_up_mode: default_queue_mode(),
+        theme: "system".into(), default_model: String::new(), default_thinking: "high".into(), auto_compaction: true, auto_retry: true, notifications: true, steering_mode: default_queue_mode(), follow_up_mode: default_queue_mode(), keybindings: default_keybindings(),
         tools: ["read", "bash", "edit", "write", "grep", "find", "ls"].iter().map(|name| json!({"name": name, "description": "Pi built-in tool", "enabled": true, "builtin": true})).collect(),
         skills: vec![], mcp_servers: vec![],
     }

@@ -84,6 +84,7 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
 .setting-row { min-height: 69px; display: grid; grid-template-columns: 34px 1fr auto; align-items: center; gap: 10px; border-bottom: 1px solid #e7e4dd; }.setting-icon, .config-icon { width: 29px; height: 29px; display: grid; place-items: center; border-radius: 7px; background: #ece9e2; color: #706c64; }.setting-icon svg { width: 15px; }.setting-row > span:nth-child(2), .config-row > span:nth-child(2) { display: grid; gap: 3px; }.setting-row strong, .config-row strong { font-size: 13px; }.setting-row small, .config-row small { color: var(--muted); font-size: 11px; }.setting-row select { border: 1px solid var(--line); background: white; border-radius: 6px; padding: 5px 23px 5px 8px; font-size: 12px; }
 .toggle { width: 30px; height: 17px; border: 0; padding: 2px; border-radius: 15px; background: #ccc8c0; transition: .15s; }.toggle span { display: block; width: 13px; height: 13px; border-radius: 50%; background: white; box-shadow: 0 1px 3px #0003; transition: .15s; }.toggle.on { background: var(--accent); }.toggle.on span { transform: translateX(13px); }
 .field { display: grid; gap: 6px; margin: 19px 0; }.field span, .command-fields label span { font-size: 11px; font-weight: 600; }.field input, .field select, .command-fields input { border: 1px solid var(--line); background: white; height: 35px; border-radius: 7px; padding: 0 10px; font-size: 12px; outline: 0; }.field input:focus, .command-fields input:focus { border-color: #aaa49a; }
+.keybind-list { margin-top: 3px; }.keybind-row { min-height: 61px; display: grid; grid-template-columns: 1fr 150px; align-items: center; gap: 16px; border-bottom: 1px solid #e7e4dd; }.keybind-row > span { display: grid; gap: 3px; }.keybind-row strong { font-size: 13px; }.keybind-row small { color: var(--muted); font-size: 11px; }.keybind-input { width: 150px; height: 33px; border: 1px solid var(--line); border-radius: 7px; background: white; padding: 0 9px; outline: 0; text-align: center; font: 11px "DM Mono"; cursor: pointer; }.keybind-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px #d46a2418; }
 .config-row { min-height: 61px; border-bottom: 1px solid #e7e4dd; display: grid; grid-template-columns: 34px 1fr auto auto; gap: 10px; align-items: center; }.config-row code { font: 10px "DM Mono"; color: var(--muted); background: #efede7; padding: 3px 5px; border-radius: 4px; }.config-row em { font: 10px "DM Mono"; font-style: normal; color: var(--faint); }.config-icon.skill { color: #a4543e; background: #f3e2dc; }.config-icon.mcp { color: #37785f; background: #dfece7; }
 .config-row.skill-row { grid-template-columns: 34px 1fr auto auto 28px; padding: 7px 0; }.skill-row input { min-width: 0; border: 0; outline: 0; background: transparent; font-size: 13px; font-weight: 600; padding: 0; }.skill-row .skill-path { color: var(--faint); font: 10px "DM Mono"; font-weight: 400; }.skill-row .icon-button { width: 27px; height: 27px; }
 .mcp-list { display: grid; gap: 10px; margin-top: 14px; }.mcp-card { border: 1px solid var(--line); border-radius: 9px; padding: 12px; background: #fff; }.mcp-card-head { display: grid; grid-template-columns: 34px 1fr auto auto auto; align-items: center; gap: 8px; }.mcp-card-head > input { font-weight: 600; font-size: 13px; border: 0; outline: 0; min-width: 0; }.mcp-card-head .icon-button { width: 27px; height: 27px; }.connection { font: 10px "DM Mono"; color: var(--muted); display: flex; align-items: center; gap: 4px; }.connection:before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: #aaa; }.connection.connected:before { background: var(--green); }.connection.error:before { background: #b34b3b; }
@@ -120,6 +121,7 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
 .app.dark .dialog-options button,
 .app.dark .field input,
 .app.dark .field select,
+.app.dark .keybind-input,
 .app.dark .command-fields input,
 .app.dark .setting-row select,
 .app.dark .stream-banner select {
@@ -145,7 +147,7 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
 .app.dark .secondary-button:hover,
 .app.dark .tree-item:hover { background: var(--dark-control-hover); color: var(--ink); }
 .app.dark .settings-nav button.active { background: #393732; color: var(--ink); }
-.app.dark .setting-row, .app.dark .config-row { border-bottom-color: var(--line); }
+.app.dark .setting-row, .app.dark .config-row, .app.dark .keybind-row { border-bottom-color: var(--line); }
 .app.dark .setting-icon, .app.dark .config-icon { background: #34332e; color: #bbb7ae; }
 .app.dark .config-icon.skill { background: #422f2a; color: #e2a18e; }
 .app.dark .config-icon.mcp { background: #293b34; color: #8fc6ae; }

@@ -9,6 +9,7 @@ import { SessionInspector, type SessionStats, type TreeNode } from "./components
 import { TerminalView, type TerminalRun } from "./components/TerminalView";
 import { defaultSettings } from "./defaults";
 import { textOf } from "./lib/content";
+import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
 import { createTransport } from "./lib/transport";
 import type { AgentState, AppSettings, ChatMessage, ExtensionUiRequest, ImageAttachment, Model, RpcEvent, SessionSummary, SlashCommand } from "./types";
 
@@ -107,6 +108,22 @@ export default function App() {
     const [stats, tree] = await Promise.all([transport.command<SessionStats>({ type: "get_session_stats" }), transport.command<{ tree: TreeNode[]; leafId: string | null }>({ type: "get_tree" })]); setInspector({ stats, tree: tree.tree, leafId: tree.leafId });
   };
   const runBash = async (command: string) => { const id = `bash-${Date.now()}`; setTerminalRuns((current) => [...current, { id, command, output: "", running: true }]); try { const result = await transport.command<{ output: string; exitCode: number }>({ id, type: "bash", command }); setTerminalRuns((current) => current.map((run) => run.id === id ? { ...run, output: run.output || result.output, exitCode: result.exitCode, running: false } : run)); } catch (reason) { setTerminalRuns((current) => current.map((run) => run.id === id ? { ...run, output: `${run.output}\n${String(reason)}`, exitCode: 1, running: false } : run)); } };
+
+  useEffect(() => {
+    const handleKeybind = (event: KeyboardEvent) => {
+      if (event.repeat) return;
+      const binding = keybindDefinitions.find((item) => matchesShortcut(event, settings.keybindings[item.action]));
+      if (!binding) return;
+      event.preventDefault();
+      if (binding.action === "newConversation") { void newSession(); return; }
+      if (binding.action === "toggleConversations") { setView("chat"); setPanelOpen((open) => !open); return; }
+      if (binding.action === "toggleTerminal") { setView((current) => current === "terminal" ? "chat" : "terminal"); return; }
+      if (binding.action === "openSettings") { setView("settings"); return; }
+      setView("chat"); window.setTimeout(() => window.dispatchEvent(new Event("pi:focus-composer")), 0);
+    };
+    window.addEventListener("keydown", handleKeybind);
+    return () => window.removeEventListener("keydown", handleKeybind);
+  }, [settings.keybindings]);
 
   return <div className={`app ${settings.theme === "system" ? (systemDark ? "dark" : "light") : settings.theme}`}>
     <aside className="icon-rail"><nav><span className={`native-status ${connected ? "online" : ""}`} title={connected ? `${transport.mode} transport connected` : "Connecting"} /><IconButton label="New conversation" onClick={newSession}><Plus size={19} /></IconButton><IconButton label="Conversations" className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}><MessageSquare size={18} /></IconButton><IconButton label="Projects" onClick={() => setProjectOpen(true)}><FolderGit2 size={18} /></IconButton><IconButton label="Terminal" className={view === "terminal" ? "active" : ""} onClick={() => setView("terminal")}><Terminal size={18} /></IconButton></nav>{view === "chat" && panelOpen && <SessionPanel sessions={sessions} activeId={state.sessionId} query={query} onQuery={setQuery} onSelect={selectSession} />}<div className="rail-bottom"><IconButton label="Settings" className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}><Settings size={19} /></IconButton></div></aside>

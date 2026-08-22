@@ -37,10 +37,10 @@ export function Composer({ streaming, queued, commands, models, model, thinkingL
   const matches = useMemo(() => commandQuery === undefined ? [] : commands.filter((command) => command.name.toLowerCase().includes(commandQuery)).slice(0, 7), [commandQuery, commands]);
 
   useEffect(() => {
-    const handler = (event: KeyboardEvent) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "l") { event.preventDefault(); ref.current?.focus(); } };
     const setEditor = (event: Event) => { setValue((event as CustomEvent<string>).detail); ref.current?.focus(); };
-    window.addEventListener("keydown", handler); window.addEventListener("pi:set-editor-text", setEditor);
-    return () => { window.removeEventListener("keydown", handler); window.removeEventListener("pi:set-editor-text", setEditor); };
+    const focusComposer = () => ref.current?.focus();
+    window.addEventListener("pi:set-editor-text", setEditor); window.addEventListener("pi:focus-composer", focusComposer);
+    return () => { window.removeEventListener("pi:set-editor-text", setEditor); window.removeEventListener("pi:focus-composer", focusComposer); };
   }, []);
 
   const addFiles = async (files: FileList | null, imagesOnly = false) => {
