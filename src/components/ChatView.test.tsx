@@ -16,10 +16,15 @@ const callbacks = { onSend: () => undefined, onAbort: () => undefined, onOpenTer
 describe("conversation work visibility", () => {
   it("limits long chat-header titles to 50 characters", () => {
     const title = "123456789012345678901234567890123456789012345678901 and more";
-    render(<ChatView state={{ ...state(false), sessionName: title }} messages={[]} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
+    render(<ChatView state={{ ...state(false), sessionName: title }} messages={messages} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
     expect(screen.getByText("12345678901234567890123456789012345678901234567890…")).toHaveAttribute("title", title);
     expect(screen.queryByText("Ready")).not.toBeInTheDocument();
     expect(document.querySelector(".status-dot")).not.toBeInTheDocument();
+  });
+
+  it("hides the chat header for a new empty session", () => {
+    render(<ChatView state={{ ...state(false), sessionName: "Untitled session" }} messages={[]} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
+    expect(document.querySelector(".chat-header")).not.toBeInTheDocument();
   });
 
   it("shows all work while running and collapses it when the turn settles", () => {

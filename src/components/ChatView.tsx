@@ -14,10 +14,10 @@ export function ChatView(props: Props) {
   const sessionTitle = props.state.sessionName || "Untitled session";
   const activity = props.state.activity || (props.state.isStreaming ? "Pi is working" : "");
   useEffect(() => { bottom.current?.scrollIntoView({ behavior: props.state.isStreaming ? "smooth" : "auto" }); }, [props.messages, props.state.isStreaming]);
-  return <main className="chat-shell">
-    <header className="chat-header">
+  return <main className={`chat-shell ${props.messages.length === 0 ? "new-session" : ""}`}>
+    {props.messages.length > 0 && <header className="chat-header">
       <div className="chat-title"><div><strong title={sessionTitle}>{compactTitle(sessionTitle)}</strong>{activity && <small>{activity}</small>}</div></div>
-    </header>
+    </header>}
     <div className="messages" aria-live="polite"><div className="conversation">
       {!props.messages.length && <div className="empty-chat"><span>π</span></div>}
       {turns.map((turn, index) => <ConversationTurn key={turn[0]?.id || index} messages={turn} active={props.state.isStreaming && index === turns.length - 1} onBranch={props.onBranch} />)}<div ref={bottom} />
