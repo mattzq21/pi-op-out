@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, CircleStop, FileText, ImagePlus, Paperclip, TerminalSquare, X } from "lucide-react";
 import type { ImageAttachment, Model, SlashCommand } from "../types";
 import { IconButton } from "./IconButton";
@@ -21,6 +21,7 @@ interface Props {
 }
 
 const TEXT_LIMIT = 200_000;
+const COMPOSER_MAX_HEIGHT = 130;
 const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((resolve, reject) => {
   const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error);
   if (mode === "dataUrl") reader.readAsDataURL(file); else reader.readAsText(file);
@@ -38,11 +39,22 @@ export function Composer({ streaming, queued, commands, models, model, thinkingL
   const commandQuery = value.match(/^\/([^\s]*)$/)?.[1]?.toLowerCase();
   const matches = useMemo(() => commandQuery === undefined ? [] : commands.filter((command) => command.name.toLowerCase().includes(commandQuery)).slice(0, 7), [commandQuery, commands]);
 
+  const resizeEditor = () => {
+    const editor = ref.current; if (!editor) return;
+    editor.style.height = "auto";
+    const contentHeight = Math.max(editor.scrollHeight, 31);
+    editor.style.height = `${Math.min(contentHeight, COMPOSER_MAX_HEIGHT)}px`;
+    editor.style.overflowY = contentHeight > COMPOSER_MAX_HEIGHT ? "auto" : "hidden";
+  };
+  useLayoutEffect(resizeEditor, [value]);
+
   useEffect(() => {
     const setEditor = (event: Event) => { setValue((event as CustomEvent<string>).detail); ref.current?.focus(); };
     const focusComposer = () => ref.current?.focus();
+    const resize = () => resizeEditor();
     window.addEventListener("pi:set-editor-text", setEditor); window.addEventListener("pi:focus-composer", focusComposer);
-    return () => { window.removeEventListener("pi:set-editor-text", setEditor); window.removeEventListener("pi:focus-composer", focusComposer); };
+    window.addEventListener("resize", resize);
+    return () => { window.removeEventListener("pi:set-editor-text", setEditor); window.removeEventListener("pi:focus-composer", focusComposer); window.removeEventListener("resize", resize); };
   }, []);
   useEffect(() => { if (restoredDraft && restoredDraft.id !== restoredDraftId.current) { restoredDraftId.current = restoredDraft.id; setValue(restoredDraft.value); } }, [restoredDraft]);
 

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentState, ChatMessage } from "../types";
@@ -26,6 +26,17 @@ describe("conversation work visibility", () => {
   it("hides the chat header for a new empty session", () => {
     render(<ChatView state={{ ...state(false), sessionName: "Untitled session" }} messages={[]} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
     expect(document.querySelector(".chat-header")).not.toBeInTheDocument();
+  });
+
+  it("grows the composer with multiline content and caps its height", () => {
+    render(<ChatView state={state(false)} messages={messages} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
+    const composer = screen.getByRole("textbox", { name: "Message Pi" });
+    Object.defineProperty(composer, "scrollHeight", { configurable: true, value: 86 });
+    fireEvent.change(composer, { target: { value: "one\ntwo\nthree" } });
+    expect(composer).toHaveStyle({ height: "86px", overflowY: "hidden" });
+    Object.defineProperty(composer, "scrollHeight", { configurable: true, value: 180 });
+    fireEvent.change(composer, { target: { value: "one\ntwo\nthree\nfour" } });
+    expect(composer).toHaveStyle({ height: "130px", overflowY: "auto" });
   });
 
   it("shows an ultimately aborted response as a failure with a retry for its prompt", async () => {
