@@ -102,7 +102,7 @@ describe("Pi desktop", () => {
     await user.click(screen.getByRole("button", { name: "New conversation" }));
     expect(await screen.findByText("π")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Terminal" }));
-    expect(await screen.findByText("Start the conversation get a CWD")).toBeInTheDocument();
+    expect(await screen.findByText("Start the conversation to get a CWD")).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Terminal input" })).not.toBeInTheDocument();
   });
 
