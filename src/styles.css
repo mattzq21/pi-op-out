@@ -61,7 +61,7 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
 .message-body p { margin: 0 0 12px; }.message-body p:last-child { margin-bottom: 0; }.message-body code { font: 13px "DM Mono"; background: #efede7; padding: 2px 4px; border-radius: 3px; }.message-body pre { background: #2c2b28; color: #e8e4dc; padding: 14px; overflow: auto; border-radius: 8px; }.message-body pre code { padding: 0; background: transparent; }
 .user-message { display: flex; flex-direction: row-reverse; align-items: flex-start; justify-content: flex-start; }
 .user-message .avatar { flex: 0 0 27px; }
-.user-message .message-body { width: fit-content; max-width: min(82%, 600px); padding: 10px 13px; border: 1px solid #ead5cd; border-radius: 12px 4px 12px 12px; background: var(--accent-soft); font-weight: 500; color: var(--ink); }
+.user-message .message-body { width: fit-content; max-width: min(82%, 600px); padding: 10px 13px; border: 1px solid #ddd9d1; border-radius: 12px 4px 12px 12px; background: #efede7; font-weight: 500; color: var(--ink); }
 .message-actions { margin-top: 12px; height: 25px; display: flex; align-items: center; gap: 1px; opacity: .55; transition: .15s; }.message:hover .message-actions { opacity: 1; }.message-actions .icon-button { width: 27px; height: 25px; }
 .branch-button { border: 0; background: transparent; color: var(--muted); height: 25px; padding: 0 6px; border-radius: 5px; display: flex; gap: 5px; align-items: center; font-size: 11px; }.branch-button:hover { background: #eeeae4; color: var(--ink); }
 .message-model { margin-left: auto; font: 10px "DM Mono"; color: var(--faint); }
@@ -162,7 +162,7 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
 .app.dark .extension-widget,
 .app.dark .attachments > span { background: var(--dark-subtle); }
 .app.dark .user-avatar { background: #3b3934; color: #d4d0c7; }
-.app.dark .user-message .message-body { border-color: #593d34; background: #3b2f2a; }
+.app.dark .user-message .message-body { border-color: #45423c; background: #302f2b; }
 .app.dark .context-track { background: #3a3833; }
 .app.dark .message-body { color: #d2cec5; }
 .app.dark .user-message .message-body { color: var(--ink); }
