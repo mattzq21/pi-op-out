@@ -102,7 +102,6 @@ export default function App() {
     await selectSession(session);
     if (action === "rename") { setRenameSession(session); return; }
     if (action === "clone") { await transport.command({ type: "clone" }); await refresh(); return; }
-    if (action === "compact") { setState((current) => ({ ...current, activity: "Compacting context…" })); await transport.command({ type: "compact" }); setState((current) => ({ ...current, activity: undefined })); await refresh(); return; }
     if (action === "export") { const result = await transport.command<{ path: string }>({ type: "export_html" }); setNotice({ title: "Conversation exported", message: result.path }); return; }
     const [stats, tree] = await Promise.all([transport.command<SessionStats>({ type: "get_session_stats" }), transport.command<{ tree: TreeNode[]; leafId: string | null }>({ type: "get_tree" })]); setInspector({ stats, tree: tree.tree, leafId: tree.leafId });
   };
