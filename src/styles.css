@@ -132,7 +132,6 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
 .app.dark input::placeholder, .app.dark textarea::placeholder { color: var(--faint); }
 .app.dark .mcp-card-head > input,
 .app.dark .skill-row input,
-.app.dark .terminal-input input,
 .app.dark .search input,
 .app.dark .composer textarea { background: transparent; color: var(--ink); }
 
