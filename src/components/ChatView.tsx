@@ -6,7 +6,7 @@ import { textOf } from "../lib/content";
 
 interface Props { state: AgentState; messages: ChatMessage[]; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: string[]; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void; onAbort: () => void; onOpenTerminal: () => void; onBranch: (message: ChatMessage) => void; onModel: (model: Model) => void; onThinking: (level: string) => void; }
 
-function compactTitle(title: string) { const characters = Array.from(title); return characters.length > 25 ? `${characters.slice(0, 25).join("")}…` : title; }
+function compactTitle(title: string) { const characters = Array.from(title); return characters.length > 50 ? `${characters.slice(0, 50).join("")}…` : title; }
 
 export function ChatView(props: Props) {
   const bottom = useRef<HTMLDivElement>(null);
