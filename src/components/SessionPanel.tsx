@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, CopyPlus, FileDown, GitFork, Pencil, Search, Star } from "lucide-react";
+import { ChevronDown, CopyPlus, FileDown, GitFork, Pencil, Search } from "lucide-react";
 import type { SessionSummary } from "../types";
-import { relativeTime } from "../lib/content";
 
 export type SessionAction = "rename" | "clone" | "export" | "inspect";
 interface Props { sessions: SessionSummary[]; activeId?: string; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; }
@@ -32,7 +31,6 @@ export function SessionPanel({ sessions, activeId, query, onQuery, onSelect, onA
         <div className="project-label"><ChevronDown size={13} /><span>{project}</span></div>
         {projectSessions?.map((session) => <button key={session.id} className={`session-item ${activeId === session.id ? "active" : ""}`} onClick={() => onSelect(session)} onContextMenu={(event) => { event.preventDefault(); setMenu({ session, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190) }); }}>
           <span className="session-copy"><strong>{session.name}</strong><span>{session.preview}</span></span>
-          <span className="session-meta">{session.starred && <Star size={11} fill="currentColor" />}{relativeTime(session.updatedAt)}</span>
         </button>)}
       </section>)}
       {!filtered.length && <div className="empty-small">No conversations match “{query}”.</div>}
