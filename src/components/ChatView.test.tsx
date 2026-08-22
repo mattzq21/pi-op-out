@@ -11,7 +11,7 @@ const messages: ChatMessage[] = [
 ];
 
 const state = (isStreaming: boolean): AgentState => ({ model: null, thinkingLevel: "off", isStreaming, sessionId: "test", messageCount: messages.length, pendingMessageCount: 0 });
-const callbacks = { onSend: () => undefined, onAbort: () => undefined, onOpenTerminal: () => undefined, onBranch: () => undefined, onRetry: () => undefined, onModel: () => undefined, onThinking: () => undefined };
+const callbacks = { onSend: () => undefined, onAbort: () => undefined, onOpenTerminal: () => undefined, onBranch: () => undefined, onModel: () => undefined, onThinking: () => undefined };
 
 describe("conversation work visibility", () => {
   it("shows all work while running and collapses it when the turn settles", () => {
