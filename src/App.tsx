@@ -116,8 +116,7 @@ export default function App() {
   const sessionAction = async (session: SessionSummary, action: SessionAction) => {
     if (!await selectSession(session)) return;
     if (action === "rename") { setRenameSession(session); return; }
-    if (action === "clone") { await transport.command({ type: "clone" }); await refresh(); return; }
-    if (action === "export") { const result = await transport.command<{ path: string }>({ type: "export_html" }); setNotice({ title: "Conversation exported", message: result.path }); }
+    if (action === "clone") { await transport.command({ type: "clone" }); await refresh(); }
   };
   const runBash = async (command: string) => { const id = `bash-${Date.now()}`; setTerminalRuns((current) => [...current, { id, command, output: "", running: true }]); try { const result = await transport.command<{ output: string; exitCode: number }>({ id, type: "bash", command }); setTerminalRuns((current) => current.map((run) => run.id === id ? { ...run, output: run.output || result.output, exitCode: result.exitCode, running: false } : run)); } catch (reason) { setTerminalRuns((current) => current.map((run) => run.id === id ? { ...run, output: `${run.output}\n${String(reason)}`, exitCode: 1, running: false } : run)); } };
 

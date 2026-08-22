@@ -58,7 +58,7 @@ describe("Pi desktop", () => {
     fireEvent.contextMenu(screen.getByRole("button", { name: /Wire RPC transport/ }), { clientX: 100, clientY: 100 });
     expect(screen.getByRole("menuitem", { name: "Rename conversation" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Clone conversation" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Export as HTML" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Export as HTML" })).not.toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Tree & session stats" })).not.toBeInTheDocument();
   });
 
