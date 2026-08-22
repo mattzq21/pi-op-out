@@ -10,7 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "Pi", "width": 1440, "height": 900, "minWidth": 900, "minHeight": 640, "decorations": true, "transparent": false }],
+    "windows": [{ "title": "Pi", "width": 1440, "height": 900, "minWidth": 900, "minHeight": 640, "decorations": false, "transparent": false }],
     "security": { "csp": null }
   },
   "bundle": {
