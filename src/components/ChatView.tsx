@@ -23,7 +23,7 @@ export function ChatView(props: Props) {
       </div>
     </header>
     <div className="messages" aria-live="polite"><div className="conversation">
-      {!props.messages.length && <div className="empty-chat"><span>π</span><h2>What should we make?</h2><p>Pi can inspect your project, edit files, run commands, and reason alongside you.</p></div>}
+      {!props.messages.length && <div className="empty-chat"><span>π</span></div>}
       {turns.map((turn, index) => <ConversationTurn key={turn[0]?.id || index} messages={turn} active={props.state.isStreaming && index === turns.length - 1} onBranch={props.onBranch} onRetry={props.onRetry} />)}<div ref={bottom} />
     </div></div>
     <div className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.map((line, index) => <div key={index}>{line}</div>)}</div>} {props.statuses.length > 0 && <div className="extension-status">{props.statuses.join(" · ")}</div>}<Composer streaming={props.state.isStreaming} queued={props.state.pendingMessageCount} commands={props.commands} models={props.models} model={props.state.model} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} onSend={props.onSend} onAbort={props.onAbort} onOpenTerminal={props.onOpenTerminal} onModel={props.onModel} onThinking={props.onThinking} /></div>
