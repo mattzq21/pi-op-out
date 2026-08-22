@@ -16,6 +16,7 @@ button { cursor: pointer; }
 .icon-rail .icon-button:hover, .icon-rail .icon-button.active { color: white; background: #ffffff15; }
 .rail-bottom { margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: 9px; }
 .native-status { width: 7px; height: 7px; border-radius: 50%; background: #8b695f; box-shadow: 0 0 0 3px #ffffff08; }
+.icon-rail nav .native-status { align-self: center; margin-bottom: 4px; }
 .native-status.online { background: #78b597; }
 
 .session-panel { width: 100%; flex: 1 1 auto; min-height: 0; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
