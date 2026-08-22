@@ -11,16 +11,16 @@ const messages: ChatMessage[] = [
 ];
 
 const state = (isStreaming: boolean): AgentState => ({ model: null, thinkingLevel: "off", isStreaming, sessionId: "test", messageCount: messages.length, pendingMessageCount: 0 });
-const callbacks = { onPanelToggle: () => undefined, onSend: () => undefined, onAbort: () => undefined, onOpenTerminal: () => undefined, onBranch: () => undefined, onRetry: () => undefined, onModel: () => undefined, onThinking: () => undefined, onSessionAction: () => undefined };
+const callbacks = { onSend: () => undefined, onAbort: () => undefined, onOpenTerminal: () => undefined, onBranch: () => undefined, onRetry: () => undefined, onModel: () => undefined, onThinking: () => undefined, onSessionAction: () => undefined };
 
 describe("conversation work visibility", () => {
   it("shows all work while running and collapses it when the turn settles", () => {
-    const view = render(<ChatView state={state(true)} messages={messages} models={[]} commands={[]} thinkingLevels={["off"]} panelOpen widgets={[]} statuses={[]} {...callbacks} />);
+    const view = render(<ChatView state={state(true)} messages={messages} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
     expect(screen.queryByText("Work · 2 steps")).not.toBeInTheDocument();
     expect(screen.getByText("Tool output")).toBeVisible();
     expect(screen.getByText("Intermediate update")).toBeVisible();
 
-    view.rerender(<ChatView state={state(false)} messages={messages} models={[]} commands={[]} thinkingLevels={["off"]} panelOpen widgets={[]} statuses={[]} {...callbacks} />);
+    view.rerender(<ChatView state={state(false)} messages={messages} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
     const work = screen.getByText("Work · 2 steps").closest("details");
     expect(work).not.toHaveAttribute("open");
     expect(screen.getByText("Final answer")).toBeVisible();
