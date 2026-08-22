@@ -48,7 +48,8 @@ export default function App() {
       transport.command<AgentState>({ type: "get_state" }), transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }), transport.listSessions(),
       transport.command<{ models: Model[] }>({ type: "get_available_models" }), transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }), transport.command<{ commands: SlashCommand[] }>({ type: "get_commands" }), transport.loadSettings()
     ]);
-    setState(nextState); setMessages(branchMessages(response.entries, response.leafId)); setSessions(nextSessions); setModels(modelResponse.models); setCommands(commandResponse.commands); setThinkingLevels(thinkingResponse.levels); setSettings(nextSettings); return nextSettings;
+    const activeSession = nextSessions.find((session) => session.id === nextState.sessionId);
+    setState({ ...nextState, sessionName: activeSession?.name ?? nextState.sessionName }); setMessages(branchMessages(response.entries, response.leafId)); setSessions(nextSessions); setModels(modelResponse.models); setCommands(commandResponse.commands); setThinkingLevels(thinkingResponse.levels); setSettings(nextSettings); return nextSettings;
   }, [transport]);
 
   const configureRuntime = useCallback((value: AppSettings) => Promise.all([
@@ -83,10 +84,24 @@ export default function App() {
         else setDialog(request);
       }
       if (event.type === "session_switched") void refresh();
+      if (event.type === "session_info_changed") void refresh();
     });
     transport.connect().then(() => refresh()).then((value) => configureRuntime(value)).then(() => setConnected(true)).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)));
     return () => { unsubscribe(); void transport.disconnect(); };
   }, [configureRuntime, refresh, transport]);
+
+  useEffect(() => {
+    if (!connected) return;
+    const syncSessionNames = () => void transport.listSessions().then((nextSessions) => {
+      setSessions(nextSessions);
+      setState((current) => {
+        const activeSession = nextSessions.find((session) => session.id === current.sessionId);
+        return activeSession && activeSession.name !== current.sessionName ? { ...current, sessionName: activeSession.name } : current;
+      });
+    }).catch(() => undefined);
+    const interval = window.setInterval(syncSessionNames, 1500);
+    return () => window.clearInterval(interval);
+  }, [connected, transport]);
 
   const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => {
     if (behavior) { await transport.command({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...(images.length ? { images } : {}) }); setState((current) => ({ ...current, pendingMessageCount: current.pendingMessageCount + 1 })); return; }
