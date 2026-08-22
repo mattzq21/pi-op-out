@@ -10,6 +10,7 @@ use std::{
     thread,
     time::{Duration, SystemTime},
 };
+use portable_pty::{native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtySize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 use walkdir::WalkDir;
@@ -18,6 +19,17 @@ use chrono::{DateTime, Utc};
 struct PiProcess {
     child: Child,
     stdin: Arc<Mutex<ChildStdin>>,
+}
+
+struct TerminalProcess {
+    master: Box<dyn MasterPty + Send>,
+    child: Box<dyn PtyChild + Send + Sync>,
+    writer: Box<dyn Write + Send>,
+}
+
+#[derive(Default)]
+struct TerminalRuntime {
+    processes: Mutex<HashMap<String, TerminalProcess>>,
 }
 
 #[derive(Default)]
@@ -218,6 +230,56 @@ fn pi_command(runtime: State<PiRuntime>, mut command: Value) -> Result<Value, St
     receiver.recv_timeout(Duration::from_secs(30)).map_err(|_| { runtime.pending.lock().ok().map(|mut map| map.remove(&id)); "Pi command timed out".to_string() })?
 }
 
+#[tauri::command]
+fn start_terminal(app: AppHandle, runtime: State<TerminalRuntime>, terminal_id: String, cwd: String, cols: u16, rows: u16) -> Result<(), String> {
+    let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
+    if processes.contains_key(&terminal_id) { return Ok(()); }
+    let working_dir = PathBuf::from(&cwd);
+    if !working_dir.is_dir() { return Err(format!("Terminal working directory does not exist: {}", working_dir.display())); }
+    let pair = native_pty_system().openpty(PtySize { rows: rows.max(1), cols: cols.max(1), pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())?;
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
+    let mut command = CommandBuilder::new(shell);
+    command.cwd(working_dir); command.env("TERM", "xterm-256color"); command.env("COLORTERM", "truecolor");
+    let child = pair.slave.spawn_command(command).map_err(|error| format!("Could not start terminal shell: {error}"))?;
+    drop(pair.slave);
+    let mut reader = pair.master.try_clone_reader().map_err(|error| error.to_string())?;
+    let writer = pair.master.take_writer().map_err(|error| error.to_string())?;
+    let event_app = app.clone(); let event_id = terminal_id.clone();
+    thread::spawn(move || {
+        let mut buffer = [0_u8; 8192];
+        loop {
+            match std::io::Read::read(&mut reader, &mut buffer) {
+                Ok(0) => break,
+                Ok(length) => { let data = String::from_utf8_lossy(&buffer[..length]).into_owned(); let _ = event_app.emit("pi://event", json!({ "type": "terminal_output", "terminalId": event_id, "data": data })); }
+                Err(_) => break,
+            }
+        }
+        let _ = event_app.emit("pi://event", json!({ "type": "terminal_exit", "terminalId": event_id }));
+    });
+    processes.insert(terminal_id, TerminalProcess { master: pair.master, child, writer });
+    Ok(())
+}
+
+#[tauri::command]
+fn write_terminal(runtime: State<TerminalRuntime>, terminal_id: String, data: String) -> Result<(), String> {
+    let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
+    let process = processes.get_mut(&terminal_id).ok_or("Terminal is not running")?;
+    process.writer.write_all(data.as_bytes()).and_then(|_| process.writer.flush()).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn resize_terminal(runtime: State<TerminalRuntime>, terminal_id: String, cols: u16, rows: u16) -> Result<(), String> {
+    let processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
+    let process = processes.get(&terminal_id).ok_or("Terminal is not running")?;
+    process.master.resize(PtySize { rows: rows.max(1), cols: cols.max(1), pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn close_terminal(runtime: State<TerminalRuntime>, terminal_id: String) -> Result<(), String> {
+    if let Some(mut process) = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.remove(&terminal_id) { let _ = process.child.kill(); let _ = process.child.wait(); }
+    Ok(())
+}
+
 fn text_content(message: &Value) -> String {
     match message.get("content") {
         Some(Value::String(text)) => text.clone(),
@@ -268,7 +330,7 @@ fn relocate_session(session_path: String, cwd: String) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, list_sessions, relocate_session, load_app_settings, save_app_settings]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, relocate_session, load_app_settings, save_app_settings]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }
 
 #[cfg(test)]

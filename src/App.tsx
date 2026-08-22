@@ -5,7 +5,7 @@ import { IconButton } from "./components/IconButton";
 import { SessionPanel, type SessionAction } from "./components/SessionPanel";
 import { SettingsView } from "./components/SettingsView";
 import { ExtensionDialog } from "./components/ExtensionDialog";
-import { TerminalView, type TerminalRun } from "./components/TerminalView";
+import { TerminalView } from "./components/TerminalView";
 import { defaultSettings } from "./defaults";
 import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
 import { findReplaceableAbortedTurn } from "./lib/abortedTurn";
@@ -14,9 +14,9 @@ import type { AgentState, AppSettings, ChatMessage, ExtensionUiRequest, ImageAtt
 
 const emptyState: AgentState = { model: null, thinkingLevel: "off", isStreaming: false, sessionId: "", messageCount: 0, pendingMessageCount: 0 };
 type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number } };
-type TerminalTabState = { id: string; runs: TerminalRun[] };
+type TerminalTabState = { id: string; output: string; started: boolean; exited?: boolean };
 type SessionTerminals = { activeId: string; tabs: TerminalTabState[] };
-const initialTerminals = (): SessionTerminals => ({ activeId: "terminal-1", tabs: [{ id: "terminal-1", runs: [] }] });
+const initialTerminals = (sessionId: string): SessionTerminals => { const id = `terminal-${sessionId}-1`; return { activeId: id, tabs: [{ id, output: "", started: false }] }; };
 
 function normalizeMessage(message: Record<string, unknown>, entryId?: string): ChatMessage {
   const stamp = Number(message.timestamp || Date.now());
@@ -44,7 +44,7 @@ export default function App() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [terminalsBySession, setTerminalsBySession] = useState<Record<string, SessionTerminals>>({});
   const terminalSessionId = state.sessionId || "new-session";
-  const sessionTerminals = terminalsBySession[terminalSessionId] ?? initialTerminals();
+  const sessionTerminals = terminalsBySession[terminalSessionId] ?? initialTerminals(terminalSessionId);
   const activeTerminal = sessionTerminals.tabs.find((terminal) => terminal.id === sessionTerminals.activeId) ?? sessionTerminals.tabs[0];
 
   useEffect(() => { settingsRef.current = settings; }, [settings]);
@@ -77,7 +77,8 @@ export default function App() {
       if (event.type === "tool_execution_update") setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.partialResult), toolStatus: "running" } : item));
       if (event.type === "tool_execution_end") setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.result), toolStatus: event.isError ? "error" : "done" } : item));
       if (event.type === "queue_update") { const pending = [...((event.steering as unknown[]) ?? []), ...((event.followUp as unknown[]) ?? [])].length; setState((current) => ({ ...current, pendingMessageCount: pending })); }
-      if (event.type === "bash_execution_update") setTerminalsBySession((current) => Object.fromEntries(Object.entries(current).map(([sessionId, session]) => [sessionId, { ...session, tabs: session.tabs.map((terminal) => ({ ...terminal, runs: terminal.runs.map((run) => run.id === event.id ? { ...run, output: run.output + String(event.delta ?? "") } : run) })) }])));
+      if (event.type === "terminal_output") setTerminalsBySession((current) => Object.fromEntries(Object.entries(current).map(([sessionId, session]) => [sessionId, { ...session, tabs: session.tabs.map((terminal) => terminal.id === event.terminalId ? { ...terminal, output: terminal.output + String(event.data ?? "") } : terminal) }])));
+      if (event.type === "terminal_exit") setTerminalsBySession((current) => Object.fromEntries(Object.entries(current).map(([sessionId, session]) => [sessionId, { ...session, tabs: session.tabs.map((terminal) => terminal.id === event.terminalId ? { ...terminal, exited: true } : terminal) }])));
       if (event.type === "compaction_start") setState((current) => ({ ...current, activity: "Compacting context…" }));
       if (event.type === "compaction_end") setState((current) => ({ ...current, activity: undefined }));
       if (event.type === "auto_retry_start") setState((current) => ({ ...current, activity: `Retrying · attempt ${event.attempt}` }));
@@ -132,16 +133,16 @@ export default function App() {
     if (action === "rename") { setRenameSession(session); return; }
     if (action === "clone") { await transport.command({ type: "clone" }); await refresh(); }
   };
-  const updateTerminalRun = (sessionId: string, terminalId: string, id: string, update: (run: TerminalRun) => TerminalRun) => setTerminalsBySession((current) => { const session = current[sessionId] ?? initialTerminals(); return { ...current, [sessionId]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, runs: terminal.runs.map((run) => run.id === id ? update(run) : run) } : terminal) } }; });
-  const runBash = async (command: string) => {
-    const sessionId = terminalSessionId; const terminalId = activeTerminal.id; const id = `bash-${Date.now()}`;
-    setTerminalsBySession((current) => { const session = current[sessionId] ?? initialTerminals(); return { ...current, [sessionId]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, runs: [...terminal.runs, { id, command, output: "", running: true }] } : terminal) } }; });
-    try { const result = await transport.command<{ output: string; exitCode: number }>({ id, type: "bash", command }); updateTerminalRun(sessionId, terminalId, id, (run) => ({ ...run, output: run.output || result.output, exitCode: result.exitCode, running: false })); }
-    catch (reason) { updateTerminalRun(sessionId, terminalId, id, (run) => ({ ...run, output: `${run.output}${run.output ? "\n" : ""}${String(reason)}`, exitCode: 1, running: false })); }
+  const appendTerminalOutput = (terminalId: string, data: string) => setTerminalsBySession((current) => { const session = current[terminalSessionId] ?? initialTerminals(terminalSessionId); return { ...current, [terminalSessionId]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, output: terminal.output + data } : terminal) } }; });
+  const startTerminal = async (terminalId: string, cols: number, rows: number) => {
+    setTerminalsBySession((current) => { const session = current[terminalSessionId] ?? initialTerminals(terminalSessionId); return { ...current, [terminalSessionId]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, started: true, exited: false } : terminal) } }; });
+    const cwd = sessions.find((session) => session.id === state.sessionId)?.cwd;
+    if (!cwd) { appendTerminalOutput(terminalId, "\r\nCould not determine this session's working directory.\r\n"); return; }
+    try { await transport.startTerminal(terminalId, cwd, cols, rows); } catch (reason) { appendTerminalOutput(terminalId, `\r\nCould not start terminal: ${String(reason)}\r\n`); }
   };
-  const addTerminal = () => setTerminalsBySession((current) => { const session = current[terminalSessionId] ?? initialTerminals(); const id = `terminal-${Date.now()}`; return { ...current, [terminalSessionId]: { activeId: id, tabs: [...session.tabs, { id, runs: [] }] } }; });
-  const selectTerminal = (terminalId: string) => setTerminalsBySession((current) => { const session = current[terminalSessionId] ?? initialTerminals(); return { ...current, [terminalSessionId]: { ...session, activeId: terminalId } }; });
-  const clearTerminal = () => setTerminalsBySession((current) => { const session = current[terminalSessionId] ?? initialTerminals(); return { ...current, [terminalSessionId]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === activeTerminal.id ? { ...terminal, runs: [] } : terminal) } }; });
+  const addTerminal = () => setTerminalsBySession((current) => { const session = current[terminalSessionId] ?? initialTerminals(terminalSessionId); const id = `terminal-${terminalSessionId}-${Date.now()}`; return { ...current, [terminalSessionId]: { activeId: id, tabs: [...session.tabs, { id, output: "", started: false }] } }; });
+  const selectTerminal = (terminalId: string) => setTerminalsBySession((current) => { const session = current[terminalSessionId] ?? initialTerminals(terminalSessionId); return { ...current, [terminalSessionId]: { ...session, activeId: terminalId } }; });
+  const clearTerminal = () => setTerminalsBySession((current) => { const session = current[terminalSessionId] ?? initialTerminals(terminalSessionId); return { ...current, [terminalSessionId]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === activeTerminal.id ? { ...terminal, output: "" } : terminal) } }; });
   const toggleTerminal = () => { setView("chat"); setTerminalOpen((open) => !open); };
 
   useEffect(() => {
@@ -162,7 +163,7 @@ export default function App() {
 
   return <div className={`app ${settings.theme === "system" ? (systemDark ? "dark" : "light") : settings.theme}`}>
     <aside className="icon-rail"><nav><span className={`native-status ${connected ? "online" : ""}`} title={connected ? `${transport.mode} transport connected` : "Connecting"} /><IconButton label="New conversation" onClick={newSession}><Plus size={19} /></IconButton><IconButton label="Conversations" className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}><MessageSquare size={18} /></IconButton><IconButton label="Projects" onClick={openProject}><FolderGit2 size={18} /></IconButton><IconButton label="Terminal" className={view === "chat" && terminalOpen ? "active" : ""} onClick={toggleTerminal}><Terminal size={18} /></IconButton></nav>{view === "chat" && panelOpen && <SessionPanel sessions={sessions} activeId={state.sessionId} query={query} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} />}<div className="rail-bottom"><IconButton label="Settings" className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}><Settings size={19} /></IconButton></div></aside>
-    {view === "chat" ? <div className="chat-workspace"><ChatView state={state} messages={messages} models={models} commands={commands} thinkingLevels={thinkingLevels} widgets={Object.values(widgets).flat()} statuses={Object.values(statuses)} onSend={send} onAbort={() => transport.command({ type: "abort" })} onOpenTerminal={() => setTerminalOpen(true)} onBranch={branch} onModel={setModel} onThinking={setThinking} />{terminalOpen && <TerminalView key={`${terminalSessionId}:${activeTerminal.id}`} cwd={sessions.find((session) => session.id === state.sessionId)?.cwd || "Active project"} terminals={sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={activeTerminal.id} runs={activeTerminal.runs} onAdd={addTerminal} onSelect={selectTerminal} onRun={runBash} onAbort={() => transport.command({ type: "abort_bash" })} onClear={clearTerminal} onClose={() => setTerminalOpen(false)} />}</div> : <SettingsView settings={settings} onSave={saveSettings} />}
+    {view === "chat" ? <div className="chat-workspace"><ChatView state={state} messages={messages} models={models} commands={commands} thinkingLevels={thinkingLevels} widgets={Object.values(widgets).flat()} statuses={Object.values(statuses)} onSend={send} onAbort={() => transport.command({ type: "abort" })} onOpenTerminal={() => setTerminalOpen(true)} onBranch={branch} onModel={setModel} onThinking={setThinking} />{terminalOpen && <TerminalView key={`${terminalSessionId}:${activeTerminal.id}`} cwd={sessions.find((session) => session.id === state.sessionId)?.cwd || "Active project"} terminals={sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={activeTerminal.id} output={activeTerminal.output} exited={activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => transport.writeTerminal(activeTerminal.id, data)} onResize={(cols, rows) => transport.resizeTerminal(activeTerminal.id, cols, rows)} onClear={clearTerminal} onClose={() => setTerminalOpen(false)} />}</div> : <SettingsView settings={settings} onSave={saveSettings} />}
     {error && <div className="error-toast"><strong>Pi could not connect</strong><span>{error}</span><button onClick={() => setError(undefined)}>×</button></div>}
     {notice && <div className="error-toast"><strong>{notice.title}</strong><span>{notice.message}</span><button onClick={() => setNotice(undefined)}>×</button></div>}
     {dialog && <ExtensionDialog request={dialog} onRespond={(response) => { void transport.command({ type: "extension_ui_response", id: dialog.id, ...response }); setDialog(undefined); }} />}

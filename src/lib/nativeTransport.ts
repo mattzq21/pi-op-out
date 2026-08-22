@@ -23,4 +23,8 @@ export class NativeTransport implements PiTransport {
   async saveSettings(settings: AppSettings) { await invoke<void>("save_app_settings", { settings }); await this.disconnect(); await this.connect(this.cwd, this.sessionPath); }
   async selectProjectDirectory(defaultPath?: string) { const selected = await open({ directory: true, multiple: false, title: "Open project", defaultPath }); return typeof selected === "string" ? selected : null; }
   async openProject(cwd: string) { await this.disconnect(); this.cwd = cwd; this.sessionPath = undefined; await this.connect(cwd); }
+  startTerminal(terminalId: string, cwd: string, cols: number, rows: number) { return invoke<void>("start_terminal", { terminalId, cwd, cols, rows }); }
+  writeTerminal(terminalId: string, data: string) { return invoke<void>("write_terminal", { terminalId, data }); }
+  resizeTerminal(terminalId: string, cols: number, rows: number) { return invoke<void>("resize_terminal", { terminalId, cols, rows }); }
+  closeTerminal(terminalId: string) { return invoke<void>("close_terminal", { terminalId }); }
 }

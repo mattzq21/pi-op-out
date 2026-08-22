@@ -24,6 +24,7 @@ export class MockTransport implements PiTransport {
   private messages = [...starter];
   private state: AgentState = { model: { provider: "openrouter", id: "deepseek/deepseek-v4-flash", name: "DeepSeek V4 Flash", reasoning: true, contextWindow: 128000 }, thinkingLevel: "high", isStreaming: false, sessionId: "pi-ui", sessionName: "Design desktop shell", messageCount: starter.length, pendingMessageCount: 0 };
   private settings = structuredClone(defaultSettings);
+  private terminals = new Set<string>();
   async connect() { this.emit({ type: "connected" }); }
   async disconnect() {}
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
@@ -37,6 +38,10 @@ export class MockTransport implements PiTransport {
     const project = cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace"; const candidate = this.sessions.find((session) => session.project === project);
     if (candidate) await this.command({ type: "switch_session", sessionPath: candidate.path }); else { await this.command({ type: "new_session" }); const session = this.sessions.find((item) => item.id === this.state.sessionId); if (session) { session.cwd = cwd; session.project = project; } }
   }
+  async startTerminal(terminalId: string, cwd: string) { if (this.terminals.has(terminalId)) return; this.terminals.add(terminalId); this.emit({ type: "terminal_output", terminalId, data: `Browser terminal preview · ${cwd}\r\n$ ` }); }
+  async writeTerminal(terminalId: string, data: string) { this.emit({ type: "terminal_output", terminalId, data }); if (data === "\r") this.emit({ type: "terminal_output", terminalId, data: "\r\nBrowser preview: native builds run a real PTY shell.\r\n$ " }); }
+  async resizeTerminal() {}
+  async closeTerminal(terminalId: string) { this.terminals.delete(terminalId); }
 
   async command<T>(command: RpcCommand): Promise<T> {
     switch (command.type) {

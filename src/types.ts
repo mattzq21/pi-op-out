@@ -26,4 +26,8 @@ export interface PiTransport {
   saveSettings(settings: AppSettings): Promise<void>;
   selectProjectDirectory(defaultPath?: string): Promise<string | null>;
   openProject(cwd: string): Promise<void>;
+  startTerminal(terminalId: string, cwd: string, cols: number, rows: number): Promise<void>;
+  writeTerminal(terminalId: string, data: string): Promise<void>;
+  resizeTerminal(terminalId: string, cols: number, rows: number): Promise<void>;
+  closeTerminal(terminalId: string): Promise<void>;
 }
