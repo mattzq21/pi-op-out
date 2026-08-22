@@ -1,25 +1,18 @@
-import { useEffect, useRef, useState } from "react";
-import { Archive, CopyPlus, FileDown, GitFork, MoreHorizontal, Pencil } from "lucide-react";
+import { useEffect, useRef } from "react";
 import type { AgentState, ChatMessage, ImageAttachment, Model, SlashCommand } from "../types";
-import { IconButton } from "./IconButton";
 import { Message } from "./Message";
 import { Composer } from "./Composer";
 import { textOf } from "../lib/content";
 
-interface Props { state: AgentState; messages: ChatMessage[]; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: string[]; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void; onAbort: () => void; onOpenTerminal: () => void; onBranch: (message: ChatMessage) => void; onRetry: (message: ChatMessage) => void; onModel: (model: Model) => void; onThinking: (level: string) => void; onSessionAction: (action: "rename" | "clone" | "compact" | "export" | "inspect") => void; }
+interface Props { state: AgentState; messages: ChatMessage[]; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: string[]; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void; onAbort: () => void; onOpenTerminal: () => void; onBranch: (message: ChatMessage) => void; onRetry: (message: ChatMessage) => void; onModel: (model: Model) => void; onThinking: (level: string) => void; }
 
 export function ChatView(props: Props) {
-  const bottom = useRef<HTMLDivElement>(null); const [menuOpen, setMenuOpen] = useState(false);
+  const bottom = useRef<HTMLDivElement>(null);
   const turns = groupTurns(props.messages);
   useEffect(() => { bottom.current?.scrollIntoView({ behavior: props.state.isStreaming ? "smooth" : "auto" }); }, [props.messages, props.state.isStreaming]);
   return <main className="chat-shell">
     <header className="chat-header">
       <div className="chat-title"><span className="status-dot" /><div><strong>{props.state.sessionName || "Untitled session"}</strong><small>{props.state.activity || (props.state.isStreaming ? "Pi is working" : "Ready")}</small></div></div>
-      <div className="header-controls">
-        <div className="menu-anchor"><IconButton label="Conversation menu" onClick={() => setMenuOpen((open) => !open)}><MoreHorizontal size={19} /></IconButton>{menuOpen && <div className="conversation-menu">{[
-          ["rename", Pencil, "Rename conversation"], ["clone", CopyPlus, "Clone conversation"], ["compact", Archive, "Compact context"], ["export", FileDown, "Export as HTML"], ["inspect", GitFork, "Tree & session stats"]
-        ].map(([action, Icon, label]) => <button key={String(action)} onClick={() => { setMenuOpen(false); props.onSessionAction(action as Parameters<Props["onSessionAction"]>[0]); }}><Icon size={14} />{String(label)}</button>)}</div>}</div>
-      </div>
     </header>
     <div className="messages" aria-live="polite"><div className="conversation">
       {!props.messages.length && <div className="empty-chat"><span>π</span></div>}
