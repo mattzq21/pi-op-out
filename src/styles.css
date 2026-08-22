@@ -55,6 +55,7 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
 .user-message { display: flex; flex-direction: row-reverse; align-items: flex-start; justify-content: flex-start; }
 .user-message .message-body { width: fit-content; max-width: min(82%, 600px); padding: 10px 13px; border: 1px solid #ddd9d1; border-radius: 12px 4px 12px 12px; background: #efede7; font-weight: 500; color: var(--ink); }
 .message-actions { margin-top: 12px; height: 25px; display: flex; align-items: center; gap: 1px; opacity: .55; transition: .15s; }.message:hover .message-actions { opacity: 1; }.message-actions .icon-button { width: 27px; height: 25px; }
+.message-failure { display: flex; align-items: center; gap: 7px; color: #c64f38; font-size: 12px; }
 .branch-button { border: 0; background: transparent; color: var(--muted); height: 25px; padding: 0 6px; border-radius: 5px; display: flex; gap: 5px; align-items: center; font-size: 11px; }.branch-button:hover { background: #eeeae4; color: var(--ink); }
 .stream-caret { display: inline-block; width: 5px; height: 14px; margin-left: 3px; background: var(--accent); animation: blink 1s steps(2) infinite; vertical-align: -2px; }
 @keyframes blink { 50% { opacity: 0; } }

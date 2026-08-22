@@ -39,7 +39,8 @@ function ConversationTurn({ messages, active, onBranch }: { messages: ChatMessag
 
   let finalIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index].role === "assistant" && textOf(messages[index].content).trim().length > 0) { finalIndex = index; break; }
+    const message = messages[index];
+    if (message.role === "assistant" && (textOf(message.content).trim().length > 0 || message.stopReason === "aborted" || message.stopReason === "error")) { finalIndex = index; break; }
   }
   const intermediate = messages.filter((message, index) => message.role !== "user" && index !== finalIndex);
   const userMessages = messages.filter((message) => message.role === "user");

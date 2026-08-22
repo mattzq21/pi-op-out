@@ -27,6 +27,16 @@ describe("conversation work visibility", () => {
     expect(document.querySelector(".chat-header")).not.toBeInTheDocument();
   });
 
+  it("shows an ultimately aborted response as a failure instead of blank work", () => {
+    const aborted: ChatMessage[] = [
+      { id: "request", role: "user", content: "x scrolling" },
+      { id: "aborted", role: "assistant", content: [], stopReason: "aborted", errorMessage: "Request was aborted" }
+    ];
+    render(<ChatView state={{ ...state(false), messageCount: aborted.length }} messages={aborted} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
+    expect(screen.getByText("Operation aborted")).toBeVisible();
+    expect(screen.queryByText(/Work ·/)).not.toBeInTheDocument();
+  });
+
   it("shows all work while running and collapses it when the turn settles", () => {
     const view = render(<ChatView state={state(true)} messages={messages} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
     expect(screen.queryByText("Work · 2 steps")).not.toBeInTheDocument();
