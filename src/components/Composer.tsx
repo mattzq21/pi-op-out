@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, AtSign, CircleStop, FileText, ImagePlus, Paperclip, TerminalSquare, X } from "lucide-react";
-import type { ImageAttachment, SlashCommand } from "../types";
+import { ArrowUp, AtSign, ChevronDown, CircleDot, CircleStop, FileText, ImagePlus, Paperclip, TerminalSquare, X } from "lucide-react";
+import type { ImageAttachment, Model, SlashCommand } from "../types";
 import { IconButton } from "./IconButton";
 
 type Upload = { id: string; name: string; kind: "image" | "text"; image?: ImageAttachment; text?: string };
@@ -8,9 +8,15 @@ interface Props {
   streaming: boolean;
   queued: number;
   commands: SlashCommand[];
+  models: Model[];
+  model: Model | null;
+  thinkingLevel: string;
+  thinkingLevels: string[];
   onSend: (message: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void;
   onAbort: () => void;
   onOpenTerminal: () => void;
+  onModel: (model: Model) => void;
+  onThinking: (level: string) => void;
 }
 
 const TEXT_LIMIT = 200_000;
@@ -19,7 +25,7 @@ const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((
   if (mode === "dataUrl") reader.readAsDataURL(file); else reader.readAsText(file);
 });
 
-export function Composer({ streaming, queued, commands, onSend, onAbort, onOpenTerminal }: Props) {
+export function Composer({ streaming, queued, commands, models, model, thinkingLevel, thinkingLevels, onSend, onAbort, onOpenTerminal, onModel, onThinking }: Props) {
   const [value, setValue] = useState("");
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [behavior, setBehavior] = useState<"steer" | "followUp">("steer");
@@ -71,7 +77,11 @@ export function Composer({ streaming, queued, commands, onSend, onAbort, onOpenT
       <textarea ref={ref} aria-label="Message Pi" placeholder={streaming ? (behavior === "steer" ? "Steer Pi while it works…" : "Queue a follow-up…") : "Ask Pi to build, explain, or change anything…"} value={value} rows={1} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} />
       <input ref={fileRef} className="hidden-input" type="file" multiple onChange={(event) => { void addFiles(event.target.files); event.target.value = ""; }} />
       <input ref={imageRef} className="hidden-input" type="file" accept="image/*" multiple onChange={(event) => { void addFiles(event.target.files, true); event.target.value = ""; }} />
-      <div className="composer-bar"><div><IconButton label="Attach files" onClick={() => fileRef.current?.click()}><Paperclip size={17} /></IconButton><IconButton label="Attach image" onClick={() => imageRef.current?.click()}><ImagePlus size={17} /></IconButton><IconButton label="Mention context" onClick={() => { setValue((current) => `${current}@`); ref.current?.focus(); }}><AtSign size={17} /></IconButton><IconButton label="Open terminal" onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton></div>
+      <div className="composer-bar"><div className="composer-tools"><IconButton label="Attach files" onClick={() => fileRef.current?.click()}><Paperclip size={17} /></IconButton><IconButton label="Attach image" onClick={() => imageRef.current?.click()}><ImagePlus size={17} /></IconButton><IconButton label="Mention context" onClick={() => { setValue((current) => `${current}@`); ref.current?.focus(); }}><AtSign size={17} /></IconButton><IconButton label="Open terminal" onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton>
+        <span className="composer-divider" />
+        <label className="select-control"><span>Model</span><select aria-label="Model" value={model ? `${model.provider}/${model.id}` : ""} onChange={(event) => { const next = models.find((item) => `${item.provider}/${item.id}` === event.target.value); if (next) onModel(next); }}>{models.map((item) => <option key={`${item.provider}/${item.id}`} value={`${item.provider}/${item.id}`}>{item.name || item.id}</option>)}</select><ChevronDown size={13} /></label>
+        <label className="select-control thinking"><CircleDot size={13} /><select aria-label="Thinking level" value={thinkingLevel} onChange={(event) => onThinking(event.target.value)}>{thinkingLevels.map((level) => <option key={level}>{level}</option>)}</select><ChevronDown size={13} /></label>
+      </div>
         <div className="composer-actions">{streaming && <IconButton label="Stop Pi" className="stop-compact" onClick={onAbort}><CircleStop size={17} /></IconButton>}<IconButton label={streaming ? (behavior === "steer" ? "Send steering message" : "Queue follow-up") : "Send message"} className="send" disabled={!value.trim() && uploads.length === 0} onClick={submit}><ArrowUp size={18} /></IconButton></div>
       </div>
     </div><p className="composer-hint">Enter to send · Shift Enter for new line · Type / for commands · ⌘L to focus</p>

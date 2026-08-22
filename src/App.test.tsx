@@ -56,6 +56,15 @@ describe("Pi desktop", () => {
     expect(await screen.findByText("exit 0")).toBeInTheDocument();
   });
 
+  it("keeps model and effort controls in the composer bar", async () => {
+    render(<App />);
+    const model = await screen.findByRole("combobox", { name: "Model" });
+    const effort = screen.getByRole("combobox", { name: "Thinking level" });
+    expect(model.closest(".composer-bar")).toBeInTheDocument();
+    expect(effort.closest(".composer-bar")).toBeInTheDocument();
+    expect(document.querySelector(".chat-header select")).not.toBeInTheDocument();
+  });
+
   it("discovers slash commands and attaches text context", async () => {
     const user = userEvent.setup(); render(<App />);
     const composer = await screen.findByRole("textbox", { name: "Message Pi" });
