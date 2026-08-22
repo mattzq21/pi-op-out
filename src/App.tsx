@@ -5,7 +5,6 @@ import { IconButton } from "./components/IconButton";
 import { SessionPanel, type SessionAction } from "./components/SessionPanel";
 import { SettingsView } from "./components/SettingsView";
 import { ExtensionDialog } from "./components/ExtensionDialog";
-import { SessionInspector, type SessionStats, type TreeNode } from "./components/SessionInspector";
 import { TerminalView, type TerminalRun } from "./components/TerminalView";
 import { defaultSettings } from "./defaults";
 import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
@@ -36,7 +35,7 @@ export default function App() {
   const [panelOpen, setPanelOpen] = useState(true); const [query, setQuery] = useState(""); const [connected, setConnected] = useState(false); const [error, setError] = useState<string>();
   const [dialog, setDialog] = useState<ExtensionUiRequest>(); const [notice, setNotice] = useState<{ title: string; message: string }>();
   const [statuses, setStatuses] = useState<Record<string, string>>({}); const [widgets, setWidgets] = useState<Record<string, string[]>>({});
-  const [renameSession, setRenameSession] = useState<SessionSummary>(); const [inspector, setInspector] = useState<{ stats: SessionStats; tree: TreeNode[]; leafId: string | null }>();
+  const [renameSession, setRenameSession] = useState<SessionSummary>();
   const [relocatingSession, setRelocatingSession] = useState<SessionSummary>(); const [relocationError, setRelocationError] = useState<string>();
   const [terminalRuns, setTerminalRuns] = useState<TerminalRun[]>([]);
 
@@ -118,8 +117,7 @@ export default function App() {
     if (!await selectSession(session)) return;
     if (action === "rename") { setRenameSession(session); return; }
     if (action === "clone") { await transport.command({ type: "clone" }); await refresh(); return; }
-    if (action === "export") { const result = await transport.command<{ path: string }>({ type: "export_html" }); setNotice({ title: "Conversation exported", message: result.path }); return; }
-    const [stats, tree] = await Promise.all([transport.command<SessionStats>({ type: "get_session_stats" }), transport.command<{ tree: TreeNode[]; leafId: string | null }>({ type: "get_tree" })]); setInspector({ stats, tree: tree.tree, leafId: tree.leafId });
+    if (action === "export") { const result = await transport.command<{ path: string }>({ type: "export_html" }); setNotice({ title: "Conversation exported", message: result.path }); }
   };
   const runBash = async (command: string) => { const id = `bash-${Date.now()}`; setTerminalRuns((current) => [...current, { id, command, output: "", running: true }]); try { const result = await transport.command<{ output: string; exitCode: number }>({ id, type: "bash", command }); setTerminalRuns((current) => current.map((run) => run.id === id ? { ...run, output: run.output || result.output, exitCode: result.exitCode, running: false } : run)); } catch (reason) { setTerminalRuns((current) => current.map((run) => run.id === id ? { ...run, output: `${run.output}\n${String(reason)}`, exitCode: 1, running: false } : run)); } };
 
@@ -146,7 +144,6 @@ export default function App() {
     {notice && <div className="error-toast"><strong>{notice.title}</strong><span>{notice.message}</span><button onClick={() => setNotice(undefined)}>×</button></div>}
     {dialog && <ExtensionDialog request={dialog} onRespond={(response) => { void transport.command({ type: "extension_ui_response", id: dialog.id, ...response }); setDialog(undefined); }} />}
     {renameSession && <ExtensionDialog request={{ type: "extension_ui_request", id: "rename-session", method: "input", title: "Rename conversation", prefill: renameSession.name }} onRespond={(response) => { setRenameSession(undefined); if (typeof response.value === "string" && response.value.trim()) { const name = response.value.trim(); void transport.command({ type: "set_session_name", name }).then(() => { setState((current) => ({ ...current, sessionName: name })); void refresh(); }); } }} />}
-    {inspector && <SessionInspector {...inspector} onClose={() => setInspector(undefined)} />}
     {relocatingSession && <ExtensionDialog request={{ type: "extension_ui_request", id: `relocate-${relocatingSession.id}`, method: "input", title: "Locate conversation project", message: `The original project directory no longer exists: ${relocatingSession.cwd}. Enter its new location to open this conversation.`, error: relocationError, placeholder: "Replacement project directory", prefill: sessions.find((session) => session.id === state.sessionId && session.cwdExists !== false)?.cwd || "" }} onRespond={(response) => { if (response.cancelled) { setRelocationError(undefined); setRelocatingSession(undefined); return; } const cwd = typeof response.value === "string" ? response.value.trim() : ""; if (!cwd) { setRelocationError("Path can't be empty"); return; } const session = relocatingSession; setRelocationError(undefined); setRelocatingSession(undefined); void transport.relocateSession(session.path, cwd).then(() => transport.command({ type: "switch_session", sessionPath: session.path })).then(() => refresh()).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason))); }} />}
   </div>;
 }

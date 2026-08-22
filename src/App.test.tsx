@@ -52,15 +52,14 @@ describe("Pi desktop", () => {
     expect(await screen.findByRole("button", { name: "Saved" })).toBeInTheDocument();
   });
 
-  it("opens session stats and the persisted branch tree", async () => {
-    const user = userEvent.setup(); render(<App />); await screen.findByRole("textbox", { name: "Search conversations" });
+  it("offers conversation actions without tree and session stats", async () => {
+    render(<App />); await screen.findByRole("textbox", { name: "Search conversations" });
     expect(screen.queryByRole("button", { name: "Conversation menu" })).not.toBeInTheDocument();
     fireEvent.contextMenu(screen.getByRole("button", { name: /Wire RPC transport/ }), { clientX: 100, clientY: 100 });
-    await user.click(screen.getByRole("menuitem", { name: "Tree & session stats" }));
-    expect(await screen.findByRole("heading", { name: "Context & branches" })).toBeInTheDocument();
-    expect(document.querySelector(".chat-header")).toHaveTextContent("Wire RPC transport");
-    expect(screen.getByText(/billed tokens/)).toBeInTheDocument();
-    expect(screen.getByText("Conversation tree")).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Rename conversation" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Clone conversation" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Export as HTML" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Tree & session stats" })).not.toBeInTheDocument();
   });
 
   it("runs project shell commands in the terminal view", async () => {
