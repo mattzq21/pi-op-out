@@ -14,6 +14,7 @@ describe("Pi desktop", () => {
 
   it("switches conversations from the right panel", async () => {
     const user = userEvent.setup(); render(<App />);
+    expect((await screen.findByRole("textbox", { name: "Search conversations" })).closest(".icon-rail")).toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: /Wire RPC transport/ }));
     expect((await screen.findAllByText("Wire RPC transport")).length).toBeGreaterThan(0);
     expect(await screen.findByText(/browser preview for/)).toHaveTextContent("Wire RPC transport");
