@@ -1,10 +1,10 @@
-import { ChevronDown, MoreHorizontal, Search, Star } from "lucide-react";
+import { ChevronDown, Search, Star } from "lucide-react";
 import type { SessionSummary } from "../types";
 import { relativeTime } from "../lib/content";
 
-interface Props { sessions: SessionSummary[]; activeId?: string; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onProject: () => void; }
+interface Props { sessions: SessionSummary[]; activeId?: string; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; }
 
-export function SessionPanel({ sessions, activeId, query, onQuery, onSelect, onProject }: Props) {
+export function SessionPanel({ sessions, activeId, query, onQuery, onSelect }: Props) {
   const filtered = sessions.filter((session) => `${session.name} ${session.project} ${session.preview}`.toLowerCase().includes(query.toLowerCase()));
   const groups = Object.entries(filtered.reduce<Record<string, SessionSummary[]>>((result, session) => {
     (result[session.project] ??= []).push(session); return result;
@@ -21,6 +21,5 @@ export function SessionPanel({ sessions, activeId, query, onQuery, onSelect, onP
       </section>)}
       {!filtered.length && <div className="empty-small">No conversations match “{query}”.</div>}
     </div>
-    <button className="project-switcher" onClick={onProject}><span className="project-avatar">{(sessions.find((session) => session.id === activeId)?.project || "PI").slice(0, 2).toUpperCase()}</span><span><strong>{sessions.find((session) => session.id === activeId)?.project || "Open project"}</strong><small>{sessions.find((session) => session.id === activeId)?.cwd || "Choose a working directory"}</small></span><MoreHorizontal size={16} /></button>
   </aside>;
 }
