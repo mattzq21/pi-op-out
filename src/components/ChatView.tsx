@@ -6,13 +6,16 @@ import { textOf } from "../lib/content";
 
 interface Props { state: AgentState; messages: ChatMessage[]; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: string[]; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void; onAbort: () => void; onOpenTerminal: () => void; onBranch: (message: ChatMessage) => void; onModel: (model: Model) => void; onThinking: (level: string) => void; }
 
+function compactTitle(title: string) { const characters = Array.from(title); return characters.length > 25 ? `${characters.slice(0, 25).join("")}…` : title; }
+
 export function ChatView(props: Props) {
   const bottom = useRef<HTMLDivElement>(null);
   const turns = groupTurns(props.messages);
+  const sessionTitle = props.state.sessionName || "Untitled session";
   useEffect(() => { bottom.current?.scrollIntoView({ behavior: props.state.isStreaming ? "smooth" : "auto" }); }, [props.messages, props.state.isStreaming]);
   return <main className="chat-shell">
     <header className="chat-header">
-      <div className="chat-title"><span className="status-dot" /><div><strong>{props.state.sessionName || "Untitled session"}</strong><small>{props.state.activity || (props.state.isStreaming ? "Pi is working" : "Ready")}</small></div></div>
+      <div className="chat-title"><span className="status-dot" /><div><strong title={sessionTitle}>{compactTitle(sessionTitle)}</strong><small>{props.state.activity || (props.state.isStreaming ? "Pi is working" : "Ready")}</small></div></div>
     </header>
     <div className="messages" aria-live="polite"><div className="conversation">
       {!props.messages.length && <div className="empty-chat"><span>π</span></div>}
