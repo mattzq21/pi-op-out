@@ -235,9 +235,9 @@ fn parse_session(path: &Path) -> Option<SessionSummary> {
     if header.get("type")?.as_str()? != "session" { return None; }
     let cwd = header.get("cwd").and_then(Value::as_str).unwrap_or("Unknown project").to_string();
     let id = header.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
-    let mut name = String::new(); let mut preview = String::new(); let mut message_count = 0;
-    for line in lines { let Ok(entry) = serde_json::from_str::<Value>(line) else { continue }; if entry.get("type").and_then(Value::as_str) == Some("session_info") { if let Some(value) = entry.get("name").and_then(Value::as_str) { name = value.into(); } } if entry.get("type").and_then(Value::as_str) == Some("message") { message_count += 1; if let Some(message) = entry.get("message") { let text = text_content(message); if !text.is_empty() { if name.is_empty() && message.get("role").and_then(Value::as_str) == Some("user") { name = text.chars().take(52).collect(); } preview = text; } } } }
-    if name.is_empty() { name = "Untitled session".into(); }
+    let mut name = None; let mut preview = String::new(); let mut message_count = 0;
+    for line in lines { let Ok(entry) = serde_json::from_str::<Value>(line) else { continue }; if entry.get("type").and_then(Value::as_str) == Some("session_info") { name = entry.get("name").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()).map(str::to_owned); } if entry.get("type").and_then(Value::as_str) == Some("message") { message_count += 1; if let Some(message) = entry.get("message") { let text = text_content(message); if !text.is_empty() { preview = text; } } } }
+    let name = name.unwrap_or_else(|| "Untitled session".into());
     let project = Path::new(&cwd).file_name().and_then(|value| value.to_str()).unwrap_or("Workspace").to_string();
     let modified = fs::metadata(path).and_then(|metadata| metadata.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
     let cwd_exists = Path::new(&cwd).is_dir();
@@ -274,6 +274,32 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uses_only_pi_session_names_for_sidebar_titles() {
+        let root = std::env::temp_dir().join(format!("pi-ui-session-name-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let unnamed = root.join("unnamed.jsonl");
+        fs::write(
+            &unnamed,
+            format!(
+                "{{\"type\":\"session\",\"version\":3,\"id\":\"unnamed\",\"cwd\":{}}}\n{{\"type\":\"message\",\"message\":{{\"role\":\"user\",\"content\":\"This is message content, not a title\"}}}}\n",
+                serde_json::to_string(root.to_str().unwrap()).unwrap()
+            ),
+        ).unwrap();
+        let named = root.join("named.jsonl");
+        fs::write(
+            &named,
+            format!(
+                "{{\"type\":\"session\",\"version\":3,\"id\":\"named\",\"cwd\":{}}}\n{{\"type\":\"message\",\"message\":{{\"role\":\"user\",\"content\":\"This is still message content\"}}}}\n{{\"type\":\"session_info\",\"name\":\"Pi CLI title\"}}\n",
+                serde_json::to_string(root.to_str().unwrap()).unwrap()
+            ),
+        ).unwrap();
+
+        assert_eq!(parse_session(&unnamed).unwrap().name, "Untitled session");
+        assert_eq!(parse_session(&named).unwrap().name, "Pi CLI title");
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn relocates_a_session_with_a_missing_working_directory() {
