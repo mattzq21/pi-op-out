@@ -25,7 +25,10 @@ describe("Pi desktop", () => {
     await user.click(await screen.findByRole("button", { name: /Fix token refresh/ }));
     expect(await screen.findByRole("heading", { name: "Locate conversation project" })).toBeInTheDocument();
     const path = screen.getByRole("textbox", { name: "Replacement project directory" });
-    await user.clear(path); await user.type(path, "/home/demo/northstar");
+    await user.clear(path); await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(screen.getByRole("heading", { name: "Locate conversation project" })).toBeInTheDocument();
+    expect(screen.getByText("Path can't be empty")).toHaveClass("dialog-error");
+    await user.type(path, "/home/demo/northstar");
     await user.click(screen.getByRole("button", { name: "Continue" }));
     expect(await screen.findByText(/browser preview for/)).toHaveTextContent("Fix token refresh");
   });
