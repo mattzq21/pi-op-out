@@ -20,7 +20,7 @@ export function ChatView(props: Props) {
     </header>}
     <div className="messages" aria-live="polite"><div className="conversation">
       {!props.messages.length && <div className="empty-chat"><span>π</span></div>}
-      {turns.map((turn, index) => <ConversationTurn key={turn[0]?.id || index} messages={turn} active={props.state.isStreaming && index === turns.length - 1} onBranch={props.onBranch} />)}<div ref={bottom} />
+      {turns.map((turn, index) => <ConversationTurn key={turn[0]?.id || index} messages={turn} active={props.state.isStreaming && index === turns.length - 1} retryable={!props.state.isStreaming && index === turns.length - 1} onRetry={props.onSend} onBranch={props.onBranch} />)}<div ref={bottom} />
     </div></div>
     <div className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.map((line, index) => <div key={index}>{line}</div>)}</div>} {props.statuses.length > 0 && <div className="extension-status">{props.statuses.join(" · ")}</div>}<Composer streaming={props.state.isStreaming} queued={props.state.pendingMessageCount} commands={props.commands} models={props.models} model={props.state.model} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} onSend={props.onSend} onAbort={props.onAbort} onOpenTerminal={props.onOpenTerminal} onModel={props.onModel} onThinking={props.onThinking} /></div>
   </main>;
@@ -34,7 +34,7 @@ function groupTurns(messages: ChatMessage[]) {
   }, []);
 }
 
-function ConversationTurn({ messages, active, onBranch }: { messages: ChatMessage[]; active: boolean; onBranch: Props["onBranch"] }) {
+function ConversationTurn({ messages, active, retryable, onRetry, onBranch }: { messages: ChatMessage[]; active: boolean; retryable: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"] }) {
   if (active) return <>{messages.map((message) => <Message key={message.id} message={message} expanded onBranch={onBranch} />)}</>;
 
   let finalIndex = -1;
@@ -45,10 +45,11 @@ function ConversationTurn({ messages, active, onBranch }: { messages: ChatMessag
   const intermediate = messages.filter((message, index) => message.role !== "user" && index !== finalIndex);
   const userMessages = messages.filter((message) => message.role === "user");
   const finalMessage = finalIndex >= 0 ? messages[finalIndex] : undefined;
+  const retryPrompt = retryable && finalMessage?.stopReason === "aborted" ? [...userMessages].reverse().map((message) => textOf(message.content).trim()).find(Boolean) : undefined;
 
   return <section className="conversation-turn">
     {userMessages.map((message) => <Message key={message.id} message={message} onBranch={onBranch} />)}
     {intermediate.length > 0 && <details className="work-group"><summary>Work · {intermediate.length} {intermediate.length === 1 ? "step" : "steps"}</summary><div className="work-group-content">{intermediate.map((message) => <Message key={message.id} message={message} expanded onBranch={onBranch} />)}</div></details>}
-    {finalMessage && <Message message={finalMessage} onBranch={onBranch} />}
+    {finalMessage && <Message message={finalMessage} onBranch={onBranch} onRetry={retryPrompt ? () => onRetry(retryPrompt) : undefined} />}
   </section>;
 }

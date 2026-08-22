@@ -6,9 +6,9 @@ import type { ChatMessage } from "../types";
 import { textOf } from "../lib/content";
 import { IconButton } from "./IconButton";
 
-interface Props { message: ChatMessage; expanded?: boolean; onBranch: (message: ChatMessage) => void; }
+interface Props { message: ChatMessage; expanded?: boolean; onBranch: (message: ChatMessage) => void; onRetry?: () => void; }
 
-export function Message({ message, expanded = false, onBranch }: Props) {
+export function Message({ message, expanded = false, onBranch, onRetry }: Props) {
   const [copied, setCopied] = useState(false);
   if (message.role === "tool") { const output = textOf(message.content); return <details className={`tool-event ${message.toolStatus ?? "done"}`} open={expanded || message.toolStatus === "running"}><summary><Wrench size={14} /><span><strong>{message.toolName || "tool"}</strong><small>{message.toolStatus === "running" ? "Running…" : message.toolStatus === "error" ? "Failed" : "Completed"}</small></span><span className="tool-chevron">›</span></summary>{output && <pre>{output}</pre>}</details>; }
   if (message.role === "user") return <article className="message user-message"><div className="message-body"><ReactMarkdown remarkPlugins={[remarkGfm]}>{textOf(message.content)}</ReactMarkdown></div></article>;
@@ -19,7 +19,7 @@ export function Message({ message, expanded = false, onBranch }: Props) {
     <div className="avatar pi-avatar"><Sparkles size={14} /></div>
     <div className="message-body">
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{output}</ReactMarkdown>
-      {failure && <div className="message-failure" role="status"><CircleAlert size={14} />{failure}</div>}
+      {failure && <div className="message-failure" role="status"><CircleAlert size={14} /><span>{failure}</span>{onRetry && <button onClick={onRetry}>Retry</button>}</div>}
       {message.streaming && <span className="stream-caret" />}
       {!message.streaming && output.trim().length > 0 && <div className="message-actions">
         <IconButton label="Copy response" onClick={copy}>{copied ? <Check size={14} /> : <Copy size={14} />}</IconButton>

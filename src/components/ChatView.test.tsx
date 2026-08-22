@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 import type { AgentState, ChatMessage } from "../types";
 import { ChatView } from "./ChatView";
 
@@ -27,14 +28,21 @@ describe("conversation work visibility", () => {
     expect(document.querySelector(".chat-header")).not.toBeInTheDocument();
   });
 
-  it("shows an ultimately aborted response as a failure instead of blank work", () => {
+  it("shows an ultimately aborted response as a failure with a retry for its prompt", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
     const aborted: ChatMessage[] = [
       { id: "request", role: "user", content: "x scrolling" },
       { id: "aborted", role: "assistant", content: [], stopReason: "aborted", errorMessage: "Request was aborted" }
     ];
-    render(<ChatView state={{ ...state(false), messageCount: aborted.length }} messages={aborted} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
+    const view = render(<ChatView state={{ ...state(false), messageCount: aborted.length }} messages={aborted} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} onSend={onSend} />);
     expect(screen.getByText("Operation aborted")).toBeVisible();
     expect(screen.queryByText(/Work ·/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(onSend).toHaveBeenCalledWith("x scrolling");
+    const continued = [...aborted, { id: "later-user", role: "user", content: "huh?" }, { id: "later-answer", role: "assistant", content: "Here is the answer." }] as ChatMessage[];
+    view.rerender(<ChatView state={{ ...state(false), messageCount: continued.length }} messages={continued} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} onSend={onSend} />);
+    expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
   });
 
   it("shows all work while running and collapses it when the turn settles", () => {
