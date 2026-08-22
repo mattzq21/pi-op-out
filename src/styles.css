@@ -17,7 +17,6 @@ button { cursor: pointer; }
 .rail-bottom { margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: 9px; }
 .native-status { width: 7px; height: 7px; border-radius: 50%; background: #8b695f; box-shadow: 0 0 0 3px #ffffff08; }
 .native-status.online { background: #78b597; }
-.user-chip { width: 30px; height: 30px; border: 1px solid #ffffff20; border-radius: 9px; background: #3d3a34; color: #eeeae2; font-size: 12px; font-weight: 600; }
 
 .session-panel { width: 100%; flex: 1 1 auto; min-height: 0; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
 .eyebrow { margin: 0 0 3px; text-transform: uppercase; letter-spacing: .15em; font: 500 11px "DM Mono"; color: var(--accent); }
