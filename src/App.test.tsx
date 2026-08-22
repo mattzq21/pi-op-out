@@ -20,6 +20,19 @@ describe("Pi desktop", () => {
     expect(await screen.findByText(/browser preview for/)).toHaveTextContent("Wire RPC transport");
   });
 
+  it("keeps composer drafts with their sessions", async () => {
+    const user = userEvent.setup(); render(<App />);
+    const composer = await screen.findByRole("textbox", { name: "Message Pi" });
+    await user.type(composer, "draft for desktop shell");
+    await user.click(screen.getByRole("button", { name: /Wire RPC transport/ }));
+    await waitFor(() => expect(composer).toHaveValue(""));
+    await user.type(composer, "draft for rpc");
+    await user.click(screen.getByRole("button", { name: /Design desktop shell/ }));
+    await waitFor(() => expect(composer).toHaveValue("draft for desktop shell"));
+    await user.click(screen.getByRole("button", { name: /Wire RPC transport/ }));
+    await waitFor(() => expect(composer).toHaveValue("draft for rpc"));
+  });
+
   it("asks for a replacement project directory before opening an unavailable session", async () => {
     const user = userEvent.setup(); render(<App />);
     await user.click(await screen.findByRole("button", { name: /Fix token refresh/ }));

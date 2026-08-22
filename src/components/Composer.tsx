@@ -12,6 +12,8 @@ interface Props {
   model: Model | null;
   thinkingLevel: string;
   thinkingLevels: string[];
+  draft?: string;
+  onDraftChange?: (value: string) => void;
   restoredDraft?: { id: string; value: string };
   onSend: (message: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void;
   onAbort: () => void;
@@ -27,8 +29,10 @@ const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((
   if (mode === "dataUrl") reader.readAsDataURL(file); else reader.readAsText(file);
 });
 
-export function Composer({ streaming, queued, commands, models, model, thinkingLevel, thinkingLevels, restoredDraft, onSend, onAbort, onOpenTerminal, onModel, onThinking }: Props) {
-  const [value, setValue] = useState("");
+export function Composer({ streaming, queued, commands, models, model, thinkingLevel, thinkingLevels, draft, onDraftChange, restoredDraft, onSend, onAbort, onOpenTerminal, onModel, onThinking }: Props) {
+  const [localValue, setLocalValue] = useState("");
+  const value = draft ?? localValue;
+  const setValue = (next: string) => { if (onDraftChange) onDraftChange(next); else setLocalValue(next); };
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [behavior, setBehavior] = useState<"steer" | "followUp">("steer");
   const [uploadError, setUploadError] = useState<string>();
@@ -36,6 +40,7 @@ export function Composer({ streaming, queued, commands, models, model, thinkingL
   const fileRef = useRef<HTMLInputElement>(null);
   const imageRef = useRef<HTMLInputElement>(null);
   const restoredDraftId = useRef<string | undefined>(undefined);
+  const setValueRef = useRef(setValue); setValueRef.current = setValue;
   const commandQuery = value.match(/^\/([^\s]*)$/)?.[1]?.toLowerCase();
   const matches = useMemo(() => commandQuery === undefined ? [] : commands.filter((command) => command.name.toLowerCase().includes(commandQuery)).slice(0, 7), [commandQuery, commands]);
 
@@ -49,7 +54,7 @@ export function Composer({ streaming, queued, commands, models, model, thinkingL
   useLayoutEffect(resizeEditor, [value]);
 
   useEffect(() => {
-    const setEditor = (event: Event) => { setValue((event as CustomEvent<string>).detail); ref.current?.focus(); };
+    const setEditor = (event: Event) => { setValueRef.current((event as CustomEvent<string>).detail); ref.current?.focus(); };
     const focusComposer = () => ref.current?.focus();
     const resize = () => resizeEditor();
     window.addEventListener("pi:set-editor-text", setEditor); window.addEventListener("pi:focus-composer", focusComposer);
