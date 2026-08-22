@@ -38,8 +38,13 @@ describe("conversation work visibility", () => {
     const view = render(<ChatView state={{ ...state(false), messageCount: aborted.length }} messages={aborted} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} onSend={onSend} />);
     expect(screen.getByText("Operation aborted")).toBeVisible();
     expect(screen.queryByText(/Work ·/)).not.toBeInTheDocument();
+    const composer = screen.getByRole("textbox", { name: "Message Pi" });
+    expect(composer).toHaveValue("x scrolling");
+    await user.clear(composer); await user.type(composer, "use vertical tabs{enter}");
+    expect(onSend).toHaveBeenLastCalledWith("use vertical tabs", undefined, []);
     await user.click(screen.getByRole("button", { name: "Retry" }));
-    expect(onSend).toHaveBeenCalledWith("x scrolling");
+    expect(onSend).toHaveBeenLastCalledWith("x scrolling");
+    expect(composer).toHaveValue("");
     const continued = [...aborted, { id: "later-user", role: "user", content: "huh?" }, { id: "later-answer", role: "assistant", content: "Here is the answer." }] as ChatMessage[];
     view.rerender(<ChatView state={{ ...state(false), messageCount: continued.length }} messages={continued} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} onSend={onSend} />);
     expect(screen.queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();

@@ -3,6 +3,7 @@ import type { AgentState, ChatMessage, ImageAttachment, Model, SlashCommand } fr
 import { Message } from "./Message";
 import { Composer } from "./Composer";
 import { textOf } from "../lib/content";
+import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 
 interface Props { state: AgentState; messages: ChatMessage[]; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: string[]; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void; onAbort: () => void; onOpenTerminal: () => void; onBranch: (message: ChatMessage) => void; onModel: (model: Model) => void; onThinking: (level: string) => void; }
 
@@ -13,6 +14,7 @@ export function ChatView(props: Props) {
   const turns = groupTurns(props.messages);
   const sessionTitle = props.state.sessionName || "Untitled session";
   const activity = props.state.activity || (props.state.isStreaming ? "Pi is working" : "");
+  const abortedTurn = !props.state.isStreaming ? findReplaceableAbortedTurn(props.messages) : undefined;
   useEffect(() => { bottom.current?.scrollIntoView({ behavior: props.state.isStreaming ? "smooth" : "auto" }); }, [props.messages, props.state.isStreaming]);
   return <main className={`chat-shell ${props.messages.length === 0 ? "new-session" : ""}`}>
     {props.messages.length > 0 && <header className="chat-header">
@@ -22,7 +24,7 @@ export function ChatView(props: Props) {
       {!props.messages.length && <div className="empty-chat"><span>π</span></div>}
       {turns.map((turn, index) => <ConversationTurn key={turn[0]?.id || index} messages={turn} active={props.state.isStreaming && index === turns.length - 1} retryable={!props.state.isStreaming && index === turns.length - 1} onRetry={props.onSend} onBranch={props.onBranch} />)}<div ref={bottom} />
     </div></div>
-    <div className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.map((line, index) => <div key={index}>{line}</div>)}</div>} {props.statuses.length > 0 && <div className="extension-status">{props.statuses.join(" · ")}</div>}<Composer streaming={props.state.isStreaming} queued={props.state.pendingMessageCount} commands={props.commands} models={props.models} model={props.state.model} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} onSend={props.onSend} onAbort={props.onAbort} onOpenTerminal={props.onOpenTerminal} onModel={props.onModel} onThinking={props.onThinking} /></div>
+    <div className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.map((line, index) => <div key={index}>{line}</div>)}</div>} {props.statuses.length > 0 && <div className="extension-status">{props.statuses.join(" · ")}</div>}<Composer streaming={props.state.isStreaming} queued={props.state.pendingMessageCount} commands={props.commands} models={props.models} model={props.state.model} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} restoredDraft={abortedTurn ? { id: `${abortedTurn.assistant.timestamp ?? abortedTurn.assistant.id}:${abortedTurn.prompt}`, value: abortedTurn.prompt } : undefined} onSend={props.onSend} onAbort={props.onAbort} onOpenTerminal={props.onOpenTerminal} onModel={props.onModel} onThinking={props.onThinking} /></div>
   </main>;
 }
 
@@ -50,6 +52,6 @@ function ConversationTurn({ messages, active, retryable, onRetry, onBranch }: { 
   return <section className="conversation-turn">
     {userMessages.map((message) => <Message key={message.id} message={message} onBranch={onBranch} />)}
     {intermediate.length > 0 && <details className="work-group"><summary>Work · {intermediate.length} {intermediate.length === 1 ? "step" : "steps"}</summary><div className="work-group-content">{intermediate.map((message) => <Message key={message.id} message={message} expanded onBranch={onBranch} />)}</div></details>}
-    {finalMessage && <Message message={finalMessage} onBranch={onBranch} onRetry={retryPrompt ? () => onRetry(retryPrompt) : undefined} />}
+    {finalMessage && <Message message={finalMessage} onBranch={onBranch} onRetry={retryPrompt ? () => { window.dispatchEvent(new CustomEvent("pi:set-editor-text", { detail: "" })); onRetry(retryPrompt); } : undefined} />}
   </section>;
 }

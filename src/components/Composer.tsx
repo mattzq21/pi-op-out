@@ -12,6 +12,7 @@ interface Props {
   model: Model | null;
   thinkingLevel: string;
   thinkingLevels: string[];
+  restoredDraft?: { id: string; value: string };
   onSend: (message: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void;
   onAbort: () => void;
   onOpenTerminal: () => void;
@@ -25,7 +26,7 @@ const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((
   if (mode === "dataUrl") reader.readAsDataURL(file); else reader.readAsText(file);
 });
 
-export function Composer({ streaming, queued, commands, models, model, thinkingLevel, thinkingLevels, onSend, onAbort, onOpenTerminal, onModel, onThinking }: Props) {
+export function Composer({ streaming, queued, commands, models, model, thinkingLevel, thinkingLevels, restoredDraft, onSend, onAbort, onOpenTerminal, onModel, onThinking }: Props) {
   const [value, setValue] = useState("");
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [behavior, setBehavior] = useState<"steer" | "followUp">("steer");
@@ -33,6 +34,7 @@ export function Composer({ streaming, queued, commands, models, model, thinkingL
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const imageRef = useRef<HTMLInputElement>(null);
+  const restoredDraftId = useRef<string | undefined>(undefined);
   const commandQuery = value.match(/^\/([^\s]*)$/)?.[1]?.toLowerCase();
   const matches = useMemo(() => commandQuery === undefined ? [] : commands.filter((command) => command.name.toLowerCase().includes(commandQuery)).slice(0, 7), [commandQuery, commands]);
 
@@ -42,6 +44,7 @@ export function Composer({ streaming, queued, commands, models, model, thinkingL
     window.addEventListener("pi:set-editor-text", setEditor); window.addEventListener("pi:focus-composer", focusComposer);
     return () => { window.removeEventListener("pi:set-editor-text", setEditor); window.removeEventListener("pi:focus-composer", focusComposer); };
   }, []);
+  useEffect(() => { if (restoredDraft && restoredDraft.id !== restoredDraftId.current) { restoredDraftId.current = restoredDraft.id; setValue(restoredDraft.value); } }, [restoredDraft]);
 
   const addFiles = async (files: FileList | null, imagesOnly = false) => {
     if (!files) return;

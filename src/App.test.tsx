@@ -41,6 +41,18 @@ describe("Pi desktop", () => {
     await waitFor(() => expect(screen.getByText(/no model was charged/).closest("article")).toHaveTextContent("local pi process"));
   });
 
+  it("restores and replaces an aborted prompt from the composer", async () => {
+    const user = userEvent.setup(); render(<App />);
+    const composer = await screen.findByRole("textbox", { name: "Message Pi" });
+    await user.type(composer, "trigger aborted response{enter}");
+    expect(await screen.findByText("Operation aborted")).toBeVisible();
+    await waitFor(() => expect(composer).toHaveValue("trigger aborted response"));
+    await user.clear(composer); await user.type(composer, "replacement prompt{enter}");
+    expect(await screen.findByText(/no model was charged/)).toBeVisible();
+    await waitFor(() => expect(document.querySelector(".messages")).not.toHaveTextContent("trigger aborted response"));
+    expect(document.querySelector(".messages")).toHaveTextContent("replacement prompt");
+  });
+
   it("configures MCP servers from settings", async () => {
     const user = userEvent.setup(); render(<App />);
     await user.click(screen.getByRole("button", { name: "Settings" }));

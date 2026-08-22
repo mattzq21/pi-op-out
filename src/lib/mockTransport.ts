@@ -74,7 +74,7 @@ export class MockTransport implements PiTransport {
       }
       case "fork": {
         const index = this.messages.findIndex((m) => m.entryId === command.entryId);
-        if (index >= 0) this.messages = this.messages.slice(0, index + 1);
+        if (index >= 0) this.messages = this.messages.slice(0, index);
         this.state.sessionId = uid("branch"); this.state.sessionName = `${this.state.sessionName ?? "Session"} — branch`;
         this.histories.set(this.state.sessionId, this.messages); this.sessions.unshift({ id: this.state.sessionId, path: `mock://${this.state.sessionId}`, name: this.state.sessionName, project: "pi-ai", cwd: "/Users/demo/code/pi-ai", updatedAt: new Date().toISOString(), preview: "Branched conversation", messageCount: this.messages.length });
         this.emit({ type: "session_switched" }); return { cancelled: false, sessionFile: `mock://${this.state.sessionId}` } as T;
@@ -90,6 +90,11 @@ export class MockTransport implements PiTransport {
     this.messages.push(user); this.state.isStreaming = true; this.emit({ type: "message_end", message: user }); this.emit({ type: "agent_start" });
     const assistant: ChatMessage = { id: uid("assistant"), entryId: uid("entry"), role: "assistant", model: this.state.model?.id, content: "", timestamp: Date.now(), streaming: true };
     this.messages.push(assistant); this.emit({ type: "message_start", message: assistant });
+    if (text === "trigger aborted response") {
+      assistant.streaming = false; assistant.stopReason = "aborted"; assistant.errorMessage = "Request was aborted"; this.state.isStreaming = false; this.state.messageCount = this.messages.length;
+      this.histories.set(this.state.sessionId, this.messages); const session = this.sessions.find((item) => item.id === this.state.sessionId); if (session) { session.preview = text; session.messageCount = this.messages.length; session.updatedAt = new Date().toISOString(); }
+      this.emit({ type: "message_end", message: { ...assistant } }); this.emit({ type: "agent_end" }); return { accepted: true };
+    }
     const response = "I’m running in the browser test transport, so no model was charged. The same interaction is sent to the local pi process in the Tauri app, where tool calls and text stream into this conversation in real time.";
     for (const chunk of response.match(/.{1,18}/g) ?? []) {
       await new Promise((resolve) => setTimeout(resolve, 12));

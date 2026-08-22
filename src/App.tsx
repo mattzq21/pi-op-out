@@ -8,6 +8,7 @@ import { ExtensionDialog } from "./components/ExtensionDialog";
 import { TerminalView, type TerminalRun } from "./components/TerminalView";
 import { defaultSettings } from "./defaults";
 import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
+import { findReplaceableAbortedTurn } from "./lib/abortedTurn";
 import { createTransport } from "./lib/transport";
 import type { AgentState, AppSettings, ChatMessage, ExtensionUiRequest, ImageAttachment, Model, RpcEvent, SessionSummary, SlashCommand } from "./types";
 
@@ -104,6 +105,12 @@ export default function App() {
 
   const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => {
     if (behavior) { await transport.command({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...(images.length ? { images } : {}) }); setState((current) => ({ ...current, pendingMessageCount: current.pendingMessageCount + 1 })); return; }
+    const abandoned = findReplaceableAbortedTurn(messages);
+    if (abandoned) {
+      let entryId = abandoned.user.entryId;
+      if (!entryId) { const response = await transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }); entryId = findReplaceableAbortedTurn(branchMessages(response.entries, response.leafId))?.user.entryId; }
+      if (entryId) { await transport.command({ type: "fork", entryId }); await refresh(); }
+    }
     await transport.command({ type: "prompt", message: text, ...(images.length ? { images } : {}) });
   };
   const branch = async (message: ChatMessage) => { const index = messages.findIndex((item) => item.id === message.id); const user = messages.slice(0, index + 1).reverse().find((item) => item.role === "user" && item.entryId); if (!user) return; await transport.command({ type: "fork", entryId: user.entryId }); await refresh(); };
