@@ -96,6 +96,18 @@ describe("Pi desktop", () => {
     expect(await screen.findByText(/command execution is available/)).toBeInTheDocument();
   });
 
+  it("adds independent terminal tabs within a session", async () => {
+    const user = userEvent.setup(); render(<App />);
+    await user.click(screen.getByRole("button", { name: "Terminal" }));
+    await user.type(await screen.findByRole("textbox", { name: "Terminal command" }), "git status{enter}");
+    expect(await screen.findByText("git status")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add terminal" }));
+    expect(screen.getByRole("button", { name: /Terminal 2/ })).toHaveClass("active");
+    expect(screen.queryByText("git status")).not.toBeInTheDocument();
+    await user.click(document.querySelector(".terminal-tab") as HTMLButtonElement);
+    expect(await screen.findByText("git status")).toBeInTheDocument();
+  });
+
   it("keeps model and effort controls in the composer bar", async () => {
     render(<App />);
     const model = await screen.findByRole("combobox", { name: "Model" });
