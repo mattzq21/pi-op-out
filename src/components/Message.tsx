@@ -21,8 +21,7 @@ export function Message({ message, expanded = false, onBranch, onRetry }: Props)
       {!message.streaming && <div className="message-actions">
         <IconButton label="Copy response" onClick={copy}>{copied ? <Check size={14} /> : <Copy size={14} />}</IconButton>
         <IconButton label="Retry response" onClick={() => onRetry(message)}><RefreshCcw size={14} /></IconButton>
-        <button className="branch-button" onClick={() => onBranch(message)}><GitBranch size={14} />Branch from here</button>
-        {message.model && <span className="message-model">{message.model.split("/").at(-1)}</span>}
+        <button className="branch-button" aria-label="Branch from here" title="Branch from here" onClick={() => onBranch(message)}><GitBranch size={14} /></button>
       </div>}
     </div>
   </article>;
