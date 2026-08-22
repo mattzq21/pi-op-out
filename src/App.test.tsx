@@ -77,35 +77,34 @@ describe("Pi desktop", () => {
   it("runs project shell commands in a bottom panel", async () => {
     const user = userEvent.setup(); render(<App />);
     await user.click(screen.getByRole("button", { name: "Terminal" }));
-    const input = await screen.findByRole("textbox", { name: "Terminal command" });
+    const input = await screen.findByRole("textbox", { name: "Terminal input" });
     expect(screen.getByRole("textbox", { name: "Message Pi" })).toBeInTheDocument();
     expect(input.closest(".terminal-shell")?.previousElementSibling).toHaveClass("chat-shell");
     await user.type(input, "git status{enter}");
-    expect(await screen.findByText(/command execution is available/)).toBeInTheDocument();
-    expect(await screen.findByText("exit 0")).toBeInTheDocument();
+    await waitFor(() => expect(document.querySelector(".terminal-host")).toHaveTextContent("native builds run a real PTY shell"));
   });
 
   it("keeps terminal output with the session that ran it", async () => {
     const user = userEvent.setup(); render(<App />);
     await user.click(screen.getByRole("button", { name: "Terminal" }));
-    await user.type(await screen.findByRole("textbox", { name: "Terminal command" }), "git status{enter}");
-    expect(await screen.findByText(/command execution is available/)).toBeInTheDocument();
+    await user.type(await screen.findByRole("textbox", { name: "Terminal input" }), "git status{enter}");
+    await waitFor(() => expect(document.querySelector(".terminal-host")).toHaveTextContent("native builds run a real PTY shell"));
     await user.click(screen.getByRole("button", { name: /Wire RPC transport/ }));
-    expect(screen.queryByText(/command execution is available/)).not.toBeInTheDocument();
+    expect(document.querySelector(".terminal-host")).not.toHaveTextContent("native builds run a real PTY shell");
     await user.click(screen.getByRole("button", { name: /Design desktop shell/ }));
-    expect(await screen.findByText(/command execution is available/)).toBeInTheDocument();
+    await waitFor(() => expect(document.querySelector(".terminal-host")).toHaveTextContent("native builds run a real PTY shell"));
   });
 
   it("adds independent terminal tabs within a session", async () => {
     const user = userEvent.setup(); render(<App />);
     await user.click(screen.getByRole("button", { name: "Terminal" }));
-    await user.type(await screen.findByRole("textbox", { name: "Terminal command" }), "git status{enter}");
-    expect(await screen.findByText("git status")).toBeInTheDocument();
+    await user.type(await screen.findByRole("textbox", { name: "Terminal input" }), "git status{enter}");
+    await waitFor(() => expect(document.querySelector(".terminal-host")).toHaveTextContent("git status"));
     await user.click(screen.getByRole("button", { name: "Add terminal" }));
     expect(screen.getByRole("button", { name: /Terminal 2/ })).toHaveClass("active");
-    expect(screen.queryByText("git status")).not.toBeInTheDocument();
+    expect(document.querySelector(".terminal-host")).not.toHaveTextContent("git status");
     await user.click(document.querySelector(".terminal-tab") as HTMLButtonElement);
-    expect(await screen.findByText("git status")).toBeInTheDocument();
+    await waitFor(() => expect(document.querySelector(".terminal-host")).toHaveTextContent("git status"));
   });
 
   it("keeps model and effort controls in the composer bar", async () => {
@@ -131,10 +130,10 @@ describe("Pi desktop", () => {
     render(<App />);
     const composer = await screen.findByRole("textbox", { name: "Message Pi" });
     fireEvent.keyDown(window, { key: "j", ctrlKey: true });
-    expect(await screen.findByRole("textbox", { name: "Terminal command" })).toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "Terminal input" })).toBeInTheDocument();
     expect(composer).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "j", ctrlKey: true });
-    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Terminal command" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Terminal input" })).not.toBeInTheDocument());
     expect(composer).toBeInTheDocument();
   });
 
