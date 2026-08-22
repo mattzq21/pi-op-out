@@ -32,6 +32,7 @@ export class MockTransport implements PiTransport {
   async relocateSession(sessionPath: string, cwd: string) { const session = this.sessions.find((item) => item.path === sessionPath); if (!session) throw new Error("Session not found"); session.cwd = cwd; session.project = cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace"; session.cwdExists = true; }
   async loadSettings() { return structuredClone(this.settings); }
   async saveSettings(settings: AppSettings) { this.settings = structuredClone(settings); localStorage.setItem("pi-ui-settings", JSON.stringify(settings)); }
+  async selectProjectDirectory() { return null; }
   async openProject(cwd: string) {
     const project = cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace"; const candidate = this.sessions.find((session) => session.project === project);
     if (candidate) await this.command({ type: "switch_session", sessionPath: candidate.path }); else { await this.command({ type: "new_session" }); const session = this.sessions.find((item) => item.id === this.state.sessionId); if (session) { session.cwd = cwd; session.project = project; } }

@@ -268,7 +268,7 @@ fn relocate_session(session_path: String, cwd: String) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default().manage(PiRuntime::default()).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, list_sessions, relocate_session, load_app_settings, save_app_settings]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, list_sessions, relocate_session, load_app_settings, save_app_settings]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }
 
 #[cfg(test)]

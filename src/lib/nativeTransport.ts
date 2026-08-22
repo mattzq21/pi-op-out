@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
 import type { AppSettings, PiTransport, RpcCommand, RpcEvent, SessionSummary } from "../types";
 
 export class NativeTransport implements PiTransport {
@@ -20,5 +21,6 @@ export class NativeTransport implements PiTransport {
   relocateSession(sessionPath: string, cwd: string) { return invoke<void>("relocate_session", { sessionPath, cwd }); }
   loadSettings() { return invoke<AppSettings>("load_app_settings"); }
   async saveSettings(settings: AppSettings) { await invoke<void>("save_app_settings", { settings }); await this.disconnect(); await this.connect(this.cwd, this.sessionPath); }
+  async selectProjectDirectory(defaultPath?: string) { const selected = await open({ directory: true, multiple: false, title: "Open project", defaultPath }); return typeof selected === "string" ? selected : null; }
   async openProject(cwd: string) { await this.disconnect(); this.cwd = cwd; this.sessionPath = undefined; await this.connect(cwd); }
 }

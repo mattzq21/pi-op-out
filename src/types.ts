@@ -24,5 +24,6 @@ export interface PiTransport {
   relocateSession(sessionPath: string, cwd: string): Promise<void>;
   loadSettings(): Promise<AppSettings>;
   saveSettings(settings: AppSettings): Promise<void>;
+  selectProjectDirectory(defaultPath?: string): Promise<string | null>;
   openProject(cwd: string): Promise<void>;
 }
