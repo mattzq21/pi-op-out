@@ -29,7 +29,7 @@ function branchMessages(entries: PiEntry[], leafId: string | null): ChatMessage[
 }
 
 export default function App() {
-  const transport = useMemo(createTransport, []); const [view, setView] = useState<"chat" | "settings" | "terminal">("chat");
+  const transport = useMemo(createTransport, []); const [view, setView] = useState<"chat" | "settings">("chat");
   const [state, setState] = useState(emptyState); const [messages, setMessages] = useState<ChatMessage[]>([]); const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [models, setModels] = useState<Model[]>([]); const [commands, setCommands] = useState<SlashCommand[]>([]); const [thinkingLevels, setThinkingLevels] = useState<string[]>(["off"]); const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const settingsRef = useRef(settings); const [systemDark, setSystemDark] = useState(() => window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false);
@@ -38,7 +38,10 @@ export default function App() {
   const [statuses, setStatuses] = useState<Record<string, string>>({}); const [widgets, setWidgets] = useState<Record<string, string[]>>({});
   const [renameSession, setRenameSession] = useState<SessionSummary>();
   const [relocatingSession, setRelocatingSession] = useState<SessionSummary>(); const [relocationError, setRelocationError] = useState<string>();
-  const [terminalRuns, setTerminalRuns] = useState<TerminalRun[]>([]);
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalRunsBySession, setTerminalRunsBySession] = useState<Record<string, TerminalRun[]>>({});
+  const terminalSessionId = state.sessionId || "new-session";
+  const terminalRuns = terminalRunsBySession[terminalSessionId] ?? [];
 
   useEffect(() => { settingsRef.current = settings; }, [settings]);
   useEffect(() => { const query = window.matchMedia?.("(prefers-color-scheme: dark)"); if (!query) return; const update = () => setSystemDark(query.matches); query.addEventListener("change", update); return () => query.removeEventListener("change", update); }, []);
@@ -70,7 +73,7 @@ export default function App() {
       if (event.type === "tool_execution_update") setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.partialResult), toolStatus: "running" } : item));
       if (event.type === "tool_execution_end") setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.result), toolStatus: event.isError ? "error" : "done" } : item));
       if (event.type === "queue_update") { const pending = [...((event.steering as unknown[]) ?? []), ...((event.followUp as unknown[]) ?? [])].length; setState((current) => ({ ...current, pendingMessageCount: pending })); }
-      if (event.type === "bash_execution_update") setTerminalRuns((current) => current.map((run) => run.id === event.id ? { ...run, output: run.output + String(event.delta ?? "") } : run));
+      if (event.type === "bash_execution_update") setTerminalRunsBySession((current) => Object.fromEntries(Object.entries(current).map(([sessionId, runs]) => [sessionId, runs.map((run) => run.id === event.id ? { ...run, output: run.output + String(event.delta ?? "") } : run)])));
       if (event.type === "compaction_start") setState((current) => ({ ...current, activity: "Compacting context…" }));
       if (event.type === "compaction_end") setState((current) => ({ ...current, activity: undefined }));
       if (event.type === "auto_retry_start") setState((current) => ({ ...current, activity: `Retrying · attempt ${event.attempt}` }));
@@ -125,7 +128,14 @@ export default function App() {
     if (action === "rename") { setRenameSession(session); return; }
     if (action === "clone") { await transport.command({ type: "clone" }); await refresh(); }
   };
-  const runBash = async (command: string) => { const id = `bash-${Date.now()}`; setTerminalRuns((current) => [...current, { id, command, output: "", running: true }]); try { const result = await transport.command<{ output: string; exitCode: number }>({ id, type: "bash", command }); setTerminalRuns((current) => current.map((run) => run.id === id ? { ...run, output: run.output || result.output, exitCode: result.exitCode, running: false } : run)); } catch (reason) { setTerminalRuns((current) => current.map((run) => run.id === id ? { ...run, output: `${run.output}\n${String(reason)}`, exitCode: 1, running: false } : run)); } };
+  const updateTerminalRun = (sessionId: string, id: string, update: (run: TerminalRun) => TerminalRun) => setTerminalRunsBySession((current) => ({ ...current, [sessionId]: (current[sessionId] ?? []).map((run) => run.id === id ? update(run) : run) }));
+  const runBash = async (command: string) => {
+    const sessionId = terminalSessionId; const id = `bash-${Date.now()}`;
+    setTerminalRunsBySession((current) => ({ ...current, [sessionId]: [...(current[sessionId] ?? []), { id, command, output: "", running: true }] }));
+    try { const result = await transport.command<{ output: string; exitCode: number }>({ id, type: "bash", command }); updateTerminalRun(sessionId, id, (run) => ({ ...run, output: run.output || result.output, exitCode: result.exitCode, running: false })); }
+    catch (reason) { updateTerminalRun(sessionId, id, (run) => ({ ...run, output: `${run.output}${run.output ? "\n" : ""}${String(reason)}`, exitCode: 1, running: false })); }
+  };
+  const toggleTerminal = () => { setView("chat"); setTerminalOpen((open) => !open); };
 
   useEffect(() => {
     const handleKeybind = (event: KeyboardEvent) => {
@@ -135,7 +145,7 @@ export default function App() {
       event.preventDefault();
       if (binding.action === "newConversation") { void newSession(); return; }
       if (binding.action === "toggleConversations") { setView("chat"); setPanelOpen((open) => !open); return; }
-      if (binding.action === "toggleTerminal") { setView((current) => current === "terminal" ? "chat" : "terminal"); return; }
+      if (binding.action === "toggleTerminal") { toggleTerminal(); return; }
       if (binding.action === "openSettings") { setView("settings"); return; }
       setView("chat"); window.setTimeout(() => window.dispatchEvent(new Event("pi:focus-composer")), 0);
     };
@@ -144,8 +154,8 @@ export default function App() {
   }, [settings.keybindings]);
 
   return <div className={`app ${settings.theme === "system" ? (systemDark ? "dark" : "light") : settings.theme}`}>
-    <aside className="icon-rail"><nav><span className={`native-status ${connected ? "online" : ""}`} title={connected ? `${transport.mode} transport connected` : "Connecting"} /><IconButton label="New conversation" onClick={newSession}><Plus size={19} /></IconButton><IconButton label="Conversations" className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}><MessageSquare size={18} /></IconButton><IconButton label="Projects" onClick={openProject}><FolderGit2 size={18} /></IconButton><IconButton label="Terminal" className={view === "terminal" ? "active" : ""} onClick={() => setView("terminal")}><Terminal size={18} /></IconButton></nav>{view === "chat" && panelOpen && <SessionPanel sessions={sessions} activeId={state.sessionId} query={query} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} />}<div className="rail-bottom"><IconButton label="Settings" className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}><Settings size={19} /></IconButton></div></aside>
-    {view === "chat" ? <ChatView state={state} messages={messages} models={models} commands={commands} thinkingLevels={thinkingLevels} widgets={Object.values(widgets).flat()} statuses={Object.values(statuses)} onSend={send} onAbort={() => transport.command({ type: "abort" })} onOpenTerminal={() => setView("terminal")} onBranch={branch} onModel={setModel} onThinking={setThinking} /> : view === "settings" ? <SettingsView settings={settings} onSave={saveSettings} /> : <TerminalView cwd={sessions.find((session) => session.id === state.sessionId)?.cwd || "Active project"} runs={terminalRuns} onRun={runBash} onAbort={() => transport.command({ type: "abort_bash" })} onClear={() => setTerminalRuns([])} />}
+    <aside className="icon-rail"><nav><span className={`native-status ${connected ? "online" : ""}`} title={connected ? `${transport.mode} transport connected` : "Connecting"} /><IconButton label="New conversation" onClick={newSession}><Plus size={19} /></IconButton><IconButton label="Conversations" className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}><MessageSquare size={18} /></IconButton><IconButton label="Projects" onClick={openProject}><FolderGit2 size={18} /></IconButton><IconButton label="Terminal" className={view === "chat" && terminalOpen ? "active" : ""} onClick={toggleTerminal}><Terminal size={18} /></IconButton></nav>{view === "chat" && panelOpen && <SessionPanel sessions={sessions} activeId={state.sessionId} query={query} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} />}<div className="rail-bottom"><IconButton label="Settings" className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}><Settings size={19} /></IconButton></div></aside>
+    {view === "chat" ? <div className="chat-workspace"><ChatView state={state} messages={messages} models={models} commands={commands} thinkingLevels={thinkingLevels} widgets={Object.values(widgets).flat()} statuses={Object.values(statuses)} onSend={send} onAbort={() => transport.command({ type: "abort" })} onOpenTerminal={() => setTerminalOpen(true)} onBranch={branch} onModel={setModel} onThinking={setThinking} />{terminalOpen && <TerminalView key={terminalSessionId} cwd={sessions.find((session) => session.id === state.sessionId)?.cwd || "Active project"} runs={terminalRuns} onRun={runBash} onAbort={() => transport.command({ type: "abort_bash" })} onClear={() => setTerminalRunsBySession((current) => ({ ...current, [terminalSessionId]: [] }))} onClose={() => setTerminalOpen(false)} />}</div> : <SettingsView settings={settings} onSave={saveSettings} />}
     {error && <div className="error-toast"><strong>Pi could not connect</strong><span>{error}</span><button onClick={() => setError(undefined)}>×</button></div>}
     {notice && <div className="error-toast"><strong>{notice.title}</strong><span>{notice.message}</span><button onClick={() => setNotice(undefined)}>×</button></div>}
     {dialog && <ExtensionDialog request={dialog} onRespond={(response) => { void transport.command({ type: "extension_ui_response", id: dialog.id, ...response }); setDialog(undefined); }} />}

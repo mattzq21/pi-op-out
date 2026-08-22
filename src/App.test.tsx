@@ -74,13 +74,26 @@ describe("Pi desktop", () => {
     expect(screen.queryByRole("menuitem", { name: "Tree & session stats" })).not.toBeInTheDocument();
   });
 
-  it("runs project shell commands in the terminal view", async () => {
+  it("runs project shell commands in a bottom panel", async () => {
     const user = userEvent.setup(); render(<App />);
     await user.click(screen.getByRole("button", { name: "Terminal" }));
     const input = await screen.findByRole("textbox", { name: "Terminal command" });
+    expect(screen.getByRole("textbox", { name: "Message Pi" })).toBeInTheDocument();
+    expect(input.closest(".terminal-shell")?.previousElementSibling).toHaveClass("chat-shell");
     await user.type(input, "git status{enter}");
     expect(await screen.findByText(/command execution is available/)).toBeInTheDocument();
     expect(await screen.findByText("exit 0")).toBeInTheDocument();
+  });
+
+  it("keeps terminal output with the session that ran it", async () => {
+    const user = userEvent.setup(); render(<App />);
+    await user.click(screen.getByRole("button", { name: "Terminal" }));
+    await user.type(await screen.findByRole("textbox", { name: "Terminal command" }), "git status{enter}");
+    expect(await screen.findByText(/command execution is available/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Wire RPC transport/ }));
+    expect(screen.queryByText(/command execution is available/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Design desktop shell/ }));
+    expect(await screen.findByText(/command execution is available/)).toBeInTheDocument();
   });
 
   it("keeps model and effort controls in the composer bar", async () => {
@@ -104,11 +117,13 @@ describe("Pi desktop", () => {
 
   it("toggles the terminal with the default keybind", async () => {
     render(<App />);
-    await screen.findByRole("textbox", { name: "Message Pi" });
+    const composer = await screen.findByRole("textbox", { name: "Message Pi" });
     fireEvent.keyDown(window, { key: "j", ctrlKey: true });
     expect(await screen.findByRole("textbox", { name: "Terminal command" })).toBeInTheDocument();
+    expect(composer).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "j", ctrlKey: true });
-    expect(await screen.findByRole("textbox", { name: "Message Pi" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Terminal command" })).not.toBeInTheDocument());
+    expect(composer).toBeInTheDocument();
   });
 
   it("discovers slash commands and attaches text context", async () => {

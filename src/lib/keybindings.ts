@@ -1,7 +1,7 @@
 export const keybindDefinitions = [
   { action: "newConversation", label: "New conversation", description: "Start a fresh conversation", defaultShortcut: "Ctrl+N" },
   { action: "toggleConversations", label: "Toggle conversations", description: "Show or hide the conversation panel", defaultShortcut: "Ctrl+B" },
-  { action: "toggleTerminal", label: "Toggle terminal", description: "Open the terminal or return to chat", defaultShortcut: "Ctrl+J" },
+  { action: "toggleTerminal", label: "Toggle terminal", description: "Show or hide the session terminal panel", defaultShortcut: "Ctrl+J" },
   { action: "focusComposer", label: "Focus composer", description: "Move focus to the message composer", defaultShortcut: "Ctrl+L" },
   { action: "openSettings", label: "Open settings", description: "Open application settings", defaultShortcut: "Ctrl+," }
 ] as const;
