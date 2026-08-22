@@ -1,6 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap');
 
-:root { font-family: "DM Sans", system-ui, sans-serif; color: #262522; background: #f3f1ec; font-synthesis: none; --ink: #262522; --muted: #77736c; --faint: #aaa69e; --line: #dedbd4; --paper: #faf9f6; --panel: #efede7; --accent: #d46a24; --accent-soft: #f8eadf; --green: #43876b; --rail-width: 312px; }
+:root { font-family: "DM Sans", system-ui, sans-serif; color: #262522; background: #f3f1ec; font-synthesis: none; --ink: #262522; --muted: #77736c; --faint: #aaa69e; --line: #dedbd4; --paper: #faf9f6; --panel: #efede7; --accent: #d46a24; --accent-soft: #f8eadf; --green: #43876b; --rail-width: 260px; }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 900px; min-height: 100vh; overflow: hidden; }
 button, input, textarea, select { font: inherit; color: inherit; }
@@ -166,4 +166,4 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
 .app.dark .composer-bar .select-control:hover { border-color: var(--line); background: var(--dark-control-hover); }
 .app.dark .composer:focus-within { border-color: #68645c; box-shadow: 0 10px 35px #0004, 0 0 0 2px #d46a2424; }
 .app.dark .composer-bar .send:disabled { background: #4b4943; color: #8f8b82; }
-@media (max-width: 1050px) { :root { --rail-width: 278px; }.conversation { max-width: 670px; }.settings-layout { gap: 25px; } }
+@media (max-width: 1050px) { :root { --rail-width: 232px; }.conversation { max-width: 670px; }.settings-layout { gap: 25px; } }
