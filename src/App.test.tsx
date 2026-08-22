@@ -71,9 +71,9 @@ describe("Pi desktop", () => {
     await user.click(screen.getByRole("button", { name: "Settings" }));
     await user.click(screen.getByRole("button", { name: /Keybinds/ }));
     const terminalShortcut = screen.getByRole("textbox", { name: "Toggle terminal shortcut" });
-    expect(terminalShortcut).toHaveValue("Mod+J");
+    expect(terminalShortcut).toHaveValue("Ctrl+J");
     fireEvent.keyDown(terminalShortcut, { key: "t", ctrlKey: true, shiftKey: true });
-    expect(terminalShortcut).toHaveValue("Mod+Shift+T");
+    expect(terminalShortcut).toHaveValue("Ctrl+Shift+T");
   });
 
   it("toggles the terminal with the default keybind", async () => {

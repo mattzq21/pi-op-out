@@ -64,11 +64,11 @@ fn default_queue_mode() -> String { "one-at-a-time".into() }
 
 fn default_keybindings() -> HashMap<String, String> {
     [
-        ("newConversation", "Mod+N"),
-        ("toggleConversations", "Mod+B"),
-        ("toggleTerminal", "Mod+J"),
-        ("focusComposer", "Mod+L"),
-        ("openSettings", "Mod+,"),
+        ("newConversation", "Ctrl+N"),
+        ("toggleConversations", "Ctrl+B"),
+        ("toggleTerminal", "Ctrl+J"),
+        ("focusComposer", "Ctrl+L"),
+        ("openSettings", "Ctrl+,"),
     ].into_iter().map(|(action, shortcut)| (action.into(), shortcut.into())).collect()
 }
 
@@ -138,6 +138,7 @@ fn merge_discovered_skills(settings: &mut AppSettings) {
 fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     let path = settings_path(&app)?;
     let mut settings = if !path.exists() { default_settings() } else { serde_json::from_slice(&fs::read(path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())? };
+    for shortcut in settings.keybindings.values_mut() { *shortcut = shortcut.replace("Mod+", "Ctrl+"); }
     merge_discovered_skills(&mut settings); Ok(settings)
 }
 

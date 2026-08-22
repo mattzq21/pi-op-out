@@ -10,7 +10,7 @@ export function SessionPanel({ sessions, activeId, query, onQuery, onSelect }: P
     (result[session.project] ??= []).push(session); return result;
   }, {}));
   return <aside className="session-panel">
-    <label className="search"><Search size={15} /><input aria-label="Search conversations" placeholder="Search conversations" value={query} onChange={(event) => onQuery(event.target.value)} /><kbd>⌘K</kbd></label>
+    <label className="search"><Search size={15} /><input aria-label="Search conversations" placeholder="Search conversations" value={query} onChange={(event) => onQuery(event.target.value)} /><kbd>Ctrl K</kbd></label>
     <div className="session-scroll">
       {groups.map(([project, projectSessions]) => <section className="project" key={project}>
         <div className="project-label"><ChevronDown size={13} /><span>{project}</span><small>{projectSessions?.length}</small></div>

@@ -84,6 +84,6 @@ export function Composer({ streaming, queued, commands, models, model, thinkingL
         <span className="composer-divider" />
         {streaming && <IconButton label="Stop Pi" className="stop-compact" onClick={onAbort}><CircleStop size={17} /></IconButton>}<IconButton label={streaming ? (behavior === "steer" ? "Send steering message" : "Queue follow-up") : "Send message"} className="send" disabled={!value.trim() && uploads.length === 0} onClick={submit}><ArrowUp size={18} /></IconButton></div>
       </div>
-    </div><p className="composer-hint">Enter to send · Shift Enter for new line · Type / for commands · ⌘L to focus</p>
+    </div><p className="composer-hint">Enter to send · Shift Enter for new line · Type / for commands · Ctrl+L to focus</p>
   </div>;
 }

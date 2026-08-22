@@ -1,9 +1,9 @@
 export const keybindDefinitions = [
-  { action: "newConversation", label: "New conversation", description: "Start a fresh conversation", defaultShortcut: "Mod+N" },
-  { action: "toggleConversations", label: "Toggle conversations", description: "Show or hide the conversation panel", defaultShortcut: "Mod+B" },
-  { action: "toggleTerminal", label: "Toggle terminal", description: "Open the terminal or return to chat", defaultShortcut: "Mod+J" },
-  { action: "focusComposer", label: "Focus composer", description: "Move focus to the message composer", defaultShortcut: "Mod+L" },
-  { action: "openSettings", label: "Open settings", description: "Open application settings", defaultShortcut: "Mod+," }
+  { action: "newConversation", label: "New conversation", description: "Start a fresh conversation", defaultShortcut: "Ctrl+N" },
+  { action: "toggleConversations", label: "Toggle conversations", description: "Show or hide the conversation panel", defaultShortcut: "Ctrl+B" },
+  { action: "toggleTerminal", label: "Toggle terminal", description: "Open the terminal or return to chat", defaultShortcut: "Ctrl+J" },
+  { action: "focusComposer", label: "Focus composer", description: "Move focus to the message composer", defaultShortcut: "Ctrl+L" },
+  { action: "openSettings", label: "Open settings", description: "Open application settings", defaultShortcut: "Ctrl+," }
 ] as const;
 
 export type KeybindAction = typeof keybindDefinitions[number]["action"];
@@ -16,7 +16,8 @@ const keyName = (key: string) => key === " " ? "Space" : key.length === 1 ? key.
 export function shortcutFromEvent(event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">) {
   if (["Meta", "Control", "Alt", "Shift"].includes(event.key)) return null;
   const parts: string[] = [];
-  if (event.metaKey || event.ctrlKey) parts.push("Mod");
+  if (event.ctrlKey) parts.push("Ctrl");
+  if (event.metaKey) parts.push("Meta");
   if (event.altKey) parts.push("Alt");
   if (event.shiftKey) parts.push("Shift");
   parts.push(keyName(event.key));
@@ -28,12 +29,15 @@ export function matchesShortcut(event: Pick<KeyboardEvent, "key" | "metaKey" | "
   if (!parts.length) return false;
   const expected = {
     mod: parts.some((part) => part.toLowerCase() === "mod"),
+    ctrl: parts.some((part) => part.toLowerCase() === "ctrl"),
+    meta: parts.some((part) => part.toLowerCase() === "meta"),
     alt: parts.some((part) => part.toLowerCase() === "alt"),
     shift: parts.some((part) => part.toLowerCase() === "shift")
   };
-  const key = parts.find((part) => !["mod", "alt", "shift"].includes(part.toLowerCase()));
+  const key = parts.find((part) => !["mod", "ctrl", "meta", "alt", "shift"].includes(part.toLowerCase()));
   if (!key) return false;
-  return expected.mod === (event.metaKey || event.ctrlKey)
+  const primaryMatches = expected.mod ? event.metaKey || event.ctrlKey : expected.ctrl === event.ctrlKey && expected.meta === event.metaKey;
+  return primaryMatches
     && expected.alt === event.altKey
     && expected.shift === event.shiftKey
     && key.toLowerCase() === keyName(event.key).toLowerCase();
