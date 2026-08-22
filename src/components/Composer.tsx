@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, AtSign, ChevronDown, CircleDot, CircleStop, FileText, ImagePlus, Paperclip, TerminalSquare, X } from "lucide-react";
+import { ArrowUp, AtSign, ChevronDown, CircleStop, FileText, ImagePlus, Paperclip, TerminalSquare, X } from "lucide-react";
 import type { ImageAttachment, Model, SlashCommand } from "../types";
 import { IconButton } from "./IconButton";
 
@@ -80,7 +80,7 @@ export function Composer({ streaming, queued, commands, models, model, thinkingL
       <div className="composer-bar"><div className="composer-tools"><IconButton label="Attach files" onClick={() => fileRef.current?.click()}><Paperclip size={17} /></IconButton><IconButton label="Attach image" onClick={() => imageRef.current?.click()}><ImagePlus size={17} /></IconButton><IconButton label="Mention context" onClick={() => { setValue((current) => `${current}@`); ref.current?.focus(); }}><AtSign size={17} /></IconButton><IconButton label="Open terminal" onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton></div>
         <div className="composer-actions">
         <label className="select-control"><span>Model</span><select aria-label="Model" value={model ? `${model.provider}/${model.id}` : ""} onChange={(event) => { const next = models.find((item) => `${item.provider}/${item.id}` === event.target.value); if (next) onModel(next); }}>{models.map((item) => <option key={`${item.provider}/${item.id}`} value={`${item.provider}/${item.id}`}>{item.name || item.id}</option>)}</select><ChevronDown size={13} /></label>
-        <label className="select-control thinking"><CircleDot size={13} /><select aria-label="Thinking level" value={thinkingLevel} onChange={(event) => onThinking(event.target.value)}>{thinkingLevels.map((level) => <option key={level}>{level}</option>)}</select><ChevronDown size={13} /></label>
+        <label className="select-control thinking"><select aria-label="Thinking level" value={thinkingLevel} onChange={(event) => onThinking(event.target.value)}>{thinkingLevels.map((level) => <option key={level}>{level}</option>)}</select><ChevronDown size={13} /></label>
         <span className="composer-divider" />
         {streaming && <IconButton label="Stop Pi" className="stop-compact" onClick={onAbort}><CircleStop size={17} /></IconButton>}<IconButton label={streaming ? (behavior === "steer" ? "Send steering message" : "Queue follow-up") : "Send message"} className="send" disabled={!value.trim() && uploads.length === 0} onClick={submit}><ArrowUp size={18} /></IconButton></div>
       </div>
