@@ -17,6 +17,8 @@ describe("conversation work visibility", () => {
   it("limits long chat-header titles to 25 characters", () => {
     render(<ChatView state={{ ...state(false), sessionName: "12345678901234567890123456 and more" }} messages={[]} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
     expect(screen.getByText("1234567890123456789012345…")).toHaveAttribute("title", "12345678901234567890123456 and more");
+    expect(screen.queryByText("Ready")).not.toBeInTheDocument();
+    expect(document.querySelector(".status-dot")).not.toBeInTheDocument();
   });
 
   it("shows all work while running and collapses it when the turn settles", () => {
