@@ -20,10 +20,8 @@ button { cursor: pointer; }
 .user-chip { width: 30px; height: 30px; border: 1px solid #ffffff20; border-radius: 9px; background: #3d3a34; color: #eeeae2; font-size: 12px; font-weight: 600; }
 
 .session-panel { order: 3; width: 312px; flex: 0 0 312px; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
-.panel-heading { display: flex; justify-content: space-between; align-items: center; padding: 24px 20px 15px; }
 .eyebrow { margin: 0 0 3px; text-transform: uppercase; letter-spacing: .15em; font: 500 11px "DM Mono"; color: var(--accent); }
-.panel-heading h1 { font: 26px/1 "Instrument Serif"; margin: 0; font-weight: 400; }
-.search { margin: 0 14px 12px; height: 35px; border: 1px solid #d5d1c9; background: #faf9f6b8; border-radius: 8px; display: flex; align-items: center; gap: 8px; padding: 0 9px; color: var(--faint); }
+.search { margin: 14px 14px 12px; height: 35px; border: 1px solid #d5d1c9; background: #faf9f6b8; border-radius: 8px; display: flex; align-items: center; gap: 8px; padding: 0 9px; color: var(--faint); }
 .search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; font-size: 14px; }
 kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; padding: 2px 4px; border-radius: 4px; color: #99958d; }
 .session-scroll { overflow: auto; padding: 2px 8px 14px; flex: 1; scrollbar-width: thin; }

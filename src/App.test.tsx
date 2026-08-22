@@ -39,7 +39,7 @@ describe("Pi desktop", () => {
   });
 
   it("opens session stats and the persisted branch tree", async () => {
-    const user = userEvent.setup(); render(<App />); await screen.findByText("Conversations");
+    const user = userEvent.setup(); render(<App />); await screen.findByRole("textbox", { name: "Search conversations" });
     await user.click(screen.getByRole("button", { name: "Conversation menu" }));
     await user.click(screen.getByRole("button", { name: "Tree & session stats" }));
     expect(await screen.findByRole("heading", { name: "Context & branches" })).toBeInTheDocument();
