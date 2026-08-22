@@ -95,5 +95,76 @@ kbd { font: 9px "DM Mono"; border: 1px solid #d5d1c9; background: white; padding
 .modal-backdrop { position: fixed; inset: 0; z-index: 20; background: #1d1b1780; display: grid; place-items: center; backdrop-filter: blur(3px); }.extension-dialog { width: min(430px, calc(100vw - 40px)); border-radius: 12px; background: var(--paper); color: var(--ink); box-shadow: 0 24px 80px #0005; padding: 22px; }.extension-dialog h2 { margin: 0 0 7px; font: 25px "Instrument Serif"; }.extension-dialog > p:not(.eyebrow) { color: var(--muted); font-size: 11px; line-height: 1.5; }.extension-dialog > input, .extension-dialog > textarea { width: 100%; border: 1px solid var(--line); border-radius: 7px; background: white; outline: 0; padding: 9px; font: 11px/1.5 "DM Mono"; resize: vertical; }.dialog-options { display: grid; gap: 6px; margin-top: 14px; }.dialog-options button { height: 35px; border: 1px solid var(--line); background: white; border-radius: 7px; text-align: left; padding: 0 10px; font-size: 11px; }.dialog-options button:hover { border-color: var(--accent); }.dialog-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 17px; }.dialog-actions > button:not(.primary-button) { height: 33px; border: 0; background: transparent; color: var(--muted); font-size: 10px; padding: 0 10px; }
 .inspector-backdrop { position: fixed; inset: 0; z-index: 15; background: #1d1b1738; }.session-inspector { position: absolute; right: 0; top: 0; bottom: 0; width: min(430px, calc(100vw - 70px)); background: var(--paper); box-shadow: -15px 0 55px #211d1730; padding: 24px; overflow: auto; }.session-inspector header { display: flex; align-items: flex-start; justify-content: space-between; border-bottom: 1px solid var(--line); padding-bottom: 17px; }.session-inspector h2 { margin: 0; font: 26px "Instrument Serif"; }.stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin: 16px 0; }.stat { min-height: 80px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; display: grid; grid-template-columns: 1fr auto; align-items: center; }.stat > span { color: var(--accent); }.stat svg { width: 14px; }.stat strong { font: 20px "Instrument Serif"; }.stat small { grid-column: 1 / -1; color: var(--muted); font-size: 9px; }.context-card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; }.context-card > div:first-child { display: flex; justify-content: space-between; font-size: 10px; }.context-card > div:first-child span { font: 8px "DM Mono"; color: var(--muted); }.context-track { height: 5px; background: #e6e2db; border-radius: 4px; margin: 11px 0 8px; overflow: hidden; }.context-track span { display: block; height: 100%; border-radius: inherit; background: var(--accent); }.context-card small { color: var(--muted); font: 8px "DM Mono"; }.tree-section { margin-top: 22px; }.tree-section h3 { font: 17px "Instrument Serif"; margin: 0 0 9px; }.tree-list { border: 1px solid var(--line); border-radius: 8px; padding: 6px; }.tree-item { min-height: 28px; display: flex; align-items: center; gap: 7px; border-radius: 5px; font-size: 9px; color: var(--muted); }.tree-item:hover { background: #efede7; }.tree-item code { margin-left: auto; padding-right: 7px; font: 8px "DM Mono"; color: var(--faint); }.tree-dot { width: 6px; height: 6px; border-radius: 50%; background: #bbb6ac; }.tree-item.leaf { color: var(--ink); font-weight: 600; }.tree-item.leaf .tree-dot { background: var(--accent); box-shadow: 0 0 0 3px #d95d3915; }.session-inspector footer { margin-top: 22px; display: grid; gap: 5px; color: var(--muted); font-size: 9px; }.session-inspector footer code { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font: 8px "DM Mono"; }
 
-.app.dark { --ink: #eae7df; --muted: #a39f96; --faint: #77736b; --line: #3b3934; --paper: #23221f; --panel: #2a2925; color: var(--ink); }.app.dark .chat-header, .app.dark .settings-shell, .app.dark .chat-shell { background: var(--paper); }.app.dark .select-control, .app.dark .composer, .app.dark .session-item.active, .app.dark .mcp-card, .app.dark input, .app.dark select { background: #302f2b; color: var(--ink); }.app.dark .message-body { color: #d2cec5; }.app.dark .user-message .message-body { color: var(--ink); }.app.dark .composer textarea { color: var(--ink); }.app.dark .icon-button:hover { background: #ffffff0b; color: white; }
+.app.dark {
+  color-scheme: dark;
+  --ink: #eae7df;
+  --muted: #aaa69d;
+  --faint: #817d75;
+  --line: #403e38;
+  --paper: #23221f;
+  --panel: #2a2925;
+  --dark-control: #302f2b;
+  --dark-control-hover: #383630;
+  --dark-subtle: #2c2b27;
+  color: var(--ink);
+}
+.app.dark .chat-header, .app.dark .settings-shell, .app.dark .chat-shell { background: var(--paper); }
+
+/* Raised surfaces and native controls need explicit dark colors. color-scheme alone
+   does not reliably recolor selects in every desktop webview. */
+.app.dark .select-control,
+.app.dark .composer,
+.app.dark .session-item.active,
+.app.dark .conversation-menu,
+.app.dark .command-palette,
+.app.dark .mcp-card,
+.app.dark .extension-dialog > input,
+.app.dark .extension-dialog > textarea,
+.app.dark .dialog-options button,
+.app.dark .field input,
+.app.dark .field select,
+.app.dark .command-fields input,
+.app.dark .setting-row select,
+.app.dark .stream-banner select {
+  border-color: var(--line);
+  background: var(--dark-control);
+  color: var(--ink);
+}
+.app.dark select option { background: var(--dark-control); color: var(--ink); }
+.app.dark input::placeholder, .app.dark textarea::placeholder { color: var(--faint); }
+.app.dark .mcp-card-head > input,
+.app.dark .skill-row input,
+.app.dark .terminal-input input,
+.app.dark .search input,
+.app.dark .composer textarea { background: transparent; color: var(--ink); }
+
+.app.dark .search { border-color: var(--line); background: #252420; }
+.app.dark kbd { border-color: var(--line); background: var(--dark-control); color: var(--muted); }
+.app.dark .session-item:hover { background: #ffffff09; }
+.app.dark .session-item.active { box-shadow: 0 1px 2px #0005; }
+.app.dark .project-avatar { background: #403e38; color: var(--ink); }
+.app.dark .conversation-menu button:hover,
+.app.dark .command-palette button:hover,
+.app.dark .settings-nav button:hover,
+.app.dark .secondary-button:hover,
+.app.dark .tree-item:hover { background: var(--dark-control-hover); color: var(--ink); }
+.app.dark .settings-nav button.active { background: #393732; color: var(--ink); }
+.app.dark .setting-row, .app.dark .config-row { border-bottom-color: var(--line); }
+.app.dark .setting-icon, .app.dark .config-icon { background: #34332e; color: #bbb7ae; }
+.app.dark .config-icon.skill { background: #422f2a; color: #e2a18e; }
+.app.dark .config-icon.mcp { background: #293b34; color: #8fc6ae; }
+.app.dark .config-row code, .app.dark .message-body code { background: #302f2b; }
+.app.dark .toggle:not(.on) { background: #57534c; }
+.app.dark .toggle span { background: #f3f0e9; }
+.app.dark .tool-event,
+.app.dark .extension-widget,
+.app.dark .attachments > span { background: var(--dark-subtle); }
+.app.dark .user-avatar { background: #3b3934; color: #d4d0c7; }
+.app.dark .context-track { background: #3a3833; }
+.app.dark .message-body { color: #d2cec5; }
+.app.dark .user-message .message-body { color: var(--ink); }
+.app.dark .icon-button:hover { background: #ffffff0b; color: white; }
+.app.dark .composer { border-color: #46443e; box-shadow: 0 9px 30px #0003; }
+.app.dark .composer:focus-within { border-color: #68645c; box-shadow: 0 10px 35px #0004, 0 0 0 2px #d95d3924; }
+.app.dark .composer-bar .send:disabled { background: #4b4943; color: #8f8b82; }
 @media (max-width: 1050px) { .session-panel { width: 278px; flex-basis: 278px; }.conversation { max-width: 670px; }.settings-layout { gap: 25px; } }
