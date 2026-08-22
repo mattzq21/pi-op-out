@@ -1,7 +1,7 @@
 export type Role = "user" | "assistant" | "tool" | "system";
 export type ContentPart = { type: "text"; text: string } | { type: "thinking"; thinking: string } | { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown> };
 export interface ChatMessage { id: string; entryId?: string; role: Role; content: string | ContentPart[]; timestamp?: number; model?: string; streaming?: boolean; toolName?: string; toolStatus?: "running" | "done" | "error"; }
-export interface SessionSummary { id: string; path: string; name: string; project: string; cwd: string; updatedAt: string; preview: string; messageCount: number; starred?: boolean; }
+export interface SessionSummary { id: string; path: string; name: string; project: string; cwd: string; cwdExists?: boolean; updatedAt: string; preview: string; messageCount: number; starred?: boolean; }
 export interface AgentState { model: Model | null; thinkingLevel: string; isStreaming: boolean; sessionFile?: string; sessionId: string; sessionName?: string; messageCount: number; pendingMessageCount: number; activity?: string; }
 export interface ExtensionUiRequest { type: "extension_ui_request"; id: string; method: "select" | "confirm" | "input" | "editor" | "notify" | "setStatus" | "setWidget" | "setTitle" | "set_editor_text"; title?: string; message?: string; options?: string[]; placeholder?: string; prefill?: string; notifyType?: "info" | "warning" | "error"; statusKey?: string; statusText?: string; widgetKey?: string; widgetLines?: string[]; widgetPlacement?: "aboveEditor" | "belowEditor"; text?: string; }
 export interface Model { provider: string; id: string; name?: string; reasoning?: boolean; contextWindow?: number; }
@@ -21,6 +21,7 @@ export interface PiTransport {
   command<T = unknown>(command: RpcCommand): Promise<T>;
   subscribe(listener: (event: RpcEvent) => void): () => void;
   listSessions(): Promise<SessionSummary[]>;
+  relocateSession(sessionPath: string, cwd: string): Promise<void>;
   loadSettings(): Promise<AppSettings>;
   saveSettings(settings: AppSettings): Promise<void>;
   openProject(cwd: string): Promise<void>;

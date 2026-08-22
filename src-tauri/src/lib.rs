@@ -34,6 +34,7 @@ struct SessionSummary {
     name: String,
     project: String,
     cwd: String,
+    cwd_exists: bool,
     updated_at: String,
     preview: String,
     message_count: usize,
@@ -239,7 +240,8 @@ fn parse_session(path: &Path) -> Option<SessionSummary> {
     if name.is_empty() { name = "Untitled session".into(); }
     let project = Path::new(&cwd).file_name().and_then(|value| value.to_str()).unwrap_or("Workspace").to_string();
     let modified = fs::metadata(path).and_then(|metadata| metadata.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
-    Some(SessionSummary { id, path: path.to_string_lossy().into_owned(), name, project, cwd, updated_at: iso_from_modified(modified), preview: preview.chars().take(100).collect(), message_count, starred: false })
+    let cwd_exists = Path::new(&cwd).is_dir();
+    Some(SessionSummary { id, path: path.to_string_lossy().into_owned(), name, project, cwd, cwd_exists, updated_at: iso_from_modified(modified), preview: preview.chars().take(100).collect(), message_count, starred: false })
 }
 
 #[tauri::command]
@@ -249,7 +251,44 @@ fn list_sessions() -> Result<Vec<SessionSummary>, String> {
     sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at)); Ok(sessions)
 }
 
+#[tauri::command]
+fn relocate_session(session_path: String, cwd: String) -> Result<(), String> {
+    let replacement = PathBuf::from(cwd.trim());
+    if !replacement.is_dir() { return Err(format!("Project directory does not exist: {}", replacement.display())); }
+    let path = PathBuf::from(session_path);
+    let content = fs::read_to_string(&path).map_err(|error| format!("Could not read session: {error}"))?;
+    let (first, rest) = content.split_once('\n').unwrap_or((&content, ""));
+    let mut header: Value = serde_json::from_str(first).map_err(|error| format!("Invalid session header: {error}"))?;
+    if header.get("type").and_then(Value::as_str) != Some("session") { return Err("File is not a Pi session".into()); }
+    header.as_object_mut().ok_or("Invalid session header")?.insert("cwd".into(), Value::String(replacement.to_string_lossy().into_owned()));
+    let first = serde_json::to_string(&header).map_err(|error| error.to_string())?;
+    let updated = if rest.is_empty() { first } else { format!("{first}\n{rest}") };
+    fs::write(path, updated).map_err(|error| format!("Could not update session: {error}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default().manage(PiRuntime::default()).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, list_sessions, load_app_settings, save_app_settings]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    tauri::Builder::default().manage(PiRuntime::default()).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, list_sessions, relocate_session, load_app_settings, save_app_settings]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relocates_a_session_with_a_missing_working_directory() {
+        let root = std::env::temp_dir().join(format!("pi-ui-relocate-{}", Uuid::new_v4()));
+        let replacement = root.join("replacement");
+        fs::create_dir_all(&replacement).unwrap();
+        let session = root.join("session.jsonl");
+        fs::write(&session, "{\"type\":\"session\",\"version\":3,\"id\":\"test\",\"cwd\":\"/missing/project\"}\n{\"type\":\"message\"}\n").unwrap();
+
+        relocate_session(session.to_string_lossy().into_owned(), replacement.to_string_lossy().into_owned()).unwrap();
+
+        let content = fs::read_to_string(&session).unwrap();
+        let header: Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        assert_eq!(header.get("cwd").and_then(Value::as_str), replacement.to_str());
+        assert!(content.contains("{\"type\":\"message\"}"));
+        fs::remove_dir_all(root).unwrap();
+    }
 }

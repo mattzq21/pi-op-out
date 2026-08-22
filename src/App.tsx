@@ -37,7 +37,7 @@ export default function App() {
   const [dialog, setDialog] = useState<ExtensionUiRequest>(); const [notice, setNotice] = useState<{ title: string; message: string }>();
   const [statuses, setStatuses] = useState<Record<string, string>>({}); const [widgets, setWidgets] = useState<Record<string, string[]>>({});
   const [renameSession, setRenameSession] = useState<SessionSummary>(); const [inspector, setInspector] = useState<{ stats: SessionStats; tree: TreeNode[]; leafId: string | null }>();
-  const [projectOpen, setProjectOpen] = useState(false);
+  const [projectOpen, setProjectOpen] = useState(false); const [relocatingSession, setRelocatingSession] = useState<SessionSummary>();
   const [terminalRuns, setTerminalRuns] = useState<TerminalRun[]>([]);
 
   useEffect(() => { settingsRef.current = settings; }, [settings]);
@@ -94,12 +94,12 @@ export default function App() {
   };
   const branch = async (message: ChatMessage) => { const index = messages.findIndex((item) => item.id === message.id); const user = messages.slice(0, index + 1).reverse().find((item) => item.role === "user" && item.entryId); if (!user) return; await transport.command({ type: "fork", entryId: user.entryId }); await refresh(); };
   const newSession = async () => { await transport.command({ type: "new_session" }); await refresh(); setView("chat"); };
-  const selectSession = async (session: SessionSummary) => { if (session.id === state.sessionId) return; await transport.command({ type: "switch_session", sessionPath: session.path }); await refresh(); };
+  const selectSession = async (session: SessionSummary) => { if (session.id === state.sessionId) return true; if (session.cwdExists === false) { setRelocatingSession(session); return false; } try { await transport.command({ type: "switch_session", sessionPath: session.path }); await refresh(); return true; } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); return false; } };
   const setModel = async (model: Model) => { await transport.command({ type: "set_model", provider: model.provider, modelId: model.id }); setState((current) => ({ ...current, model })); };
   const setThinking = async (level: string) => { await transport.command({ type: "set_thinking_level", level }); setState((current) => ({ ...current, thinkingLevel: level })); };
   const saveSettings = async (value: AppSettings) => { if (value.notifications && "Notification" in window && Notification.permission === "default") await Notification.requestPermission(); await transport.saveSettings(value); await configureRuntime(value); setSettings(value); await refresh(); };
   const sessionAction = async (session: SessionSummary, action: SessionAction) => {
-    await selectSession(session);
+    if (!await selectSession(session)) return;
     if (action === "rename") { setRenameSession(session); return; }
     if (action === "clone") { await transport.command({ type: "clone" }); await refresh(); return; }
     if (action === "export") { const result = await transport.command<{ path: string }>({ type: "export_html" }); setNotice({ title: "Conversation exported", message: result.path }); return; }
@@ -132,5 +132,6 @@ export default function App() {
     {renameSession && <ExtensionDialog request={{ type: "extension_ui_request", id: "rename-session", method: "input", title: "Rename conversation", prefill: renameSession.name }} onRespond={(response) => { setRenameSession(undefined); if (typeof response.value === "string" && response.value.trim()) { const name = response.value.trim(); void transport.command({ type: "set_session_name", name }).then(() => { setState((current) => ({ ...current, sessionName: name })); void refresh(); }); } }} />}
     {inspector && <SessionInspector {...inspector} onClose={() => setInspector(undefined)} />}
     {projectOpen && <ExtensionDialog request={{ type: "extension_ui_request", id: "open-project", method: "input", title: "Open project", placeholder: "/path/to/project", prefill: sessions.find((session) => session.id === state.sessionId)?.cwd || "" }} onRespond={(response) => { setProjectOpen(false); if (typeof response.value === "string" && response.value.trim()) { setConnected(false); void transport.openProject(response.value.trim()).then(() => refresh()).then((value) => configureRuntime(value)).then(() => { setConnected(true); setView("chat"); }).catch((reason: unknown) => setError(String(reason))); } }} />}
+    {relocatingSession && <ExtensionDialog request={{ type: "extension_ui_request", id: `relocate-${relocatingSession.id}`, method: "input", title: "Locate conversation project", message: `The original project directory no longer exists: ${relocatingSession.cwd}. Enter its new location to open this conversation.`, placeholder: "Replacement project directory", prefill: sessions.find((session) => session.id === state.sessionId && session.cwdExists !== false)?.cwd || "" }} onRespond={(response) => { const session = relocatingSession; setRelocatingSession(undefined); if (typeof response.value === "string" && response.value.trim()) { const cwd = response.value.trim(); void transport.relocateSession(session.path, cwd).then(() => transport.command({ type: "switch_session", sessionPath: session.path })).then(() => refresh()).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason))); } }} />}
   </div>;
 }

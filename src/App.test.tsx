@@ -20,6 +20,16 @@ describe("Pi desktop", () => {
     expect(await screen.findByText(/browser preview for/)).toHaveTextContent("Wire RPC transport");
   });
 
+  it("asks for a replacement project directory before opening an unavailable session", async () => {
+    const user = userEvent.setup(); render(<App />);
+    await user.click(await screen.findByRole("button", { name: /Fix token refresh/ }));
+    expect(await screen.findByRole("heading", { name: "Locate conversation project" })).toBeInTheDocument();
+    const path = screen.getByRole("textbox", { name: "Replacement project directory" });
+    await user.clear(path); await user.type(path, "/home/demo/northstar");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByText(/browser preview for/)).toHaveTextContent("Fix token refresh");
+  });
+
   it("sends a prompt and renders the streamed browser response", async () => {
     const user = userEvent.setup(); render(<App />);
     const composer = await screen.findByRole("textbox", { name: "Message Pi" });

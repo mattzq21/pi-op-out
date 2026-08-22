@@ -5,7 +5,7 @@ import { uid } from "./content";
 const sessions: SessionSummary[] = [
   { id: "pi-ui", path: "mock://pi-ui", name: "Design desktop shell", project: "pi-ai", cwd: "/Users/demo/code/pi-ai", updatedAt: new Date().toISOString(), preview: "The session rail and branching flow are ready.", messageCount: 8, starred: true },
   { id: "rpc", path: "mock://rpc", name: "Wire RPC transport", project: "pi-ai", cwd: "/Users/demo/code/pi-ai", updatedAt: new Date(Date.now() - 38 * 60_000).toISOString(), preview: "Connect the process event stream.", messageCount: 14 },
-  { id: "auth", path: "mock://auth", name: "Fix token refresh", project: "northstar", cwd: "/Users/demo/code/northstar", updatedAt: new Date(Date.now() - 86_400_000).toISOString(), preview: "Refresh is now serialized.", messageCount: 21 },
+  { id: "auth", path: "mock://auth", name: "Fix token refresh", project: "northstar", cwd: "/Users/demo/code/northstar", cwdExists: false, updatedAt: new Date(Date.now() - 86_400_000).toISOString(), preview: "Refresh is now serialized.", messageCount: 21 },
   { id: "query", path: "mock://query", name: "Optimize project query", project: "northstar", cwd: "/Users/demo/code/northstar", updatedAt: new Date(Date.now() - 3 * 86_400_000).toISOString(), preview: "Added the composite index.", messageCount: 11 }
 ];
 
@@ -29,6 +29,7 @@ export class MockTransport implements PiTransport {
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   private emit(event: RpcEvent) { this.listeners.forEach((listener) => listener(event)); }
   async listSessions() { return structuredClone(this.sessions); }
+  async relocateSession(sessionPath: string, cwd: string) { const session = this.sessions.find((item) => item.path === sessionPath); if (!session) throw new Error("Session not found"); session.cwd = cwd; session.project = cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace"; session.cwdExists = true; }
   async loadSettings() { return structuredClone(this.settings); }
   async saveSettings(settings: AppSettings) { this.settings = structuredClone(settings); localStorage.setItem("pi-ui-settings", JSON.stringify(settings)); }
   async openProject(cwd: string) {
