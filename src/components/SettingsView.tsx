@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Blocks, Check, ChevronRight, CirclePlus, Cpu, Keyboard, PlugZap, RotateCcw, Save, Search, Settings2, ShieldCheck, Sparkles, Trash2, Wrench } from "lucide-react";
+import { Blocks, Check, CirclePlus, Cpu, Keyboard, PlugZap, RotateCcw, Save, Search, Settings2, ShieldCheck, Sparkles, Trash2, Wrench } from "lucide-react";
 import type { AppSettings, McpServer } from "../types";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutFromEvent, type KeybindAction } from "../lib/keybindings";
@@ -22,7 +22,7 @@ export function SettingsView({ settings, onSave }: { settings: AppSettings; onSa
   const changeableSkills = draft.skills.filter((skill) => !skill.userInvokedOnly);
   const allSkillsEnabled = changeableSkills.length > 0 && changeableSkills.every((skill) => skill.enabled);
   return <main className="settings-shell"><header className="settings-header"><div><p className="eyebrow">Pi desktop</p><h1>Settings</h1><p>Configure how Pi works across your projects.</p></div><button className="primary-button" onClick={save}>{saved ? <Check size={15} /> : <Save size={15} />}{saved ? "Saved" : "Save changes"}</button></header>
-    <div className="settings-layout"><nav className="settings-nav">{sections.map((item) => <button key={item.id} className={section === item.id ? "active" : ""} onClick={() => setSection(item.id)}><item.icon size={16} /><span>{item.label}</span><ChevronRight size={14} /></button>)}</nav>
+    <div className="settings-layout"><nav className="settings-nav">{sections.map((item) => <button key={item.id} className={section === item.id ? "active" : ""} onClick={() => setSection(item.id)}><item.icon size={16} /><span>{item.label}</span></button>)}</nav>
       <section className="settings-content">
         {section === "general" && <SettingsSection title="General" description="Agent behavior.">
           <SettingRow icon={<Cpu />} title="Auto compaction" description="Compact context before it reaches the model limit."><Toggle label="Auto compaction" checked={draft.autoCompaction} onChange={(autoCompaction) => patch({ autoCompaction })} /></SettingRow>
