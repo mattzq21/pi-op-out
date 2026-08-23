@@ -81,11 +81,11 @@ describe("conversation work visibility", () => {
   it("groups consecutive completed calls to the same tool", () => {
     const repeated: ChatMessage[] = [
       { id: "user", role: "user", content: "Run checks" },
-      { id: "call-1", role: "assistant", stopReason: "toolUse", content: [{ type: "thinking", thinking: "Inspecting" }, { type: "toolCall", id: "tool-call-1", name: "bash", arguments: {} }] },
+      { id: "call-1", role: "assistant", stopReason: "toolUse", content: [{ type: "toolCall", id: "tool-call-1", name: "bash", arguments: {} }] },
       { id: "bash-1", role: "tool", toolName: "bash", toolStatus: "done", content: "first" },
-      { id: "call-2", role: "assistant", stopReason: "toolUse", content: [{ type: "thinking", thinking: "Searching" }, { type: "toolCall", id: "tool-call-2", name: "bash", arguments: {} }] },
+      { id: "call-2", role: "assistant", stopReason: "toolUse", content: [{ type: "toolCall", id: "tool-call-2", name: "bash", arguments: {} }] },
       { id: "bash-2", role: "tool", toolName: "bash", toolStatus: "done", content: "second" },
-      { id: "call-3", role: "assistant", stopReason: "toolUse", content: [{ type: "thinking", thinking: "Checking" }, { type: "toolCall", id: "tool-call-3", name: "bash", arguments: {} }] },
+      { id: "call-3", role: "assistant", stopReason: "toolUse", content: [{ type: "toolCall", id: "tool-call-3", name: "bash", arguments: {} }] },
       { id: "bash-3", role: "tool", toolName: "bash", toolStatus: "done", content: "third" },
       { id: "final", role: "assistant", content: "Done" }
     ];
@@ -106,5 +106,25 @@ describe("conversation work visibility", () => {
     await user.click(screen.getByRole("button", { name: "Copy code" }));
     expect(await navigator.clipboard.readText()).toBe("const answer = 42;");
     expect(screen.getByRole("button", { name: "Code copied" })).toBeVisible();
+  });
+
+  it("keeps reasoning traces inside settled work and shows them while running", () => {
+    const reasoned: ChatMessage[] = [
+      { id: "user", role: "user", content: "Investigate" },
+      { id: "tool-call", role: "assistant", stopReason: "toolUse", content: [{ type: "thinking", thinking: "I should inspect the relevant files." }, { type: "toolCall", id: "call", name: "read", arguments: {} }] },
+      { id: "tool", role: "tool", toolName: "read", toolStatus: "done", content: "file contents" },
+      { id: "answer", role: "assistant", content: [{ type: "thinking", thinking: "The evidence supports the fix." }, { type: "text", text: "Final result" }] }
+    ];
+    const view = render(<ChatView state={{ ...state(false), messageCount: reasoned.length }} messages={reasoned} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
+    expect(screen.getByText("Final result")).toBeVisible();
+    expect(screen.getByText("I should inspect the relevant files.")).not.toBeVisible();
+    expect(screen.getByText("The evidence supports the fix.")).not.toBeVisible();
+    fireEvent.click(screen.getByText("Work · 3 steps"));
+    expect(screen.getByText("I should inspect the relevant files.")).toBeVisible();
+    expect(screen.getByText("The evidence supports the fix.")).toBeVisible();
+
+    view.rerender(<ChatView state={{ ...state(true), messageCount: reasoned.length }} messages={reasoned} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
+    expect(screen.getByText("I should inspect the relevant files.")).toBeVisible();
+    expect(screen.getByText("The evidence supports the fix.")).toBeVisible();
   });
 });

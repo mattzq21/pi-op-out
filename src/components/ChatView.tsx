@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import type { AgentState, ChatMessage, ImageAttachment, Model, SlashCommand } from "../types";
 import { Message } from "./Message";
 import { Composer } from "./Composer";
-import { textOf } from "../lib/content";
+import { textOf, thinkingOf } from "../lib/content";
 import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 
 interface Props { state: AgentState; messages: ChatMessage[]; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: string[]; draft?: string; onDraftChange?: (value: string) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void; onAbort: () => void; onOpenTerminal: () => void; onBranch: (message: ChatMessage) => void; onModel: (model: Model) => void; onThinking: (level: string) => void; }
@@ -39,7 +39,7 @@ function groupTurns(messages: ChatMessage[]) {
 function compactCompletedTools(messages: ChatMessage[]) {
   return messages.reduce<Array<{ message: ChatMessage; count: number }>>((runs, message) => {
     const hasToolCall = Array.isArray(message.content) && message.content.some((part) => part.type === "toolCall");
-    if (message.role === "assistant" && textOf(message.content).trim().length === 0 && (hasToolCall || (!message.streaming && !message.stopReason))) return runs;
+    if (message.role === "assistant" && textOf(message.content).trim().length === 0 && thinkingOf(message.content).trim().length === 0 && (hasToolCall || (!message.streaming && !message.stopReason))) return runs;
     const previous = runs.at(-1);
     const status = message.toolStatus ?? "done";
     if (message.role === "tool" && status === "done" && previous?.message.role === "tool" && (previous.message.toolStatus ?? "done") === "done" && (previous.message.toolName || "tool") === (message.toolName || "tool")) {
@@ -63,9 +63,14 @@ function ConversationTurn({ messages, active, retryable, onRetry, onBranch }: { 
     const message = messages[index];
     if (message.role === "assistant" && (textOf(message.content).trim().length > 0 || message.stopReason === "aborted" || message.stopReason === "error")) { finalIndex = index; break; }
   }
-  const intermediate = messages.filter((message, index) => message.role !== "user" && index !== finalIndex);
+  const finalThinking = finalIndex >= 0 ? thinkingOf(messages[finalIndex].content) : "";
+  const intermediate = messages.flatMap((message, index) => {
+    if (message.role === "user") return [];
+    if (index !== finalIndex) return [message];
+    return finalThinking ? [{ ...message, id: `${message.id}:reasoning`, content: [{ type: "thinking" as const, thinking: finalThinking }], stopReason: undefined, errorMessage: undefined }] : [];
+  });
   const userMessages = messages.filter((message) => message.role === "user");
-  const finalMessage = finalIndex >= 0 ? messages[finalIndex] : undefined;
+  const finalMessage = finalIndex >= 0 ? { ...messages[finalIndex], content: textOf(messages[finalIndex].content) } : undefined;
   const retryPrompt = retryable && finalMessage?.stopReason === "aborted" ? [...userMessages].reverse().map((message) => textOf(message.content).trim()).find(Boolean) : undefined;
 
   return <section className="conversation-turn">

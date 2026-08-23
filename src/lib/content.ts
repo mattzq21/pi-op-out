@@ -5,6 +5,11 @@ export function textOf(content: ChatMessage["content"]): string {
   return content.filter((part): part is Extract<ContentPart, { type: "text" }> => part.type === "text").map((part) => part.text).join("");
 }
 
+export function thinkingOf(content: ChatMessage["content"]): string {
+  if (typeof content === "string") return "";
+  return content.filter((part): part is Extract<ContentPart, { type: "thinking" }> => part.type === "thinking").map((part) => part.thinking).join("\n\n");
+}
+
 export function uid(prefix = "id") {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
