@@ -20,6 +20,7 @@ describe("skill invocation settings", () => {
     expect(screen.getByText("User invoked only")).toBeVisible();
     expect(screen.queryByRole("switch", { name: "Enable Explicit skill" })).not.toBeInTheDocument();
     expect(screen.getByRole("switch", { name: "Enable Regular skill" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Remove .* skill/ })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Disable all" }));
     await user.click(screen.getByRole("button", { name: "Save changes" }));
