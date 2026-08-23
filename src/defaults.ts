@@ -15,10 +15,7 @@ export const defaultSettings: AppSettings = {
     { name: "find", description: "Find files by glob", enabled: true, builtin: true },
     { name: "ls", description: "List directories", enabled: true, builtin: true }
   ],
-  skills: [
-    { name: "frontend-design", path: "~/.pi/agent/skills/frontend-design", description: "Build polished production interfaces", enabled: true, scope: "global" },
-    { name: "review", path: ".pi/skills/review", description: "Review changes before handoff", enabled: true, scope: "project" }
-  ],
+  skills: [],
   mcpServers: [
     { id: "filesystem", name: "Filesystem", command: "npx", args: "-y @modelcontextprotocol/server-filesystem .", enabled: true, status: "connected" }
   ]

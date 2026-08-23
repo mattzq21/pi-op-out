@@ -130,21 +130,106 @@ fn frontmatter_value(content: &str, key: &str) -> Option<String> {
     })
 }
 
-fn merge_discovered_skills(settings: &mut AppSettings) {
-    let mut known: HashSet<String> = settings.skills.iter().filter_map(|skill| skill.get("path").and_then(Value::as_str).map(str::to_owned)).collect();
-    let mut roots = Vec::new();
-    if let Ok(home) = home_dir() { roots.push((home.join(".pi/agent/skills"), "global")); }
-    if let Ok(cwd) = std::env::current_dir() { roots.push((cwd.join(".pi/skills"), "project")); roots.push((cwd.join(".pi/agent/skills"), "project")); }
-    for (root, scope) in roots {
-        if !root.exists() { continue; }
-        for entry in WalkDir::new(root).min_depth(1).max_depth(3).follow_links(false).into_iter().filter_map(Result::ok).filter(|entry| entry.file_type().is_file() && entry.file_name() == "SKILL.md") {
-            let directory = entry.path().parent().unwrap_or(entry.path()); let path = directory.to_string_lossy().into_owned();
-            if !known.insert(path.clone()) { continue; }
-            let content = fs::read_to_string(entry.path()).unwrap_or_default();
-            let fallback = directory.file_name().and_then(|value| value.to_str()).unwrap_or("skill");
-            settings.skills.push(json!({ "name": frontmatter_value(&content, "name").unwrap_or_else(|| fallback.to_string()), "path": path, "description": frontmatter_value(&content, "description").unwrap_or_else(|| "Pi skill".into()), "enabled": true, "scope": scope }));
+fn skill_path_is_within(path: &Path, root: &Path) -> bool {
+    path.starts_with(root)
+}
+
+fn expand_skill_path(path: &str, home: &Path) -> PathBuf {
+    path.strip_prefix("~/").map(|rest| home.join(rest)).unwrap_or_else(|| PathBuf::from(path))
+}
+
+fn discover_skills_in(root: &Path, include_root_markdown: bool) -> Vec<Value> {
+    if !root.is_dir() { return Vec::new(); }
+
+    let mut skill_files: Vec<PathBuf> = WalkDir::new(root)
+        .min_depth(1)
+        .follow_links(true)
+        .into_iter()
+        .filter_entry(|entry| {
+            if entry.depth() == 0 { return true; }
+            let name = entry.file_name().to_string_lossy();
+            !name.starts_with('.') && name != "node_modules"
+        })
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_file() && entry.file_name() == "SKILL.md")
+        .map(|entry| entry.into_path())
+        .collect();
+    skill_files.sort_by_key(|path| path.components().count());
+
+    // A directory containing SKILL.md is one skill. Pi does not continue looking
+    // for nested skills inside that directory.
+    let mut skill_roots: Vec<PathBuf> = Vec::new();
+    let mut discovered = Vec::new();
+    for skill_file in skill_files {
+        let directory = skill_file.parent().unwrap_or(&skill_file);
+        if skill_roots.iter().any(|known| directory != known && directory.starts_with(known)) { continue; }
+        skill_roots.push(directory.to_path_buf());
+        let content = fs::read_to_string(&skill_file).unwrap_or_default();
+        let fallback = directory.file_name().and_then(|value| value.to_str()).unwrap_or("skill");
+        discovered.push(json!({
+            "name": frontmatter_value(&content, "name").unwrap_or_else(|| fallback.to_string()),
+            "path": directory.to_string_lossy(),
+            "description": frontmatter_value(&content, "description").unwrap_or_else(|| "Pi skill".into()),
+            "enabled": true,
+            "scope": "global",
+            "discovered": true,
+        }));
+    }
+
+    // Pi also treats direct .md children of ~/.pi/agent/skills as skills.
+    if include_root_markdown {
+        if let Ok(entries) = fs::read_dir(root) {
+            for entry in entries.filter_map(Result::ok) {
+                let path = entry.path();
+                if !path.is_file() || path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md") || path.extension().and_then(|extension| extension.to_str()) != Some("md") { continue; }
+                let content = fs::read_to_string(&path).unwrap_or_default();
+                let fallback = path.file_stem().and_then(|value| value.to_str()).unwrap_or("skill");
+                discovered.push(json!({
+                    "name": frontmatter_value(&content, "name").unwrap_or_else(|| fallback.to_string()),
+                    "path": path.to_string_lossy(),
+                    "description": frontmatter_value(&content, "description").unwrap_or_else(|| "Pi skill".into()),
+                    "enabled": true,
+                    "scope": "global",
+                    "discovered": true,
+                }));
+            }
         }
     }
+    discovered
+}
+
+fn merge_discovered_skills(settings: &mut AppSettings) {
+    let Ok(home) = home_dir() else { return };
+    let roots = [
+        (home.join(".pi/agent/skills"), true),
+        (home.join(".agents/skills"), false),
+    ];
+    let enabled_by_path: HashMap<PathBuf, bool> = settings.skills.iter().filter_map(|skill| {
+        let path = expand_skill_path(skill.get("path")?.as_str()?, &home);
+        Some((path, skill.get("enabled").and_then(Value::as_bool).unwrap_or(true)))
+    }).collect();
+
+    // Preserve manually-added paths, but rebuild entries belonging to discovery
+    // roots so deleted skills disappear and newly installed skills show up.
+    settings.skills.retain(|skill| {
+        let Some(path) = skill.get("path").and_then(Value::as_str).map(|path| expand_skill_path(path, &home)) else { return true };
+        !roots.iter().any(|(root, _)| skill_path_is_within(&path, root))
+    });
+
+    let mut known: HashSet<PathBuf> = settings.skills.iter().filter_map(|skill| skill.get("path").and_then(Value::as_str).map(|path| expand_skill_path(path, &home))).collect();
+    for (root, include_root_markdown) in roots {
+        for mut skill in discover_skills_in(&root, include_root_markdown) {
+            let Some(path) = skill.get("path").and_then(Value::as_str).map(PathBuf::from) else { continue };
+            if !known.insert(path.clone()) { continue; }
+            if let Some(enabled) = enabled_by_path.get(&path) { skill["enabled"] = Value::Bool(*enabled); }
+            settings.skills.push(skill);
+        }
+    }
+    settings.skills.sort_by(|left, right| {
+        let left_name = left.get("name").and_then(Value::as_str).unwrap_or("");
+        let right_name = right.get("name").and_then(Value::as_str).unwrap_or("");
+        left_name.to_lowercase().cmp(&right_name.to_lowercase())
+    });
 }
 
 #[tauri::command]
@@ -169,7 +254,7 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, cwd: Option<String>, sess
     let settings = load_app_settings(app.clone()).unwrap_or_else(|_| default_settings());
     let (mcp_extension, mcp_config) = prepare_mcp_bridge(&app, &settings)?;
     let mut command = Command::new(pi_executable());
-    command.arg("--mode").arg("rpc").arg("--approve").current_dir(&working_dir).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    command.arg("--mode").arg("rpc").arg("--approve").arg("--no-skills").current_dir(&working_dir).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     command.arg("--extension").arg(mcp_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config);
     if let Some(path) = session_path { command.arg("--session").arg(path); }
     if !settings.default_model.trim().is_empty() { command.arg("--model").arg(settings.default_model.trim()); }
@@ -354,6 +439,27 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovers_skills_using_pi_global_directory_rules() {
+        let root = std::env::temp_dir().join(format!("pi-ui-skills-{}", Uuid::new_v4()));
+        let regular = root.join("regular");
+        let nested = regular.join("references/nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(regular.join("SKILL.md"), "---\nname: Regular skill\ndescription: A discovered skill\n---\n").unwrap();
+        fs::write(nested.join("SKILL.md"), "---\nname: Nested reference\n---\n").unwrap();
+        fs::write(root.join("standalone.md"), "---\nname: Standalone skill\n---\n").unwrap();
+
+        let pi_skills = discover_skills_in(&root, true);
+        assert_eq!(pi_skills.len(), 2);
+        assert!(pi_skills.iter().any(|skill| skill.get("name").and_then(Value::as_str) == Some("Regular skill")));
+        assert!(pi_skills.iter().any(|skill| skill.get("name").and_then(Value::as_str) == Some("Standalone skill")));
+
+        let agents_skills = discover_skills_in(&root, false);
+        assert_eq!(agents_skills.len(), 1);
+        assert_eq!(agents_skills[0].get("name").and_then(Value::as_str), Some("Regular skill"));
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn matches_pi_cli_session_picker_titles() {
