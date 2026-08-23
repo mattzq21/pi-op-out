@@ -98,6 +98,8 @@ describe("Pi desktop", () => {
     expect(screen.getByDisplayValue("Filesystem")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Add MCP server" }));
     expect(screen.getByDisplayValue("New server")).toBeInTheDocument();
+    await user.selectOptions(screen.getByRole("combobox", { name: "New server transport" }), "http");
+    expect(screen.getByPlaceholderText("https://example.com/mcp")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     expect(await screen.findByRole("button", { name: "Saved" })).toBeInTheDocument();
   });
