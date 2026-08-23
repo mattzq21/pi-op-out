@@ -81,18 +81,21 @@ describe("conversation work visibility", () => {
   it("groups consecutive completed calls to the same tool", () => {
     const repeated: ChatMessage[] = [
       { id: "user", role: "user", content: "Run checks" },
-      { id: "call-1", role: "assistant", content: [{ type: "toolCall", id: "tool-call-1", name: "bash", arguments: {} }] },
+      { id: "call-1", role: "assistant", stopReason: "toolUse", content: [{ type: "thinking", thinking: "Inspecting" }, { type: "toolCall", id: "tool-call-1", name: "bash", arguments: {} }] },
       { id: "bash-1", role: "tool", toolName: "bash", toolStatus: "done", content: "first" },
-      { id: "call-2", role: "assistant", content: [{ type: "toolCall", id: "tool-call-2", name: "bash", arguments: {} }] },
+      { id: "call-2", role: "assistant", stopReason: "toolUse", content: [{ type: "thinking", thinking: "Searching" }, { type: "toolCall", id: "tool-call-2", name: "bash", arguments: {} }] },
       { id: "bash-2", role: "tool", toolName: "bash", toolStatus: "done", content: "second" },
-      { id: "call-3", role: "assistant", content: [{ type: "toolCall", id: "tool-call-3", name: "bash", arguments: {} }] },
-      { id: "bash-3", role: "tool", toolName: "bash", toolStatus: "done", content: "third" }
+      { id: "call-3", role: "assistant", stopReason: "toolUse", content: [{ type: "thinking", thinking: "Checking" }, { type: "toolCall", id: "tool-call-3", name: "bash", arguments: {} }] },
+      { id: "bash-3", role: "tool", toolName: "bash", toolStatus: "done", content: "third" },
+      { id: "final", role: "assistant", content: "Done" }
     ];
-    render(<ChatView state={{ ...state(true), messageCount: repeated.length }} messages={repeated} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
+    render(<ChatView state={{ ...state(false), messageCount: repeated.length }} messages={repeated} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
+    const work = screen.getByText("Work · 6 steps").closest("details")!;
+    fireEvent.click(screen.getByText("Work · 6 steps"));
     expect(screen.getByText("bash x3")).toBeVisible();
     expect(screen.getByText("Completed")).toBeVisible();
-    expect(document.querySelectorAll(".tool-event")).toHaveLength(1);
-    expect(document.querySelectorAll(".assistant-message")).toHaveLength(0);
+    expect(work.querySelectorAll(".tool-event")).toHaveLength(1);
+    expect(work.querySelectorAll(".assistant-message")).toHaveLength(0);
     expect(screen.getByText(/first\s+second\s+third/)).not.toBeVisible();
   });
 });
