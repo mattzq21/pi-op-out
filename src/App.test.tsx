@@ -20,6 +20,18 @@ describe("Pi desktop", () => {
     expect(await screen.findByText(/browser preview for/)).toHaveTextContent("Wire RPC transport");
   });
 
+  it("collapses and expands sessions by project", async () => {
+    const user = userEvent.setup(); render(<App />);
+    const project = await screen.findByRole("button", { name: "pi-ai" });
+    expect(screen.getByRole("button", { name: /Wire RPC transport/ })).toBeVisible();
+    await user.click(project);
+    expect(project).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: /Wire RPC transport/ })).not.toBeInTheDocument();
+    await user.click(project);
+    expect(project).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: /Wire RPC transport/ })).toBeVisible();
+  });
+
   it("keeps composer drafts with their sessions", async () => {
     const user = userEvent.setup(); render(<App />);
     const composer = await screen.findByRole("textbox", { name: "Message Pi" });

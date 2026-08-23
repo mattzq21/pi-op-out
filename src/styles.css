@@ -26,7 +26,7 @@ button { cursor: pointer; }
 kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; padding: 2px 4px; border-radius: 4px; color: #99958d; }
 .session-scroll { overflow: auto; padding: 2px 8px 14px; flex: 1; scrollbar-width: thin; }
 .project { margin: 8px 0 17px; }
-.project-label { height: 27px; display: flex; align-items: center; gap: 5px; padding: 0 7px; text-transform: uppercase; color: #88847c; letter-spacing: .08em; font: 500 11px "DM Mono"; }
+.project-label { width: 100%; height: 27px; border: 0; background: transparent; display: flex; align-items: center; gap: 5px; padding: 0 7px; text-transform: uppercase; text-align: left; color: #88847c; letter-spacing: .08em; font: 500 11px "DM Mono"; }.project-label:hover { color: var(--ink); }.project-label svg { transition: transform .15s ease; }.project-label svg.collapsed { transform: rotate(-90deg); }
 .session-item { width: 100%; border: 0; background: transparent; border-radius: 8px; display: flex; gap: 8px; text-align: left; padding: 9px 8px 9px 11px; margin: 1px 0; position: relative; }
 .session-item:hover { background: #ffffff77; }
 .session-item.active { background: #fff; box-shadow: 0 1px 2px #3c362d0c; }
