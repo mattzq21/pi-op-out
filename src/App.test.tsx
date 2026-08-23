@@ -32,6 +32,19 @@ describe("Pi desktop", () => {
     expect(screen.getByRole("button", { name: /Wire RPC transport/ })).toBeVisible();
   });
 
+  it("opens projects through a dialog with an optional system directory picker", async () => {
+    const user = userEvent.setup(); render(<App />);
+    await user.click(screen.getByRole("button", { name: "Projects" }));
+    expect(screen.getByRole("heading", { name: "Open project" })).toBeInTheDocument();
+    const path = screen.getByRole("textbox", { name: "Project directory" });
+    await user.clear(path); await user.click(screen.getByRole("button", { name: "Open project" }));
+    expect(screen.getByText("Path can't be empty")).toHaveClass("dialog-error");
+    await user.click(screen.getByRole("button", { name: "Choose directory…" }));
+    expect(path).toHaveValue("/Users/demo/code/northstar");
+    await user.click(screen.getByRole("button", { name: "Open project" }));
+    expect(await screen.findByText(/browser preview for/)).toHaveTextContent("Fix token refresh");
+  });
+
   it("keeps composer drafts with their sessions", async () => {
     const user = userEvent.setup(); render(<App />);
     const composer = await screen.findByRole("textbox", { name: "Message Pi" });
