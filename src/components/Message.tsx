@@ -31,7 +31,7 @@ export function Message({ message, expanded = false, toolCount = 1, onBranch, on
   const thinking = thinkingOf(message.content);
   const failure = message.stopReason === "aborted" ? (message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
   const copy = async () => { await navigator.clipboard?.writeText(textOf(message.content)); setCopied(true); window.setTimeout(() => setCopied(false), 1400); };
-  return <article className="message assistant-message">
+  return <article className={`message assistant-message ${thinking ? "reasoning-message" : ""}`}>
     <div className="message-body">
       {thinking && <div className="reasoning-text"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{thinking}</ReactMarkdown></div>}
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{output}</ReactMarkdown>
