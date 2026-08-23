@@ -49,7 +49,7 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
 .messages { overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
 .conversation { max-width: 740px; margin: 0 auto; padding: 48px 36px 22px; }
 .message { display: grid; grid-template-columns: 27px 1fr; gap: 13px; margin-bottom: 35px; }
-.assistant-message { grid-template-columns: 1fr; margin-bottom: 0; }
+.assistant-message { grid-template-columns: 1fr; }
 .avatar { width: 27px; height: 27px; border-radius: 8px; display: grid; place-items: center; font-size: 11px; font-weight: 600; margin-top: -2px; }
 .pi-avatar { background: #292824; color: #f5b69e; }
 .message-body { min-width: 0; font-size: 15px; line-height: 1.72; color: #373530; }
@@ -63,7 +63,7 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
 .stream-caret { display: inline-block; width: 5px; height: 14px; margin-left: 3px; background: var(--accent); animation: blink 1s steps(2) infinite; vertical-align: -2px; }
 @keyframes blink { 50% { opacity: 0; } }
 .tool-event { margin: -19px 0 28px 39px; border: 1px solid var(--line); background: #f3f1ec; border-radius: 7px; font-size: 12px; color: var(--muted); overflow: hidden; }.tool-event summary { list-style: none; padding: 8px 10px; display: flex; align-items: center; gap: 7px; cursor: pointer; }.tool-event summary::-webkit-details-marker { display: none; }.tool-event summary > span:nth-child(2) { flex: 1; display: flex; align-items: center; gap: 7px; }.tool-event strong { color: var(--ink); font-family: "DM Mono"; }.tool-event small { font: 10px "DM Mono"; }.tool-event pre { margin: 0; max-height: 260px; overflow: auto; border-top: 1px solid var(--line); background: #292824; color: #dedad1; padding: 11px; white-space: pre-wrap; font: 11px/1.55 "DM Mono"; }.tool-event.done pre { max-height: calc(7.75em + 23px); overflow-y: auto; }.tool-event.running { border-color: #d5b79d; }.tool-event.error { border-color: #d99e91; }.tool-chevron { font-size: 16px; transform: rotate(90deg); transition: .15s; }.tool-event[open] .tool-chevron { transform: rotate(-90deg); }
-.work-group { margin: -18px 0 28px 40px; color: var(--muted); }.work-group > summary { width: fit-content; cursor: pointer; font: 11px "DM Mono"; }.work-group > summary:hover { color: var(--ink); }.work-group-content { margin-top: 15px; padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: #f3f1ec; }.work-group-content .message { margin-bottom: 22px; }.work-group-content > :last-child { margin-bottom: 0; }.work-group-content .tool-event { margin: 0 0 12px; }
+.work-group { margin: -18px 0 28px 40px; color: var(--muted); }.work-group > summary { width: fit-content; cursor: pointer; font: 11px "DM Mono"; }.work-group > summary:hover { color: var(--ink); }.work-group-content { margin-top: 15px; padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: #f3f1ec; }.work-group-content .message { margin-bottom: 0; }.work-group-content > :last-child { margin-bottom: 0; }.work-group-content .tool-event { margin: 0 0 12px; }
 .empty-chat { text-align: center; color: var(--muted); padding: 15vh 20px; }.empty-chat span { font: 46px "Instrument Serif"; color: var(--accent); }
 
 .composer-wrap { width: min(740px, calc(100% - 72px)); margin: 0 auto; padding-bottom: 13px; }
