@@ -98,4 +98,13 @@ describe("conversation work visibility", () => {
     expect(work.querySelectorAll(".assistant-message")).toHaveLength(0);
     expect(screen.getByText(/first\s+second\s+third/)).not.toBeVisible();
   });
+
+  it("copies an individual Markdown code block", async () => {
+    const user = userEvent.setup();
+    const codeMessage: ChatMessage[] = [{ id: "code", role: "assistant", content: "```ts\nconst answer = 42;\n```" }];
+    render(<ChatView state={{ ...state(false), messageCount: 1 }} messages={codeMessage} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
+    await user.click(screen.getByRole("button", { name: "Copy code" }));
+    expect(await navigator.clipboard.readText()).toBe("const answer = 42;");
+    expect(screen.getByRole("button", { name: "Code copied" })).toBeVisible();
+  });
 });
