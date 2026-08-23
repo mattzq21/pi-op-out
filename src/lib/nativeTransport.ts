@@ -7,14 +7,21 @@ export class NativeTransport implements PiTransport {
   mode = "native" as const;
   private listeners = new Set<(event: RpcEvent) => void>();
   private unlisten?: UnlistenFn;
+  private connectionVersion = 0;
+  private processLifecycle: Promise<unknown> = Promise.resolve();
   private cwd?: string;
   private sessionPath?: string;
+  private runProcessCommand<T>(command: () => Promise<T>) { const result = this.processLifecycle.then(command, command); this.processLifecycle = result.then(() => undefined, () => undefined); return result; }
   async connect(cwd?: string, sessionPath?: string) {
     if (cwd !== undefined) this.cwd = cwd; if (sessionPath !== undefined) this.sessionPath = sessionPath;
-    this.unlisten = await listen<RpcEvent>("pi://event", ({ payload }) => this.listeners.forEach((listener) => listener(payload)));
-    await invoke("start_pi", { cwd: this.cwd, sessionPath: this.sessionPath });
+    const version = ++this.connectionVersion;
+    this.unlisten?.(); this.unlisten = undefined;
+    const unlisten = await listen<RpcEvent>("pi://event", ({ payload }) => this.listeners.forEach((listener) => listener(payload)));
+    if (version !== this.connectionVersion) { unlisten(); return; }
+    this.unlisten = unlisten;
+    await this.runProcessCommand(() => invoke("start_pi", { cwd: this.cwd, sessionPath: this.sessionPath }));
   }
-  async disconnect() { this.unlisten?.(); await invoke("stop_pi"); }
+  async disconnect() { ++this.connectionVersion; this.unlisten?.(); this.unlisten = undefined; await this.runProcessCommand(() => invoke("stop_pi")); }
   async command<T>(command: RpcCommand) { const result = await invoke<T>("pi_command", { command }); if (command.type === "get_state") this.sessionPath = (result as { sessionFile?: string }).sessionFile; return result; }
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   listSessions() { return invoke<SessionSummary[]>("list_sessions"); }
