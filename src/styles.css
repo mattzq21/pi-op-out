@@ -49,6 +49,7 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
 .messages { overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
 .conversation { max-width: 740px; margin: 0 auto; padding: 48px 36px 22px; }
 .message { display: grid; grid-template-columns: 27px 1fr; gap: 13px; margin-bottom: 35px; }
+.assistant-message { grid-template-columns: 1fr; }
 .avatar { width: 27px; height: 27px; border-radius: 8px; display: grid; place-items: center; font-size: 11px; font-weight: 600; margin-top: -2px; }
 .pi-avatar { background: #292824; color: #f5b69e; }
 .message-body { min-width: 0; font-size: 15px; line-height: 1.72; color: #373530; }

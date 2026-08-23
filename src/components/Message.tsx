@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, CircleAlert, Copy, GitBranch, Sparkles, Wrench } from "lucide-react";
+import { Check, CircleAlert, Copy, GitBranch, Wrench } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage } from "../types";
@@ -16,7 +16,6 @@ export function Message({ message, expanded = false, onBranch, onRetry }: Props)
   const failure = message.stopReason === "aborted" ? (message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
   const copy = async () => { await navigator.clipboard?.writeText(textOf(message.content)); setCopied(true); window.setTimeout(() => setCopied(false), 1400); };
   return <article className="message assistant-message">
-    <div className="avatar pi-avatar"><Sparkles size={14} /></div>
     <div className="message-body">
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{output}</ReactMarkdown>
       {failure && <div className="message-failure" role="status"><CircleAlert size={14} /><span>{failure}</span>{onRetry && <button onClick={onRetry}>Retry</button>}</div>}

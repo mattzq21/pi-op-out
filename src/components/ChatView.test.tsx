@@ -63,6 +63,7 @@ describe("conversation work visibility", () => {
 
   it("shows all work while running and collapses it when the turn settles", () => {
     const view = render(<ChatView state={state(true)} messages={messages} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
+    expect(document.querySelector(".pi-avatar")).not.toBeInTheDocument();
     expect(screen.queryByText("Work · 2 steps")).not.toBeInTheDocument();
     expect(screen.getByText("inspect")).toBeVisible();
     expect(screen.getByText("Completed")).toBeVisible();
