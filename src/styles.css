@@ -96,17 +96,18 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
 
 .app.dark {
   color-scheme: dark;
-  --ink: #eae7df;
-  --muted: #aaa69d;
-  --faint: #817d75;
-  --line: #403e38;
-  --paper: #23221f;
-  --panel: #2a2925;
-  --dark-control: #302f2b;
-  --dark-control-hover: #383630;
-  --dark-subtle: #2c2b27;
+  --ink: #e8e5dd;
+  --muted: #a09c93;
+  --faint: #77736b;
+  --line: #34322d;
+  --paper: #181817;
+  --panel: #1e1e1b;
+  --dark-control: #24231f;
+  --dark-control-hover: #2c2a26;
+  --dark-subtle: #201f1c;
   color: var(--ink);
 }
+.app.dark .icon-rail { background: #141413; }
 .app.dark .chat-header, .app.dark .settings-shell, .app.dark .chat-shell { background: var(--paper); }
 
 /* Raised surfaces and native controls need explicit dark colors. color-scheme alone
@@ -137,7 +138,7 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
 .app.dark .search input,
 .app.dark .composer textarea { background: transparent; color: var(--ink); }
 
-.app.dark .search { border-color: var(--line); background: #252420; }
+.app.dark .search { border-color: var(--line); background: #1a1a18; }
 .app.dark kbd { border-color: var(--line); background: var(--dark-control); color: var(--muted); }
 .app.dark .session-item:hover { background: #ffffff09; }
 .app.dark .session-item.active { box-shadow: 0 1px 2px #0005; }
@@ -146,24 +147,24 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
 .app.dark .settings-nav button:hover,
 .app.dark .secondary-button:hover,
 .app.dark .tree-item:hover { background: var(--dark-control-hover); color: var(--ink); }
-.app.dark .settings-nav button.active { background: #393732; color: var(--ink); }
+.app.dark .settings-nav button.active { background: #2a2925; color: var(--ink); }
 .app.dark .setting-row, .app.dark .config-row, .app.dark .keybind-row { border-bottom-color: var(--line); }
-.app.dark .setting-icon, .app.dark .config-icon { background: #34332e; color: #bbb7ae; }
+.app.dark .setting-icon, .app.dark .config-icon { background: #292824; color: #bbb7ae; }
 .app.dark .config-icon.skill { background: #422f2a; color: #e2a18e; }
 .app.dark .config-icon.mcp { background: #293b34; color: #8fc6ae; }
-.app.dark .config-row code, .app.dark .message-body code { background: #302f2b; }
+.app.dark .config-row code, .app.dark .message-body code { background: #252420; }
 .app.dark .toggle:not(.on) { background: #57534c; }
 .app.dark .toggle span { background: #f3f0e9; }
 .app.dark .tool-event,
 .app.dark .work-group-content,
 .app.dark .extension-widget,
 .app.dark .attachments > span { background: var(--dark-subtle); }
-.app.dark .user-message .message-body { border-color: #45423c; background: #302f2b; }
-.app.dark .context-track { background: #3a3833; }
+.app.dark .user-message .message-body { border-color: #393732; background: #24231f; }
+.app.dark .context-track { background: #2d2c28; }
 .app.dark .message-body { color: #d2cec5; }
 .app.dark .user-message .message-body { color: var(--ink); }
 .app.dark .icon-button:hover { background: #ffffff0b; color: white; }
-.app.dark .composer { border-color: #46443e; box-shadow: 0 9px 30px #0003; }
+.app.dark .composer { border-color: #393732; box-shadow: 0 9px 30px #0005; }
 .app.dark .composer-bar .select-control { border-color: transparent; background: transparent; }
 .app.dark .composer-bar .select-control:hover { border-color: var(--line); background: var(--dark-control-hover); }
 .app.dark .composer:focus-within { border-color: #68645c; box-shadow: 0 10px 35px #0004, 0 0 0 2px #d46a2424; }
