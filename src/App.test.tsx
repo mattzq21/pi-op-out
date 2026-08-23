@@ -109,7 +109,8 @@ describe("Pi desktop", () => {
 
   it("runs project shell commands in a bottom panel", async () => {
     const user = userEvent.setup(); render(<App />);
-    await user.click(screen.getByRole("button", { name: "Terminal" }));
+    expect(screen.queryByRole("button", { name: "Terminal" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Open terminal" }));
     const input = await screen.findByRole("textbox", { name: "Terminal input" });
     expect(screen.getByRole("textbox", { name: "Message Pi" })).toBeInTheDocument();
     expect(input.closest(".terminal-shell")?.previousElementSibling).toHaveClass("chat-shell");
@@ -121,14 +122,14 @@ describe("Pi desktop", () => {
     const user = userEvent.setup(); render(<App />);
     await user.click(screen.getByRole("button", { name: "New conversation" }));
     expect(await screen.findByText("π")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Terminal" }));
+    await user.click(screen.getByRole("button", { name: "Open terminal" }));
     expect(await screen.findByText("Start the conversation to get a CWD")).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Terminal input" })).not.toBeInTheDocument();
   });
 
   it("keeps terminal output with the session that ran it", async () => {
     const user = userEvent.setup(); render(<App />);
-    await user.click(screen.getByRole("button", { name: "Terminal" }));
+    await user.click(screen.getByRole("button", { name: "Open terminal" }));
     await user.type(await screen.findByRole("textbox", { name: "Terminal input" }), "git status{enter}");
     await waitFor(() => expect(document.querySelector(".terminal-host")).toHaveTextContent("native builds run a real PTY shell"));
     await user.click(screen.getByRole("button", { name: /Wire RPC transport/ }));
@@ -139,7 +140,7 @@ describe("Pi desktop", () => {
 
   it("adds and deletes independent terminal tabs within a session", async () => {
     const user = userEvent.setup(); render(<App />);
-    await user.click(screen.getByRole("button", { name: "Terminal" }));
+    await user.click(screen.getByRole("button", { name: "Open terminal" }));
     await user.type(await screen.findByRole("textbox", { name: "Terminal input" }), "git status{enter}");
     await waitFor(() => expect(document.querySelector(".terminal-host")).toHaveTextContent("git status"));
     await user.click(screen.getByRole("button", { name: "Add terminal" }));
