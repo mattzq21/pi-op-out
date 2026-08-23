@@ -38,6 +38,7 @@ function groupTurns(messages: ChatMessage[]) {
 
 function compactCompletedTools(messages: ChatMessage[]) {
   return messages.reduce<Array<{ message: ChatMessage; count: number }>>((runs, message) => {
+    if (message.role === "assistant" && !message.streaming && !message.stopReason && textOf(message.content).trim().length === 0) return runs;
     const previous = runs.at(-1);
     const status = message.toolStatus ?? "done";
     if (message.role === "tool" && status === "done" && previous?.message.role === "tool" && (previous.message.toolStatus ?? "done") === "done" && (previous.message.toolName || "tool") === (message.toolName || "tool")) {
