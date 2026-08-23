@@ -38,7 +38,6 @@ export function Composer({ streaming, queued, commands, models, model, thinkingL
   const [uploadError, setUploadError] = useState<string>();
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const imageRef = useRef<HTMLInputElement>(null);
   const restoredDraftId = useRef<string | undefined>(undefined);
   const setValueRef = useRef(setValue); setValueRef.current = setValue;
   const commandQuery = value.match(/^\/([^\s]*)$/)?.[1]?.toLowerCase();
@@ -63,7 +62,7 @@ export function Composer({ streaming, queued, commands, models, model, thinkingL
   }, []);
   useEffect(() => { if (restoredDraft && restoredDraft.id !== restoredDraftId.current) { restoredDraftId.current = restoredDraft.id; setValue(restoredDraft.value); } }, [restoredDraft]);
 
-  const addFiles = async (files: FileList | null, imagesOnly = false) => {
+  const addFiles = async (files: FileList | null) => {
     if (!files) return;
     setUploadError(undefined);
     const next: Upload[] = [];
@@ -71,7 +70,7 @@ export function Composer({ streaming, queued, commands, models, model, thinkingL
       if (file.type.startsWith("image/")) {
         const url = await readFile(file, "dataUrl");
         next.push({ id: `${file.name}-${file.lastModified}`, name: file.name, kind: "image", image: { type: "image", data: url.slice(url.indexOf(",") + 1), mimeType: file.type || "image/png", name: file.name } });
-      } else if (!imagesOnly) {
+      } else {
         if (file.size > TEXT_LIMIT) { setUploadError(`${file.name} is larger than 200 KB`); continue; }
         next.push({ id: `${file.name}-${file.lastModified}`, name: file.name, kind: "text", text: await readFile(file, "text") });
       }
@@ -96,8 +95,7 @@ export function Composer({ streaming, queued, commands, models, model, thinkingL
       {uploadError && <div className="upload-error">{uploadError}</div>}
       <textarea ref={ref} aria-label="Message Pi" placeholder={streaming ? (behavior === "steer" ? "Steer Pi while it works…" : "Queue a follow-up…") : "Ask Pi to build, explain, or change anything…"} value={value} rows={1} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} />
       <input ref={fileRef} className="hidden-input" type="file" multiple onChange={(event) => { void addFiles(event.target.files); event.target.value = ""; }} />
-      <input ref={imageRef} className="hidden-input" type="file" accept="image/*" multiple onChange={(event) => { void addFiles(event.target.files, true); event.target.value = ""; }} />
-      <div className="composer-bar"><div className="composer-tools"><IconButton label="Attach files" onClick={() => fileRef.current?.click()}><Paperclip size={17} /></IconButton><IconButton label="Attach image" onClick={() => imageRef.current?.click()}><ImagePlus size={17} /></IconButton><IconButton label="Open terminal" onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton></div>
+      <div className="composer-bar"><div className="composer-tools"><IconButton label="Attach files" onClick={() => fileRef.current?.click()}><Paperclip size={17} /></IconButton><IconButton label="Open terminal" onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton></div>
         <div className="composer-actions">
         <label className="select-control"><select aria-label="Model" value={model ? `${model.provider}/${model.id}` : ""} onChange={(event) => { const next = models.find((item) => `${item.provider}/${item.id}` === event.target.value); if (next) onModel(next); }}>{models.map((item) => <option key={`${item.provider}/${item.id}`} value={`${item.provider}/${item.id}`}>{item.name || item.id}</option>)}</select></label>
         <label className="select-control thinking"><select aria-label="Thinking level" value={thinkingLevel} onChange={(event) => onThinking(event.target.value)}>{thinkingLevels.map((level) => <option key={level}>{level}</option>)}</select></label>
