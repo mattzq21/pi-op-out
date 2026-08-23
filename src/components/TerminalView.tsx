@@ -32,7 +32,7 @@ export function TerminalView({ cwd, terminals, activeId, output, exited, onAdd, 
     lastOutput.current = output;
   }, [output]);
 
-  return <section className="terminal-shell" aria-label="Session terminal"><header><div className="terminal-tabs">{terminals.map((item) => <button key={item.id} className={`terminal-tab ${item.id === activeId ? "active" : ""}`} onClick={() => onSelect(item.id)}><TerminalSquare size={14} /><strong>{item.label}</strong>{item.id === activeId && cwd && <code title={cwd}>{cwd}</code>}</button>)}<IconButton label="Add terminal" onClick={onAdd}><Plus size={16} /></IconButton></div><div>{exited && <span className="terminal-exited">exited</span>}<IconButton label="Clear terminal" onClick={onClear}><Trash2 size={15} /></IconButton><IconButton label="Close terminal panel" onClick={onClose}><X size={16} /></IconButton></div></header>
+  return <section className="terminal-shell" aria-label="Session terminal"><header><div className="terminal-tabs">{terminals.map((item) => <button key={item.id} className={`terminal-tab ${item.id === activeId ? "active" : ""}`} onClick={() => onSelect(item.id)}><TerminalSquare size={14} /><strong>{item.label}</strong></button>)}<IconButton label="Add terminal" onClick={onAdd}><Plus size={16} /></IconButton></div><div>{exited && <span className="terminal-exited">exited</span>}<IconButton label="Clear terminal" onClick={onClear}><Trash2 size={15} /></IconButton><IconButton label="Close terminal panel" onClick={onClose}><X size={16} /></IconButton></div></header>
     {cwd ? <div className="terminal-host" ref={host} onMouseDown={() => terminal.current?.focus()} /> : <div className="terminal-unavailable">Start the conversation to get a CWD</div>}
   </section>;
 }
