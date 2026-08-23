@@ -64,7 +64,9 @@ describe("conversation work visibility", () => {
   it("shows all work while running and collapses it when the turn settles", () => {
     const view = render(<ChatView state={state(true)} messages={messages} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
     expect(screen.queryByText("Work · 2 steps")).not.toBeInTheDocument();
-    expect(screen.getByText("Tool output")).toBeVisible();
+    expect(screen.getByText("inspect")).toBeVisible();
+    expect(screen.getByText("Completed")).toBeVisible();
+    expect(screen.getByText("Tool output")).not.toBeVisible();
     expect(screen.getByText("Intermediate update")).toBeVisible();
 
     view.rerender(<ChatView state={state(false)} messages={messages} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
