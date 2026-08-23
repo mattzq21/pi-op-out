@@ -56,7 +56,6 @@ struct SessionSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AppSettings {
-    theme: String,
     default_model: String,
     default_thinking: String,
     auto_compaction: bool,
@@ -116,7 +115,7 @@ fn prepare_mcp_bridge(app: &AppHandle, settings: &AppSettings) -> Result<(PathBu
 
 fn default_settings() -> AppSettings {
     AppSettings {
-        theme: "system".into(), default_model: String::new(), default_thinking: "high".into(), auto_compaction: true, auto_retry: true, notifications: true, steering_mode: default_queue_mode(), follow_up_mode: default_queue_mode(), keybindings: default_keybindings(),
+        default_model: String::new(), default_thinking: "high".into(), auto_compaction: true, auto_retry: true, notifications: true, steering_mode: default_queue_mode(), follow_up_mode: default_queue_mode(), keybindings: default_keybindings(),
         tools: ["read", "bash", "edit", "write", "grep", "find", "ls"].iter().map(|name| json!({"name": name, "description": "Pi built-in tool", "enabled": true, "builtin": true})).collect(),
         skills: vec![], mcp_servers: vec![],
     }

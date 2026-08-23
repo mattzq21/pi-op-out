@@ -2,7 +2,7 @@ import type { AppSettings } from "./types";
 import { defaultKeybindings } from "./lib/keybindings";
 
 export const defaultSettings: AppSettings = {
-  theme: "system", defaultModel: "openrouter/deepseek/deepseek-v4-flash", defaultThinking: "high",
+  defaultModel: "openrouter/deepseek/deepseek-v4-flash", defaultThinking: "high",
   autoCompaction: true, autoRetry: true, notifications: true,
   steeringMode: "one-at-a-time", followUpMode: "one-at-a-time",
   keybindings: { ...defaultKeybindings },
