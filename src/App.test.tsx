@@ -117,7 +117,7 @@ describe("Pi desktop", () => {
     await waitFor(() => expect(document.querySelector(".terminal-host")).toHaveTextContent("native builds run a real PTY shell"));
   });
 
-  it("adds independent terminal tabs within a session", async () => {
+  it("adds and deletes independent terminal tabs within a session", async () => {
     const user = userEvent.setup(); render(<App />);
     await user.click(screen.getByRole("button", { name: "Terminal" }));
     await user.type(await screen.findByRole("textbox", { name: "Terminal input" }), "git status{enter}");
@@ -125,7 +125,8 @@ describe("Pi desktop", () => {
     await user.click(screen.getByRole("button", { name: "Add terminal" }));
     expect(screen.getByRole("button", { name: /Terminal 2/ })).toHaveClass("active");
     expect(document.querySelector(".terminal-host")).not.toHaveTextContent("git status");
-    await user.click(document.querySelector(".terminal-tab") as HTMLButtonElement);
+    await user.click(screen.getByRole("button", { name: "Delete terminal" }));
+    expect(screen.queryByRole("button", { name: /Terminal 2/ })).not.toBeInTheDocument();
     await waitFor(() => expect(document.querySelector(".terminal-host")).toHaveTextContent("git status"));
   });
 

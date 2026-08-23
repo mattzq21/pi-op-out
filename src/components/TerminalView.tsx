@@ -8,10 +8,10 @@ import { IconButton } from "./IconButton";
 interface Props {
   cwd?: string; terminals: { id: string; label: string }[]; activeId: string; output: string; exited?: boolean;
   onAdd: () => void; onSelect: (id: string) => void; onStart: (id: string, cols: number, rows: number) => void;
-  onData: (data: string) => void; onResize: (cols: number, rows: number) => void; onClear: () => void; onClose: () => void;
+  onData: (data: string) => void; onResize: (cols: number, rows: number) => void; onDelete: () => void; onClose: () => void;
 }
 
-export function TerminalView({ cwd, terminals, activeId, output, exited, onAdd, onSelect, onStart, onData, onResize, onClear, onClose }: Props) {
+export function TerminalView({ cwd, terminals, activeId, output, exited, onAdd, onSelect, onStart, onData, onResize, onDelete, onClose }: Props) {
   const host = useRef<HTMLDivElement>(null); const terminal = useRef<Terminal | undefined>(undefined); const lastOutput = useRef("");
   const callbacks = useRef({ onData, onResize, onStart }); callbacks.current = { onData, onResize, onStart };
 
@@ -32,7 +32,7 @@ export function TerminalView({ cwd, terminals, activeId, output, exited, onAdd, 
     lastOutput.current = output;
   }, [output]);
 
-  return <section className="terminal-shell" aria-label="Session terminal"><header><div className="terminal-tabs">{terminals.map((item) => <button key={item.id} className={`terminal-tab ${item.id === activeId ? "active" : ""}`} onClick={() => onSelect(item.id)}><TerminalSquare size={14} /><strong>{item.label}</strong></button>)}<IconButton label="Add terminal" onClick={onAdd}><Plus size={16} /></IconButton></div><div>{exited && <span className="terminal-exited">exited</span>}<IconButton label="Clear terminal" onClick={onClear}><Trash2 size={15} /></IconButton><IconButton label="Close terminal panel" onClick={onClose}><X size={16} /></IconButton></div></header>
+  return <section className="terminal-shell" aria-label="Session terminal"><header><div className="terminal-tabs">{terminals.map((item) => <button key={item.id} className={`terminal-tab ${item.id === activeId ? "active" : ""}`} onClick={() => onSelect(item.id)}><TerminalSquare size={14} /><strong>{item.label}</strong></button>)}<IconButton label="Add terminal" onClick={onAdd}><Plus size={16} /></IconButton></div><div>{exited && <span className="terminal-exited">exited</span>}<IconButton label="Delete terminal" onClick={onDelete}><Trash2 size={15} /></IconButton><IconButton label="Close terminal panel" onClick={onClose}><X size={16} /></IconButton></div></header>
     {cwd ? <div className="terminal-host" ref={host} onMouseDown={() => terminal.current?.focus()} /> : <div className="terminal-unavailable">Start the conversation to get a CWD</div>}
   </section>;
 }
