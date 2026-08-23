@@ -8,7 +8,7 @@ export interface Model { provider: string; id: string; name?: string; reasoning?
 export interface RpcCommand { id?: string; type: string; [key: string]: unknown; }
 export interface RpcEvent { type: string; [key: string]: unknown; }
 export interface ToolConfig { name: string; description: string; enabled: boolean; builtin?: boolean; }
-export interface SkillConfig { name: string; path: string; description: string; enabled: boolean; scope: "global" | "project"; }
+export interface SkillConfig { name: string; path: string; description: string; enabled: boolean; scope: "global" | "project"; userInvokedOnly?: boolean; }
 export interface McpServer { id: string; name: string; transport?: "stdio" | "http"; command: string; args: string; url?: string; headers?: string; enabled: boolean; status?: "connected" | "stopped" | "error"; }
 export interface SlashCommand { name: string; description?: string; source: "extension" | "prompt" | "skill"; path?: string; }
 export interface ImageAttachment { type: "image"; data: string; mimeType: string; name?: string; }

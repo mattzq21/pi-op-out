@@ -129,6 +129,24 @@ fn frontmatter_value(content: &str, key: &str) -> Option<String> {
     })
 }
 
+fn codex_disables_implicit_invocation(skill_directory: &Path) -> bool {
+    let Ok(content) = fs::read_to_string(skill_directory.join("agents/openai.yaml")) else { return false };
+    let mut policy_indent = None;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') { continue; }
+        let indent = line.len().saturating_sub(line.trim_start().len());
+        if trimmed == "policy:" { policy_indent = Some(indent); continue; }
+        let Some(parent_indent) = policy_indent else { continue };
+        if indent <= parent_indent { policy_indent = None; continue; }
+        let Some((key, value)) = trimmed.split_once(':') else { continue };
+        if key.trim() == "allow_implicit_invocation" {
+            return value.split('#').next().unwrap_or("").trim().trim_matches(['\'', '"']).eq_ignore_ascii_case("false");
+        }
+    }
+    false
+}
+
 fn skill_path_is_within(path: &Path, root: &Path) -> bool {
     path.starts_with(root)
 }
@@ -165,6 +183,8 @@ fn discover_skills_in(root: &Path, include_root_markdown: bool) -> Vec<Value> {
         skill_roots.push(directory.to_path_buf());
         let content = fs::read_to_string(&skill_file).unwrap_or_default();
         let fallback = directory.file_name().and_then(|value| value.to_str()).unwrap_or("skill");
+        let claude_user_only = frontmatter_value(&content, "disable-model-invocation").is_some_and(|value| value.eq_ignore_ascii_case("true"));
+        let codex_user_only = codex_disables_implicit_invocation(directory);
         discovered.push(json!({
             "name": frontmatter_value(&content, "name").unwrap_or_else(|| fallback.to_string()),
             "path": directory.to_string_lossy(),
@@ -172,6 +192,7 @@ fn discover_skills_in(root: &Path, include_root_markdown: bool) -> Vec<Value> {
             "enabled": true,
             "scope": "global",
             "discovered": true,
+            "userInvokedOnly": claude_user_only || codex_user_only,
         }));
     }
 
@@ -183,6 +204,7 @@ fn discover_skills_in(root: &Path, include_root_markdown: bool) -> Vec<Value> {
                 if !path.is_file() || path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md") || path.extension().and_then(|extension| extension.to_str()) != Some("md") { continue; }
                 let content = fs::read_to_string(&path).unwrap_or_default();
                 let fallback = path.file_stem().and_then(|value| value.to_str()).unwrap_or("skill");
+                let claude_user_only = frontmatter_value(&content, "disable-model-invocation").is_some_and(|value| value.eq_ignore_ascii_case("true"));
                 discovered.push(json!({
                     "name": frontmatter_value(&content, "name").unwrap_or_else(|| fallback.to_string()),
                     "path": path.to_string_lossy(),
@@ -190,6 +212,7 @@ fn discover_skills_in(root: &Path, include_root_markdown: bool) -> Vec<Value> {
                     "enabled": true,
                     "scope": "global",
                     "discovered": true,
+                    "userInvokedOnly": claude_user_only,
                 }));
             }
         }
@@ -220,7 +243,9 @@ fn merge_discovered_skills(settings: &mut AppSettings) {
         for mut skill in discover_skills_in(&root, include_root_markdown) {
             let Some(path) = skill.get("path").and_then(Value::as_str).map(PathBuf::from) else { continue };
             if !known.insert(path.clone()) { continue; }
-            if let Some(enabled) = enabled_by_path.get(&path) { skill["enabled"] = Value::Bool(*enabled); }
+            if !skill.get("userInvokedOnly").and_then(Value::as_bool).unwrap_or(false) {
+                if let Some(enabled) = enabled_by_path.get(&path) { skill["enabled"] = Value::Bool(*enabled); }
+            }
             settings.skills.push(skill);
         }
     }
@@ -444,19 +469,23 @@ mod tests {
         let root = std::env::temp_dir().join(format!("pi-ui-skills-{}", Uuid::new_v4()));
         let regular = root.join("regular");
         let nested = regular.join("references/nested");
+        let codex = root.join("codex-only");
         fs::create_dir_all(&nested).unwrap();
-        fs::write(regular.join("SKILL.md"), "---\nname: Regular skill\ndescription: A discovered skill\n---\n").unwrap();
+        fs::create_dir_all(codex.join("agents")).unwrap();
+        fs::write(regular.join("SKILL.md"), "---\nname: Regular skill\ndescription: A discovered skill\ndisable-model-invocation: true\n---\n").unwrap();
         fs::write(nested.join("SKILL.md"), "---\nname: Nested reference\n---\n").unwrap();
+        fs::write(codex.join("SKILL.md"), "---\nname: Codex skill\ndescription: A Codex user-only skill\n---\n").unwrap();
+        fs::write(codex.join("agents/openai.yaml"), "interface:\n  display_name: Codex skill\npolicy:\n  allow_implicit_invocation: false\n").unwrap();
         fs::write(root.join("standalone.md"), "---\nname: Standalone skill\n---\n").unwrap();
 
         let pi_skills = discover_skills_in(&root, true);
-        assert_eq!(pi_skills.len(), 2);
-        assert!(pi_skills.iter().any(|skill| skill.get("name").and_then(Value::as_str) == Some("Regular skill")));
+        assert_eq!(pi_skills.len(), 3);
+        assert!(pi_skills.iter().any(|skill| skill.get("name").and_then(Value::as_str) == Some("Regular skill") && skill.get("userInvokedOnly").and_then(Value::as_bool) == Some(true)));
+        assert!(pi_skills.iter().any(|skill| skill.get("name").and_then(Value::as_str) == Some("Codex skill") && skill.get("userInvokedOnly").and_then(Value::as_bool) == Some(true)));
         assert!(pi_skills.iter().any(|skill| skill.get("name").and_then(Value::as_str) == Some("Standalone skill")));
 
         let agents_skills = discover_skills_in(&root, false);
-        assert_eq!(agents_skills.len(), 1);
-        assert_eq!(agents_skills[0].get("name").and_then(Value::as_str), Some("Regular skill"));
+        assert_eq!(agents_skills.len(), 2);
         fs::remove_dir_all(root).unwrap();
     }
 
