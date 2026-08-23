@@ -69,6 +69,7 @@ export default function App() {
   ]), [transport]);
 
   useEffect(() => {
+    let cancelled = false;
     const unsubscribe = transport.subscribe((event: RpcEvent) => {
       if (event.type === "agent_start") setState((current) => ({ ...current, isStreaming: true }));
       if (event.type === "agent_end" || event.type === "agent_settled") { setState((current) => ({ ...current, isStreaming: false, activity: undefined })); if (event.type === "agent_settled" && document.hidden && settingsRef.current.notifications && "Notification" in window && Notification.permission === "granted") new Notification("Pi finished", { body: "Your coding agent is ready for you." }); }
@@ -98,8 +99,8 @@ export default function App() {
       if (event.type === "session_switched") void refresh();
       if (event.type === "session_info_changed") void refresh();
     });
-    transport.connect().then(() => refresh()).then((value) => configureRuntime(value)).then(() => setConnected(true)).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)));
-    return () => { unsubscribe(); void transport.disconnect(); };
+    transport.connect().then(() => refresh()).then((value) => configureRuntime(value)).then(() => { if (!cancelled) { setError(undefined); setConnected(true); } }).catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); });
+    return () => { cancelled = true; unsubscribe(); void transport.disconnect(); };
   }, [configureRuntime, refresh, transport]);
 
   useEffect(() => {
