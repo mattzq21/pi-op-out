@@ -10,7 +10,7 @@ type Section = "general" | "models" | "keybinds" | "tools" | "skills" | "mcp";
 const sections = [
   { id: "general" as const, label: "General", icon: Settings2 }, { id: "models" as const, label: "Models", icon: Bot },
   { id: "keybinds" as const, label: "Keybinds", icon: Keyboard },
-  { id: "tools" as const, label: "Tools", icon: Wrench }, { id: "skills" as const, label: "Skills", icon: Sparkles }, { id: "mcp" as const, label: "MCP servers", icon: Blocks }
+  { id: "skills" as const, label: "Skills", icon: Sparkles }, { id: "tools" as const, label: "Tools", icon: Wrench }, { id: "mcp" as const, label: "MCP servers", icon: Blocks }
 ];
 
 export function SettingsView({ settings, onSave }: { settings: AppSettings; onSave: (settings: AppSettings) => Promise<void> }) {
