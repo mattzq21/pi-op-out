@@ -107,7 +107,7 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
   --dark-subtle: #201f1c;
   color: var(--ink);
 }
-.app.dark .icon-rail { background: #141413; }
+.app.dark .icon-rail, .app.dark .session-panel { background: #141413; }
 .app.dark .chat-header, .app.dark .settings-shell, .app.dark .chat-shell { background: var(--paper); }
 
 /* Raised surfaces and native controls need explicit dark colors. color-scheme alone
