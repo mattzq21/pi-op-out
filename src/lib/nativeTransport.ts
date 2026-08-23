@@ -18,6 +18,7 @@ export class NativeTransport implements PiTransport {
   async command<T>(command: RpcCommand) { const result = await invoke<T>("pi_command", { command }); if (command.type === "get_state") this.sessionPath = (result as { sessionFile?: string }).sessionFile; return result; }
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   listSessions() { return invoke<SessionSummary[]>("list_sessions"); }
+  archiveSession(sessionPath: string) { return invoke<void>("archive_session", { sessionPath }); }
   relocateSession(sessionPath: string, cwd: string) { return invoke<void>("relocate_session", { sessionPath, cwd }); }
   loadSettings() { return invoke<AppSettings>("load_app_settings"); }
   async saveSettings(settings: AppSettings) { await invoke<void>("save_app_settings", { settings }); await this.disconnect(); await this.connect(this.cwd, this.sessionPath); }

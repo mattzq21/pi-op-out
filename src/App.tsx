@@ -131,6 +131,13 @@ export default function App() {
   const saveSettings = async (value: AppSettings) => { if (value.notifications && "Notification" in window && Notification.permission === "default") await Notification.requestPermission(); await transport.saveSettings(value); await configureRuntime(value); setSettings(value); await refresh(); };
   const openProject = async () => { try { const cwd = await transport.selectProjectDirectory(sessions.find((session) => session.id === state.sessionId)?.cwd); if (!cwd) return; setConnected(false); const value = await transport.openProject(cwd).then(() => refresh()); await configureRuntime(value); setConnected(true); setView("chat"); } catch (reason) { setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); } };
   const sessionAction = async (session: SessionSummary, action: SessionAction) => {
+    if (action === "archive") {
+      try {
+        if (session.id === state.sessionId) { await transport.command({ type: "new_session" }); await refresh(); }
+        await transport.archiveSession(session.path); await refresh();
+      } catch (reason) { setNotice({ title: "Could not archive conversation", message: reason instanceof Error ? reason.message : String(reason) }); }
+      return;
+    }
     if (!await selectSession(session)) return;
     if (action === "rename") { setRenameSession(session); return; }
     if (action === "clone") { await transport.command({ type: "clone" }); await refresh(); }

@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, CopyPlus, Pencil, Search } from "lucide-react";
+import { Archive, ChevronDown, CopyPlus, Pencil, Search } from "lucide-react";
 import type { SessionSummary } from "../types";
 
-export type SessionAction = "rename" | "clone";
+export type SessionAction = "rename" | "clone" | "archive";
 interface Props { sessions: SessionSummary[]; activeId?: string; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; }
 
 const actions = [
-  ["rename", Pencil, "Rename conversation"], ["clone", CopyPlus, "Clone conversation"]
+  ["rename", Pencil, "Rename conversation"], ["clone", CopyPlus, "Clone conversation"], ["archive", Archive, "Archive conversation"]
 ] as const;
 
 export function SessionPanel({ sessions, activeId, query, onQuery, onSelect, onAction }: Props) {

@@ -95,8 +95,16 @@ describe("Pi desktop", () => {
     fireEvent.contextMenu(screen.getByRole("button", { name: /Wire RPC transport/ }), { clientX: 100, clientY: 100 });
     expect(screen.getByRole("menuitem", { name: "Rename conversation" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Clone conversation" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Archive conversation" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Export as HTML" })).not.toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Tree & session stats" })).not.toBeInTheDocument();
+  });
+
+  it("archives a conversation from its right-click menu", async () => {
+    const user = userEvent.setup(); render(<App />); await screen.findByRole("textbox", { name: "Search conversations" });
+    fireEvent.contextMenu(screen.getByRole("button", { name: /Wire RPC transport/ }), { clientX: 100, clientY: 100 });
+    await user.click(screen.getByRole("menuitem", { name: "Archive conversation" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Wire RPC transport/ })).not.toBeInTheDocument());
   });
 
   it("runs project shell commands in a bottom panel", async () => {

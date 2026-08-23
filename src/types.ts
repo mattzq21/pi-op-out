@@ -21,6 +21,7 @@ export interface PiTransport {
   command<T = unknown>(command: RpcCommand): Promise<T>;
   subscribe(listener: (event: RpcEvent) => void): () => void;
   listSessions(): Promise<SessionSummary[]>;
+  archiveSession(sessionPath: string): Promise<void>;
   relocateSession(sessionPath: string, cwd: string): Promise<void>;
   loadSettings(): Promise<AppSettings>;
   saveSettings(settings: AppSettings): Promise<void>;

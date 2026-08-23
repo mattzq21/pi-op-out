@@ -314,6 +314,24 @@ fn list_sessions() -> Result<Vec<SessionSummary>, String> {
 }
 
 #[tauri::command]
+fn archive_session(session_path: String) -> Result<(), String> {
+    let sessions_root = home_dir()?.join(".pi/agent/sessions").canonicalize().map_err(|error| format!("Could not locate Pi sessions: {error}"))?;
+    let source = PathBuf::from(&session_path).canonicalize().map_err(|error| format!("Could not locate session file: {error}"))?;
+    if !source.starts_with(&sessions_root) { return Err("Only Pi session files can be archived".into()); }
+    if !source.is_file() { return Err(format!("Session file does not exist: {}", source.display())); }
+    let archive_dir = home_dir()?.join(".pi-desktop/archived");
+    fs::create_dir_all(&archive_dir).map_err(|error| format!("Could not create archive directory: {error}"))?;
+    let file_name = source.file_name().ok_or("Session path has no file name")?;
+    let mut destination = archive_dir.join(file_name);
+    if destination.exists() {
+        let stem = source.file_stem().and_then(|value| value.to_str()).unwrap_or("session");
+        let extension = source.extension().and_then(|value| value.to_str()).unwrap_or("jsonl");
+        destination = archive_dir.join(format!("{stem}-{}.{}", Uuid::new_v4(), extension));
+    }
+    fs::rename(&source, &destination).map_err(|error| format!("Could not archive session: {error}"))
+}
+
+#[tauri::command]
 fn relocate_session(session_path: String, cwd: String) -> Result<(), String> {
     let replacement = PathBuf::from(cwd.trim());
     if !replacement.is_dir() { return Err(format!("Project directory does not exist: {}", replacement.display())); }
@@ -330,7 +348,7 @@ fn relocate_session(session_path: String, cwd: String) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, relocate_session, load_app_settings, save_app_settings]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, archive_session, relocate_session, load_app_settings, save_app_settings]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }
 
 #[cfg(test)]
