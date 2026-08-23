@@ -77,4 +77,18 @@ describe("conversation work visibility", () => {
     expect(screen.getByText("Tool output")).not.toBeVisible();
     expect(screen.getByText("Intermediate update")).not.toBeVisible();
   });
+
+  it("groups consecutive completed calls to the same tool", () => {
+    const repeated: ChatMessage[] = [
+      { id: "user", role: "user", content: "Run checks" },
+      { id: "bash-1", role: "tool", toolName: "bash", toolStatus: "done", content: "first" },
+      { id: "bash-2", role: "tool", toolName: "bash", toolStatus: "done", content: "second" },
+      { id: "bash-3", role: "tool", toolName: "bash", toolStatus: "done", content: "third" }
+    ];
+    render(<ChatView state={{ ...state(true), messageCount: repeated.length }} messages={repeated} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
+    expect(screen.getByText("bash x3")).toBeVisible();
+    expect(screen.getByText("Completed")).toBeVisible();
+    expect(document.querySelectorAll(".tool-event")).toHaveLength(1);
+    expect(screen.getByText(/first\s+second\s+third/)).not.toBeVisible();
+  });
 });

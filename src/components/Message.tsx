@@ -6,11 +6,11 @@ import type { ChatMessage } from "../types";
 import { textOf } from "../lib/content";
 import { IconButton } from "./IconButton";
 
-interface Props { message: ChatMessage; expanded?: boolean; onBranch: (message: ChatMessage) => void; onRetry?: () => void; }
+interface Props { message: ChatMessage; expanded?: boolean; toolCount?: number; onBranch: (message: ChatMessage) => void; onRetry?: () => void; }
 
-export function Message({ message, expanded = false, onBranch, onRetry }: Props) {
+export function Message({ message, expanded = false, toolCount = 1, onBranch, onRetry }: Props) {
   const [copied, setCopied] = useState(false);
-  if (message.role === "tool") { const output = textOf(message.content); const status = message.toolStatus ?? "done"; return <details className={`tool-event ${status}`} open={status === "running" || (expanded && status !== "done")}><summary><Wrench size={14} /><span><strong>{message.toolName || "tool"}</strong><small>{status === "running" ? "Running…" : status === "error" ? "Failed" : "Completed"}</small></span><span className="tool-chevron">›</span></summary>{output && <pre>{output}</pre>}</details>; }
+  if (message.role === "tool") { const output = textOf(message.content); const status = message.toolStatus ?? "done"; return <details className={`tool-event ${status}`} open={status === "running" || (expanded && status !== "done")}><summary><Wrench size={14} /><span><strong>{message.toolName || "tool"}{toolCount > 1 ? ` x${toolCount}` : ""}</strong><small>{status === "running" ? "Running…" : status === "error" ? "Failed" : "Completed"}</small></span><span className="tool-chevron">›</span></summary>{output && <pre>{output}</pre>}</details>; }
   if (message.role === "user") return <article className="message user-message"><div className="message-body"><ReactMarkdown remarkPlugins={[remarkGfm]}>{textOf(message.content)}</ReactMarkdown></div></article>;
   const output = textOf(message.content);
   const failure = message.stopReason === "aborted" ? (message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;

@@ -36,8 +36,25 @@ function groupTurns(messages: ChatMessage[]) {
   }, []);
 }
 
+function compactCompletedTools(messages: ChatMessage[]) {
+  return messages.reduce<Array<{ message: ChatMessage; count: number }>>((runs, message) => {
+    const previous = runs.at(-1);
+    const status = message.toolStatus ?? "done";
+    if (message.role === "tool" && status === "done" && previous?.message.role === "tool" && (previous.message.toolStatus ?? "done") === "done" && (previous.message.toolName || "tool") === (message.toolName || "tool")) {
+      const outputs = [textOf(previous.message.content), textOf(message.content)].filter(Boolean);
+      previous.message = { ...previous.message, id: `${previous.message.id}:${message.id}`, content: outputs.join("\n\n") };
+      previous.count += 1;
+    } else runs.push({ message, count: 1 });
+    return runs;
+  }, []);
+}
+
+function renderMessages(messages: ChatMessage[], expanded: boolean, onBranch: Props["onBranch"]) {
+  return compactCompletedTools(messages).map(({ message, count }) => <Message key={message.id} message={message} toolCount={count} expanded={expanded} onBranch={onBranch} />);
+}
+
 function ConversationTurn({ messages, active, retryable, onRetry, onBranch }: { messages: ChatMessage[]; active: boolean; retryable: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"] }) {
-  if (active) return <>{messages.map((message) => <Message key={message.id} message={message} expanded onBranch={onBranch} />)}</>;
+  if (active) return <>{renderMessages(messages, true, onBranch)}</>;
 
   let finalIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -51,7 +68,7 @@ function ConversationTurn({ messages, active, retryable, onRetry, onBranch }: { 
 
   return <section className="conversation-turn">
     {userMessages.map((message) => <Message key={message.id} message={message} onBranch={onBranch} />)}
-    {intermediate.length > 0 && <details className="work-group"><summary>Work · {intermediate.length} {intermediate.length === 1 ? "step" : "steps"}</summary><div className="work-group-content">{intermediate.map((message) => <Message key={message.id} message={message} expanded onBranch={onBranch} />)}</div></details>}
+    {intermediate.length > 0 && <details className="work-group"><summary>Work · {intermediate.length} {intermediate.length === 1 ? "step" : "steps"}</summary><div className="work-group-content">{renderMessages(intermediate, true, onBranch)}</div></details>}
     {finalMessage && <Message message={finalMessage} onBranch={onBranch} onRetry={retryPrompt ? () => { window.dispatchEvent(new CustomEvent("pi:set-editor-text", { detail: "" })); onRetry(retryPrompt); } : undefined} />}
   </section>;
 }
