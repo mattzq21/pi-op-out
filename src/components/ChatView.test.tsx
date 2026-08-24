@@ -38,7 +38,7 @@ describe("conversation work visibility", () => {
       { id: "answer", role: "assistant", content: "Done" }
     ];
     render(<ChatView state={{ ...state(false), messageCount: skillMessages.length }} messages={skillMessages} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
-    expect(screen.getByText("/skill:review")).toHaveClass("skill-reference");
+    expect(screen.getByText("$review")).toHaveClass("skill-reference");
     expect(screen.getByText("Keep this request visible.")).toBeVisible();
     expect(screen.queryByText("Private skill instructions")).not.toBeInTheDocument();
   });
