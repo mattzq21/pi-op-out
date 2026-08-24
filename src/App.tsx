@@ -56,7 +56,7 @@ export default function App() {
   const transport = useMemo(createTransport, []); const [view, setView] = useState<"chat" | "settings">("chat");
   const [state, setState] = useState(emptyState); const [messages, setMessages] = useState<ChatMessage[]>([]); const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [models, setModels] = useState<Model[]>([]); const [commands, setCommands] = useState<SlashCommand[]>([]); const [thinkingLevels, setThinkingLevels] = useState<string[]>(["off"]); const [settings, setSettings] = useState<AppSettings>(defaultSettings);
-  const settingsRef = useRef(settings); const liveRevision = useRef(0); const activeAssistantId = useRef<string | undefined>(undefined);
+  const settingsRef = useRef(settings); const liveRevision = useRef(0); const activeAssistantId = useRef<string | undefined>(undefined); const sessionIndexRequest = useRef<Promise<void> | undefined>(undefined);
   const [panelOpen, setPanelOpen] = useState(true); const [query, setQuery] = useState(""); const [connected, setConnected] = useState(false); const [error, setError] = useState<string>();
   const [activeHostId, setActiveHostId] = useState("local");
   const [codexUsage, setCodexUsage] = useState<number>();
@@ -77,16 +77,28 @@ export default function App() {
   useEffect(() => { settingsRef.current = settings; }, [settings]);
   useEffect(() => { void transport.loadCodexUsage().then((usage) => setCodexUsage(usage.remainingPercent)).catch(() => undefined); }, [transport]);
 
-  const refresh = useCallback(async (hostId = activeHostId) => {
+  const syncSessionIndex = useCallback(() => {
+    if (!sessionIndexRequest.current) sessionIndexRequest.current = transport.listSessions().then((nextSessions) => {
+      setSessions(nextSessions);
+      setState((current) => {
+        const activeSession = nextSessions.find((session) => session.id === current.sessionId && (session.hostId ?? "local") === activeHostId);
+        return activeSession && activeSession.name !== current.sessionName ? { ...current, sessionName: activeSession.name } : current;
+      });
+    }).catch(() => undefined).finally(() => { sessionIndexRequest.current = undefined; });
+    return sessionIndexRequest.current;
+  }, [activeHostId, transport]);
+
+  const refresh = useCallback(async (_hostId = activeHostId) => {
     const revision = liveRevision.current;
-    const [nextState, response, nextSessions, modelResponse, thinkingResponse, commandResponse, nextSettings] = await Promise.all([
-      transport.command<AgentState>({ type: "get_state" }), transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }), transport.listSessions(),
+    void syncSessionIndex();
+    const [nextState, response, modelResponse, thinkingResponse, commandResponse, nextSettings] = await Promise.all([
+      transport.command<AgentState>({ type: "get_state" }), transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }),
       transport.command<{ models: Model[] }>({ type: "get_available_models" }), transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }), transport.command<{ commands: SlashCommand[] }>({ type: "get_commands" }), transport.loadSettings()
     ]);
-    const activeSession = nextSessions.find((session) => session.id === nextState.sessionId && (session.hostId ?? "local") === hostId);
-    if (liveRevision.current === revision) { setState({ ...nextState, sessionName: activeSession?.name ?? nextState.sessionName }); setMessages(branchMessages(response.entries, response.leafId)); }
-    setSessions(nextSessions); setModels(modelResponse.models); setCommands(commandResponse.commands); setThinkingLevels(thinkingResponse.levels); setSettings(nextSettings); return nextSettings;
-  }, [activeHostId, transport]);
+    if (liveRevision.current === revision) { setState(nextState); setMessages(branchMessages(response.entries, response.leafId)); }
+    setModels(modelResponse.models); setCommands(commandResponse.commands); setThinkingLevels(thinkingResponse.levels); setSettings(nextSettings);
+    return nextSettings;
+  }, [activeHostId, syncSessionIndex, transport]);
 
   const configureRuntime = useCallback((value: AppSettings) => Promise.all([
     transport.command({ type: "set_auto_compaction", enabled: value.autoCompaction }), transport.command({ type: "set_auto_retry", enabled: value.autoRetry }),
@@ -146,16 +158,9 @@ export default function App() {
 
   useEffect(() => {
     if (!connected) return;
-    const syncSessionNames = () => void transport.listSessions().then((nextSessions) => {
-      setSessions(nextSessions);
-      setState((current) => {
-        const activeSession = nextSessions.find((session) => session.id === current.sessionId && (session.hostId ?? "local") === activeHostId);
-        return activeSession && activeSession.name !== current.sessionName ? { ...current, sessionName: activeSession.name } : current;
-      });
-    }).catch(() => undefined);
-    const interval = window.setInterval(syncSessionNames, settings.hosts.length ? 5000 : 1500);
+    const interval = window.setInterval(() => void syncSessionIndex(), settings.hosts.length ? 5000 : 1500);
     return () => window.clearInterval(interval);
-  }, [activeHostId, connected, settings.hosts.length, transport]);
+  }, [connected, settings.hosts.length, syncSessionIndex]);
 
   const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => {
     if (behavior) { await transport.command({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...(images.length ? { images } : {}) }); setState((current) => ({ ...current, pendingMessageCount: current.pendingMessageCount + 1 })); return; }

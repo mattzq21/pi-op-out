@@ -155,7 +155,7 @@ fn codex_remaining_percent(response: &Value) -> Option<u8> {
     Some((100.0 - used.clamp(0.0, 100.0)).round() as u8)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn codex_usage() -> Result<CodexUsage, String> {
     let mut child = Command::new(codex_executable()).arg("app-server").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|error| format!("Could not start Codex: {error}"))?;
     let result = (|| {
@@ -333,7 +333,7 @@ fn merge_discovered_skills(settings: &mut AppSettings) {
     });
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     let path = settings_path(&app)?;
     let mut settings = if !path.exists() { default_settings() } else { serde_json::from_slice(&fs::read(path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())? };
@@ -341,7 +341,7 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     merge_discovered_skills(&mut settings); Ok(settings)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<(), String> {
     let mut host_ids = HashSet::new();
     for host in &settings.hosts {
@@ -388,7 +388,7 @@ fn remote_directory_path(path: Option<&str>) -> String {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn start_pi(app: AppHandle, runtime: State<PiRuntime>, cwd: Option<String>, session_path: Option<String>, host_id: Option<String>) -> Result<(), String> {
     let mut process_guard = runtime.process.lock().map_err(|_| "Pi runtime lock was poisoned")?;
     if process_guard.is_some() { return Ok(()); }
@@ -444,13 +444,13 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, cwd: Option<String>, sess
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn stop_pi(runtime: State<PiRuntime>) -> Result<(), String> {
     if let Some(mut process) = runtime.process.lock().map_err(|_| "Pi runtime lock was poisoned")?.take() { let _ = process.child.kill(); let _ = process.child.wait(); }
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn pi_command(runtime: State<PiRuntime>, mut command: Value) -> Result<Value, String> {
     let fire_and_forget = command.get("type").and_then(Value::as_str) == Some("extension_ui_response");
     let id = command.get("id").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -521,7 +521,7 @@ fn resize_terminal(runtime: State<TerminalRuntime>, terminal_id: String, cols: u
     process.master.resize(PtySize { rows: rows.max(1), cols: cols.max(1), pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn close_terminal(runtime: State<TerminalRuntime>, terminal_id: String) -> Result<(), String> {
     if let Some(mut process) = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.remove(&terminal_id) { let _ = process.child.kill(); let _ = process.child.wait(); }
     Ok(())
@@ -574,7 +574,7 @@ fn list_remote_sessions(host: &RemoteHost) -> Result<Vec<SessionSummary>, String
     Ok(sessions)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn home_directory(app: AppHandle, host_id: String) -> Result<String, String> {
     if host_id == "local" { let home = home_dir()?; return Ok(home.canonicalize().unwrap_or(home).to_string_lossy().into_owned()); }
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
@@ -584,7 +584,7 @@ fn home_directory(app: AppHandle, host_id: String) -> Result<String, String> {
     (!path.is_empty()).then_some(path).ok_or_else(|| "Remote home directory was unavailable".into())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_directories(app: AppHandle, host_id: String, path: Option<String>) -> Result<DirectoryListing, String> {
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
     let remote = format!("cd {} && printf '%s\\000' \"$PWD\" && find . -mindepth 1 -maxdepth 1 -type d -printf '%f\\000'", remote_directory_path(path.as_deref()));
@@ -597,16 +597,19 @@ fn list_directories(app: AppHandle, host_id: String, path: Option<String>) -> Re
     Ok(DirectoryListing { path: current.to_string_lossy().into_owned(), parent: current.parent().map(|parent| parent.to_string_lossy().into_owned()), directories })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_sessions(app: AppHandle) -> Result<Vec<SessionSummary>, String> {
     let root = home_dir()?.join(".pi/agent/sessions");
     let mut sessions: Vec<_> = if root.exists() { WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok).filter(|entry| entry.file_type().is_file() && entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")).filter_map(|entry| parse_session(entry.path())).collect() } else { vec![] };
-    // ponytail: hosts are queried serially; parallelize only when measured startup latency warrants it.
-    for host in load_app_settings(app)?.hosts { if let Ok(mut remote) = list_remote_sessions(&host) { sessions.append(&mut remote); } }
+    let hosts = load_app_settings(app)?.hosts;
+    thread::scope(|scope| {
+        let requests: Vec<_> = hosts.iter().map(|host| scope.spawn(move || list_remote_sessions(host))).collect();
+        for request in requests { if let Ok(Ok(mut remote)) = request.join() { sessions.append(&mut remote); } }
+    });
     sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at)); Ok(sessions)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn archive_session(app: AppHandle, session_path: String, host_id: Option<String>) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     if host_id != "local" {
@@ -634,7 +637,7 @@ fn archive_session(app: AppHandle, session_path: String, host_id: Option<String>
     fs::rename(&source, &destination).map_err(|error| format!("Could not archive session: {error}"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn relocate_session(session_path: String, cwd: String, host_id: Option<String>) -> Result<(), String> {
     if host_id.as_deref().unwrap_or("local") != "local" { return Err("Relocating remote sessions is not supported yet".into()); }
     let replacement = PathBuf::from(cwd.trim());
