@@ -36,7 +36,7 @@ export default function App() {
   const transport = useMemo(createTransport, []); const [view, setView] = useState<"chat" | "settings">("chat");
   const [state, setState] = useState(emptyState); const [messages, setMessages] = useState<ChatMessage[]>([]); const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [models, setModels] = useState<Model[]>([]); const [commands, setCommands] = useState<SlashCommand[]>([]); const [thinkingLevels, setThinkingLevels] = useState<string[]>(["off"]); const [settings, setSettings] = useState<AppSettings>(defaultSettings);
-  const settingsRef = useRef(settings);
+  const settingsRef = useRef(settings); const liveRevision = useRef(0);
   const [panelOpen, setPanelOpen] = useState(true); const [query, setQuery] = useState(""); const [connected, setConnected] = useState(false); const [error, setError] = useState<string>();
   const [codexUsage, setCodexUsage] = useState<number>();
   const [dialog, setDialog] = useState<ExtensionUiRequest>(); const [notice, setNotice] = useState<{ title: string; message: string }>();
@@ -56,12 +56,14 @@ export default function App() {
   useEffect(() => { void transport.loadCodexUsage().then((usage) => setCodexUsage(usage.remainingPercent)).catch(() => undefined); }, [transport]);
 
   const refresh = useCallback(async () => {
+    const revision = liveRevision.current;
     const [nextState, response, nextSessions, modelResponse, thinkingResponse, commandResponse, nextSettings] = await Promise.all([
       transport.command<AgentState>({ type: "get_state" }), transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }), transport.listSessions(),
       transport.command<{ models: Model[] }>({ type: "get_available_models" }), transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }), transport.command<{ commands: SlashCommand[] }>({ type: "get_commands" }), transport.loadSettings()
     ]);
     const activeSession = nextSessions.find((session) => session.id === nextState.sessionId);
-    setState({ ...nextState, sessionName: activeSession?.name ?? nextState.sessionName }); setMessages(branchMessages(response.entries, response.leafId)); setSessions(nextSessions); setModels(modelResponse.models); setCommands(commandResponse.commands); setThinkingLevels(thinkingResponse.levels); setSettings(nextSettings); return nextSettings;
+    if (liveRevision.current === revision) { setState({ ...nextState, sessionName: activeSession?.name ?? nextState.sessionName }); setMessages(branchMessages(response.entries, response.leafId)); }
+    setSessions(nextSessions); setModels(modelResponse.models); setCommands(commandResponse.commands); setThinkingLevels(thinkingResponse.levels); setSettings(nextSettings); return nextSettings;
   }, [transport]);
 
   const configureRuntime = useCallback((value: AppSettings) => Promise.all([
@@ -72,6 +74,7 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     const unsubscribe = transport.subscribe((event: RpcEvent) => {
+      if (["agent_start", "agent_end", "agent_settled", "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end"].includes(event.type)) liveRevision.current += 1;
       if (event.type === "agent_start") setState((current) => ({ ...current, isStreaming: true }));
       if (event.type === "agent_end" || event.type === "agent_settled") { setState((current) => ({ ...current, isStreaming: false, activity: undefined })); if (event.type === "agent_settled" && document.hidden && settingsRef.current.notifications && "Notification" in window && Notification.permission === "granted") new Notification("Pi finished", { body: "Your coding agent is ready for you." }); }
       if (event.type === "message_start" || event.type === "message_end") {
