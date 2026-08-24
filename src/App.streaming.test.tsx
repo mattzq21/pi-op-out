@@ -71,3 +71,18 @@ it("does not let an older snapshot erase newer live work", async () => {
   expect(screen.getByText("second thought")).toBeVisible();
   expect(screen.getByText("bash")).toBeVisible();
 });
+
+it("renders Pi assistant deltas before message_end", async () => {
+  render(<App />);
+  await screen.findByRole("textbox", { name: "Message Pi" });
+  act(() => {
+    control.listener?.({ type: "agent_start" });
+    control.listener?.({ type: "message_start", message: { role: "assistant", content: [], timestamp: 1 } });
+    control.listener?.({ type: "message_update", assistantMessageEvent: { type: "thinking_start", contentIndex: 0 } });
+    control.listener?.({ type: "message_update", assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "Checking now" } });
+    control.listener?.({ type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 1 } });
+    control.listener?.({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Still working" } });
+  });
+  expect(screen.getByText("Checking now")).toBeVisible();
+  expect(screen.getByText("Still working")).toBeVisible();
+});
