@@ -189,7 +189,9 @@ describe("Pi desktop", () => {
     render(<App />);
     const usage = await screen.findByLabelText("Codex usage remaining");
     expect(usage).toHaveTextContent("73% left");
-    expect(usage.parentElement).toContainElement(screen.getByRole("button", { name: "Settings" }));
+    const settings = screen.getByRole("button", { name: "Settings" });
+    expect(usage.parentElement).toContainElement(settings);
+    expect(settings.nextElementSibling).toBe(usage);
   });
 
   it("toggles the terminal with the default keybind", async () => {
