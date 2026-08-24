@@ -3,7 +3,8 @@ use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, Read, Write},
+    net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::{mpsc, Arc, Mutex},
@@ -36,6 +37,23 @@ struct TerminalRuntime {
 struct PiRuntime {
     process: Mutex<Option<PiProcess>>,
     pending: Arc<Mutex<HashMap<String, mpsc::Sender<Result<Value, String>>>>>,
+    active_agent: Mutex<Option<AgentAddress>>,
+}
+
+#[derive(Clone)]
+struct AgentAddress { host_id: String, session_id: Option<String>, session_path: Option<String> }
+
+#[derive(Clone)]
+struct BrokerRuntime { port: Arc<Mutex<u16>>, token: String, busy: Arc<Mutex<HashSet<String>>> }
+
+impl Default for BrokerRuntime {
+    fn default() -> Self { Self { port: Arc::new(Mutex::new(0)), token: Uuid::new_v4().to_string(), busy: Arc::new(Mutex::new(HashSet::new())) } }
+}
+
+struct BusyAgent { key: String, busy: Arc<Mutex<HashSet<String>>> }
+
+impl Drop for BusyAgent {
+    fn drop(&mut self) { if let Ok(mut busy) = self.busy.lock() { busy.remove(&self.key); } }
 }
 
 fn fail_pending(pending: &Arc<Mutex<HashMap<String, mpsc::Sender<Result<Value, String>>>>>, error: &str) {
@@ -202,10 +220,21 @@ fn prepare_mcp_bridge(app: &AppHandle, settings: &AppSettings) -> Result<(PathBu
     Ok((extension_path, config_path))
 }
 
+fn prepare_session_broker(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_config_dir().map_err(|error| error.to_string())?;
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let path = dir.join("pi-desktop-session-broker.ts");
+    fs::write(&path, include_str!("../resources/session-broker.ts")).map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
 fn default_settings() -> AppSettings {
     AppSettings {
         default_model: String::new(), default_thinking: "high".into(), auto_compaction: true, auto_retry: true, notifications: true, steering_mode: default_queue_mode(), follow_up_mode: default_queue_mode(), keybindings: default_keybindings(),
-        tools: ["read", "bash", "edit", "write", "grep", "find", "ls"].iter().map(|name| json!({"name": name, "description": "Pi built-in tool", "enabled": true, "builtin": true})).collect(),
+        tools: ["read", "bash", "edit", "write", "grep", "find", "ls"].iter().map(|name| json!({"name": name, "description": "Pi built-in tool", "enabled": true, "builtin": true})).chain([
+            json!({"name":"list_agents","description":"List agents by machine and session","enabled":true,"builtin":false}),
+            json!({"name":"send_message","description":"Send a message to another agent","enabled":true,"builtin":false}),
+        ]).collect(),
         skills: vec![], mcp_servers: vec![], hosts: vec![],
     }
 }
@@ -350,6 +379,7 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     let path = settings_path(&app)?;
     let mut settings = if !path.exists() { default_settings() } else { serde_json::from_slice(&fs::read(path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())? };
     for shortcut in settings.keybindings.values_mut() { *shortcut = shortcut.replace("Mod+", "Ctrl+"); }
+    for tool in default_settings().tools { if !settings.tools.iter().any(|current| current.get("name") == tool.get("name")) { settings.tools.push(tool); } }
     merge_discovered_skills(&mut settings); Ok(settings)
 }
 
@@ -381,10 +411,14 @@ fn remote_host<'a>(settings: &'a AppSettings, host_id: &str) -> Result<&'a Remot
 
 fn user_ssh_config() -> Option<PathBuf> { home_dir().ok().map(|home| home.join(".ssh/config")).filter(|path| path.is_file()) }
 
-fn ssh(host: &RemoteHost) -> Command {
+fn ssh_base() -> Command {
     let mut command = Command::new("ssh");
     if let Some(config) = user_ssh_config() { command.arg("-F").arg(config); }
-    command.args(["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=5", &host.target]); command
+    command.args(["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=5"]); command
+}
+
+fn ssh(host: &RemoteHost) -> Command {
+    let mut command = ssh_base(); command.arg(&host.target); command
 }
 
 fn remote_pi_path(path: &str) -> String {
@@ -400,19 +434,56 @@ fn remote_directory_path(path: Option<&str>) -> String {
     }
 }
 
+fn enabled_tool_names(settings: &AppSettings) -> Vec<&str> {
+    settings.tools.iter().filter(|tool| tool.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|tool| tool.get("name").and_then(Value::as_str)).collect()
+}
+
+fn broker_environment(broker: &BrokerRuntime) -> Result<(u16, String), String> {
+    let port = *broker.port.lock().map_err(|_| "Session broker lock was poisoned")?;
+    if port == 0 { return Err("Session broker is not ready".into()); }
+    Ok((port, broker.token.clone()))
+}
+
+fn claim_agent(broker: &BrokerRuntime, host_id: &str, session_id: &str) -> Result<BusyAgent, String> {
+    let key = format!("{host_id}\0{session_id}");
+    let mut busy = broker.busy.lock().map_err(|_| "Session broker lock was poisoned")?;
+    if !busy.insert(key.clone()) { return Err(format!("Agent {host_id}/{session_id} is already responding")); }
+    Ok(BusyAgent { key, busy: broker.busy.clone() })
+}
+
+fn remote_broker_port() -> u16 {
+    let bytes = Uuid::new_v4(); let bytes = bytes.as_bytes();
+    20_000 + (u16::from_be_bytes([bytes[0], bytes[1]]) % 30_000)
+}
+
+fn remote_broker_command(host: &RemoteHost, local_port: u16, remote_port: u16) -> Command {
+    let mut command = ssh_base();
+    command.args(["-o", "ExitOnForwardFailure=yes", "-R", &format!("127.0.0.1:{remote_port}:127.0.0.1:{local_port}"), &host.target]);
+    command
+}
+
+fn stage_remote_broker(host: &RemoteHost) -> Result<(), String> {
+    let body = shell_quote(include_str!("../resources/session-broker.ts"));
+    let remote = format!("mkdir -p \"$HOME/.pi-desktop\" && printf %s {body} > \"$HOME/.pi-desktop/session-broker.ts\"");
+    let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not install the session broker on {}: {error}", host.name))?;
+    output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
+}
+
 #[tauri::command(async)]
-fn start_pi(app: AppHandle, runtime: State<PiRuntime>, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, host_id: Option<String>) -> Result<(), String> {
+fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, host_id: Option<String>) -> Result<(), String> {
     let mut process_guard = runtime.process.lock().map_err(|_| "Pi runtime lock was poisoned")?;
     if process_guard.is_some() { return Ok(()); }
     let settings = load_app_settings(app.clone()).unwrap_or_else(|_| default_settings());
     let host_id = host_id.unwrap_or_else(|| "local".into());
+    let (broker_port, broker_token) = broker_environment(&broker)?;
+    let enabled_tools = enabled_tool_names(&settings);
     let mut command = if host_id == "local" {
         let working_dir = match cwd.as_deref() { Some("~") => home_dir()?, Some(path) => PathBuf::from(path), None => std::env::current_dir().map_err(|error| error.to_string())? };
         let (mcp_extension, mcp_config) = prepare_mcp_bridge(&app, &settings)?;
+        let broker_extension = prepare_session_broker(&app)?;
         let mut command = Command::new(pi_executable());
-        command.arg("--mode").arg("rpc").arg("--approve").arg("--no-skills").current_dir(&working_dir).arg("--extension").arg(mcp_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config);
+        command.arg("--mode").arg("rpc").arg("--approve").arg("--no-skills").current_dir(&working_dir).arg("--extension").arg(mcp_extension).arg("--extension").arg(broker_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config).env("PI_DESKTOP_BROKER_URL", format!("http://127.0.0.1:{broker_port}")).env("PI_DESKTOP_BROKER_TOKEN", &broker_token);
         if let Some(path) = &session_path { command.arg("--session").arg(path); } else if let Some(id) = &session_id { command.arg("--session-id").arg(id); }
-        let enabled_tools: Vec<&str> = settings.tools.iter().filter(|tool| tool.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|tool| tool.get("name").and_then(Value::as_str)).collect();
         if enabled_tools.is_empty() { command.arg("--no-tools"); } else { command.arg("--tools").arg(enabled_tools.join(",")); }
         for skill in settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)) { if let Some(path) = skill.get("path").and_then(Value::as_str) { let expanded = path.strip_prefix("~/").and_then(|rest| home_dir().ok().map(|home| home.join(rest))).unwrap_or_else(|| PathBuf::from(path)); command.arg("--skill").arg(expanded); } }
         if !settings.default_model.trim().is_empty() { command.arg("--model").arg(settings.default_model.trim()); }
@@ -420,13 +491,16 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, cwd: Option<String>, sess
         command
     } else {
         let host = remote_host(&settings, &host_id)?;
-        let mut arguments = vec![remote_pi_path(&host.pi_path), "--mode".into(), "rpc".into(), "--approve".into()];
+        stage_remote_broker(host)?;
+        let remote_port = remote_broker_port();
+        let mut arguments = vec![remote_pi_path(&host.pi_path), "--mode".into(), "rpc".into(), "--approve".into(), "--extension".into(), "\"$HOME/.pi-desktop/session-broker.ts\"".into()];
         if let Some(path) = &session_path { arguments.extend(["--session".into(), shell_quote(path)]); } else if let Some(id) = &session_id { arguments.extend(["--session-id".into(), shell_quote(id)]); }
+        if enabled_tools.is_empty() { arguments.push("--no-tools".into()); } else { arguments.extend(["--tools".into(), shell_quote(&enabled_tools.join(","))]); }
         if !settings.default_model.trim().is_empty() { arguments.extend(["--model".into(), shell_quote(settings.default_model.trim())]); }
         if !settings.default_thinking.trim().is_empty() { arguments.extend(["--thinking".into(), shell_quote(settings.default_thinking.trim())]); }
         let directory = remote_directory_path(cwd.as_deref());
-        let remote = format!("cd {directory} && exec {}", arguments.join(" "));
-        let mut command = ssh(host); command.arg(remote); command
+        let remote = format!("cd {directory} && PI_DESKTOP_BROKER_URL={} PI_DESKTOP_BROKER_TOKEN={} exec {}", shell_quote(&format!("http://127.0.0.1:{remote_port}")), shell_quote(&broker_token), arguments.join(" "));
+        let mut command = remote_broker_command(host, broker_port, remote_port); command.arg(remote); command
     };
     command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|error| format!("Could not start pi: {error}"))?;
@@ -453,12 +527,14 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, cwd: Option<String>, sess
     let error_app = app.clone();
     thread::spawn(move || for line in BufReader::new(stderr).lines().map_while(Result::ok) { let _ = error_app.emit("pi://stderr", line); });
     *process_guard = Some(PiProcess { child, stdin });
+    *runtime.active_agent.lock().map_err(|_| "Active agent lock was poisoned")? = Some(AgentAddress { host_id, session_id, session_path });
     Ok(())
 }
 
 #[tauri::command(async)]
 fn stop_pi(runtime: State<PiRuntime>) -> Result<(), String> {
     if let Some(mut process) = runtime.process.lock().map_err(|_| "Pi runtime lock was poisoned")?.take() { let _ = process.child.kill(); let _ = process.child.wait(); }
+    *runtime.active_agent.lock().map_err(|_| "Active agent lock was poisoned")? = None;
     Ok(())
 }
 
@@ -632,17 +708,19 @@ fn list_directories(app: AppHandle, host_id: String, path: Option<String>) -> Re
     Ok(DirectoryListing { path: current.to_string_lossy().into_owned(), parent: current.parent().map(|parent| parent.to_string_lossy().into_owned()), directories })
 }
 
-#[tauri::command(async)]
-fn list_sessions(app: AppHandle) -> Result<Vec<SessionSummary>, String> {
+fn collect_sessions(app: &AppHandle) -> Result<Vec<SessionSummary>, String> {
     let root = home_dir()?.join(".pi/agent/sessions");
     let mut sessions: Vec<_> = if root.exists() { WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok).filter(|entry| entry.file_type().is_file() && entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")).filter_map(|entry| parse_session(entry.path())).collect() } else { vec![] };
-    let hosts = load_app_settings(app)?.hosts;
+    let hosts = load_app_settings(app.clone())?.hosts;
     thread::scope(|scope| {
         let requests: Vec<_> = hosts.iter().map(|host| scope.spawn(move || list_remote_sessions(host))).collect();
         for request in requests { if let Ok(Ok(mut remote)) = request.join() { sessions.append(&mut remote); } }
     });
     sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at)); Ok(sessions)
 }
+
+#[tauri::command(async)]
+fn list_sessions(app: AppHandle) -> Result<Vec<SessionSummary>, String> { collect_sessions(&app) }
 
 fn session_entries(content: &str) -> Value {
     let entries: Vec<Value> = content.lines().skip(1).filter_map(|line| serde_json::from_str(line).ok()).collect();
@@ -708,9 +786,114 @@ fn relocate_session(session_path: String, cwd: String, host_id: Option<String>) 
     fs::write(path, updated).map_err(|error| format!("Could not update session: {error}"))
 }
 
+fn resolve_agent<'a>(sessions: &'a [SessionSummary], host_id: &str, session_id: &str, active: Option<&AgentAddress>) -> Result<&'a SessionSummary, String> {
+    let session = sessions.iter().find(|session| session.host_id == host_id && session.id == session_id).ok_or_else(|| format!("Agent {host_id}/{session_id} was not found"))?;
+    // ponytail: A resident per-session worker can replace this guard if measured startup latency warrants that extra lifecycle.
+    if active.is_some_and(|agent| agent_is_active(session, agent)) {
+        return Err("Cannot message the session currently open in Pi Desktop".into());
+    }
+    Ok(session)
+}
+
+fn agent_is_active(session: &SessionSummary, agent: &AgentAddress) -> bool {
+    agent.host_id == session.host_id && (agent.session_id.as_deref() == Some(session.id.as_str()) || agent.session_path.as_deref() == Some(session.path.as_str()))
+}
+
+fn append_configured_skills(command: &mut Command, settings: &AppSettings) {
+    for skill in settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)) {
+        if let Some(path) = skill.get("path").and_then(Value::as_str) {
+            let expanded = path.strip_prefix("~/").and_then(|rest| home_dir().ok().map(|home| home.join(rest))).unwrap_or_else(|| PathBuf::from(path));
+            command.arg("--skill").arg(expanded);
+        }
+    }
+}
+
+fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &SessionSummary, message: &str) -> Result<String, String> {
+    let settings = load_app_settings(app.clone()).unwrap_or_else(|_| default_settings());
+    let (port, token) = broker_environment(broker)?;
+    let tools = enabled_tool_names(&settings);
+    let mut command = if session.host_id == "local" {
+        let mut command = Command::new(pi_executable());
+        command.arg("--print").arg("--approve").arg("--no-skills").arg("--session").arg(&session.path).arg("--extension").arg(prepare_session_broker(app)?).current_dir(&session.cwd).env("PI_DESKTOP_BROKER_URL", format!("http://127.0.0.1:{port}")).env("PI_DESKTOP_BROKER_TOKEN", &token);
+        append_configured_skills(&mut command, &settings);
+        command
+    } else {
+        let host = remote_host(&settings, &session.host_id)?;
+        stage_remote_broker(host)?;
+        let remote_port = remote_broker_port();
+        let mut arguments = vec![remote_pi_path(&host.pi_path), "--print".into(), "--approve".into(), "--session".into(), shell_quote(&session.path), "--extension".into(), "\"$HOME/.pi-desktop/session-broker.ts\"".into()];
+        if tools.is_empty() { arguments.push("--no-tools".into()); } else { arguments.extend(["--tools".into(), shell_quote(&tools.join(","))]); }
+        if !settings.default_model.trim().is_empty() { arguments.extend(["--model".into(), shell_quote(settings.default_model.trim())]); }
+        if !settings.default_thinking.trim().is_empty() { arguments.extend(["--thinking".into(), shell_quote(settings.default_thinking.trim())]); }
+        arguments.push(shell_quote(message));
+        let remote = format!("cd {} && PI_DESKTOP_BROKER_URL={} PI_DESKTOP_BROKER_TOKEN={} exec {}", remote_directory_path(Some(&session.cwd)), shell_quote(&format!("http://127.0.0.1:{remote_port}")), shell_quote(&token), arguments.join(" "));
+        let mut command = remote_broker_command(host, port, remote_port); command.arg(remote); command
+    };
+    if session.host_id == "local" {
+        if tools.is_empty() { command.arg("--no-tools"); } else { command.arg("--tools").arg(tools.join(",")); }
+        if !settings.default_model.trim().is_empty() { command.arg("--model").arg(settings.default_model.trim()); }
+        if !settings.default_thinking.trim().is_empty() { command.arg("--thinking").arg(settings.default_thinking.trim()); }
+        command.arg(message);
+    }
+    let output = command.output().map_err(|error| format!("Could not message agent: {error}"))?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn broker_response(mut stream: TcpStream, status: &str, body: Value) {
+    let payload = body.to_string();
+    let _ = write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len());
+}
+
+fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStream) -> Result<(), String> {
+    let mut reader = BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
+    let mut request_line = String::new(); reader.read_line(&mut request_line).map_err(|error| error.to_string())?;
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().unwrap_or(""); let path = parts.next().unwrap_or("");
+    let mut authorized = false; let mut content_length = 0usize;
+    loop {
+        let mut line = String::new(); reader.read_line(&mut line).map_err(|error| error.to_string())?;
+        if line == "\r\n" || line.is_empty() { break; }
+        let Some((name, value)) = line.split_once(':') else { continue };
+        if name.eq_ignore_ascii_case("authorization") { authorized = value.trim() == format!("Bearer {}", broker.token); }
+        if name.eq_ignore_ascii_case("content-length") { content_length = value.trim().parse().unwrap_or(0); }
+    }
+    if !authorized { broker_response(stream, "401 Unauthorized", json!({"error":"Unauthorized"})); return Ok(()); }
+    if content_length > 1024 * 1024 { broker_response(stream, "413 Payload Too Large", json!({"error":"Message is too large"})); return Ok(()); }
+    let mut body = vec![0; content_length]; reader.read_exact(&mut body).map_err(|error| error.to_string())?;
+    let result = match (method, path) {
+        ("GET", "/agents") => {
+            let active = app.state::<PiRuntime>().active_agent.lock().map_err(|_| "Active agent lock was poisoned")?.clone();
+            collect_sessions(&app).map(|sessions| json!(sessions.into_iter().map(|session| json!({"hostId":session.host_id,"sessionId":session.id,"name":session.name,"project":session.project,"cwd":session.cwd,"active":active.as_ref().is_some_and(|agent| agent_is_active(&session, agent))})).collect::<Vec<_>>()))
+        },
+        ("POST", "/message") => (|| {
+            let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid message request".to_string())?;
+            let host_id = value.get("hostId").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("hostId is required")?;
+            let session_id = value.get("sessionId").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("sessionId is required")?;
+            let message = value.get("message").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("message is required")?;
+            let sessions = collect_sessions(&app)?;
+            let active = app.state::<PiRuntime>().active_agent.lock().map_err(|_| "Active agent lock was poisoned")?.clone();
+            let session = resolve_agent(&sessions, host_id, session_id, active.as_ref())?;
+            let _claim = claim_agent(&broker, host_id, session_id)?;
+            dispatch_agent_message(&app, &broker, session, message).map(|reply| json!({"reply":reply}))
+        })(),
+        _ => Err("Unknown session broker endpoint".into()),
+    };
+    match result { Ok(data) => broker_response(stream, "200 OK", json!({"data":data})), Err(error) => broker_response(stream, "400 Bad Request", json!({"error":error})) }
+    Ok(())
+}
+
+fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), String> {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|error| format!("Could not start session broker: {error}"))?;
+    *broker.port.lock().map_err(|_| "Session broker lock was poisoned")? = listener.local_addr().map_err(|error| error.to_string())?.port();
+    thread::spawn(move || for stream in listener.incoming().flatten() { let app = app.clone(); let broker = broker.clone(); thread::spawn(move || { let _ = handle_broker_request(app, broker, stream); }); });
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_entries, home_directory, create_temporary_chat, list_directories, archive_session, relocate_session, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    let broker = BrokerRuntime::default();
+    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(broker.clone()).setup(move |app| start_session_broker(app.handle().clone(), broker.clone()).map_err(Into::into)).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_entries, home_directory, create_temporary_chat, list_directories, archive_session, relocate_session, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }
 
 #[cfg(test)]
@@ -817,5 +1000,19 @@ mod tests {
         let (sender, receiver) = mpsc::channel(); pending.lock().unwrap().insert("request".into(), sender);
         fail_pending(&pending, "Pi disconnected before responding");
         assert_eq!(receiver.recv_timeout(Duration::from_millis(50)).unwrap().unwrap_err(), "Pi disconnected before responding");
+    }
+
+    #[test]
+    fn addresses_agents_by_machine_and_session_and_protects_the_active_one() {
+        let sessions = vec![SessionSummary { id: "same-id".into(), path: "/remote/session.jsonl".into(), name: "Agent".into(), project: "project".into(), cwd: "/srv/project".into(), cwd_exists: true, updated_at: String::new(), preview: String::new(), message_count: 1, starred: false, host_id: "vps".into(), host_name: "VPS".into() }];
+        assert_eq!(resolve_agent(&sessions, "vps", "same-id", None).unwrap().path, "/remote/session.jsonl");
+        assert!(resolve_agent(&sessions, "local", "same-id", None).is_err());
+        let active = AgentAddress { host_id: "vps".into(), session_id: Some("same-id".into()), session_path: None };
+        assert_eq!(resolve_agent(&sessions, "vps", "same-id", Some(&active)).unwrap_err(), "Cannot message the session currently open in Pi Desktop");
+        let broker = BrokerRuntime::default();
+        let claim = claim_agent(&broker, "vps", "same-id").unwrap();
+        assert_eq!(claim_agent(&broker, "vps", "same-id").err().unwrap(), "Agent vps/same-id is already responding");
+        drop(claim);
+        assert!(claim_agent(&broker, "vps", "same-id").is_ok());
     }
 }

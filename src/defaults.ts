@@ -13,7 +13,9 @@ export const defaultSettings: AppSettings = {
     { name: "write", description: "Create and overwrite files", enabled: true, builtin: true },
     { name: "grep", description: "Search file contents", enabled: true, builtin: true },
     { name: "find", description: "Find files by glob", enabled: true, builtin: true },
-    { name: "ls", description: "List directories", enabled: true, builtin: true }
+    { name: "ls", description: "List directories", enabled: true, builtin: true },
+    { name: "list_agents", description: "List agents by machine and session", enabled: true, builtin: false },
+    { name: "send_message", description: "Send a message to another agent", enabled: true, builtin: false }
   ],
   skills: [],
   hosts: [],

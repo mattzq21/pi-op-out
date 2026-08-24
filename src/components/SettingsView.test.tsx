@@ -47,3 +47,15 @@ describe("machine settings", () => {
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ hosts: [expect.objectContaining({ name: "Build VPS", target: "deploy@example.com", piPath: "/home/deploy/.local/bin/pi" })] }));
   });
 });
+
+describe("session broker tools", () => {
+  it("lets the user disable agent messaging", async () => {
+    const user = userEvent.setup(); const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<SettingsView settings={structuredClone(defaultSettings)} onSave={onSave} />);
+    await user.click(screen.getByRole("button", { name: "Tools" }));
+    expect(screen.getByText("list_agents")).toBeVisible();
+    await user.click(screen.getByRole("switch", { name: "Enable send_message" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ tools: expect.arrayContaining([expect.objectContaining({ name: "send_message", enabled: false })]) }));
+  });
+});
