@@ -38,6 +38,11 @@ export class MockTransport implements PiTransport {
   async selectProjectDirectory() { return "/Users/demo/code/northstar"; }
   async homeDirectory(hostId: string) { return hostId === "local" ? "/Users/demo" : "/home/demo"; }
   async listDirectories(_hostId: string, path = "/home/demo") { return { path, parent: path === "/" ? undefined : path.replace(/\/[^/]+$/, "") || "/", directories: [`${path.replace(/\/$/, "")}/project`] }; }
+  async newTemporaryChat(hostId: string) {
+    await this.command({ type: "new_session" });
+    const session = this.sessions.find((item) => item.id === this.state.sessionId);
+    if (session) { session.cwd = `${hostId === "local" ? "/Users/demo" : "/home/demo"}/pi-desktop/tmp/${session.id}`; session.project = session.id; session.hostId = hostId; }
+  }
   async openProject(cwd: string) {
     const project = cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace"; const candidate = this.sessions.find((session) => session.project === project);
     if (candidate) await this.command({ type: "switch_session", sessionPath: candidate.path }); else { await this.command({ type: "new_session" }); const session = this.sessions.find((item) => item.id === this.state.sessionId); if (session) { session.cwd = cwd; session.project = project; } }

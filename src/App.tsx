@@ -194,7 +194,7 @@ export default function App() {
     await transport.command({ type: "prompt", message: text, ...(images.length ? { images } : {}) });
   };
   const branch = async (message: ChatMessage) => { const index = messages.findIndex((item) => item.id === message.id); const user = messages.slice(0, index + 1).reverse().find((item) => item.role === "user" && item.entryId); if (!user) return; await transport.command({ type: "fork", entryId: user.entryId }); await refresh(); };
-  const newSession = async () => { await transport.command({ type: "new_session" }); await refresh(); setView("chat"); };
+  const newSession = async () => { setView("chat"); setConnected(false); discardMessageUpdates(); setMessages([]); try { await transport.newTemporaryChat(activeHostId); const value = await refresh(activeHostId); await configureRuntime(value); setConnected(true); } catch (reason) { setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); } };
   const selectSession = async (session: SessionSummary) => {
     const hostId = session.hostId ?? "local"; if (session.id === state.sessionId && hostId === activeHostId) return true;
     if (session.cwdExists === false) { setRelocationError(undefined); setRelocatingSession(session); return false; }

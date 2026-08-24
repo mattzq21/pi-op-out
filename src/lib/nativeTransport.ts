@@ -11,19 +11,21 @@ export class NativeTransport implements PiTransport {
   private processLifecycle: Promise<unknown> = Promise.resolve();
   private cwd?: string;
   private sessionPath?: string;
+  private sessionId?: string;
   private hostId = "local";
   private runProcessCommand<T>(command: () => Promise<T>) { const result = this.processLifecycle.then(command, command); this.processLifecycle = result.then(() => undefined, () => undefined); return result; }
   async connect(cwd?: string, sessionPath?: string, hostId?: string) {
-    if (cwd !== undefined) this.cwd = cwd; if (sessionPath !== undefined) this.sessionPath = sessionPath; if (hostId !== undefined) this.hostId = hostId;
+    if (cwd !== undefined) this.cwd = cwd; if (sessionPath !== undefined) { this.sessionPath = sessionPath; this.sessionId = undefined; } if (hostId !== undefined) this.hostId = hostId;
+    if (this.cwd === undefined && this.sessionPath === undefined) { const chat = await invoke<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId: this.hostId }); this.cwd = chat.cwd; this.sessionId = chat.sessionId; }
     const version = ++this.connectionVersion;
     this.unlisten?.(); this.unlisten = undefined;
     const unlisten = await listen<RpcEvent>("pi://event", ({ payload }) => this.listeners.forEach((listener) => listener(payload)));
     if (version !== this.connectionVersion) { unlisten(); return; }
     this.unlisten = unlisten;
-    await this.runProcessCommand(() => invoke("start_pi", { cwd: this.cwd, sessionPath: this.sessionPath, hostId: this.hostId }));
+    await this.runProcessCommand(() => invoke("start_pi", { cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId }));
   }
   async disconnect() { ++this.connectionVersion; this.unlisten?.(); this.unlisten = undefined; await this.runProcessCommand(() => invoke("stop_pi")); }
-  async command<T>(command: RpcCommand) { const result = await invoke<T>("pi_command", { command }); if (command.type === "get_state") this.sessionPath = (result as { sessionFile?: string }).sessionFile; return result; }
+  async command<T>(command: RpcCommand) { const result = await invoke<T>("pi_command", { command }); if (command.type === "get_state") { this.sessionPath = (result as { sessionFile?: string }).sessionFile; this.sessionId = undefined; } return result; }
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   listSessions() { return invoke<SessionSummary[]>("list_sessions"); }
   archiveSession(sessionPath: string, hostId = "local") { return invoke<void>("archive_session", { sessionPath, hostId }); }
@@ -34,7 +36,8 @@ export class NativeTransport implements PiTransport {
   async selectProjectDirectory(defaultPath?: string) { const selected = await open({ directory: true, multiple: false, title: "Open project", defaultPath }); return typeof selected === "string" ? selected : null; }
   homeDirectory(hostId: string) { return invoke<string>("home_directory", { hostId }); }
   listDirectories(hostId: string, path?: string) { return invoke<DirectoryListing>("list_directories", { hostId, path }); }
-  async openProject(cwd: string, hostId = "local") { await this.disconnect(); this.cwd = cwd; this.sessionPath = undefined; this.hostId = hostId; await this.connect(cwd, undefined, hostId); }
+  async newTemporaryChat(hostId: string) { await this.disconnect(); const chat = await invoke<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId }); this.cwd = chat.cwd; this.sessionPath = undefined; this.sessionId = chat.sessionId; this.hostId = hostId; await this.connect(chat.cwd, undefined, hostId); }
+  async openProject(cwd: string, hostId = "local") { await this.disconnect(); this.cwd = cwd; this.sessionPath = undefined; this.sessionId = undefined; this.hostId = hostId; await this.connect(cwd, undefined, hostId); }
   startTerminal(terminalId: string, cwd: string, cols: number, rows: number) { return invoke<void>("start_terminal", { terminalId, cwd, cols, rows, hostId: this.hostId }); }
   writeTerminal(terminalId: string, data: string) { return invoke<void>("write_terminal", { terminalId, data }); }
   resizeTerminal(terminalId: string, cols: number, rows: number) { return invoke<void>("resize_terminal", { terminalId, cols, rows }); }
