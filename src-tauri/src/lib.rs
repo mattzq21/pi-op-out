@@ -38,6 +38,11 @@ struct PiRuntime {
     pending: Arc<Mutex<HashMap<String, mpsc::Sender<Result<Value, String>>>>>,
 }
 
+fn fail_pending(pending: &Arc<Mutex<HashMap<String, mpsc::Sender<Result<Value, String>>>>>, error: &str) {
+    let senders: Vec<_> = pending.lock().map(|mut requests| requests.drain().map(|(_, sender)| sender).collect()).unwrap_or_default();
+    for sender in senders { let _ = sender.send(Err(error.into())); }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SessionSummary {
@@ -362,12 +367,16 @@ fn remote_host<'a>(settings: &'a AppSettings, host_id: &str) -> Result<&'a Remot
     Ok(host)
 }
 
+fn user_ssh_config() -> Option<PathBuf> { home_dir().ok().map(|home| home.join(".ssh/config")).filter(|path| path.is_file()) }
+
 fn ssh(host: &RemoteHost) -> Command {
     let mut command = Command::new("ssh");
-    command.args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", &host.target]); command
+    if let Some(config) = user_ssh_config() { command.arg("-F").arg(config); }
+    command.args(["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=5", &host.target]); command
 }
 
 fn remote_pi_path(path: &str) -> String {
+    if path == "pi" { return "\"$(bash -lc 'command -v pi')\"".into(); }
     path.strip_prefix("~/").map(|rest| format!("$HOME/{}", rest)).unwrap_or_else(|| shell_quote(path))
 }
 
@@ -426,6 +435,7 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, cwd: Option<String>, sess
             }
             let _ = event_app.emit("pi://event", value);
         }
+        fail_pending(&pending, "Pi disconnected before responding");
         let _ = event_app.emit("pi://event", json!({"type": "disconnected"}));
     });
     let error_app = app.clone();
@@ -473,7 +483,8 @@ fn start_terminal(app: AppHandle, runtime: State<TerminalRuntime>, terminal_id: 
     } else {
         let settings = load_app_settings(app.clone())?; let host = remote_host(&settings, &host_id)?;
         let mut command = CommandBuilder::new("ssh");
-        command.args(["-tt", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", &host.target, &format!("cd {} && exec \"${{SHELL:-/bin/bash}}\" -l", shell_quote(&cwd))]); command
+        if let Some(config) = user_ssh_config() { command.arg("-F"); command.arg(config); }
+        command.args(["-tt", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=5", &host.target, &format!("cd {} && exec \"${{SHELL:-/bin/bash}}\" -l", shell_quote(&cwd))]); command
     };
     command.env("TERM", "xterm-256color"); command.env("COLORTERM", "truecolor");
     let child = pair.slave.spawn_command(command).map_err(|error| format!("Could not start terminal shell: {error}"))?;
@@ -728,5 +739,14 @@ mod tests {
         let session = parse_session_content(Path::new("/home/deploy/.pi/agent/sessions/remote.jsonl"), content, SystemTime::UNIX_EPOCH, true, "build", "Build VPS").unwrap();
         assert_eq!((session.host_id.as_str(), session.host_name.as_str(), session.project.as_str()), ("build", "Build VPS", "app"));
         assert_eq!(shell_quote("it's safe"), "'it'\\''s safe'");
+        assert_eq!(remote_pi_path("pi"), "\"$(bash -lc 'command -v pi')\"");
+    }
+
+    #[test]
+    fn disconnect_releases_pending_rpc_calls_immediately() {
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let (sender, receiver) = mpsc::channel(); pending.lock().unwrap().insert("request".into(), sender);
+        fail_pending(&pending, "Pi disconnected before responding");
+        assert_eq!(receiver.recv_timeout(Duration::from_millis(50)).unwrap().unwrap_err(), "Pi disconnected before responding");
     }
 }
