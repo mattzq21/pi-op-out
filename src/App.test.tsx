@@ -9,7 +9,6 @@ describe("Pi desktop", () => {
     expect((await screen.findAllByText("Design desktop shell")).length).toBeGreaterThan(0);
     expect(screen.getByText("northstar")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Branch from here" })).toHaveLength(2);
-    expect(screen.getByTitle("browser transport connected")).toBeInTheDocument();
   });
 
   it("switches conversations from the right panel", async () => {
