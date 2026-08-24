@@ -362,9 +362,11 @@ fn remote_host<'a>(settings: &'a AppSettings, host_id: &str) -> Result<&'a Remot
     Ok(host)
 }
 
+const SSH_OPTIONS: [&str; 6] = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "StrictHostKeyChecking=accept-new"];
+
 fn ssh(host: &RemoteHost) -> Command {
     let mut command = Command::new("ssh");
-    command.args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", &host.target]); command
+    command.arg("-T").args(SSH_OPTIONS).arg(&host.target); command
 }
 
 fn remote_pi_path(path: &str) -> String {
@@ -473,7 +475,7 @@ fn start_terminal(app: AppHandle, runtime: State<TerminalRuntime>, terminal_id: 
     } else {
         let settings = load_app_settings(app.clone())?; let host = remote_host(&settings, &host_id)?;
         let mut command = CommandBuilder::new("ssh");
-        command.args(["-tt", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", &host.target, &format!("cd {} && exec \"${{SHELL:-/bin/bash}}\" -l", shell_quote(&cwd))]); command
+        command.arg("-tt"); command.args(SSH_OPTIONS); command.arg(&host.target); command.arg(format!("cd {} && exec \"${{SHELL:-/bin/bash}}\" -l", shell_quote(&cwd))); command
     };
     command.env("TERM", "xterm-256color"); command.env("COLORTERM", "truecolor");
     let child = pair.slave.spawn_command(command).map_err(|error| format!("Could not start terminal shell: {error}"))?;
@@ -718,5 +720,12 @@ mod tests {
         let session = parse_session_content(Path::new("/home/deploy/.pi/agent/sessions/remote.jsonl"), content, SystemTime::UNIX_EPOCH, true, "build", "Build VPS").unwrap();
         assert_eq!((session.host_id.as_str(), session.host_name.as_str(), session.project.as_str()), ("build", "Build VPS", "app"));
         assert_eq!(shell_quote("it's safe"), "'it'\\''s safe'");
+    }
+
+    #[test]
+    fn ssh_accepts_new_keys_without_accepting_changed_keys() {
+        let host = RemoteHost { id: "vps".into(), name: "VPS".into(), target: "deploy@example.com".into(), pi_path: "pi".into() };
+        let command = ssh(&host); let arguments: Vec<_> = command.get_args().map(|argument| argument.to_string_lossy().into_owned()).collect();
+        assert!(arguments.windows(2).any(|pair| pair == ["StrictHostKeyChecking=accept-new", "deploy@example.com"]));
     }
 }
