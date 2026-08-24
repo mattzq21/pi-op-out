@@ -58,7 +58,7 @@ export class MockTransport implements PiTransport {
         { provider: "openai-codex", id: "gpt-5.6", name: "GPT-5.6", reasoning: true, contextWindow: 272000 }
       ].filter(Boolean) as Model[] } as T;
       case "get_available_thinking_levels": return { levels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"] } as T;
-      case "get_commands": return { commands: [{ name: "review", description: "Review the current changes", source: "prompt" }, { name: "skill:frontend", description: "Use the frontend skill", source: "skill" }, { name: "session-name", description: "Rename this session", source: "extension" }] } as T;
+      case "get_commands": return { commands: [{ name: "llama", description: "Manage llama.cpp router models", source: "extension", sourceInfo: { path: "<inline:llama.cpp>", source: "inline" } }, { name: "review", description: "Review the current changes", source: "prompt" }, { name: "skill:frontend", description: "Use the frontend skill", source: "skill" }, { name: "session-name", description: "Rename this session", source: "extension" }] } as T;
       case "set_model": this.state.model = { provider: String(command.provider), id: String(command.modelId), name: String(command.modelId) }; return this.state.model as T;
       case "set_thinking_level": this.state.thinkingLevel = String(command.level); return undefined as T;
       case "set_session_name": { const name = String(command.name); this.state.sessionName = name; const session = this.sessions.find((item) => item.id === this.state.sessionId); if (session) session.name = name; return undefined as T; }

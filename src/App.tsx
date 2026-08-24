@@ -115,7 +115,7 @@ export default function App() {
       transport.command<{ models: Model[] }>({ type: "get_available_models" }), transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }), transport.command<{ commands: SlashCommand[] }>({ type: "get_commands" }), transport.loadSettings()
     ]);
     if (liveRevision.current === revision) { discardMessageUpdates(); setState(nextState); setMessages(branchMessages(response.entries, response.leafId)); }
-    setModels(modelResponse.models); setCommands(commandResponse.commands); setThinkingLevels(thinkingResponse.levels); setSettings(nextSettings);
+    setModels(modelResponse.models); setCommands(commandResponse.commands.filter((command) => command.sourceInfo?.source !== "inline")); setThinkingLevels(thinkingResponse.levels); setSettings(nextSettings);
     return nextSettings;
   }, [discardMessageUpdates, syncSessionIndex, transport]);
 

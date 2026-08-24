@@ -219,6 +219,7 @@ describe("Pi desktop", () => {
     const composer = await screen.findByRole("textbox", { name: "Message Pi" });
     await user.type(composer, "/");
     expect(await screen.findByRole("option", { name: /review/i })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /llama/i })).not.toBeInTheDocument();
     await user.click(screen.getByRole("option", { name: /review/i }));
     expect(composer).toHaveValue("/review ");
     const picker = document.querySelector('input[type="file"]:not([accept])') as HTMLInputElement;

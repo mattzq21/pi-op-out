@@ -12,7 +12,7 @@ export interface SkillConfig { name: string; path: string; description: string; 
 export interface McpServer { id: string; name: string; transport?: "stdio" | "http"; command: string; args: string; url?: string; headers?: string; enabled: boolean; status?: "connected" | "stopped" | "error"; }
 export interface RemoteHost { id: string; name: string; target: string; piPath: string; }
 export interface DirectoryListing { path: string; parent?: string; directories: string[]; }
-export interface SlashCommand { name: string; description?: string; source: "extension" | "prompt" | "skill"; path?: string; }
+export interface SlashCommand { name: string; description?: string; source: "extension" | "prompt" | "skill"; path?: string; sourceInfo?: { path?: string; source?: string }; }
 export interface ImageAttachment { type: "image"; data: string; mimeType: string; name?: string; }
 export interface AppSettings { defaultModel: string; defaultThinking: string; autoCompaction: boolean; autoRetry: boolean; notifications: boolean; steeringMode: "all" | "one-at-a-time"; followUpMode: "all" | "one-at-a-time"; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; mcpServers: McpServer[]; hosts: RemoteHost[]; }
 export interface CodexUsage { remainingPercent: number; }
