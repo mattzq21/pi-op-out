@@ -20,6 +20,15 @@ describe("Pi desktop", () => {
     expect(await screen.findByText(/browser preview for/)).toHaveTextContent("Wire RPC transport");
   });
 
+  it("opens a conversation before its persisted messages finish loading", async () => {
+    render(<App />);
+    const conversation = await screen.findByRole("button", { name: /Wire RPC transport/ });
+    fireEvent.click(conversation);
+    expect(conversation).toHaveClass("active");
+    expect(screen.queryByText(/I mapped the product around/)).not.toBeInTheDocument();
+    expect(await screen.findByText(/browser preview for/)).toHaveTextContent("Wire RPC transport");
+  });
+
   it("collapses and expands sessions by project", async () => {
     const user = userEvent.setup(); render(<App />);
     const project = await screen.findByRole("button", { name: "pi-ai" });
