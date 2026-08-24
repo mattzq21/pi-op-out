@@ -37,7 +37,7 @@ function compactCompletedTools(messages: ChatMessage[]) {
     const status = message.toolStatus ?? "done";
     if (message.role === "tool" && status === "done" && previous?.message.role === "tool" && (previous.message.toolStatus ?? "done") === "done" && (previous.message.toolName || "tool") === (message.toolName || "tool")) {
       const outputs = [textOf(previous.message.content), textOf(message.content)].filter(Boolean);
-      previous.message = { ...previous.message, id: `${previous.message.id}:${message.id}`, content: outputs.join("\n\n") };
+      previous.message = { ...previous.message, content: outputs.join("\n\n") };
       previous.count += 1;
     } else runs.push({ message, count: 1 });
     return runs;

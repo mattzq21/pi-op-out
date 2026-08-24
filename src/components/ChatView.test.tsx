@@ -92,6 +92,20 @@ describe("conversation work visibility", () => {
     expect(screen.getByText(/first\s+second\s+third/)).not.toBeVisible();
   });
 
+  it("keeps an opened tool call stable while more tool results stream in", () => {
+    const first: ChatMessage[] = [
+      { id: "user", role: "user", content: "Run checks" },
+      { id: "bash-1", role: "tool", toolName: "bash", toolStatus: "done", content: "first" }
+    ];
+    const view = render(<ChatView state={{ ...state(true), messageCount: first.length }} messages={first} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
+    fireEvent.click(screen.getByText("bash"));
+    expect(document.querySelector(".tool-event")).toHaveAttribute("open");
+
+    const second = [...first, { id: "bash-2", role: "tool" as const, toolName: "bash", toolStatus: "done" as const, content: "second" }];
+    view.rerender(<ChatView state={{ ...state(true), messageCount: second.length }} messages={second} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
+    expect(screen.getByText("bash x2").closest("details")).toHaveAttribute("open");
+  });
+
   it("copies an individual Markdown code block", async () => {
     const user = userEvent.setup();
     const codeMessage: ChatMessage[] = [{ id: "code", role: "assistant", content: "```ts\nconst answer = 42;\n```" }];
