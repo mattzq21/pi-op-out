@@ -64,7 +64,7 @@ it("does not let an older snapshot erase newer live work", async () => {
     control.listener?.({ type: "message_update", message: { id: "thought-2", role: "assistant", content: [{ type: "thinking", thinking: "second thought" }] } });
     control.listener?.({ type: "tool_execution_start", toolCallId: "bash-1", toolName: "bash", args: { command: "pwd" } });
   });
-  expect(screen.getByText("second thought")).toBeVisible();
+  expect(await screen.findByText("second thought")).toBeVisible();
   expect(screen.getByText("bash")).toBeVisible();
 
   await act(async () => control.resolveStale?.({ entries: [], leafId: null }));
@@ -83,14 +83,35 @@ it("renders Pi assistant deltas before message_end", async () => {
     control.listener?.({ type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 1 } });
     control.listener?.({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: "Still working" } });
   });
-  expect(screen.getByText("Checking now")).toBeVisible();
-  expect(screen.getByText("Still working")).toBeVisible();
+  expect(await screen.findByText("Checking now")).toBeVisible();
+  expect(await screen.findByText("Still working")).toBeVisible();
 
   act(() => {
     control.listener?.({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Authoritative final response" }], timestamp: 2 } });
   });
   expect(screen.getByText("Authoritative final response")).toBeVisible();
   expect(screen.queryByText("Still working")).not.toBeInTheDocument();
+});
+
+it("batches token-sized streaming events into a few UI updates", async () => {
+  render(<App />);
+  await screen.findByRole("textbox", { name: "Message Pi" });
+  act(() => {
+    control.listener?.({ type: "agent_start" });
+    control.listener?.({ type: "message_start", message: { role: "assistant", content: [], timestamp: 3 } });
+    control.listener?.({ type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 0 } });
+  });
+  const scroll = vi.mocked(Element.prototype.scrollIntoView); scroll.mockClear();
+
+  for (const delta of "twenty small chunks!!") {
+    await act(async () => {
+      control.listener?.({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta } });
+      await Promise.resolve();
+    });
+  }
+
+  expect(await screen.findByText("twenty small chunks!!")).toBeVisible();
+  expect(scroll.mock.calls.length).toBeLessThanOrEqual(3);
 });
 
 it("accumulates Pi tool-call deltas until the authoritative end event", () => {

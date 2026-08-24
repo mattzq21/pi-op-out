@@ -11,7 +11,7 @@ export function ChatView(props: Props) {
   const bottom = useRef<HTMLDivElement>(null);
   const turns = groupTurns(props.messages);
   const abortedTurn = !props.state.isStreaming ? findReplaceableAbortedTurn(props.messages) : undefined;
-  useEffect(() => { bottom.current?.scrollIntoView({ behavior: props.state.isStreaming ? "smooth" : "auto" }); }, [props.messages, props.state.isStreaming]);
+  useEffect(() => { bottom.current?.scrollIntoView({ behavior: "auto" }); }, [props.messages, props.state.isStreaming]);
   return <main className="chat-shell">
     <div className="messages" aria-live="polite"><div className="conversation">
       {!props.messages.length && <div className="empty-chat"><span>π</span></div>}

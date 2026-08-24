@@ -17,6 +17,7 @@ const emptyState: AgentState = { model: null, thinkingLevel: "off", isStreaming:
 type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number } };
 type TerminalTabState = { id: string; output: string; started: boolean; exited?: boolean };
 type SessionTerminals = { activeId: string; tabs: TerminalTabState[] };
+type MessageUpdate = (messages: ChatMessage[]) => ChatMessage[];
 const initialTerminals = (sessionId: string): SessionTerminals => { const id = `terminal-${sessionId}-1`; return { activeId: id, tabs: [{ id, output: "", started: false }] }; };
 
 function normalizeMessage(message: Record<string, unknown>, entryId?: string): ChatMessage {
@@ -70,6 +71,7 @@ export default function App() {
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>({});
   const [loadingSessionId, setLoadingSessionId] = useState<string>();
   const [terminalsBySession, setTerminalsBySession] = useState<Record<string, SessionTerminals>>({});
+  const pendingMessageUpdates = useRef<MessageUpdate[]>([]); const messageFrame = useRef<number | undefined>(undefined);
   const terminalSessionId = `${activeHostId}:${state.sessionId || "new-session"}`;
   const composerDraft = composerDrafts[terminalSessionId] ?? "";
   const sessionTerminals = terminalsBySession[terminalSessionId] ?? initialTerminals(terminalSessionId);
@@ -77,6 +79,22 @@ export default function App() {
 
   useEffect(() => { settingsRef.current = settings; }, [settings]);
   useEffect(() => { void transport.loadCodexUsage().then((usage) => setCodexUsage(usage.remainingPercent)).catch(() => undefined); }, [transport]);
+
+  const flushMessageUpdates = useCallback(() => {
+    if (messageFrame.current !== undefined) cancelAnimationFrame(messageFrame.current);
+    messageFrame.current = undefined;
+    const updates = pendingMessageUpdates.current.splice(0);
+    if (updates.length) setMessages((current) => updates.reduce((next, update) => update(next), current));
+  }, []);
+  const queueMessageUpdate = useCallback((update: MessageUpdate) => {
+    pendingMessageUpdates.current.push(update);
+    if (messageFrame.current === undefined) messageFrame.current = requestAnimationFrame(flushMessageUpdates);
+  }, [flushMessageUpdates]);
+  const discardMessageUpdates = useCallback(() => {
+    if (messageFrame.current !== undefined) cancelAnimationFrame(messageFrame.current);
+    messageFrame.current = undefined; pendingMessageUpdates.current.length = 0;
+  }, []);
+  useEffect(() => discardMessageUpdates, [discardMessageUpdates]);
 
   const syncSessionIndex = useCallback(() => {
     if (!sessionIndexRequest.current) sessionIndexRequest.current = transport.listSessions().then((nextSessions) => {
@@ -96,10 +114,10 @@ export default function App() {
       transport.command<AgentState>({ type: "get_state" }), transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }),
       transport.command<{ models: Model[] }>({ type: "get_available_models" }), transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }), transport.command<{ commands: SlashCommand[] }>({ type: "get_commands" }), transport.loadSettings()
     ]);
-    if (liveRevision.current === revision) { setState(nextState); setMessages(branchMessages(response.entries, response.leafId)); }
+    if (liveRevision.current === revision) { discardMessageUpdates(); setState(nextState); setMessages(branchMessages(response.entries, response.leafId)); }
     setModels(modelResponse.models); setCommands(commandResponse.commands); setThinkingLevels(thinkingResponse.levels); setSettings(nextSettings);
     return nextSettings;
-  }, [syncSessionIndex, transport]);
+  }, [discardMessageUpdates, syncSessionIndex, transport]);
 
   const configureRuntime = useCallback((value: AppSettings) => Promise.all([
     transport.command({ type: "set_auto_compaction", enabled: value.autoCompaction }), transport.command({ type: "set_auto_retry", enabled: value.autoRetry }),
@@ -114,6 +132,7 @@ export default function App() {
       if (event.type === "agent_start") setState((current) => ({ ...current, isStreaming: true }));
       if (event.type === "agent_end" || event.type === "agent_settled") { setState((current) => ({ ...current, isStreaming: false, activity: undefined })); if (event.type === "agent_settled" && document.hidden && settingsRef.current.notifications && "Notification" in window && Notification.permission === "granted") new Notification("Pi finished", { body: "Your coding agent is ready for you." }); }
       if (event.type === "message_start" || event.type === "message_end") {
+        if (event.type === "message_end") flushMessageUpdates();
         let message = normalizeMessage(event.message as Record<string, unknown>);
         if (message.role === "assistant" && event.type === "message_start") { message = { ...message, streaming: true }; activeAssistantId.current = message.id; }
         if (message.role === "assistant" && event.type === "message_end") { message = { ...message, ...(activeAssistantId.current ? { id: activeAssistantId.current } : {}), streaming: false }; activeAssistantId.current = undefined; }
@@ -121,7 +140,7 @@ export default function App() {
         if (event.type === "message_end") window.setTimeout(() => void refresh(), 30);
       }
       if (event.type === "message_update") {
-        if (event.assistantMessageEvent) setMessages((current) => {
+        if (event.assistantMessageEvent) queueMessageUpdate((current) => {
           let index = -1;
           for (let candidate = current.length - 1; candidate >= 0; candidate -= 1) {
             const message = current[candidate];
@@ -130,11 +149,11 @@ export default function App() {
           if (index < 0) return current;
           const next = [...current]; next[index] = applyAssistantMessageEvent(next[index], event.assistantMessageEvent); return next;
         });
-        else if (event.message) { const message = { ...normalizeMessage(event.message as Record<string, unknown>), streaming: true }; setMessages((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? message : item) : [...current, message]); }
+        else if (event.message) { const message = { ...normalizeMessage(event.message as Record<string, unknown>), streaming: true }; queueMessageUpdate((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? message : item) : [...current, message]); }
       }
       if (event.type === "tool_execution_start") { const message: ChatMessage = { id: String(event.toolCallId), role: "tool", toolName: String(event.toolName), toolStatus: "running", content: JSON.stringify(event.args ?? {}, null, 2), timestamp: Date.now() }; setMessages((current) => [...current.filter((item) => item.id !== message.id), message]); }
-      if (event.type === "tool_execution_update") setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.partialResult), toolStatus: "running" } : item));
-      if (event.type === "tool_execution_end") setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.result), toolStatus: event.isError ? "error" : "done" } : item));
+      if (event.type === "tool_execution_update") queueMessageUpdate((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.partialResult), toolStatus: "running" } : item));
+      if (event.type === "tool_execution_end") { flushMessageUpdates(); setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.result), toolStatus: event.isError ? "error" : "done" } : item)); }
       if (event.type === "queue_update") { const pending = [...((event.steering as unknown[]) ?? []), ...((event.followUp as unknown[]) ?? [])].length; setState((current) => ({ ...current, pendingMessageCount: pending })); }
       if (event.type === "terminal_output") setTerminalsBySession((current) => Object.fromEntries(Object.entries(current).map(([sessionId, session]) => [sessionId, { ...session, tabs: session.tabs.map((terminal) => terminal.id === event.terminalId ? { ...terminal, output: terminal.output + String(event.data ?? "") } : terminal) }])));
       if (event.type === "terminal_exit") setTerminalsBySession((current) => Object.fromEntries(Object.entries(current).map(([sessionId, session]) => [sessionId, { ...session, tabs: session.tabs.map((terminal) => terminal.id === event.terminalId ? { ...terminal, exited: true } : terminal) }])));
@@ -155,7 +174,7 @@ export default function App() {
     });
     transport.connect().then(() => refresh()).then((value) => configureRuntime(value)).then(() => { if (!cancelled) { setError(undefined); setConnected(true); } }).catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); });
     return () => { cancelled = true; unsubscribe(); void transport.disconnect(); };
-  }, [configureRuntime, refresh, transport]);
+  }, [configureRuntime, flushMessageUpdates, queueMessageUpdate, refresh, transport]);
 
   useEffect(() => {
     if (!connected) return;
@@ -180,7 +199,7 @@ export default function App() {
     if (session.cwdExists === false) { setRelocationError(undefined); setRelocatingSession(session); return false; }
     const previousState = state; const previousMessages = messages; const previousHostId = activeHostId;
     const current = sessions.find((item) => item.id === state.sessionId && (item.hostId ?? "local") === activeHostId);
-    setView("chat"); setActiveHostId(hostId); setLoadingSessionId(`${hostId}:${session.id}`); setMessages([]); setState((value) => ({ ...value, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, isStreaming: false, activity: undefined }));
+    discardMessageUpdates(); setView("chat"); setActiveHostId(hostId); setLoadingSessionId(`${hostId}:${session.id}`); setMessages([]); setState((value) => ({ ...value, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, isStreaming: false, activity: undefined }));
     try {
       if (hostId !== previousHostId || current?.cwd !== session.cwd) { setConnected(false); await transport.disconnect(); await transport.connect(session.cwd, session.path, hostId); setConnected(true); }
       else await transport.command({ type: "switch_session", sessionPath: session.path });
