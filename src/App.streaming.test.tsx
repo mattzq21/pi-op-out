@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-import type { RpcEvent } from "./types";
+import type { ChatMessage, RpcEvent } from "./types";
 
 const control = vi.hoisted(() => ({
   listener: undefined as ((event: RpcEvent) => void) | undefined,
@@ -43,7 +43,7 @@ vi.mock("./lib/transport", async () => {
   }) };
 });
 
-import App from "./App";
+import App, { applyAssistantMessageEvent } from "./App";
 
 beforeEach(() => {
   control.listener = undefined;
@@ -85,4 +85,20 @@ it("renders Pi assistant deltas before message_end", async () => {
   });
   expect(screen.getByText("Checking now")).toBeVisible();
   expect(screen.getByText("Still working")).toBeVisible();
+
+  act(() => {
+    control.listener?.({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "Authoritative final response" }], timestamp: 2 } });
+  });
+  expect(screen.getByText("Authoritative final response")).toBeVisible();
+  expect(screen.queryByText("Still working")).not.toBeInTheDocument();
+});
+
+it("accumulates Pi tool-call deltas until the authoritative end event", () => {
+  let message: ChatMessage = { id: "assistant", role: "assistant", content: [] };
+  message = applyAssistantMessageEvent(message, { type: "toolcall_start", contentIndex: 0, id: "call-1", toolName: "read" });
+  message = applyAssistantMessageEvent(message, { type: "toolcall_delta", contentIndex: 0, delta: '{"path":' });
+  message = applyAssistantMessageEvent(message, { type: "toolcall_delta", contentIndex: 0, delta: '"README.md"}' });
+  expect(message.content).toEqual([{ type: "toolCall", id: "call-1", name: "read", arguments: {}, partialArgs: '{"path":"README.md"}' }]);
+  message = applyAssistantMessageEvent(message, { type: "toolcall_end", contentIndex: 0, toolCall: { id: "call-1", name: "read", arguments: { path: "README.md" } } });
+  expect(message.content).toEqual([{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "README.md" } }]);
 });

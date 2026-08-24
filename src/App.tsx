@@ -11,7 +11,7 @@ import { defaultSettings } from "./defaults";
 import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
 import { findReplaceableAbortedTurn } from "./lib/abortedTurn";
 import { createTransport } from "./lib/transport";
-import type { AgentState, AppSettings, ChatMessage, ExtensionUiRequest, ImageAttachment, Model, RpcEvent, SessionSummary, SlashCommand } from "./types";
+import type { AgentState, AppSettings, ChatMessage, ContentPart, ExtensionUiRequest, ImageAttachment, Model, RpcEvent, SessionSummary, SlashCommand } from "./types";
 
 const emptyState: AgentState = { model: null, thinkingLevel: "off", isStreaming: false, sessionId: "", messageCount: 0, pendingMessageCount: 0 };
 type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number } };
@@ -26,6 +26,26 @@ function normalizeMessage(message: Record<string, unknown>, entryId?: string): C
 
 function rpcContent(value: unknown): ChatMessage["content"] { const content = (value as { content?: ChatMessage["content"] })?.content; return content ?? ""; }
 
+export function applyAssistantMessageEvent(message: ChatMessage, value: unknown): ChatMessage {
+  const event = value as { type?: string; contentIndex?: number; delta?: string; content?: string; id?: string; toolName?: string; toolCall?: { id?: string; name?: string; arguments?: unknown } };
+  const index = event.contentIndex;
+  if (!Number.isInteger(index) || index === undefined || index < 0) return message;
+  const content: ContentPart[] = Array.isArray(message.content) ? [...message.content] : message.content ? [{ type: "text", text: message.content }] : [];
+  while (content.length <= index) content.push({ type: "text", text: "" });
+  const current = content[index];
+  const tool = current?.type === "toolCall" ? current : { type: "toolCall" as const, id: event.id || `tool-${index}`, name: event.toolName || "tool", arguments: {}, partialArgs: "" };
+  if (event.type === "text_start") content[index] = { type: "text", text: "" };
+  if (event.type === "text_delta") content[index] = { type: "text", text: `${current?.type === "text" ? current.text : ""}${event.delta || ""}` };
+  if (event.type === "text_end") content[index] = { type: "text", text: event.content || "" };
+  if (event.type === "thinking_start") content[index] = { type: "thinking", thinking: "" };
+  if (event.type === "thinking_delta") content[index] = { type: "thinking", thinking: `${current?.type === "thinking" ? current.thinking : ""}${event.delta || ""}` };
+  if (event.type === "thinking_end") content[index] = { type: "thinking", thinking: event.content || "" };
+  if (event.type === "toolcall_start") content[index] = tool;
+  if (event.type === "toolcall_delta") content[index] = { ...tool, partialArgs: `${tool.partialArgs || ""}${event.delta || ""}` };
+  if (event.type === "toolcall_end" && event.toolCall) content[index] = { type: "toolCall", id: event.toolCall.id || tool.id, name: event.toolCall.name || tool.name, arguments: event.toolCall.arguments && typeof event.toolCall.arguments === "object" ? event.toolCall.arguments as Record<string, unknown> : {} };
+  return { ...message, content, streaming: true };
+}
+
 function branchMessages(entries: PiEntry[], leafId: string | null): ChatMessage[] {
   const byId = new Map(entries.map((entry) => [entry.id, entry])); const branch: PiEntry[] = []; let cursor = leafId;
   while (cursor) { const entry = byId.get(cursor); if (!entry) break; branch.unshift(entry); cursor = entry.parentId; }
@@ -36,7 +56,7 @@ export default function App() {
   const transport = useMemo(createTransport, []); const [view, setView] = useState<"chat" | "settings">("chat");
   const [state, setState] = useState(emptyState); const [messages, setMessages] = useState<ChatMessage[]>([]); const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [models, setModels] = useState<Model[]>([]); const [commands, setCommands] = useState<SlashCommand[]>([]); const [thinkingLevels, setThinkingLevels] = useState<string[]>(["off"]); const [settings, setSettings] = useState<AppSettings>(defaultSettings);
-  const settingsRef = useRef(settings); const liveRevision = useRef(0);
+  const settingsRef = useRef(settings); const liveRevision = useRef(0); const activeAssistantId = useRef<string | undefined>(undefined);
   const [panelOpen, setPanelOpen] = useState(true); const [query, setQuery] = useState(""); const [connected, setConnected] = useState(false); const [error, setError] = useState<string>();
   const [codexUsage, setCodexUsage] = useState<number>();
   const [dialog, setDialog] = useState<ExtensionUiRequest>(); const [notice, setNotice] = useState<{ title: string; message: string }>();
@@ -78,10 +98,24 @@ export default function App() {
       if (event.type === "agent_start") setState((current) => ({ ...current, isStreaming: true }));
       if (event.type === "agent_end" || event.type === "agent_settled") { setState((current) => ({ ...current, isStreaming: false, activity: undefined })); if (event.type === "agent_settled" && document.hidden && settingsRef.current.notifications && "Notification" in window && Notification.permission === "granted") new Notification("Pi finished", { body: "Your coding agent is ready for you." }); }
       if (event.type === "message_start" || event.type === "message_end") {
-        const message = normalizeMessage(event.message as Record<string, unknown>); setMessages((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? message : item) : [...current, message]);
+        let message = normalizeMessage(event.message as Record<string, unknown>);
+        if (message.role === "assistant" && event.type === "message_start") { message = { ...message, streaming: true }; activeAssistantId.current = message.id; }
+        if (message.role === "assistant" && event.type === "message_end") { message = { ...message, ...(activeAssistantId.current ? { id: activeAssistantId.current } : {}), streaming: false }; activeAssistantId.current = undefined; }
+        setMessages((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? message : item) : [...current, message]);
         if (event.type === "message_end") window.setTimeout(() => void refresh(), 30);
       }
-      if (event.type === "message_update") { const message = { ...normalizeMessage(event.message as Record<string, unknown>), streaming: true }; setMessages((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? message : item) : [...current, message]); }
+      if (event.type === "message_update") {
+        if (event.assistantMessageEvent) setMessages((current) => {
+          let index = -1;
+          for (let candidate = current.length - 1; candidate >= 0; candidate -= 1) {
+            const message = current[candidate];
+            if (message.role === "assistant" && (message.id === activeAssistantId.current || message.streaming)) { index = candidate; break; }
+          }
+          if (index < 0) return current;
+          const next = [...current]; next[index] = applyAssistantMessageEvent(next[index], event.assistantMessageEvent); return next;
+        });
+        else if (event.message) { const message = { ...normalizeMessage(event.message as Record<string, unknown>), streaming: true }; setMessages((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? message : item) : [...current, message]); }
+      }
       if (event.type === "tool_execution_start") { const message: ChatMessage = { id: String(event.toolCallId), role: "tool", toolName: String(event.toolName), toolStatus: "running", content: JSON.stringify(event.args ?? {}, null, 2), timestamp: Date.now() }; setMessages((current) => [...current.filter((item) => item.id !== message.id), message]); }
       if (event.type === "tool_execution_update") setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.partialResult), toolStatus: "running" } : item));
       if (event.type === "tool_execution_end") setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.result), toolStatus: event.isError ? "error" : "done" } : item));
