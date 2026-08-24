@@ -12,13 +12,23 @@ const messages: ChatMessage[] = [
 ];
 
 const state = (isStreaming: boolean): AgentState => ({ model: null, thinkingLevel: "off", isStreaming, sessionId: "test", messageCount: messages.length, pendingMessageCount: 0 });
-const callbacks = { onSend: () => undefined, onAbort: () => undefined, onOpenTerminal: () => undefined, onBranch: () => undefined, onModel: () => undefined, onThinking: () => undefined };
+const callbacks = { onSend: () => undefined, onAbort: () => undefined, onOpenTerminal: () => undefined, onOpenProject: () => undefined, onBranch: () => undefined, onModel: () => undefined, onThinking: () => undefined };
 
 describe("conversation work visibility", () => {
   it("does not render a chat header", () => {
     render(<ChatView state={{ ...state(false), sessionName: "Named session" }} messages={messages} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
     expect(document.querySelector(".chat-header")).not.toBeInTheDocument();
     expect(screen.queryByText("Named session")).not.toBeInTheDocument();
+  });
+
+  it("offers the project picker above the composer only before a chat starts", () => {
+    const onOpenProject = vi.fn();
+    const view = render(<ChatView state={{ ...state(false), messageCount: 0 }} messages={[]} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} onOpenProject={onOpenProject} />);
+    fireEvent.click(screen.getByRole("button", { name: "Choose project" }));
+    expect(onOpenProject).toHaveBeenCalledOnce();
+    expect(document.querySelector(".new-chat-project")?.nextElementSibling).toHaveClass("composer-wrap");
+    view.rerender(<ChatView state={state(false)} messages={messages} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} onOpenProject={onOpenProject} />);
+    expect(screen.queryByRole("button", { name: "Choose project" })).not.toBeInTheDocument();
   });
 
   it("grows the composer with multiline content and caps its height", () => {

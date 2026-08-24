@@ -1,11 +1,12 @@
 import { useEffect, useRef } from "react";
+import { FolderGit2 } from "lucide-react";
 import type { AgentState, ChatMessage, ImageAttachment, Model, SlashCommand } from "../types";
 import { Message } from "./Message";
 import { Composer } from "./Composer";
 import { textOf, thinkingOf } from "../lib/content";
 import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 
-interface Props { state: AgentState; messages: ChatMessage[]; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: string[]; draft?: string; onDraftChange?: (value: string) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void; onAbort: () => void; onOpenTerminal: () => void; onBranch: (message: ChatMessage) => void; onModel: (model: Model) => void; onThinking: (level: string) => void; }
+interface Props { state: AgentState; messages: ChatMessage[]; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: string[]; draft?: string; onDraftChange?: (value: string) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void; onAbort: () => void; onOpenTerminal: () => void; onOpenProject: () => void; onBranch: (message: ChatMessage) => void; onModel: (model: Model) => void; onThinking: (level: string) => void; }
 
 export function ChatView(props: Props) {
   const bottom = useRef<HTMLDivElement>(null);
@@ -17,7 +18,7 @@ export function ChatView(props: Props) {
       {!props.messages.length && <div className="empty-chat"><span>π</span></div>}
       {turns.map((turn, index) => <ConversationTurn key={turn[0]?.id || index} messages={turn} active={props.state.isStreaming && index === turns.length - 1} retryable={!props.state.isStreaming && index === turns.length - 1} onRetry={props.onSend} onBranch={props.onBranch} />)}<div ref={bottom} />
     </div></div>
-    <div className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.map((line, index) => <div key={index}>{line}</div>)}</div>} {props.statuses.length > 0 && <div className="extension-status">{props.statuses.join(" · ")}</div>}<Composer streaming={props.state.isStreaming} queued={props.state.pendingMessageCount} commands={props.commands} models={props.models} model={props.state.model} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} draft={props.draft} onDraftChange={props.onDraftChange} restoredDraft={abortedTurn ? { id: `${abortedTurn.assistant.timestamp ?? abortedTurn.assistant.id}:${abortedTurn.prompt}`, value: abortedTurn.prompt } : undefined} onSend={props.onSend} onAbort={props.onAbort} onOpenTerminal={props.onOpenTerminal} onModel={props.onModel} onThinking={props.onThinking} /></div>
+    <div className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.map((line, index) => <div key={index}>{line}</div>)}</div>} {props.statuses.length > 0 && <div className="extension-status">{props.statuses.join(" · ")}</div>}{!props.messages.length && props.state.messageCount === 0 && <div className="new-chat-project"><button type="button" onClick={props.onOpenProject}><FolderGit2 size={14} />Choose project</button></div>}<Composer streaming={props.state.isStreaming} queued={props.state.pendingMessageCount} commands={props.commands} models={props.models} model={props.state.model} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} draft={props.draft} onDraftChange={props.onDraftChange} restoredDraft={abortedTurn ? { id: `${abortedTurn.assistant.timestamp ?? abortedTurn.assistant.id}:${abortedTurn.prompt}`, value: abortedTurn.prompt } : undefined} onSend={props.onSend} onAbort={props.onAbort} onOpenTerminal={props.onOpenTerminal} onModel={props.onModel} onThinking={props.onThinking} /></div>
   </main>;
 }
 
