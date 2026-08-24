@@ -8,9 +8,9 @@ it("browses and opens a project on an SSH machine", async () => {
     .mockResolvedValueOnce({ path: "/srv", parent: "/", directories: ["/srv/app"] })
     .mockResolvedValueOnce({ path: "/srv/app", parent: "/srv", directories: [] });
   const onOpen = vi.fn();
-  render(<ProjectDialog initialPath="" initialHostId="local" hosts={[{ id: "vps", name: "Build VPS", target: "deploy@example.com", piPath: "pi" }]} onChooseDirectory={onChooseDirectory} onOpen={onOpen} onCancel={() => undefined} />);
+  render(<ProjectDialog initialPath="" initialHostId="local" hosts={[{ id: "vps", name: "Build VPS", target: "deploy@example.com", piPath: "pi" }]} onHomeDirectory={async (hostId) => hostId === "local" ? "/home/local" : "/home/deploy"} onChooseDirectory={onChooseDirectory} onOpen={onOpen} onCancel={() => undefined} />);
   await user.selectOptions(screen.getByLabelText("Machine"), "vps");
-  expect(screen.getByLabelText("Project directory")).toHaveValue("~");
+  expect(await screen.findByDisplayValue("/home/deploy")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Choose directory…" }));
   await user.click(screen.getByRole("button", { name: "app" }));
   expect(screen.getByLabelText("Project directory")).toHaveValue("/srv/app");

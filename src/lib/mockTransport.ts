@@ -36,6 +36,7 @@ export class MockTransport implements PiTransport {
   async loadCodexUsage() { return { remainingPercent: 73 }; }
   async saveSettings(settings: AppSettings) { this.settings = structuredClone(settings); localStorage.setItem("pi-ui-settings", JSON.stringify(settings)); }
   async selectProjectDirectory() { return "/Users/demo/code/northstar"; }
+  async homeDirectory(hostId: string) { return hostId === "local" ? "/Users/demo" : "/home/demo"; }
   async listDirectories(_hostId: string, path = "/home/demo") { return { path, parent: path === "/" ? undefined : path.replace(/\/[^/]+$/, "") || "/", directories: [`${path.replace(/\/$/, "")}/project`] }; }
   async openProject(cwd: string) {
     const project = cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace"; const candidate = this.sessions.find((session) => session.project === project);

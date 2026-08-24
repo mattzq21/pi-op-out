@@ -30,6 +30,7 @@ export interface PiTransport {
   loadCodexUsage(): Promise<CodexUsage>;
   saveSettings(settings: AppSettings): Promise<void>;
   selectProjectDirectory(defaultPath?: string): Promise<string | null>;
+  homeDirectory(hostId: string): Promise<string>;
   listDirectories(hostId: string, path?: string): Promise<DirectoryListing>;
   openProject(cwd: string, hostId?: string): Promise<void>;
   startTerminal(terminalId: string, cwd: string, cols: number, rows: number): Promise<void>;
