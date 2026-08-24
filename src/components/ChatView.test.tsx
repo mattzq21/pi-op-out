@@ -92,7 +92,7 @@ describe("conversation work visibility", () => {
     expect(screen.getByText(/first\s+second\s+third/)).not.toBeVisible();
   });
 
-  it("keeps an opened tool call stable while more tool results stream in", () => {
+  it("keeps streamed tool calls separate and preserves an opened call", () => {
     const first: ChatMessage[] = [
       { id: "user", role: "user", content: "Run checks" },
       { id: "bash-1", role: "tool", toolName: "bash", toolStatus: "done", content: "first" }
@@ -103,7 +103,10 @@ describe("conversation work visibility", () => {
 
     const second = [...first, { id: "bash-2", role: "tool" as const, toolName: "bash", toolStatus: "done" as const, content: "second" }];
     view.rerender(<ChatView state={{ ...state(true), messageCount: second.length }} messages={second} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
-    expect(screen.getByText("bash x2").closest("details")).toHaveAttribute("open");
+    const calls = document.querySelectorAll(".tool-event");
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toHaveAttribute("open");
+    expect(screen.queryByText("bash x2")).not.toBeInTheDocument();
   });
 
   it("copies an individual Markdown code block", async () => {

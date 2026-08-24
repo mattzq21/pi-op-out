@@ -29,13 +29,13 @@ function groupTurns(messages: ChatMessage[]) {
   }, []);
 }
 
-function compactCompletedTools(messages: ChatMessage[]) {
+function compactCompletedTools(messages: ChatMessage[], groupRepeated = true) {
   return messages.reduce<Array<{ message: ChatMessage; count: number }>>((runs, message) => {
     const hasToolCall = Array.isArray(message.content) && message.content.some((part) => part.type === "toolCall");
     if (message.role === "assistant" && textOf(message.content).trim().length === 0 && thinkingOf(message.content).trim().length === 0 && (hasToolCall || (!message.streaming && !message.stopReason))) return runs;
     const previous = runs.at(-1);
     const status = message.toolStatus ?? "done";
-    if (message.role === "tool" && status === "done" && previous?.message.role === "tool" && (previous.message.toolStatus ?? "done") === "done" && (previous.message.toolName || "tool") === (message.toolName || "tool")) {
+    if (groupRepeated && message.role === "tool" && status === "done" && previous?.message.role === "tool" && (previous.message.toolStatus ?? "done") === "done" && (previous.message.toolName || "tool") === (message.toolName || "tool")) {
       const outputs = [textOf(previous.message.content), textOf(message.content)].filter(Boolean);
       previous.message = { ...previous.message, content: outputs.join("\n\n") };
       previous.count += 1;
@@ -44,12 +44,12 @@ function compactCompletedTools(messages: ChatMessage[]) {
   }, []);
 }
 
-function renderMessages(messages: ChatMessage[], expanded: boolean, onBranch: Props["onBranch"]) {
-  return compactCompletedTools(messages).map(({ message, count }) => <Message key={message.id} message={message} toolCount={count} expanded={expanded} onBranch={onBranch} />);
+function renderMessages(messages: ChatMessage[], expanded: boolean, onBranch: Props["onBranch"], compact = true) {
+  return compactCompletedTools(messages, compact).map(({ message, count }) => <Message key={message.id} message={message} toolCount={count} expanded={expanded} onBranch={onBranch} />);
 }
 
 function ConversationTurn({ messages, active, retryable, onRetry, onBranch }: { messages: ChatMessage[]; active: boolean; retryable: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"] }) {
-  if (active) return <>{renderMessages(messages, true, onBranch)}</>;
+  if (active) return <>{renderMessages(messages, true, onBranch, false)}</>;
 
   let finalIndex = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
