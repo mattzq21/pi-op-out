@@ -565,7 +565,7 @@ fn list_remote_sessions(host: &RemoteHost) -> Result<Vec<SessionSummary>, String
 
 #[tauri::command]
 fn home_directory(app: AppHandle, host_id: String) -> Result<String, String> {
-    if host_id == "local" { return Ok(home_dir()?.canonicalize().unwrap_or(home_dir()?).to_string_lossy().into_owned()); }
+    if host_id == "local" { let home = home_dir()?; return Ok(home.canonicalize().unwrap_or(home).to_string_lossy().into_owned()); }
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
     let output = ssh(host).arg("cd \"$HOME\" && pwd -P").output().map_err(|error| format!("Could not resolve home on {}: {error}", host.name))?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
