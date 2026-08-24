@@ -213,13 +213,12 @@ describe("Pi desktop", () => {
     expect(terminalShortcut).toHaveValue("Ctrl+Shift+T");
   });
 
-  it("shows remaining Codex usage next to settings", async () => {
+  it("shows remaining Codex usage at the bottom of the rail", async () => {
     render(<App />);
     const usage = await screen.findByLabelText("Codex usage remaining");
     expect(usage).toHaveTextContent("73% left · 3d");
-    const settings = screen.getByRole("button", { name: "Settings" });
-    expect(usage.parentElement).toContainElement(settings);
-    expect(settings.nextElementSibling).toBe(usage);
+    expect(usage.parentElement).toHaveClass("rail-bottom");
+    expect(usage.closest("nav")).not.toBeInTheDocument();
   });
 
   it("shows hours and minutes only when the Codex reset is within a day", () => {
