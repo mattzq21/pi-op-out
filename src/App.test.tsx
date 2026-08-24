@@ -180,6 +180,14 @@ describe("Pi desktop", () => {
     expect(screen.queryByRole("button", { name: "Choose project" })).not.toBeInTheDocument();
   });
 
+  it("opens the project dialog from the empty-chat project picker", async () => {
+    const user = userEvent.setup(); render(<App />);
+    await user.click(screen.getByRole("button", { name: "New conversation" }));
+    await user.click(await screen.findByRole("button", { name: "Choose project" }));
+    expect(screen.getByRole("heading", { name: "Open project" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Choose directory…" })).toBeVisible();
+  });
+
   it("opens the system directory picker from the empty chat project control", async () => {
     const user = userEvent.setup(); render(<App />);
     await user.click(screen.getByRole("button", { name: "New conversation" }));
