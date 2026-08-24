@@ -169,6 +169,24 @@ describe("Pi desktop", () => {
     expect(document.querySelector(".terminal-host")).toHaveTextContent("/Users/demo/pi-desktop/tmp/");
   });
 
+  it("inherits the current project when the new conversation button is used", async () => {
+    const user = userEvent.setup(); render(<App />);
+    await user.click(await screen.findByRole("button", { name: /Wire RPC transport/ }));
+    await screen.findByText(/browser preview for/);
+    await user.click(screen.getByRole("button", { name: "New conversation" }));
+    expect(await screen.findByRole("button", { name: "Selected project: pi-ai" })).toBeVisible();
+    expect(screen.getByText("π")).toBeVisible();
+  });
+
+  it("inherits the current project when Ctrl+N is used", async () => {
+    const user = userEvent.setup(); render(<App />);
+    await user.click(await screen.findByRole("button", { name: /Wire RPC transport/ }));
+    await screen.findByText(/browser preview for/);
+    fireEvent.keyDown(window, { key: "n", ctrlKey: true });
+    expect(await screen.findByRole("button", { name: "Selected project: pi-ai" })).toBeVisible();
+    expect(screen.getByText("π")).toBeVisible();
+  });
+
   it("shows the selected project on an empty conversation", async () => {
     const user = userEvent.setup(); render(<App />);
     await user.click(screen.getByRole("button", { name: "New conversation" }));
@@ -180,20 +198,13 @@ describe("Pi desktop", () => {
     expect(screen.queryByRole("button", { name: "Choose project" })).not.toBeInTheDocument();
   });
 
-  it("opens the project dialog from the empty-chat project picker", async () => {
+  it("opens the project dialog with its system picker from the empty chat control", async () => {
     const user = userEvent.setup(); render(<App />);
     await user.click(screen.getByRole("button", { name: "New conversation" }));
     await user.click(await screen.findByRole("button", { name: "Choose project" }));
     expect(screen.getByRole("heading", { name: "Open project" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "Choose directory…" })).toBeVisible();
-  });
-
-  it("opens the system directory picker from the empty chat project control", async () => {
-    const user = userEvent.setup(); render(<App />);
-    await user.click(screen.getByRole("button", { name: "New conversation" }));
-    await user.click(await screen.findByRole("button", { name: "Choose project" }));
-    expect(screen.queryByRole("heading", { name: "Open project" })).not.toBeInTheDocument();
-    expect(await screen.findByText(/browser preview for/)).toHaveTextContent("Fix token refresh");
+    await user.click(screen.getByRole("button", { name: "Choose directory…" }));
+    expect(screen.getByRole("textbox", { name: "Project directory" })).toHaveValue("/Users/demo/code/northstar");
   });
 
   it("keeps terminal output with the session that ran it", async () => {

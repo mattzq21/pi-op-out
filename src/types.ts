@@ -35,6 +35,7 @@ export interface PiTransport {
   homeDirectory(hostId: string): Promise<string>;
   listDirectories(hostId: string, path?: string): Promise<DirectoryListing>;
   newTemporaryChat(hostId: string): Promise<string>;
+  newChat(cwd: string, hostId?: string): Promise<void>;
   openProject(cwd: string, hostId?: string): Promise<void>;
   startTerminal(terminalId: string, cwd: string, cols: number, rows: number): Promise<void>;
   writeTerminal(terminalId: string, data: string): Promise<void>;
