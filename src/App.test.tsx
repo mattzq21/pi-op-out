@@ -34,7 +34,7 @@ describe("Pi desktop", () => {
 
   it("opens projects through a dialog with an optional system directory picker", async () => {
     const user = userEvent.setup(); render(<App />);
-    await user.click(screen.getByRole("button", { name: "Projects" }));
+    await user.click(screen.getByRole("button", { name: "New project" }));
     expect(screen.getByRole("heading", { name: "Open project" })).toBeInTheDocument();
     const path = screen.getByRole("textbox", { name: "Project directory" });
     await user.clear(path); await user.click(screen.getByRole("button", { name: "Open project" }));
