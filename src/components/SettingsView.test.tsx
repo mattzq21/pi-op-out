@@ -32,3 +32,18 @@ describe("skill invocation settings", () => {
     }));
   });
 });
+
+describe("machine settings", () => {
+  it("saves an SSH machine while keeping Local implicit", async () => {
+    const user = userEvent.setup(); const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<SettingsView settings={structuredClone(defaultSettings)} onSave={onSave} />);
+    await user.click(screen.getByRole("button", { name: "Machines" }));
+    expect(screen.getByText("This machine")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Add machine" }));
+    await user.clear(screen.getByLabelText("Machine name")); await user.type(screen.getByLabelText("Machine name"), "Build VPS");
+    await user.type(screen.getByLabelText("Build VPS SSH target"), "deploy@example.com");
+    await user.clear(screen.getByLabelText("Build VPS Pi executable")); await user.type(screen.getByLabelText("Build VPS Pi executable"), "/home/deploy/.local/bin/pi");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ hosts: [expect.objectContaining({ name: "Build VPS", target: "deploy@example.com", piPath: "/home/deploy/.local/bin/pi" })] }));
+  });
+});

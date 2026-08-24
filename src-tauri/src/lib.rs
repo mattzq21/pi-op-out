@@ -51,6 +51,18 @@ struct SessionSummary {
     preview: String,
     message_count: usize,
     starred: bool,
+    host_id: String,
+    host_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteHost {
+    id: String,
+    name: String,
+    target: String,
+    #[serde(default = "default_pi_path")]
+    pi_path: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -76,9 +88,12 @@ struct AppSettings {
     tools: Vec<Value>,
     skills: Vec<Value>,
     mcp_servers: Vec<Value>,
+    #[serde(default)]
+    hosts: Vec<RemoteHost>,
 }
 
 fn default_queue_mode() -> String { "one-at-a-time".into() }
+fn default_pi_path() -> String { "pi".into() }
 
 fn default_keybindings() -> HashMap<String, String> {
     [
@@ -166,7 +181,7 @@ fn default_settings() -> AppSettings {
     AppSettings {
         default_model: String::new(), default_thinking: "high".into(), auto_compaction: true, auto_retry: true, notifications: true, steering_mode: default_queue_mode(), follow_up_mode: default_queue_mode(), keybindings: default_keybindings(),
         tools: ["read", "bash", "edit", "write", "grep", "find", "ls"].iter().map(|name| json!({"name": name, "description": "Pi built-in tool", "enabled": true, "builtin": true})).collect(),
-        skills: vec![], mcp_servers: vec![],
+        skills: vec![], mcp_servers: vec![], hosts: vec![],
     }
 }
 
@@ -315,28 +330,68 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
 
 #[tauri::command]
 fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<(), String> {
+    let mut host_ids = HashSet::new();
+    for host in &settings.hosts {
+        if host.id.trim().is_empty() || !host_ids.insert(host.id.as_str()) { return Err("Every machine needs a unique id".into()); }
+        validate_remote_host(host)?;
+    }
     let body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
     fs::write(settings_path(&app)?, body).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-fn start_pi(app: AppHandle, runtime: State<PiRuntime>, cwd: Option<String>, session_path: Option<String>) -> Result<(), String> {
+fn shell_quote(value: &str) -> String { format!("'{}'", value.replace('\'', "'\\''")) }
+
+fn validate_remote_host(host: &RemoteHost) -> Result<(), String> {
+    if host.target.is_empty() || !host.target.chars().all(|character| character.is_ascii_alphanumeric() || "._@:-[]".contains(character)) { return Err("SSH target may only contain a host, user, and port-safe characters".into()); }
+    if host.pi_path.is_empty() || !host.pi_path.chars().all(|character| character.is_ascii_alphanumeric() || "._/-~".contains(character)) { return Err("Pi executable must be a plain executable name or path".into()); }
+    Ok(())
+}
+
+fn remote_host<'a>(settings: &'a AppSettings, host_id: &str) -> Result<&'a RemoteHost, String> {
+    let host = settings.hosts.iter().find(|host| host.id == host_id).ok_or_else(|| format!("Unknown machine: {host_id}"))?;
+    validate_remote_host(host)?;
+    Ok(host)
+}
+
+fn ssh(host: &RemoteHost) -> Command {
+    let mut command = Command::new("ssh");
+    command.args(["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", &host.target]); command
+}
+
+fn remote_pi_path(path: &str) -> String {
+    path.strip_prefix("~/").map(|rest| format!("$HOME/{}", rest)).unwrap_or_else(|| shell_quote(path))
+}
+
+#[tauri::command]
+fn start_pi(app: AppHandle, runtime: State<PiRuntime>, cwd: Option<String>, session_path: Option<String>, host_id: Option<String>) -> Result<(), String> {
     let mut process_guard = runtime.process.lock().map_err(|_| "Pi runtime lock was poisoned")?;
     if process_guard.is_some() { return Ok(()); }
-    let working_dir = cwd.map(PathBuf::from).unwrap_or(std::env::current_dir().map_err(|error| error.to_string())?);
     let settings = load_app_settings(app.clone()).unwrap_or_else(|_| default_settings());
-    let (mcp_extension, mcp_config) = prepare_mcp_bridge(&app, &settings)?;
-    let mut command = Command::new(pi_executable());
-    command.arg("--mode").arg("rpc").arg("--approve").arg("--no-skills").current_dir(&working_dir).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    command.arg("--extension").arg(mcp_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config);
-    if let Some(path) = session_path { command.arg("--session").arg(path); }
-    if !settings.default_model.trim().is_empty() { command.arg("--model").arg(settings.default_model.trim()); }
-    if !settings.default_thinking.trim().is_empty() { command.arg("--thinking").arg(settings.default_thinking.trim()); }
-    let enabled_tools: Vec<&str> = settings.tools.iter().filter(|tool| tool.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|tool| tool.get("name").and_then(Value::as_str)).collect();
-    if enabled_tools.is_empty() { command.arg("--no-tools"); } else { command.arg("--tools").arg(enabled_tools.join(",")); }
-    for skill in settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)) {
-        if let Some(path) = skill.get("path").and_then(Value::as_str) { let expanded = path.strip_prefix("~/").and_then(|rest| home_dir().ok().map(|home| home.join(rest))).unwrap_or_else(|| PathBuf::from(path)); command.arg("--skill").arg(expanded); }
-    }
+    let host_id = host_id.unwrap_or_else(|| "local".into());
+    let mut command = if host_id == "local" {
+        let working_dir = cwd.as_ref().map(PathBuf::from).unwrap_or(std::env::current_dir().map_err(|error| error.to_string())?);
+        let (mcp_extension, mcp_config) = prepare_mcp_bridge(&app, &settings)?;
+        let mut command = Command::new(pi_executable());
+        command.arg("--mode").arg("rpc").arg("--approve").arg("--no-skills").current_dir(&working_dir).arg("--extension").arg(mcp_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config);
+        if let Some(path) = &session_path { command.arg("--session").arg(path); }
+        let enabled_tools: Vec<&str> = settings.tools.iter().filter(|tool| tool.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|tool| tool.get("name").and_then(Value::as_str)).collect();
+        if enabled_tools.is_empty() { command.arg("--no-tools"); } else { command.arg("--tools").arg(enabled_tools.join(",")); }
+        for skill in settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)) { if let Some(path) = skill.get("path").and_then(Value::as_str) { let expanded = path.strip_prefix("~/").and_then(|rest| home_dir().ok().map(|home| home.join(rest))).unwrap_or_else(|| PathBuf::from(path)); command.arg("--skill").arg(expanded); } }
+        if !settings.default_model.trim().is_empty() { command.arg("--model").arg(settings.default_model.trim()); }
+        if !settings.default_thinking.trim().is_empty() { command.arg("--thinking").arg(settings.default_thinking.trim()); }
+        command
+    } else {
+        let host = remote_host(&settings, &host_id)?;
+        let mut arguments = vec![remote_pi_path(&host.pi_path), "--mode".into(), "rpc".into(), "--approve".into()];
+        if let Some(path) = &session_path { arguments.extend(["--session".into(), shell_quote(path)]); }
+        if !settings.default_model.trim().is_empty() { arguments.extend(["--model".into(), shell_quote(settings.default_model.trim())]); }
+        if !settings.default_thinking.trim().is_empty() { arguments.extend(["--thinking".into(), shell_quote(settings.default_thinking.trim())]); }
+        let directory = cwd.as_ref().map(|path| shell_quote(path)).unwrap_or_else(|| "\"$HOME\"".into());
+        let remote = format!("cd {directory} && exec {}", arguments.join(" "));
+        let mut command = ssh(host); command.arg(remote); command
+    };
+    command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|error| format!("Could not start pi: {error}"))?;
     let stdin = Arc::new(Mutex::new(child.stdin.take().ok_or("Pi stdin was unavailable")?));
     let stdout = child.stdout.take().ok_or("Pi stdout was unavailable")?;
@@ -389,15 +444,22 @@ fn pi_command(runtime: State<PiRuntime>, mut command: Value) -> Result<Value, St
 }
 
 #[tauri::command]
-fn start_terminal(app: AppHandle, runtime: State<TerminalRuntime>, terminal_id: String, cwd: String, cols: u16, rows: u16) -> Result<(), String> {
+fn start_terminal(app: AppHandle, runtime: State<TerminalRuntime>, terminal_id: String, cwd: String, cols: u16, rows: u16, host_id: Option<String>) -> Result<(), String> {
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
     if processes.contains_key(&terminal_id) { return Ok(()); }
-    let working_dir = PathBuf::from(&cwd);
-    if !working_dir.is_dir() { return Err(format!("Terminal working directory does not exist: {}", working_dir.display())); }
     let pair = native_pty_system().openpty(PtySize { rows: rows.max(1), cols: cols.max(1), pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())?;
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
-    let mut command = CommandBuilder::new(shell);
-    command.cwd(working_dir); command.env("TERM", "xterm-256color"); command.env("COLORTERM", "truecolor");
+    let host_id = host_id.unwrap_or_else(|| "local".into());
+    let mut command = if host_id == "local" {
+        let working_dir = PathBuf::from(&cwd);
+        if !working_dir.is_dir() { return Err(format!("Terminal working directory does not exist: {}", working_dir.display())); }
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
+        let mut command = CommandBuilder::new(shell); command.cwd(working_dir); command
+    } else {
+        let settings = load_app_settings(app.clone())?; let host = remote_host(&settings, &host_id)?;
+        let mut command = CommandBuilder::new("ssh");
+        command.args(["-tt", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", &host.target, &format!("cd {} && exec \"${{SHELL:-/bin/bash}}\" -l", shell_quote(&cwd))]); command
+    };
+    command.env("TERM", "xterm-256color"); command.env("COLORTERM", "truecolor");
     let child = pair.slave.spawn_command(command).map_err(|error| format!("Could not start terminal shell: {error}"))?;
     drop(pair.slave);
     let mut reader = pair.master.try_clone_reader().map_err(|error| error.to_string())?;
@@ -450,8 +512,8 @@ fn iso_from_modified(time: SystemTime) -> String {
     DateTime::<Utc>::from(time).to_rfc3339()
 }
 
-fn parse_session(path: &Path) -> Option<SessionSummary> {
-    let content = fs::read_to_string(path).ok()?; let mut lines = content.lines(); let header: Value = serde_json::from_str(lines.next()?).ok()?;
+fn parse_session_content(path: &Path, content: &str, modified: SystemTime, cwd_exists: bool, host_id: &str, host_name: &str) -> Option<SessionSummary> {
+    let mut lines = content.lines(); let header: Value = serde_json::from_str(lines.next()?).ok()?;
     if header.get("type")?.as_str()? != "session" { return None; }
     let cwd = header.get("cwd").and_then(Value::as_str).unwrap_or("Unknown project").to_string();
     let id = header.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
@@ -459,20 +521,53 @@ fn parse_session(path: &Path) -> Option<SessionSummary> {
     for line in lines { let Ok(entry) = serde_json::from_str::<Value>(line) else { continue }; if entry.get("type").and_then(Value::as_str) == Some("session_info") { name = entry.get("name").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()).map(str::to_owned); } if entry.get("type").and_then(Value::as_str) == Some("message") { message_count += 1; if let Some(message) = entry.get("message") { let text = text_content(message); if !text.is_empty() { if first_user_message.is_empty() && message.get("role").and_then(Value::as_str) == Some("user") { first_user_message = text.clone(); } preview = text; } } } }
     let name = name.unwrap_or_else(|| if first_user_message.is_empty() { "Untitled session".into() } else { first_user_message });
     let project = Path::new(&cwd).file_name().and_then(|value| value.to_str()).unwrap_or("Workspace").to_string();
+    Some(SessionSummary { id, path: path.to_string_lossy().into_owned(), name, project, cwd, cwd_exists, updated_at: iso_from_modified(modified), preview: preview.chars().take(100).collect(), message_count, starred: false, host_id: host_id.into(), host_name: host_name.into() })
+}
+
+fn parse_session(path: &Path) -> Option<SessionSummary> {
+    let content = fs::read_to_string(path).ok()?;
     let modified = fs::metadata(path).and_then(|metadata| metadata.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
-    let cwd_exists = Path::new(&cwd).is_dir();
-    Some(SessionSummary { id, path: path.to_string_lossy().into_owned(), name, project, cwd, cwd_exists, updated_at: iso_from_modified(modified), preview: preview.chars().take(100).collect(), message_count, starred: false })
+    parse_session_content(path, &content, modified, true, "local", "Local").map(|mut session| { session.cwd_exists = Path::new(&session.cwd).is_dir(); session })
+}
+
+fn list_remote_sessions(host: &RemoteHost) -> Result<Vec<SessionSummary>, String> {
+    let script = r#"find "$HOME/.pi/agent/sessions" -type f -name '*.jsonl' -exec sh -c 'for path do printf "%s\000%s\000" "$path" "$(stat -c %Y "$path")"; cat "$path"; printf "\000"; done' sh {} + 2>/dev/null"#;
+    let output = ssh(host).arg(script).output().map_err(|error| format!("Could not run ssh for {}: {error}", host.name))?;
+    if !output.status.success() { return Err(format!("Could not list sessions on {}: {}", host.name, String::from_utf8_lossy(&output.stderr).trim())); }
+    let chunks: Vec<&[u8]> = output.stdout.split(|byte| *byte == 0).collect();
+    let mut sessions = Vec::new();
+    for frame in chunks.chunks(3) {
+        if frame.len() < 3 || frame[0].is_empty() { continue; }
+        let path = PathBuf::from(String::from_utf8_lossy(frame[0]).into_owned());
+        let seconds = String::from_utf8_lossy(frame[1]).trim().parse::<u64>().unwrap_or(0);
+        let content = String::from_utf8_lossy(frame[2]);
+        // ponytail: remote CWD existence is validated when Pi starts; batch it here only if stale remote paths become common.
+        if let Some(session) = parse_session_content(&path, &content, SystemTime::UNIX_EPOCH + Duration::from_secs(seconds), true, &host.id, &host.name) { sessions.push(session); }
+    }
+    Ok(sessions)
 }
 
 #[tauri::command]
-fn list_sessions() -> Result<Vec<SessionSummary>, String> {
-    let root = home_dir()?.join(".pi/agent/sessions"); if !root.exists() { return Ok(vec![]); }
-    let mut sessions: Vec<_> = WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok).filter(|entry| entry.file_type().is_file() && entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")).filter_map(|entry| parse_session(entry.path())).collect();
+fn list_sessions(app: AppHandle) -> Result<Vec<SessionSummary>, String> {
+    let root = home_dir()?.join(".pi/agent/sessions");
+    let mut sessions: Vec<_> = if root.exists() { WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok).filter(|entry| entry.file_type().is_file() && entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")).filter_map(|entry| parse_session(entry.path())).collect() } else { vec![] };
+    // ponytail: hosts are queried serially; parallelize only when measured startup latency warrants it.
+    for host in load_app_settings(app)?.hosts { if let Ok(mut remote) = list_remote_sessions(&host) { sessions.append(&mut remote); } }
     sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at)); Ok(sessions)
 }
 
 #[tauri::command]
-fn archive_session(session_path: String) -> Result<(), String> {
+fn archive_session(app: AppHandle, session_path: String, host_id: Option<String>) -> Result<(), String> {
+    let host_id = host_id.unwrap_or_else(|| "local".into());
+    if host_id != "local" {
+        if session_path.contains("/../") || !session_path.contains("/.pi/agent/sessions/") { return Err("Only remote Pi session files can be archived".into()); }
+        let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+        let file_name = Path::new(&session_path).file_name().and_then(|name| name.to_str()).ok_or("Session path has no file name")?;
+        let destination = format!("{}-{file_name}", Uuid::new_v4());
+        let remote = format!("mkdir -p \"$HOME/.pi-desktop/archived\" && mv -- {} \"$HOME/.pi-desktop/archived/{}\"", shell_quote(&session_path), destination);
+        let output = ssh(host).arg(remote).output().map_err(|error| error.to_string())?;
+        return output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
     let sessions_root = home_dir()?.join(".pi/agent/sessions").canonicalize().map_err(|error| format!("Could not locate Pi sessions: {error}"))?;
     let source = PathBuf::from(&session_path).canonicalize().map_err(|error| format!("Could not locate session file: {error}"))?;
     if !source.starts_with(&sessions_root) { return Err("Only Pi session files can be archived".into()); }
@@ -490,7 +585,8 @@ fn archive_session(session_path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn relocate_session(session_path: String, cwd: String) -> Result<(), String> {
+fn relocate_session(session_path: String, cwd: String, host_id: Option<String>) -> Result<(), String> {
+    if host_id.as_deref().unwrap_or("local") != "local" { return Err("Relocating remote sessions is not supported yet".into()); }
     let replacement = PathBuf::from(cwd.trim());
     if !replacement.is_dir() { return Err(format!("Project directory does not exist: {}", replacement.display())); }
     let path = PathBuf::from(session_path);
@@ -578,12 +674,20 @@ mod tests {
         let session = root.join("session.jsonl");
         fs::write(&session, "{\"type\":\"session\",\"version\":3,\"id\":\"test\",\"cwd\":\"/missing/project\"}\n{\"type\":\"message\"}\n").unwrap();
 
-        relocate_session(session.to_string_lossy().into_owned(), replacement.to_string_lossy().into_owned()).unwrap();
+        relocate_session(session.to_string_lossy().into_owned(), replacement.to_string_lossy().into_owned(), None).unwrap();
 
         let content = fs::read_to_string(&session).unwrap();
         let header: Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
         assert_eq!(header.get("cwd").and_then(Value::as_str), replacement.to_str());
         assert!(content.contains("{\"type\":\"message\"}"));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn tags_remote_sessions_with_their_machine() {
+        let content = "{\"type\":\"session\",\"version\":3,\"id\":\"remote\",\"cwd\":\"/srv/app\"}\n{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"Deploy it\"}}\n";
+        let session = parse_session_content(Path::new("/home/deploy/.pi/agent/sessions/remote.jsonl"), content, SystemTime::UNIX_EPOCH, true, "build", "Build VPS").unwrap();
+        assert_eq!((session.host_id.as_str(), session.host_name.as_str(), session.project.as_str()), ("build", "Build VPS", "app"));
+        assert_eq!(shell_quote("it's safe"), "'it'\\''s safe'");
     }
 }

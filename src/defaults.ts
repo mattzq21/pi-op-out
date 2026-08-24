@@ -16,6 +16,7 @@ export const defaultSettings: AppSettings = {
     { name: "ls", description: "List directories", enabled: true, builtin: true }
   ],
   skills: [],
+  hosts: [],
   mcpServers: [
     { id: "filesystem", name: "Filesystem", transport: "stdio", command: "npx", args: "-y @modelcontextprotocol/server-filesystem .", enabled: true, status: "connected" }
   ]

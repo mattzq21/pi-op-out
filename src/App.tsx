@@ -58,6 +58,7 @@ export default function App() {
   const [models, setModels] = useState<Model[]>([]); const [commands, setCommands] = useState<SlashCommand[]>([]); const [thinkingLevels, setThinkingLevels] = useState<string[]>(["off"]); const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const settingsRef = useRef(settings); const liveRevision = useRef(0); const activeAssistantId = useRef<string | undefined>(undefined);
   const [panelOpen, setPanelOpen] = useState(true); const [query, setQuery] = useState(""); const [connected, setConnected] = useState(false); const [error, setError] = useState<string>();
+  const [activeHostId, setActiveHostId] = useState("local");
   const [codexUsage, setCodexUsage] = useState<number>();
   const [dialog, setDialog] = useState<ExtensionUiRequest>(); const [notice, setNotice] = useState<{ title: string; message: string }>();
   const [statuses, setStatuses] = useState<Record<string, string>>({}); const [widgets, setWidgets] = useState<Record<string, string[]>>({});
@@ -67,7 +68,7 @@ export default function App() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>({});
   const [terminalsBySession, setTerminalsBySession] = useState<Record<string, SessionTerminals>>({});
-  const terminalSessionId = state.sessionId || "new-session";
+  const terminalSessionId = `${activeHostId}:${state.sessionId || "new-session"}`;
   const composerDraft = composerDrafts[terminalSessionId] ?? "";
   const sessionTerminals = terminalsBySession[terminalSessionId] ?? initialTerminals(terminalSessionId);
   const activeTerminal = sessionTerminals.tabs.find((terminal) => terminal.id === sessionTerminals.activeId) ?? sessionTerminals.tabs[0];
@@ -75,16 +76,16 @@ export default function App() {
   useEffect(() => { settingsRef.current = settings; }, [settings]);
   useEffect(() => { void transport.loadCodexUsage().then((usage) => setCodexUsage(usage.remainingPercent)).catch(() => undefined); }, [transport]);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (hostId = activeHostId) => {
     const revision = liveRevision.current;
     const [nextState, response, nextSessions, modelResponse, thinkingResponse, commandResponse, nextSettings] = await Promise.all([
       transport.command<AgentState>({ type: "get_state" }), transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }), transport.listSessions(),
       transport.command<{ models: Model[] }>({ type: "get_available_models" }), transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }), transport.command<{ commands: SlashCommand[] }>({ type: "get_commands" }), transport.loadSettings()
     ]);
-    const activeSession = nextSessions.find((session) => session.id === nextState.sessionId);
+    const activeSession = nextSessions.find((session) => session.id === nextState.sessionId && (session.hostId ?? "local") === hostId);
     if (liveRevision.current === revision) { setState({ ...nextState, sessionName: activeSession?.name ?? nextState.sessionName }); setMessages(branchMessages(response.entries, response.leafId)); }
     setSessions(nextSessions); setModels(modelResponse.models); setCommands(commandResponse.commands); setThinkingLevels(thinkingResponse.levels); setSettings(nextSettings); return nextSettings;
-  }, [transport]);
+  }, [activeHostId, transport]);
 
   const configureRuntime = useCallback((value: AppSettings) => Promise.all([
     transport.command({ type: "set_auto_compaction", enabled: value.autoCompaction }), transport.command({ type: "set_auto_retry", enabled: value.autoRetry }),
@@ -146,13 +147,13 @@ export default function App() {
     const syncSessionNames = () => void transport.listSessions().then((nextSessions) => {
       setSessions(nextSessions);
       setState((current) => {
-        const activeSession = nextSessions.find((session) => session.id === current.sessionId);
+        const activeSession = nextSessions.find((session) => session.id === current.sessionId && (session.hostId ?? "local") === activeHostId);
         return activeSession && activeSession.name !== current.sessionName ? { ...current, sessionName: activeSession.name } : current;
       });
     }).catch(() => undefined);
-    const interval = window.setInterval(syncSessionNames, 1500);
+    const interval = window.setInterval(syncSessionNames, settings.hosts.length ? 5000 : 1500);
     return () => window.clearInterval(interval);
-  }, [connected, transport]);
+  }, [activeHostId, connected, settings.hosts.length, transport]);
 
   const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => {
     if (behavior) { await transport.command({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...(images.length ? { images } : {}) }); setState((current) => ({ ...current, pendingMessageCount: current.pendingMessageCount + 1 })); return; }
@@ -166,16 +167,16 @@ export default function App() {
   };
   const branch = async (message: ChatMessage) => { const index = messages.findIndex((item) => item.id === message.id); const user = messages.slice(0, index + 1).reverse().find((item) => item.role === "user" && item.entryId); if (!user) return; await transport.command({ type: "fork", entryId: user.entryId }); await refresh(); };
   const newSession = async () => { await transport.command({ type: "new_session" }); await refresh(); setView("chat"); };
-  const selectSession = async (session: SessionSummary) => { if (session.id === state.sessionId) return true; if (session.cwdExists === false) { setRelocationError(undefined); setRelocatingSession(session); return false; } try { await transport.command({ type: "switch_session", sessionPath: session.path }); await refresh(); return true; } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); return false; } };
+  const selectSession = async (session: SessionSummary) => { const hostId = session.hostId ?? "local"; if (session.id === state.sessionId && hostId === activeHostId) return true; if (session.cwdExists === false) { setRelocationError(undefined); setRelocatingSession(session); return false; } try { const current = sessions.find((item) => item.id === state.sessionId && (item.hostId ?? "local") === activeHostId); if (hostId !== activeHostId || current?.cwd !== session.cwd) { setConnected(false); await transport.disconnect(); await transport.connect(session.cwd, session.path, hostId); setActiveHostId(hostId); setConnected(true); } else await transport.command({ type: "switch_session", sessionPath: session.path }); await refresh(hostId); return true; } catch (reason) { setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); return false; } };
   const setModel = async (model: Model) => { await transport.command({ type: "set_model", provider: model.provider, modelId: model.id }); setState((current) => ({ ...current, model })); };
   const setThinking = async (level: string) => { await transport.command({ type: "set_thinking_level", level }); setState((current) => ({ ...current, thinkingLevel: level })); };
-  const saveSettings = async (value: AppSettings) => { if (value.notifications && "Notification" in window && Notification.permission === "default") await Notification.requestPermission(); await transport.saveSettings(value); await configureRuntime(value); setSettings(value); await refresh(); };
-  const openProject = async (cwd: string) => { setProjectOpen(false); try { setConnected(false); const value = await transport.openProject(cwd).then(() => refresh()); await configureRuntime(value); setConnected(true); setView("chat"); } catch (reason) { setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); } };
+  const saveSettings = async (value: AppSettings) => { if (value.notifications && "Notification" in window && Notification.permission === "default") await Notification.requestPermission(); await transport.saveSettings(value); await configureRuntime(value); setSettings(value); if (activeHostId !== "local" && !value.hosts.some((host) => host.id === activeHostId)) setActiveHostId("local"); await refresh(); };
+  const openProject = async (cwd: string, hostId: string) => { setProjectOpen(false); try { setConnected(false); await transport.openProject(cwd, hostId); setActiveHostId(hostId); const value = await refresh(hostId); await configureRuntime(value); setConnected(true); setView("chat"); } catch (reason) { setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); } };
   const sessionAction = async (session: SessionSummary, action: SessionAction) => {
     if (action === "archive") {
       try {
-        if (session.id === state.sessionId) { await transport.command({ type: "new_session" }); await refresh(); }
-        await transport.archiveSession(session.path); await refresh();
+        if (session.id === state.sessionId && (session.hostId ?? "local") === activeHostId) { await transport.command({ type: "new_session" }); await refresh(); }
+        await transport.archiveSession(session.path, session.hostId); await refresh();
       } catch (reason) { setNotice({ title: "Could not archive conversation", message: reason instanceof Error ? reason.message : String(reason) }); }
       return;
     }
@@ -186,7 +187,7 @@ export default function App() {
   const appendTerminalOutput = (terminalId: string, data: string) => setTerminalsBySession((current) => Object.fromEntries(Object.entries(current).map(([sessionId, session]) => [sessionId, { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, output: terminal.output + data } : terminal) }])));
   const startTerminal = async (terminalId: string, cols: number, rows: number) => {
     setTerminalsBySession((current) => { const session = current[terminalSessionId] ?? initialTerminals(terminalSessionId); return { ...current, [terminalSessionId]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, started: true, exited: false } : terminal) } }; });
-    const cwd = sessions.find((session) => session.id === state.sessionId)?.cwd;
+    const cwd = sessions.find((session) => session.id === state.sessionId && (session.hostId ?? "local") === activeHostId)?.cwd;
     if (!cwd) { appendTerminalOutput(terminalId, "\r\nCould not determine this session's working directory.\r\n"); return; }
     try { await transport.startTerminal(terminalId, cwd, cols, rows); } catch (reason) { appendTerminalOutput(terminalId, `\r\nCould not start terminal: ${String(reason)}\r\n`); }
   };
@@ -218,13 +219,13 @@ export default function App() {
   }, [settings.keybindings]);
 
   return <div className="app dark">
-    <aside className="icon-rail"><nav><span className={`native-status ${connected ? "online" : ""}`} title={connected ? `${transport.mode} transport connected` : "Connecting"} /><IconButton label="New conversation" onClick={newSession}><Plus size={19} /></IconButton><IconButton label="Conversations" className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}><MessageSquare size={18} /></IconButton><IconButton label="New project" onClick={() => setProjectOpen(true)}><FolderGit2 size={18} /></IconButton></nav>{view === "chat" && panelOpen && <SessionPanel sessions={sessions} activeId={state.sessionId} query={query} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} />}<div className="rail-bottom"><IconButton label="Settings" className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}><Settings size={19} /></IconButton>{codexUsage !== undefined && <span className="codex-usage" aria-label="Codex usage remaining" title="Codex usage remaining">{codexUsage}% left</span>}</div></aside>
-    {view === "chat" ? <div className="chat-workspace"><ChatView state={state} messages={messages} models={models} commands={commands} thinkingLevels={thinkingLevels} widgets={Object.values(widgets).flat()} statuses={Object.values(statuses)} draft={composerDraft} onDraftChange={setComposerDraft} onSend={send} onAbort={() => transport.command({ type: "abort" })} onOpenTerminal={() => setTerminalOpen(true)} onBranch={branch} onModel={setModel} onThinking={setThinking} />{terminalOpen && <TerminalView key={`${terminalSessionId}:${activeTerminal.id}`} cwd={messages.length > 0 ? sessions.find((session) => session.id === state.sessionId)?.cwd : undefined} terminals={sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={activeTerminal.id} output={activeTerminal.output} exited={activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { void transport.writeTerminal(activeTerminal.id, data).catch((reason) => appendTerminalOutput(activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { void transport.resizeTerminal(activeTerminal.id, cols, rows).catch(() => undefined); }} onDelete={deleteTerminal} onClose={() => setTerminalOpen(false)} />}</div> : <SettingsView settings={settings} onSave={saveSettings} />}
+    <aside className="icon-rail"><nav><span className={`native-status ${connected ? "online" : ""}`} title={connected ? `${transport.mode} transport connected` : "Connecting"} /><IconButton label="New conversation" onClick={newSession}><Plus size={19} /></IconButton><IconButton label="Conversations" className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}><MessageSquare size={18} /></IconButton><IconButton label="New project" onClick={() => setProjectOpen(true)}><FolderGit2 size={18} /></IconButton></nav>{view === "chat" && panelOpen && <SessionPanel sessions={sessions} activeId={state.sessionId} activeHostId={activeHostId} query={query} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} />}<div className="rail-bottom"><IconButton label="Settings" className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}><Settings size={19} /></IconButton>{codexUsage !== undefined && <span className="codex-usage" aria-label="Codex usage remaining" title="Codex usage remaining">{codexUsage}% left</span>}</div></aside>
+    {view === "chat" ? <div className="chat-workspace"><ChatView state={state} messages={messages} models={models} commands={commands} thinkingLevels={thinkingLevels} widgets={Object.values(widgets).flat()} statuses={Object.values(statuses)} draft={composerDraft} onDraftChange={setComposerDraft} onSend={send} onAbort={() => transport.command({ type: "abort" })} onOpenTerminal={() => setTerminalOpen(true)} onBranch={branch} onModel={setModel} onThinking={setThinking} />{terminalOpen && <TerminalView key={`${terminalSessionId}:${activeTerminal.id}`} cwd={messages.length > 0 ? sessions.find((session) => session.id === state.sessionId && (session.hostId ?? "local") === activeHostId)?.cwd : undefined} terminals={sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={activeTerminal.id} output={activeTerminal.output} exited={activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { void transport.writeTerminal(activeTerminal.id, data).catch((reason) => appendTerminalOutput(activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { void transport.resizeTerminal(activeTerminal.id, cols, rows).catch(() => undefined); }} onDelete={deleteTerminal} onClose={() => setTerminalOpen(false)} />}</div> : <SettingsView settings={settings} onSave={saveSettings} />}
     {error && <div className="error-toast"><strong>Pi could not connect</strong><span>{error}</span><button onClick={() => setError(undefined)}>×</button></div>}
     {notice && <div className="error-toast"><strong>{notice.title}</strong><span>{notice.message}</span><button onClick={() => setNotice(undefined)}>×</button></div>}
     {dialog && <ExtensionDialog request={dialog} onRespond={(response) => { void transport.command({ type: "extension_ui_response", id: dialog.id, ...response }); setDialog(undefined); }} />}
-    {projectOpen && <ProjectDialog initialPath={sessions.find((session) => session.id === state.sessionId)?.cwd || ""} onChooseDirectory={(currentPath) => transport.selectProjectDirectory(currentPath || undefined)} onOpen={(cwd) => void openProject(cwd)} onCancel={() => setProjectOpen(false)} />}
+    {projectOpen && <ProjectDialog initialPath={sessions.find((session) => session.id === state.sessionId && (session.hostId ?? "local") === activeHostId)?.cwd || ""} hosts={settings.hosts} initialHostId={activeHostId} onChooseDirectory={(currentPath) => transport.selectProjectDirectory(currentPath || undefined)} onOpen={(cwd, hostId) => void openProject(cwd, hostId)} onCancel={() => setProjectOpen(false)} />}
     {renameSession && <ExtensionDialog request={{ type: "extension_ui_request", id: "rename-session", method: "input", title: "Rename conversation", prefill: renameSession.name }} onRespond={(response) => { setRenameSession(undefined); if (typeof response.value === "string" && response.value.trim()) { const name = response.value.trim(); void transport.command({ type: "set_session_name", name }).then(() => { setState((current) => ({ ...current, sessionName: name })); void refresh(); }); } }} />}
-    {relocatingSession && <ExtensionDialog request={{ type: "extension_ui_request", id: `relocate-${relocatingSession.id}`, method: "input", title: "Locate conversation project", message: `The original project directory no longer exists: ${relocatingSession.cwd}. Enter its new location to open this conversation.`, error: relocationError, placeholder: "Replacement project directory", prefill: sessions.find((session) => session.id === state.sessionId && session.cwdExists !== false)?.cwd || "" }} onRespond={(response) => { if (response.cancelled) { setRelocationError(undefined); setRelocatingSession(undefined); return; } const cwd = typeof response.value === "string" ? response.value.trim() : ""; if (!cwd) { setRelocationError("Path can't be empty"); return; } const session = relocatingSession; setRelocationError(undefined); setRelocatingSession(undefined); void transport.relocateSession(session.path, cwd).then(() => transport.command({ type: "switch_session", sessionPath: session.path })).then(() => refresh()).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason))); }} />}
+    {relocatingSession && <ExtensionDialog request={{ type: "extension_ui_request", id: `relocate-${relocatingSession.id}`, method: "input", title: "Locate conversation project", message: `The original project directory no longer exists: ${relocatingSession.cwd}. Enter its new location to open this conversation.`, error: relocationError, placeholder: "Replacement project directory", prefill: sessions.find((session) => session.id === state.sessionId && (session.hostId ?? "local") === activeHostId && session.cwdExists !== false)?.cwd || "" }} onRespond={(response) => { if (response.cancelled) { setRelocationError(undefined); setRelocatingSession(undefined); return; } const cwd = typeof response.value === "string" ? response.value.trim() : ""; if (!cwd) { setRelocationError("Path can't be empty"); return; } const session = relocatingSession; setRelocationError(undefined); setRelocatingSession(undefined); void transport.relocateSession(session.path, cwd, session.hostId).then(() => transport.command({ type: "switch_session", sessionPath: session.path })).then(() => refresh()).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason))); }} />}
   </div>;
 }

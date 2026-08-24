@@ -14,4 +14,11 @@ describe("SessionPanel", () => {
     expect(screen.getByText("Project one")).toHaveClass("active");
     expect(screen.getByText("Project two")).not.toHaveClass("active");
   });
+
+  it("separates projects and active sessions by machine", () => {
+    const remote = { ...sessions[0], hostId: "vps", hostName: "Build VPS", id: "active" };
+    render(<SessionPanel sessions={[sessions[0], remote]} activeId="active" activeHostId="vps" query="" onQuery={() => undefined} onSelect={() => undefined} onAction={() => undefined} />);
+    expect(screen.getByText("Build VPS / Project one")).toHaveClass("active");
+    expect(screen.getByText("Project one")).not.toHaveClass("active");
+  });
 });
