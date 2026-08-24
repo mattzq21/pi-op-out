@@ -152,6 +152,17 @@ describe("Pi desktop", () => {
     expect(document.querySelector(".terminal-host")).toHaveTextContent("/Users/demo/pi-desktop/tmp/");
   });
 
+  it("shows the selected project on an empty conversation", async () => {
+    const user = userEvent.setup(); render(<App />);
+    await user.click(screen.getByRole("button", { name: "New conversation" }));
+    await user.click(await screen.findByRole("button", { name: "Choose project" }));
+    const path = screen.getByRole("textbox", { name: "Project directory" });
+    await user.type(path, "/Users/demo/code/fresh-project");
+    await user.click(screen.getByRole("button", { name: "Open project" }));
+    expect(await screen.findByRole("button", { name: "Selected project: fresh-project" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Choose project" })).not.toBeInTheDocument();
+  });
+
   it("keeps terminal output with the session that ran it", async () => {
     const user = userEvent.setup(); render(<App />);
     await user.click(screen.getByRole("button", { name: "Open terminal" }));
