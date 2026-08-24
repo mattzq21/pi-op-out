@@ -14,6 +14,7 @@ import { createTransport } from "./lib/transport";
 import type { AgentState, AppSettings, ChatMessage, ContentPart, ExtensionUiRequest, ImageAttachment, Model, RpcEvent, SessionSummary, SlashCommand } from "./types";
 
 const emptyState: AgentState = { model: null, thinkingLevel: "off", isStreaming: false, sessionId: "", messageCount: 0, pendingMessageCount: 0 };
+const staleExtensionContext = "This extension ctx is stale after session replacement or reload.";
 type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number } };
 type TerminalTabState = { id: string; output: string; started: boolean; exited?: boolean };
 type SessionTerminals = { activeId: string; tabs: TerminalTabState[] };
@@ -160,7 +161,7 @@ export default function App() {
       if (event.type === "compaction_start") setState((current) => ({ ...current, activity: "Compacting context…" }));
       if (event.type === "compaction_end") setState((current) => ({ ...current, activity: undefined }));
       if (event.type === "auto_retry_start") setState((current) => ({ ...current, activity: `Retrying · attempt ${event.attempt}` }));
-      if (event.type === "extension_error") setNotice({ title: "Extension error", message: String(event.error ?? "An extension failed") });
+      if (event.type === "extension_error") { const message = String(event.error ?? "An extension failed"); if (!message.startsWith(staleExtensionContext)) setNotice({ title: "Extension error", message }); }
       if (event.type === "extension_ui_request") { const request = event as unknown as ExtensionUiRequest;
         if (request.method === "notify") setNotice({ title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "Pi extension", message: request.message || "Notification" });
         else if (request.method === "setStatus" && request.statusKey) setStatuses((current) => { const next = { ...current }; if (request.statusText) next[request.statusKey!] = request.statusText; else delete next[request.statusKey!]; return next; });
