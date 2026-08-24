@@ -2,6 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { MockTransport } from "./mockTransport";
 
 describe("MockTransport", () => {
+  it("gives a new unassigned chat its own temporary directory", async () => {
+    const transport = new MockTransport(); await transport.newTemporaryChat("local");
+    const state = await transport.command<{ sessionId: string }>({ type: "get_state" });
+    const session = (await transport.listSessions()).find((item) => item.id === state.sessionId);
+    expect(session?.cwd).toBe(`/Users/demo/pi-desktop/tmp/${state.sessionId}`);
+  });
+
   it("streams a prompt and persists it in the session tree", async () => {
     const transport = new MockTransport(); const events: string[] = [];
     transport.subscribe((event) => events.push(event.type));

@@ -142,13 +142,14 @@ describe("Pi desktop", () => {
     await waitFor(() => expect(document.querySelector(".terminal-host")).toHaveTextContent("native builds run a real PTY shell"));
   });
 
-  it("waits for a new conversation to establish its CWD before starting a terminal", async () => {
+  it("starts a new conversation in its temporary CWD", async () => {
     const user = userEvent.setup(); render(<App />);
     await user.click(screen.getByRole("button", { name: "New conversation" }));
     expect(await screen.findByText("π")).toBeInTheDocument();
+    await screen.findByRole("button", { name: "Choose project" });
     await user.click(screen.getByRole("button", { name: "Open terminal" }));
-    expect(await screen.findByText("Start the conversation to get a CWD")).toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: "Terminal input" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "Terminal input" })).toBeInTheDocument();
+    expect(document.querySelector(".terminal-host")).toHaveTextContent("/Users/demo/pi-desktop/tmp/");
   });
 
   it("keeps terminal output with the session that ran it", async () => {

@@ -84,6 +84,13 @@ struct DirectoryListing {
     directories: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TemporaryChat {
+    cwd: String,
+    session_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AppSettings {
@@ -389,7 +396,7 @@ fn remote_directory_path(path: Option<&str>) -> String {
 }
 
 #[tauri::command(async)]
-fn start_pi(app: AppHandle, runtime: State<PiRuntime>, cwd: Option<String>, session_path: Option<String>, host_id: Option<String>) -> Result<(), String> {
+fn start_pi(app: AppHandle, runtime: State<PiRuntime>, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, host_id: Option<String>) -> Result<(), String> {
     let mut process_guard = runtime.process.lock().map_err(|_| "Pi runtime lock was poisoned")?;
     if process_guard.is_some() { return Ok(()); }
     let settings = load_app_settings(app.clone()).unwrap_or_else(|_| default_settings());
@@ -399,7 +406,7 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, cwd: Option<String>, sess
         let (mcp_extension, mcp_config) = prepare_mcp_bridge(&app, &settings)?;
         let mut command = Command::new(pi_executable());
         command.arg("--mode").arg("rpc").arg("--approve").arg("--no-skills").current_dir(&working_dir).arg("--extension").arg(mcp_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config);
-        if let Some(path) = &session_path { command.arg("--session").arg(path); }
+        if let Some(path) = &session_path { command.arg("--session").arg(path); } else if let Some(id) = &session_id { command.arg("--session-id").arg(id); }
         let enabled_tools: Vec<&str> = settings.tools.iter().filter(|tool| tool.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|tool| tool.get("name").and_then(Value::as_str)).collect();
         if enabled_tools.is_empty() { command.arg("--no-tools"); } else { command.arg("--tools").arg(enabled_tools.join(",")); }
         for skill in settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)) { if let Some(path) = skill.get("path").and_then(Value::as_str) { let expanded = path.strip_prefix("~/").and_then(|rest| home_dir().ok().map(|home| home.join(rest))).unwrap_or_else(|| PathBuf::from(path)); command.arg("--skill").arg(expanded); } }
@@ -409,7 +416,7 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, cwd: Option<String>, sess
     } else {
         let host = remote_host(&settings, &host_id)?;
         let mut arguments = vec![remote_pi_path(&host.pi_path), "--mode".into(), "rpc".into(), "--approve".into()];
-        if let Some(path) = &session_path { arguments.extend(["--session".into(), shell_quote(path)]); }
+        if let Some(path) = &session_path { arguments.extend(["--session".into(), shell_quote(path)]); } else if let Some(id) = &session_id { arguments.extend(["--session-id".into(), shell_quote(id)]); }
         if !settings.default_model.trim().is_empty() { arguments.extend(["--model".into(), shell_quote(settings.default_model.trim())]); }
         if !settings.default_thinking.trim().is_empty() { arguments.extend(["--thinking".into(), shell_quote(settings.default_thinking.trim())]); }
         let directory = remote_directory_path(cwd.as_deref());
@@ -584,6 +591,29 @@ fn home_directory(app: AppHandle, host_id: String) -> Result<String, String> {
     (!path.is_empty()).then_some(path).ok_or_else(|| "Remote home directory was unavailable".into())
 }
 
+fn create_local_temporary_chat(home: &Path, session_id: &str) -> Result<PathBuf, String> {
+    let cwd = home.join("pi-desktop/tmp").join(session_id);
+    fs::create_dir_all(&cwd).map_err(|error| format!("Could not create temporary chat directory: {error}"))?;
+    Ok(cwd)
+}
+
+#[tauri::command(async)]
+fn create_temporary_chat(app: AppHandle, host_id: String) -> Result<TemporaryChat, String> {
+    let session_id = Uuid::new_v4().to_string();
+    let cwd = if host_id == "local" {
+        create_local_temporary_chat(&home_dir()?, &session_id)?.to_string_lossy().into_owned()
+    } else {
+        let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+        let remote = format!("mkdir -p \"$HOME/pi-desktop/tmp/{session_id}\" && cd \"$HOME/pi-desktop/tmp/{session_id}\" && pwd -P");
+        let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not create temporary chat directory on {}: {error}", host.name))?;
+        if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if path.is_empty() { return Err("Remote temporary chat directory was unavailable".into()); }
+        path
+    };
+    Ok(TemporaryChat { cwd, session_id })
+}
+
 #[tauri::command(async)]
 fn list_directories(app: AppHandle, host_id: String, path: Option<String>) -> Result<DirectoryListing, String> {
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
@@ -655,7 +685,7 @@ fn relocate_session(session_path: String, cwd: String, host_id: Option<String>) 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, list_directories, archive_session, relocate_session, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, list_directories, archive_session, relocate_session, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }
 
 #[cfg(test)]
@@ -666,6 +696,15 @@ mod tests {
     fn reports_the_limiting_codex_usage_window() {
         let response = json!({"rateLimitsByLimitId":{"codex":{"primary":{"usedPercent":24},"secondary":{"usedPercent":61}}}});
         assert_eq!(codex_remaining_percent(&response), Some(39));
+    }
+
+    #[test]
+    fn creates_a_temporary_directory_for_the_chat_id() {
+        let home = std::env::temp_dir().join(format!("pi-ui-temporary-chat-{}", Uuid::new_v4()));
+        let cwd = create_local_temporary_chat(&home, "chat-id").unwrap();
+        assert_eq!(cwd, home.join("pi-desktop/tmp/chat-id"));
+        assert!(cwd.is_dir());
+        fs::remove_dir_all(home).unwrap();
     }
 
     #[test]

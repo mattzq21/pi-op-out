@@ -35,6 +35,7 @@ vi.mock("./lib/transport", async () => {
     loadCodexUsage: async () => ({ remainingPercent: 50 }),
     saveSettings: async () => undefined,
     selectProjectDirectory: async () => null,
+    newTemporaryChat: async () => undefined,
     openProject: async () => undefined,
     startTerminal: async () => undefined,
     writeTerminal: async () => undefined,
