@@ -386,7 +386,7 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, cwd: Option<String>, sess
     let settings = load_app_settings(app.clone()).unwrap_or_else(|_| default_settings());
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let mut command = if host_id == "local" {
-        let working_dir = cwd.as_ref().map(PathBuf::from).unwrap_or(std::env::current_dir().map_err(|error| error.to_string())?);
+        let working_dir = match cwd.as_deref() { Some("~") => home_dir()?, Some(path) => PathBuf::from(path), None => std::env::current_dir().map_err(|error| error.to_string())? };
         let (mcp_extension, mcp_config) = prepare_mcp_bridge(&app, &settings)?;
         let mut command = Command::new(pi_executable());
         command.arg("--mode").arg("rpc").arg("--approve").arg("--no-skills").current_dir(&working_dir).arg("--extension").arg(mcp_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config);
@@ -403,7 +403,7 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, cwd: Option<String>, sess
         if let Some(path) = &session_path { arguments.extend(["--session".into(), shell_quote(path)]); }
         if !settings.default_model.trim().is_empty() { arguments.extend(["--model".into(), shell_quote(settings.default_model.trim())]); }
         if !settings.default_thinking.trim().is_empty() { arguments.extend(["--thinking".into(), shell_quote(settings.default_thinking.trim())]); }
-        let directory = cwd.as_ref().map(|path| shell_quote(path)).unwrap_or_else(|| "\"$HOME\"".into());
+        let directory = remote_directory_path(cwd.as_deref());
         let remote = format!("cd {directory} && exec {}", arguments.join(" "));
         let mut command = ssh(host); command.arg(remote); command
     };
@@ -564,6 +564,16 @@ fn list_remote_sessions(host: &RemoteHost) -> Result<Vec<SessionSummary>, String
 }
 
 #[tauri::command]
+fn home_directory(app: AppHandle, host_id: String) -> Result<String, String> {
+    if host_id == "local" { return Ok(home_dir()?.canonicalize().unwrap_or(home_dir()?).to_string_lossy().into_owned()); }
+    let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+    let output = ssh(host).arg("cd \"$HOME\" && pwd -P").output().map_err(|error| format!("Could not resolve home on {}: {error}", host.name))?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!path.is_empty()).then_some(path).ok_or_else(|| "Remote home directory was unavailable".into())
+}
+
+#[tauri::command]
 fn list_directories(app: AppHandle, host_id: String, path: Option<String>) -> Result<DirectoryListing, String> {
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
     let remote = format!("cd {} && printf '%s\\000' \"$PWD\" && find . -mindepth 1 -maxdepth 1 -type d -printf '%f\\000'", remote_directory_path(path.as_deref()));
@@ -631,7 +641,7 @@ fn relocate_session(session_path: String, cwd: String, host_id: Option<String>) 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, list_directories, archive_session, relocate_session, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, list_directories, archive_session, relocate_session, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }
 
 #[cfg(test)]
