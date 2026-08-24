@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import App from "./App";
+import App, { formatCodexReset } from "./App";
 
 describe("Pi desktop", () => {
   it("loads the web transport, grouped sessions, and response branch controls", async () => {
@@ -216,10 +216,14 @@ describe("Pi desktop", () => {
   it("shows remaining Codex usage next to settings", async () => {
     render(<App />);
     const usage = await screen.findByLabelText("Codex usage remaining");
-    expect(usage).toHaveTextContent("73% left");
+    expect(usage).toHaveTextContent("73% left · 3d");
     const settings = screen.getByRole("button", { name: "Settings" });
     expect(usage.parentElement).toContainElement(settings);
     expect(settings.nextElementSibling).toBe(usage);
+  });
+
+  it("shows hours and minutes only when the Codex reset is within a day", () => {
+    expect(formatCodexReset(1_000_000 + 5 * 60 * 60 + 12 * 60, 1_000_000 * 1000)).toBe("5h 12m");
   });
 
   it("toggles the terminal with the default keybind", async () => {

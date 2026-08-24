@@ -74,6 +74,8 @@ struct RemoteHost {
 #[serde(rename_all = "camelCase")]
 struct CodexUsage {
     remaining_percent: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reset_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -156,10 +158,13 @@ fn codex_response(receiver: &mpsc::Receiver<String>, id: u64, deadline: Instant)
     }
 }
 
-fn codex_remaining_percent(response: &Value) -> Option<u8> {
+fn codex_usage_values(response: &Value) -> Option<CodexUsage> {
     let limits = response.pointer("/rateLimitsByLimitId/codex").or_else(|| response.get("rateLimits"))?;
-    let used = ["primary", "secondary"].iter().filter_map(|window| limits.get(window)?.get("usedPercent")?.as_f64()).fold(None, |highest, value| Some(highest.map_or(value, |current: f64| current.max(value))))?;
-    Some((100.0 - used.clamp(0.0, 100.0)).round() as u8)
+    let (used, reset_at) = ["primary", "secondary"].iter().filter_map(|window| {
+        let value = limits.get(window)?;
+        Some((value.get("usedPercent")?.as_f64()?, value.get("resetsAt").and_then(Value::as_u64)))
+    }).max_by(|left, right| left.0.total_cmp(&right.0))?;
+    Some(CodexUsage { remaining_percent: (100.0 - used.clamp(0.0, 100.0)).round() as u8, reset_at })
 }
 
 #[tauri::command(async)]
@@ -176,7 +181,7 @@ fn codex_usage() -> Result<CodexUsage, String> {
         writeln!(stdin, "{}", json!({"method":"initialized"})).map_err(|error| error.to_string())?;
         writeln!(stdin, "{}", json!({"method":"account/rateLimits/read","id":2})).map_err(|error| error.to_string())?;
         let response = codex_response(&receiver, 2, deadline)?;
-        Ok(CodexUsage { remaining_percent: codex_remaining_percent(&response).ok_or("Codex usage is unavailable")? })
+        codex_usage_values(&response).ok_or_else(|| "Codex usage is unavailable".into())
     })();
     let _ = child.kill(); let _ = child.wait(); result
 }
@@ -694,8 +699,10 @@ mod tests {
 
     #[test]
     fn reports_the_limiting_codex_usage_window() {
-        let response = json!({"rateLimitsByLimitId":{"codex":{"primary":{"usedPercent":24},"secondary":{"usedPercent":61}}}});
-        assert_eq!(codex_remaining_percent(&response), Some(39));
+        let response = json!({"rateLimitsByLimitId":{"codex":{"primary":{"usedPercent":24,"resetsAt":100},"secondary":{"usedPercent":61,"resetsAt":200}}}});
+        let usage = codex_usage_values(&response).unwrap();
+        assert_eq!(usage.remaining_percent, 39);
+        assert_eq!(usage.reset_at, Some(200));
     }
 
     #[test]

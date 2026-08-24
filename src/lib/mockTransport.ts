@@ -33,7 +33,7 @@ export class MockTransport implements PiTransport {
   async archiveSession(sessionPath: string) { const index = this.sessions.findIndex((session) => session.path === sessionPath); if (index < 0) throw new Error("Session not found"); const [session] = this.sessions.splice(index, 1); this.histories.delete(session.id); }
   async relocateSession(sessionPath: string, cwd: string) { const session = this.sessions.find((item) => item.path === sessionPath); if (!session) throw new Error("Session not found"); session.cwd = cwd; session.project = cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace"; session.cwdExists = true; }
   async loadSettings() { return structuredClone(this.settings); }
-  async loadCodexUsage() { return { remainingPercent: 73 }; }
+  async loadCodexUsage() { return { remainingPercent: 73, resetAt: Math.floor(Date.now() / 1000) + 49 * 60 * 60 }; }
   async saveSettings(settings: AppSettings) { this.settings = structuredClone(settings); localStorage.setItem("pi-ui-settings", JSON.stringify(settings)); }
   async selectProjectDirectory() { return "/Users/demo/code/northstar"; }
   async homeDirectory(hostId: string) { return hostId === "local" ? "/Users/demo" : "/home/demo"; }

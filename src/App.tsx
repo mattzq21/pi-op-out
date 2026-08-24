@@ -11,7 +11,7 @@ import { defaultSettings } from "./defaults";
 import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
 import { findReplaceableAbortedTurn } from "./lib/abortedTurn";
 import { createTransport } from "./lib/transport";
-import type { AgentState, AppSettings, ChatMessage, ContentPart, ExtensionUiRequest, ImageAttachment, Model, RpcEvent, SessionSummary, SlashCommand } from "./types";
+import type { AgentState, AppSettings, ChatMessage, CodexUsage, ContentPart, ExtensionUiRequest, ImageAttachment, Model, RpcEvent, SessionSummary, SlashCommand } from "./types";
 
 const emptyState: AgentState = { model: null, thinkingLevel: "off", isStreaming: false, sessionId: "", messageCount: 0, pendingMessageCount: 0 };
 const staleExtensionContext = "This extension ctx is stale after session replacement or reload.";
@@ -59,6 +59,16 @@ function selectedProjectCwd(cwd?: string) {
   return cwd;
 }
 
+export function formatCodexReset(resetAt: number, now = Date.now()) {
+  const remaining = Math.max(0, resetAt * 1000 - now);
+  if (remaining === 0) return "now";
+  const day = 24 * 60 * 60 * 1000;
+  if (remaining > day) return `${Math.ceil(remaining / day)}d`;
+  const hours = Math.floor(remaining / (60 * 60 * 1000));
+  const minutes = Math.ceil((remaining % (60 * 60 * 1000)) / (60 * 1000));
+  return hours ? `${hours}h${minutes ? ` ${minutes}m` : ""}` : `${Math.max(1, minutes)}m`;
+}
+
 export default function App() {
   const transport = useMemo(createTransport, []); const [view, setView] = useState<"chat" | "settings">("chat");
   const [state, setState] = useState(emptyState); const [messages, setMessages] = useState<ChatMessage[]>([]); const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -68,7 +78,8 @@ export default function App() {
   const [activeHostId, setActiveHostId] = useState("local");
   const [activeCwd, setActiveCwd] = useState<string>();
   const activeHostIdRef = useRef(activeHostId); activeHostIdRef.current = activeHostId;
-  const [codexUsage, setCodexUsage] = useState<number>();
+  const [codexUsage, setCodexUsage] = useState<CodexUsage>();
+  const [, setUsageClock] = useState(0);
   const [dialog, setDialog] = useState<ExtensionUiRequest>(); const [notice, setNotice] = useState<{ title: string; message: string }>();
   const [statuses, setStatuses] = useState<Record<string, string>>({}); const [widgets, setWidgets] = useState<Record<string, string[]>>({});
   const [renameSession, setRenameSession] = useState<SessionSummary>();
@@ -85,7 +96,12 @@ export default function App() {
   const activeTerminal = sessionTerminals.tabs.find((terminal) => terminal.id === sessionTerminals.activeId) ?? sessionTerminals.tabs[0];
 
   useEffect(() => { settingsRef.current = settings; }, [settings]);
-  useEffect(() => { void transport.loadCodexUsage().then((usage) => setCodexUsage(usage.remainingPercent)).catch(() => undefined); }, [transport]);
+  useEffect(() => { void transport.loadCodexUsage().then(setCodexUsage).catch(() => undefined); }, [transport]);
+  useEffect(() => {
+    if (!codexUsage?.resetAt) return;
+    const timer = window.setInterval(() => setUsageClock((value) => value + 1), 60_000);
+    return () => window.clearInterval(timer);
+  }, [codexUsage?.resetAt]);
 
   const flushMessageUpdates = useCallback(() => {
     if (messageFrame.current !== undefined) cancelAnimationFrame(messageFrame.current);
@@ -272,7 +288,7 @@ export default function App() {
   }, [settings.keybindings]);
 
   return <div className="app dark">
-    <aside className="icon-rail"><nav><IconButton label="New conversation" onClick={newSession}><Plus size={19} /></IconButton><IconButton label="Conversations" className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}><MessageSquare size={18} /></IconButton><IconButton label="New project" onClick={() => setProjectOpen(true)}><FolderGit2 size={18} /></IconButton><IconButton label="Settings" className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}><Settings size={19} /></IconButton>{codexUsage !== undefined && <span className="codex-usage" aria-label="Codex usage remaining" title="Codex usage remaining">{codexUsage}% left</span>}</nav>{view === "chat" && panelOpen && <SessionPanel sessions={sessions} activeId={state.sessionId} activeHostId={activeHostId} query={query} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} />}</aside>
+    <aside className="icon-rail"><nav><IconButton label="New conversation" onClick={newSession}><Plus size={19} /></IconButton><IconButton label="Conversations" className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}><MessageSquare size={18} /></IconButton><IconButton label="New project" onClick={() => setProjectOpen(true)}><FolderGit2 size={18} /></IconButton><IconButton label="Settings" className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}><Settings size={19} /></IconButton>{codexUsage !== undefined && <span className="codex-usage" aria-label="Codex usage remaining" title="Codex usage remaining">{codexUsage.remainingPercent}% left{codexUsage.resetAt ? ` · ${formatCodexReset(codexUsage.resetAt)}` : ""}</span>}</nav>{view === "chat" && panelOpen && <SessionPanel sessions={sessions} activeId={state.sessionId} activeHostId={activeHostId} query={query} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} />}</aside>
     {view === "chat" ? <div className="chat-workspace"><ChatView state={state} messages={messages} models={models} commands={commands} thinkingLevels={thinkingLevels} widgets={Object.values(widgets).flat()} statuses={Object.values(statuses)} projectCwd={selectedProjectCwd(activeCwd)} draft={composerDraft} onDraftChange={setComposerDraft} onSend={send} onAbort={() => transport.command({ type: "abort" })} onOpenTerminal={() => setTerminalOpen(true)} onOpenProject={() => void chooseChatProject()} onBranch={branch} onModel={setModel} onThinking={setThinking} />{terminalOpen && <TerminalView key={`${terminalSessionId}:${activeTerminal.id}`} cwd={activeCwd ?? sessions.find((session) => session.id === state.sessionId && (session.hostId ?? "local") === activeHostId)?.cwd} terminals={sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={activeTerminal.id} output={activeTerminal.output} exited={activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { void transport.writeTerminal(activeTerminal.id, data).catch((reason) => appendTerminalOutput(activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { void transport.resizeTerminal(activeTerminal.id, cols, rows).catch(() => undefined); }} onDelete={deleteTerminal} onClose={() => setTerminalOpen(false)} />}</div> : <SettingsView settings={settings} onSave={saveSettings} />}
     {error && <div className="error-toast"><strong>Pi could not connect</strong><span>{error}</span><button onClick={() => setError(undefined)}>×</button></div>}
     {notice && <div className="error-toast"><strong>{notice.title}</strong><span>{notice.message}</span><button onClick={() => setNotice(undefined)}>×</button></div>}
