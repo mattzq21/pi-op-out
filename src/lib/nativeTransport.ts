@@ -5,6 +5,7 @@ import type { AppSettings, CodexUsage, DirectoryListing, PiTransport, RpcCommand
 
 export class NativeTransport implements PiTransport {
   mode = "native" as const;
+  private readonly runtimeId = globalThis.crypto?.randomUUID?.() ?? `runtime-${Date.now()}-${Math.random()}`;
   private listeners = new Set<(event: RpcEvent) => void>();
   private unlisten?: UnlistenFn;
   private connectionVersion = 0;
@@ -19,13 +20,17 @@ export class NativeTransport implements PiTransport {
     if (this.cwd === undefined && this.sessionPath === undefined) { const chat = await invoke<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId: this.hostId }); this.cwd = chat.cwd; this.sessionId = chat.sessionId; }
     const version = ++this.connectionVersion;
     this.unlisten?.(); this.unlisten = undefined;
-    const unlisten = await listen<RpcEvent>("pi://event", ({ payload }) => this.listeners.forEach((listener) => listener(payload)));
+    const unlisten = await listen<RpcEvent | { runtimeId: string; event: RpcEvent }>("pi://event", ({ payload }) => {
+      const envelope = payload as { runtimeId?: unknown; event?: RpcEvent };
+      if (typeof envelope.runtimeId === "string") { if (envelope.runtimeId === this.runtimeId && envelope.event) this.listeners.forEach((listener) => listener(envelope.event!)); }
+      else this.listeners.forEach((listener) => listener(payload as RpcEvent));
+    });
     if (version !== this.connectionVersion) { unlisten(); return; }
     this.unlisten = unlisten;
-    await this.runProcessCommand(() => invoke("start_pi", { cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId }));
+    await this.runProcessCommand(() => invoke("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId }));
   }
-  async disconnect() { ++this.connectionVersion; this.unlisten?.(); this.unlisten = undefined; await this.runProcessCommand(() => invoke("stop_pi")); }
-  async command<T>(command: RpcCommand) { const result = await invoke<T>("pi_command", { command }); if (command.type === "get_state") { this.sessionPath = (result as { sessionFile?: string }).sessionFile; this.sessionId = undefined; } return result; }
+  async disconnect() { ++this.connectionVersion; this.unlisten?.(); this.unlisten = undefined; await this.runProcessCommand(() => invoke("stop_pi", { runtimeId: this.runtimeId })); }
+  async command<T>(command: RpcCommand) { const result = await invoke<T>("pi_command", { runtimeId: this.runtimeId, command }); if (command.type === "get_state") { this.sessionPath = (result as { sessionFile?: string }).sessionFile; this.sessionId = undefined; } return result; }
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   listSessions() { return invoke<SessionSummary[]>("list_sessions"); }
   loadSessionEntries(sessionPath: string, hostId = "local") { return invoke<SessionEntries>("load_session_entries", { sessionPath, hostId }); }

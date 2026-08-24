@@ -17,7 +17,7 @@ interface Props {
   restoredDraft?: { id: string; value: string };
   onSend: (message: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void;
   onAbort: () => void;
-  onOpenTerminal: () => void;
+  onOpenTerminal?: () => void;
   onModel: (model: Model) => void;
   onThinking: (level: string) => void;
 }
@@ -95,7 +95,7 @@ export function Composer({ streaming, queued, commands, models, model, thinkingL
       {uploadError && <div className="upload-error">{uploadError}</div>}
       <textarea ref={ref} aria-label="Message Pi" placeholder={streaming ? (behavior === "steer" ? "Steer Pi while it works…" : "Queue a follow-up…") : "Ask Pi to build, explain, or change anything…"} value={value} rows={1} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} />
       <input ref={fileRef} className="hidden-input" type="file" multiple onChange={(event) => { void addFiles(event.target.files); event.target.value = ""; }} />
-      <div className="composer-bar"><div className="composer-tools"><IconButton label="Attach files" onClick={() => fileRef.current?.click()}><Paperclip size={17} /></IconButton><IconButton label="Open terminal" onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton></div>
+      <div className="composer-bar"><div className="composer-tools"><IconButton label="Attach files" onClick={() => fileRef.current?.click()}><Paperclip size={17} /></IconButton>{onOpenTerminal && <IconButton label="Open terminal" onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton>}</div>
         <div className="composer-actions">
         <label className="select-control"><select aria-label="Model" value={model ? `${model.provider}/${model.id}` : ""} onChange={(event) => { const next = models.find((item) => `${item.provider}/${item.id}` === event.target.value); if (next) onModel(next); }}>{models.map((item) => <option key={`${item.provider}/${item.id}`} value={`${item.provider}/${item.id}`}>{item.name || item.id}</option>)}</select></label>
         <label className="select-control thinking"><select aria-label="Thinking level" value={thinkingLevel} onChange={(event) => onThinking(event.target.value)}>{thinkingLevels.map((level) => <option key={level}>{level}</option>)}</select></label>

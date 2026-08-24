@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import App, { formatCodexReset } from "./App";
@@ -132,6 +132,10 @@ describe("Pi desktop", () => {
     const split = await screen.findByRole("region", { name: "Split conversation: Wire RPC transport" });
     expect(split).toHaveTextContent("browser preview for Wire RPC transport");
     expect(activeComposer).toBeInTheDocument();
+    const splitComposer = within(split).getByRole("textbox", { name: "Message Pi" });
+    await user.type(splitComposer, "Message from the split shell{enter}");
+    expect(await within(split).findByText(/no model was charged/)).toBeVisible();
+    expect(activeComposer.closest(".chat-shell")).not.toHaveTextContent("Message from the split shell");
     expect(screen.getByRole("button", { name: /Design desktop shell/ })).toHaveClass("active");
     await user.click(screen.getByRole("button", { name: "Close split pane" }));
     expect(screen.queryByRole("region", { name: /Split conversation/ })).not.toBeInTheDocument();

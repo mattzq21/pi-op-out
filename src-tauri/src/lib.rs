@@ -35,9 +35,9 @@ struct TerminalRuntime {
 
 #[derive(Default)]
 struct PiRuntime {
-    process: Mutex<Option<PiProcess>>,
-    pending: Arc<Mutex<HashMap<String, mpsc::Sender<Result<Value, String>>>>>,
-    active_agent: Mutex<Option<AgentAddress>>,
+    processes: Mutex<HashMap<String, PiProcess>>,
+    pending: Arc<Mutex<HashMap<(String, String), mpsc::Sender<Result<Value, String>>>>>,
+    active_agents: Mutex<HashMap<String, AgentAddress>>,
 }
 
 #[derive(Clone)]
@@ -56,8 +56,8 @@ impl Drop for BusyAgent {
     fn drop(&mut self) { if let Ok(mut busy) = self.busy.lock() { busy.remove(&self.key); } }
 }
 
-fn fail_pending(pending: &Arc<Mutex<HashMap<String, mpsc::Sender<Result<Value, String>>>>>, error: &str) {
-    let senders: Vec<_> = pending.lock().map(|mut requests| requests.drain().map(|(_, sender)| sender).collect()).unwrap_or_default();
+fn fail_pending(pending: &Arc<Mutex<HashMap<(String, String), mpsc::Sender<Result<Value, String>>>>>, runtime_id: &str, error: &str) {
+    let senders: Vec<_> = pending.lock().map(|mut requests| { let keys: Vec<_> = requests.keys().filter(|(owner, _)| owner == runtime_id).cloned().collect(); keys.into_iter().filter_map(|key| requests.remove(&key)).collect() }).unwrap_or_default();
     for sender in senders { let _ = sender.send(Err(error.into())); }
 }
 
@@ -470,9 +470,8 @@ fn stage_remote_broker(host: &RemoteHost) -> Result<(), String> {
 }
 
 #[tauri::command(async)]
-fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, host_id: Option<String>) -> Result<(), String> {
-    let mut process_guard = runtime.process.lock().map_err(|_| "Pi runtime lock was poisoned")?;
-    if process_guard.is_some() { return Ok(()); }
+fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, host_id: Option<String>) -> Result<(), String> {
+    if runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.contains_key(&runtime_id) { return Ok(()); }
     let settings = load_app_settings(app.clone()).unwrap_or_else(|_| default_settings());
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let (broker_port, broker_token) = broker_environment(&broker)?;
@@ -507,54 +506,55 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
     let stdin = Arc::new(Mutex::new(child.stdin.take().ok_or("Pi stdin was unavailable")?));
     let stdout = child.stdout.take().ok_or("Pi stdout was unavailable")?;
     let stderr = child.stderr.take().ok_or("Pi stderr was unavailable")?;
-    let pending = runtime.pending.clone(); let event_app = app.clone();
+    let pending = runtime.pending.clone(); let event_app = app.clone(); let event_runtime_id = runtime_id.clone();
     thread::spawn(move || {
         for line in BufReader::new(stdout).split(b'\n') {
             let Ok(bytes) = line else { break }; let Ok(value) = serde_json::from_slice::<Value>(&bytes) else { continue };
             if value.get("type") == Some(&Value::String("response".into())) {
                 if let Some(id) = value.get("id").and_then(Value::as_str) {
-                    if let Some(sender) = pending.lock().ok().and_then(|mut map| map.remove(id)) {
+                    if let Some(sender) = pending.lock().ok().and_then(|mut map| map.remove(&(event_runtime_id.clone(), id.to_string()))) {
                         let result = if value.get("success").and_then(Value::as_bool).unwrap_or(false) { Ok(value.get("data").cloned().unwrap_or(Value::Null)) } else { Err(value.get("error").and_then(Value::as_str).unwrap_or("Pi command failed").to_string()) };
                         let _ = sender.send(result); continue;
                     }
                 }
             }
-            let _ = event_app.emit("pi://event", value);
+            let _ = event_app.emit("pi://event", json!({"runtimeId":event_runtime_id,"event":value}));
         }
-        fail_pending(&pending, "Pi disconnected before responding");
-        let _ = event_app.emit("pi://event", json!({"type": "disconnected"}));
+        fail_pending(&pending, &event_runtime_id, "Pi disconnected before responding");
+        let _ = event_app.emit("pi://event", json!({"runtimeId":event_runtime_id,"event":{"type":"disconnected"}}));
     });
     let error_app = app.clone();
     thread::spawn(move || for line in BufReader::new(stderr).lines().map_while(Result::ok) { let _ = error_app.emit("pi://stderr", line); });
-    *process_guard = Some(PiProcess { child, stdin });
-    *runtime.active_agent.lock().map_err(|_| "Active agent lock was poisoned")? = Some(AgentAddress { host_id, session_id, session_path });
+    runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { child, stdin });
+    runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id, AgentAddress { host_id, session_id, session_path });
     Ok(())
 }
 
 #[tauri::command(async)]
-fn stop_pi(runtime: State<PiRuntime>) -> Result<(), String> {
-    if let Some(mut process) = runtime.process.lock().map_err(|_| "Pi runtime lock was poisoned")?.take() { let _ = process.child.kill(); let _ = process.child.wait(); }
-    *runtime.active_agent.lock().map_err(|_| "Active agent lock was poisoned")? = None;
+fn stop_pi(runtime: State<PiRuntime>, runtime_id: String) -> Result<(), String> {
+    if let Some(mut process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.remove(&runtime_id) { let _ = process.child.kill(); let _ = process.child.wait(); }
+    runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.remove(&runtime_id);
+    fail_pending(&runtime.pending, &runtime_id, "Pi disconnected before responding");
     Ok(())
 }
 
 #[tauri::command(async)]
-fn pi_command(runtime: State<PiRuntime>, mut command: Value) -> Result<Value, String> {
+fn pi_command(runtime: State<PiRuntime>, runtime_id: String, mut command: Value) -> Result<Value, String> {
     let fire_and_forget = command.get("type").and_then(Value::as_str) == Some("extension_ui_response");
     let id = command.get("id").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| Uuid::new_v4().to_string());
     command.as_object_mut().ok_or("RPC command must be an object")?.insert("id".into(), Value::String(id.clone()));
     let (sender, receiver) = mpsc::channel();
-    runtime.pending.lock().map_err(|_| "Pending command lock was poisoned")?.insert(id.clone(), sender);
+    runtime.pending.lock().map_err(|_| "Pending command lock was poisoned")?.insert((runtime_id.clone(), id.clone()), sender);
     let write_result = (|| {
-        let process_guard = runtime.process.lock().map_err(|_| "Pi runtime lock was poisoned")?;
-        let process = process_guard.as_ref().ok_or("Pi is not running")?;
+        let process_guard = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?;
+        let process = process_guard.get(&runtime_id).ok_or("Pi is not running")?;
         let mut stdin = process.stdin.lock().map_err(|_| "Pi stdin lock was poisoned")?;
         serde_json::to_writer(&mut *stdin, &command).map_err(|error| error.to_string())?;
         stdin.write_all(b"\n").and_then(|_| stdin.flush()).map_err(|error| error.to_string())
     })();
-    if let Err(error) = write_result { runtime.pending.lock().ok().map(|mut map| map.remove(&id)); return Err(error); }
-    if fire_and_forget { runtime.pending.lock().ok().map(|mut map| map.remove(&id)); return Ok(Value::Null); }
-    receiver.recv_timeout(Duration::from_secs(30)).map_err(|_| { runtime.pending.lock().ok().map(|mut map| map.remove(&id)); "Pi command timed out".to_string() })?
+    if let Err(error) = write_result { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.clone(), id.clone()))); return Err(error); }
+    if fire_and_forget { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.clone(), id.clone()))); return Ok(Value::Null); }
+    receiver.recv_timeout(Duration::from_secs(30)).map_err(|_| { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id, id))); "Pi command timed out".to_string() })?
 }
 
 #[tauri::command]
@@ -786,10 +786,10 @@ fn relocate_session(session_path: String, cwd: String, host_id: Option<String>) 
     fs::write(path, updated).map_err(|error| format!("Could not update session: {error}"))
 }
 
-fn resolve_agent<'a>(sessions: &'a [SessionSummary], host_id: &str, session_id: &str, active: Option<&AgentAddress>) -> Result<&'a SessionSummary, String> {
+fn resolve_agent<'a>(sessions: &'a [SessionSummary], host_id: &str, session_id: &str, active: &[AgentAddress]) -> Result<&'a SessionSummary, String> {
     let session = sessions.iter().find(|session| session.host_id == host_id && session.id == session_id).ok_or_else(|| format!("Agent {host_id}/{session_id} was not found"))?;
     // ponytail: A resident per-session worker can replace this guard if measured startup latency warrants that extra lifecycle.
-    if active.is_some_and(|agent| agent_is_active(session, agent)) {
+    if active.iter().any(|agent| agent_is_active(session, agent)) {
         return Err("Cannot message the session currently open in Pi Desktop".into());
     }
     Ok(session)
@@ -863,8 +863,8 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
     let mut body = vec![0; content_length]; reader.read_exact(&mut body).map_err(|error| error.to_string())?;
     let result = match (method, path) {
         ("GET", "/agents") => {
-            let active = app.state::<PiRuntime>().active_agent.lock().map_err(|_| "Active agent lock was poisoned")?.clone();
-            collect_sessions(&app).map(|sessions| json!(sessions.into_iter().map(|session| json!({"hostId":session.host_id,"sessionId":session.id,"name":session.name,"project":session.project,"cwd":session.cwd,"active":active.as_ref().is_some_and(|agent| agent_is_active(&session, agent))})).collect::<Vec<_>>()))
+            let active: Vec<_> = app.state::<PiRuntime>().active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values().cloned().collect();
+            collect_sessions(&app).map(|sessions| json!(sessions.into_iter().map(|session| json!({"hostId":session.host_id,"sessionId":session.id,"name":session.name,"project":session.project,"cwd":session.cwd,"active":active.iter().any(|agent| agent_is_active(&session, agent))})).collect::<Vec<_>>()))
         },
         ("POST", "/message") => (|| {
             let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid message request".to_string())?;
@@ -872,8 +872,8 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
             let session_id = value.get("sessionId").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("sessionId is required")?;
             let message = value.get("message").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("message is required")?;
             let sessions = collect_sessions(&app)?;
-            let active = app.state::<PiRuntime>().active_agent.lock().map_err(|_| "Active agent lock was poisoned")?.clone();
-            let session = resolve_agent(&sessions, host_id, session_id, active.as_ref())?;
+            let active: Vec<_> = app.state::<PiRuntime>().active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values().cloned().collect();
+            let session = resolve_agent(&sessions, host_id, session_id, &active)?;
             let _claim = claim_agent(&broker, host_id, session_id)?;
             dispatch_agent_message(&app, &broker, session, message).map(|reply| json!({"reply":reply}))
         })(),
@@ -997,18 +997,22 @@ mod tests {
     #[test]
     fn disconnect_releases_pending_rpc_calls_immediately() {
         let pending = Arc::new(Mutex::new(HashMap::new()));
-        let (sender, receiver) = mpsc::channel(); pending.lock().unwrap().insert("request".into(), sender);
-        fail_pending(&pending, "Pi disconnected before responding");
+        let (sender, receiver) = mpsc::channel(); pending.lock().unwrap().insert(("primary".into(), "request".into()), sender);
+        let (split_sender, split_receiver) = mpsc::channel(); pending.lock().unwrap().insert(("split".into(), "request".into()), split_sender);
+        fail_pending(&pending, "primary", "Pi disconnected before responding");
         assert_eq!(receiver.recv_timeout(Duration::from_millis(50)).unwrap().unwrap_err(), "Pi disconnected before responding");
+        assert!(matches!(split_receiver.try_recv(), Err(mpsc::TryRecvError::Empty)));
+        fail_pending(&pending, "split", "Split disconnected");
+        assert_eq!(split_receiver.recv_timeout(Duration::from_millis(50)).unwrap().unwrap_err(), "Split disconnected");
     }
 
     #[test]
     fn addresses_agents_by_machine_and_session_and_protects_the_active_one() {
         let sessions = vec![SessionSummary { id: "same-id".into(), path: "/remote/session.jsonl".into(), name: "Agent".into(), project: "project".into(), cwd: "/srv/project".into(), cwd_exists: true, updated_at: String::new(), preview: String::new(), message_count: 1, starred: false, host_id: "vps".into(), host_name: "VPS".into() }];
-        assert_eq!(resolve_agent(&sessions, "vps", "same-id", None).unwrap().path, "/remote/session.jsonl");
-        assert!(resolve_agent(&sessions, "local", "same-id", None).is_err());
+        assert_eq!(resolve_agent(&sessions, "vps", "same-id", &[]).unwrap().path, "/remote/session.jsonl");
+        assert!(resolve_agent(&sessions, "local", "same-id", &[]).is_err());
         let active = AgentAddress { host_id: "vps".into(), session_id: Some("same-id".into()), session_path: None };
-        assert_eq!(resolve_agent(&sessions, "vps", "same-id", Some(&active)).unwrap_err(), "Cannot message the session currently open in Pi Desktop");
+        assert_eq!(resolve_agent(&sessions, "vps", "same-id", &[active]).unwrap_err(), "Cannot message the session currently open in Pi Desktop");
         let broker = BrokerRuntime::default();
         let claim = claim_agent(&broker, "vps", "same-id").unwrap();
         assert_eq!(claim_agent(&broker, "vps", "same-id").err().unwrap(), "Agent vps/same-id is already responding");

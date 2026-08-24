@@ -23,7 +23,7 @@ describe("NativeTransport event lifecycle", () => {
     await vi.waitFor(() => expect(eventMock.subscriptions).toHaveLength(1));
     eventMock.subscriptions[0].resolve(() => undefined); await connected;
     expect(invokeMock).toHaveBeenCalledWith("create_temporary_chat", { hostId: "local" });
-    expect(invokeMock).toHaveBeenCalledWith("start_pi", { cwd: "/home/matt/pi-desktop/tmp/chat-id", sessionPath: undefined, sessionId: "chat-id", hostId: "local" });
+    expect(invokeMock).toHaveBeenCalledWith("start_pi", { runtimeId: expect.any(String), cwd: "/home/matt/pi-desktop/tmp/chat-id", sessionPath: undefined, sessionId: "chat-id", hostId: "local" });
   });
 
   it("does not double-deliver terminal output when an interrupted connection finishes late", async () => {
@@ -39,5 +39,17 @@ describe("NativeTransport event lifecycle", () => {
 
     for (const subscription of eventMock.subscriptions) if (subscription.active) subscription.callback({ payload: { type: "terminal_output", terminalId: "terminal-1", data: "x" } });
     expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps simultaneous Pi process events in their owning chat shell", async () => {
+    const first = new NativeTransport(); const second = new NativeTransport(); const firstListener = vi.fn(); const secondListener = vi.fn(); first.subscribe(firstListener); second.subscribe(secondListener);
+    const connections = [first.connect("/one", "one.jsonl"), second.connect("/two", "two.jsonl")];
+    await vi.waitFor(() => expect(eventMock.subscriptions).toHaveLength(2));
+    eventMock.subscriptions.forEach((subscription) => subscription.resolve(() => { subscription.active = false; })); await Promise.all(connections);
+    const runtimeIds = (invokeMock.mock.calls as unknown as Array<[string, { runtimeId: string }]>).filter(([command]) => command === "start_pi").map(([, args]) => args.runtimeId);
+    for (const subscription of eventMock.subscriptions) subscription.callback({ payload: { runtimeId: runtimeIds[0], event: { type: "agent_start" } } });
+    expect(firstListener).toHaveBeenCalledWith({ type: "agent_start" }); expect(secondListener).not.toHaveBeenCalled();
+    for (const subscription of eventMock.subscriptions) subscription.callback({ payload: { runtimeId: runtimeIds[1], event: { type: "agent_end" } } });
+    expect(secondListener).toHaveBeenCalledWith({ type: "agent_end" }); expect(firstListener).toHaveBeenCalledTimes(1);
   });
 });
