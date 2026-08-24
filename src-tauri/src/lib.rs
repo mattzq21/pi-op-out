@@ -71,6 +71,14 @@ struct CodexUsage {
     remaining_percent: u8,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DirectoryListing {
+    path: String,
+    parent: Option<String>,
+    directories: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AppSettings {
@@ -363,6 +371,14 @@ fn remote_pi_path(path: &str) -> String {
     path.strip_prefix("~/").map(|rest| format!("$HOME/{}", rest)).unwrap_or_else(|| shell_quote(path))
 }
 
+fn remote_directory_path(path: Option<&str>) -> String {
+    match path.map(str::trim).filter(|path| !path.is_empty()) {
+        None | Some("~") => "\"$HOME\"".into(),
+        Some(path) if path.starts_with("~/") => format!("$HOME/{}", shell_quote(&path[2..])),
+        Some(path) => shell_quote(path),
+    }
+}
+
 #[tauri::command]
 fn start_pi(app: AppHandle, runtime: State<PiRuntime>, cwd: Option<String>, session_path: Option<String>, host_id: Option<String>) -> Result<(), String> {
     let mut process_guard = runtime.process.lock().map_err(|_| "Pi runtime lock was poisoned")?;
@@ -548,6 +564,19 @@ fn list_remote_sessions(host: &RemoteHost) -> Result<Vec<SessionSummary>, String
 }
 
 #[tauri::command]
+fn list_directories(app: AppHandle, host_id: String, path: Option<String>) -> Result<DirectoryListing, String> {
+    let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+    let remote = format!("cd {} && printf '%s\\000' \"$PWD\" && find . -mindepth 1 -maxdepth 1 -type d -printf '%f\\000'", remote_directory_path(path.as_deref()));
+    let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not browse {}: {error}", host.name))?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    let mut parts = output.stdout.split(|byte| *byte == 0).filter(|part| !part.is_empty());
+    let current = PathBuf::from(String::from_utf8_lossy(parts.next().ok_or("Remote directory was unavailable")?).into_owned());
+    let mut directories: Vec<String> = parts.map(|name| current.join(String::from_utf8_lossy(name).as_ref()).to_string_lossy().into_owned()).collect();
+    directories.sort_by_key(|directory| directory.to_lowercase());
+    Ok(DirectoryListing { path: current.to_string_lossy().into_owned(), parent: current.parent().map(|parent| parent.to_string_lossy().into_owned()), directories })
+}
+
+#[tauri::command]
 fn list_sessions(app: AppHandle) -> Result<Vec<SessionSummary>, String> {
     let root = home_dir()?.join(".pi/agent/sessions");
     let mut sessions: Vec<_> = if root.exists() { WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok).filter(|entry| entry.file_type().is_file() && entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")).filter_map(|entry| parse_session(entry.path())).collect() } else { vec![] };
@@ -602,7 +631,7 @@ fn relocate_session(session_path: String, cwd: String, host_id: Option<String>) 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, archive_session, relocate_session, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, list_directories, archive_session, relocate_session, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }
 
 #[cfg(test)]

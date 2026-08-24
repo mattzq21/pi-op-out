@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { AppSettings, CodexUsage, PiTransport, RpcCommand, RpcEvent, SessionSummary } from "../types";
+import type { AppSettings, CodexUsage, DirectoryListing, PiTransport, RpcCommand, RpcEvent, SessionSummary } from "../types";
 
 export class NativeTransport implements PiTransport {
   mode = "native" as const;
@@ -32,6 +32,7 @@ export class NativeTransport implements PiTransport {
   loadCodexUsage() { return invoke<CodexUsage>("codex_usage"); }
   async saveSettings(settings: AppSettings) { await invoke<void>("save_app_settings", { settings }); if (this.hostId !== "local" && !settings.hosts.some((host) => host.id === this.hostId)) this.hostId = "local"; await this.disconnect(); await this.connect(this.cwd, this.sessionPath, this.hostId); }
   async selectProjectDirectory(defaultPath?: string) { const selected = await open({ directory: true, multiple: false, title: "Open project", defaultPath }); return typeof selected === "string" ? selected : null; }
+  listDirectories(hostId: string, path?: string) { return invoke<DirectoryListing>("list_directories", { hostId, path }); }
   async openProject(cwd: string, hostId = "local") { await this.disconnect(); this.cwd = cwd; this.sessionPath = undefined; this.hostId = hostId; await this.connect(cwd, undefined, hostId); }
   startTerminal(terminalId: string, cwd: string, cols: number, rows: number) { return invoke<void>("start_terminal", { terminalId, cwd, cols, rows, hostId: this.hostId }); }
   writeTerminal(terminalId: string, data: string) { return invoke<void>("write_terminal", { terminalId, data }); }
