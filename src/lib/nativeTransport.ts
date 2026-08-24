@@ -36,7 +36,7 @@ export class NativeTransport implements PiTransport {
   async selectProjectDirectory(defaultPath?: string) { const selected = await open({ directory: true, multiple: false, title: "Open project", defaultPath }); return typeof selected === "string" ? selected : null; }
   homeDirectory(hostId: string) { return invoke<string>("home_directory", { hostId }); }
   listDirectories(hostId: string, path?: string) { return invoke<DirectoryListing>("list_directories", { hostId, path }); }
-  async newTemporaryChat(hostId: string) { await this.disconnect(); const chat = await invoke<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId }); this.cwd = chat.cwd; this.sessionPath = undefined; this.sessionId = chat.sessionId; this.hostId = hostId; await this.connect(chat.cwd, undefined, hostId); }
+  async newTemporaryChat(hostId: string) { await this.disconnect(); const chat = await invoke<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId }); this.cwd = chat.cwd; this.sessionPath = undefined; this.sessionId = chat.sessionId; this.hostId = hostId; await this.connect(chat.cwd, undefined, hostId); return chat.cwd; }
   async openProject(cwd: string, hostId = "local") { await this.disconnect(); this.cwd = cwd; this.sessionPath = undefined; this.sessionId = undefined; this.hostId = hostId; await this.connect(cwd, undefined, hostId); }
   startTerminal(terminalId: string, cwd: string, cols: number, rows: number) { return invoke<void>("start_terminal", { terminalId, cwd, cols, rows, hostId: this.hostId }); }
   writeTerminal(terminalId: string, data: string) { return invoke<void>("write_terminal", { terminalId, data }); }

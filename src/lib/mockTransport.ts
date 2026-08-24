@@ -42,6 +42,7 @@ export class MockTransport implements PiTransport {
     await this.command({ type: "new_session" });
     const session = this.sessions.find((item) => item.id === this.state.sessionId);
     if (session) { session.cwd = `${hostId === "local" ? "/Users/demo" : "/home/demo"}/pi-desktop/tmp/${session.id}`; session.project = session.id; session.hostId = hostId; }
+    return session?.cwd ?? `${hostId === "local" ? "/Users/demo" : "/home/demo"}/pi-desktop/tmp/${this.state.sessionId}`;
   }
   async openProject(cwd: string) {
     const project = cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace"; const candidate = this.sessions.find((session) => session.project === project);
