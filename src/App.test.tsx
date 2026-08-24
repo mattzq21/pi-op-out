@@ -155,12 +155,20 @@ describe("Pi desktop", () => {
   it("shows the selected project on an empty conversation", async () => {
     const user = userEvent.setup(); render(<App />);
     await user.click(screen.getByRole("button", { name: "New conversation" }));
-    await user.click(await screen.findByRole("button", { name: "Choose project" }));
+    await user.click(screen.getByRole("button", { name: "New project" }));
     const path = screen.getByRole("textbox", { name: "Project directory" });
     await user.type(path, "/Users/demo/code/fresh-project");
     await user.click(screen.getByRole("button", { name: "Open project" }));
     expect(await screen.findByRole("button", { name: "Selected project: fresh-project" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Choose project" })).not.toBeInTheDocument();
+  });
+
+  it("opens the system directory picker from the empty chat project control", async () => {
+    const user = userEvent.setup(); render(<App />);
+    await user.click(screen.getByRole("button", { name: "New conversation" }));
+    await user.click(await screen.findByRole("button", { name: "Choose project" }));
+    expect(screen.queryByRole("heading", { name: "Open project" })).not.toBeInTheDocument();
+    expect(await screen.findByText(/browser preview for/)).toHaveTextContent("Fix token refresh");
   });
 
   it("keeps terminal output with the session that ran it", async () => {
