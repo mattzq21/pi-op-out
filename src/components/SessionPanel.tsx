@@ -12,6 +12,7 @@ const actions = [
 export function SessionPanel({ sessions, activeId, query, onQuery, onSelect, onAction }: Props) {
   const [menu, setMenu] = useState<{ session: SessionSummary; x: number; y: number }>();
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
+  const activeProject = sessions.find((session) => session.id === activeId)?.project;
   useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(undefined);
@@ -29,7 +30,7 @@ export function SessionPanel({ sessions, activeId, query, onQuery, onSelect, onA
     <label className="search"><Search size={15} /><input aria-label="Search conversations" placeholder="Search conversations" value={query} onChange={(event) => onQuery(event.target.value)} /><kbd>Ctrl K</kbd></label>
     <div className="session-scroll">
       {groups.map(([project, projectSessions]) => { const collapsed = !query && collapsedProjects.has(project); const groupId = `project-${project.replace(/[^a-z0-9_-]/gi, "-")}`; return <section className="project" key={project}>
-        <button className="project-label" aria-expanded={!collapsed} aria-controls={groupId} onClick={() => setCollapsedProjects((current) => { const next = new Set(current); if (next.has(project)) next.delete(project); else next.add(project); return next; })}><ChevronDown className={collapsed ? "collapsed" : ""} size={13} /><span>{project}</span></button>
+        <button className="project-label" aria-expanded={!collapsed} aria-controls={groupId} onClick={() => setCollapsedProjects((current) => { const next = new Set(current); if (next.has(project)) next.delete(project); else next.add(project); return next; })}><ChevronDown className={collapsed ? "collapsed" : ""} size={13} /><span className={project === activeProject ? "active" : undefined}>{project}</span></button>
         <div id={groupId} hidden={collapsed}>{projectSessions?.map((session) => <button key={session.id} className={`session-item ${activeId === session.id ? "active" : ""}`} onClick={() => onSelect(session)} onContextMenu={(event) => { event.preventDefault(); setMenu({ session, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190) }); }}>
           <span className="session-copy"><strong>{session.name}</strong><span>{session.preview}</span></span>
         </button>)}</div>
