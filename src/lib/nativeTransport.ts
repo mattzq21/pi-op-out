@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { AppSettings, CodexUsage, DirectoryListing, PiTransport, RpcCommand, RpcEvent, SessionSummary } from "../types";
+import type { AppSettings, CodexUsage, DirectoryListing, PiTransport, RpcCommand, RpcEvent, SessionEntries, SessionSummary } from "../types";
 
 export class NativeTransport implements PiTransport {
   mode = "native" as const;
@@ -28,6 +28,7 @@ export class NativeTransport implements PiTransport {
   async command<T>(command: RpcCommand) { const result = await invoke<T>("pi_command", { command }); if (command.type === "get_state") { this.sessionPath = (result as { sessionFile?: string }).sessionFile; this.sessionId = undefined; } return result; }
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   listSessions() { return invoke<SessionSummary[]>("list_sessions"); }
+  loadSessionEntries(sessionPath: string, hostId = "local") { return invoke<SessionEntries>("load_session_entries", { sessionPath, hostId }); }
   archiveSession(sessionPath: string, hostId = "local") { return invoke<void>("archive_session", { sessionPath, hostId }); }
   relocateSession(sessionPath: string, cwd: string, hostId = "local") { return invoke<void>("relocate_session", { sessionPath, cwd, hostId }); }
   loadSettings() { return invoke<AppSettings>("load_app_settings"); }

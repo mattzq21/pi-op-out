@@ -1,5 +1,6 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
 import type { SessionSummary } from "../types";
 import { SessionPanel } from "./SessionPanel";
 
@@ -20,5 +21,16 @@ describe("SessionPanel", () => {
     render(<SessionPanel sessions={[sessions[0], remote]} activeId="active" activeHostId="vps" query="" onQuery={() => undefined} onSelect={() => undefined} onAction={() => undefined} />);
     expect(screen.getByText("Build VPS / Project one")).toHaveClass("active");
     expect(screen.getByText("Project one")).not.toHaveClass("active");
+  });
+
+  it("offers split pane only for a session that is not currently open", async () => {
+    const user = userEvent.setup(); const onAction = vi.fn();
+    render(<SessionPanel sessions={sessions} activeId="active" query="" onQuery={() => undefined} onSelect={() => undefined} onAction={onAction} />);
+    fireEvent.contextMenu(screen.getByRole("button", { name: /Active chat/ }));
+    expect(screen.queryByRole("menuitem", { name: "Split pane" })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    fireEvent.contextMenu(screen.getByRole("button", { name: /Other chat/ }));
+    await user.click(screen.getByRole("menuitem", { name: "Split pane" }));
+    expect(onAction).toHaveBeenCalledWith(sessions[1], "split");
   });
 });

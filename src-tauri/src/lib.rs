@@ -580,7 +580,7 @@ fn list_remote_sessions(host: &RemoteHost) -> Result<Vec<SessionSummary>, String
         let path = PathBuf::from(String::from_utf8_lossy(frame[0]).into_owned());
         let seconds = String::from_utf8_lossy(frame[1]).trim().parse::<u64>().unwrap_or(0);
         let content = String::from_utf8_lossy(frame[2]);
-        // ponytail: remote CWD existence is validated when Pi starts; batch it here only if stale remote paths become common.
+        // Remote CWD existence is validated when Pi starts; batch it here only if stale remote paths become common.
         if let Some(session) = parse_session_content(&path, &content, SystemTime::UNIX_EPOCH + Duration::from_secs(seconds), true, &host.id, &host.name) { sessions.push(session); }
     }
     Ok(sessions)
@@ -644,6 +644,26 @@ fn list_sessions(app: AppHandle) -> Result<Vec<SessionSummary>, String> {
     sessions.sort_by(|left, right| right.updated_at.cmp(&left.updated_at)); Ok(sessions)
 }
 
+fn session_entries(content: &str) -> Value {
+    let entries: Vec<Value> = content.lines().skip(1).filter_map(|line| serde_json::from_str(line).ok()).collect();
+    let leaf_id = entries.iter().rev().find_map(|entry| entry.get("id").and_then(Value::as_str));
+    json!({ "entries": entries, "leafId": leaf_id })
+}
+
+#[tauri::command(async)]
+fn load_session_entries(app: AppHandle, session_path: String, host_id: Option<String>) -> Result<Value, String> {
+    let host_id = host_id.unwrap_or_else(|| "local".into());
+    let content = if host_id == "local" {
+        fs::read_to_string(&session_path).map_err(|error| format!("Could not read session: {error}"))?
+    } else {
+        let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+        let output = ssh(host).arg(format!("cat -- {}", shell_quote(&session_path))).output().map_err(|error| format!("Could not read session on {}: {error}", host.name))?;
+        if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+        String::from_utf8(output.stdout).map_err(|_| "Remote session was not valid UTF-8".to_string())?
+    };
+    Ok(session_entries(&content))
+}
+
 #[tauri::command(async)]
 fn archive_session(app: AppHandle, session_path: String, host_id: Option<String>) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
@@ -690,7 +710,7 @@ fn relocate_session(session_path: String, cwd: String, host_id: Option<String>) 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, list_directories, archive_session, relocate_session, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_entries, home_directory, create_temporary_chat, list_directories, archive_session, relocate_session, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }
 
 #[cfg(test)]

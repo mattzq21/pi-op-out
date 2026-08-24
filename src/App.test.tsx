@@ -119,8 +119,22 @@ describe("Pi desktop", () => {
     expect(screen.getByRole("menuitem", { name: "Rename conversation" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Clone conversation" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Archive conversation" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Split pane" })).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Export as HTML" })).not.toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Tree & session stats" })).not.toBeInTheDocument();
+  });
+
+  it("opens another conversation in a vertical split without switching the active session", async () => {
+    const user = userEvent.setup(); render(<App />);
+    const activeComposer = await screen.findByRole("textbox", { name: "Message Pi" });
+    fireEvent.contextMenu(screen.getByRole("button", { name: /Wire RPC transport/ }), { clientX: 100, clientY: 100 });
+    await user.click(screen.getByRole("menuitem", { name: "Split pane" }));
+    const split = await screen.findByRole("region", { name: "Split conversation: Wire RPC transport" });
+    expect(split).toHaveTextContent("browser preview for Wire RPC transport");
+    expect(activeComposer).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Design desktop shell/ })).toHaveClass("active");
+    await user.click(screen.getByRole("button", { name: "Close split pane" }));
+    expect(screen.queryByRole("region", { name: /Split conversation/ })).not.toBeInTheDocument();
   });
 
   it("archives a conversation from its right-click menu", async () => {
@@ -136,7 +150,7 @@ describe("Pi desktop", () => {
     await user.click(screen.getByRole("button", { name: "Open terminal" }));
     const input = await screen.findByRole("textbox", { name: "Terminal input" });
     expect(screen.getByRole("textbox", { name: "Message Pi" })).toBeInTheDocument();
-    expect(input.closest(".terminal-shell")?.previousElementSibling).toHaveClass("chat-shell");
+    expect(input.closest(".terminal-shell")?.previousElementSibling).toHaveClass("chat-panes");
     await user.type(input, "git status{enter}");
     await waitFor(() => expect(document.querySelector(".terminal-host")).toHaveTextContent("native builds run a real PTY shell"));
   });

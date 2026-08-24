@@ -7,6 +7,7 @@ import { SettingsView } from "./components/SettingsView";
 import { ExtensionDialog } from "./components/ExtensionDialog";
 import { TerminalView } from "./components/TerminalView";
 import { ProjectDialog } from "./components/ProjectDialog";
+import { SplitChatPane } from "./components/SplitChatPane";
 import { defaultSettings } from "./defaults";
 import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
 import { findReplaceableAbortedTurn } from "./lib/abortedTurn";
@@ -19,6 +20,7 @@ type PiEntry = { type: string; id: string; parentId: string | null; message?: Om
 type TerminalTabState = { id: string; output: string; started: boolean; exited?: boolean };
 type SessionTerminals = { activeId: string; tabs: TerminalTabState[] };
 type MessageUpdate = (messages: ChatMessage[]) => ChatMessage[];
+type SplitPaneState = { session: SessionSummary; messages?: ChatMessage[]; error?: string };
 const initialTerminals = (sessionId: string): SessionTerminals => { const id = `terminal-${sessionId}-1`; return { activeId: id, tabs: [{ id, output: "", started: false }] }; };
 
 function normalizeMessage(message: Record<string, unknown>, entryId?: string): ChatMessage {
@@ -88,6 +90,7 @@ export default function App() {
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>({});
   const [loadingSessionId, setLoadingSessionId] = useState<string>();
+  const [splitPane, setSplitPane] = useState<SplitPaneState>();
   const [terminalsBySession, setTerminalsBySession] = useState<Record<string, SessionTerminals>>({});
   const pendingMessageUpdates = useRef<MessageUpdate[]>([]); const messageFrame = useRef<number | undefined>(undefined);
   const terminalSessionId = `${activeHostId}:${state.sessionId || "new-session"}`;
@@ -216,9 +219,10 @@ export default function App() {
     await transport.command({ type: "prompt", message: text, ...(images.length ? { images } : {}) });
   };
   const branch = async (message: ChatMessage) => { const index = messages.findIndex((item) => item.id === message.id); const user = messages.slice(0, index + 1).reverse().find((item) => item.role === "user" && item.entryId); if (!user) return; await transport.command({ type: "fork", entryId: user.entryId }); await refresh(); };
-  const newSession = async () => { const hostId = activeHostIdRef.current; setView("chat"); setConnected(false); discardMessageUpdates(); setMessages([]); try { setActiveCwd(await transport.newTemporaryChat(hostId)); const value = await refresh(hostId); await configureRuntime(value); setConnected(true); } catch (reason) { setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); } };
+  const newSession = async () => { const hostId = activeHostIdRef.current; setView("chat"); setSplitPane(undefined); setConnected(false); discardMessageUpdates(); setMessages([]); try { setActiveCwd(await transport.newTemporaryChat(hostId)); const value = await refresh(hostId); await configureRuntime(value); setConnected(true); } catch (reason) { setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); } };
   const selectSession = async (session: SessionSummary) => {
     const hostId = session.hostId ?? "local"; if (session.id === state.sessionId && hostId === activeHostId) return true;
+    if (splitPane?.session.id === session.id && (splitPane.session.hostId ?? "local") === hostId) setSplitPane(undefined);
     if (session.cwdExists === false) { setRelocationError(undefined); setRelocatingSession(session); return false; }
     const previousState = state; const previousMessages = messages; const previousHostId = activeHostId; const previousCwd = activeCwd;
     const current = sessions.find((item) => item.id === state.sessionId && (item.hostId ?? "local") === activeHostId);
@@ -232,7 +236,7 @@ export default function App() {
   const setModel = async (model: Model) => { await transport.command({ type: "set_model", provider: model.provider, modelId: model.id }); setState((current) => ({ ...current, model })); };
   const setThinking = async (level: string) => { await transport.command({ type: "set_thinking_level", level }); setState((current) => ({ ...current, thinkingLevel: level })); };
   const saveSettings = async (value: AppSettings) => { if (value.notifications && "Notification" in window && Notification.permission === "default") await Notification.requestPermission(); await transport.saveSettings(value); await configureRuntime(value); setSettings(value); if (activeHostId !== "local" && !value.hosts.some((host) => host.id === activeHostId)) setActiveHostId("local"); await refresh(); };
-  const openProject = async (cwd: string, hostId: string) => { setProjectOpen(false); try { setConnected(false); await transport.openProject(cwd, hostId); setActiveHostId(hostId); setActiveCwd(cwd); const value = await refresh(hostId); await configureRuntime(value); setConnected(true); setView("chat"); } catch (reason) { setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); } };
+  const openProject = async (cwd: string, hostId: string) => { setProjectOpen(false); setSplitPane(undefined); try { setConnected(false); await transport.openProject(cwd, hostId); setActiveHostId(hostId); setActiveCwd(cwd); const value = await refresh(hostId); await configureRuntime(value); setConnected(true); setView("chat"); } catch (reason) { setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); } };
   const chooseChatProject = async () => {
     const hostId = activeHostIdRef.current;
     if (hostId !== "local") { setProjectOpen(true); return; }
@@ -241,7 +245,20 @@ export default function App() {
       if (cwd) await openProject(cwd, hostId);
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   };
+  const openSplitPane = async (session: SessionSummary) => {
+    const identity = `${session.hostId ?? "local"}:${session.id}`;
+    setSplitPane({ session });
+    try {
+      const result = await transport.loadSessionEntries(session.path, session.hostId);
+      const splitMessages = branchMessages(result.entries as PiEntry[], result.leafId);
+      setSplitPane((current) => current && `${current.session.hostId ?? "local"}:${current.session.id}` === identity ? { session, messages: splitMessages } : current);
+    } catch (reason) {
+      const error = reason instanceof Error ? reason.message : String(reason);
+      setSplitPane((current) => current && `${current.session.hostId ?? "local"}:${current.session.id}` === identity ? { session, error } : current);
+    }
+  };
   const sessionAction = async (session: SessionSummary, action: SessionAction) => {
+    if (action === "split") { await openSplitPane(session); return; }
     if (action === "archive") {
       try {
         if (session.id === state.sessionId && (session.hostId ?? "local") === activeHostId) { await transport.command({ type: "new_session" }); await refresh(); }
@@ -289,7 +306,7 @@ export default function App() {
 
   return <div className="app dark">
     <aside className="icon-rail"><nav><IconButton label="New conversation" onClick={newSession}><Plus size={19} /></IconButton><IconButton label="Conversations" className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}><MessageSquare size={18} /></IconButton><IconButton label="New project" onClick={() => setProjectOpen(true)}><FolderGit2 size={18} /></IconButton><IconButton label="Settings" className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}><Settings size={19} /></IconButton></nav>{view === "chat" && panelOpen && <SessionPanel sessions={sessions} activeId={state.sessionId} activeHostId={activeHostId} query={query} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} />}<div className="rail-bottom">{codexUsage !== undefined && <span className="codex-usage" aria-label="Codex usage remaining" title="Codex usage remaining">{codexUsage.remainingPercent}% left{codexUsage.resetAt ? ` · ${formatCodexReset(codexUsage.resetAt)}` : ""}</span>}</div></aside>
-    {view === "chat" ? <div className="chat-workspace"><ChatView state={state} messages={messages} models={models} commands={commands} thinkingLevels={thinkingLevels} widgets={Object.values(widgets).flat()} statuses={Object.values(statuses)} projectCwd={selectedProjectCwd(activeCwd)} draft={composerDraft} onDraftChange={setComposerDraft} onSend={send} onAbort={() => transport.command({ type: "abort" })} onOpenTerminal={() => setTerminalOpen(true)} onOpenProject={() => void chooseChatProject()} onBranch={branch} onModel={setModel} onThinking={setThinking} />{terminalOpen && <TerminalView key={`${terminalSessionId}:${activeTerminal.id}`} cwd={activeCwd ?? sessions.find((session) => session.id === state.sessionId && (session.hostId ?? "local") === activeHostId)?.cwd} terminals={sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={activeTerminal.id} output={activeTerminal.output} exited={activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { void transport.writeTerminal(activeTerminal.id, data).catch((reason) => appendTerminalOutput(activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { void transport.resizeTerminal(activeTerminal.id, cols, rows).catch(() => undefined); }} onDelete={deleteTerminal} onClose={() => setTerminalOpen(false)} />}</div> : <SettingsView settings={settings} onSave={saveSettings} />}
+    {view === "chat" ? <div className="chat-workspace"><div className={`chat-panes ${splitPane ? "split" : ""}`}><ChatView state={state} messages={messages} models={models} commands={commands} thinkingLevels={thinkingLevels} widgets={Object.values(widgets).flat()} statuses={Object.values(statuses)} projectCwd={selectedProjectCwd(activeCwd)} draft={composerDraft} onDraftChange={setComposerDraft} onSend={send} onAbort={() => transport.command({ type: "abort" })} onOpenTerminal={() => setTerminalOpen(true)} onOpenProject={() => void chooseChatProject()} onBranch={branch} onModel={setModel} onThinking={setThinking} />{splitPane && <SplitChatPane session={splitPane.session} messages={splitPane.messages} error={splitPane.error} onClose={() => setSplitPane(undefined)} />}</div>{terminalOpen && <TerminalView key={`${terminalSessionId}:${activeTerminal.id}`} cwd={activeCwd ?? sessions.find((session) => session.id === state.sessionId && (session.hostId ?? "local") === activeHostId)?.cwd} terminals={sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={activeTerminal.id} output={activeTerminal.output} exited={activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { void transport.writeTerminal(activeTerminal.id, data).catch((reason) => appendTerminalOutput(activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { void transport.resizeTerminal(activeTerminal.id, cols, rows).catch(() => undefined); }} onDelete={deleteTerminal} onClose={() => setTerminalOpen(false)} />}</div> : <SettingsView settings={settings} onSave={saveSettings} />}
     {error && <div className="error-toast"><strong>Pi could not connect</strong><span>{error}</span><button onClick={() => setError(undefined)}>×</button></div>}
     {notice && <div className="error-toast"><strong>{notice.title}</strong><span>{notice.message}</span><button onClick={() => setNotice(undefined)}>×</button></div>}
     {dialog && <ExtensionDialog request={dialog} onRespond={(response) => { void transport.command({ type: "extension_ui_response", id: dialog.id, ...response }); setDialog(undefined); }} />}

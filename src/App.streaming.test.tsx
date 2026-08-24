@@ -29,6 +29,7 @@ vi.mock("./lib/transport", async () => {
       return {};
     },
     listSessions: async () => [],
+    loadSessionEntries: async () => ({ entries: [], leafId: null }),
     archiveSession: async () => undefined,
     relocateSession: async () => undefined,
     loadSettings: async () => structuredClone(defaultSettings),

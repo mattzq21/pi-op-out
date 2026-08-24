@@ -30,6 +30,12 @@ export class MockTransport implements PiTransport {
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   private emit(event: RpcEvent) { this.listeners.forEach((listener) => listener(event)); }
   async listSessions() { return structuredClone(this.sessions); }
+  async loadSessionEntries(sessionPath: string) {
+    const id = sessionPath.replace("mock://", ""); const session = this.sessions.find((item) => item.id === id);
+    if (!session) throw new Error("Session not found");
+    const messages = this.histories.get(id) ?? [{ id: uid("assistant"), entryId: uid("entry"), role: "assistant" as const, content: `This is the browser preview for **${session.name}**. Native Pi sessions load their complete persisted message tree.`, timestamp: Date.now(), model: this.state.model?.id }];
+    return { entries: messages.map((message, index) => ({ type: "message", id: message.entryId, parentId: index ? messages[index - 1].entryId : null, timestamp: new Date(message.timestamp ?? Date.now()).toISOString(), message })), leafId: messages.at(-1)?.entryId ?? null };
+  }
   async archiveSession(sessionPath: string) { const index = this.sessions.findIndex((session) => session.path === sessionPath); if (index < 0) throw new Error("Session not found"); const [session] = this.sessions.splice(index, 1); this.histories.delete(session.id); }
   async relocateSession(sessionPath: string, cwd: string) { const session = this.sessions.find((item) => item.path === sessionPath); if (!session) throw new Error("Session not found"); session.cwd = cwd; session.project = cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace"; session.cwdExists = true; }
   async loadSettings() { return structuredClone(this.settings); }

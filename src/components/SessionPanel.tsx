@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import { Archive, ChevronDown, CopyPlus, Pencil, Search } from "lucide-react";
+import { Archive, ChevronDown, Columns2, CopyPlus, Pencil, Search } from "lucide-react";
 import type { SessionSummary } from "../types";
 
-export type SessionAction = "rename" | "clone" | "archive";
+export type SessionAction = "split" | "rename" | "clone" | "archive";
 interface Props { sessions: SessionSummary[]; activeId?: string; activeHostId?: string; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; }
 
 const actions = [
-  ["rename", Pencil, "Rename conversation"], ["clone", CopyPlus, "Clone conversation"], ["archive", Archive, "Archive conversation"]
+  ["split", Columns2, "Split pane"], ["rename", Pencil, "Rename conversation"], ["clone", CopyPlus, "Clone conversation"], ["archive", Archive, "Archive conversation"]
 ] as const;
 
 export function SessionPanel({ sessions, activeId, activeHostId = "local", query, onQuery, onSelect, onAction }: Props) {
@@ -37,6 +37,6 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", query
       </section>; })}
       {!filtered.length && <div className="empty-small">No conversations match “{query}”.</div>}
     </div>
-    {menu && <div className="conversation-menu session-context-menu" role="menu" aria-label={`${menu.session.name} actions`} style={{ left: menu.x, top: menu.y }} onContextMenu={(event) => event.preventDefault()}>{actions.map(([action, Icon, label]) => <button key={action} role="menuitem" onClick={() => { setMenu(undefined); onAction(menu.session, action); }}><Icon size={14} />{label}</button>)}</div>}
+    {menu && <div className="conversation-menu session-context-menu" role="menu" aria-label={`${menu.session.name} actions`} style={{ left: menu.x, top: menu.y }} onContextMenu={(event) => event.preventDefault()}>{actions.filter(([action]) => action !== "split" || menu.session.id !== activeId || (menu.session.hostId ?? "local") !== activeHostId).map(([action, Icon, label]) => <button key={action} role="menuitem" onClick={() => { setMenu(undefined); onAction(menu.session, action); }}><Icon size={14} />{label}</button>)}</div>}
   </aside>;
 }

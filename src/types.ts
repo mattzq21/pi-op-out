@@ -16,6 +16,7 @@ export interface SlashCommand { name: string; description?: string; source: "ext
 export interface ImageAttachment { type: "image"; data: string; mimeType: string; name?: string; }
 export interface AppSettings { defaultModel: string; defaultThinking: string; autoCompaction: boolean; autoRetry: boolean; notifications: boolean; steeringMode: "all" | "one-at-a-time"; followUpMode: "all" | "one-at-a-time"; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; mcpServers: McpServer[]; hosts: RemoteHost[]; }
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
+export interface SessionEntries { entries: Array<Record<string, unknown>>; leafId: string | null; }
 
 export interface PiTransport {
   mode: "native" | "browser";
@@ -24,6 +25,7 @@ export interface PiTransport {
   command<T = unknown>(command: RpcCommand): Promise<T>;
   subscribe(listener: (event: RpcEvent) => void): () => void;
   listSessions(): Promise<SessionSummary[]>;
+  loadSessionEntries(sessionPath: string, hostId?: string): Promise<SessionEntries>;
   archiveSession(sessionPath: string, hostId?: string): Promise<void>;
   relocateSession(sessionPath: string, cwd: string, hostId?: string): Promise<void>;
   loadSettings(): Promise<AppSettings>;
