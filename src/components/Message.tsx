@@ -23,10 +23,16 @@ function CodeBlock({ children, node: _node, ...props }: ComponentPropsWithoutRef
 
 const markdownComponents: Components = { pre: CodeBlock };
 
+function userMessageParts(content: string) {
+  const skills: string[] = [];
+  const text = content.replace(/<skill\s+name="([^"]+)"[^>]*>[\s\S]*?<\/skill>/g, (_match, name: string) => { skills.push(name); return ""; }).trim();
+  return { skills, text };
+}
+
 export function Message({ message, expanded = false, toolCount = 1, onBranch, onRetry }: Props) {
   const [copied, setCopied] = useState(false);
   if (message.role === "tool") { const output = textOf(message.content); const status = message.toolStatus ?? "done"; return <details className={`tool-event ${status}`} open={status === "running" || (expanded && status !== "done")}><summary><Wrench size={14} /><span><strong>{message.toolName || "tool"}{toolCount > 1 ? ` x${toolCount}` : ""}</strong><small>{status === "running" ? "Running…" : status === "error" ? "Failed" : "Completed"}</small></span><span className="tool-chevron">›</span></summary>{output && <pre>{output}</pre>}</details>; }
-  if (message.role === "user") return <article className="message user-message"><div className="message-body"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{textOf(message.content)}</ReactMarkdown></div></article>;
+  if (message.role === "user") { const { skills, text } = userMessageParts(textOf(message.content)); return <article className="message user-message"><div className="message-body">{skills.map((skill) => <span className="skill-reference" key={skill}>/skill:{skill}</span>)}{text && <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>}</div></article>; }
   const output = textOf(message.content);
   const thinking = thinkingOf(message.content);
   const failure = message.stopReason === "aborted" ? (message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;

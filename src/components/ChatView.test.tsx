@@ -32,6 +32,17 @@ describe("conversation work visibility", () => {
     expect(composer).toHaveStyle({ height: "130px", overflowY: "auto" });
   });
 
+  it("shows an invoked skill without exposing its instruction content", () => {
+    const skillMessages: ChatMessage[] = [
+      { id: "skill", role: "user", content: '<skill name="review" location="/tmp/review/SKILL.md">\nPrivate skill instructions\n</skill>\n\nKeep this request visible.' },
+      { id: "answer", role: "assistant", content: "Done" }
+    ];
+    render(<ChatView state={{ ...state(false), messageCount: skillMessages.length }} messages={skillMessages} models={[]} commands={[]} thinkingLevels={["off"]} widgets={[]} statuses={[]} {...callbacks} />);
+    expect(screen.getByText("/skill:review")).toHaveClass("skill-reference");
+    expect(screen.getByText("Keep this request visible.")).toBeVisible();
+    expect(screen.queryByText("Private skill instructions")).not.toBeInTheDocument();
+  });
+
   it("shows an ultimately aborted response as a failure with a retry for its prompt", async () => {
     const user = userEvent.setup();
     const onSend = vi.fn();
