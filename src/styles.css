@@ -37,11 +37,7 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
 .empty-small { text-align: center; color: var(--muted); font-size: 13px; padding: 40px 10px; }
 
 .chat-workspace { order: 2; flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.chat-shell { flex: 1; min-width: 0; min-height: 0; display: grid; grid-template-rows: 61px 1fr auto; background: var(--paper); }
-.chat-shell.new-session { grid-template-rows: 1fr auto; }
-.chat-header { border-bottom: 1px solid var(--line); padding: 0 18px; display: flex; justify-content: center; align-items: center; }
-.chat-title { display: flex; align-items: center; }.chat-title > div { display: grid; gap: 2px; text-align: center; }.chat-title strong { font-size: 14px; }.chat-title small { font-size: 11px; color: var(--muted); }
-.header-controls { display: flex; align-items: center; gap: 4px; }
+.chat-shell { flex: 1; min-width: 0; min-height: 0; display: grid; grid-template-rows: 1fr auto; background: var(--paper); }
 .menu-anchor { position: relative; }.conversation-menu { position: absolute; z-index: 8; right: 0; top: 37px; width: 176px; padding: 5px; border: 1px solid var(--line); border-radius: 9px; background: white; box-shadow: 0 12px 35px #302b2226; }.conversation-menu button { width: 100%; height: 32px; border: 0; border-radius: 6px; background: transparent; display: flex; align-items: center; gap: 8px; padding: 0 8px; text-align: left; color: var(--muted); font-size: 12px; }.conversation-menu button:hover { background: #f1eee8; color: var(--ink); }
 .session-context-menu { position: fixed; right: auto; z-index: 30; }
 .select-control { height: 31px; border: 1px solid var(--line); border-radius: 7px; display: flex; align-items: center; padding: 0 7px; gap: 4px; background: white; }
@@ -108,7 +104,7 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
   color: var(--ink);
 }
 .app.dark .icon-rail, .app.dark .session-panel { background: #141413; }
-.app.dark .chat-header, .app.dark .settings-shell, .app.dark .chat-shell { background: var(--paper); }
+.app.dark .settings-shell, .app.dark .chat-shell { background: var(--paper); }
 
 /* Raised surfaces and native controls need explicit dark colors. color-scheme alone
    does not reliably recolor selects in every desktop webview. */
