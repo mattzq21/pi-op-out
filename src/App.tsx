@@ -59,6 +59,7 @@ export default function App() {
   const settingsRef = useRef(settings); const liveRevision = useRef(0); const activeAssistantId = useRef<string | undefined>(undefined); const sessionIndexRequest = useRef<Promise<void> | undefined>(undefined);
   const [panelOpen, setPanelOpen] = useState(true); const [query, setQuery] = useState(""); const [connected, setConnected] = useState(false); const [error, setError] = useState<string>();
   const [activeHostId, setActiveHostId] = useState("local");
+  const activeHostIdRef = useRef(activeHostId); activeHostIdRef.current = activeHostId;
   const [codexUsage, setCodexUsage] = useState<number>();
   const [dialog, setDialog] = useState<ExtensionUiRequest>(); const [notice, setNotice] = useState<{ title: string; message: string }>();
   const [statuses, setStatuses] = useState<Record<string, string>>({}); const [widgets, setWidgets] = useState<Record<string, string[]>>({});
@@ -81,14 +82,14 @@ export default function App() {
     if (!sessionIndexRequest.current) sessionIndexRequest.current = transport.listSessions().then((nextSessions) => {
       setSessions(nextSessions);
       setState((current) => {
-        const activeSession = nextSessions.find((session) => session.id === current.sessionId && (session.hostId ?? "local") === activeHostId);
+        const activeSession = nextSessions.find((session) => session.id === current.sessionId && (session.hostId ?? "local") === activeHostIdRef.current);
         return activeSession && activeSession.name !== current.sessionName ? { ...current, sessionName: activeSession.name } : current;
       });
     }).catch(() => undefined).finally(() => { sessionIndexRequest.current = undefined; });
     return sessionIndexRequest.current;
-  }, [activeHostId, transport]);
+  }, [transport]);
 
-  const refresh = useCallback(async (_hostId = activeHostId) => {
+  const refresh = useCallback(async (_hostId?: string) => {
     const revision = liveRevision.current;
     void syncSessionIndex();
     const [nextState, response, modelResponse, thinkingResponse, commandResponse, nextSettings] = await Promise.all([
@@ -98,7 +99,7 @@ export default function App() {
     if (liveRevision.current === revision) { setState(nextState); setMessages(branchMessages(response.entries, response.leafId)); }
     setModels(modelResponse.models); setCommands(commandResponse.commands); setThinkingLevels(thinkingResponse.levels); setSettings(nextSettings);
     return nextSettings;
-  }, [activeHostId, syncSessionIndex, transport]);
+  }, [syncSessionIndex, transport]);
 
   const configureRuntime = useCallback((value: AppSettings) => Promise.all([
     transport.command({ type: "set_auto_compaction", enabled: value.autoCompaction }), transport.command({ type: "set_auto_retry", enabled: value.autoRetry }),
