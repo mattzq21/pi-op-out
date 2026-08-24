@@ -8,7 +8,7 @@ use std::{
     process::{Child, ChildStdin, Command, Stdio},
     sync::{mpsc, Arc, Mutex},
     thread,
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 use portable_pty::{native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtySize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -53,6 +53,12 @@ struct SessionSummary {
     starred: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexUsage {
+    remaining_percent: u8,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AppSettings {
@@ -95,6 +101,49 @@ fn pi_executable() -> PathBuf {
     }
     for candidate in ["/opt/homebrew/bin/pi", "/usr/local/bin/pi", "/usr/bin/pi"] { let path = PathBuf::from(candidate); if path.is_file() { return path; } }
     PathBuf::from("pi")
+}
+
+fn codex_executable() -> PathBuf {
+    if let Ok(home) = home_dir() {
+        for candidate in [home.join(".local/bin/codex"), home.join(".npm-global/bin/codex"), home.join(".bun/bin/codex")] { if candidate.is_file() { return candidate; } }
+    }
+    PathBuf::from("codex")
+}
+
+fn codex_response(receiver: &mpsc::Receiver<String>, id: u64, deadline: Instant) -> Result<Value, String> {
+    loop {
+        let timeout = deadline.checked_duration_since(Instant::now()).ok_or("Codex usage request timed out")?;
+        let line = receiver.recv_timeout(timeout).map_err(|_| "Codex usage request timed out".to_string())?;
+        let Ok(value) = serde_json::from_str::<Value>(&line) else { continue };
+        if value.get("id").and_then(Value::as_u64) != Some(id) { continue; }
+        if let Some(error) = value.get("error") { return Err(error.to_string()); }
+        return value.get("result").cloned().ok_or_else(|| "Codex returned no usage data".into());
+    }
+}
+
+fn codex_remaining_percent(response: &Value) -> Option<u8> {
+    let limits = response.pointer("/rateLimitsByLimitId/codex").or_else(|| response.get("rateLimits"))?;
+    let used = ["primary", "secondary"].iter().filter_map(|window| limits.get(window)?.get("usedPercent")?.as_f64()).fold(None, |highest, value| Some(highest.map_or(value, |current: f64| current.max(value))))?;
+    Some((100.0 - used.clamp(0.0, 100.0)).round() as u8)
+}
+
+#[tauri::command]
+fn codex_usage() -> Result<CodexUsage, String> {
+    let mut child = Command::new(codex_executable()).arg("app-server").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|error| format!("Could not start Codex: {error}"))?;
+    let result = (|| {
+        let mut stdin = child.stdin.take().ok_or("Codex stdin was unavailable")?;
+        let stdout = child.stdout.take().ok_or("Codex stdout was unavailable")?;
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || for line in BufReader::new(stdout).lines().map_while(Result::ok) { if sender.send(line).is_err() { break; } });
+        let deadline = Instant::now() + Duration::from_secs(8);
+        writeln!(stdin, "{}", json!({"method":"initialize","id":1,"params":{"clientInfo":{"name":"pi-desktop","title":"Pi Desktop","version":env!("CARGO_PKG_VERSION")},"capabilities":null}})).map_err(|error| error.to_string())?;
+        codex_response(&receiver, 1, deadline)?;
+        writeln!(stdin, "{}", json!({"method":"initialized"})).map_err(|error| error.to_string())?;
+        writeln!(stdin, "{}", json!({"method":"account/rateLimits/read","id":2})).map_err(|error| error.to_string())?;
+        let response = codex_response(&receiver, 2, deadline)?;
+        Ok(CodexUsage { remaining_percent: codex_remaining_percent(&response).ok_or("Codex usage is unavailable")? })
+    })();
+    let _ = child.kill(); let _ = child.wait(); result
 }
 
 fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -457,12 +506,18 @@ fn relocate_session(session_path: String, cwd: String) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, archive_session, relocate_session, load_app_settings, save_app_settings]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, archive_session, relocate_session, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reports_the_limiting_codex_usage_window() {
+        let response = json!({"rateLimitsByLimitId":{"codex":{"primary":{"usedPercent":24},"secondary":{"usedPercent":61}}}});
+        assert_eq!(codex_remaining_percent(&response), Some(39));
+    }
 
     #[test]
     fn discovers_skills_using_pi_global_directory_rules() {

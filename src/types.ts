@@ -13,6 +13,7 @@ export interface McpServer { id: string; name: string; transport?: "stdio" | "ht
 export interface SlashCommand { name: string; description?: string; source: "extension" | "prompt" | "skill"; path?: string; }
 export interface ImageAttachment { type: "image"; data: string; mimeType: string; name?: string; }
 export interface AppSettings { defaultModel: string; defaultThinking: string; autoCompaction: boolean; autoRetry: boolean; notifications: boolean; steeringMode: "all" | "one-at-a-time"; followUpMode: "all" | "one-at-a-time"; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; mcpServers: McpServer[]; }
+export interface CodexUsage { remainingPercent: number; }
 
 export interface PiTransport {
   mode: "native" | "browser";
@@ -24,6 +25,7 @@ export interface PiTransport {
   archiveSession(sessionPath: string): Promise<void>;
   relocateSession(sessionPath: string, cwd: string): Promise<void>;
   loadSettings(): Promise<AppSettings>;
+  loadCodexUsage(): Promise<CodexUsage>;
   saveSettings(settings: AppSettings): Promise<void>;
   selectProjectDirectory(defaultPath?: string): Promise<string | null>;
   openProject(cwd: string): Promise<void>;

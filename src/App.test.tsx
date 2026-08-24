@@ -185,6 +185,13 @@ describe("Pi desktop", () => {
     expect(terminalShortcut).toHaveValue("Ctrl+Shift+T");
   });
 
+  it("shows remaining Codex usage next to settings", async () => {
+    render(<App />);
+    const usage = await screen.findByLabelText("Codex usage remaining");
+    expect(usage).toHaveTextContent("73% left");
+    expect(usage.parentElement).toContainElement(screen.getByRole("button", { name: "Settings" }));
+  });
+
   it("toggles the terminal with the default keybind", async () => {
     render(<App />);
     const composer = await screen.findByRole("textbox", { name: "Message Pi" });

@@ -14,7 +14,7 @@ button { cursor: pointer; }
 .icon-button:hover { background: #0000000b; color: var(--ink); }
 .icon-rail .icon-button { color: #aaa69d; width: 36px; height: 36px; }
 .icon-rail .icon-button:hover, .icon-rail .icon-button.active { color: white; background: #ffffff15; }
-.rail-bottom { margin-top: auto; display: flex; flex-direction: column; align-items: center; gap: 9px; }
+.rail-bottom { margin-top: auto; display: flex; align-items: center; gap: 9px; }.codex-usage { color: #aaa69d; font: 500 11px "DM Mono"; white-space: nowrap; }
 .native-status { width: 7px; height: 7px; border-radius: 50%; background: #8b695f; box-shadow: 0 0 0 3px #ffffff08; }
 .icon-rail nav .native-status { flex: 0 0 auto; margin-right: 4px; }
 .native-status.online { background: #78b597; }
