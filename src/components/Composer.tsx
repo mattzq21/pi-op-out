@@ -60,6 +60,7 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
   const [selectedMatch, setSelectedMatch] = useState(0);
   const [paletteDismissed, setPaletteDismissed] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const restoredDraftId = useRef<string | undefined>(undefined);
   const setValueRef = useRef(setValue); setValueRef.current = setValue;
@@ -72,6 +73,11 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
       : [], [commandQuery, skillQuery, commands, paletteDismissed]);
   useEffect(() => setSelectedMatch(0), [skillQuery, matches.length]);
   useEffect(() => setPaletteDismissed(false), [value]);
+  useEffect(() => {
+    const dismissOutside = (event: PointerEvent) => { if (!composerRef.current?.contains(event.target as Node)) setPaletteDismissed(true); };
+    document.addEventListener("pointerdown", dismissOutside);
+    return () => document.removeEventListener("pointerdown", dismissOutside);
+  }, []);
 
   const resizeEditor = () => {
     const editor = ref.current; if (!editor) return;
@@ -124,7 +130,7 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
 
   return <div className="composer-wrap">
     {streaming && <div className="stream-banner"><span className="pulse" />Pi is working {queued > 0 && `· ${queued} queued`}<label>Send as <select aria-label="Streaming message behavior" value={behavior} onChange={(event) => setBehavior(event.target.value as typeof behavior)}><option value="steer">Steer now</option><option value="followUp">Follow up</option></select></label><button onClick={onAbort}>Stop</button></div>}
-    <div className="composer">
+    <div ref={composerRef} className="composer">
       {matches.length > 0 && <div className="command-palette" role="listbox" aria-label={skillQuery === undefined ? "Pi commands" : "Pi skills"}>{matches.map((command, index) => <button role="option" aria-selected={skillQuery !== undefined && index === selectedMatch} key={`${command.source}:${command.name}`} type="button" onMouseEnter={() => setSelectedMatch(index)} onClick={() => chooseCommand(command)}><span><strong>{skillQuery !== undefined ? `$${skillName(command)}` : `/${command.name}`}</strong><small>{command.description || `${command.source} command`}</small></span><em>{command.source}</em></button>)}</div>}
       {uploads.length > 0 && <div className="attachments">{uploads.map((upload) => <span key={upload.id}>{upload.kind === "image" ? <ImagePlus size={12} /> : <FileText size={12} />}<b>{upload.name}</b><button aria-label={`Remove ${upload.name}`} onClick={() => setUploads((current) => current.filter((item) => item.id !== upload.id))}><X size={11} /></button></span>)}</div>}
       {uploadError && <div className="upload-error">{uploadError}</div>}
