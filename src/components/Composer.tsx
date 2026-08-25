@@ -58,18 +58,20 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
   const [behavior, setBehavior] = useState<"steer" | "followUp">("steer");
   const [uploadError, setUploadError] = useState<string>();
   const [selectedMatch, setSelectedMatch] = useState(0);
+  const [paletteDismissed, setPaletteDismissed] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const restoredDraftId = useRef<string | undefined>(undefined);
   const setValueRef = useRef(setValue); setValueRef.current = setValue;
   const commandQuery = value.match(/^\/([^\s]*)$/)?.[1]?.toLowerCase();
   const skillQuery = commandQuery === undefined ? skillReference(value) : undefined;
-  const matches = useMemo(() => commandQuery !== undefined
+  const matches = useMemo(() => paletteDismissed ? [] : commandQuery !== undefined
     ? commands.filter((command) => command.name.toLowerCase().includes(commandQuery)).slice(0, 7)
     : skillQuery !== undefined
       ? commands.filter((command) => skillName(command)?.toLowerCase().includes(skillQuery)).slice(0, 7)
-      : [], [commandQuery, skillQuery, commands]);
+      : [], [commandQuery, skillQuery, commands, paletteDismissed]);
   useEffect(() => setSelectedMatch(0), [skillQuery, matches.length]);
+  useEffect(() => setPaletteDismissed(false), [value]);
 
   const resizeEditor = () => {
     const editor = ref.current; if (!editor) return;
@@ -126,7 +128,7 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
       {matches.length > 0 && <div className="command-palette" role="listbox" aria-label={skillQuery === undefined ? "Pi commands" : "Pi skills"}>{matches.map((command, index) => <button role="option" aria-selected={skillQuery !== undefined && index === selectedMatch} key={`${command.source}:${command.name}`} type="button" onMouseEnter={() => setSelectedMatch(index)} onClick={() => chooseCommand(command)}><span><strong>{skillQuery !== undefined ? `$${skillName(command)}` : `/${command.name}`}</strong><small>{command.description || `${command.source} command`}</small></span><em>{command.source}</em></button>)}</div>}
       {uploads.length > 0 && <div className="attachments">{uploads.map((upload) => <span key={upload.id}>{upload.kind === "image" ? <ImagePlus size={12} /> : <FileText size={12} />}<b>{upload.name}</b><button aria-label={`Remove ${upload.name}`} onClick={() => setUploads((current) => current.filter((item) => item.id !== upload.id))}><X size={11} /></button></span>)}</div>}
       {uploadError && <div className="upload-error">{uploadError}</div>}
-      <textarea ref={ref} aria-label="Message Pi" placeholder={streaming ? (behavior === "steer" ? "Steer Pi while it works…" : "Queue a follow-up…") : "Ask Pi to build, explain, or change anything…"} value={value} rows={1} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (skillQuery !== undefined && matches.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length); } else if (event.key === "Tab" && !event.shiftKey && skillQuery !== undefined && matches[selectedMatch]) { event.preventDefault(); chooseCommand(matches[selectedMatch]); } else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} />
+      <textarea ref={ref} aria-label="Message Pi" placeholder={streaming ? (behavior === "steer" ? "Steer Pi while it works…" : "Queue a follow-up…") : "Ask Pi to build, explain, or change anything…"} value={value} rows={1} onChange={(event) => { setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={(event) => { if (event.key === "Escape" && matches.length) { event.preventDefault(); setPaletteDismissed(true); } else if (skillQuery !== undefined && matches.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length); } else if (event.key === "Tab" && !event.shiftKey && skillQuery !== undefined && matches[selectedMatch]) { event.preventDefault(); chooseCommand(matches[selectedMatch]); } else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} />
       <input ref={fileRef} className="hidden-input" type="file" multiple onChange={(event) => { void addFiles(event.target.files); event.target.value = ""; }} />
       <div className="composer-bar"><div className="composer-tools"><IconButton label="Attach files" onClick={() => fileRef.current?.click()}><Paperclip size={17} /></IconButton>{onOpenTerminal && <IconButton label="Open terminal" onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton>}{contextUsage && <ContextWheel usage={contextUsage} />}{sessionCache && <span className={`session-cache-hit${sessionCache.low ? " low" : ""}`} title={`${sessionCache.cachedTokens.toLocaleString()} of ${sessionCache.promptTokens.toLocaleString()} session prompt tokens read from cache`}>Cache {sessionCache.rate}%</span>}</div>
         <div className="composer-actions">
