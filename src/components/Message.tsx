@@ -2,12 +2,13 @@ import { isValidElement, useState, type ComponentPropsWithoutRef, type ReactNode
 import { Check, CircleAlert, Copy, GitBranch, Wrench } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ChatMessage } from "../types";
+import type { ChatMessage, GitDiffSnapshot } from "../types";
 import { textOf, thinkingOf } from "../lib/content";
 import { cacheHitStats } from "../lib/messages";
 import { IconButton } from "./IconButton";
+import { DiffViewer } from "./DiffViewer";
 
-interface Props { message: ChatMessage; expanded?: boolean; toolCount?: number; onBranch: (message: ChatMessage) => void; onRetry?: () => void; }
+interface Props { message: ChatMessage; diff?: GitDiffSnapshot; expanded?: boolean; toolCount?: number; onBranch: (message: ChatMessage) => void; onRetry?: () => void; }
 
 function nodeText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -30,7 +31,7 @@ function userMessageParts(content: string) {
   return { skills, text };
 }
 
-export function Message({ message, expanded = false, toolCount = 1, onBranch, onRetry }: Props) {
+export function Message({ message, diff, expanded = false, toolCount = 1, onBranch, onRetry }: Props) {
   const [copied, setCopied] = useState(false);
   if (message.role === "tool") { const output = textOf(message.content); const status = message.toolStatus ?? "done"; return <details className={`tool-event ${status}`} open={status === "running" || (expanded && status !== "done")}><summary><Wrench size={14} /><span><strong>{message.toolName || "tool"}{toolCount > 1 ? ` x${toolCount}` : ""}</strong><small>{status === "running" ? "Running…" : status === "error" ? "Failed" : "Completed"}</small></span><span className="tool-chevron">›</span></summary>{output && <pre>{output}</pre>}</details>; }
   if (message.role === "user") { const { skills, text } = userMessageParts(textOf(message.content)); return <article className="message user-message"><div className="message-body">{skills.map((skill) => <span className="skill-reference" key={skill}>${skill}</span>)}{text && <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>}</div></article>; }
@@ -45,6 +46,7 @@ export function Message({ message, expanded = false, toolCount = 1, onBranch, on
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{output}</ReactMarkdown>
       {failure && <div className="message-failure" role="status"><CircleAlert size={14} /><span>{failure}</span>{onRetry && <button onClick={onRetry}>Retry</button>}</div>}
       {message.streaming && <span className="stream-caret" />}
+      {diff && <DiffViewer snapshot={diff} />}
       {!message.streaming && output.trim().length > 0 && <div className="message-actions">
         <IconButton label="Copy response" onClick={copy}>{copied ? <Check size={14} /> : <Copy size={14} />}</IconButton>
         <button className="branch-button" aria-label="Branch from here" title="Branch from here" onClick={() => onBranch(message)}><GitBranch size={14} /></button>

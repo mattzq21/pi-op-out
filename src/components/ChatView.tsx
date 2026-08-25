@@ -1,13 +1,12 @@
 import { useEffect, useRef } from "react";
 import { FolderGit2 } from "lucide-react";
-import type { AgentProfile, AgentState, ChatMessage, GitDiffSnapshot, GitDiffSnapshots, ImageAttachment, Model, SequenceProfile, SlashCommand } from "../types";
+import type { AgentProfile, AgentState, ChatMessage, GitDiffSnapshots, ImageAttachment, Model, SequenceProfile, SlashCommand } from "../types";
 import { Message } from "./Message";
 import { Composer } from "./Composer";
 import { textOf, thinkingOf } from "../lib/content";
 import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 import { cacheHitStats } from "../lib/messages";
 import { parseSequencePrompt } from "../lib/sequence";
-import { DiffViewer } from "./DiffViewer";
 
 interface Props { state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; agents?: AgentProfile[]; sequences?: SequenceProfile[]; activeAgent?: string; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: string[]; projectCwd?: string; readOnly?: boolean; draft?: string; onDraftChange?: (value: string) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void; onAbort: () => void; onOpenTerminal?: () => void; onOpenProject: () => void; onBranch: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onThinking: (level: string) => void; }
 
@@ -99,7 +98,7 @@ function ConversationTurn({ messages, gitDiffs, active, retryable, onRetry, onBr
   });
   const userMessages = parsed.step?.step ? [] : shown.filter((message) => message.role === "user");
   const finalMessage = finalIndex >= 0 ? { ...shown[finalIndex], content: textOf(shown[finalIndex].content) } : undefined;
-  const gitDiff: GitDiffSnapshot | undefined = finalMessage ? gitDiffs?.[finalMessage.id] : undefined;
+  const gitDiff = finalMessage ? gitDiffs?.[finalMessage.id] : undefined;
   const workedFor = formatWorkedFor(userIndex >= 0 ? shown[userIndex].timestamp : shown[0]?.timestamp, finalMessage?.completedAt ?? finalMessage?.timestamp);
   const retryPrompt = retryable && finalMessage?.stopReason === "aborted" ? [...userMessages].reverse().map((message) => textOf(message.content).trim()).find(Boolean) : undefined;
 
@@ -107,7 +106,6 @@ function ConversationTurn({ messages, gitDiffs, active, retryable, onRetry, onBr
     {parsed.step && parsed.step.step > 0 && <div className="sequence-step-label">{parsed.step.sequence} · {parsed.step.agent}</div>}
     {userMessages.map((message) => <Message key={message.id} message={message} onBranch={onBranch} />)}
     {intermediate.length > 0 && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}</summary><div className="work-group-content">{renderMessages(intermediate, true, onBranch)}</div></details>}
-    {finalMessage && <Message message={finalMessage} onBranch={onBranch} onRetry={retryPrompt ? () => { window.dispatchEvent(new CustomEvent("pi:set-editor-text", { detail: "" })); onRetry(retryPrompt); } : undefined} />}
-    {finalMessage && gitDiff && <DiffViewer snapshot={gitDiff} />}
+    {finalMessage && <Message message={finalMessage} diff={gitDiff} onBranch={onBranch} onRetry={retryPrompt ? () => { window.dispatchEvent(new CustomEvent("pi:set-editor-text", { detail: "" })); onRetry(retryPrompt); } : undefined} />}
   </section>;
 }
