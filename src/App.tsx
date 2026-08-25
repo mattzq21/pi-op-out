@@ -12,6 +12,7 @@ import { defaultSettings } from "./defaults";
 import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
 import { findReplaceableAbortedTurn } from "./lib/abortedTurn";
 import { NativeTransport } from "./lib/nativeTransport";
+import { SessionRuntimePool } from "./lib/sessionRuntimePool";
 import { useChatSession } from "./lib/useChatSession";
 import { decodeOrchestrationValue, encodeOrchestrationValue, ORCHESTRATION_STATUS_KEY } from "./lib/orchestrationProtocol";
 import type { AgentState, AppSettings, ChatMessage, CodexUsage, ExtensionUiRequest, ImageAttachment, Model, OrchestrationCapability, OrchestrationConfig, RpcEvent, SessionSummary } from "./types";
@@ -41,7 +42,7 @@ export function formatCodexReset(resetAt: number, now = Date.now()) {
 }
 
 export default function App() {
-  const transport = useMemo(() => new NativeTransport(), []); const [view, setView] = useState<"chat" | "settings">("chat");
+  const runtimePool = useMemo(() => new SessionRuntimePool(), []); const [transport, setTransport] = useState(() => runtimePool.create()); const [view, setView] = useState<"chat" | "settings">("chat");
   const sessionRuntime = useChatSession(transport); const { state, setState, messages, setMessages, models, commands, thinkingLevels, refresh: refreshSession, handleEvent, discardPendingUpdates } = sessionRuntime;
   const [sessions, setSessions] = useState<SessionSummary[]>([]); const [settings, setSettings] = useState<AppSettings>(defaultSettings); const [orchestration, setOrchestration] = useState<OrchestrationCapability>();
   const sessionIndexRequest = useRef<Promise<void> | undefined>(undefined);
@@ -86,9 +87,9 @@ export default function App() {
     return sessionIndexRequest.current;
   }, [transport]);
 
-  const refresh = useCallback(async (_hostId?: string) => {
-    void syncSessionIndex(); const [, nextSettings] = await Promise.all([refreshSession(), transport.loadSettings()]); setSettings(nextSettings); return nextSettings;
-  }, [refreshSession, syncSessionIndex, transport]);
+  const refresh = useCallback(async (hostId?: string) => {
+    void syncSessionIndex(); const [nextState, nextSettings] = await Promise.all([refreshSession(), transport.loadSettings()]); runtimePool.bind(hostId ?? transport.currentHostId(), nextState.sessionId, transport); setSettings(nextSettings); return nextSettings;
+  }, [refreshSession, runtimePool, syncSessionIndex, transport]);
 
   const configureRuntime = useCallback((value: AppSettings) => Promise.all([
     transport.command({ type: "set_auto_compaction", enabled: value.autoCompaction }), transport.command({ type: "set_auto_retry", enabled: value.autoRetry })
@@ -135,8 +136,10 @@ export default function App() {
       if (event.type === "disconnected") setOrchestration(undefined);
     });
     transport.connect().then(() => refresh()).then((value) => configureRuntime(value)).then(() => { if (!cancelled) { setError(undefined); setConnected(true); } }).catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); });
-    return () => { cancelled = true; unsubscribe(); void transport.disconnect(); };
+    return () => { cancelled = true; unsubscribe(); };
   }, [configureRuntime, handleEvent, refresh, transport]);
+
+  useEffect(() => { const shutdown = () => { void runtimePool.disconnectAll(); }; window.addEventListener("beforeunload", shutdown); return () => window.removeEventListener("beforeunload", shutdown); }, [runtimePool]);
 
   useEffect(() => {
     if (!connected) return;
@@ -167,25 +170,19 @@ export default function App() {
     setSplitPane(undefined);
   };
   const branch = async (message: ChatMessage) => { const index = messages.findIndex((item) => item.id === message.id); const user = messages.slice(0, index + 1).reverse().find((item) => item.role === "user" && item.entryId); if (!user) return; await transport.command({ type: "fork", entryId: user.entryId }); await refresh(); };
-  const newSession = async () => { const hostId = activeHostIdRef.current; const projectCwd = selectedProjectCwd(activeCwd); setView("chat"); closeSplitPane(); setConnected(false); setOrchestration(undefined); discardPendingUpdates(); setMessages([]); try { if (projectCwd) { await transport.newChat(projectCwd, hostId); setActiveCwd(projectCwd); } else setActiveCwd(await transport.newTemporaryChat(hostId)); const value = await refresh(hostId); await configureRuntime(value); setConnected(true); } catch (reason) { setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); } };
-  const selectSession = async (session: SessionSummary) => {
-    const hostId = session.hostId ?? "local"; if (session.id === state.sessionId && hostId === activeHostId) return true;
+  const newSession = async () => { const hostId = activeHostIdRef.current; const projectCwd = selectedProjectCwd(activeCwd); setView("chat"); closeSplitPane(); setConnected(false); setOrchestration(undefined); discardPendingUpdates(); setMessages([]); const nextTransport = runtimePool.create(projectCwd ? { cwd: projectCwd, hostId } : { hostId }); try { if (projectCwd) setActiveCwd(projectCwd); else setActiveCwd(await nextTransport.prepareTemporaryChat(hostId)); setActiveHostId(hostId); setTransport(nextTransport); } catch (reason) { setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); } };
+  const selectSession = (session: SessionSummary) => {
+    const hostId = session.hostId ?? "local"; if (session.id === state.sessionId && hostId === activeHostId) return transport;
     if (splitPane?.session.id === session.id && (splitPane.session.hostId ?? "local") === hostId) closeSplitPane();
-    if (session.cwdExists === false) { setRelocationError(undefined); setRelocatingSession(session); return false; }
-    const previousState = state; const previousMessages = messages; const previousHostId = activeHostId; const previousCwd = activeCwd;
-    const current = sessions.find((item) => item.id === state.sessionId && (item.hostId ?? "local") === activeHostId);
-    discardPendingUpdates(); setView("chat"); setOrchestration(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd); setMessages([]); setState((value) => ({ ...value, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, isStreaming: false, activity: undefined }));
-    try {
-      if (hostId !== previousHostId || current?.cwd !== session.cwd) { setConnected(false); await transport.disconnect(); await transport.connect(session.cwd, session.path, hostId); setConnected(true); }
-      else await transport.command({ type: "switch_session", sessionPath: session.path });
-      await refresh(hostId); return true;
-    } catch (reason) { setActiveHostId(previousHostId); setActiveCwd(previousCwd); setState(previousState); setMessages(previousMessages); setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); return false; }
+    if (session.cwdExists === false) { setRelocationError(undefined); setRelocatingSession(session); return undefined; }
+    const nextTransport = runtimePool.forSession(session);
+    discardPendingUpdates(); setView("chat"); setConnected(false); setOrchestration(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd); setMessages([]); setState((value) => ({ ...value, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, isStreaming: false, activity: undefined })); setTransport(nextTransport); return nextTransport;
   };
   const setModel = async (model: Model) => { await transport.command({ type: "set_model", provider: model.provider, modelId: model.id }); await refreshSession(); };
   const setThinking = async (level: string) => { await transport.command({ type: "set_thinking_level", level }); setState((current) => ({ ...current, thinkingLevel: level })); };
   const saveSettings = async (value: AppSettings, nextConfig?: OrchestrationConfig) => { if (nextConfig) await transport.command({ type: "prompt", message: `/pi-orchestration-config ${encodeOrchestrationValue(nextConfig)}` }); await transport.saveSettings(value); await configureRuntime(value); setSettings(value); if (activeHostId !== "local" && !value.hosts.some((host) => host.id === activeHostId)) setActiveHostId("local"); await refresh(); };
   const setAgent = async (name: string) => { await transport.command({ type: "prompt", message: `/pi-orchestration-use ${encodeOrchestrationValue(name)}` }); };
-  const openProject = async (cwd: string, hostId: string) => { setProjectOpen(false); closeSplitPane(); try { setConnected(false); await transport.openProject(cwd, hostId); setActiveHostId(hostId); setActiveCwd(cwd); const value = await refresh(hostId); await configureRuntime(value); setConnected(true); setView("chat"); } catch (reason) { setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); } };
+  const openProject = async (cwd: string, hostId: string) => { setProjectOpen(false); closeSplitPane(); setConnected(false); setOrchestration(undefined); discardPendingUpdates(); setMessages([]); setActiveHostId(hostId); setActiveCwd(cwd); setView("chat"); setTransport(runtimePool.create({ cwd, hostId })); };
   const chooseChatProject = () => setProjectOpen(true);
   const openSplitPane = (session: SessionSummary) => { closeSplitPane(); setSplitPane({ session }); };
   const sessionAction = async (session: SessionSummary, action: SessionAction) => {
@@ -200,6 +197,7 @@ export default function App() {
         const archivedTerminalSessionId = `${session.hostId ?? "local"}:${session.id}`;
         const terminalState = terminalsBySession[archivedTerminalSessionId];
         if (session.id === state.sessionId && (session.hostId ?? "local") === activeHostId) { await transport.command({ type: "new_session" }); await refresh(); }
+        else await runtimePool.remove(session);
         await transport.archiveSession(session.path, session.hostId, terminalState);
         setTerminalsBySession((current) => { const next = { ...current }; delete next[archivedTerminalSessionId]; return next; });
         if (archivedTerminalSessionId === terminalSessionId) setTerminalOpen(false);
@@ -207,13 +205,13 @@ export default function App() {
       } catch (reason) { setNotice({ title: "Could not archive conversation", message: reason instanceof Error ? reason.message : String(reason) }); }
       return;
     }
-    if (!await selectSession(session)) return;
+    const selectedTransport = selectSession(session); if (!selectedTransport) return;
     if (action === "rename") { setRenameSession(session); return; }
-    if (action === "clone") { await transport.command({ type: "clone" }); await refresh(); }
+    if (action === "clone") { await selectedTransport.connect(); await selectedTransport.command({ type: "clone" }); await syncSessionIndex(); }
     if (action === "export") {
       try {
-        const result = await transport.command<{ path: string }>({ type: "export_html" });
-        try { await transport.openExportedHtml(result.path, session.cwd, session.hostId); }
+        await selectedTransport.connect(); const result = await selectedTransport.command<{ path: string }>({ type: "export_html" });
+        try { await selectedTransport.openExportedHtml(result.path, session.cwd, session.hostId); }
         catch (reason) { setNotice({ title: "Conversation exported, but could not be opened", message: reason instanceof Error ? reason.message : String(reason) }); }
       } catch (reason) { setNotice({ title: "Could not export conversation", message: reason instanceof Error ? reason.message : String(reason) }); }
     }
@@ -261,6 +259,6 @@ export default function App() {
     {dialog && <ExtensionDialog request={dialog} onRespond={(response) => { void transport.command({ type: "extension_ui_response", id: dialog.id, ...response }); setDialog(undefined); }} />}
     {projectOpen && <ProjectDialog initialPath="" hosts={settings.hosts} initialHostId={activeHostId} onHomeDirectory={resolveHomeDirectory} onChooseDirectory={(currentPath, hostId) => hostId === "local" ? transport.selectProjectDirectory(currentPath || undefined) : transport.listDirectories(hostId, currentPath || undefined)} onOpen={(cwd, hostId) => void openProject(cwd, hostId)} onCancel={() => setProjectOpen(false)} />}
     {renameSession && <ExtensionDialog request={{ type: "extension_ui_request", id: "rename-session", method: "input", title: "Rename conversation", prefill: renameSession.name }} onRespond={(response) => { setRenameSession(undefined); if (typeof response.value === "string" && response.value.trim()) { const name = response.value.trim(); void transport.command({ type: "set_session_name", name }).then(() => { setState((current) => ({ ...current, sessionName: name })); void refresh(); }); } }} />}
-    {relocatingSession && <ExtensionDialog request={{ type: "extension_ui_request", id: `relocate-${relocatingSession.id}`, method: "input", title: "Locate conversation project", message: `The original project directory no longer exists: ${relocatingSession.cwd}. Enter its new location to open this conversation.`, error: relocationError, placeholder: "Replacement project directory", prefill: sessions.find((session) => session.id === state.sessionId && (session.hostId ?? "local") === activeHostId && session.cwdExists !== false)?.cwd || "" }} onRespond={(response) => { if (response.cancelled) { setRelocationError(undefined); setRelocatingSession(undefined); return; } const cwd = typeof response.value === "string" ? response.value.trim() : ""; if (!cwd) { setRelocationError("Path can't be empty"); return; } const session = relocatingSession; setRelocationError(undefined); setRelocatingSession(undefined); void transport.relocateSession(session.path, cwd, session.hostId).then(() => transport.command({ type: "switch_session", sessionPath: session.path })).then(() => { setActiveCwd(cwd); return refresh(); }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason))); }} />}
+    {relocatingSession && <ExtensionDialog request={{ type: "extension_ui_request", id: `relocate-${relocatingSession.id}`, method: "input", title: "Locate conversation project", message: `The original project directory no longer exists: ${relocatingSession.cwd}. Enter its new location to open this conversation.`, error: relocationError, placeholder: "Replacement project directory", prefill: sessions.find((session) => session.id === state.sessionId && (session.hostId ?? "local") === activeHostId && session.cwdExists !== false)?.cwd || "" }} onRespond={(response) => { if (response.cancelled) { setRelocationError(undefined); setRelocatingSession(undefined); return; } const cwd = typeof response.value === "string" ? response.value.trim() : ""; if (!cwd) { setRelocationError("Path can't be empty"); return; } const session = relocatingSession; setRelocationError(undefined); setRelocatingSession(undefined); void transport.relocateSession(session.path, cwd, session.hostId).then(() => { selectSession({ ...session, cwd, cwdExists: true }); }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason))); }} />}
   </div>;
 }

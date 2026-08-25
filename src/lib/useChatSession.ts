@@ -14,7 +14,7 @@ export interface ChatSessionRuntime {
   models: Model[];
   commands: SlashCommand[];
   thinkingLevels: string[];
-  refresh: () => Promise<void>;
+  refresh: () => Promise<AgentState>;
   handleEvent: (event: RpcEvent) => void;
   discardPendingUpdates: () => void;
 }
@@ -27,14 +27,15 @@ export function useChatSession(transport: PiTransport, initialState: AgentState 
   const queue = useCallback((update: MessageUpdate) => { pendingUpdates.current.push(update); if (frame.current === undefined) frame.current = requestAnimationFrame(flush); }, [flush]);
   const discardPendingUpdates = useCallback(() => { if (frame.current !== undefined) cancelAnimationFrame(frame.current); frame.current = undefined; pendingUpdates.current.length = 0; }, []);
   useEffect(() => discardPendingUpdates, [discardPendingUpdates]);
+  useEffect(() => { liveRevision.current += 1; activeAssistantId.current = undefined; discardPendingUpdates(); }, [discardPendingUpdates, transport]);
 
   const refresh = useCallback(async () => {
     const revision = liveRevision.current;
     const [nextState, history, modelResponse, thinkingResponse, commandResponse, stats] = await Promise.all([
       transport.command<AgentState>({ type: "get_state" }), transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }), transport.command<{ models: Model[] }>({ type: "get_available_models" }), transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }), transport.command<{ commands: SlashCommand[] }>({ type: "get_commands" }), transport.command<{ contextUsage?: AgentState["contextUsage"] }>({ type: "get_session_stats" })
     ]);
-    if (liveRevision.current === revision) { discardPendingUpdates(); setState({ ...nextState, contextUsage: stats.contextUsage }); setMessages(branchMessages(history.entries, history.leafId)); }
-    setModels(modelResponse.models); setThinkingLevels(thinkingResponse.levels); setCommands(commandResponse.commands.filter((command) => command.sourceInfo?.source !== "inline" && command.name !== "pi-orchestration-next"));
+    if (liveRevision.current === revision) { discardPendingUpdates(); setState({ ...nextState, contextUsage: stats.contextUsage }); setMessages(branchMessages(history.entries, history.leafId)); setModels(modelResponse.models); setThinkingLevels(thinkingResponse.levels); setCommands(commandResponse.commands.filter((command) => command.sourceInfo?.source !== "inline" && command.name !== "pi-orchestration-next")); }
+    return nextState;
   }, [discardPendingUpdates, transport]);
 
   const handleEvent = useCallback((event: RpcEvent) => {

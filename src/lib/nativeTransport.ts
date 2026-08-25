@@ -3,6 +3,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { AppSettings, CodexUsage, DirectoryListing, PiTransport, RpcCommand, RpcEvent, SavedTerminalState, SessionEntries, SessionSummary } from "../types";
 
+export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; sessionId?: string; hostId?: string; }
+
 export class NativeTransport implements PiTransport {
   private readonly runtimeId = globalThis.crypto?.randomUUID?.() ?? `runtime-${Date.now()}-${Math.random()}`;
   private listeners = new Set<(event: RpcEvent) => void>();
@@ -13,22 +15,26 @@ export class NativeTransport implements PiTransport {
   private sessionPath?: string;
   private sessionId?: string;
   private hostId = "local";
+  private running = false;
+  constructor(target: NativeConnectionTarget = {}) { this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId ?? "local"; }
+  currentHostId() { return this.hostId; }
   private runProcessCommand<T>(command: () => Promise<T>) { const result = this.processLifecycle.then(command, command); this.processLifecycle = result.then(() => undefined, () => undefined); return result; }
   async connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string) {
     if (cwd !== undefined) this.cwd = cwd; if (sessionPath !== undefined) { this.sessionPath = sessionPath; this.sessionId = undefined; } if (hostId !== undefined) this.hostId = hostId;
+    if (this.running) return;
     if (this.cwd === undefined && this.sessionPath === undefined) { const chat = await invoke<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId: this.hostId }); this.cwd = chat.cwd; this.sessionId = chat.sessionId; }
     const version = ++this.connectionVersion;
     this.unlisten?.(); this.unlisten = undefined;
     const unlisten = await listen<RpcEvent | { runtimeId: string; event: RpcEvent }>("pi://event", ({ payload }) => {
       const envelope = payload as { runtimeId?: unknown; event?: RpcEvent };
-      if (typeof envelope.runtimeId === "string") { if (envelope.runtimeId === this.runtimeId && envelope.event) this.listeners.forEach((listener) => listener(envelope.event!)); }
+      if (typeof envelope.runtimeId === "string") { if (envelope.runtimeId === this.runtimeId && envelope.event) { if (envelope.event.type === "disconnected") this.running = false; this.listeners.forEach((listener) => listener(envelope.event!)); } }
       else this.listeners.forEach((listener) => listener(payload as RpcEvent));
     });
     if (version !== this.connectionVersion) { unlisten(); return; }
     this.unlisten = unlisten;
-    await this.runProcessCommand(() => invoke("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, forkPath, hostId: this.hostId }));
+    await this.runProcessCommand(() => invoke("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, forkPath, hostId: this.hostId })); this.running = true;
   }
-  async disconnect() { ++this.connectionVersion; this.unlisten?.(); this.unlisten = undefined; await this.runProcessCommand(() => invoke("stop_pi", { runtimeId: this.runtimeId })); }
+  async disconnect() { ++this.connectionVersion; this.unlisten?.(); this.unlisten = undefined; if (this.running) await this.runProcessCommand(() => invoke("stop_pi", { runtimeId: this.runtimeId })); this.running = false; }
   async command<T>(command: RpcCommand) { const result = await invoke<T>("pi_command", { runtimeId: this.runtimeId, command }); if (command.type === "get_state") { this.sessionPath = (result as { sessionFile?: string }).sessionFile; this.sessionId = undefined; } return result; }
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   listSessions() { return invoke<SessionSummary[]>("list_sessions"); }
@@ -45,6 +51,7 @@ export class NativeTransport implements PiTransport {
   homeDirectory(hostId: string) { return invoke<string>("home_directory", { hostId }); }
   listDirectories(hostId: string, path?: string) { return invoke<DirectoryListing>("list_directories", { hostId, path }); }
   async newTemporaryChat(hostId: string) { await this.disconnect(); const chat = await invoke<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId }); this.cwd = chat.cwd; this.sessionPath = undefined; this.sessionId = chat.sessionId; this.hostId = hostId; await this.connect(chat.cwd, undefined, hostId); return chat.cwd; }
+  async prepareTemporaryChat(hostId: string) { const chat = await invoke<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId }); this.cwd = chat.cwd; this.sessionPath = undefined; this.sessionId = chat.sessionId; this.hostId = hostId; return chat.cwd; }
   async newChat(cwd: string, hostId = "local") { await this.disconnect(); this.cwd = cwd; this.sessionPath = undefined; this.sessionId = undefined; this.hostId = hostId; await this.connect(cwd, undefined, hostId); }
   openProject(cwd: string, hostId = "local") { return this.newChat(cwd, hostId); }
   startTerminal(terminalId: string, cwd: string, cols: number, rows: number) { return invoke<void>("start_terminal", { terminalId, cwd, cols, rows, hostId: this.hostId }); }
