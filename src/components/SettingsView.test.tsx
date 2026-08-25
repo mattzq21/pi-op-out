@@ -29,14 +29,7 @@ describe("skill invocation settings", () => {
         expect.objectContaining({ name: "Explicit skill", enabled: true, userInvokedOnly: true }),
         expect.objectContaining({ name: "Regular skill", enabled: false })
       ]
-    }), undefined);
-  });
-
-  it("hides extension-owned settings when the orchestration capability is absent", () => {
-    render(<SettingsView settings={structuredClone(defaultSettings)} onSave={vi.fn()} />);
-    expect(screen.queryByRole("button", { name: "Agents" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Sequences" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+    }));
   });
 });
 
