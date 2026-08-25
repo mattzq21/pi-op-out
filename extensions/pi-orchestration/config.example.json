@@ -1,4 +1,10 @@
 {
+  "preprompter": {
+    "enabled": false,
+    "model": "",
+    "systemPrompt": "Correct the user's prompt. Return only the corrected prompt.",
+    "agentsMd": ""
+  },
   "agents": [
     {
       "name": "default",

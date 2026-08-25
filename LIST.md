@@ -24,10 +24,17 @@ This is the complete user-facing and architectural feature set carried over from
 
 ## Orchestrator
 
-- A special `orchestrator` choice whose only active tool is `call_agent`.
+- `final-only` and `own+final` multi-agent choices whose only active tool is `call_agent`.
 - `call_agent` can invoke either a named agent or a named sequence.
+- `call_agent` accepts `done` to mark the job complete.
+- Final-only agents receive the original request and all agents' chronological final messages; own+final agents also receive their own prior requests.
 - The orchestrator is told only the available agent/sequence names and descriptions and is instructed to delegate rather than do the work itself.
 - Delegated calls are shown in work as `{target} called`, both while streaming and when a persisted conversation is reopened.
+
+## Pre-prompter
+
+- An optional tool-less model rewrites prompts before they are automatically sent to the selected session.
+- Its model, system prompt, and `AGENTS.md` are independently configurable in settings.
 
 ## Resource policy
 
