@@ -7,7 +7,7 @@ import { textOf, thinkingOf } from "../lib/content";
 import { cacheHitStats } from "../lib/messages";
 import { IconButton } from "./IconButton";
 
-interface Props { message: ChatMessage; expanded?: boolean; toolCount?: number; onBranch: (message: ChatMessage) => void; onRetry?: () => void; }
+interface Props { message: ChatMessage; expanded?: boolean; toolCount?: number; previousCacheTokens?: number; onBranch: (message: ChatMessage) => void; onRetry?: () => void; }
 
 function nodeText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -30,13 +30,14 @@ function userMessageParts(content: string) {
   return { skills, text };
 }
 
-export function Message({ message, expanded = false, toolCount = 1, onBranch, onRetry }: Props) {
+export function Message({ message, expanded = false, toolCount = 1, previousCacheTokens, onBranch, onRetry }: Props) {
   const [copied, setCopied] = useState(false);
   if (message.role === "tool") { const output = textOf(message.content); const status = message.toolStatus ?? "done"; return <details className={`tool-event ${status}`} open={status === "running" || (expanded && status !== "done")}><summary><Wrench size={14} /><span><strong>{message.toolName || "tool"}{toolCount > 1 ? ` x${toolCount}` : ""}</strong><small>{status === "running" ? "Running…" : status === "error" ? "Failed" : "Completed"}</small></span><span className="tool-chevron">›</span></summary>{output && <pre>{output}</pre>}</details>; }
   if (message.role === "user") { const { skills, text } = userMessageParts(textOf(message.content)); return <article className="message user-message"><div className="message-body">{skills.map((skill) => <span className="skill-reference" key={skill}>${skill}</span>)}{text && <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>}</div></article>; }
   const output = textOf(message.content);
   const thinking = thinkingOf(message.content);
   const cache = cacheHitStats(message.usage);
+  const cacheReuse = message.usage && previousCacheTokens ? { rate: Math.round(message.usage.cacheRead / previousCacheTokens * 100), current: message.usage.cacheRead, previous: previousCacheTokens } : undefined;
   const failure = message.stopReason === "aborted" ? (message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
   const copy = async () => { await navigator.clipboard?.writeText(textOf(message.content)); setCopied(true); window.setTimeout(() => setCopied(false), 1400); };
   return <article className={`message assistant-message ${thinking ? "reasoning-message" : ""}`}>
@@ -49,6 +50,7 @@ export function Message({ message, expanded = false, toolCount = 1, onBranch, on
         <IconButton label="Copy response" onClick={copy}>{copied ? <Check size={14} /> : <Copy size={14} />}</IconButton>
         <button className="branch-button" aria-label="Branch from here" title="Branch from here" onClick={() => onBranch(message)}><GitBranch size={14} /></button>
         {cache && <span className={`cache-hit-rate${cache.low ? " low" : ""}`} title={`${cache.cachedTokens.toLocaleString()} of ${cache.promptTokens.toLocaleString()} prompt tokens read from cache`}>Cache {cache.rate}%</span>}
+        {cacheReuse && <span className="cache-reuse-rate" title={`${cacheReuse.current.toLocaleString()} current cache-read tokens compared with ${cacheReuse.previous.toLocaleString()} cache-read plus cache-write tokens in the previous response`}>Reuse {cacheReuse.rate}%</span>}
       </div>}
     </div>
   </article>;
