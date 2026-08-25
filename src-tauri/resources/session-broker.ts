@@ -13,6 +13,7 @@ async function request(path: string, body?: unknown) {
 }
 
 export default function sessionBroker(pi: ExtensionAPI) {
+  pi.on("before_provider_request", (event) => { pi.appendEntry("pi-desktop-llm-context", event.payload); });
   pi.registerTool({
     name: "list_agents", label: "List agents", description: "List Pi agents addressable through Pi Desktop", promptSnippet: "List agents by hostId and sessionId",
     parameters: Type.Object({}),

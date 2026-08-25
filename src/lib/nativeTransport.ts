@@ -49,6 +49,7 @@ export class NativeTransport implements PiTransport {
   deleteSession(sessionPath: string, hostId = "local") { return invoke<void>("delete_session", { sessionPath, hostId }); }
   relocateSession(sessionPath: string, cwd: string, hostId = "local") { return invoke<void>("relocate_session", { sessionPath, cwd, hostId }); }
   openProjectDirectory(cwd: string, hostId = "local") { return invoke<void>("open_project_directory", { cwd, hostId }); }
+  openLogViewer(sessionPath: string, hostId = "local") { return invoke<void>("open_log_viewer", { sessionPath, hostId }); }
   gitBranch() { return invoke<string | null>("git_branch"); }
   loadSettings() { return invoke<AppSettings>("load_app_settings"); }
   loadCodexUsage() { return invoke<CodexUsage>("codex_usage"); }

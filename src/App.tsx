@@ -215,6 +215,11 @@ export default function App() {
       } catch (reason) { setNotice({ title: "Could not archive conversation", message: reason instanceof Error ? reason.message : String(reason) }); }
       return;
     }
+    if (action === "logs") {
+      try { await transport.openLogViewer(session.path, session.hostId); }
+      catch (reason) { setNotice({ title: "Could not open request viewer", message: reason instanceof Error ? reason.message : String(reason) }); }
+      return;
+    }
     const selectedTransport = selectSession(session); if (!selectedTransport) return;
     if (action === "rename") { setRenameSession(session); return; }
     if (action === "clone") { await selectedTransport.connect(); await selectedTransport.command({ type: "clone" }); await syncSessionIndex(); }
