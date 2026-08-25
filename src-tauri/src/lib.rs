@@ -659,6 +659,29 @@ fn open_system_path(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn html_open_program() -> &'static str {
+    if cfg!(target_os = "macos") { "open" } else if cfg!(target_os = "windows") { "explorer" } else { "gtk-launch" }
+}
+
+fn file_uri(path: &Path) -> String {
+    let resolved = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut uri = String::from("file://");
+    for byte in resolved.to_string_lossy().bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'.' | b'_' | b'~') { uri.push(byte as char); }
+        else { uri.push_str(&format!("%{byte:02X}")); }
+    }
+    uri
+}
+
+fn open_html_in_browser(path: &Path) -> Result<(), String> {
+    if !cfg!(target_os = "linux") { return open_system_path(path); }
+    let output = Command::new("xdg-settings").args(["get", "default-web-browser"]).output().map_err(|error| format!("Could not find the default browser: {error}"))?;
+    let browser = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if !output.status.success() || browser.is_empty() { return Err("Could not find the default browser".into()); }
+    Command::new(html_open_program()).arg(browser).arg(file_uri(path)).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|error| format!("Could not open {} in the default browser: {error}", path.display()))?;
+    Ok(())
+}
+
 #[tauri::command(async)]
 fn open_project_directory(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<(), String> {
     if host_id.as_deref().unwrap_or("local") != "local" {
@@ -678,7 +701,7 @@ fn open_exported_html(app: AppHandle, path: String, cwd: String, host_id: Option
         let candidate = PathBuf::from(path);
         let resolved = if candidate.is_absolute() { candidate } else { PathBuf::from(cwd).join(candidate) };
         if !resolved.is_file() { return Err(format!("Exported HTML file does not exist: {}", resolved.display())); }
-        return open_system_path(&resolved);
+        return open_html_in_browser(&resolved);
     }
     let settings = load_app_settings(app)?;
     let host = remote_host(&settings, &host_id)?;
@@ -687,7 +710,7 @@ fn open_exported_html(app: AppHandle, path: String, cwd: String, host_id: Option
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let local_path = std::env::temp_dir().join(format!("pi-desktop-export-{}.html", Uuid::new_v4()));
     fs::write(&local_path, output.stdout).map_err(|error| format!("Could not save exported conversation: {error}"))?;
-    open_system_path(&local_path)
+    open_html_in_browser(&local_path)
 }
 
 fn text_content(message: &Value) -> String {
