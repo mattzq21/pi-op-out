@@ -14,7 +14,7 @@ import { findReplaceableAbortedTurn } from "./lib/abortedTurn";
 import { NativeTransport } from "./lib/nativeTransport";
 import { useChatSession } from "./lib/useChatSession";
 import { decodeOrchestrationValue, encodeOrchestrationValue, ORCHESTRATION_STATUS_KEY } from "./lib/orchestrationProtocol";
-import type { AppSettings, ChatMessage, CodexUsage, ExtensionUiRequest, ImageAttachment, Model, OrchestrationCapability, OrchestrationConfig, RpcEvent, SessionSummary } from "./types";
+import type { AgentState, AppSettings, ChatMessage, CodexUsage, ExtensionUiRequest, ImageAttachment, Model, OrchestrationCapability, OrchestrationConfig, RpcEvent, SessionSummary } from "./types";
 import { branchMessages, type PiEntry } from "./lib/messages";
 
 const staleExtensionContext = "This extension ctx is stale after session replacement or reload.";
@@ -148,9 +148,17 @@ export default function App() {
     if (behavior) { await transport.command({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...(images.length ? { images } : {}) }); setState((current) => ({ ...current, pendingMessageCount: current.pendingMessageCount + 1 })); return; }
     const abandoned = findReplaceableAbortedTurn(messages);
     if (abandoned) {
+      let oldSessionPath = state.sessionFile;
+      if (!oldSessionPath) oldSessionPath = (await transport.command<AgentState>({ type: "get_state" })).sessionFile;
+      if (!oldSessionPath) throw new Error("Cannot replace an aborted turn before the session has been saved");
       let entryId = abandoned.user.entryId;
       if (!entryId) { const response = await transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }); entryId = findReplaceableAbortedTurn(branchMessages(response.entries, response.leafId))?.user.entryId; }
-      if (entryId) { await transport.command({ type: "fork", entryId }); await refresh(); }
+      if (!entryId) throw new Error("Cannot find the abandoned turn in the saved session");
+      const fork = await transport.command<{ cancelled?: boolean }>({ type: "fork", entryId });
+      if (fork.cancelled) return;
+      await transport.deleteSession(oldSessionPath, activeHostId);
+      setSessions((current) => current.filter((session) => session.path !== oldSessionPath || (session.hostId ?? "local") !== activeHostId));
+      await refresh();
     }
     await transport.command({ type: "prompt", message: text, ...(images.length ? { images } : {}) });
   };

@@ -34,6 +34,7 @@ export class NativeTransport implements PiTransport {
   listSessions() { return invoke<SessionSummary[]>("list_sessions"); }
   loadSessionEntries(sessionPath: string, hostId = "local") { return invoke<SessionEntries>("load_session_entries", { sessionPath, hostId }); }
   archiveSession(sessionPath: string, hostId = "local", terminalState?: SavedTerminalState) { return invoke<void>("archive_session", { sessionPath, hostId, terminalState }); }
+  deleteSession(sessionPath: string, hostId = "local") { return invoke<void>("delete_session", { sessionPath, hostId }); }
   relocateSession(sessionPath: string, cwd: string, hostId = "local") { return invoke<void>("relocate_session", { sessionPath, cwd, hostId }); }
   openProjectDirectory(cwd: string, hostId = "local") { return invoke<void>("open_project_directory", { cwd, hostId }); }
   openExportedHtml(path: string, cwd: string, hostId = "local") { return invoke<void>("open_exported_html", { path, cwd, hostId }); }

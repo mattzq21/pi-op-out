@@ -895,6 +895,23 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
 }
 
 #[tauri::command(async)]
+fn delete_session(app: AppHandle, session_path: String, host_id: Option<String>) -> Result<(), String> {
+    let host_id = host_id.unwrap_or_else(|| "local".into());
+    if host_id != "local" {
+        if session_path.contains("/../") || !session_path.contains("/.pi/agent/sessions/") || !session_path.ends_with(".jsonl") { return Err("Only remote Pi session files can be deleted".into()); }
+        let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+        let remote = format!(r#"root=$(cd "$HOME/.pi/agent/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) rm -- "$target" ;; *) printf 'Refusing to delete a non-session file' >&2; exit 1 ;; esac"#, shell_quote(&session_path));
+        let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not delete session on {}: {error}", host.name))?;
+        return output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    let sessions_root = home_dir()?.join(".pi/agent/sessions").canonicalize().map_err(|error| format!("Could not locate Pi sessions: {error}"))?;
+    let source = PathBuf::from(&session_path).canonicalize().map_err(|error| format!("Could not locate session file: {error}"))?;
+    if !source.starts_with(&sessions_root) || source.extension().and_then(|value| value.to_str()) != Some("jsonl") { return Err("Only Pi session files can be deleted".into()); }
+    if !source.is_file() { return Err(format!("Session file does not exist: {}", source.display())); }
+    fs::remove_file(&source).map_err(|error| format!("Could not delete session: {error}"))
+}
+
+#[tauri::command(async)]
 fn relocate_session(session_path: String, cwd: String, host_id: Option<String>) -> Result<(), String> {
     if host_id.as_deref().unwrap_or("local") != "local" { return Err("Relocating remote sessions is not supported yet".into()); }
     let replacement = PathBuf::from(cwd.trim());
@@ -984,5 +1001,5 @@ fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), Str
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let broker = BrokerRuntime::default();
-    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(broker.clone()).setup(move |app| start_session_broker(app.handle().clone(), broker.clone()).map_err(Into::into)).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_entries, home_directory, create_temporary_chat, list_directories, archive_session, relocate_session, open_project_directory, open_exported_html, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(broker.clone()).setup(move |app| start_session_broker(app.handle().clone(), broker.clone()).map_err(Into::into)).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_entries, home_directory, create_temporary_chat, list_directories, archive_session, delete_session, relocate_session, open_project_directory, open_exported_html, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }

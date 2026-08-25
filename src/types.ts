@@ -33,6 +33,7 @@ export interface PiTransport {
   listSessions(): Promise<SessionSummary[]>;
   loadSessionEntries(sessionPath: string, hostId?: string): Promise<SessionEntries>;
   archiveSession(sessionPath: string, hostId?: string, terminalState?: SavedTerminalState): Promise<void>;
+  deleteSession(sessionPath: string, hostId?: string): Promise<void>;
   relocateSession(sessionPath: string, cwd: string, hostId?: string): Promise<void>;
   openProjectDirectory(cwd: string, hostId?: string): Promise<void>;
   openExportedHtml(path: string, cwd: string, hostId?: string): Promise<void>;
