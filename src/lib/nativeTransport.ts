@@ -37,7 +37,7 @@ export class NativeTransport implements PiTransport {
     await this.runProcessCommand(() => invoke("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, forkPath, hostId: this.hostId })); this.running = true;
   }
   async disconnect() { ++this.connectionVersion; this.unlisten?.(); this.unlisten = undefined; if (this.running) await this.runProcessCommand(() => invoke("stop_pi", { runtimeId: this.runtimeId })); this.running = false; }
-  async command<T>(command: RpcCommand) { const result = await invoke<T>("pi_command", { runtimeId: this.runtimeId, command }); if (command.type === "get_state") { this.sessionPath = (result as { sessionFile?: string }).sessionFile; this.sessionId = undefined; } return result; }
+  async command<T>(command: RpcCommand) { const compact = command.type === "prompt" && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null; if (compact) command = { type: "compact", ...(compact[1]?.trim() ? { customInstructions: compact[1].trim() } : {}) }; const result = await invoke<T>("pi_command", { runtimeId: this.runtimeId, command }); if (command.type === "get_state") { this.sessionPath = (result as { sessionFile?: string }).sessionFile; this.sessionId = undefined; } return result; }
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   listSessions() { return invoke<SessionSummary[]>("list_sessions"); }
   loadSessionEntries(sessionPath: string, hostId = "local") { return invoke<SessionEntries>("load_session_entries", { sessionPath, hostId }); }

@@ -109,7 +109,7 @@ export default function App() {
     let cancelled = false;
     const unsubscribe = transport.subscribe((event: RpcEvent) => {
       handleEvent(event);
-      if (event.type === "message_end") window.setTimeout(() => void refresh(), 30);
+      if (event.type === "message_end" || event.type === "compaction_end") window.setTimeout(() => void refresh(), 30);
       if (event.type === "terminal_output") setTerminalsBySession((current) => Object.fromEntries(Object.entries(current).map(([sessionId, session]) => [sessionId, { ...session, tabs: session.tabs.map((terminal) => terminal.id === event.terminalId ? { ...terminal, output: terminal.output + String(event.data ?? "") } : terminal) }])));
       if (event.type === "terminal_exit") setTerminalsBySession((current) => Object.fromEntries(Object.entries(current).map(([sessionId, session]) => [sessionId, { ...session, tabs: session.tabs.map((terminal) => terminal.id === event.terminalId ? { ...terminal, exited: true } : terminal) }])));
       if (event.type === "extension_error") { const message = String(event.error ?? "An extension failed"); if (!message.startsWith(staleExtensionContext)) setNotice({ title: "Extension error", message }); }
