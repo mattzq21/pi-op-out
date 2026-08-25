@@ -25,6 +25,9 @@ export interface AppSettings { defaultModel: string; defaultThinking: string; co
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
 export interface SessionEntries { entries: Array<Record<string, unknown>>; leafId: string | null; }
 
+export interface GitDiffSnapshot { patch: string; scope: "turn"; }
+export type GitDiffSnapshots = Record<string, GitDiffSnapshot>;
+
 export interface PiTransport {
   connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string): Promise<void>;
   disconnect(): Promise<void>;
@@ -32,6 +35,10 @@ export interface PiTransport {
   subscribe(listener: (event: RpcEvent) => void): () => void;
   listSessions(): Promise<SessionSummary[]>;
   loadSessionEntries(sessionPath: string, hostId?: string): Promise<SessionEntries>;
+  captureGitTree(cwd: string, hostId?: string): Promise<string | null>;
+  loadGitDiff(cwd: string, baseTree: string, hostId?: string): Promise<GitDiffSnapshot | null>;
+  loadGitDiffs(sessionPath: string, hostId?: string): Promise<GitDiffSnapshots>;
+  saveGitDiffs(sessionPath: string, snapshots: GitDiffSnapshots, hostId?: string): Promise<void>;
   archiveSession(sessionPath: string, hostId?: string, terminalState?: SavedTerminalState): Promise<void>;
   deleteSession(sessionPath: string, hostId?: string): Promise<void>;
   relocateSession(sessionPath: string, cwd: string, hostId?: string): Promise<void>;

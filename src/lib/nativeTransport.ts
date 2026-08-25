@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { AppSettings, CodexUsage, DirectoryListing, PiTransport, RpcCommand, RpcEvent, SavedTerminalState, SessionEntries, SessionSummary } from "../types";
+import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, PiTransport, RpcCommand, RpcEvent, SavedTerminalState, SessionEntries, SessionSummary } from "../types";
 
 export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; sessionId?: string; hostId?: string; }
 
@@ -18,6 +18,8 @@ export class NativeTransport implements PiTransport {
   private running = false;
   constructor(target: NativeConnectionTarget = {}) { this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId ?? "local"; }
   currentHostId() { return this.hostId; }
+  currentCwd() { return this.cwd; }
+  currentSessionPath() { return this.sessionPath; }
   private runProcessCommand<T>(command: () => Promise<T>) { const result = this.processLifecycle.then(command, command); this.processLifecycle = result.then(() => undefined, () => undefined); return result; }
   async connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string) {
     if (cwd !== undefined) this.cwd = cwd; if (sessionPath !== undefined) { this.sessionPath = sessionPath; this.sessionId = undefined; } if (hostId !== undefined) this.hostId = hostId;
@@ -39,6 +41,10 @@ export class NativeTransport implements PiTransport {
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   listSessions() { return invoke<SessionSummary[]>("list_sessions"); }
   loadSessionEntries(sessionPath: string, hostId = "local") { return invoke<SessionEntries>("load_session_entries", { sessionPath, hostId }); }
+  captureGitTree(cwd: string, hostId = "local") { return invoke<string | null>("capture_git_tree", { cwd, hostId }); }
+  loadGitDiff(cwd: string, baseTree: string, hostId = "local") { return invoke<GitDiffSnapshot | null>("load_git_diff", { cwd, baseTree, hostId }); }
+  loadGitDiffs(sessionPath: string, hostId = "local") { return invoke<GitDiffSnapshots>("load_git_diffs", { sessionPath, hostId }); }
+  saveGitDiffs(sessionPath: string, snapshots: GitDiffSnapshots, hostId = "local") { return invoke<void>("save_git_diffs", { sessionPath, snapshots, hostId }); }
   archiveSession(sessionPath: string, hostId = "local", terminalState?: SavedTerminalState) { return invoke<void>("archive_session", { sessionPath, hostId, terminalState }); }
   deleteSession(sessionPath: string, hostId = "local") { return invoke<void>("delete_session", { sessionPath, hostId }); }
   relocateSession(sessionPath: string, cwd: string, hostId = "local") { return invoke<void>("relocate_session", { sessionPath, cwd, hostId }); }

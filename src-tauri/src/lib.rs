@@ -111,6 +111,11 @@ struct TemporaryChat {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+struct GitDiffSnapshot { patch: String, scope: String }
+
+type GitDiffSnapshots = HashMap<String, GitDiffSnapshot>;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AppSettings {
     default_model: String,
@@ -409,6 +414,96 @@ fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<(), String
 
 #[tauri::command]
 fn shell_quote(value: &str) -> String { format!("'{}'", value.replace('\'', "'\\''")) }
+
+fn append_git_output(command: &mut Command, patch: &mut Vec<u8>) -> Result<(), String> {
+    let output = command.output().map_err(|error| format!("Could not read Git changes: {error}"))?;
+    // `git diff --no-index` returns 1 when differences are present.
+    if !output.status.success() && output.status.code() != Some(1) { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    patch.extend(output.stdout);
+    Ok(())
+}
+
+fn local_git_tree(cwd: &str) -> Result<Option<String>, String> {
+    let requested = Path::new(cwd).canonicalize().map_err(|error| format!("Could not open project directory: {error}"))?;
+    let root = Command::new("git").args(["-C", cwd, "rev-parse", "--show-toplevel"]).output().map_err(|error| format!("Could not run Git: {error}"))?;
+    if !root.status.success() { return Ok(None); }
+    let root = PathBuf::from(String::from_utf8_lossy(&root.stdout).trim()).canonicalize().map_err(|error| format!("Could not resolve Git root: {error}"))?;
+    if root != requested { return Ok(None); }
+    let index = std::env::temp_dir().join(format!("pi-desktop-diff-{}.index", Uuid::new_v4()));
+    let has_head = Command::new("git").args(["-C", cwd, "rev-parse", "--verify", "HEAD"]).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|status| status.success()).unwrap_or(false);
+    let result = (|| {
+        let mut read_tree = Command::new("git"); read_tree.args(["-C", cwd, "read-tree"]).env("GIT_INDEX_FILE", &index); if has_head { read_tree.arg("HEAD"); } else { read_tree.arg("--empty"); }
+        let output = read_tree.output().map_err(|error| format!("Could not prepare Git snapshot: {error}"))?; if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+        let output = Command::new("git").args(["-C", cwd, "add", "-A", "--", "."]).env("GIT_INDEX_FILE", &index).output().map_err(|error| format!("Could not capture Git snapshot: {error}"))?; if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+        let output = Command::new("git").args(["-C", cwd, "write-tree"]).env("GIT_INDEX_FILE", &index).output().map_err(|error| format!("Could not finalize Git snapshot: {error}"))?; if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    })();
+    let _ = fs::remove_file(index); result.map(Some)
+}
+
+fn local_git_diff(cwd: &str, base_tree: &str) -> Result<Option<GitDiffSnapshot>, String> {
+    let Some(current_tree) = local_git_tree(cwd)? else { return Ok(None) };
+    let mut patch = Vec::new(); let mut diff = Command::new("git");
+    diff.args(["-C", cwd, "diff", "--no-color", "--no-ext-diff", "--find-renames", base_tree, &current_tree, "--"]);
+    append_git_output(&mut diff, &mut patch)?;
+    let patch = String::from_utf8_lossy(&patch).into_owned();
+    Ok((!patch.trim().is_empty()).then_some(GitDiffSnapshot { patch, scope: "turn".into() }))
+}
+
+fn remote_git_tree(host: &RemoteHost, cwd: &str) -> Result<Option<String>, String> {
+    let directory = shell_quote(cwd);
+    let script = format!("cd {directory} || exit 2; root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 3; [ \"$(pwd -P)\" = \"$(cd \"$root\" && pwd -P)\" ] || exit 4; idx=$(mktemp \"${{TMPDIR:-/tmp}}/pi-desktop-diff.XXXXXX\") || exit 5; rm -f \"$idx\"; trap 'rm -f \"$idx\"' EXIT; export GIT_INDEX_FILE=\"$idx\"; if git rev-parse --verify HEAD >/dev/null 2>&1; then git read-tree HEAD; else git read-tree --empty; fi && git add -A -- . && git write-tree");
+    let output = ssh(host).arg(script).output().map_err(|error| format!("Could not capture Git snapshot on {}: {error}", host.name))?;
+    match output.status.code() { Some(3 | 4) => return Ok(None), _ => {} }
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    let tree = String::from_utf8_lossy(&output.stdout).trim().to_string(); Ok((!tree.is_empty()).then_some(tree))
+}
+
+#[tauri::command(async)]
+fn capture_git_tree(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<Option<String>, String> {
+    let host_id = host_id.unwrap_or_else(|| "local".into()); if host_id == "local" { return local_git_tree(&cwd); }
+    let settings = load_app_settings(app)?; remote_git_tree(remote_host(&settings, &host_id)?, &cwd)
+}
+
+#[tauri::command(async)]
+fn load_git_diff(app: AppHandle, cwd: String, base_tree: String, host_id: Option<String>) -> Result<Option<GitDiffSnapshot>, String> {
+    let host_id = host_id.unwrap_or_else(|| "local".into());
+    if host_id == "local" { return local_git_diff(&cwd, &base_tree); }
+    let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+    let Some(current_tree) = remote_git_tree(host, &cwd)? else { return Ok(None) };
+    let script = format!("cd {} && git diff --no-color --no-ext-diff --find-renames {} {} --", shell_quote(&cwd), shell_quote(&base_tree), shell_quote(&current_tree));
+    let output = ssh(host).arg(script).output().map_err(|error| format!("Could not read Git changes on {}: {error}", host.name))?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    let patch = String::from_utf8_lossy(&output.stdout).into_owned();
+    Ok((!patch.trim().is_empty()).then_some(GitDiffSnapshot { patch, scope: "turn".into() }))
+}
+
+fn git_diffs_path(session_path: &str) -> PathBuf { Path::new(session_path).with_extension("diffs.json") }
+
+#[tauri::command(async)]
+fn load_git_diffs(app: AppHandle, session_path: String, host_id: Option<String>) -> Result<GitDiffSnapshots, String> {
+    let host_id = host_id.unwrap_or_else(|| "local".into()); let path = git_diffs_path(&session_path);
+    let content = if host_id == "local" {
+        if !path.exists() { return Ok(HashMap::new()); }
+        fs::read_to_string(&path).map_err(|error| format!("Could not read saved diffs: {error}"))?
+    } else {
+        let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+        let output = ssh(host).arg(format!("if [ -f {0} ]; then cat -- {0}; else printf '{{}}'; fi", shell_quote(&path.to_string_lossy()))).output().map_err(|error| format!("Could not read saved diffs on {}: {error}", host.name))?;
+        if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+        String::from_utf8(output.stdout).map_err(|_| "Saved remote diffs were not valid UTF-8".to_string())?
+    };
+    serde_json::from_str(&content).map_err(|error| format!("Could not parse saved diffs: {error}"))
+}
+
+#[tauri::command(async)]
+fn save_git_diffs(app: AppHandle, session_path: String, snapshots: GitDiffSnapshots, host_id: Option<String>) -> Result<(), String> {
+    let host_id = host_id.unwrap_or_else(|| "local".into()); let path = git_diffs_path(&session_path);
+    let body = serde_json::to_string(&snapshots).map_err(|error| format!("Could not serialize diffs: {error}"))?;
+    if host_id == "local" { return fs::write(path, body).map_err(|error| format!("Could not save diffs: {error}")); }
+    let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+    let output = ssh(host).arg(format!("printf %s {} > {}", shell_quote(&body), shell_quote(&path.to_string_lossy()))).output().map_err(|error| format!("Could not save diffs on {}: {error}", host.name))?;
+    output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
+}
 
 fn validate_remote_host(host: &RemoteHost) -> Result<(), String> {
     if host.target.is_empty() || !host.target.chars().all(|character| character.is_ascii_alphanumeric() || "._@:-[]".contains(character)) { return Err("SSH target may only contain a host, user, and port-safe characters".into()); }
@@ -826,7 +921,8 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
             let body = serde_json::to_string_pretty(state).unwrap_or_else(|_| "{}".into());
             format!(" && printf '%s' {} > \"$HOME/.pi-desktop/archived/{}\"", shell_quote(&body), sidecar)
         }).unwrap_or_default();
-        let remote = format!("mkdir -p \"$HOME/.pi-desktop/archived\"{terminal_sidecar} && mv -- {} \"$HOME/.pi-desktop/archived/{}\"", shell_quote(&session_path), destination);
+        let diff_source = git_diffs_path(&session_path); let diff_destination = Path::new(&destination).with_extension("diffs.json").to_string_lossy().into_owned();
+        let remote = format!("mkdir -p \"$HOME/.pi-desktop/archived\"{terminal_sidecar} && mv -- {} \"$HOME/.pi-desktop/archived/{}\" && if [ -f {} ]; then mv -- {} \"$HOME/.pi-desktop/archived/{}\"; fi", shell_quote(&session_path), destination, shell_quote(&diff_source.to_string_lossy()), shell_quote(&diff_source.to_string_lossy()), diff_destination);
         let output = ssh(host).arg(remote).output().map_err(|error| error.to_string())?;
         return output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
@@ -847,9 +943,12 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
         let state_path = destination.with_extension("terminals.json");
         fs::write(&state_path, serde_json::to_vec_pretty(&state).map_err(|error| format!("Could not serialize terminal state: {error}"))?).map_err(|error| format!("Could not save terminal state: {error}"))?;
         if let Err(error) = fs::rename(&source, &destination) { let _ = fs::remove_file(state_path); return Err(format!("Could not archive session: {error}")); }
+        let diff_source = source.with_extension("diffs.json"); if diff_source.exists() { fs::rename(diff_source, destination.with_extension("diffs.json")).map_err(|error| format!("Session archived, but its diffs could not be archived: {error}"))?; }
         return Ok(());
     }
-    fs::rename(&source, &destination).map_err(|error| format!("Could not archive session: {error}"))
+    fs::rename(&source, &destination).map_err(|error| format!("Could not archive session: {error}"))?;
+    let diff_source = source.with_extension("diffs.json"); if diff_source.exists() { fs::rename(diff_source, destination.with_extension("diffs.json")).map_err(|error| format!("Session archived, but its diffs could not be archived: {error}"))?; }
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -858,7 +957,8 @@ fn delete_session(app: AppHandle, session_path: String, host_id: Option<String>)
     if host_id != "local" {
         if session_path.contains("/../") || !session_path.contains("/.pi/agent/sessions/") || !session_path.ends_with(".jsonl") { return Err("Only remote Pi session files can be deleted".into()); }
         let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
-        let remote = format!(r#"root=$(cd "$HOME/.pi/agent/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) rm -- "$target" ;; *) printf 'Refusing to delete a non-session file' >&2; exit 1 ;; esac"#, shell_quote(&session_path));
+        let diff_path = git_diffs_path(&session_path);
+        let remote = format!(r#"root=$(cd "$HOME/.pi/agent/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) rm -- "$target"; rm -f -- {} ;; *) printf 'Refusing to delete a non-session file' >&2; exit 1 ;; esac"#, shell_quote(&session_path), shell_quote(&diff_path.to_string_lossy()));
         let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not delete session on {}: {error}", host.name))?;
         return output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
@@ -866,7 +966,9 @@ fn delete_session(app: AppHandle, session_path: String, host_id: Option<String>)
     let source = PathBuf::from(&session_path).canonicalize().map_err(|error| format!("Could not locate session file: {error}"))?;
     if !source.starts_with(&sessions_root) || source.extension().and_then(|value| value.to_str()) != Some("jsonl") { return Err("Only Pi session files can be deleted".into()); }
     if !source.is_file() { return Err(format!("Session file does not exist: {}", source.display())); }
-    fs::remove_file(&source).map_err(|error| format!("Could not delete session: {error}"))
+    fs::remove_file(&source).map_err(|error| format!("Could not delete session: {error}"))?;
+    let diff_path = source.with_extension("diffs.json"); if diff_path.exists() { fs::remove_file(diff_path).map_err(|error| format!("Session deleted, but its diffs could not be deleted: {error}"))?; }
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -959,5 +1061,5 @@ fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), Str
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let broker = BrokerRuntime::default();
-    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(broker.clone()).setup(move |app| start_session_broker(app.handle().clone(), broker.clone()).map_err(Into::into)).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_entries, home_directory, create_temporary_chat, list_directories, archive_session, delete_session, relocate_session, open_project_directory, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(broker.clone()).setup(move |app| start_session_broker(app.handle().clone(), broker.clone()).map_err(Into::into)).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_entries, home_directory, create_temporary_chat, list_directories, capture_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }
