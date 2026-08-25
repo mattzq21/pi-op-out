@@ -19,7 +19,7 @@
 *::-webkit-scrollbar-thumb:active,
 *::-webkit-scrollbar-thumb:window-inactive {
   min-height: 24px;
-  background: #3d3c38;
+  background: #2b2a27;
   border: 2px solid transparent;
   border-radius: 999px;
   background-clip: padding-box;
