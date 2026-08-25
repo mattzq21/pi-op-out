@@ -26,6 +26,7 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
 .session-item:hover { background: #ffffff77; }
 .session-item.active { background: #fff; box-shadow: 0 1px 2px #3c362d0c; }
 .session-item.active:before { content: ""; position: absolute; left: 0; top: 11px; bottom: 11px; width: 2px; border-radius: 2px; background: var(--accent); }
+.session-item.running:after { content: ""; position: absolute; right: 0; top: 11px; bottom: 11px; width: 2px; border-radius: 2px; background: #d7b84d; }
 .session-main { flex: 1; min-width: 0; border: 0; background: transparent; color: inherit; display: flex; text-align: left; padding: 9px 2px 9px 11px; }
 .session-archive { width: 30px; height: 30px; flex: 0 0 30px; align-self: center; margin-right: 4px; border: 0; border-radius: 6px; background: transparent; color: var(--faint); display: grid; place-items: center; opacity: 0; pointer-events: none; }
 .session-item:hover .session-archive { opacity: .65; pointer-events: auto; }
