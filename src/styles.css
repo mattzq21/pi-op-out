@@ -6,7 +6,7 @@ body { margin: 0; min-width: 900px; min-height: 100vh; overflow: hidden; }
 button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 .app { height: 100vh; display: flex; background: var(--paper); }
-.icon-rail { position: relative; width: var(--rail-width); flex: 0 0 var(--rail-width); background: #292824; color: #bdb9b0; display: flex; flex-direction: column; align-items: center; padding: 13px 0 0; z-index: 3; }
+.icon-rail { width: var(--rail-width); flex: 0 0 var(--rail-width); background: #292824; color: #bdb9b0; display: flex; flex-direction: column; align-items: center; padding: 13px 0 12px; z-index: 3; }
 .logo { width: 34px; height: 34px; background: var(--accent); color: white; display: grid; place-items: center; border-radius: 10px; box-shadow: 0 5px 14px #0004; }
 .logo span { font-family: "Instrument Serif"; font-size: 25px; transform: translateY(-1px); }
 .icon-rail nav { width: 100%; display: flex; flex-direction: row; justify-content: center; align-items: center; gap: 5px; }
@@ -14,14 +14,14 @@ button { cursor: pointer; }
 .icon-button:hover { background: #0000000b; color: var(--ink); }
 .icon-rail .icon-button { color: #aaa69d; width: 36px; height: 36px; }
 .icon-rail .icon-button:hover, .icon-rail .icon-button.active { color: white; background: #ffffff15; }
-.rail-bottom { position: absolute; right: 14px; bottom: 12px; z-index: 2; display: flex; align-items: center; justify-content: flex-end; pointer-events: none; }.codex-usage { color: #aaa69d; font: 500 11px "DM Mono"; white-space: nowrap; }
+.rail-bottom { margin-top: auto; display: flex; align-items: center; justify-content: center; }.codex-usage { color: #aaa69d; font: 500 11px "DM Mono"; white-space: nowrap; }
 
 .session-panel { width: 100%; flex: 1 1 auto; min-height: 0; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
 .eyebrow { margin: 0 0 3px; text-transform: uppercase; letter-spacing: .15em; font: 500 11px "DM Mono"; color: var(--accent); }
 .search { margin: 14px 14px 12px; height: 35px; border: 1px solid #d5d1c9; background: #faf9f6b8; border-radius: 8px; display: flex; align-items: center; gap: 8px; padding: 0 9px; color: var(--faint); }
 .search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; font-size: 14px; }
 kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; padding: 2px 4px; border-radius: 4px; color: #99958d; }
-.session-scroll { overflow: auto; padding: 2px 8px 38px; flex: 1; }
+.session-scroll { overflow: auto; padding: 2px 8px 14px; flex: 1; }
 .project { margin: 8px 0 17px; }
 .project-label { width: 100%; height: 27px; border: 0; background: transparent; display: flex; align-items: center; gap: 5px; padding: 0 7px; text-transform: uppercase; text-align: left; color: #88847c; letter-spacing: .08em; font: 500 11px "DM Mono"; }.project-label:hover { color: var(--ink); }.project-label span.active { color: var(--accent); }.project-label svg { transition: transform .15s ease; }.project-label svg.collapsed { transform: rotate(-90deg); }
 .session-item { width: 100%; border: 0; background: transparent; border-radius: 8px; display: flex; gap: 8px; text-align: left; padding: 9px 8px 9px 11px; margin: 1px 0; position: relative; }
@@ -35,13 +35,14 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
 
 .chat-workspace { order: 2; flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .chat-panes { flex: 1; min-width: 0; min-height: 0; display: flex; overflow: hidden; }.chat-panes > .chat-shell, .split-chat { flex: 1 1 0; width: 0; }.split-chat { min-width: 0; min-height: 0; display: grid; grid-template-rows: 39px 1fr; border-left: 1px solid var(--line); background: var(--paper); }.split-chat > header { min-width: 0; padding: 0 7px 0 13px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 8px; }.split-chat > header strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }.split-chat > header .icon-button { flex: 0 0 auto; }.split-chat > .chat-shell { min-height: 0; }.split-chat .message-actions { display: none; }.split-pane-status { display: grid; place-items: center; color: var(--muted); font-size: 12px; }.split-pane-status.error { color: #d77865; padding: 20px; text-align: center; }
-.chat-shell { flex: 1; min-width: 0; min-height: 0; display: grid; grid-template-rows: 1fr auto; background: var(--paper); }
+.chat-shell { position: relative; flex: 1; min-width: 0; min-height: 0; background: var(--paper); }
 .menu-anchor { position: relative; }.conversation-menu { position: absolute; z-index: 8; right: 0; top: 37px; width: 176px; padding: 5px; border: 1px solid var(--line); border-radius: 9px; background: white; box-shadow: 0 12px 35px #302b2226; }.conversation-menu button { width: 100%; height: 32px; border: 0; border-radius: 6px; background: transparent; display: flex; align-items: center; gap: 8px; padding: 0 8px; text-align: left; color: var(--muted); font-size: 12px; }.conversation-menu button:hover { background: #f1eee8; color: var(--ink); }
 .session-context-menu { position: fixed; right: auto; z-index: 30; }
 .select-control { height: 31px; border: 1px solid var(--line); border-radius: 7px; display: flex; align-items: center; padding: 0 7px; gap: 4px; background: white; }
 .select-control span { font: 10px "DM Mono"; color: var(--faint); text-transform: uppercase; }.select-control select { max-width: 130px; border: 0; outline: 0; appearance: none; font-size: 12px; font-weight: 500; background: transparent; }.select-control.thinking select { max-width: 70px; }
-.messages { overflow-y: auto; overflow-x: hidden; }
+.messages { height: 100%; overflow-y: auto; overflow-x: hidden; }
 .conversation { max-width: 740px; margin: 0 auto; padding: 48px 36px 22px; }
+.scroll-anchor { height: var(--composer-height, 0px); }
 .message { display: grid; grid-template-columns: 27px 1fr; gap: 13px; margin-bottom: 35px; }
 .assistant-message { grid-template-columns: 1fr; }
 .avatar { width: 27px; height: 27px; border-radius: 8px; display: grid; place-items: center; font-size: 11px; font-weight: 600; margin-top: -2px; }
@@ -62,7 +63,7 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
 .empty-chat { text-align: center; color: var(--muted); padding: 15vh 20px; }.empty-chat span { font: 46px "Instrument Serif"; color: var(--accent); }
 
 .composer-wrap { width: min(740px, calc(100% - 72px)); margin: 0 auto; padding-bottom: 13px; }
-.composer-stack { min-width: 0; }.extension-widget, .extension-status { width: min(740px, calc(100% - 72px)); margin: 0 auto 6px; border: 1px solid var(--line); border-radius: 7px; background: #f1eee8; color: var(--muted); padding: 8px 10px; font: 11px/1.5 "DM Mono"; }.extension-status { border: 0; background: transparent; padding: 0 8px; }
+.composer-stack { position: absolute; z-index: 2; right: 0; bottom: 0; left: 0; min-width: 0; }.extension-widget, .extension-status { width: min(740px, calc(100% - 72px)); margin: 0 auto 6px; border: 1px solid var(--line); border-radius: 7px; background: #f1eee8; color: var(--muted); padding: 8px 10px; font: 11px/1.5 "DM Mono"; }.extension-status { border: 0; background: transparent; padding: 0 8px; }
 .new-chat-project { width: min(740px, calc(100% - 72px)); margin: 0 auto 7px; }.new-chat-project button { height: 29px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--dark-subtle); color: var(--muted); font-size: 12px; }.new-chat-project button:hover { background: var(--dark-control); color: var(--ink); }.new-chat-project button.selected { color: var(--accent); }
 .composer { position: relative; background: white; border: 1px solid #d8d4cc; border-radius: 11px; padding: 11px 11px 8px; box-shadow: 0 9px 30px #4b433616; }.composer:focus-within { border-color: #bbb5aa; box-shadow: 0 10px 35px #4b433620, 0 0 0 2px #d46a240c; }
 .composer textarea { width: 100%; max-height: 130px; min-height: 31px; overflow-y: hidden; resize: none; border: 0; outline: 0; background: transparent; padding: 2px 4px; font-size: 14px; line-height: 1.5; }.composer textarea::placeholder { color: #aaa69e; }
