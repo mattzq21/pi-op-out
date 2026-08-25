@@ -247,7 +247,7 @@ fn prepare_btw_extension() -> Result<PathBuf, String> {
 
 fn default_settings() -> AppSettings {
     AppSettings {
-        default_model: DEFAULT_MODEL.into(), default_thinking: "high".into(), context_window_cap: default_context_window_cap(), auto_compaction: true, auto_retry: true, keybindings: default_keybindings(),
+        default_model: DEFAULT_MODEL.into(), default_thinking: "medium".into(), context_window_cap: default_context_window_cap(), auto_compaction: true, auto_retry: true, keybindings: default_keybindings(),
         tools: ["read", "bash", "edit", "write", "grep", "find", "ls"].iter().map(|name| json!({"name": name, "description": "Pi built-in tool", "enabled": true, "builtin": true})).chain([
             json!({"name":"list_agents","description":"List agents by machine and session","enabled":true,"builtin":false}),
             json!({"name":"send_message","description":"Send a message to another agent","enabled":true,"builtin":false}),
@@ -394,7 +394,7 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     let path = settings_path(&app)?;
     let mut settings = if !path.exists() { default_settings() } else { serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())? };
     let migrated_model = settings.default_model == "openrouter/deepseek/deepseek-v4-flash";
-    if migrated_model { settings.default_model = DEFAULT_MODEL.into(); }
+    if migrated_model { settings.default_model = DEFAULT_MODEL.into(); settings.default_thinking = "medium".into(); }
     for shortcut in settings.keybindings.values_mut() { *shortcut = shortcut.replace("Mod+", "Ctrl+"); }
     for tool in default_settings().tools { if !settings.tools.iter().any(|current| current.get("name") == tool.get("name")) { settings.tools.push(tool); } }
     merge_discovered_skills(&mut settings);
