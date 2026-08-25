@@ -1,6 +1,7 @@
 import { defaultSettings } from "../defaults";
-import type { AgentState, AppSettings, ChatMessage, Model, PiTransport, RpcCommand, RpcEvent, SessionSummary } from "../types";
+import type { AgentProfile, AgentState, AppSettings, ChatMessage, Model, OrchestrationCapability, PiTransport, RpcCommand, RpcEvent, SessionSummary } from "../types";
 import { uid } from "./content";
+import { decodeOrchestrationValue, encodeOrchestrationValue, ORCHESTRATION_STATUS_KEY } from "./orchestrationProtocol";
 
 const sessions: SessionSummary[] = [
   { id: "pi-ui", path: "mock://pi-ui", name: "Design desktop shell", project: "pi-ai", cwd: "/Users/demo/code/pi-ai", updatedAt: new Date().toISOString(), preview: "The session rail and branching flow are ready.", messageCount: 10, starred: true },
@@ -30,11 +31,14 @@ export class MockTransport implements PiTransport {
   private messages = [...starter];
   private state: AgentState = { model: { provider: "openrouter", id: "deepseek/deepseek-v4-flash", name: "DeepSeek V4 Flash", reasoning: true, contextWindow: 128000 }, thinkingLevel: "high", isStreaming: false, sessionId: "pi-ui", sessionName: "Design desktop shell", messageCount: starter.length, pendingMessageCount: 0 };
   private settings = structuredClone(defaultSettings);
+  private agents: AgentProfile[] = [{ name: "default", description: "General-purpose agent", model: "", effort: "high", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: defaultSettings.tools.map((tool) => tool.name), skills: defaultSettings.skills.map((skill) => skill.path), mcpServers: defaultSettings.mcpServers.map((server) => server.id) }];
+  private orchestration: OrchestrationCapability = { version: 1, active: "default", config: { agents: this.agents, sequences: [] } };
   private terminals = new Set<string>();
-  async connect(_cwd?: string, sessionPath?: string, _hostId?: string, forkPath?: string) { if (forkPath) { await this.command({ type: "switch_session", sessionPath: forkPath }); const leaf = this.messages.at(-1)?.entryId; if (leaf) await this.command({ type: "fork", entryId: leaf }); } else if (sessionPath) await this.command({ type: "switch_session", sessionPath }); this.emit({ type: "connected" }); }
+  async connect(_cwd?: string, sessionPath?: string, _hostId?: string, forkPath?: string) { if (forkPath) { await this.command({ type: "switch_session", sessionPath: forkPath }); const leaf = this.messages.at(-1)?.entryId; if (leaf) await this.command({ type: "fork", entryId: leaf }); } else if (sessionPath) await this.command({ type: "switch_session", sessionPath }); this.emit({ type: "connected" }); window.setTimeout(() => this.publishOrchestration(), 0); }
   async disconnect() {}
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   private emit(event: RpcEvent) { this.listeners.forEach((listener) => listener(event)); }
+  private publishOrchestration() { const sequence = this.orchestration.config.sequences.find((item) => item.name === this.orchestration.active); const currentAgent = sequence?.agents[0] ?? (this.orchestration.active === "orchestrator" ? undefined : this.orchestration.active); this.emit({ type: "extension_ui_request", id: uid("orchestration"), method: "setStatus", statusKey: ORCHESTRATION_STATUS_KEY, statusText: `json:${encodeOrchestrationValue({ ...this.orchestration, currentAgent })}` }); }
   async listSessions() { return structuredClone(this.sessions); }
   async loadSessionEntries(sessionPath: string) {
     const id = sessionPath.replace("mock://", ""); const session = this.sessions.find((item) => item.id === id);
@@ -44,6 +48,8 @@ export class MockTransport implements PiTransport {
   }
   async archiveSession(sessionPath: string) { const index = this.sessions.findIndex((session) => session.path === sessionPath); if (index < 0) throw new Error("Session not found"); const [session] = this.sessions.splice(index, 1); this.histories.delete(session.id); }
   async relocateSession(sessionPath: string, cwd: string) { const session = this.sessions.find((item) => item.path === sessionPath); if (!session) throw new Error("Session not found"); session.cwd = cwd; session.project = cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace"; session.cwdExists = true; }
+  async openProjectDirectory() {}
+  async openExportedHtml() {}
   async loadSettings() { return structuredClone(this.settings); }
   async loadCodexUsage() { return { remainingPercent: 73, resetAt: Math.floor(Date.now() / 1000) + 49 * 60 * 60 }; }
   async saveSettings(settings: AppSettings) { this.settings = structuredClone(settings); localStorage.setItem("pi-ui-settings", JSON.stringify(settings)); }
@@ -80,7 +86,7 @@ export class MockTransport implements PiTransport {
         { provider: "openai-codex", id: "gpt-5.6", name: "GPT-5.6", reasoning: true, contextWindow: 272000 }
       ].filter(Boolean) as Model[] } as T;
       case "get_available_thinking_levels": return { levels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"] } as T;
-      case "get_commands": return { commands: [{ name: "llama", description: "Manage llama.cpp router models", source: "extension", sourceInfo: { path: "<inline:llama.cpp>", source: "inline" } }, { name: "review", description: "Review the current changes", source: "prompt" }, { name: "skill:frontend", description: "Use the frontend skill", source: "skill" }, { name: "session-name", description: "Rename this session", source: "extension" }] } as T;
+      case "get_commands": return { commands: [{ name: "llama", description: "Manage llama.cpp router models", source: "extension", sourceInfo: { path: "<inline:llama.cpp>", source: "inline" } }, { name: "review", description: "Review the current changes", source: "prompt" }, { name: "skill:frontend", description: "Use the frontend skill", source: "skill" }, { name: "session-name", description: "Rename this session", source: "extension" }, { name: "pi-orchestration-use", description: "Select orchestration", source: "extension" }, { name: "pi-orchestration-config", description: "Configure orchestration", source: "extension" }] } as T;
       case "set_model": this.state.model = { provider: String(command.provider), id: String(command.modelId), name: String(command.modelId) }; return this.state.model as T;
       case "set_thinking_level": this.state.thinkingLevel = String(command.level); return undefined as T;
       case "set_session_name": { const name = String(command.name); this.state.sessionName = name; const session = this.sessions.find((item) => item.id === this.state.sessionId); if (session) session.name = name; return undefined as T; }
@@ -108,7 +114,12 @@ export class MockTransport implements PiTransport {
         this.histories.set(this.state.sessionId, this.messages); this.sessions.unshift({ id: this.state.sessionId, path: `mock://${this.state.sessionId}`, name: this.state.sessionName, project: "pi-ai", cwd: "/Users/demo/code/pi-ai", updatedAt: new Date().toISOString(), preview: "Branched conversation", messageCount: this.messages.length });
         this.emit({ type: "session_switched" }); return { cancelled: false, sessionFile: `mock://${this.state.sessionId}` } as T;
       }
-      case "prompt": return this.mockPrompt(String(command.message ?? "")) as T;
+      case "prompt": {
+        const text = String(command.message ?? "");
+        if (text.startsWith("/pi-orchestration-use ")) { this.orchestration.active = decodeOrchestrationValue<string>(text.slice(22)); const sequence = this.orchestration.config.sequences.find((item) => item.name === this.orchestration.active); const agent = this.agents.find((item) => item.name === (sequence?.agents[0] ?? this.orchestration.active)); if (agent?.model) { const [provider, ...id] = agent.model.split("/"); this.state.model = { provider, id: id.join("/"), name: id.join("/") }; } if (agent?.effort) this.state.thinkingLevel = agent.effort; this.publishOrchestration(); return { accepted: true } as T; }
+        if (text.startsWith("/pi-orchestration-config ")) { this.orchestration.config = decodeOrchestrationValue<OrchestrationCapability["config"]>(text.slice(25)); this.agents = this.orchestration.config.agents; this.publishOrchestration(); return { accepted: true } as T; }
+        return this.mockPrompt(text) as T;
+      }
       case "steer": case "follow_up": return { queued: true } as T;
       default: return {} as T;
     }

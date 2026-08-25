@@ -10,11 +10,11 @@ const children: ReturnType<typeof spawn>[] = [];
 const httpServers: Server[] = [];
 afterEach(() => { children.splice(0).forEach((child) => child.kill()); httpServers.splice(0).forEach((server) => server.close()); });
 
-async function probeRegisteredTools(temporary: string, servers: unknown[]) {
+async function probeRegisteredTools(temporary: string, servers: unknown[], environment: Record<string, string> = {}) {
   const config = join(temporary, "servers.json"); const probe = join(temporary, "tools.json");
   await writeFile(config, JSON.stringify(servers));
-  const child = spawn("pi", ["--mode", "rpc", "--no-session", "--offline", "--approve", "--extension", resolve("src-tauri/resources/mcp-bridge.ts"), "--extension", resolve("test/fixtures/probe-tools.ts")], {
-    cwd: resolve("."), env: { ...process.env, PI_DESKTOP_MCP_CONFIG: config, PI_DESKTOP_TOOL_PROBE: probe }, stdio: ["pipe", "pipe", "pipe"]
+  const child = spawn("pi", ["--mode", "rpc", "--no-session", "--offline", "--approve", "--no-skills", "--extension", resolve("src-tauri/resources/mcp-bridge.ts"), "--extension", resolve("test/fixtures/probe-tools.ts")], {
+    cwd: resolve("."), env: { ...process.env, HOME: temporary, XDG_CONFIG_HOME: temporary, PI_DESKTOP_MCP_CONFIG: config, PI_DESKTOP_TOOL_PROBE: probe, ...environment }, stdio: ["pipe", "pipe", "pipe"]
   });
   children.push(child); let stderr = ""; child.stderr.setEncoding("utf8"); child.stderr.on("data", (chunk) => { stderr += chunk; });
   child.stdin.write(`${JSON.stringify({ id: "state", type: "get_state" })}\n`);
@@ -56,5 +56,11 @@ describe("MCP bridge extension", () => {
     const tools = await probeRegisteredTools(temporary, [{ id: "remote", name: "Remote", transport: "http", url: `http://127.0.0.1:${address.port}/mcp`, headers: '{"X-Test":"bridge"}', enabled: true }]);
     expect(tools).toContain("mcp_remote_echo");
     expect(sawSession).toBe(true); expect(sawProtocol).toBe(true); expect(sawCustomHeader).toBe(true);
+  }, 15_000);
+
+  it("loads only MCP servers allowed for a spawned agent", async () => {
+    const temporary = await mkdtemp(join(tmpdir(), "pi-desktop-mcp-policy-")); const server = { name: "Fixture", transport: "stdio", command: process.execPath, args: resolve("test/fixtures/fake-mcp-server.mjs"), enabled: true };
+    const tools = await probeRegisteredTools(temporary, [{ ...server, id: "allowed" }, { ...server, id: "denied" }], { PI_DESKTOP_MCP_ALLOWED_SERVER_IDS: "allowed" });
+    expect(tools).toContain("mcp_allowed_echo"); expect(tools).not.toContain("mcp_denied_echo");
   }, 15_000);
 });

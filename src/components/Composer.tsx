@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, CircleStop, FileText, ImagePlus, Paperclip, TerminalSquare, X } from "lucide-react";
-import type { ImageAttachment, Model, SlashCommand } from "../types";
+import type { AgentProfile, ImageAttachment, Model, SequenceProfile, SlashCommand } from "../types";
 import { IconButton } from "./IconButton";
 
 type Upload = { id: string; name: string; kind: "image" | "text"; image?: ImageAttachment; text?: string };
@@ -8,6 +8,9 @@ interface Props {
   streaming: boolean;
   queued: number;
   commands: SlashCommand[];
+  agents: AgentProfile[];
+  sequences: SequenceProfile[];
+  activeAgent?: string;
   models: Model[];
   model: Model | null;
   thinkingLevel: string;
@@ -18,6 +21,7 @@ interface Props {
   onSend: (message: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void;
   onAbort: () => void;
   onOpenTerminal?: () => void;
+  onAgent: (name: string) => void;
   onModel: (model: Model) => void;
   onThinking: (level: string) => void;
 }
@@ -29,7 +33,7 @@ const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((
   if (mode === "dataUrl") reader.readAsDataURL(file); else reader.readAsText(file);
 });
 
-export function Composer({ streaming, queued, commands, models, model, thinkingLevel, thinkingLevels, draft, onDraftChange, restoredDraft, onSend, onAbort, onOpenTerminal, onModel, onThinking }: Props) {
+export function Composer({ streaming, queued, commands, agents, sequences, activeAgent, models, model, thinkingLevel, thinkingLevels, draft, onDraftChange, restoredDraft, onSend, onAbort, onOpenTerminal, onAgent, onModel, onThinking }: Props) {
   const [localValue, setLocalValue] = useState("");
   const value = draft ?? localValue;
   const setValue = (next: string) => { if (onDraftChange) onDraftChange(next); else setLocalValue(next); };
@@ -97,6 +101,7 @@ export function Composer({ streaming, queued, commands, models, model, thinkingL
       <input ref={fileRef} className="hidden-input" type="file" multiple onChange={(event) => { void addFiles(event.target.files); event.target.value = ""; }} />
       <div className="composer-bar"><div className="composer-tools"><IconButton label="Attach files" onClick={() => fileRef.current?.click()}><Paperclip size={17} /></IconButton>{onOpenTerminal && <IconButton label="Open terminal" onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton>}</div>
         <div className="composer-actions">
+        {activeAgent !== undefined && <label className="select-control agent-select"><select aria-label="Agent" value={activeAgent} disabled={streaming} onChange={(event) => onAgent(event.target.value)}><optgroup label="Agents">{agents.map((agent) => <option key={agent.name} value={agent.name}>{agent.name}</option>)}</optgroup>{sequences.length > 0 && <optgroup label="Sequences">{sequences.map((sequence) => <option key={sequence.name} value={sequence.name}>{sequence.name}</option>)}</optgroup>}<optgroup label="Orchestration"><option value="orchestrator">orchestrator</option></optgroup></select></label>}
         <label className="select-control"><select aria-label="Model" value={model ? `${model.provider}/${model.id}` : ""} onChange={(event) => { const next = models.find((item) => `${item.provider}/${item.id}` === event.target.value); if (next) onModel(next); }}>{models.map((item) => <option key={`${item.provider}/${item.id}`} value={`${item.provider}/${item.id}`}>{item.name || item.id}</option>)}</select></label>
         <label className="select-control thinking"><select aria-label="Thinking level" value={thinkingLevel} onChange={(event) => onThinking(event.target.value)}>{thinkingLevels.map((level) => <option key={level}>{level}</option>)}</select></label>
         <span className="composer-divider" />

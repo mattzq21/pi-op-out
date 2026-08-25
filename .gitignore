@@ -4,6 +4,7 @@ dist/
 vite.config.js
 vite.config.d.ts
 src-tauri/target/
+extensions/pi-orchestration/config.json
 .DS_Store
 pi-ui.png
 pi-settings.png

@@ -5,6 +5,10 @@ export interface SessionSummary { id: string; path: string; name: string; projec
 export interface AgentState { model: Model | null; thinkingLevel: string; isStreaming: boolean; sessionFile?: string; sessionId: string; sessionName?: string; messageCount: number; pendingMessageCount: number; activity?: string; }
 export interface ExtensionUiRequest { type: "extension_ui_request"; id: string; method: "select" | "confirm" | "input" | "editor" | "notify" | "setStatus" | "setWidget" | "setTitle" | "set_editor_text"; title?: string; message?: string; error?: string; options?: string[]; placeholder?: string; prefill?: string; notifyType?: "info" | "warning" | "error"; statusKey?: string; statusText?: string; widgetKey?: string; widgetLines?: string[]; widgetPlacement?: "aboveEditor" | "belowEditor"; text?: string; }
 export interface Model { provider: string; id: string; name?: string; reasoning?: boolean; contextWindow?: number; }
+export interface AgentProfile { name: string; description: string; model: string; effort: string; systemPrompt: string; developerPrompt: string; agentsMd: string; tools: string[]; skills: string[]; mcpServers: string[]; }
+export interface SequenceProfile { name: string; description: string; agents: string[]; visibleSteps: number; }
+export interface OrchestrationConfig { agents: AgentProfile[]; sequences: SequenceProfile[]; }
+export interface OrchestrationCapability { version: number; active: string; currentAgent?: string; config: OrchestrationConfig; }
 export interface RpcCommand { id?: string; type: string; [key: string]: unknown; }
 export interface RpcEvent { type: string; [key: string]: unknown; }
 export interface ToolConfig { name: string; description: string; enabled: boolean; builtin?: boolean; }
@@ -14,6 +18,7 @@ export interface RemoteHost { id: string; name: string; target: string; piPath: 
 export interface DirectoryListing { path: string; parent?: string; directories: string[]; }
 export interface SlashCommand { name: string; description?: string; source: "extension" | "prompt" | "skill"; path?: string; sourceInfo?: { path?: string; source?: string }; }
 export interface ImageAttachment { type: "image"; data: string; mimeType: string; name?: string; }
+export interface SavedTerminalState { activeId: string; tabs: Array<{ id: string; output: string; started: boolean; exited?: boolean }> }
 export interface AppSettings { defaultModel: string; defaultThinking: string; autoCompaction: boolean; autoRetry: boolean; notifications: boolean; steeringMode: "all" | "one-at-a-time"; followUpMode: "all" | "one-at-a-time"; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; mcpServers: McpServer[]; hosts: RemoteHost[]; }
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
 export interface SessionEntries { entries: Array<Record<string, unknown>>; leafId: string | null; }
@@ -26,8 +31,10 @@ export interface PiTransport {
   subscribe(listener: (event: RpcEvent) => void): () => void;
   listSessions(): Promise<SessionSummary[]>;
   loadSessionEntries(sessionPath: string, hostId?: string): Promise<SessionEntries>;
-  archiveSession(sessionPath: string, hostId?: string): Promise<void>;
+  archiveSession(sessionPath: string, hostId?: string, terminalState?: SavedTerminalState): Promise<void>;
   relocateSession(sessionPath: string, cwd: string, hostId?: string): Promise<void>;
+  openProjectDirectory(cwd: string, hostId?: string): Promise<void>;
+  openExportedHtml(path: string, cwd: string, hostId?: string): Promise<void>;
   loadSettings(): Promise<AppSettings>;
   loadCodexUsage(): Promise<CodexUsage>;
   saveSettings(settings: AppSettings): Promise<void>;

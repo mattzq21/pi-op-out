@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { AppSettings, CodexUsage, DirectoryListing, PiTransport, RpcCommand, RpcEvent, SessionEntries, SessionSummary } from "../types";
+import type { AppSettings, CodexUsage, DirectoryListing, PiTransport, RpcCommand, RpcEvent, SavedTerminalState, SessionEntries, SessionSummary } from "../types";
 
 export class NativeTransport implements PiTransport {
   mode = "native" as const;
@@ -34,8 +34,10 @@ export class NativeTransport implements PiTransport {
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   listSessions() { return invoke<SessionSummary[]>("list_sessions"); }
   loadSessionEntries(sessionPath: string, hostId = "local") { return invoke<SessionEntries>("load_session_entries", { sessionPath, hostId }); }
-  archiveSession(sessionPath: string, hostId = "local") { return invoke<void>("archive_session", { sessionPath, hostId }); }
+  archiveSession(sessionPath: string, hostId = "local", terminalState?: SavedTerminalState) { return invoke<void>("archive_session", { sessionPath, hostId, terminalState }); }
   relocateSession(sessionPath: string, cwd: string, hostId = "local") { return invoke<void>("relocate_session", { sessionPath, cwd, hostId }); }
+  openProjectDirectory(cwd: string, hostId = "local") { return invoke<void>("open_project_directory", { cwd, hostId }); }
+  openExportedHtml(path: string, cwd: string, hostId = "local") { return invoke<void>("open_exported_html", { path, cwd, hostId }); }
   loadSettings() { return invoke<AppSettings>("load_app_settings"); }
   loadCodexUsage() { return invoke<CodexUsage>("codex_usage"); }
   async saveSettings(settings: AppSettings) { await invoke<void>("save_app_settings", { settings }); if (this.hostId !== "local" && !settings.hosts.some((host) => host.id === this.hostId)) this.hostId = "local"; await this.disconnect(); await this.connect(this.cwd, this.sessionPath, this.hostId); }

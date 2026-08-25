@@ -26,7 +26,7 @@ describe("MockTransport", () => {
     const data = await transport.command<{ entries: unknown[] }>({ type: "get_entries" });
     expect(state.sessionId).toMatch(/^branch-/);
     expect(state.sessionName).toContain("branch");
-    expect(data.entries).toHaveLength(3);
+    expect(data.entries).toHaveLength(2);
   });
 
   it("emits an abort event", async () => {

@@ -32,9 +32,18 @@ export function applyAssistantMessageEvent(message: ChatMessage, value: unknown)
 export function branchMessages(entries: PiEntry[], leafId: string | null): ChatMessage[] {
   const byId = new Map(entries.map((entry) => [entry.id, entry])); const branch: PiEntry[] = []; let cursor = leafId;
   while (cursor) { const entry = byId.get(cursor); if (!entry) break; branch.unshift(entry); cursor = entry.parentId; }
-  return branch.flatMap((entry) => {
+  const messages = branch.flatMap((entry) => {
     if (entry.type === "message" && entry.message) return [normalizeMessage(entry.message as unknown as Record<string, unknown>, entry.id)];
     if (entry.type === "custom_message" && entry.customType === "pi-desktop-btw" && entry.display !== false) return [normalizeMessage({ role: "custom", customType: entry.customType, content: entry.content ?? "", timestamp: entry.timestamp ?? Date.now() }, entry.id)];
     return [];
+  });
+  const calledTargets = new Map<string, string>();
+  for (const message of messages) if (message.role === "assistant" && Array.isArray(message.content)) for (const part of message.content) {
+    if (part.type === "toolCall" && part.name === "call_agent" && typeof part.arguments.target === "string") calledTargets.set(part.id, part.arguments.target);
+  }
+  return messages.map((message) => {
+    const toolCallId = (message as ChatMessage & { toolCallId?: string }).toolCallId;
+    const target = message.toolName === "call_agent" && toolCallId ? calledTargets.get(toolCallId) : undefined;
+    return target ? { ...message, toolName: `${target} called` } : message;
   });
 }

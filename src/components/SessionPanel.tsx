@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import { Archive, ChevronDown, Columns2, CopyPlus, Pencil, Search } from "lucide-react";
+import { Archive, ChevronDown, Columns2, CopyPlus, FileDown, FolderOpen, Pencil, Search } from "lucide-react";
 import type { SessionSummary } from "../types";
 
-export type SessionAction = "split" | "rename" | "clone" | "archive";
+export type SessionAction = "split" | "rename" | "clone" | "export" | "open-directory" | "archive";
 interface Props { sessions: SessionSummary[]; activeId?: string; activeHostId?: string; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; }
 
 const actions = [
-  ["split", Columns2, "Split pane"], ["rename", Pencil, "Rename conversation"], ["clone", CopyPlus, "Clone conversation"], ["archive", Archive, "Archive conversation"]
+  ["split", Columns2, "Split pane"], ["rename", Pencil, "Rename conversation"], ["clone", CopyPlus, "Clone conversation"], ["export", FileDown, "Export to HTML"], ["open-directory", FolderOpen, "Open project directory"]
 ] as const;
 
 export function SessionPanel({ sessions, activeId, activeHostId = "local", query, onQuery, onSelect, onAction }: Props) {
@@ -31,9 +31,10 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", query
     <div className="session-scroll">
       {groups.map(([projectKey, projectSessions]) => { const project = projectSessions[0].project; const hostId = projectSessions[0].hostId ?? "local"; const label = hostId === "local" ? project : `${projectSessions[0].hostName ?? hostId} / ${project}`; const collapsed = !query && collapsedProjects.has(projectKey); const groupId = `project-${projectKey.replace(/[^a-z0-9_-]/gi, "-")}`; return <section className="project" key={projectKey}>
         <button className="project-label" aria-expanded={!collapsed} aria-controls={groupId} onClick={() => setCollapsedProjects((current) => { const next = new Set(current); if (next.has(projectKey)) next.delete(projectKey); else next.add(projectKey); return next; })}><ChevronDown className={collapsed ? "collapsed" : ""} size={13} /><span className={project === activeProject && hostId === activeHostId ? "active" : undefined}>{label}</span></button>
-        <div id={groupId} hidden={collapsed}>{projectSessions?.map((session) => <button key={`${session.hostId ?? "local"}:${session.id}`} className={`session-item ${activeId === session.id && (session.hostId ?? "local") === activeHostId ? "active" : ""}`} onClick={() => onSelect(session)} onContextMenu={(event) => { event.preventDefault(); setMenu({ session, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190) }); }}>
-          <span className="session-copy"><strong>{session.name}</strong><span>{session.preview}</span></span>
-        </button>)}</div>
+        <div id={groupId} hidden={collapsed}>{projectSessions?.map((session) => <div key={`${session.hostId ?? "local"}:${session.id}`} className={`session-item ${activeId === session.id && (session.hostId ?? "local") === activeHostId ? "active" : ""}`} onContextMenu={(event) => { event.preventDefault(); setMenu({ session, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190) }); }}>
+          <button className="session-main" onClick={() => onSelect(session)}><span className="session-copy"><strong>{session.name}</strong><span>{session.preview}</span></span></button>
+          <button className="session-archive" aria-label="Archive conversation" title={`Archive ${session.name}`} onClick={() => onAction(session, "archive")}><Archive size={14} /></button>
+        </div>)}</div>
       </section>; })}
       {!filtered.length && <div className="empty-small">No conversations match “{query}”.</div>}
     </div>

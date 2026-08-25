@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { ChatMessage, RpcEvent } from "./types";
+import { encodeOrchestrationValue, ORCHESTRATION_STATUS_KEY } from "./lib/orchestrationProtocol";
 
 const control = vi.hoisted(() => ({
   listener: undefined as ((event: RpcEvent) => void) | undefined,
@@ -32,6 +33,8 @@ vi.mock("./lib/transport", async () => {
     loadSessionEntries: async () => ({ entries: [], leafId: null }),
     archiveSession: async () => undefined,
     relocateSession: async () => undefined,
+    openProjectDirectory: async () => undefined,
+    openExportedHtml: async () => undefined,
     loadSettings: async () => structuredClone(defaultSettings),
     loadCodexUsage: async () => ({ remainingPercent: 50, resetAt: Math.floor(Date.now() / 1000) + 60 * 60 }),
     saveSettings: async () => undefined,
@@ -51,6 +54,21 @@ beforeEach(() => {
   control.listener = undefined;
   control.entryCalls = 0;
   control.resolveStale = undefined;
+});
+
+it("hides extension-owned composer controls when no orchestration capability is published", async () => {
+  render(<App />);
+  await screen.findByRole("textbox", { name: "Message Pi" });
+  expect(screen.queryByRole("combobox", { name: "Agent" })).not.toBeInTheDocument();
+});
+
+it("removes extension-owned controls when the providing Pi runtime disconnects", async () => {
+  render(<App />); await screen.findByRole("textbox", { name: "Message Pi" });
+  const capability = { version: 1, active: "default", currentAgent: "default", config: { agents: [{ name: "default", description: "", model: "", effort: "off", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: [], skills: [], mcpServers: [] }], sequences: [] } };
+  act(() => control.listener?.({ type: "extension_ui_request", id: "capability", method: "setStatus", statusKey: ORCHESTRATION_STATUS_KEY, statusText: `json:${encodeOrchestrationValue(capability)}` }));
+  expect(screen.getByRole("combobox", { name: "Agent" })).toBeInTheDocument();
+  act(() => control.listener?.({ type: "disconnected" }));
+  expect(screen.queryByRole("combobox", { name: "Agent" })).not.toBeInTheDocument();
 });
 
 it("does not let an older snapshot erase newer live work", async () => {
@@ -124,4 +142,10 @@ it("accumulates Pi tool-call deltas until the authoritative end event", () => {
   expect(message.content).toEqual([{ type: "toolCall", id: "call-1", name: "read", arguments: {}, partialArgs: '{"path":"README.md"}' }]);
   message = applyAssistantMessageEvent(message, { type: "toolcall_end", contentIndex: 0, toolCall: { id: "call-1", name: "read", arguments: { path: "README.md" } } });
   expect(message.content).toEqual([{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "README.md" } }]);
+});
+
+it("labels orchestrator delegation with the selected target", async () => {
+  render(<App />); await screen.findByRole("textbox", { name: "Message Pi" });
+  act(() => control.listener?.({ type: "tool_execution_start", toolCallId: "delegate-1", toolName: "call_agent", args: { target: "review-sequence", task: "Review it" } }));
+  expect(screen.getByText("review-sequence called")).toBeVisible();
 });

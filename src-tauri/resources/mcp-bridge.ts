@@ -77,8 +77,12 @@ class StdioMcpClient {
   private failAll(error: Error) { for (const pending of this.pending.values()) { clearTimeout(pending.timeout); pending.reject(error); } this.pending.clear(); }
   private write(message: JsonRpcMessage) { this.process.stdin.write(`${JSON.stringify(message)}\n`); }
   private request(method: string, params?: unknown): Promise<unknown> {
-    const id = this.nextId++; this.write({ jsonrpc: "2.0", id, method, ...(params === undefined ? {} : { params }) } as JsonRpcMessage);
-    return new Promise((resolve, reject) => { const timeout = setTimeout(() => { this.pending.delete(id); reject(new Error(`MCP request timed out: ${method}`)); }, REQUEST_TIMEOUT_MS); this.pending.set(id, { resolve, reject, timeout }); });
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => { this.pending.delete(id); reject(new Error(`MCP request timed out: ${method}`)); }, REQUEST_TIMEOUT_MS);
+      this.pending.set(id, { resolve, reject, timeout });
+      this.write({ jsonrpc: "2.0", id, method, ...(params === undefined ? {} : { params }) } as JsonRpcMessage);
+    });
   }
   private notify(method: string, params?: unknown) { this.write({ jsonrpc: "2.0", method, ...(params === undefined ? {} : { params }) } as JsonRpcMessage); }
 
@@ -227,8 +231,12 @@ function resultContent(result: unknown) {
 export default async function mcpBridge(pi: ExtensionAPI) {
   const configPath = process.env.PI_DESKTOP_MCP_CONFIG; if (!configPath) return;
   const servers = JSON.parse(await readFile(configPath, "utf8")) as ServerConfig[];
+  const allowedServerIds = process.env.PI_DESKTOP_MCP_ALLOWED_SERVER_IDS?.split(",").map((id) => id.trim()).filter(Boolean);
+  const allowed = allowedServerIds ? new Set(allowedServerIds) : undefined;
+  const desktopSkillPaths = (() => { try { const value = JSON.parse(process.env.PI_DESKTOP_SKILL_PATHS || "[]"); return Array.isArray(value) ? value.filter((path): path is string => typeof path === "string") : []; } catch { return []; } })();
+  pi.on("resources_discover", () => process.env.PI_DESKTOP_ORCHESTRATION_ACTIVE === "1" || !desktopSkillPaths.length ? undefined : { skillPaths: desktopSkillPaths });
   const clients: McpClient[] = []; const loaded: Array<{ server: string; tools: string[] }> = [];
-  for (const server of servers.filter((item) => item.enabled && (item.transport === "http" ? item.url?.trim() : item.command?.trim()))) {
+  for (const server of servers.filter((item) => item.enabled && (!allowed || allowed.has(item.id)) && (item.transport === "http" ? item.url?.trim() : item.command?.trim()))) {
     try {
       const client = createClient(server); await client.initialize(); const tools = await client.tools(); clients.push(client);
       const registered: string[] = [];

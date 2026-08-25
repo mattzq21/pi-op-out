@@ -1,0 +1,17 @@
+{
+  "agents": [
+    {
+      "name": "default",
+      "description": "General-purpose agent",
+      "model": "",
+      "effort": "high",
+      "systemPrompt": "",
+      "developerPrompt": "",
+      "agentsMd": "",
+      "tools": ["read", "bash", "edit", "write", "grep", "find", "ls"],
+      "skills": [],
+      "mcpServers": []
+    }
+  ],
+  "sequences": []
+}
