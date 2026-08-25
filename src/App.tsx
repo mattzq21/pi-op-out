@@ -74,10 +74,10 @@ export default function App() {
 
   useEffect(() => { void transport.loadCodexUsage().then(setCodexUsage).catch(() => undefined); }, [transport]);
   useEffect(() => {
-    let cancelled = false; const cwd = selectedProjectCwd(activeCwd); setActiveBranch(undefined);
-    if (cwd) void transport.gitBranch(cwd, activeHostId).then((branch) => { if (!cancelled) setActiveBranch(branch ?? undefined); }).catch(() => undefined);
+    let cancelled = false;
+    void transport.gitBranch().then((branch) => { if (!cancelled) setActiveBranch(branch ?? undefined); }).catch(() => undefined);
     return () => { cancelled = true; };
-  }, [activeCwd, activeHostId, state.messageCount, transport]);
+  }, [transport]);
   useEffect(() => {
     if (!codexUsage?.resetAt) return;
     const timer = window.setInterval(() => setUsageClock((value) => value + 1), 60_000);
