@@ -103,13 +103,21 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
   --dark-control-hover: #2c2a26;
   --dark-subtle: #201f1c;
   color: var(--ink);
-  scrollbar-color: #34322e #121211;
 }
-.app.dark *::-webkit-scrollbar { width: 9px; height: 9px; }
-.app.dark *::-webkit-scrollbar-track { background: #121211; }
-.app.dark *::-webkit-scrollbar-thumb { background: #34322e; border: 2px solid #121211; border-radius: 999px; }
+.app.dark,
+.app.dark * { scrollbar-color: #34322e #121211 !important; }
+.app.dark *::-webkit-scrollbar { width: 9px !important; height: 9px !important; }
+.app.dark *::-webkit-scrollbar-track,
+.app.dark *::-webkit-scrollbar-track:hover,
+.app.dark *::-webkit-scrollbar-track:active { background: #121211 !important; }
+.app.dark *::-webkit-scrollbar-thumb,
 .app.dark *::-webkit-scrollbar-thumb:hover,
-.app.dark *::-webkit-scrollbar-thumb:active { background: #34322e; border: 2px solid #121211; border-radius: 999px; }
+.app.dark *::-webkit-scrollbar-thumb:active,
+.app.dark *::-webkit-scrollbar-thumb:window-inactive {
+  background-color: #34322e !important;
+  border: 2px solid #121211 !important;
+  border-radius: 999px !important;
+}
 .app.dark .icon-rail, .app.dark .session-panel { background: #141413; }
 .app.dark .settings-shell, .app.dark .chat-shell { background: var(--paper); }
 
