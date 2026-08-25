@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import { Archive, ChevronDown, Columns2, CopyPlus, FileDown, FolderOpen, Pencil, Search } from "lucide-react";
+import { Archive, ChevronDown, Columns2, CopyPlus, FolderOpen, Pencil, Search } from "lucide-react";
 import type { SessionSummary } from "../types";
 
-export type SessionAction = "split" | "rename" | "clone" | "export" | "open-directory" | "archive";
+export type SessionAction = "split" | "rename" | "clone" | "open-directory" | "archive";
 interface Props { sessions: SessionSummary[]; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; }
 
 const actions = [
-  ["split", Columns2, "Split pane"], ["rename", Pencil, "Rename conversation"], ["clone", CopyPlus, "Clone conversation"], ["export", FileDown, "Open logs in browser"], ["open-directory", FolderOpen, "Open project directory"]
+  ["split", Columns2, "Split pane"], ["rename", Pencil, "Rename conversation"], ["clone", CopyPlus, "Clone conversation"], ["open-directory", FolderOpen, "Open project directory"]
 ] as const;
 
 export function SessionPanel({ sessions, activeId, activeHostId = "local", runningSessions = new Set(), unseenSessions = new Set(), query, onQuery, onSelect, onAction }: Props) {

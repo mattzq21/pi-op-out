@@ -36,7 +36,6 @@ export interface PiTransport {
   deleteSession(sessionPath: string, hostId?: string): Promise<void>;
   relocateSession(sessionPath: string, cwd: string, hostId?: string): Promise<void>;
   openProjectDirectory(cwd: string, hostId?: string): Promise<void>;
-  openExportedHtml(path: string, cwd: string, hostId?: string): Promise<void>;
   loadSettings(): Promise<AppSettings>;
   loadCodexUsage(): Promise<CodexUsage>;
   saveSettings(settings: AppSettings): Promise<void>;
