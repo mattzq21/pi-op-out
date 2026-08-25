@@ -48,6 +48,17 @@ function groupTurns(messages: ChatMessage[]) {
   }, []);
 }
 
+function formatWorkedFor(startedAt?: number, completedAt?: number) {
+  if (startedAt === undefined || completedAt === undefined || completedAt < startedAt) return "";
+  const totalSeconds = Math.max(1, Math.round((completedAt - startedAt) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor(totalSeconds % 3600 / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h${minutes > 0 ? ` ${minutes}min` : ""}`;
+  if (minutes > 0) return `${minutes}min${seconds > 0 ? ` ${seconds}s` : ""}`;
+  return `${seconds}s`;
+}
+
 function compactCompletedTools(messages: ChatMessage[], groupRepeated = true) {
   return messages.reduce<Array<{ message: ChatMessage; count: number }>>((runs, message) => {
     const hasToolCall = Array.isArray(message.content) && message.content.some((part) => part.type === "toolCall");
@@ -87,12 +98,13 @@ function ConversationTurn({ messages, active, retryable, onRetry, onBranch }: { 
   });
   const userMessages = parsed.step?.step ? [] : shown.filter((message) => message.role === "user");
   const finalMessage = finalIndex >= 0 ? { ...shown[finalIndex], content: textOf(shown[finalIndex].content) } : undefined;
+  const workedFor = formatWorkedFor(userIndex >= 0 ? shown[userIndex].timestamp : shown[0]?.timestamp, finalMessage?.completedAt ?? finalMessage?.timestamp);
   const retryPrompt = retryable && finalMessage?.stopReason === "aborted" ? [...userMessages].reverse().map((message) => textOf(message.content).trim()).find(Boolean) : undefined;
 
   return <section className="conversation-turn">
     {parsed.step && parsed.step.step > 0 && <div className="sequence-step-label">{parsed.step.sequence} · {parsed.step.agent}</div>}
     {userMessages.map((message) => <Message key={message.id} message={message} onBranch={onBranch} />)}
-    {intermediate.length > 0 && <details className="work-group"><summary>Work · {intermediate.length} {intermediate.length === 1 ? "step" : "steps"}</summary><div className="work-group-content">{renderMessages(intermediate, true, onBranch)}</div></details>}
+    {intermediate.length > 0 && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}</summary><div className="work-group-content">{renderMessages(intermediate, true, onBranch)}</div></details>}
     {finalMessage && <Message message={finalMessage} onBranch={onBranch} onRetry={retryPrompt ? () => { window.dispatchEvent(new CustomEvent("pi:set-editor-text", { detail: "" })); onRetry(retryPrompt); } : undefined} />}
   </section>;
 }

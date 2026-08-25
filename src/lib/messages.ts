@@ -9,11 +9,12 @@ export function cacheHitStats(usage?: { input: number; cacheRead: number }) {
   return { rate: Math.round(usage.cacheRead / promptTokens * 100), low: usage.cacheRead < Math.max(promptTokens * .5, 1000), cachedTokens: usage.cacheRead, promptTokens };
 }
 
-export function normalizeMessage(message: Record<string, unknown>, entryId?: string): ChatMessage {
+export function normalizeMessage(message: Record<string, unknown>, entryId?: string, completedAt?: string): ChatMessage {
   const numericStamp = Number(message.timestamp || Date.now());
   const stamp = Number.isFinite(numericStamp) ? numericStamp : Date.parse(String(message.timestamp)) || Date.now();
+  const completionStamp = completedAt ? Date.parse(completedAt) : NaN;
   const isBtw = message.role === "custom" && message.customType === "pi-desktop-btw";
-  return { ...(message as unknown as ChatMessage), id: entryId || `live-${message.role}-${stamp}`, entryId, role: (message.role === "toolResult" ? "tool" : isBtw ? "assistant" : message.role) as ChatMessage["role"], toolStatus: message.role === "toolResult" ? (message.isError ? "error" : "done") : undefined, timestamp: stamp };
+  return { ...(message as unknown as ChatMessage), id: entryId || `live-${message.role}-${stamp}`, entryId, role: (message.role === "toolResult" ? "tool" : isBtw ? "assistant" : message.role) as ChatMessage["role"], toolStatus: message.role === "toolResult" ? (message.isError ? "error" : "done") : undefined, timestamp: stamp, ...(Number.isFinite(completionStamp) ? { completedAt: completionStamp } : {}) };
 }
 
 export function applyAssistantMessageEvent(message: ChatMessage, value: unknown): ChatMessage {
@@ -40,7 +41,7 @@ export function branchMessages(entries: PiEntry[], leafId: string | null): ChatM
   const byId = new Map(entries.map((entry) => [entry.id, entry])); const branch: PiEntry[] = []; let cursor = leafId;
   while (cursor) { const entry = byId.get(cursor); if (!entry) break; branch.unshift(entry); cursor = entry.parentId; }
   const messages = branch.flatMap((entry) => {
-    if (entry.type === "message" && entry.message) return [normalizeMessage(entry.message as unknown as Record<string, unknown>, entry.id)];
+    if (entry.type === "message" && entry.message) return [normalizeMessage(entry.message as unknown as Record<string, unknown>, entry.id, entry.timestamp)];
     if (entry.type === "custom_message" && entry.customType === "pi-desktop-btw" && entry.display !== false) return [normalizeMessage({ role: "custom", customType: entry.customType, content: entry.content ?? "", timestamp: entry.timestamp ?? Date.now() }, entry.id)];
     return [];
   });
