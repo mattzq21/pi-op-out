@@ -4,7 +4,7 @@ import type { GitDiffSnapshot } from "../types";
 import { parseDiff } from "../lib/diff";
 
 export function DiffViewer({ snapshot }: { snapshot: GitDiffSnapshot }) {
-  const files = useMemo(() => parseDiff(snapshot.patch), [snapshot.patch]);
+  const files = useMemo(() => parseDiff(snapshot), [snapshot]);
   const [open, setOpen] = useState(false);
   const additions = files.reduce((total, file) => total + file.additions, 0);
   const deletions = files.reduce((total, file) => total + file.deletions, 0);
@@ -22,4 +22,3 @@ export function DiffViewer({ snapshot }: { snapshot: GitDiffSnapshot }) {
     </div>}
   </section>;
 }
-

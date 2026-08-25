@@ -110,10 +110,7 @@ struct TemporaryChat {
     session_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct GitDiffSnapshot { patch: String, scope: String }
-
-type GitDiffSnapshots = HashMap<String, GitDiffSnapshot>;
+type GitDiffSnapshots = HashMap<String, String>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -415,14 +412,6 @@ fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<(), String
 #[tauri::command]
 fn shell_quote(value: &str) -> String { format!("'{}'", value.replace('\'', "'\\''")) }
 
-fn append_git_output(command: &mut Command, patch: &mut Vec<u8>) -> Result<(), String> {
-    let output = command.output().map_err(|error| format!("Could not read Git changes: {error}"))?;
-    // `git diff --no-index` returns 1 when differences are present.
-    if !output.status.success() && output.status.code() != Some(1) { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-    patch.extend(output.stdout);
-    Ok(())
-}
-
 fn local_git_tree(cwd: &str) -> Result<Option<String>, String> {
     let requested = Path::new(cwd).canonicalize().map_err(|error| format!("Could not open project directory: {error}"))?;
     let root = Command::new("git").args(["-C", cwd, "rev-parse", "--show-toplevel"]).output().map_err(|error| format!("Could not run Git: {error}"))?;
@@ -441,13 +430,12 @@ fn local_git_tree(cwd: &str) -> Result<Option<String>, String> {
     let _ = fs::remove_file(index); result.map(Some)
 }
 
-fn local_git_diff(cwd: &str, base_tree: &str) -> Result<Option<GitDiffSnapshot>, String> {
+fn local_git_diff(cwd: &str, base_tree: &str) -> Result<Option<String>, String> {
     let Some(current_tree) = local_git_tree(cwd)? else { return Ok(None) };
-    let mut patch = Vec::new(); let mut diff = Command::new("git");
-    diff.args(["-C", cwd, "diff", "--no-color", "--no-ext-diff", "--find-renames", base_tree, &current_tree, "--"]);
-    append_git_output(&mut diff, &mut patch)?;
-    let patch = String::from_utf8_lossy(&patch).into_owned();
-    Ok((!patch.trim().is_empty()).then_some(GitDiffSnapshot { patch, scope: "turn".into() }))
+    let output = Command::new("git").args(["-C", cwd, "diff", "--no-color", "--no-ext-diff", "--find-renames", base_tree, &current_tree, "--"]).output().map_err(|error| format!("Could not read Git changes: {error}"))?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    let patch = String::from_utf8_lossy(&output.stdout).into_owned();
+    Ok((!patch.trim().is_empty()).then_some(patch))
 }
 
 fn remote_git_tree(host: &RemoteHost, cwd: &str) -> Result<Option<String>, String> {
@@ -466,7 +454,7 @@ fn capture_git_tree(app: AppHandle, cwd: String, host_id: Option<String>) -> Res
 }
 
 #[tauri::command(async)]
-fn load_git_diff(app: AppHandle, cwd: String, base_tree: String, host_id: Option<String>) -> Result<Option<GitDiffSnapshot>, String> {
+fn load_git_diff(app: AppHandle, cwd: String, base_tree: String, host_id: Option<String>) -> Result<Option<String>, String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     if host_id == "local" { return local_git_diff(&cwd, &base_tree); }
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
@@ -475,7 +463,7 @@ fn load_git_diff(app: AppHandle, cwd: String, base_tree: String, host_id: Option
     let output = ssh(host).arg(script).output().map_err(|error| format!("Could not read Git changes on {}: {error}", host.name))?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let patch = String::from_utf8_lossy(&output.stdout).into_owned();
-    Ok((!patch.trim().is_empty()).then_some(GitDiffSnapshot { patch, scope: "turn".into() }))
+    Ok((!patch.trim().is_empty()).then_some(patch))
 }
 
 fn git_diffs_path(session_path: &str) -> PathBuf { Path::new(session_path).with_extension("diffs.json") }

@@ -25,7 +25,7 @@ export interface AppSettings { defaultModel: string; defaultThinking: string; co
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
 export interface SessionEntries { entries: Array<Record<string, unknown>>; leafId: string | null; }
 
-export interface GitDiffSnapshot { patch: string; scope: "turn"; }
+export type GitDiffSnapshot = string;
 export type GitDiffSnapshots = Record<string, GitDiffSnapshot>;
 
 export interface PiTransport {
