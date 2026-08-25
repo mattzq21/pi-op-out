@@ -2,7 +2,8 @@ export type Role = "user" | "assistant" | "tool" | "system";
 export type ContentPart = { type: "text"; text: string } | { type: "thinking"; thinking: string } | { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown>; partialArgs?: string };
 export interface ChatMessage { id: string; entryId?: string; role: Role; content: string | ContentPart[]; customType?: string; timestamp?: number; completedAt?: number; model?: string; streaming?: boolean; stopReason?: "stop" | "length" | "toolUse" | "error" | "aborted"; errorMessage?: string; toolName?: string; toolStatus?: "running" | "done" | "error"; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning?: number; totalTokens: number }; }
 export interface SessionSummary { id: string; path: string; name: string; project: string; cwd: string; cwdExists?: boolean; preview: string; messageCount: number; hostId?: string; hostName?: string; }
-export interface AgentState { model: Model | null; thinkingLevel: string; isStreaming: boolean; sessionFile?: string; sessionId: string; sessionName?: string; messageCount: number; pendingMessageCount: number; activity?: string; }
+export interface ContextUsage { tokens: number | null; contextWindow: number; percent: number | null; }
+export interface AgentState { model: Model | null; thinkingLevel: string; isStreaming: boolean; sessionFile?: string; sessionId: string; sessionName?: string; messageCount: number; pendingMessageCount: number; activity?: string; contextUsage?: ContextUsage; }
 export interface ExtensionUiRequest { type: "extension_ui_request"; id: string; method: "select" | "confirm" | "input" | "editor" | "notify" | "setStatus" | "setWidget" | "setTitle" | "set_editor_text"; title?: string; message?: string; error?: string; options?: string[]; placeholder?: string; prefill?: string; notifyType?: "info" | "warning" | "error"; statusKey?: string; statusText?: string; widgetKey?: string; widgetLines?: string[]; widgetPlacement?: "aboveEditor" | "belowEditor"; text?: string; }
 export interface Model { provider: string; id: string; name?: string; reasoning?: boolean; contextWindow?: number; }
 export interface AgentProfile { name: string; description: string; model: string; effort: string; systemPrompt: string; developerPrompt: string; agentsMd: string; tools: string[]; skills: string[]; mcpServers: string[]; }
@@ -19,7 +20,7 @@ export interface DirectoryListing { path: string; parent?: string; directories: 
 export interface SlashCommand { name: string; description?: string; source: "extension" | "prompt" | "skill"; sourceInfo?: { source?: string }; }
 export interface ImageAttachment { type: "image"; data: string; mimeType: string; name?: string; }
 export interface SavedTerminalState { activeId: string; tabs: Array<{ id: string; output: string; started: boolean; exited?: boolean }> }
-export interface AppSettings { defaultModel: string; defaultThinking: string; autoCompaction: boolean; autoRetry: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; mcpServers: McpServer[]; hosts: RemoteHost[]; }
+export interface AppSettings { defaultModel: string; defaultThinking: string; contextWindowCap: number; autoCompaction: boolean; autoRetry: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; mcpServers: McpServer[]; hosts: RemoteHost[]; }
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
 export interface SessionEntries { entries: Array<Record<string, unknown>>; leafId: string | null; }
 

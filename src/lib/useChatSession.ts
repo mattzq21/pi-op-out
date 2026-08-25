@@ -30,10 +30,10 @@ export function useChatSession(transport: PiTransport, initialState: AgentState 
 
   const refresh = useCallback(async () => {
     const revision = liveRevision.current;
-    const [nextState, history, modelResponse, thinkingResponse, commandResponse] = await Promise.all([
-      transport.command<AgentState>({ type: "get_state" }), transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }), transport.command<{ models: Model[] }>({ type: "get_available_models" }), transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }), transport.command<{ commands: SlashCommand[] }>({ type: "get_commands" })
+    const [nextState, history, modelResponse, thinkingResponse, commandResponse, stats] = await Promise.all([
+      transport.command<AgentState>({ type: "get_state" }), transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }), transport.command<{ models: Model[] }>({ type: "get_available_models" }), transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }), transport.command<{ commands: SlashCommand[] }>({ type: "get_commands" }), transport.command<{ contextUsage?: AgentState["contextUsage"] }>({ type: "get_session_stats" })
     ]);
-    if (liveRevision.current === revision) { discardPendingUpdates(); setState(nextState); setMessages(branchMessages(history.entries, history.leafId)); }
+    if (liveRevision.current === revision) { discardPendingUpdates(); setState({ ...nextState, contextUsage: stats.contextUsage }); setMessages(branchMessages(history.entries, history.leafId)); }
     setModels(modelResponse.models); setThinkingLevels(thinkingResponse.levels); setCommands(commandResponse.commands.filter((command) => command.sourceInfo?.source !== "inline" && command.name !== "pi-orchestration-next"));
   }, [discardPendingUpdates, transport]);
 
@@ -57,7 +57,7 @@ export function useChatSession(transport: PiTransport, initialState: AgentState 
     if (event.type === "tool_execution_end") { flush(); setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.result), toolStatus: event.isError ? "error" : "done" } : item)); }
     if (event.type === "queue_update") setState((current) => ({ ...current, pendingMessageCount: [...((event.steering as unknown[]) ?? []), ...((event.followUp as unknown[]) ?? [])].length }));
     if (event.type === "compaction_start") setState((current) => ({ ...current, activity: "Compacting context…" }));
-    if (event.type === "compaction_end") setState((current) => ({ ...current, activity: undefined }));
+    if (event.type === "compaction_end") setState((current) => ({ ...current, activity: undefined, contextUsage: current.contextUsage ? { ...current.contextUsage, tokens: null, percent: null } : undefined }));
     if (event.type === "auto_retry_start") setState((current) => ({ ...current, activity: `Retrying · attempt ${event.attempt}` }));
     if (event.type === "thinking_level_changed" && typeof event.level === "string") setState((current) => ({ ...current, thinkingLevel: event.level as string }));
   }, [flush, queue]);

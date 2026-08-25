@@ -173,7 +173,7 @@ export default function App() {
       await refresh(hostId); return true;
     } catch (reason) { setActiveHostId(previousHostId); setActiveCwd(previousCwd); setState(previousState); setMessages(previousMessages); setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); return false; }
   };
-  const setModel = async (model: Model) => { await transport.command({ type: "set_model", provider: model.provider, modelId: model.id }); setState((current) => ({ ...current, model })); };
+  const setModel = async (model: Model) => { await transport.command({ type: "set_model", provider: model.provider, modelId: model.id }); await refreshSession(); };
   const setThinking = async (level: string) => { await transport.command({ type: "set_thinking_level", level }); setState((current) => ({ ...current, thinkingLevel: level })); };
   const saveSettings = async (value: AppSettings, nextConfig?: OrchestrationConfig) => { if (nextConfig) await transport.command({ type: "prompt", message: `/pi-orchestration-config ${encodeOrchestrationValue(nextConfig)}` }); await transport.saveSettings(value); await configureRuntime(value); setSettings(value); if (activeHostId !== "local" && !value.hosts.some((host) => host.id === activeHostId)) setActiveHostId("local"); await refresh(); };
   const setAgent = async (name: string) => { await transport.command({ type: "prompt", message: `/pi-orchestration-use ${encodeOrchestrationValue(name)}` }); };

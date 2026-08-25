@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Blocks, Bot, Check, CirclePlus, Cpu, GitBranch, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Sparkles, Trash2, Wrench } from "lucide-react";
+import { Blocks, Bot, Check, CircleGauge, CirclePlus, Cpu, GitBranch, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Sparkles, Trash2, Wrench } from "lucide-react";
 import type { AgentProfile, AppSettings, McpServer, Model, OrchestrationConfig, RemoteHost, SequenceProfile } from "../types";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutFromEvent, type KeybindAction } from "../lib/keybindings";
@@ -46,6 +46,7 @@ export function SettingsView({ settings, orchestration, models = [], thinkingLev
       <section className="settings-content">
         {section === "general" && <SettingsSection title="General" description="Agent behavior.">
           <SettingRow icon={<Cpu />} title="Auto compaction" description="Compact context before it reaches the model limit."><Toggle label="Auto compaction" checked={draft.autoCompaction} onChange={(autoCompaction) => patch({ autoCompaction })} /></SettingRow>
+          <SettingRow icon={<CircleGauge />} title="Context window cap" description="Treat larger model contexts as this many tokens for compaction."><input className="setting-number" aria-label="Context window cap" type="number" min={1} step={1000} value={draft.contextWindowCap} onChange={(event) => patch({ contextWindowCap: Number(event.target.value) })} /></SettingRow>
           <SettingRow icon={<ShieldCheck />} title="Automatic retry" description="Retry transient provider and network errors."><Toggle label="Automatic retry" checked={draft.autoRetry} onChange={(autoRetry) => patch({ autoRetry })} /></SettingRow>
           <label className="field"><span>Default model</span><input value={draft.defaultModel} onChange={(e) => patch({ defaultModel: e.target.value })} /></label>
           <label className="field"><span>Thinking level</span><select value={draft.defaultThinking} onChange={(e) => patch({ defaultThinking: e.target.value })}>{["off", "minimal", "low", "medium", "high", "xhigh", "max"].map((level) => <option key={level}>{level}</option>)}</select></label>

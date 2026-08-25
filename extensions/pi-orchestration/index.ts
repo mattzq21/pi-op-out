@@ -67,6 +67,8 @@ function agentArgs(agent: Agent, session?: string) {
   if (agent.developerPrompt.trim()) args.push("--append-system-prompt", agent.developerPrompt.trim());
   if (agent.agentsMd.trim()) args.push("--append-system-prompt", `# Agent AGENTS.md\n\n${agent.agentsMd.trim()}`);
   for (const skill of agentSkills(agent)) args.push("--skill", skill);
+  const contextWindowCapExtension = process.env.PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION;
+  if (contextWindowCapExtension) args.push("--extension", contextWindowCapExtension);
   args.push("--extension", extensionPath);
   const mcpConfig = process.env.PI_DESKTOP_MCP_CONFIG;
   if (mcpConfig) args.push("--extension", join(dirname(mcpConfig), "pi-desktop-mcp-bridge.ts"));
