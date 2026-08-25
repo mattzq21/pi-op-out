@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { copyFile, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,7 +18,6 @@ const HANDOFF = /^<!-- pi-desktop-sequence:/;
 const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
 const extensionPath = fileURLToPath(import.meta.url);
 const fallbackConfig: Config = { agents: [{ name: "default", description: "General-purpose agent", model: "", effort: "high", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }], sequences: [] };
-let migratedActive: string | undefined;
 
 function normalize(value: Partial<Config>): Config {
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => agent && typeof agent.name === "string" && agent.name.length > 0).map((agent) => ({
@@ -33,63 +32,10 @@ function normalize(value: Partial<Config>): Config {
   return { agents, sequences };
 }
 
-async function legacySettings() {
-  const home = homedir();
-  const candidates = [
-    process.env.XDG_CONFIG_HOME ? join(process.env.XDG_CONFIG_HOME, "dev.pi.desktop", "settings.json") : "",
-    join(home, ".config", "dev.pi.desktop", "settings.json"),
-    join(home, "Library", "Application Support", "dev.pi.desktop", "settings.json"),
-    process.env.APPDATA ? join(process.env.APPDATA, "dev.pi.desktop", "settings.json") : "",
-  ].filter(Boolean);
-  for (const path of candidates) try { return JSON.parse(await readFile(path, "utf8")) as { activeAgent?: string; sequences?: Sequence[] }; } catch { /* try the next platform path */ }
-  return {};
-}
-
-function yamlScalar(value: string) {
-  const trimmed = value.trim();
-  if (trimmed === "[]") return [];
-  if (trimmed === "''" || trimmed === '""') return "";
-  if (trimmed.startsWith("'") && trimmed.endsWith("'")) return trimmed.slice(1, -1).replace(/''/g, "'");
-  if (trimmed.startsWith('"') && trimmed.endsWith('"')) try { return JSON.parse(trimmed) as string; } catch { /* use it literally */ }
-  return trimmed;
-}
-
-function parseLegacyAgentYaml(source: string): Agent {
-  const value: Record<string, unknown> = {}; const lines = source.split(/\r?\n/);
-  for (let index = 0; index < lines.length; index += 1) {
-    const match = lines[index].match(/^([A-Za-z][A-Za-z0-9]*):(?:\s*(.*))?$/); if (!match) continue;
-    const [, key, raw = ""] = match;
-    if (/^[|>][-+]?$/u.test(raw.trim())) {
-      const folded = raw.trim().startsWith(">"); const block: string[] = [];
-      while (index + 1 < lines.length && (/^\s/.test(lines[index + 1]) || lines[index + 1] === "")) block.push(lines[++index].replace(/^ {2}/, ""));
-      value[key] = folded ? block.join(" ").trimEnd() : block.join("\n").trimEnd(); continue;
-    }
-    if (!raw.trim()) {
-      const items: string[] = [];
-      while (index + 1 < lines.length) { const item = lines[index + 1].match(/^\s*-\s*(.*)$/); if (!item) break; index += 1; items.push(yamlScalar(item[1])); }
-      value[key] = items; continue;
-    }
-    value[key] = yamlScalar(raw);
-  }
-  return value as unknown as Agent;
-}
-
-async function migrateLegacyConfig() {
-  const directory = join(homedir(), ".pi-desktop", "agents");
-  let files: string[]; try { files = (await readdir(directory)).filter((file) => /\.ya?ml$/i.test(file)); } catch { return undefined; }
-  const agents: Agent[] = [];
-  for (const file of files) try { agents.push(parseLegacyAgentYaml(await readFile(join(directory, file), "utf8"))); } catch { /* leave malformed legacy profiles untouched */ }
-  if (!agents.length) return undefined;
-  const settings = await legacySettings(); migratedActive = settings.activeAgent;
-  const config = normalize({ agents, sequences: settings.sequences ?? [] });
-  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-  return config;
-}
 
 async function loadConfig() {
   try { return normalize(JSON.parse(await readFile(configPath, "utf8"))); }
   catch {
-    const migrated = await migrateLegacyConfig(); if (migrated) return migrated;
     const fallback = structuredClone(fallbackConfig); await writeFile(configPath, `${JSON.stringify(fallback, null, 2)}\n`, { mode: 0o600 }); return fallback;
   }
 }
@@ -151,7 +97,7 @@ export default async function orchestration(pi: ExtensionAPI) {
     return;
   }
   process.env.PI_DESKTOP_ORCHESTRATION_ACTIVE = "1";
-  let config = await loadConfig(); let active = migratedActive ?? "default"; let run: Run | undefined; let pendingHandoff: string | undefined; let activeToolError: string | undefined;
+  let config = await loadConfig(); let active = "default"; let run: Run | undefined; let pendingHandoff: string | undefined; let activeToolError: string | undefined;
 
   const findAgent = (name: string) => config.agents.find((agent) => agent.name === name);
   const findSequence = (name: string) => config.sequences.find((sequence) => sequence.name === name);

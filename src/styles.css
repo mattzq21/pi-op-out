@@ -7,8 +7,6 @@ button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 .app { height: 100vh; display: flex; background: var(--paper); }
 .icon-rail { width: var(--rail-width); flex: 0 0 var(--rail-width); background: #292824; color: #bdb9b0; display: flex; flex-direction: column; align-items: center; padding: 13px 0 12px; z-index: 3; }
-.logo { width: 34px; height: 34px; background: var(--accent); color: white; display: grid; place-items: center; border-radius: 10px; box-shadow: 0 5px 14px #0004; }
-.logo span { font-family: "Instrument Serif"; font-size: 25px; transform: translateY(-1px); }
 .icon-rail nav { width: 100%; display: flex; flex-direction: row; justify-content: center; align-items: center; gap: 5px; }
 .icon-button { border: 0; background: transparent; width: 32px; height: 32px; padding: 0; border-radius: 8px; display: inline-grid; place-items: center; color: var(--muted); transition: .15s ease; }
 .icon-button:hover { background: #0000000b; color: var(--ink); }

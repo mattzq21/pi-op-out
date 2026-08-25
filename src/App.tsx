@@ -11,23 +11,19 @@ import { SplitChatPane } from "./components/SplitChatPane";
 import { defaultSettings } from "./defaults";
 import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
 import { findReplaceableAbortedTurn } from "./lib/abortedTurn";
-import { createTransport } from "./lib/transport";
+import { NativeTransport } from "./lib/nativeTransport";
+import { useChatSession } from "./lib/useChatSession";
 import { decodeOrchestrationValue, encodeOrchestrationValue, ORCHESTRATION_STATUS_KEY } from "./lib/orchestrationProtocol";
-import type { AgentState, AppSettings, ChatMessage, CodexUsage, ExtensionUiRequest, ImageAttachment, Model, OrchestrationCapability, OrchestrationConfig, RpcEvent, SessionSummary, SlashCommand } from "./types";
-import { applyAssistantMessageEvent, branchMessages, normalizeMessage, type PiEntry } from "./lib/messages";
-export { applyAssistantMessageEvent } from "./lib/messages";
+import type { AppSettings, ChatMessage, CodexUsage, ExtensionUiRequest, ImageAttachment, Model, OrchestrationCapability, OrchestrationConfig, RpcEvent, SessionSummary } from "./types";
+import { branchMessages, type PiEntry } from "./lib/messages";
 
-const emptyState: AgentState = { model: null, thinkingLevel: "off", isStreaming: false, sessionId: "", messageCount: 0, pendingMessageCount: 0 };
 const staleExtensionContext = "This extension ctx is stale after session replacement or reload.";
 type TerminalTabState = { id: string; output: string; started: boolean; exited?: boolean };
 type SessionTerminals = { activeId: string; tabs: TerminalTabState[] };
-type MessageUpdate = (messages: ChatMessage[]) => ChatMessage[];
 type BtwRequest = { requestId: string; task: string; forkFrom: string };
 type SplitPaneState = { session: SessionSummary; btw?: BtwRequest };
 const BTW_REQUEST_TITLE = "__pi_desktop_btw__";
 const initialTerminals = (sessionId: string): SessionTerminals => { const id = `terminal-${sessionId}-1`; return { activeId: id, tabs: [{ id, output: "", started: false }] }; };
-
-function rpcContent(value: unknown): ChatMessage["content"] { const content = (value as { content?: ChatMessage["content"] })?.content; return content ?? ""; }
 
 function selectedProjectCwd(cwd?: string) {
   if (!cwd || /[\\/]pi-desktop[\\/]tmp[\\/][^\\/]+[\\/]?$/.test(cwd)) return undefined;
@@ -45,10 +41,10 @@ export function formatCodexReset(resetAt: number, now = Date.now()) {
 }
 
 export default function App() {
-  const transport = useMemo(createTransport, []); const [view, setView] = useState<"chat" | "settings">("chat");
-  const [state, setState] = useState(emptyState); const [messages, setMessages] = useState<ChatMessage[]>([]); const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [models, setModels] = useState<Model[]>([]); const [commands, setCommands] = useState<SlashCommand[]>([]); const [thinkingLevels, setThinkingLevels] = useState<string[]>(["off"]); const [settings, setSettings] = useState<AppSettings>(defaultSettings); const [orchestration, setOrchestration] = useState<OrchestrationCapability>();
-  const settingsRef = useRef(settings); const liveRevision = useRef(0); const activeAssistantId = useRef<string | undefined>(undefined); const sessionIndexRequest = useRef<Promise<void> | undefined>(undefined);
+  const transport = useMemo(() => new NativeTransport(), []); const [view, setView] = useState<"chat" | "settings">("chat");
+  const sessionRuntime = useChatSession(transport); const { state, setState, messages, setMessages, models, commands, thinkingLevels, refresh: refreshSession, handleEvent, discardPendingUpdates } = sessionRuntime;
+  const [sessions, setSessions] = useState<SessionSummary[]>([]); const [settings, setSettings] = useState<AppSettings>(defaultSettings); const [orchestration, setOrchestration] = useState<OrchestrationCapability>();
+  const sessionIndexRequest = useRef<Promise<void> | undefined>(undefined);
   const [panelOpen, setPanelOpen] = useState(true); const [query, setQuery] = useState(""); const [connected, setConnected] = useState(false); const [error, setError] = useState<string>();
   const [activeHostId, setActiveHostId] = useState("local");
   const [activeCwd, setActiveCwd] = useState<string>();
@@ -62,10 +58,8 @@ export default function App() {
   const [relocatingSession, setRelocatingSession] = useState<SessionSummary>(); const [relocationError, setRelocationError] = useState<string>();
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>({});
-  const [loadingSessionId, setLoadingSessionId] = useState<string>();
   const [splitPane, setSplitPane] = useState<SplitPaneState>();
   const [terminalsBySession, setTerminalsBySession] = useState<Record<string, SessionTerminals>>({});
-  const pendingMessageUpdates = useRef<MessageUpdate[]>([]); const messageFrame = useRef<number | undefined>(undefined);
   const terminalSessionId = `${activeHostId}:${state.sessionId || "new-session"}`;
   const splitSessionId = splitPane ? `${splitPane.session.hostId ?? "local"}:${splitPane.session.id}` : "";
   const composerDraft = composerDrafts[terminalSessionId] ?? "";
@@ -73,7 +67,6 @@ export default function App() {
   const sessionTerminals = terminalsBySession[terminalSessionId] ?? initialTerminals(terminalSessionId);
   const activeTerminal = sessionTerminals.tabs.find((terminal) => terminal.id === sessionTerminals.activeId) ?? sessionTerminals.tabs[0];
 
-  useEffect(() => { settingsRef.current = settings; }, [settings]);
   useEffect(() => { void transport.loadCodexUsage().then(setCodexUsage).catch(() => undefined); }, [transport]);
   useEffect(() => {
     if (!codexUsage?.resetAt) return;
@@ -81,21 +74,6 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [codexUsage?.resetAt]);
 
-  const flushMessageUpdates = useCallback(() => {
-    if (messageFrame.current !== undefined) cancelAnimationFrame(messageFrame.current);
-    messageFrame.current = undefined;
-    const updates = pendingMessageUpdates.current.splice(0);
-    if (updates.length) setMessages((current) => updates.reduce((next, update) => update(next), current));
-  }, []);
-  const queueMessageUpdate = useCallback((update: MessageUpdate) => {
-    pendingMessageUpdates.current.push(update);
-    if (messageFrame.current === undefined) messageFrame.current = requestAnimationFrame(flushMessageUpdates);
-  }, [flushMessageUpdates]);
-  const discardMessageUpdates = useCallback(() => {
-    if (messageFrame.current !== undefined) cancelAnimationFrame(messageFrame.current);
-    messageFrame.current = undefined; pendingMessageUpdates.current.length = 0;
-  }, []);
-  useEffect(() => discardMessageUpdates, [discardMessageUpdates]);
 
   const syncSessionIndex = useCallback(() => {
     if (!sessionIndexRequest.current) sessionIndexRequest.current = transport.listSessions().then((nextSessions) => {
@@ -109,58 +87,21 @@ export default function App() {
   }, [transport]);
 
   const refresh = useCallback(async (_hostId?: string) => {
-    const revision = liveRevision.current;
-    void syncSessionIndex();
-    const [nextState, response, modelResponse, thinkingResponse, commandResponse, nextSettings] = await Promise.all([
-      transport.command<AgentState>({ type: "get_state" }), transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }),
-      transport.command<{ models: Model[] }>({ type: "get_available_models" }), transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }), transport.command<{ commands: SlashCommand[] }>({ type: "get_commands" }), transport.loadSettings()
-    ]);
-    if (liveRevision.current === revision) { discardMessageUpdates(); setState(nextState); setMessages(branchMessages(response.entries, response.leafId)); }
-    setModels(modelResponse.models); setCommands(commandResponse.commands.filter((command) => command.sourceInfo?.source !== "inline" && command.name !== "pi-orchestration-next")); setThinkingLevels(thinkingResponse.levels); setSettings(nextSettings);
-    return nextSettings;
-  }, [discardMessageUpdates, syncSessionIndex, transport]);
+    void syncSessionIndex(); const [, nextSettings] = await Promise.all([refreshSession(), transport.loadSettings()]); setSettings(nextSettings); return nextSettings;
+  }, [refreshSession, syncSessionIndex, transport]);
 
   const configureRuntime = useCallback((value: AppSettings) => Promise.all([
-    transport.command({ type: "set_auto_compaction", enabled: value.autoCompaction }), transport.command({ type: "set_auto_retry", enabled: value.autoRetry }),
-    transport.command({ type: "set_steering_mode", mode: value.steeringMode }), transport.command({ type: "set_follow_up_mode", mode: value.followUpMode })
+    transport.command({ type: "set_auto_compaction", enabled: value.autoCompaction }), transport.command({ type: "set_auto_retry", enabled: value.autoRetry })
   ]), [transport]);
   const resolveHomeDirectory = useCallback((hostId: string) => transport.homeDirectory(hostId), [transport]);
 
   useEffect(() => {
     let cancelled = false;
     const unsubscribe = transport.subscribe((event: RpcEvent) => {
-      if (["agent_start", "agent_end", "agent_settled", "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end"].includes(event.type)) liveRevision.current += 1;
-      if (event.type === "agent_start") setState((current) => ({ ...current, isStreaming: true }));
-      if (event.type === "agent_end" || event.type === "agent_settled") { setState((current) => ({ ...current, isStreaming: false, activity: undefined })); if (event.type === "agent_settled" && document.hidden && settingsRef.current.notifications && "Notification" in window && Notification.permission === "granted") new Notification("Pi finished", { body: "Your coding agent is ready for you." }); }
-      if (event.type === "message_start" || event.type === "message_end") {
-        if (event.type === "message_end") flushMessageUpdates();
-        let message = normalizeMessage(event.message as Record<string, unknown>);
-        if (message.role === "assistant" && event.type === "message_start") { message = { ...message, streaming: true }; activeAssistantId.current = message.id; }
-        if (message.role === "assistant" && event.type === "message_end") { message = { ...message, ...(activeAssistantId.current ? { id: activeAssistantId.current } : {}), streaming: false }; activeAssistantId.current = undefined; }
-        setMessages((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? message : item) : [...current, message]);
-        if (event.type === "message_end") window.setTimeout(() => void refresh(), 30);
-      }
-      if (event.type === "message_update") {
-        if (event.assistantMessageEvent) queueMessageUpdate((current) => {
-          let index = -1;
-          for (let candidate = current.length - 1; candidate >= 0; candidate -= 1) {
-            const message = current[candidate];
-            if (message.role === "assistant" && (message.id === activeAssistantId.current || message.streaming)) { index = candidate; break; }
-          }
-          if (index < 0) return current;
-          const next = [...current]; next[index] = applyAssistantMessageEvent(next[index], event.assistantMessageEvent); return next;
-        });
-        else if (event.message) { const message = { ...normalizeMessage(event.message as Record<string, unknown>), streaming: true }; queueMessageUpdate((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? message : item) : [...current, message]); }
-      }
-      if (event.type === "tool_execution_start") { const target = event.toolName === "call_agent" && event.args && typeof event.args === "object" ? String((event.args as { target?: unknown }).target ?? "") : ""; const message: ChatMessage = { id: String(event.toolCallId), role: "tool", toolName: target ? `${target} called` : String(event.toolName), toolStatus: "running", content: JSON.stringify(event.args ?? {}, null, 2), timestamp: Date.now() }; setMessages((current) => [...current.filter((item) => item.id !== message.id), message]); }
-      if (event.type === "tool_execution_update") queueMessageUpdate((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.partialResult), toolStatus: "running" } : item));
-      if (event.type === "tool_execution_end") { flushMessageUpdates(); setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.result), toolStatus: event.isError ? "error" : "done" } : item)); }
-      if (event.type === "queue_update") { const pending = [...((event.steering as unknown[]) ?? []), ...((event.followUp as unknown[]) ?? [])].length; setState((current) => ({ ...current, pendingMessageCount: pending })); }
+      handleEvent(event);
+      if (event.type === "message_end") window.setTimeout(() => void refresh(), 30);
       if (event.type === "terminal_output") setTerminalsBySession((current) => Object.fromEntries(Object.entries(current).map(([sessionId, session]) => [sessionId, { ...session, tabs: session.tabs.map((terminal) => terminal.id === event.terminalId ? { ...terminal, output: terminal.output + String(event.data ?? "") } : terminal) }])));
       if (event.type === "terminal_exit") setTerminalsBySession((current) => Object.fromEntries(Object.entries(current).map(([sessionId, session]) => [sessionId, { ...session, tabs: session.tabs.map((terminal) => terminal.id === event.terminalId ? { ...terminal, exited: true } : terminal) }])));
-      if (event.type === "compaction_start") setState((current) => ({ ...current, activity: "Compacting context…" }));
-      if (event.type === "compaction_end") setState((current) => ({ ...current, activity: undefined }));
-      if (event.type === "auto_retry_start") setState((current) => ({ ...current, activity: `Retrying · attempt ${event.attempt}` }));
       if (event.type === "extension_error") { const message = String(event.error ?? "An extension failed"); if (!message.startsWith(staleExtensionContext)) setNotice({ title: "Extension error", message }); }
       if (event.type === "extension_ui_request") { const request = event as unknown as ExtensionUiRequest;
         if (request.method === "notify") setNotice({ title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "Pi extension", message: request.message || "Notification" });
@@ -170,7 +111,7 @@ export default function App() {
             if (typeof payload.task !== "string" || !payload.task.trim() || typeof payload.sessionFile !== "string" || !payload.sessionFile) throw new Error("Invalid /btw branch request");
             const cwd = typeof payload.cwd === "string" && payload.cwd ? payload.cwd : ".";
             setSplitPane({
-              session: { id: `btw-${request.id}`, path: "", name: "BTW", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, updatedAt: new Date().toISOString(), preview: payload.task, messageCount: 0, hostId: activeHostIdRef.current },
+              session: { id: `btw-${request.id}`, path: "", name: "BTW", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task, messageCount: 0, hostId: activeHostIdRef.current },
               btw: { requestId: request.id, task: payload.task, forkFrom: payload.sessionFile },
             });
           } catch (reason) {
@@ -191,12 +132,11 @@ export default function App() {
       }
       if (event.type === "session_switched") void refresh();
       if (event.type === "session_info_changed") void refresh();
-      if (event.type === "thinking_level_changed" && typeof event.level === "string") setState((current) => ({ ...current, thinkingLevel: event.level as string }));
       if (event.type === "disconnected") setOrchestration(undefined);
     });
     transport.connect().then(() => refresh()).then((value) => configureRuntime(value)).then(() => { if (!cancelled) { setError(undefined); setConnected(true); } }).catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); });
     return () => { cancelled = true; unsubscribe(); void transport.disconnect(); };
-  }, [configureRuntime, flushMessageUpdates, queueMessageUpdate, refresh, transport]);
+  }, [configureRuntime, handleEvent, refresh, transport]);
 
   useEffect(() => {
     if (!connected) return;
@@ -219,23 +159,23 @@ export default function App() {
     setSplitPane(undefined);
   };
   const branch = async (message: ChatMessage) => { const index = messages.findIndex((item) => item.id === message.id); const user = messages.slice(0, index + 1).reverse().find((item) => item.role === "user" && item.entryId); if (!user) return; await transport.command({ type: "fork", entryId: user.entryId }); await refresh(); };
-  const newSession = async () => { const hostId = activeHostIdRef.current; const projectCwd = selectedProjectCwd(activeCwd); setView("chat"); closeSplitPane(); setConnected(false); setOrchestration(undefined); discardMessageUpdates(); setMessages([]); try { if (projectCwd) { await transport.newChat(projectCwd, hostId); setActiveCwd(projectCwd); } else setActiveCwd(await transport.newTemporaryChat(hostId)); const value = await refresh(hostId); await configureRuntime(value); setConnected(true); } catch (reason) { setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); } };
+  const newSession = async () => { const hostId = activeHostIdRef.current; const projectCwd = selectedProjectCwd(activeCwd); setView("chat"); closeSplitPane(); setConnected(false); setOrchestration(undefined); discardPendingUpdates(); setMessages([]); try { if (projectCwd) { await transport.newChat(projectCwd, hostId); setActiveCwd(projectCwd); } else setActiveCwd(await transport.newTemporaryChat(hostId)); const value = await refresh(hostId); await configureRuntime(value); setConnected(true); } catch (reason) { setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); } };
   const selectSession = async (session: SessionSummary) => {
     const hostId = session.hostId ?? "local"; if (session.id === state.sessionId && hostId === activeHostId) return true;
     if (splitPane?.session.id === session.id && (splitPane.session.hostId ?? "local") === hostId) closeSplitPane();
     if (session.cwdExists === false) { setRelocationError(undefined); setRelocatingSession(session); return false; }
     const previousState = state; const previousMessages = messages; const previousHostId = activeHostId; const previousCwd = activeCwd;
     const current = sessions.find((item) => item.id === state.sessionId && (item.hostId ?? "local") === activeHostId);
-    discardMessageUpdates(); setView("chat"); setOrchestration(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd); setLoadingSessionId(`${hostId}:${session.id}`); setMessages([]); setState((value) => ({ ...value, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, isStreaming: false, activity: undefined }));
+    discardPendingUpdates(); setView("chat"); setOrchestration(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd); setMessages([]); setState((value) => ({ ...value, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, isStreaming: false, activity: undefined }));
     try {
       if (hostId !== previousHostId || current?.cwd !== session.cwd) { setConnected(false); await transport.disconnect(); await transport.connect(session.cwd, session.path, hostId); setConnected(true); }
       else await transport.command({ type: "switch_session", sessionPath: session.path });
-      await refresh(hostId); setLoadingSessionId(undefined); return true;
-    } catch (reason) { setLoadingSessionId(undefined); setActiveHostId(previousHostId); setActiveCwd(previousCwd); setState(previousState); setMessages(previousMessages); setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); return false; }
+      await refresh(hostId); return true;
+    } catch (reason) { setActiveHostId(previousHostId); setActiveCwd(previousCwd); setState(previousState); setMessages(previousMessages); setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); return false; }
   };
   const setModel = async (model: Model) => { await transport.command({ type: "set_model", provider: model.provider, modelId: model.id }); setState((current) => ({ ...current, model })); };
   const setThinking = async (level: string) => { await transport.command({ type: "set_thinking_level", level }); setState((current) => ({ ...current, thinkingLevel: level })); };
-  const saveSettings = async (value: AppSettings, nextConfig?: OrchestrationConfig) => { if (value.notifications && "Notification" in window && Notification.permission === "default") await Notification.requestPermission(); if (nextConfig) await transport.command({ type: "prompt", message: `/pi-orchestration-config ${encodeOrchestrationValue(nextConfig)}` }); await transport.saveSettings(value); await configureRuntime(value); setSettings(value); if (activeHostId !== "local" && !value.hosts.some((host) => host.id === activeHostId)) setActiveHostId("local"); await refresh(); };
+  const saveSettings = async (value: AppSettings, nextConfig?: OrchestrationConfig) => { if (nextConfig) await transport.command({ type: "prompt", message: `/pi-orchestration-config ${encodeOrchestrationValue(nextConfig)}` }); await transport.saveSettings(value); await configureRuntime(value); setSettings(value); if (activeHostId !== "local" && !value.hosts.some((host) => host.id === activeHostId)) setActiveHostId("local"); await refresh(); };
   const setAgent = async (name: string) => { await transport.command({ type: "prompt", message: `/pi-orchestration-use ${encodeOrchestrationValue(name)}` }); };
   const openProject = async (cwd: string, hostId: string) => { setProjectOpen(false); closeSplitPane(); try { setConnected(false); await transport.openProject(cwd, hostId); setActiveHostId(hostId); setActiveCwd(cwd); const value = await refresh(hostId); await configureRuntime(value); setConnected(true); setView("chat"); } catch (reason) { setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); } };
   const chooseChatProject = () => setProjectOpen(true);

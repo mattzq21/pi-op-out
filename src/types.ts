@@ -1,7 +1,7 @@
 export type Role = "user" | "assistant" | "tool" | "system";
 export type ContentPart = { type: "text"; text: string } | { type: "thinking"; thinking: string } | { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown>; partialArgs?: string };
 export interface ChatMessage { id: string; entryId?: string; role: Role; content: string | ContentPart[]; customType?: string; timestamp?: number; model?: string; streaming?: boolean; stopReason?: "stop" | "length" | "toolUse" | "error" | "aborted"; errorMessage?: string; toolName?: string; toolStatus?: "running" | "done" | "error"; }
-export interface SessionSummary { id: string; path: string; name: string; project: string; cwd: string; cwdExists?: boolean; updatedAt: string; preview: string; messageCount: number; starred?: boolean; hostId?: string; hostName?: string; }
+export interface SessionSummary { id: string; path: string; name: string; project: string; cwd: string; cwdExists?: boolean; preview: string; messageCount: number; hostId?: string; hostName?: string; }
 export interface AgentState { model: Model | null; thinkingLevel: string; isStreaming: boolean; sessionFile?: string; sessionId: string; sessionName?: string; messageCount: number; pendingMessageCount: number; activity?: string; }
 export interface ExtensionUiRequest { type: "extension_ui_request"; id: string; method: "select" | "confirm" | "input" | "editor" | "notify" | "setStatus" | "setWidget" | "setTitle" | "set_editor_text"; title?: string; message?: string; error?: string; options?: string[]; placeholder?: string; prefill?: string; notifyType?: "info" | "warning" | "error"; statusKey?: string; statusText?: string; widgetKey?: string; widgetLines?: string[]; widgetPlacement?: "aboveEditor" | "belowEditor"; text?: string; }
 export interface Model { provider: string; id: string; name?: string; reasoning?: boolean; contextWindow?: number; }
@@ -12,19 +12,18 @@ export interface OrchestrationCapability { version: number; active: string; curr
 export interface RpcCommand { id?: string; type: string; [key: string]: unknown; }
 export interface RpcEvent { type: string; [key: string]: unknown; }
 export interface ToolConfig { name: string; description: string; enabled: boolean; builtin?: boolean; }
-export interface SkillConfig { name: string; path: string; description: string; enabled: boolean; scope: "global" | "project"; userInvokedOnly?: boolean; }
+export interface SkillConfig { name: string; path: string; description: string; enabled: boolean; userInvokedOnly?: boolean; }
 export interface McpServer { id: string; name: string; transport?: "stdio" | "http"; command: string; args: string; url?: string; headers?: string; enabled: boolean; status?: "connected" | "stopped" | "error"; }
 export interface RemoteHost { id: string; name: string; target: string; piPath: string; }
 export interface DirectoryListing { path: string; parent?: string; directories: string[]; }
-export interface SlashCommand { name: string; description?: string; source: "extension" | "prompt" | "skill"; path?: string; sourceInfo?: { path?: string; source?: string }; }
+export interface SlashCommand { name: string; description?: string; source: "extension" | "prompt" | "skill"; sourceInfo?: { source?: string }; }
 export interface ImageAttachment { type: "image"; data: string; mimeType: string; name?: string; }
 export interface SavedTerminalState { activeId: string; tabs: Array<{ id: string; output: string; started: boolean; exited?: boolean }> }
-export interface AppSettings { defaultModel: string; defaultThinking: string; autoCompaction: boolean; autoRetry: boolean; notifications: boolean; steeringMode: "all" | "one-at-a-time"; followUpMode: "all" | "one-at-a-time"; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; mcpServers: McpServer[]; hosts: RemoteHost[]; }
+export interface AppSettings { defaultModel: string; defaultThinking: string; autoCompaction: boolean; autoRetry: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; mcpServers: McpServer[]; hosts: RemoteHost[]; }
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
 export interface SessionEntries { entries: Array<Record<string, unknown>>; leafId: string | null; }
 
 export interface PiTransport {
-  mode: "native" | "browser";
   connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string): Promise<void>;
   disconnect(): Promise<void>;
   command<T = unknown>(command: RpcCommand): Promise<T>;

@@ -4,7 +4,6 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type { AppSettings, CodexUsage, DirectoryListing, PiTransport, RpcCommand, RpcEvent, SavedTerminalState, SessionEntries, SessionSummary } from "../types";
 
 export class NativeTransport implements PiTransport {
-  mode = "native" as const;
   private readonly runtimeId = globalThis.crypto?.randomUUID?.() ?? `runtime-${Date.now()}-${Math.random()}`;
   private listeners = new Set<(event: RpcEvent) => void>();
   private unlisten?: UnlistenFn;

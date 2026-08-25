@@ -3,8 +3,7 @@ import { defaultKeybindings } from "./lib/keybindings";
 
 export const defaultSettings: AppSettings = {
   defaultModel: "openrouter/deepseek/deepseek-v4-flash", defaultThinking: "high",
-  autoCompaction: true, autoRetry: true, notifications: true,
-  steeringMode: "one-at-a-time", followUpMode: "one-at-a-time",
+  autoCompaction: true, autoRetry: true,
   keybindings: { ...defaultKeybindings },
   tools: [
     { name: "read", description: "Read files from the active project", enabled: true, builtin: true },
