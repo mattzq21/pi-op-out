@@ -43,6 +43,7 @@ export interface PiTransport {
   deleteSession(sessionPath: string, hostId?: string): Promise<void>;
   relocateSession(sessionPath: string, cwd: string, hostId?: string): Promise<void>;
   openProjectDirectory(cwd: string, hostId?: string): Promise<void>;
+  gitBranch(cwd: string, hostId?: string): Promise<string | null>;
   loadSettings(): Promise<AppSettings>;
   loadCodexUsage(): Promise<CodexUsage>;
   saveSettings(settings: AppSettings): Promise<void>;

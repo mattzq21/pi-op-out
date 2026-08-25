@@ -438,6 +438,20 @@ fn local_git_diff(cwd: &str, base_tree: &str) -> Result<Option<String>, String> 
     Ok((!patch.trim().is_empty()).then_some(patch))
 }
 
+#[tauri::command(async)]
+fn git_branch(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<Option<String>, String> {
+    let host_id = host_id.unwrap_or_else(|| "local".into());
+    let output = if host_id == "local" {
+        Command::new("git").args(["-C", &cwd, "rev-parse", "--abbrev-ref", "HEAD"]).output().map_err(|error| format!("Could not read Git branch: {error}"))?
+    } else {
+        let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+        ssh(host).arg(format!("git -C {} rev-parse --abbrev-ref HEAD 2>/dev/null", shell_quote(&cwd))).output().map_err(|error| format!("Could not read Git branch on {}: {error}", host.name))?
+    };
+    if !output.status.success() { return Ok(None); }
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok((!branch.is_empty()).then_some(branch))
+}
+
 fn remote_git_tree(host: &RemoteHost, cwd: &str) -> Result<Option<String>, String> {
     let directory = shell_quote(cwd);
     let script = format!("cd {directory} || exit 2; root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 3; [ \"$(pwd -P)\" = \"$(cd \"$root\" && pwd -P)\" ] || exit 4; idx=$(mktemp \"${{TMPDIR:-/tmp}}/pi-desktop-diff.XXXXXX\") || exit 5; rm -f \"$idx\"; trap 'rm -f \"$idx\"' EXIT; export GIT_INDEX_FILE=\"$idx\"; if git rev-parse --verify HEAD >/dev/null 2>&1; then git read-tree HEAD; else git read-tree --empty; fi && git add -A -- . && git write-tree");
@@ -1049,5 +1063,5 @@ fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), Str
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let broker = BrokerRuntime::default();
-    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(broker.clone()).setup(move |app| start_session_broker(app.handle().clone(), broker.clone()).map_err(Into::into)).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_entries, home_directory, create_temporary_chat, list_directories, capture_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(broker.clone()).setup(move |app| start_session_broker(app.handle().clone(), broker.clone()).map_err(Into::into)).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_entries, home_directory, create_temporary_chat, list_directories, git_branch, capture_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }
