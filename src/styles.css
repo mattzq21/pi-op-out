@@ -7,7 +7,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 .app { height: 100vh; display: flex; background: var(--paper); }
 .icon-rail { width: var(--rail-width); flex: 0 0 var(--rail-width); background: #292824; color: #bdb9b0; display: flex; flex-direction: column; align-items: center; padding: 13px 0 12px; z-index: 3; }
-.rail-branch { width: calc(100% - 28px); min-width: 0; height: 30px; margin: 0 14px 4px; padding: 0 8px; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--accent); font-size: 15px; }.rail-branch svg { flex: 0 0 auto; }.rail-branch span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-branch { width: calc(100% - 28px); min-width: 0; height: 34px; margin: 0 14px 4px; padding: 0 8px; display: flex; align-items: center; justify-content: center; gap: 7px; color: var(--accent); font-size: 18px; }.rail-branch svg { width: 17px; height: 17px; flex: 0 0 auto; }.rail-branch span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .icon-rail nav { width: 100%; display: flex; flex-direction: row; justify-content: center; align-items: center; gap: 5px; }
 .icon-button { border: 0; background: transparent; width: 32px; height: 32px; padding: 0; border-radius: 8px; display: inline-grid; place-items: center; color: var(--muted); transition: .15s ease; }
 .icon-button:hover { background: #0000000b; color: var(--ink); }
