@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { AgentState, ChatMessage, Model, PiTransport, RpcEvent, SlashCommand } from "../types";
 import { applyAssistantMessageEvent, branchMessages, normalizeMessage, type PiEntry } from "./messages";
+import { contextUsageAfterCompaction } from "./contextUsage";
 
 type MessageUpdate = (messages: ChatMessage[]) => ChatMessage[];
 const emptyState: AgentState = { model: null, thinkingLevel: "off", isStreaming: false, sessionId: "", messageCount: 0, pendingMessageCount: 0 };
@@ -58,7 +59,7 @@ export function useChatSession(transport: PiTransport, initialState: AgentState 
     if (event.type === "tool_execution_end") { flush(); setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.result), toolStatus: event.isError ? "error" : "done" } : item)); }
     if (event.type === "queue_update") setState((current) => ({ ...current, pendingMessageCount: [...((event.steering as unknown[]) ?? []), ...((event.followUp as unknown[]) ?? [])].length }));
     if (event.type === "compaction_start") setState((current) => ({ ...current, activity: "Compacting context…" }));
-    if (event.type === "compaction_end") setState((current) => ({ ...current, activity: undefined, contextUsage: current.contextUsage ? { ...current.contextUsage, tokens: null, percent: null } : undefined }));
+    if (event.type === "compaction_end") setState((current) => ({ ...current, activity: undefined, contextUsage: contextUsageAfterCompaction(current.contextUsage, event) }));
     if (event.type === "auto_retry_start") setState((current) => ({ ...current, activity: `Retrying · attempt ${event.attempt}` }));
     if (event.type === "thinking_level_changed" && typeof event.level === "string") setState((current) => ({ ...current, thinkingLevel: event.level as string }));
   }, [flush, queue]);

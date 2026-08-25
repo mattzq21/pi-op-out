@@ -24,7 +24,7 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
           else onFailure?.("The /btw conversation finished without an answer");
         }).catch((reason) => onFailure?.(reason instanceof Error ? reason.message : String(reason)));
       }
-      if (event.type === "message_end" || event.type === "compaction_end") window.setTimeout(() => void refresh(), 30);
+      if (event.type === "message_end") window.setTimeout(() => void refresh(), 30);
       if (event.type === "disconnected" && !closing) setError("Pi disconnected before responding");
     });
     transport.connect(session.cwd, forkFrom ? undefined : session.path, session.hostId, forkFrom).then(() => refresh()).then(() => Promise.all([
