@@ -228,6 +228,14 @@ fn prepare_session_broker(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+fn prepare_btw_extension() -> Result<PathBuf, String> {
+    let dir = home_dir()?.join(".pi/agent/extensions");
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let path = dir.join("pi-desktop-btw.ts");
+    fs::write(&path, include_str!("../resources/btw.ts")).map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
 fn default_settings() -> AppSettings {
     AppSettings {
         default_model: String::new(), default_thinking: "high".into(), auto_compaction: true, auto_retry: true, notifications: true, steering_mode: default_queue_mode(), follow_up_mode: default_queue_mode(), keybindings: default_keybindings(),
@@ -462,15 +470,16 @@ fn remote_broker_command(host: &RemoteHost, local_port: u16, remote_port: u16) -
     command
 }
 
-fn stage_remote_broker(host: &RemoteHost) -> Result<(), String> {
-    let body = shell_quote(include_str!("../resources/session-broker.ts"));
-    let remote = format!("mkdir -p \"$HOME/.pi-desktop\" && printf %s {body} > \"$HOME/.pi-desktop/session-broker.ts\"");
-    let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not install the session broker on {}: {error}", host.name))?;
+fn stage_remote_extensions(host: &RemoteHost) -> Result<(), String> {
+    let broker = shell_quote(include_str!("../resources/session-broker.ts"));
+    let btw = shell_quote(include_str!("../resources/btw.ts"));
+    let remote = format!("mkdir -p \"$HOME/.pi-desktop\" \"$HOME/.pi/agent/extensions\" && printf %s {broker} > \"$HOME/.pi-desktop/session-broker.ts\" && printf %s {btw} > \"$HOME/.pi/agent/extensions/pi-desktop-btw.ts\"");
+    let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not install Pi Desktop extensions on {}: {error}", host.name))?;
     output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
 }
 
 #[tauri::command(async)]
-fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, host_id: Option<String>) -> Result<(), String> {
+fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, host_id: Option<String>) -> Result<(), String> {
     if runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.contains_key(&runtime_id) { return Ok(()); }
     let settings = load_app_settings(app.clone()).unwrap_or_else(|_| default_settings());
     let host_id = host_id.unwrap_or_else(|| "local".into());
@@ -480,9 +489,11 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
         let working_dir = match cwd.as_deref() { Some("~") => home_dir()?, Some(path) => PathBuf::from(path), None => std::env::current_dir().map_err(|error| error.to_string())? };
         let (mcp_extension, mcp_config) = prepare_mcp_bridge(&app, &settings)?;
         let broker_extension = prepare_session_broker(&app)?;
-        let mut command = Command::new(pi_executable());
-        command.arg("--mode").arg("rpc").arg("--approve").arg("--no-skills").current_dir(&working_dir).arg("--extension").arg(mcp_extension).arg("--extension").arg(broker_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config).env("PI_DESKTOP_BROKER_URL", format!("http://127.0.0.1:{broker_port}")).env("PI_DESKTOP_BROKER_TOKEN", &broker_token);
-        if let Some(path) = &session_path { command.arg("--session").arg(path); } else if let Some(id) = &session_id { command.arg("--session-id").arg(id); }
+        let btw_extension = prepare_btw_extension()?;
+        let pi_path = pi_executable();
+        let mut command = Command::new(&pi_path);
+        command.arg("--mode").arg("rpc").arg("--approve").arg("--no-skills").current_dir(&working_dir).arg("--extension").arg(mcp_extension).arg("--extension").arg(broker_extension).arg("--extension").arg(btw_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config).env("PI_DESKTOP_BROKER_URL", format!("http://127.0.0.1:{broker_port}")).env("PI_DESKTOP_BROKER_TOKEN", &broker_token).env("PI_DESKTOP_BTW", "1").env("PI_DESKTOP_PI_EXECUTABLE", &pi_path);
+        if let Some(path) = &fork_path { command.arg("--fork").arg(path); } else if let Some(path) = &session_path { command.arg("--session").arg(path); } else if let Some(id) = &session_id { command.arg("--session-id").arg(id); }
         if enabled_tools.is_empty() { command.arg("--no-tools"); } else { command.arg("--tools").arg(enabled_tools.join(",")); }
         for skill in settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)) { if let Some(path) = skill.get("path").and_then(Value::as_str) { let expanded = path.strip_prefix("~/").and_then(|rest| home_dir().ok().map(|home| home.join(rest))).unwrap_or_else(|| PathBuf::from(path)); command.arg("--skill").arg(expanded); } }
         if !settings.default_model.trim().is_empty() { command.arg("--model").arg(settings.default_model.trim()); }
@@ -490,15 +501,16 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
         command
     } else {
         let host = remote_host(&settings, &host_id)?;
-        stage_remote_broker(host)?;
+        stage_remote_extensions(host)?;
         let remote_port = remote_broker_port();
-        let mut arguments = vec![remote_pi_path(&host.pi_path), "--mode".into(), "rpc".into(), "--approve".into(), "--extension".into(), "\"$HOME/.pi-desktop/session-broker.ts\"".into()];
-        if let Some(path) = &session_path { arguments.extend(["--session".into(), shell_quote(path)]); } else if let Some(id) = &session_id { arguments.extend(["--session-id".into(), shell_quote(id)]); }
+        let remote_pi = remote_pi_path(&host.pi_path);
+        let mut arguments = vec![remote_pi.clone(), "--mode".into(), "rpc".into(), "--approve".into(), "--extension".into(), "\"$HOME/.pi-desktop/session-broker.ts\"".into(), "--extension".into(), "\"$HOME/.pi/agent/extensions/pi-desktop-btw.ts\"".into()];
+        if let Some(path) = &fork_path { arguments.extend(["--fork".into(), shell_quote(path)]); } else if let Some(path) = &session_path { arguments.extend(["--session".into(), shell_quote(path)]); } else if let Some(id) = &session_id { arguments.extend(["--session-id".into(), shell_quote(id)]); }
         if enabled_tools.is_empty() { arguments.push("--no-tools".into()); } else { arguments.extend(["--tools".into(), shell_quote(&enabled_tools.join(","))]); }
         if !settings.default_model.trim().is_empty() { arguments.extend(["--model".into(), shell_quote(settings.default_model.trim())]); }
         if !settings.default_thinking.trim().is_empty() { arguments.extend(["--thinking".into(), shell_quote(settings.default_thinking.trim())]); }
         let directory = remote_directory_path(cwd.as_deref());
-        let remote = format!("cd {directory} && PI_DESKTOP_BROKER_URL={} PI_DESKTOP_BROKER_TOKEN={} exec {}", shell_quote(&format!("http://127.0.0.1:{remote_port}")), shell_quote(&broker_token), arguments.join(" "));
+        let remote = format!("cd {directory} && PI_DESKTOP_BROKER_URL={} PI_DESKTOP_BROKER_TOKEN={} PI_DESKTOP_BTW=1 PI_DESKTOP_PI_EXECUTABLE={} exec {}", shell_quote(&format!("http://127.0.0.1:{remote_port}")), shell_quote(&broker_token), remote_pi, arguments.join(" "));
         let mut command = remote_broker_command(host, broker_port, remote_port); command.arg(remote); command
     };
     command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -819,7 +831,7 @@ fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &Ses
         command
     } else {
         let host = remote_host(&settings, &session.host_id)?;
-        stage_remote_broker(host)?;
+        stage_remote_extensions(host)?;
         let remote_port = remote_broker_port();
         let mut arguments = vec![remote_pi_path(&host.pi_path), "--print".into(), "--approve".into(), "--session".into(), shell_quote(&session.path), "--extension".into(), "\"$HOME/.pi-desktop/session-broker.ts\"".into()];
         if tools.is_empty() { arguments.push("--no-tools".into()); } else { arguments.extend(["--tools".into(), shell_quote(&tools.join(","))]); }

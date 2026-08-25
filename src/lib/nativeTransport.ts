@@ -15,7 +15,7 @@ export class NativeTransport implements PiTransport {
   private sessionId?: string;
   private hostId = "local";
   private runProcessCommand<T>(command: () => Promise<T>) { const result = this.processLifecycle.then(command, command); this.processLifecycle = result.then(() => undefined, () => undefined); return result; }
-  async connect(cwd?: string, sessionPath?: string, hostId?: string) {
+  async connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string) {
     if (cwd !== undefined) this.cwd = cwd; if (sessionPath !== undefined) { this.sessionPath = sessionPath; this.sessionId = undefined; } if (hostId !== undefined) this.hostId = hostId;
     if (this.cwd === undefined && this.sessionPath === undefined) { const chat = await invoke<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId: this.hostId }); this.cwd = chat.cwd; this.sessionId = chat.sessionId; }
     const version = ++this.connectionVersion;
@@ -27,7 +27,7 @@ export class NativeTransport implements PiTransport {
     });
     if (version !== this.connectionVersion) { unlisten(); return; }
     this.unlisten = unlisten;
-    await this.runProcessCommand(() => invoke("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId }));
+    await this.runProcessCommand(() => invoke("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, forkPath, hostId: this.hostId }));
   }
   async disconnect() { ++this.connectionVersion; this.unlisten?.(); this.unlisten = undefined; await this.runProcessCommand(() => invoke("stop_pi", { runtimeId: this.runtimeId })); }
   async command<T>(command: RpcCommand) { const result = await invoke<T>("pi_command", { runtimeId: this.runtimeId, command }); if (command.type === "get_state") { this.sessionPath = (result as { sessionFile?: string }).sessionFile; this.sessionId = undefined; } return result; }

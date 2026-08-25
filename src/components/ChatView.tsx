@@ -22,6 +22,7 @@ export function ChatView(props: Props) {
     if (!composer || !chatShell) return;
     const updateHeight = () => chatShell.style.setProperty("--composer-height", `${composer.getBoundingClientRect().height}px`);
     updateHeight();
+    if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(updateHeight);
     observer.observe(composer);
     return () => observer.disconnect();
@@ -37,7 +38,7 @@ export function ChatView(props: Props) {
 
 function groupTurns(messages: ChatMessage[]) {
   return messages.reduce<ChatMessage[][]>((turns, message) => {
-    if (message.role === "user" || turns.length === 0) turns.push([]);
+    if (message.role === "user" || message.customType === "pi-desktop-btw" || turns.length === 0) turns.push([]);
     turns[turns.length - 1].push(message);
     return turns;
   }, []);

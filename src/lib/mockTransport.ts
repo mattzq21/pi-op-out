@@ -31,7 +31,7 @@ export class MockTransport implements PiTransport {
   private state: AgentState = { model: { provider: "openrouter", id: "deepseek/deepseek-v4-flash", name: "DeepSeek V4 Flash", reasoning: true, contextWindow: 128000 }, thinkingLevel: "high", isStreaming: false, sessionId: "pi-ui", sessionName: "Design desktop shell", messageCount: starter.length, pendingMessageCount: 0 };
   private settings = structuredClone(defaultSettings);
   private terminals = new Set<string>();
-  async connect(_cwd?: string, sessionPath?: string) { if (sessionPath) await this.command({ type: "switch_session", sessionPath }); this.emit({ type: "connected" }); }
+  async connect(_cwd?: string, sessionPath?: string, _hostId?: string, forkPath?: string) { if (forkPath) { await this.command({ type: "switch_session", sessionPath: forkPath }); const leaf = this.messages.at(-1)?.entryId; if (leaf) await this.command({ type: "fork", entryId: leaf }); } else if (sessionPath) await this.command({ type: "switch_session", sessionPath }); this.emit({ type: "connected" }); }
   async disconnect() {}
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   private emit(event: RpcEvent) { this.listeners.forEach((listener) => listener(event)); }

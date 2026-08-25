@@ -1,10 +1,12 @@
 import type { ChatMessage, ContentPart } from "../types";
 
-export type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number } };
+export type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number }; customType?: string; content?: ChatMessage["content"]; display?: boolean; timestamp?: string };
 
 export function normalizeMessage(message: Record<string, unknown>, entryId?: string): ChatMessage {
-  const stamp = Number(message.timestamp || Date.now());
-  return { ...(message as unknown as ChatMessage), id: entryId || `live-${message.role}-${stamp}`, entryId, role: (message.role === "toolResult" ? "tool" : message.role) as ChatMessage["role"], toolStatus: message.role === "toolResult" ? (message.isError ? "error" : "done") : undefined, timestamp: stamp };
+  const numericStamp = Number(message.timestamp || Date.now());
+  const stamp = Number.isFinite(numericStamp) ? numericStamp : Date.parse(String(message.timestamp)) || Date.now();
+  const isBtw = message.role === "custom" && message.customType === "pi-desktop-btw";
+  return { ...(message as unknown as ChatMessage), id: entryId || `live-${message.role}-${stamp}`, entryId, role: (message.role === "toolResult" ? "tool" : isBtw ? "assistant" : message.role) as ChatMessage["role"], toolStatus: message.role === "toolResult" ? (message.isError ? "error" : "done") : undefined, timestamp: stamp };
 }
 
 export function applyAssistantMessageEvent(message: ChatMessage, value: unknown): ChatMessage {
@@ -30,5 +32,9 @@ export function applyAssistantMessageEvent(message: ChatMessage, value: unknown)
 export function branchMessages(entries: PiEntry[], leafId: string | null): ChatMessage[] {
   const byId = new Map(entries.map((entry) => [entry.id, entry])); const branch: PiEntry[] = []; let cursor = leafId;
   while (cursor) { const entry = byId.get(cursor); if (!entry) break; branch.unshift(entry); cursor = entry.parentId; }
-  return branch.filter((entry) => entry.type === "message" && entry.message).map((entry) => normalizeMessage(entry.message as unknown as Record<string, unknown>, entry.id));
+  return branch.flatMap((entry) => {
+    if (entry.type === "message" && entry.message) return [normalizeMessage(entry.message as unknown as Record<string, unknown>, entry.id)];
+    if (entry.type === "custom_message" && entry.customType === "pi-desktop-btw" && entry.display !== false) return [normalizeMessage({ role: "custom", customType: entry.customType, content: entry.content ?? "", timestamp: entry.timestamp ?? Date.now() }, entry.id)];
+    return [];
+  });
 }
