@@ -215,8 +215,8 @@ export default function App() {
       try {
         await selectedTransport.connect(); const result = await selectedTransport.command<{ path: string }>({ type: "export_html" });
         try { await selectedTransport.openExportedHtml(result.path, session.cwd, session.hostId); }
-        catch (reason) { setNotice({ title: "Conversation exported, but could not be opened", message: reason instanceof Error ? reason.message : String(reason) }); }
-      } catch (reason) { setNotice({ title: "Could not export conversation", message: reason instanceof Error ? reason.message : String(reason) }); }
+        catch (reason) { setNotice({ title: "Could not open logs in browser", message: reason instanceof Error ? reason.message : String(reason) }); }
+      } catch (reason) { setNotice({ title: "Could not prepare conversation logs", message: reason instanceof Error ? reason.message : String(reason) }); }
     }
   };
   const appendTerminalOutput = (terminalId: string, data: string) => setTerminalsBySession((current) => Object.fromEntries(Object.entries(current).map(([sessionId, session]) => [sessionId, { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, output: terminal.output + data } : terminal) }])));
