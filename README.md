@@ -4,7 +4,7 @@ A Tauri-only native interface for the Pi coding agent. It is not a standalone br
 
 ## What is included
 
-- Streaming chat with Markdown, thinking content, per-response cache hit rates, tool progress, abort, retry, steering, follow-ups, and queued-message state
+- Streaming chat with Markdown, thinking content, per-response and session-wide cache hit rates, tool progress, abort, retry, steering, follow-ups, and queued-message state
 - Project-grouped conversation history, search, switching, rename, clone, HTML export, branch creation, archiving, and split panes
 - Runtime model and thinking-level controls, slash-command discovery, text/image attachments, and direct project shell execution
 - Pi extension UI support for prompts, confirms, selects, editors, notifications, status lines, widgets, titles, and editor text

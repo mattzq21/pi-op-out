@@ -2,6 +2,13 @@ import type { ChatMessage, ContentPart } from "../types";
 
 export type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number }; customType?: string; content?: ChatMessage["content"]; display?: boolean; timestamp?: string };
 
+export function cacheHitStats(usage?: { input: number; cacheRead: number }) {
+  if (!usage) return undefined;
+  const promptTokens = usage.input + usage.cacheRead;
+  if (promptTokens <= 0) return undefined;
+  return { rate: Math.round(usage.cacheRead / promptTokens * 100), low: usage.cacheRead < Math.max(promptTokens * .5, 1000), cachedTokens: usage.cacheRead, promptTokens };
+}
+
 export function normalizeMessage(message: Record<string, unknown>, entryId?: string): ChatMessage {
   const numericStamp = Number(message.timestamp || Date.now());
   const stamp = Number.isFinite(numericStamp) ? numericStamp : Date.parse(String(message.timestamp)) || Date.now();

@@ -4,6 +4,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage } from "../types";
 import { textOf, thinkingOf } from "../lib/content";
+import { cacheHitStats } from "../lib/messages";
 import { IconButton } from "./IconButton";
 
 interface Props { message: ChatMessage; expanded?: boolean; toolCount?: number; onBranch: (message: ChatMessage) => void; onRetry?: () => void; }
@@ -35,9 +36,7 @@ export function Message({ message, expanded = false, toolCount = 1, onBranch, on
   if (message.role === "user") { const { skills, text } = userMessageParts(textOf(message.content)); return <article className="message user-message"><div className="message-body">{skills.map((skill) => <span className="skill-reference" key={skill}>${skill}</span>)}{text && <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>}</div></article>; }
   const output = textOf(message.content);
   const thinking = thinkingOf(message.content);
-  const promptTokens = message.usage ? message.usage.input + message.usage.cacheRead : 0;
-  const cacheRate = promptTokens > 0 ? Math.round(message.usage!.cacheRead / promptTokens * 100) : undefined;
-  const lowCache = message.usage && promptTokens > 0 ? message.usage.cacheRead < Math.max(promptTokens * .5, 1000) : false;
+  const cache = cacheHitStats(message.usage);
   const failure = message.stopReason === "aborted" ? (message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
   const copy = async () => { await navigator.clipboard?.writeText(textOf(message.content)); setCopied(true); window.setTimeout(() => setCopied(false), 1400); };
   return <article className={`message assistant-message ${thinking ? "reasoning-message" : ""}`}>
@@ -49,7 +48,7 @@ export function Message({ message, expanded = false, toolCount = 1, onBranch, on
       {!message.streaming && output.trim().length > 0 && <div className="message-actions">
         <IconButton label="Copy response" onClick={copy}>{copied ? <Check size={14} /> : <Copy size={14} />}</IconButton>
         <button className="branch-button" aria-label="Branch from here" title="Branch from here" onClick={() => onBranch(message)}><GitBranch size={14} /></button>
-        {cacheRate !== undefined && <span className={`cache-hit-rate${lowCache ? " low" : ""}`} title={`${message.usage!.cacheRead.toLocaleString()} of ${promptTokens.toLocaleString()} prompt tokens read from cache`}>Cache {cacheRate}%</span>}
+        {cache && <span className={`cache-hit-rate${cache.low ? " low" : ""}`} title={`${cache.cachedTokens.toLocaleString()} of ${cache.promptTokens.toLocaleString()} prompt tokens read from cache`}>Cache {cache.rate}%</span>}
       </div>}
     </div>
   </article>;
