@@ -60,7 +60,7 @@ This is the complete user-facing and architectural feature set carried over from
 ## Development
 
 - The Tauri/Vite development server uses port `1421`, avoiding the original branch's port `1420`.
-- Pi Desktop is native-only: both the primary chat and split panes instantiate the Tauri transport directly.
+- Pi Desktop is Tauri-only and has no standalone browser runtime; both the primary chat and split panes instantiate the native Tauri transport directly.
 - Primary and split chats share one session runtime for snapshots, frame-batched streaming deltas, tool events, queue state, and model metadata.
 - Local and remote interactive/broker Pi launches share one backend command builder.
 - Generated Tauri schemas under `src-tauri/gen/` are not tracked and should be regenerated when needed.

@@ -1,6 +1,6 @@
 # Pi Desktop
 
-A native Tauri interface for the Pi coding agent. The desktop app controls persistent local or SSH-hosted `pi --mode rpc` processes.
+A Tauri-only native interface for the Pi coding agent. It is not a standalone browser application. The desktop app controls persistent local or SSH-hosted `pi --mode rpc` processes.
 
 ## What is included
 
@@ -23,6 +23,8 @@ npm run tauri dev
 The native launcher also checks `~/.local/bin/pi`, `~/.npm-global/bin/pi`, and `~/.bun/bin/pi`. Set `PI_DESKTOP_PI_PATH` to use another executable.
 
 Authenticate Pi before starting the desktop app with Pi's normal `/login` flow or provider environment variables. Credentials remain in Pi's own auth store and are never copied into this app's settings.
+
+`npm run dev` only provides the frontend development server consumed by `tauri dev`; opening that server directly in a browser is unsupported.
 
 Saving native settings restarts the managed Pi process while preserving the active project and session. Enabled tools, skills, default model/thinking level, and MCP configuration are applied at startup.
 
