@@ -3,13 +3,13 @@ import { Archive, ChevronDown, Columns2, CopyPlus, FileDown, FolderOpen, Pencil,
 import type { SessionSummary } from "../types";
 
 export type SessionAction = "split" | "rename" | "clone" | "export" | "open-directory" | "archive";
-interface Props { sessions: SessionSummary[]; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; }
+interface Props { sessions: SessionSummary[]; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; }
 
 const actions = [
   ["split", Columns2, "Split pane"], ["rename", Pencil, "Rename conversation"], ["clone", CopyPlus, "Clone conversation"], ["export", FileDown, "Export to HTML"], ["open-directory", FolderOpen, "Open project directory"]
 ] as const;
 
-export function SessionPanel({ sessions, activeId, activeHostId = "local", runningSessions = new Set(), query, onQuery, onSelect, onAction }: Props) {
+export function SessionPanel({ sessions, activeId, activeHostId = "local", runningSessions = new Set(), unseenSessions = new Set(), query, onQuery, onSelect, onAction }: Props) {
   const [menu, setMenu] = useState<{ session: SessionSummary; x: number; y: number }>();
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set());
   const activeProject = sessions.find((session) => session.id === activeId && (session.hostId ?? "local") === activeHostId)?.project;
@@ -31,7 +31,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
     <div className="session-scroll">
       {groups.map(([projectKey, projectSessions]) => { const project = projectSessions[0].project; const hostId = projectSessions[0].hostId ?? "local"; const label = hostId === "local" ? project : `${projectSessions[0].hostName ?? hostId} / ${project}`; const collapsed = !query && collapsedProjects.has(projectKey); const groupId = `project-${projectKey.replace(/[^a-z0-9_-]/gi, "-")}`; return <section className="project" key={projectKey}>
         <button className="project-label" aria-expanded={!collapsed} aria-controls={groupId} onClick={() => setCollapsedProjects((current) => { const next = new Set(current); if (next.has(projectKey)) next.delete(projectKey); else next.add(projectKey); return next; })}><ChevronDown className={collapsed ? "collapsed" : ""} size={13} /><span className={project === activeProject && hostId === activeHostId ? "active" : undefined}>{label}</span></button>
-        <div id={groupId} hidden={collapsed}>{projectSessions?.map((session) => { const key = `${session.hostId ?? "local"}:${session.id}`; return <div key={key} className={`session-item ${activeId === session.id && (session.hostId ?? "local") === activeHostId ? "active" : ""} ${runningSessions.has(key) ? "running" : ""}`} onContextMenu={(event) => { event.preventDefault(); setMenu({ session, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190) }); }}>
+        <div id={groupId} hidden={collapsed}>{projectSessions?.map((session) => { const key = `${session.hostId ?? "local"}:${session.id}`; return <div key={key} className={`session-item ${activeId === session.id && (session.hostId ?? "local") === activeHostId ? "active" : ""} ${runningSessions.has(key) ? "running" : unseenSessions.has(key) ? "unseen" : ""}`} onContextMenu={(event) => { event.preventDefault(); setMenu({ session, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190) }); }}>
           <button className="session-main" onClick={() => onSelect(session)}><span className="session-copy"><strong>{session.name}</strong><span>{session.preview}</span></span></button>
           <button className="session-archive" aria-label="Archive conversation" title={`Archive ${session.name}`} onClick={() => onAction(session, "archive")}><Archive size={14} /></button>
         </div>; })}</div>
