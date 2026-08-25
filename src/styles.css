@@ -103,7 +103,12 @@ kbd { font: 11px "DM Mono"; border: 1px solid #d5d1c9; background: white; paddin
   --dark-control-hover: #2c2a26;
   --dark-subtle: #201f1c;
   color: var(--ink);
+  scrollbar-color: #34322e #121211;
 }
+.app.dark *::-webkit-scrollbar { width: 9px; height: 9px; }
+.app.dark *::-webkit-scrollbar-track { background: #121211; }
+.app.dark *::-webkit-scrollbar-thumb { background: #34322e; border: 2px solid #121211; border-radius: 999px; }
+.app.dark *::-webkit-scrollbar-thumb:hover { background: #45423c; }
 .app.dark .icon-rail, .app.dark .session-panel { background: #141413; }
 .app.dark .settings-shell, .app.dark .chat-shell { background: var(--paper); }
 
