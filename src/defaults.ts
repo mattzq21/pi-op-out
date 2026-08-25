@@ -2,7 +2,7 @@ import type { AppSettings } from "./types";
 import { defaultKeybindings } from "./lib/keybindings";
 
 export const defaultSettings: AppSettings = {
-  defaultModel: "openrouter/deepseek/deepseek-v4-flash", defaultThinking: "high",
+  defaultModel: "opencodex/gpt-5.6-sol", defaultThinking: "high",
   contextWindowCap: 200_000, autoCompaction: true, autoRetry: true,
   keybindings: { ...defaultKeybindings },
   tools: [
