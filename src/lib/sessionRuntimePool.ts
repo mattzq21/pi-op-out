@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from "react";
 import type { GitDiffSnapshots, SessionSummary } from "../types";
 import { NativeTransport, type NativeConnectionTarget } from "./nativeTransport";
 import { branchMessages, type PiEntry } from "./messages";
@@ -113,13 +114,10 @@ export class SessionRuntimePool {
 
   async remove(session: SessionSummary) {
     const key = sessionKey(session.hostId ?? "local", session.id); const transport = this.sessions.get(key); this.sessions.delete(key);
-    if (transport) {
-      const diffState = this.diffStates.get(transport); if (diffState?.timer) clearTimeout(diffState.timer);
-      this.transports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport);
-      this.diffStates.delete(transport);
-      this.publishSessionStates(); await transport.disconnect();
-    }
+    if (transport) await this.release(transport);
   }
+
+  async release(transport: NativeTransport) { for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key); const diffState = this.diffStates.get(transport); if (diffState?.timer) clearTimeout(diffState.timer); this.transports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport); this.diffStates.delete(transport); this.publishSessionStates(); await transport.disconnect(); }
 
   subscribe(listener: () => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   runningSessions() { return this.runningSessionKeys; }
@@ -128,3 +126,5 @@ export class SessionRuntimePool {
 
   async disconnectAll() { await Promise.allSettled([...this.transports].map((transport) => transport.disconnect())); }
 }
+
+export function useTurnDiffs(pool: SessionRuntimePool, transport: NativeTransport) { return useSyncExternalStore((listener) => pool.subscribe(listener), () => pool.gitDiffs(transport)); }
