@@ -17,7 +17,7 @@ export function TerminalView({ cwd, terminals, activeId, output, exited, onAdd, 
 
   useEffect(() => {
     if (!cwd || !host.current) return;
-    const instance = new Terminal({ cursorBlink: true, convertEol: false, fontFamily: '"DM Mono", monospace', fontSize: 12, lineHeight: 1.25, scrollback: 5000, theme: { background: "#1d1d1b", foreground: "#e5e1d8", cursor: "#d46a24", selectionBackground: "#5a554b88", black: "#242320", red: "#d77865", green: "#72ad8d", yellow: "#c49b52", blue: "#7496b8", magenta: "#ad83ad", cyan: "#72aaa9", white: "#e5e1d8" } });
+    const instance = new Terminal({ cursorBlink: true, convertEol: false, fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace", fontSize: 12, lineHeight: 1.25, scrollback: 5000, theme: { background: "#1d1d1b", foreground: "#e5e1d8", cursor: "#d46a24", selectionBackground: "#5a554b88", black: "#242320", red: "#d77865", green: "#72ad8d", yellow: "#c49b52", blue: "#7496b8", magenta: "#ad83ad", cyan: "#72aaa9", white: "#e5e1d8" } });
     const fit = new FitAddon(); instance.loadAddon(fit); instance.open(host.current); terminal.current = instance;
     const fitAndResize = () => { try { fit.fit(); callbacks.current.onResize(instance.cols, instance.rows); } catch { /* The panel may be between layouts. */ } };
     fit.fit(); callbacks.current.onStart(activeId, instance.cols, instance.rows); instance.focus();
