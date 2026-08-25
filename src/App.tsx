@@ -205,7 +205,7 @@ export default function App() {
     if (action === "export") {
       try {
         const result = await transport.command<{ path: string }>({ type: "export_html" });
-        try { await transport.openExportedHtml(result.path, session.cwd, session.hostId); setNotice({ title: "Conversation exported", message: result.path }); }
+        try { await transport.openExportedHtml(result.path, session.cwd, session.hostId); }
         catch (reason) { setNotice({ title: "Conversation exported, but could not be opened", message: reason instanceof Error ? reason.message : String(reason) }); }
       } catch (reason) { setNotice({ title: "Could not export conversation", message: reason instanceof Error ? reason.message : String(reason) }); }
     }
