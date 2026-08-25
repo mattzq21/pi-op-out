@@ -42,7 +42,7 @@ This is the complete user-facing and architectural feature set carried over from
 
 - Orchestration is owned by the reusable `extensions/pi-orchestration` Pi CLI extension; the desktop is a capability consumer rather than the owner of orchestration state.
 - The extension stores `config.json` beside itself and ships with installation documentation and an example configuration.
-- Existing desktop-owned YAML profiles in `~/.pi-desktop/agents` and legacy active-agent/sequence settings are migrated without deleting the old files.
+- Missing or unreadable orchestration configuration is replaced with the documented default JSON configuration; valid JSON is normalized on load. Legacy desktop YAML/settings migration is not supported.
 - The same agents, sequences, and orchestrator can be selected from Pi CLI with `/pi-orchestration-use`.
 - Desktop configuration updates are sent through `/pi-orchestration-config`.
 - The extension publishes machine-readable capability state through the `pi-desktop-orchestration` status key.
@@ -60,3 +60,8 @@ This is the complete user-facing and architectural feature set carried over from
 ## Development
 
 - The Tauri/Vite development server uses port `1421`, avoiding the original branch's port `1420`.
+- Pi Desktop is native-only: both the primary chat and split panes instantiate the Tauri transport directly.
+- Primary and split chats share one session runtime for snapshots, frame-batched streaming deltas, tool events, queue state, and model metadata.
+- Local and remote interactive/broker Pi launches share one backend command builder.
+- Generated Tauri schemas under `src-tauri/gen/` are not tracked and should be regenerated when needed.
+- The repository does not retain task-specific tests after the task is complete.
