@@ -12,7 +12,7 @@ button { cursor: pointer; }
 .icon-button:hover { background: #0000000b; color: var(--ink); }
 .icon-rail .icon-button { color: #aaa69d; width: 36px; height: 36px; }
 .icon-rail .icon-button:hover, .icon-rail .icon-button.active { color: white; background: #ffffff15; }
-.rail-bottom { margin-top: auto; display: flex; align-items: center; justify-content: center; }.codex-usage { color: #aaa69d; font: 500 11px "DM Mono"; white-space: nowrap; }
+.rail-bottom { margin-top: auto; padding-top: 12px; display: flex; align-items: center; justify-content: center; }.codex-usage { color: #aaa69d; font: 500 11px "DM Mono"; white-space: nowrap; }
 
 .session-panel { width: 100%; flex: 1 1 auto; min-height: 0; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
 .eyebrow { margin: 0 0 3px; text-transform: uppercase; letter-spacing: .15em; font: 500 11px "DM Mono"; color: var(--accent); }
