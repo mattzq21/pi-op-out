@@ -1,15 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
 import type { AgentState, AppSettings, ChatMessage, ImageAttachment, RpcEvent, SessionSummary } from "../types";
 import { useChatSession } from "../lib/useChatSession";
 import { SessionRuntimePool, useTurnDiffs } from "../lib/sessionRuntimePool";
 import { ChatView } from "./ChatView";
-import { IconButton } from "./IconButton";
 
-interface Props { runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: string) => void; onClose: () => void; forkFrom?: string; initialPrompt?: string; onComplete?: (answer: string) => void; onFailure?: (error: string) => void; }
+interface Props { runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: string) => void; forkFrom?: string; initialPrompt?: string; onComplete?: (answer: string) => void; onFailure?: (error: string) => void; }
 const initialState = (session: SessionSummary): AgentState => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, pendingMessageCount: 0 });
 
-export function SplitChatPane({ runtimePool, session, settings, draft, onDraftChange, onClose, forkFrom, initialPrompt, onComplete, onFailure }: Props) {
+export function SplitChatPane({ runtimePool, session, settings, draft, onDraftChange, forkFrom, initialPrompt, onComplete, onFailure }: Props) {
   const transport = useMemo(() => runtimePool.create({ cwd: session.cwd, sessionPath: forkFrom ? undefined : session.path, hostId: session.hostId }), [runtimePool]);
   const gitDiffs = useTurnDiffs(runtimePool, transport); const runtime = useChatSession(transport, initialState(session));
   const { state, setState, messages, models, commands, thinkingLevels, refresh, handleEvent } = runtime; const [error, setError] = useState<string>();
@@ -41,7 +39,6 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
   const send = (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => transport.command({ type: behavior === "steer" ? "steer" : behavior === "followUp" ? "follow_up" : "prompt", message: text, ...(images.length ? { images } : {}) }).then(() => undefined);
   const branch = async (message: ChatMessage) => { const index = messages.findIndex((item) => item.id === message.id); const user = messages.slice(0, index + 1).reverse().find((item) => item.role === "user" && item.entryId); if (user?.entryId) { await transport.command({ type: "fork", entryId: user.entryId }); await refresh(); } };
   return <section className="split-chat" aria-label={`Split conversation: ${session.name}`}>
-    <header><strong>{session.name}</strong><IconButton label="Close split pane" onClick={onClose}><X size={15} /></IconButton></header>
     {error ? <div className="split-pane-status error">{error}</div> : <ChatView state={state} messages={messages} gitDiffs={gitDiffs} models={models} commands={commands} thinkingLevels={thinkingLevels} widgets={[]} statuses={[]} projectCwd={session.cwd} draft={draft} onDraftChange={onDraftChange} onSend={send} onAbort={() => void transport.command({ type: "abort" })} onOpenProject={() => undefined} onBranch={branch} onModel={(model) => void transport.command({ type: "set_model", provider: model.provider, modelId: model.id }).then(() => refresh())} onThinking={(level) => void transport.command({ type: "set_thinking_level", level }).then(() => setState((current) => ({ ...current, thinkingLevel: level })))} />}
   </section>;
 }
