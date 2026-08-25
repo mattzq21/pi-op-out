@@ -30,6 +30,21 @@ interface Props {
 
 const TEXT_LIMIT = 200_000;
 const COMPOSER_MAX_HEIGHT = 130;
+const skillName = (command: SlashCommand) => command.source === "skill" ? command.name.replace(/^skill:/, "") : undefined;
+const skillReference = (value: string) => value.match(/(?:^|[\s([{])\$([a-zA-Z0-9_-]*)$/)?.[1]?.toLowerCase();
+function expandSkillReference(value: string, commands: SlashCommand[]) {
+  if (value.startsWith("/")) return value;
+  const skills = new Map(commands.flatMap((command) => { const name = skillName(command); return name ? [[name.toLowerCase(), name] as const] : []; }));
+  const reference = /(^|[^a-zA-Z0-9_$])\$([a-zA-Z0-9][a-zA-Z0-9_-]*)\b/g;
+  for (const match of value.matchAll(reference)) {
+    const name = skills.get(match[2].toLowerCase()); if (!name || match.index === undefined) continue;
+    const tokenStart = match.index + match[1].length; const tokenEnd = tokenStart + match[0].length - match[1].length;
+    const before = value.slice(0, tokenStart).replace(/\s+$/, " "); const after = value.slice(tokenEnd).replace(/^\s+/, "");
+    const message = `${before}${after}`.trim();
+    return `/skill:${name}${message ? ` ${message}` : ""}`;
+  }
+  return value;
+}
 const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((resolve, reject) => {
   const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error);
   if (mode === "dataUrl") reader.readAsDataURL(file); else reader.readAsText(file);
@@ -47,7 +62,12 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
   const restoredDraftId = useRef<string | undefined>(undefined);
   const setValueRef = useRef(setValue); setValueRef.current = setValue;
   const commandQuery = value.match(/^\/([^\s]*)$/)?.[1]?.toLowerCase();
-  const matches = useMemo(() => commandQuery === undefined ? [] : commands.filter((command) => command.name.toLowerCase().includes(commandQuery)).slice(0, 7), [commandQuery, commands]);
+  const skillQuery = commandQuery === undefined ? skillReference(value) : undefined;
+  const matches = useMemo(() => commandQuery !== undefined
+    ? commands.filter((command) => command.name.toLowerCase().includes(commandQuery)).slice(0, 7)
+    : skillQuery !== undefined
+      ? commands.filter((command) => skillName(command)?.toLowerCase().includes(skillQuery)).slice(0, 7)
+      : [], [commandQuery, skillQuery, commands]);
 
   const resizeEditor = () => {
     const editor = ref.current; if (!editor) return;
@@ -85,18 +105,23 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
   };
   const submit = () => {
     const textFiles = uploads.filter((upload) => upload.kind === "text");
-    const message = [value.trim(), ...textFiles.map((file) => `<file name="${file.name.replaceAll('"', "&quot;")}">\n${file.text}\n</file>`)].filter(Boolean).join("\n\n");
+    const message = [expandSkillReference(value.trim(), commands), ...textFiles.map((file) => `<file name="${file.name.replaceAll('"', "&quot;")}">\n${file.text}\n</file>`)].filter(Boolean).join("\n\n");
     const images = uploads.flatMap((upload) => upload.image ? [upload.image] : []);
     if (!message && !images.length) return;
     onSend(message || "Describe the attached image.", streaming ? behavior : undefined, images);
     setValue(""); setUploads([]); setUploadError(undefined);
   };
-  const chooseCommand = (command: SlashCommand) => { setValue(`/${command.name} `); ref.current?.focus(); };
+  const chooseCommand = (command: SlashCommand) => {
+    const name = skillName(command);
+    if (skillQuery !== undefined && name) setValue(value.replace(/\$[a-zA-Z0-9_-]*$/, `$${name} `));
+    else setValue(`/${command.name} `);
+    ref.current?.focus();
+  };
 
   return <div className="composer-wrap">
     {streaming && <div className="stream-banner"><span className="pulse" />Pi is working {queued > 0 && `· ${queued} queued`}<label>Send as <select aria-label="Streaming message behavior" value={behavior} onChange={(event) => setBehavior(event.target.value as typeof behavior)}><option value="steer">Steer now</option><option value="followUp">Follow up</option></select></label><button onClick={onAbort}>Stop</button></div>}
     <div className="composer">
-      {matches.length > 0 && <div className="command-palette" role="listbox" aria-label="Pi commands">{matches.map((command) => <button role="option" aria-selected="false" key={`${command.source}:${command.name}`} type="button" onClick={() => chooseCommand(command)}><span><strong>/{command.name}</strong><small>{command.description || `${command.source} command`}</small></span><em>{command.source}</em></button>)}</div>}
+      {matches.length > 0 && <div className="command-palette" role="listbox" aria-label={skillQuery === undefined ? "Pi commands" : "Pi skills"}>{matches.map((command) => <button role="option" aria-selected="false" key={`${command.source}:${command.name}`} type="button" onClick={() => chooseCommand(command)}><span><strong>{skillQuery !== undefined ? `$${skillName(command)}` : `/${command.name}`}</strong><small>{command.description || `${command.source} command`}</small></span><em>{command.source}</em></button>)}</div>}
       {uploads.length > 0 && <div className="attachments">{uploads.map((upload) => <span key={upload.id}>{upload.kind === "image" ? <ImagePlus size={12} /> : <FileText size={12} />}<b>{upload.name}</b><button aria-label={`Remove ${upload.name}`} onClick={() => setUploads((current) => current.filter((item) => item.id !== upload.id))}><X size={11} /></button></span>)}</div>}
       {uploadError && <div className="upload-error">{uploadError}</div>}
       <textarea ref={ref} aria-label="Message Pi" placeholder={streaming ? (behavior === "steer" ? "Steer Pi while it works…" : "Queue a follow-up…") : "Ask Pi to build, explain, or change anything…"} value={value} rows={1} onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} />
