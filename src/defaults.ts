@@ -2,7 +2,7 @@ import type { AppSettings } from "./types";
 import { defaultKeybindings } from "./lib/keybindings";
 
 export const defaultSettings: AppSettings = {
-  defaultModel: "opencodex/gpt-5.6-sol", defaultThinking: "medium",
+  defaultModel: "openai-codex/gpt-5.6-sol", defaultThinking: "medium",
   contextWindowCap: 200_000, autoCompaction: true, autoRetry: true,
   keybindings: { ...defaultKeybindings },
   tools: [

@@ -135,7 +135,7 @@ struct AppSettings {
 
 fn default_pi_path() -> String { "pi".into() }
 fn default_context_window_cap() -> u64 { 200_000 }
-const DEFAULT_MODEL: &str = "opencodex/gpt-5.6-sol";
+const DEFAULT_MODEL: &str = "openai-codex/gpt-5.6-sol";
 
 fn default_keybindings() -> HashMap<String, String> {
     [
@@ -396,7 +396,7 @@ fn merge_discovered_skills(settings: &mut AppSettings) {
 fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     let path = settings_path(&app)?;
     let mut settings = if !path.exists() { default_settings() } else { serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())? };
-    let migrated_model = settings.default_model == "openrouter/deepseek/deepseek-v4-flash";
+    let migrated_model = matches!(settings.default_model.as_str(), "openrouter/deepseek/deepseek-v4-flash" | "opencodex/gpt-5.6-sol");
     if migrated_model { settings.default_model = DEFAULT_MODEL.into(); settings.default_thinking = "medium".into(); }
     for shortcut in settings.keybindings.values_mut() { *shortcut = shortcut.replace("Mod+", "Ctrl+"); }
     for tool in default_settings().tools { if !settings.tools.iter().any(|current| current.get("name") == tool.get("name")) { settings.tools.push(tool); } }
