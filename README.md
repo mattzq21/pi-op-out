@@ -39,4 +39,12 @@ cd src-tauri && cargo check --locked
 cd src-tauri && cargo build --locked
 ```
 
-The repository does not keep a permanent automated test suite; task-specific tests are temporary by project policy.
+## End-to-end tests
+
+The acceptance-oriented WebdriverIO suite builds a release-profile native app with its test-only `webdriver` Cargo feature, then exercises user-visible frontend workflows through the embedded Tauri WebDriver provider. The release profile ensures Tauri embeds the tested frontend rather than loading the development server. Normal builds do not register the test plugins, and no external `tauri-driver` is required.
+
+```bash
+npm run test:e2e
+```
+
+After the binary has already been built, use `npm run test:e2e:run` for faster iterations. Set `PI_E2E_BINARY` to test another binary. Add acceptance scenarios under `test/e2e/specs` and reusable interactions under `test/e2e/pageobjects`.

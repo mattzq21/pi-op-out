@@ -602,6 +602,7 @@ fn build_pi_command(app: &AppHandle, broker: &BrokerRuntime, settings: &AppSetti
     let remote_skills: Vec<&str> = settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|skill| skill.get("path").and_then(Value::as_str)).collect();
     let remote_skills = serde_json::to_string(&remote_skills).unwrap_or_else(|_| "[]".into());
     let is_rpc = matches!(launch, PiLaunch::Rpc { .. }); let print_message = match &launch { PiLaunch::Print { message, .. } => Some(*message), PiLaunch::Rpc { .. } => None };
+    let default_model = std::env::var("PI_DESKTOP_E2E_MODEL").ok().filter(|model| !model.trim().is_empty()).unwrap_or_else(|| settings.default_model.clone());
     if host_id == "local" {
         let (mcp_extension, mcp_config) = prepare_mcp_bridge(app, settings)?; let context_window_cap_extension = prepare_context_window_cap_extension(app, settings)?; let pi_path = pi_executable();
         let mut command = Command::new(&pi_path); command.arg(if is_rpc { "--mode" } else { "--print" }); if is_rpc { command.arg("rpc"); }
@@ -616,7 +617,7 @@ fn build_pi_command(app: &AppHandle, broker: &BrokerRuntime, settings: &AppSetti
             PiLaunch::Print { cwd, session_path, .. } => { command.current_dir(cwd).arg("--session").arg(session_path); }
         }
         if !disabled_tools.is_empty() { command.arg("--exclude-tools").arg(disabled_tools.join(",")); }
-        if !settings.default_model.trim().is_empty() { command.arg("--model").arg(settings.default_model.trim()); }
+        if !default_model.trim().is_empty() { command.arg("--model").arg(default_model.trim()); }
         if !settings.default_thinking.trim().is_empty() { command.arg("--thinking").arg(settings.default_thinking.trim()); }
         if let Some(message) = print_message { command.arg(message); }
         return Ok(command);
@@ -629,7 +630,7 @@ fn build_pi_command(app: &AppHandle, broker: &BrokerRuntime, settings: &AppSetti
         PiLaunch::Print { cwd, session_path, .. } => { arguments.extend(["--session".into(), shell_quote(session_path)]); Some(cwd) },
     };
     if !disabled_tools.is_empty() { arguments.extend(["--exclude-tools".into(), shell_quote(&disabled_tools.join(","))]); }
-    if !settings.default_model.trim().is_empty() { arguments.extend(["--model".into(), shell_quote(settings.default_model.trim())]); }
+    if !default_model.trim().is_empty() { arguments.extend(["--model".into(), shell_quote(default_model.trim())]); }
     if !settings.default_thinking.trim().is_empty() { arguments.extend(["--thinking".into(), shell_quote(settings.default_thinking.trim())]); }
     if let Some(message) = print_message { arguments.push(shell_quote(message)); }
     let rpc_environment = if is_rpc { format!(" PI_DESKTOP_BTW=1 PI_DESKTOP_PI_EXECUTABLE={remote_pi}") } else { String::new() };
@@ -880,10 +881,12 @@ fn create_local_temporary_chat(home: &Path, session_id: &str) -> Result<PathBuf,
 }
 
 #[tauri::command(async)]
-fn create_temporary_chat(app: AppHandle, host_id: String) -> Result<TemporaryChat, String> {
+fn create_temporary_chat(app: AppHandle, host_id: String, e2e: Option<bool>) -> Result<TemporaryChat, String> {
     let session_id = Uuid::new_v4().to_string();
     let cwd = if host_id == "local" {
-        create_local_temporary_chat(&home_dir()?, &session_id)?.to_string_lossy().into_owned()
+        let cwd = create_local_temporary_chat(&home_dir()?, &session_id)?;
+        if cfg!(feature = "webdriver") && e2e.unwrap_or(false) { fs::write(cwd.join(".pi-e2e-test"), b"").map_err(|error| format!("Could not mark temporary test chat: {error}"))?; }
+        cwd.to_string_lossy().into_owned()
     } else {
         let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
         let remote = format!("mkdir -p \"$HOME/pi-desktop/tmp/{session_id}\" && cd \"$HOME/pi-desktop/tmp/{session_id}\" && pwd -P");
@@ -1138,5 +1141,8 @@ fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), Str
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let broker = BrokerRuntime::default();
-    tauri::Builder::default().plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(broker.clone()).setup(move |app| start_session_broker(app.handle().clone(), broker.clone()).map_err(Into::into)).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_entries, home_directory, create_temporary_chat, list_directories, git_branch, capture_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_log_viewer, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    let builder = tauri::Builder::default();
+    #[cfg(feature = "webdriver")]
+    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+    builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(broker.clone()).setup(move |app| start_session_broker(app.handle().clone(), broker.clone()).map_err(Into::into)).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_entries, home_directory, create_temporary_chat, list_directories, git_branch, capture_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_log_viewer, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }
