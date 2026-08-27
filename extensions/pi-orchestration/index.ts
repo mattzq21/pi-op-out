@@ -19,7 +19,7 @@ const RUN_ENTRY = "pi-orchestration-run";
 const HANDOFF = /^<!-- pi-desktop-sequence:/;
 const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
 const extensionPath = fileURLToPath(import.meta.url);
-const fallbackConfig: Config = { preprompter: { enabled: false, model: "", systemPrompt: "Correct the user's prompt. Return only the corrected prompt.", agentsMd: "" }, agents: [{ name: "default", description: "General-purpose agent", model: "", effort: "high", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }], sequences: [] };
+const fallbackConfig: Config = { preprompter: { enabled: false, model: "", systemPrompt: "Correct the user's prompt. Return only the corrected prompt.", agentsMd: "" }, agents: [{ name: "default", description: "General-purpose agent", model: "", effort: "high", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: ["read", "bash", "edit", "write", "grep", "find", "ls", "read_trace"], skills: [], mcpServers: [] }], sequences: [] };
 
 function normalize(value: Partial<Config>): Config {
   const source = value.preprompter;
@@ -74,6 +74,8 @@ function agentArgs(agent: Agent, session?: string) {
   for (const skill of agentSkills(agent)) args.push("--skill", skill);
   const contextWindowCapExtension = process.env.PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION;
   if (contextWindowCapExtension) args.push("--extension", contextWindowCapExtension);
+  const traceReaderExtension = process.env.PI_DESKTOP_TRACE_READER_EXTENSION;
+  if (traceReaderExtension) args.push("--extension", traceReaderExtension);
   args.push("--extension", extensionPath);
   const mcpConfig = process.env.PI_DESKTOP_MCP_CONFIG;
   if (mcpConfig) args.push("--extension", join(dirname(mcpConfig), "pi-desktop-mcp-bridge.ts"));

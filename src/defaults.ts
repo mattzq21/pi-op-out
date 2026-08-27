@@ -14,7 +14,8 @@ export const defaultSettings: AppSettings = {
     { name: "find", description: "Find files by glob", enabled: true, builtin: true },
     { name: "ls", description: "List directories", enabled: true, builtin: true },
     { name: "list_agents", description: "List agents by machine and session", enabled: true, builtin: false },
-    { name: "send_message", description: "Send a message to another agent", enabled: true, builtin: false }
+    { name: "send_message", description: "Send a message to another agent", enabled: true, builtin: false },
+    { name: "read_trace", description: "Extract clean user and final assistant messages from a Pi trace", enabled: true, builtin: false }
   ],
   skills: [],
   hosts: [],
