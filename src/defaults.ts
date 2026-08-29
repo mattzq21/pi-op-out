@@ -19,7 +19,5 @@ export const defaultSettings: AppSettings = {
   ],
   skills: [],
   hosts: [],
-  mcpServers: [
-    { id: "filesystem", name: "Filesystem", transport: "stdio", command: "npx", args: "-y @modelcontextprotocol/server-filesystem .", enabled: true, status: "connected" }
-  ]
+  mcpServers: []
 };

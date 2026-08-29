@@ -36,7 +36,7 @@ const acceptanceOrchestration = (): OrchestrationCapability => ({
   config: {
     preprompter: { enabled: false, model: "", systemPrompt: "", agentsMd: "" },
     agents: [
-      { name: "default", description: "Default acceptance agent", model: "e2e/acceptance", effort: "high", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: ["read"], skills: [], mcpServers: ["filesystem"] },
+      { name: "default", description: "Default acceptance agent", model: "e2e/acceptance", effort: "high", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: ["read"], skills: [], mcpServers: [] },
       { name: "reviewer", description: "Reviews acceptance changes", model: "e2e/alternate", effort: "off", systemPrompt: "Review carefully.", developerPrompt: "", agentsMd: "", tools: ["read"], skills: [], mcpServers: [] },
     ],
     sequences: [],

@@ -406,11 +406,14 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     let path = settings_path(&app)?;
     let mut settings = if !path.exists() { default_settings() } else { serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())? };
     let migrated_model = matches!(settings.default_model.as_str(), "openrouter/deepseek/deepseek-v4-flash" | "opencodex/gpt-5.6-sol");
+    let previous_mcp_count = settings.mcp_servers.len();
+    settings.mcp_servers.retain(|server| server.get("id").and_then(Value::as_str) != Some("filesystem"));
+    let migrated_filesystem_mcp = settings.mcp_servers.len() != previous_mcp_count;
     if migrated_model { settings.default_model = DEFAULT_MODEL.into(); settings.default_thinking = "medium".into(); }
     for shortcut in settings.keybindings.values_mut() { *shortcut = shortcut.replace("Mod+", "Ctrl+"); }
     for tool in default_settings().tools { if !settings.tools.iter().any(|current| current.get("name") == tool.get("name")) { settings.tools.push(tool); } }
     merge_discovered_skills(&mut settings);
-    if migrated_model { fs::write(path, serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?; }
+    if migrated_model || migrated_filesystem_mcp { fs::write(path, serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?; }
     Ok(settings)
 }
 
