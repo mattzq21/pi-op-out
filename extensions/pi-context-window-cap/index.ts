@@ -42,18 +42,20 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
   const cap = await loadCap();
   let lastStatus = "";
 
-  const publishPromptContext = (ctx: ExtensionContext) => {
+  const publishPromptContext = (ctx: ExtensionContext, persist = false) => {
     const systemPrompt = ctx.getSystemPrompt();
     const { block: skillPrompt, skills } = skillsFromPrompt(systemPrompt);
     const activeTools = new Set(pi.getActiveTools());
     const tools = pi.getAllTools().filter((tool) => activeTools.has(tool.name)).map(({ name, description, parameters }) => ({ name, description, parameters }));
     const estimate = (value: unknown) => Math.ceil((typeof value === "string" ? value : JSON.stringify(value)).length / 4);
-    const status = `json:${JSON.stringify({
+    const snapshot = {
       systemPrompt,
       tools,
       skills,
       tokens: { system: estimate(systemPrompt.replace(skillPrompt, "")), tools: estimate(tools), skills: estimate(skillPrompt) },
-    })}`;
+    };
+    if (persist) pi.appendEntry(STATUS_KEY, snapshot);
+    const status = `json:${JSON.stringify(snapshot)}`;
     if (status !== lastStatus) { lastStatus = status; ctx.ui.setStatus(STATUS_KEY, status); }
   };
 
@@ -68,6 +70,6 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
   });
 
   pi.on("context", (_event, ctx) => {
-    publishPromptContext(ctx);
+    publishPromptContext(ctx, true);
   });
 }

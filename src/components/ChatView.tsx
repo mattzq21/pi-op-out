@@ -7,7 +7,6 @@ import { textOf, thinkingOf } from "../lib/content";
 import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 import { cacheHitStats } from "../lib/messages";
 import { parseSequencePrompt } from "../lib/sequence";
-import { PromptContextBar } from "./PromptContextBar";
 
 interface Props { state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; promptContext?: PromptContextInfo; agents?: AgentProfile[]; sequences?: SequenceProfile[]; activeAgent?: string; dictionaries?: PromptDictionary[]; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: string[]; projectCwd?: string; readOnly?: boolean; draft?: string; onDraftChange?: (value: string) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void; onAbort: () => void; onOpenTerminal?: () => void; onOpenProject: () => void; onBranch: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onThinking: (level: string) => void; }
 
@@ -34,9 +33,8 @@ export function ChatView(props: Props) {
   }, [props.readOnly]);
   return <main ref={shell} className="chat-shell">
     <div className="messages" aria-live="polite"><div className="conversation">
-      {props.promptContext && <PromptContextBar context={props.promptContext} />}
       {!props.messages.length && <div className="empty-chat"><span>π</span></div>}
-      {turns.map((turn, index) => <ConversationTurn key={turn[0]?.id || index} messages={turn} gitDiffs={props.gitDiffs} active={props.state.isStreaming && index === turns.length - 1} retryable={!props.state.isStreaming && index === turns.length - 1} onRetry={props.onSend} onBranch={props.onBranch} />)}<div ref={bottom} className="scroll-anchor" />
+      {turns.map((turn, index) => <ConversationTurn key={turn[0]?.id || index} messages={turn} gitDiffs={props.gitDiffs} promptContext={index === turns.length - 1 ? props.promptContext : undefined} active={props.state.isStreaming && index === turns.length - 1} retryable={!props.state.isStreaming && index === turns.length - 1} onRetry={props.onSend} onBranch={props.onBranch} />)}<div ref={bottom} className="scroll-anchor" />
     </div></div>
     {!props.readOnly && <div ref={composerStack} className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.map((line, index) => <div key={index}>{line}</div>)}</div>} {props.statuses.length > 0 && <div className="extension-status">{props.statuses.join(" · ")}</div>}{!props.messages.length && props.state.messageCount === 0 && <div className="new-chat-project"><button type="button" className={projectName ? "selected" : undefined} aria-label={projectName ? `Selected project: ${projectName}` : "Choose project"} title={props.projectCwd} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName ?? "Choose project"}</button></div>}<Composer streaming={props.state.isStreaming} queued={props.state.pendingMessageCount} commands={props.commands} agents={props.agents ?? []} sequences={props.sequences ?? []} activeAgent={props.activeAgent} dictionaries={props.dictionaries} models={props.models} model={props.state.model} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={sessionCache} contextUsage={props.state.contextUsage} draft={props.draft} onDraftChange={props.onDraftChange} restoredDraft={abortedTurn ? { id: `${abortedTurn.assistant.timestamp ?? abortedTurn.assistant.id}:${abortedTurn.prompt}`, value: abortedTurn.prompt } : undefined} onSend={props.onSend} onAbort={props.onAbort} onOpenTerminal={props.onOpenTerminal} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onThinking={props.onThinking} /></div>}
   </main>;
@@ -76,16 +74,16 @@ function compactCompletedTools(messages: ChatMessage[], groupRepeated = true) {
   }, []);
 }
 
-function renderMessages(messages: ChatMessage[], expanded: boolean, onBranch: Props["onBranch"], compact = true) {
-  return compactCompletedTools(messages, compact).map(({ message, count }) => <Message key={message.id} message={message} toolCount={count} expanded={expanded} onBranch={onBranch} />);
+function renderMessages(messages: ChatMessage[], expanded: boolean, onBranch: Props["onBranch"], compact = true, promptContext?: PromptContextInfo) {
+  return compactCompletedTools(messages, compact).map(({ message, count }) => <Message key={message.id} message={message.role === "assistant" && !message.promptContext && promptContext ? { ...message, promptContext } : message} toolCount={count} expanded={expanded} onBranch={onBranch} />);
 }
 
-function ConversationTurn({ messages, gitDiffs, active, retryable, onRetry, onBranch }: { messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; active: boolean; retryable: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"] }) {
+function ConversationTurn({ messages, gitDiffs, promptContext, active, retryable, onRetry, onBranch }: { messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; promptContext?: PromptContextInfo; active: boolean; retryable: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"] }) {
   const userIndex = messages.findIndex((message) => message.role === "user");
   const parsed = userIndex >= 0 ? parseSequencePrompt(textOf(messages[userIndex].content)) : { text: "" };
   if (parsed.step && !parsed.step.visible) return null;
   const shown = parsed.step ? messages.map((message, index) => index === userIndex ? { ...message, content: parsed.text } : message) : messages;
-  if (active) return <>{parsed.step && parsed.step.step > 0 && <div className="sequence-step-label">{parsed.step.sequence} · {parsed.step.agent}</div>}{renderMessages(shown, true, onBranch, false)}</>;
+  if (active) return <>{parsed.step && parsed.step.step > 0 && <div className="sequence-step-label">{parsed.step.sequence} · {parsed.step.agent}</div>}{renderMessages(shown, true, onBranch, false, promptContext)}</>;
 
   let finalIndex = -1;
   for (let index = shown.length - 1; index >= 0; index -= 1) {

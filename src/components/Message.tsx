@@ -7,6 +7,7 @@ import { textOf, thinkingOf } from "../lib/content";
 import { cacheHitStats } from "../lib/messages";
 import { IconButton } from "./IconButton";
 import { DiffViewer } from "./DiffViewer";
+import { PromptContextBar } from "./PromptContextBar";
 
 interface Props { message: ChatMessage; diff?: GitDiffSnapshot; expanded?: boolean; toolCount?: number; onBranch: (message: ChatMessage) => void; onRetry?: () => void; }
 
@@ -42,6 +43,7 @@ export function Message({ message, diff, expanded = false, toolCount = 1, onBran
   const copy = async () => { await navigator.clipboard?.writeText(textOf(message.content)); setCopied(true); window.setTimeout(() => setCopied(false), 1400); };
   return <article className={`message assistant-message ${thinking ? "reasoning-message" : ""}`}>
     <div className="message-body">
+      {message.promptContext && <PromptContextBar context={message.promptContext} />}
       {thinking && <div className="reasoning-text"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{thinking}</ReactMarkdown></div>}
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{output}</ReactMarkdown>
       {failure && <div className="message-failure" role="status"><CircleAlert size={14} /><span>{failure}</span>{onRetry && <button onClick={onRetry}>Retry</button>}</div>}

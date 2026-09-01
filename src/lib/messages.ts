@@ -1,6 +1,6 @@
-import type { ChatMessage, ContentPart } from "../types";
+import type { ChatMessage, ContentPart, PromptContextInfo } from "../types";
 
-export type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number }; customType?: string; content?: ChatMessage["content"]; display?: boolean; timestamp?: string };
+export type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number }; customType?: string; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string };
 
 export function cacheHitStats(usage?: { input: number; cacheRead: number }) {
   if (!usage) return undefined;
@@ -40,11 +40,15 @@ export function applyAssistantMessageEvent(message: ChatMessage, value: unknown)
 export function branchMessages(entries: PiEntry[], leafId: string | null): ChatMessage[] {
   const byId = new Map(entries.map((entry) => [entry.id, entry])); const branch: PiEntry[] = []; let cursor = leafId;
   while (cursor) { const entry = byId.get(cursor); if (!entry) break; branch.unshift(entry); cursor = entry.parentId; }
-  const messages = branch.flatMap((entry) => {
-    if (entry.type === "message" && entry.message) return [normalizeMessage(entry.message as unknown as Record<string, unknown>, entry.id, entry.timestamp)];
-    if (entry.type === "custom_message" && entry.customType === "pi-desktop-btw" && entry.display !== false) return [normalizeMessage({ role: "custom", customType: entry.customType, content: entry.content ?? "", timestamp: entry.timestamp ?? Date.now() }, entry.id)];
-    return [];
-  });
+  const messages: ChatMessage[] = []; let promptContext: PromptContextInfo | undefined;
+  for (const entry of branch) {
+    if (entry.type === "custom" && entry.customType === "pi-desktop-prompt-context") { promptContext = entry.data as PromptContextInfo; continue; }
+    if (entry.type === "message" && entry.message) {
+      const message = normalizeMessage(entry.message as unknown as Record<string, unknown>, entry.id, entry.timestamp);
+      messages.push(message.role === "assistant" && promptContext ? { ...message, promptContext } : message);
+      if (message.role === "assistant") promptContext = undefined;
+    } else if (entry.type === "custom_message" && entry.customType === "pi-desktop-btw" && entry.display !== false) messages.push(normalizeMessage({ role: "custom", customType: entry.customType, content: entry.content ?? "", timestamp: entry.timestamp ?? Date.now() }, entry.id));
+  }
   const calledTargets = new Map<string, string>();
   for (const message of messages) if (message.role === "assistant" && Array.isArray(message.content)) for (const part of message.content) {
     if (part.type === "toolCall" && part.name === "call_agent" && typeof part.arguments.target === "string") calledTargets.set(part.id, part.arguments.target);
