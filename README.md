@@ -49,3 +49,5 @@ npm run test:e2e
 ```
 
 After the binary has already been built, use `npm run test:e2e:run` for faster iterations. Set `PI_E2E_BINARY` to test another binary. Add acceptance scenarios under `test/e2e/specs` and reusable interactions under `test/e2e/pageobjects`.
+
+For quick interactive checks and screenshot evidence, see [Handy manual testing with WDIO MCP](docs/wdio-mcp-testing.md).
