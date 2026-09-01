@@ -1,14 +1,15 @@
 import { useEffect, useRef } from "react";
 import { FolderGit2 } from "lucide-react";
-import type { AgentProfile, AgentState, ChatMessage, GitDiffSnapshots, ImageAttachment, Model, PromptDictionary, SequenceProfile, SlashCommand } from "../types";
+import type { AgentProfile, AgentState, ChatMessage, GitDiffSnapshots, ImageAttachment, Model, PromptContextInfo, PromptDictionary, SequenceProfile, SlashCommand } from "../types";
 import { Message } from "./Message";
 import { Composer } from "./Composer";
 import { textOf, thinkingOf } from "../lib/content";
 import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 import { cacheHitStats } from "../lib/messages";
 import { parseSequencePrompt } from "../lib/sequence";
+import { PromptContextBar } from "./PromptContextBar";
 
-interface Props { state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; agents?: AgentProfile[]; sequences?: SequenceProfile[]; activeAgent?: string; dictionaries?: PromptDictionary[]; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: string[]; projectCwd?: string; readOnly?: boolean; draft?: string; onDraftChange?: (value: string) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void; onAbort: () => void; onOpenTerminal?: () => void; onOpenProject: () => void; onBranch: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onThinking: (level: string) => void; }
+interface Props { state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; promptContext?: PromptContextInfo; agents?: AgentProfile[]; sequences?: SequenceProfile[]; activeAgent?: string; dictionaries?: PromptDictionary[]; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: string[]; projectCwd?: string; readOnly?: boolean; draft?: string; onDraftChange?: (value: string) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void; onAbort: () => void; onOpenTerminal?: () => void; onOpenProject: () => void; onBranch: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onThinking: (level: string) => void; }
 
 export function ChatView(props: Props) {
   const bottom = useRef<HTMLDivElement>(null);
@@ -33,6 +34,7 @@ export function ChatView(props: Props) {
   }, [props.readOnly]);
   return <main ref={shell} className="chat-shell">
     <div className="messages" aria-live="polite"><div className="conversation">
+      {props.promptContext && <PromptContextBar context={props.promptContext} />}
       {!props.messages.length && <div className="empty-chat"><span>π</span></div>}
       {turns.map((turn, index) => <ConversationTurn key={turn[0]?.id || index} messages={turn} gitDiffs={props.gitDiffs} active={props.state.isStreaming && index === turns.length - 1} retryable={!props.state.isStreaming && index === turns.length - 1} onRetry={props.onSend} onBranch={props.onBranch} />)}<div ref={bottom} className="scroll-anchor" />
     </div></div>
