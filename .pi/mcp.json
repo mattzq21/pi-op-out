@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "wdio": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@wdio/mcp@latest"],
+      "lifecycle": "eager",
+      "requestTimeoutMs": 120000
+    }
+  }
+}
