@@ -80,6 +80,16 @@ function renderMessages(messages: ChatMessage[], expanded: boolean, onBranch: Pr
   return compactCompletedTools(messages, compact).map(({ message, count }) => <Message key={message.id} message={message.role === "assistant" && !message.promptContext && promptContext ? { ...message, promptContext } : message} toolCount={count} expanded={expanded} onBranch={onBranch} />);
 }
 
+function keepFirstPromptContext(messages: ChatMessage[], contextAlreadyShown: boolean) {
+  let shown = contextAlreadyShown;
+  return messages.map((message) => {
+    if (!message.promptContext) return message;
+    if (!shown) { shown = true; return message; }
+    const { promptContext: _promptContext, ...withoutContext } = message;
+    return withoutContext;
+  });
+}
+
 function ConversationTurn({ messages, gitDiffs, promptContext, contextInWork, active, retryable, onRetry, onBranch }: { messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; promptContext?: PromptContextInfo; contextInWork: boolean; active: boolean; retryable: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"] }) {
   const userIndex = messages.findIndex((message) => message.role === "user");
   const parsed = userIndex >= 0 ? parseSequencePrompt(textOf(messages[userIndex].content)) : { text: "" };
@@ -115,7 +125,7 @@ function ConversationTurn({ messages, gitDiffs, promptContext, contextInWork, ac
   return <section className="conversation-turn">
     {parsed.step && parsed.step.step > 0 && <div className="sequence-step-label">{parsed.step.sequence} · {parsed.step.agent}</div>}
     {userMessages.map((message) => <Message key={message.id} message={message} onBranch={onBranch} />)}
-    {(intermediate.length > 0 || (contextInWork && finalContext)) && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}</summary><div className="work-group-content">{contextInWork && finalContext && <PromptContextBar context={finalContext} />}{renderMessages(intermediate, true, onBranch)}</div></details>}
+    {(intermediate.length > 0 || (contextInWork && finalContext)) && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}</summary><div className="work-group-content">{contextInWork && finalContext && <PromptContextBar context={finalContext} />}{renderMessages(keepFirstPromptContext(intermediate, Boolean(contextInWork && finalContext)), true, onBranch)}</div></details>}
     {finalMessage && <Message message={finalMessage} diff={gitDiff} onBranch={onBranch} onRetry={retryPrompt ? () => { window.dispatchEvent(new CustomEvent("pi:set-editor-text", { detail: "" })); onRetry(retryPrompt); } : undefined} />}
   </section>;
 }
