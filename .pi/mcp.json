@@ -2,8 +2,7 @@
   "mcpServers": {
     "wdio": {
       "transport": "stdio",
-      "command": "npx",
-      "args": ["-y", "@wdio/mcp@latest"],
+      "command": ".pi/start-wdio-mcp.sh",
       "lifecycle": "eager",
       "requestTimeoutMs": 120000
     }
