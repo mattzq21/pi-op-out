@@ -97,7 +97,11 @@ function ConversationTurn({ messages, gitDiffs, promptContext, active, retryable
     return finalThinking ? [{ ...message, id: `${message.id}:reasoning`, content: [{ type: "thinking" as const, thinking: finalThinking }], stopReason: undefined, errorMessage: undefined }] : [];
   });
   const userMessages = parsed.step?.step ? [] : shown.filter((message) => message.role === "user");
-  const finalMessage = finalIndex >= 0 ? { ...shown[finalIndex], content: textOf(shown[finalIndex].content) } : undefined;
+  const finalMessage = finalIndex >= 0 ? {
+    ...shown[finalIndex],
+    ...(!shown[finalIndex].promptContext && promptContext ? { promptContext } : {}),
+    content: textOf(shown[finalIndex].content),
+  } : undefined;
   const gitDiff = finalMessage ? gitDiffs?.[finalMessage.id] : undefined;
   const workedFor = formatWorkedFor(userIndex >= 0 ? shown[userIndex].timestamp : shown[0]?.timestamp, finalMessage?.completedAt ?? finalMessage?.timestamp);
   const retryPrompt = retryable && finalMessage?.stopReason === "aborted" ? [...userMessages].reverse().map((message) => textOf(message.content).trim()).find(Boolean) : undefined;
