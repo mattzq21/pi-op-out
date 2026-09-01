@@ -91,6 +91,21 @@ struct RemoteHost {
     pi_path: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DictionaryEntry {
+    word: String,
+    replacement: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PromptDictionary {
+    id: String,
+    name: String,
+    entries: Vec<DictionaryEntry>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CodexUsage {
@@ -133,7 +148,7 @@ struct AppSettings {
     #[serde(default)]
     hosts: Vec<RemoteHost>,
     #[serde(default)]
-    dictionaries: Vec<Value>,
+    dictionaries: Vec<PromptDictionary>,
     #[serde(default)]
     active_dictionary_id: String,
 }
@@ -215,6 +230,40 @@ fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_config_dir().map_err(|error| error.to_string())?;
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     Ok(dir.join("settings.json"))
+}
+
+fn pi_desktop_config_path() -> Result<PathBuf, String> {
+    Ok(home_dir()?.join(".pi-desktop/config.json"))
+}
+
+fn write_dictionary_config(settings: &AppSettings) -> Result<(), String> {
+    let path = pi_desktop_config_path()?;
+    if let Some(parent) = path.parent() { fs::create_dir_all(parent).map_err(|error| error.to_string())?; }
+    let mut config = if path.exists() {
+        serde_json::from_slice::<Value>(&fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| format!("Could not parse {}: {error}", path.display()))?
+    } else { json!({}) };
+    let object = config.as_object_mut().ok_or_else(|| format!("{} must contain a JSON object", path.display()))?;
+    object.insert("activeDictionaryId".into(), Value::String(settings.active_dictionary_id.clone()));
+    object.insert("dictionaries".into(), serde_json::to_value(&settings.dictionaries).map_err(|error| error.to_string())?);
+    fs::write(path, serde_json::to_vec_pretty(&config).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
+}
+
+fn load_dictionary_config(settings: &mut AppSettings) -> Result<bool, String> {
+    let path = pi_desktop_config_path()?;
+    if !path.exists() { write_dictionary_config(settings)?; return Ok(false); }
+    let config: Value = serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| format!("Could not parse {}: {error}", path.display()))?;
+    let object = config.as_object().ok_or_else(|| format!("{} must contain a JSON object", path.display()))?;
+    let previous_dictionaries = settings.dictionaries.clone(); let previous_active = settings.active_dictionary_id.clone();
+    if let Some(value) = object.get("dictionaries") { settings.dictionaries = serde_json::from_value(value.clone()).map_err(|error| format!("Invalid dictionaries in {}: {error}", path.display()))?; }
+    if let Some(value) = object.get("activeDictionaryId") { settings.active_dictionary_id = value.as_str().ok_or_else(|| "activeDictionaryId must be a string".to_string())?.into(); }
+    Ok(settings.dictionaries != previous_dictionaries || settings.active_dictionary_id != previous_active)
+}
+
+fn validate_dictionaries(settings: &AppSettings) -> Result<(), String> {
+    let mut ids = HashSet::new();
+    for dictionary in &settings.dictionaries { if dictionary.id.trim().is_empty() || !ids.insert(dictionary.id.as_str()) { return Err("Every dictionary needs a unique id".into()); } }
+    if !settings.active_dictionary_id.is_empty() && !ids.contains(settings.active_dictionary_id.as_str()) { return Err("Active dictionary was not found".into()); }
+    Ok(())
 }
 
 fn prepare_mcp_bridge(app: &AppHandle, settings: &AppSettings) -> Result<(PathBuf, PathBuf), String> {
@@ -418,19 +467,23 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     for shortcut in settings.keybindings.values_mut() { *shortcut = shortcut.replace("Mod+", "Ctrl+"); }
     for tool in default_settings().tools { if !settings.tools.iter().any(|current| current.get("name") == tool.get("name")) { settings.tools.push(tool); } }
     merge_discovered_skills(&mut settings);
-    if migrated_model || migrated_filesystem_mcp { fs::write(path, serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?; }
+    let dictionaries_changed = load_dictionary_config(&mut settings)?;
+    validate_dictionaries(&settings)?;
+    if migrated_model || migrated_filesystem_mcp || dictionaries_changed { fs::write(path, serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?; }
     Ok(settings)
 }
 
 #[tauri::command(async)]
 fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<(), String> {
     if settings.context_window_cap == 0 { return Err("Context window cap must be a positive integer".into()); }
+    validate_dictionaries(&settings)?;
     let mut host_ids = HashSet::new();
     for host in &settings.hosts {
         if host.id.trim().is_empty() || !host_ids.insert(host.id.as_str()) { return Err("Every machine needs a unique id".into()); }
         validate_remote_host(host)?;
     }
     let body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
+    write_dictionary_config(&settings)?;
     fs::write(settings_path(&app)?, body).map_err(|error| error.to_string())
 }
 
