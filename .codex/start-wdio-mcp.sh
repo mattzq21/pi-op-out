@@ -2,14 +2,8 @@
 set -euo pipefail
 
 driver_pid=""
-mcp_pid=""
 
 cleanup() {
-  if [[ -n "$mcp_pid" ]] && kill -0 "$mcp_pid" 2>/dev/null; then
-    kill "$mcp_pid" 2>/dev/null || true
-    wait "$mcp_pid" 2>/dev/null || true
-  fi
-
   if [[ -n "$driver_pid" ]] && kill -0 "$driver_pid" 2>/dev/null; then
     kill "$driver_pid" 2>/dev/null || true
     wait "$driver_pid" 2>/dev/null || true
@@ -28,7 +22,7 @@ else
   }
 
   # Keep bridge logs away from stdout, which belongs to the MCP protocol.
-  tauri-driver --port 4444 --native-port 4445 1>&2 &
+  tauri-driver --port 4444 --native-port 4445 </dev/null 1>&2 &
   driver_pid=$!
 
   for _ in {1..50}; do
@@ -50,6 +44,5 @@ else
   fi
 fi
 
-npx -y @wdio/mcp@latest &
-mcp_pid=$!
-wait "$mcp_pid"
+# MCP must remain in the foreground so Codex's stdin/stdout stay attached.
+npx -y @wdio/mcp@latest
