@@ -150,6 +150,8 @@ struct AppSettings {
     #[serde(default)]
     dictionaries: Vec<PromptDictionary>,
     #[serde(default)]
+    active_dictionary_ids: Vec<String>,
+    #[serde(default, skip_serializing)]
     active_dictionary_id: String,
 }
 
@@ -243,26 +245,37 @@ fn write_dictionary_config(settings: &AppSettings) -> Result<(), String> {
         serde_json::from_slice::<Value>(&fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| format!("Could not parse {}: {error}", path.display()))?
     } else { json!({}) };
     let object = config.as_object_mut().ok_or_else(|| format!("{} must contain a JSON object", path.display()))?;
-    object.insert("activeDictionaryId".into(), Value::String(settings.active_dictionary_id.clone()));
+    object.remove("activeDictionaryId");
+    object.insert("activeDictionaryIds".into(), serde_json::to_value(&settings.active_dictionary_ids).map_err(|error| error.to_string())?);
     object.insert("dictionaries".into(), serde_json::to_value(&settings.dictionaries).map_err(|error| error.to_string())?);
     fs::write(path, serde_json::to_vec_pretty(&config).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
 }
 
 fn load_dictionary_config(settings: &mut AppSettings) -> Result<bool, String> {
+    let migrated_legacy = settings.active_dictionary_ids.is_empty() && !settings.active_dictionary_id.is_empty();
+    if migrated_legacy { settings.active_dictionary_ids.push(settings.active_dictionary_id.clone()); }
     let path = pi_desktop_config_path()?;
-    if !path.exists() { write_dictionary_config(settings)?; return Ok(false); }
+    if !path.exists() { write_dictionary_config(settings)?; return Ok(migrated_legacy); }
     let config: Value = serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| format!("Could not parse {}: {error}", path.display()))?;
     let object = config.as_object().ok_or_else(|| format!("{} must contain a JSON object", path.display()))?;
-    let previous_dictionaries = settings.dictionaries.clone(); let previous_active = settings.active_dictionary_id.clone();
+    let config_legacy = !object.contains_key("activeDictionaryIds") && object.contains_key("activeDictionaryId");
+    let previous_dictionaries = settings.dictionaries.clone(); let previous_active = settings.active_dictionary_ids.clone();
     if let Some(value) = object.get("dictionaries") { settings.dictionaries = serde_json::from_value(value.clone()).map_err(|error| format!("Invalid dictionaries in {}: {error}", path.display()))?; }
-    if let Some(value) = object.get("activeDictionaryId") { settings.active_dictionary_id = value.as_str().ok_or_else(|| "activeDictionaryId must be a string".to_string())?.into(); }
-    Ok(settings.dictionaries != previous_dictionaries || settings.active_dictionary_id != previous_active)
+    if let Some(value) = object.get("activeDictionaryIds") { settings.active_dictionary_ids = serde_json::from_value(value.clone()).map_err(|error| format!("Invalid activeDictionaryIds in {}: {error}", path.display()))?; }
+    else if let Some(value) = object.get("activeDictionaryId") { let id = value.as_str().ok_or_else(|| "activeDictionaryId must be a string".to_string())?; settings.active_dictionary_ids = if id.is_empty() { vec![] } else { vec![id.into()] }; }
+    if config_legacy { write_dictionary_config(settings)?; }
+    Ok(migrated_legacy || config_legacy || settings.dictionaries != previous_dictionaries || settings.active_dictionary_ids != previous_active)
 }
 
 fn validate_dictionaries(settings: &AppSettings) -> Result<(), String> {
     let mut ids = HashSet::new();
     for dictionary in &settings.dictionaries { if dictionary.id.trim().is_empty() || !ids.insert(dictionary.id.as_str()) { return Err("Every dictionary needs a unique id".into()); } }
-    if !settings.active_dictionary_id.is_empty() && !ids.contains(settings.active_dictionary_id.as_str()) { return Err("Active dictionary was not found".into()); }
+    let mut active_ids = HashSet::new();
+    for id in &settings.active_dictionary_ids { if !ids.contains(id.as_str()) { return Err("Active dictionary was not found".into()); } if !active_ids.insert(id.as_str()) { return Err("A dictionary can only be active once".into()); } }
+    let mut keys: HashMap<String, &str> = HashMap::new();
+    for dictionary in settings.dictionaries.iter().filter(|dictionary| active_ids.contains(dictionary.id.as_str())) {
+        for entry in &dictionary.entries { let key = entry.word.trim().to_lowercase(); if key.is_empty() { continue; } if let Some(owner) = keys.insert(key.clone(), dictionary.id.as_str()) { if owner != dictionary.id.as_str() { return Err(format!("Key '{}' exists in more than one active dictionary", entry.word.trim())); } } }
+    }
     Ok(())
 }
 
@@ -318,7 +331,7 @@ fn default_settings() -> AppSettings {
             json!({"name":"send_message","description":"Send a message to another agent","enabled":true,"builtin":false}),
             json!({"name":"read_trace","description":"Extract clean user and final assistant messages from a Pi trace","enabled":true,"builtin":false}),
         ]).collect(),
-        skills: vec![], mcp_servers: vec![], hosts: vec![], dictionaries: vec![], active_dictionary_id: String::new(),
+        skills: vec![], mcp_servers: vec![], hosts: vec![], dictionaries: vec![], active_dictionary_ids: vec![], active_dictionary_id: String::new(),
     }
 }
 

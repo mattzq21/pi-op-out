@@ -23,7 +23,7 @@ export interface DirectoryListing { path: string; parent?: string; directories: 
 export interface SlashCommand { name: string; description?: string; source: "builtin" | "extension" | "prompt" | "skill"; sourceInfo?: { source?: string }; }
 export interface ImageAttachment { type: "image"; data: string; mimeType: string; name?: string; }
 export interface SavedTerminalState { activeId: string; tabs: Array<{ id: string; output: string; started: boolean; exited?: boolean }> }
-export interface AppSettings { defaultModel: string; defaultThinking: string; contextWindowCap: number; autoCompaction: boolean; autoRetry: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; mcpServers: McpServer[]; hosts: RemoteHost[]; dictionaries: PromptDictionary[]; activeDictionaryId: string; }
+export interface AppSettings { defaultModel: string; defaultThinking: string; contextWindowCap: number; autoCompaction: boolean; autoRetry: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; mcpServers: McpServer[]; hosts: RemoteHost[]; dictionaries: PromptDictionary[]; activeDictionaryIds: string[]; }
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
 export interface SessionEntries { entries: Array<Record<string, unknown>>; leafId: string | null; }
 

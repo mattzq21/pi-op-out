@@ -5,11 +5,10 @@ export interface DictionaryMatch { start: number; end: number; replacement: stri
 const wordCharacter = /[\p{L}\p{N}_]/u;
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-export function dictionaryMatches(value: string, dictionary?: PromptDictionary): DictionaryMatch[] {
+export function dictionaryMatches(value: string, dictionaries: PromptDictionary[] = []): DictionaryMatch[] {
   const entries = new Map<string, string>();
-  for (const entry of dictionary?.entries ?? []) {
-    const word = entry.word.trim();
-    const replacement = entry.replacement.trim();
+  for (const dictionary of dictionaries) for (const entry of dictionary.entries) {
+    const word = entry.word.trim(); const replacement = entry.replacement.trim();
     if (word && replacement && !entries.has(word.toLocaleLowerCase())) entries.set(word.toLocaleLowerCase(), replacement);
   }
   const words = [...entries.keys()].sort((left, right) => right.length - left.length);
@@ -26,8 +25,8 @@ export function dictionaryMatches(value: string, dictionary?: PromptDictionary):
   return matches;
 }
 
-export function applyDictionary(value: string, dictionary?: PromptDictionary) {
-  const matches = dictionaryMatches(value, dictionary);
+export function applyDictionary(value: string, dictionaries: PromptDictionary[] = []) {
+  const matches = dictionaryMatches(value, dictionaries);
   if (!matches.length) return value;
   let result = ""; let offset = 0;
   for (const match of matches) { result += value.slice(offset, match.start) + match.replacement; offset = match.end; }

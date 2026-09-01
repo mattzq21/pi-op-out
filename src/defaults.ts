@@ -20,6 +20,6 @@ export const defaultSettings: AppSettings = {
   skills: [],
   hosts: [],
   dictionaries: [],
-  activeDictionaryId: "",
+  activeDictionaryIds: [],
   mcpServers: []
 };

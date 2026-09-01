@@ -12,7 +12,7 @@ interface Props {
   agents: AgentProfile[];
   sequences: SequenceProfile[];
   activeAgent?: string;
-  dictionary?: PromptDictionary;
+  dictionaries?: PromptDictionary[];
   models: Model[];
   model: Model | null;
   thinkingLevel: string;
@@ -52,7 +52,7 @@ const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((
   if (mode === "dataUrl") reader.readAsDataURL(file); else reader.readAsText(file);
 });
 
-export function Composer({ streaming, queued, commands, agents, sequences, activeAgent, dictionary, models, model, thinkingLevel, thinkingLevels, sessionCache, contextUsage, draft, onDraftChange, restoredDraft, onSend, onAbort, onOpenTerminal, onAgent, onModel, onThinking }: Props) {
+export function Composer({ streaming, queued, commands, agents, sequences, activeAgent, dictionaries = [], models, model, thinkingLevel, thinkingLevels, sessionCache, contextUsage, draft, onDraftChange, restoredDraft, onSend, onAbort, onOpenTerminal, onAgent, onModel, onThinking }: Props) {
   const [localValue, setLocalValue] = useState("");
   const value = draft ?? localValue;
   const setValue = (next: string) => { if (onDraftChange) onDraftChange(next); else setLocalValue(next); };
@@ -69,7 +69,7 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
   const setValueRef = useRef(setValue); setValueRef.current = setValue;
   const commandQuery = value.match(/^\/([^\s]*)$/)?.[1]?.toLowerCase();
   const skillQuery = commandQuery === undefined ? skillReference(value) : undefined;
-  const dictionaryHighlights = useMemo(() => dictionaryMatches(value, dictionary), [value, dictionary]);
+  const dictionaryHighlights = useMemo(() => dictionaryMatches(value, dictionaries), [value, dictionaries]);
   const matches = useMemo(() => paletteDismissed ? [] : commandQuery !== undefined
     ? commands.filter((command) => command.name.toLowerCase().includes(commandQuery)).slice(0, 7)
     : skillQuery !== undefined
@@ -119,7 +119,7 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
   };
   const submit = () => {
     const textFiles = uploads.filter((upload) => upload.kind === "text");
-    const message = [expandSkillReference(applyDictionary(value.trim(), dictionary), commands), ...textFiles.map((file) => `<file name="${file.name.replaceAll('"', "&quot;")}">\n${file.text}\n</file>`)].filter(Boolean).join("\n\n");
+    const message = [expandSkillReference(applyDictionary(value.trim(), dictionaries), commands), ...textFiles.map((file) => `<file name="${file.name.replaceAll('"', "&quot;")}">\n${file.text}\n</file>`)].filter(Boolean).join("\n\n");
     const images = uploads.flatMap((upload) => upload.image ? [upload.image] : []);
     if (!message && !images.length) return;
     onSend(message || "Describe the attached image.", streaming ? behavior : undefined, images);
