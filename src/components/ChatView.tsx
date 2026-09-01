@@ -3,6 +3,7 @@ import { FolderGit2 } from "lucide-react";
 import type { AgentProfile, AgentState, ChatMessage, GitDiffSnapshots, ImageAttachment, Model, PromptContextInfo, PromptDictionary, SequenceProfile, SlashCommand } from "../types";
 import { Message } from "./Message";
 import { Composer } from "./Composer";
+import { PromptContextBar } from "./PromptContextBar";
 import { textOf, thinkingOf } from "../lib/content";
 import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 import { cacheHitStats } from "../lib/messages";
@@ -15,6 +16,7 @@ export function ChatView(props: Props) {
   const shell = useRef<HTMLElement>(null);
   const composerStack = useRef<HTMLDivElement>(null);
   const turns = groupTurns(props.messages);
+  const recentResponseTurns = new Set(turns.map((turn, index) => turn.some((message) => message.role === "assistant") ? index : -1).filter((index) => index >= 0).slice(-3));
   const sessionUsage = props.messages.reduce((total, message) => ({ input: total.input + (message.usage?.input ?? 0), cacheRead: total.cacheRead + (message.usage?.cacheRead ?? 0) }), { input: 0, cacheRead: 0 });
   const sessionCache = cacheHitStats(sessionUsage);
   const projectName = props.projectCwd?.split(/[\\/]/).filter(Boolean).at(-1);
@@ -34,7 +36,7 @@ export function ChatView(props: Props) {
   return <main ref={shell} className="chat-shell">
     <div className="messages" aria-live="polite"><div className="conversation">
       {!props.messages.length && <div className="empty-chat"><span>π</span></div>}
-      {turns.map((turn, index) => <ConversationTurn key={turn[0]?.id || index} messages={turn} gitDiffs={props.gitDiffs} promptContext={index === turns.length - 1 ? props.promptContext : undefined} active={props.state.isStreaming && index === turns.length - 1} retryable={!props.state.isStreaming && index === turns.length - 1} onRetry={props.onSend} onBranch={props.onBranch} />)}<div ref={bottom} className="scroll-anchor" />
+      {turns.map((turn, index) => <ConversationTurn key={turn[0]?.id || index} messages={turn} gitDiffs={props.gitDiffs} promptContext={index === turns.length - 1 ? props.promptContext : undefined} contextInWork={!recentResponseTurns.has(index)} active={props.state.isStreaming && index === turns.length - 1} retryable={!props.state.isStreaming && index === turns.length - 1} onRetry={props.onSend} onBranch={props.onBranch} />)}<div ref={bottom} className="scroll-anchor" />
     </div></div>
     {!props.readOnly && <div ref={composerStack} className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.map((line, index) => <div key={index}>{line}</div>)}</div>} {props.statuses.length > 0 && <div className="extension-status">{props.statuses.join(" · ")}</div>}{!props.messages.length && props.state.messageCount === 0 && <div className="new-chat-project"><button type="button" className={projectName ? "selected" : undefined} aria-label={projectName ? `Selected project: ${projectName}` : "Choose project"} title={props.projectCwd} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName ?? "Choose project"}</button></div>}<Composer streaming={props.state.isStreaming} queued={props.state.pendingMessageCount} commands={props.commands} agents={props.agents ?? []} sequences={props.sequences ?? []} activeAgent={props.activeAgent} dictionaries={props.dictionaries} models={props.models} model={props.state.model} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={sessionCache} contextUsage={props.state.contextUsage} draft={props.draft} onDraftChange={props.onDraftChange} restoredDraft={abortedTurn ? { id: `${abortedTurn.assistant.timestamp ?? abortedTurn.assistant.id}:${abortedTurn.prompt}`, value: abortedTurn.prompt } : undefined} onSend={props.onSend} onAbort={props.onAbort} onOpenTerminal={props.onOpenTerminal} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onThinking={props.onThinking} /></div>}
   </main>;
@@ -78,7 +80,7 @@ function renderMessages(messages: ChatMessage[], expanded: boolean, onBranch: Pr
   return compactCompletedTools(messages, compact).map(({ message, count }) => <Message key={message.id} message={message.role === "assistant" && !message.promptContext && promptContext ? { ...message, promptContext } : message} toolCount={count} expanded={expanded} onBranch={onBranch} />);
 }
 
-function ConversationTurn({ messages, gitDiffs, promptContext, active, retryable, onRetry, onBranch }: { messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; promptContext?: PromptContextInfo; active: boolean; retryable: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"] }) {
+function ConversationTurn({ messages, gitDiffs, promptContext, contextInWork, active, retryable, onRetry, onBranch }: { messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; promptContext?: PromptContextInfo; contextInWork: boolean; active: boolean; retryable: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"] }) {
   const userIndex = messages.findIndex((message) => message.role === "user");
   const parsed = userIndex >= 0 ? parseSequencePrompt(textOf(messages[userIndex].content)) : { text: "" };
   if (parsed.step && !parsed.step.visible) return null;
@@ -94,14 +96,18 @@ function ConversationTurn({ messages, gitDiffs, promptContext, active, retryable
   const intermediate = shown.flatMap((message, index) => {
     if (message.role === "user") return [];
     if (index !== finalIndex) return [message];
-    return finalThinking ? [{ ...message, id: `${message.id}:reasoning`, content: [{ type: "thinking" as const, thinking: finalThinking }], stopReason: undefined, errorMessage: undefined }] : [];
+    if (!finalThinking) return [];
+    const { promptContext: _promptContext, ...reasoningMessage } = message;
+    return [{ ...reasoningMessage, id: `${message.id}:reasoning`, content: [{ type: "thinking" as const, thinking: finalThinking }], stopReason: undefined, errorMessage: undefined }];
   });
   const userMessages = parsed.step?.step ? [] : shown.filter((message) => message.role === "user");
-  const finalMessage = finalIndex >= 0 ? {
-    ...shown[finalIndex],
-    ...(!shown[finalIndex].promptContext && promptContext ? { promptContext } : {}),
-    content: textOf(shown[finalIndex].content),
-  } : undefined;
+  const finalContext = finalIndex >= 0 ? shown[finalIndex].promptContext ?? promptContext : undefined;
+  const finalMessage = finalIndex >= 0 ? (() => {
+    const contextual = { ...shown[finalIndex], ...(!shown[finalIndex].promptContext && promptContext ? { promptContext } : {}), content: textOf(shown[finalIndex].content) };
+    if (!contextInWork) return contextual;
+    const { promptContext: _promptContext, ...withoutContext } = contextual;
+    return withoutContext;
+  })() : undefined;
   const gitDiff = finalMessage ? gitDiffs?.[finalMessage.id] : undefined;
   const workedFor = formatWorkedFor(userIndex >= 0 ? shown[userIndex].timestamp : shown[0]?.timestamp, finalMessage?.completedAt ?? finalMessage?.timestamp);
   const retryPrompt = retryable && finalMessage?.stopReason === "aborted" ? [...userMessages].reverse().map((message) => textOf(message.content).trim()).find(Boolean) : undefined;
@@ -109,7 +115,7 @@ function ConversationTurn({ messages, gitDiffs, promptContext, active, retryable
   return <section className="conversation-turn">
     {parsed.step && parsed.step.step > 0 && <div className="sequence-step-label">{parsed.step.sequence} · {parsed.step.agent}</div>}
     {userMessages.map((message) => <Message key={message.id} message={message} onBranch={onBranch} />)}
-    {intermediate.length > 0 && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}</summary><div className="work-group-content">{renderMessages(intermediate, true, onBranch)}</div></details>}
+    {(intermediate.length > 0 || (contextInWork && finalContext)) && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}</summary><div className="work-group-content">{contextInWork && finalContext && <PromptContextBar context={finalContext} />}{renderMessages(intermediate, true, onBranch)}</div></details>}
     {finalMessage && <Message message={finalMessage} diff={gitDiff} onBranch={onBranch} onRetry={retryPrompt ? () => { window.dispatchEvent(new CustomEvent("pi:set-editor-text", { detail: "" })); onRetry(retryPrompt); } : undefined} />}
   </section>;
 }
