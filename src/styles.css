@@ -34,7 +34,9 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .session-item:hover .session-archive { opacity: .65; pointer-events: auto; }
 .session-archive:hover { background: #ffffff12; color: var(--accent); opacity: 1; }
 .session-copy { flex: 1; min-width: 0; display: grid; gap: 4px; }
-.session-copy strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; font-weight: 600; }
+.session-title-row { min-width: 0; display: flex; align-items: baseline; gap: 7px; }
+.session-copy strong { min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; font-weight: 600; }
+.session-api-cost { flex: 0 0 auto; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
 .empty-small { text-align: center; color: var(--muted); font-size: 13px; padding: 40px 10px; }
 
 .chat-workspace { order: 2; flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }

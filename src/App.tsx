@@ -141,7 +141,7 @@ export default function App() {
             if (typeof payload.task !== "string" || !payload.task.trim() || typeof payload.sessionFile !== "string" || !payload.sessionFile) throw new Error("Invalid /btw branch request");
             const cwd = typeof payload.cwd === "string" && payload.cwd ? payload.cwd : ".";
             setSplitPane({
-              session: { id: `btw-${request.id}`, path: "", name: "BTW", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task, messageCount: 0, hostId: activeHostIdRef.current },
+              session: { id: `btw-${request.id}`, path: "", name: "BTW", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task, messageCount: 0, apiCost: 0, hostId: activeHostIdRef.current },
               btw: { requestId: request.id, task: payload.task, forkFrom: payload.sessionFile },
             });
           } catch (reason) {

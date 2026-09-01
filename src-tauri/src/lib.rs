@@ -76,6 +76,7 @@ struct SessionSummary {
     modified_at: u64,
     preview: String,
     message_count: usize,
+    api_cost: f64,
     host_id: String,
     host_name: String,
 }
@@ -847,11 +848,11 @@ fn parse_session_content(path: &Path, content: &str, modified: SystemTime, cwd_e
     if header.get("type")?.as_str()? != "session" { return None; }
     let cwd = header.get("cwd").and_then(Value::as_str).unwrap_or("Unknown project").to_string();
     let id = header.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
-    let mut name = None; let mut first_user_message = String::new(); let mut preview = String::new(); let mut message_count = 0;
-    for line in lines { let Ok(entry) = serde_json::from_str::<Value>(line) else { continue }; if entry.get("type").and_then(Value::as_str) == Some("session_info") { name = entry.get("name").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()).map(str::to_owned); } if entry.get("type").and_then(Value::as_str) == Some("message") { message_count += 1; if let Some(message) = entry.get("message") { let text = text_content(message); if !text.is_empty() { if first_user_message.is_empty() && message.get("role").and_then(Value::as_str) == Some("user") { first_user_message = text.clone(); } preview = text; } } } }
+    let mut name = None; let mut first_user_message = String::new(); let mut preview = String::new(); let mut message_count = 0; let mut api_cost = 0.0;
+    for line in lines { let Ok(entry) = serde_json::from_str::<Value>(line) else { continue }; if entry.get("type").and_then(Value::as_str) == Some("session_info") { name = entry.get("name").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()).map(str::to_owned); } if entry.get("type").and_then(Value::as_str) == Some("message") { message_count += 1; if let Some(message) = entry.get("message") { let text = text_content(message); if !text.is_empty() { if first_user_message.is_empty() && message.get("role").and_then(Value::as_str) == Some("user") { first_user_message = text.clone(); } preview = text; } if message.get("role").and_then(Value::as_str) == Some("assistant") { api_cost += message.pointer("/usage/cost/total").and_then(Value::as_f64).filter(|cost| cost.is_finite() && *cost >= 0.0).unwrap_or(0.0); } } } }
     let name = name.unwrap_or_else(|| if first_user_message.is_empty() { "Untitled session".into() } else { first_user_message });
     let project = Path::new(&cwd).file_name().and_then(|value| value.to_str()).unwrap_or("Workspace").to_string();
-    Some(SessionSummary { id, path: path.to_string_lossy().into_owned(), name, project, cwd, cwd_exists, modified_at: unix_timestamp(modified), preview: preview.chars().take(100).collect(), message_count, host_id: host_id.into(), host_name: host_name.into() })
+    Some(SessionSummary { id, path: path.to_string_lossy().into_owned(), name, project, cwd, cwd_exists, modified_at: unix_timestamp(modified), preview: preview.chars().take(100).collect(), message_count, api_cost, host_id: host_id.into(), host_name: host_name.into() })
 }
 
 fn parse_session(path: &Path) -> Option<SessionSummary> {
