@@ -132,6 +132,10 @@ struct AppSettings {
     mcp_servers: Vec<Value>,
     #[serde(default)]
     hosts: Vec<RemoteHost>,
+    #[serde(default)]
+    dictionaries: Vec<Value>,
+    #[serde(default)]
+    active_dictionary_id: String,
 }
 
 fn default_pi_path() -> String { "pi".into() }
@@ -265,7 +269,7 @@ fn default_settings() -> AppSettings {
             json!({"name":"send_message","description":"Send a message to another agent","enabled":true,"builtin":false}),
             json!({"name":"read_trace","description":"Extract clean user and final assistant messages from a Pi trace","enabled":true,"builtin":false}),
         ]).collect(),
-        skills: vec![], mcp_servers: vec![], hosts: vec![],
+        skills: vec![], mcp_servers: vec![], hosts: vec![], dictionaries: vec![], active_dictionary_id: String::new(),
     }
 }
 

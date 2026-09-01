@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
-import { Blocks, Bot, Check, CircleGauge, CirclePlus, Cpu, GitBranch, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Sparkles, Trash2, Wrench } from "lucide-react";
+import { Blocks, BookOpen, Bot, Check, CircleGauge, CirclePlus, Cpu, GitBranch, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Sparkles, Trash2, Wrench } from "lucide-react";
 import type { AgentProfile, AppSettings, McpServer, Model, OrchestrationConfig, RemoteHost, SequenceProfile } from "../types";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutFromEvent, type KeybindAction } from "../lib/keybindings";
 import { IconButton } from "./IconButton";
 import { Toggle } from "./Toggle";
 
-type Section = "general" | "agents" | "sequences" | "machines" | "keybinds" | "tools" | "skills" | "mcp";
+type Section = "general" | "dictionaries" | "agents" | "sequences" | "machines" | "keybinds" | "tools" | "skills" | "mcp";
 const sections = [
   { id: "general" as const, label: "General", icon: Settings2 },
+  { id: "dictionaries" as const, label: "Dictionaries", icon: BookOpen },
   { id: "agents" as const, label: "Agents", icon: Bot },
   { id: "sequences" as const, label: "Sequences", icon: GitBranch },
   { id: "machines" as const, label: "Machines", icon: Server },
@@ -28,6 +29,7 @@ export function SettingsView({ settings, orchestration, models = [], thinkingLev
   const updateMcp = (id: string, value: Partial<McpServer>) => setDraft((current) => ({ ...current, mcpServers: current.mcpServers.map((server) => server.id === id ? { ...server, ...value } : server) }));
   const addHost = () => setDraft((current) => ({ ...current, hosts: [...current.hosts, { id: uid("host"), name: "New machine", target: "", piPath: "pi" }] }));
   const updateHost = (id: string, value: Partial<RemoteHost>) => setDraft((current) => ({ ...current, hosts: current.hosts.map((host) => host.id === id ? { ...host, ...value } : host) }));
+  const addDictionary = () => setDraft((current) => { const id = uid("dictionary"); return { ...current, activeDictionaryId: current.activeDictionaryId || id, dictionaries: [...current.dictionaries, { id, name: "New dictionary", entries: [] }] }; });
   const changeableSkills = draft.skills.filter((skill) => !skill.userInvokedOnly);
   const allSkillsEnabled = changeableSkills.length > 0 && changeableSkills.every((skill) => skill.enabled);
   const agent = agentDrafts[agentIndex];
@@ -53,6 +55,15 @@ export function SettingsView({ settings, orchestration, models = [], thinkingLev
           <label className="field"><span>Default model</span><input value={draft.defaultModel} onChange={(e) => patch({ defaultModel: e.target.value })} /></label>
           <label className="field"><span>Thinking level</span><select value={draft.defaultThinking} onChange={(e) => patch({ defaultThinking: e.target.value })}>{["off", "minimal", "low", "medium", "high", "xhigh", "max"].map((level) => <option key={level}>{level}</option>)}</select></label>
           {preprompter && <><SettingRow icon={<Sparkles />} title="Pre-prompter" description="Rewrite each prompt before it is sent to the selected session."><Toggle label="Pre-prompter" checked={preprompter.enabled} onChange={(enabled) => setPreprompter((current) => current && ({ ...current, enabled }))} /></SettingRow><label className="field"><span>Pre-prompter model</span><select value={preprompter.model} onChange={(event) => setPreprompter((current) => current && ({ ...current, model: event.target.value }))}><option value="">Use general default</option>{models.map((model) => <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>{model.name || model.id}</option>)}</select></label><label className="field"><span>Pre-prompter system prompt</span><textarea value={preprompter.systemPrompt} onChange={(event) => setPreprompter((current) => current && ({ ...current, systemPrompt: event.target.value }))} /></label><label className="field"><span>Pre-prompter AGENTS.md</span><textarea value={preprompter.agentsMd} onChange={(event) => setPreprompter((current) => current && ({ ...current, agentsMd: event.target.value }))} /></label></>}
+        </SettingsSection>}
+        {section === "dictionaries" && <SettingsSection title="Dictionaries" description="Highlight configured words while typing and replace them only when a prompt is submitted." headerAction={<button className="secondary-button" onClick={addDictionary}><CirclePlus size={15} />Add dictionary</button>}>
+          <label className="field"><span>Active dictionary</span><select aria-label="Active dictionary" value={draft.activeDictionaryId} onChange={(event) => patch({ activeDictionaryId: event.target.value })}><option value="">None</option>{draft.dictionaries.map((dictionary) => <option key={dictionary.id} value={dictionary.id}>{dictionary.name}</option>)}</select></label>
+          <div className="dictionary-list">{draft.dictionaries.map((dictionary) => <div className="mcp-card dictionary-card" key={dictionary.id}>
+            <div className="dictionary-card-head"><span className="config-icon dictionary"><BookOpen size={16} /></span><input aria-label="Dictionary name" value={dictionary.name} onChange={(event) => setDraft((current) => ({ ...current, dictionaries: current.dictionaries.map((item) => item.id === dictionary.id ? { ...item, name: event.target.value } : item) }))} /><IconButton label={`Remove ${dictionary.name}`} onClick={() => setDraft((current) => ({ ...current, activeDictionaryId: current.activeDictionaryId === dictionary.id ? "" : current.activeDictionaryId, dictionaries: current.dictionaries.filter((item) => item.id !== dictionary.id) }))}><Trash2 size={15} /></IconButton></div>
+            <div className="dictionary-entries">{dictionary.entries.map((entry, entryIndex) => <div className="dictionary-entry" key={entryIndex}><input aria-label={`Word ${entryIndex + 1}`} placeholder="Word" value={entry.word} onChange={(event) => setDraft((current) => ({ ...current, dictionaries: current.dictionaries.map((item) => item.id === dictionary.id ? { ...item, entries: item.entries.map((candidate, index) => index === entryIndex ? { ...candidate, word: event.target.value } : candidate) } : item) }))} /><span>→</span><input aria-label={`Replacement ${entryIndex + 1}`} placeholder="Replacement" value={entry.replacement} onChange={(event) => setDraft((current) => ({ ...current, dictionaries: current.dictionaries.map((item) => item.id === dictionary.id ? { ...item, entries: item.entries.map((candidate, index) => index === entryIndex ? { ...candidate, replacement: event.target.value } : candidate) } : item) }))} /><IconButton label={`Remove entry ${entryIndex + 1}`} onClick={() => setDraft((current) => ({ ...current, dictionaries: current.dictionaries.map((item) => item.id === dictionary.id ? { ...item, entries: item.entries.filter((_, index) => index !== entryIndex) } : item) }))}><Trash2 size={14} /></IconButton></div>)}</div>
+            <button className="secondary-button dictionary-add-entry" onClick={() => setDraft((current) => ({ ...current, dictionaries: current.dictionaries.map((item) => item.id === dictionary.id ? { ...item, entries: [...item.entries, { word: "", replacement: "" }] } : item) }))}><CirclePlus size={14} />Add word</button>
+          </div>)}</div>
+          {!draft.dictionaries.length && <div className="empty-small">Add a dictionary to get started.</div>}
         </SettingsSection>}
         {section === "agents" && <SettingsSection title="Agents" description="Choose defaults, instructions, and the resources each agent may see." headerAction={<button className="secondary-button" onClick={addAgent}><CirclePlus size={15} />Add agent</button>}>
           <div className="agent-editor"><div className="agent-list">{agentDrafts.map((item, index) => <button key={`${item.name}-${index}`} className={index === agentIndex ? "active" : ""} disabled={item.name === "default"} onClick={() => setAgentIndex(index)}><Bot size={14} /><span>{item.name}</span>{item.name === "default" && <small>Built in</small>}</button>)}</div>
