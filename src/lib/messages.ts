@@ -1,6 +1,6 @@
 import type { ChatMessage, ContentPart, PromptContextInfo } from "../types";
 
-export type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number }; customType?: string; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string };
+export type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number }; customType?: string; content?: ChatMessage["content"]; data?: unknown; details?: Record<string, unknown>; display?: boolean; timestamp?: string };
 
 function decodeXml(value: string) {
   return value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"').replaceAll("&apos;", "'").replaceAll("&amp;", "&");
@@ -86,7 +86,7 @@ export function branchMessages(entries: PiEntry[], leafId: string | null): ChatM
       const message = normalizeMessage(entry.message as unknown as Record<string, unknown>, entry.id, entry.timestamp);
       messages.push(message.role === "assistant" && promptContext ? { ...message, promptContext } : message);
       if (message.role === "assistant") promptContext = undefined;
-    } else if (entry.type === "custom_message" && entry.customType === "pi-desktop-btw" && entry.display !== false) messages.push(normalizeMessage({ role: "custom", customType: entry.customType, content: entry.content ?? "", timestamp: entry.timestamp ?? Date.now() }, entry.id));
+    } else if (entry.type === "custom_message" && entry.customType === "pi-desktop-btw" && entry.display !== false) messages.push(normalizeMessage({ role: "custom", customType: entry.customType, content: entry.content ?? "", details: entry.details, timestamp: entry.timestamp ?? Date.now() }, entry.id));
   }
   const calledTargets = new Map<string, string>();
   for (const message of messages) if (message.role === "assistant" && Array.isArray(message.content)) for (const part of message.content) {

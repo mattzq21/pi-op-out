@@ -36,6 +36,11 @@ export function Message({ message, diff, expanded = false, toolCount = 1, debug 
   const [copied, setCopied] = useState(false);
   if (message.role === "tool") { const output = textOf(message.content); const status = message.toolStatus ?? "done"; return <details className={`tool-event ${status}`} open={status === "running" || (expanded && status !== "done")}><summary><Wrench size={14} /><span><strong>{message.toolName || "tool"}{toolCount > 1 ? ` x${toolCount}` : ""}</strong><small>{status === "running" ? "Running…" : status === "error" ? "Failed" : "Completed"}</small></span><span className="tool-chevron">›</span></summary>{output && <pre>{output}</pre>}</details>; }
   if (message.role === "user") { const { skills, text } = userMessageParts(textOf(message.content)); return <article className="message user-message"><div className="message-body">{skills.map((skill) => <span className="skill-reference" key={skill}>${skill}</span>)}{text && <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>}</div></article>; }
+  if (message.customType === "pi-desktop-btw") {
+    const question = typeof message.details?.task === "string" ? message.details.task.trim() : "";
+    const answer = textOf(message.content).replace(/^Side conversation result:\s*/i, "").trim();
+    return <article className="btw-message"><div className="btw-question"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{question}</ReactMarkdown></div><div className="btw-answer"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{answer}</ReactMarkdown></div></article>;
+  }
   const output = textOf(message.content);
   const thinking = thinkingOf(message.content);
   const cache = cacheHitStats(message.usage);
