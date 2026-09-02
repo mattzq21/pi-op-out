@@ -38,6 +38,15 @@ struct TerminalRuntime {
     processes: Mutex<HashMap<String, TerminalProcess>>,
 }
 
+#[derive(Clone)]
+struct CachedSession { fingerprint: String, summary: SessionSummary }
+
+#[derive(Default)]
+struct SessionIndexRuntime {
+    local: Mutex<HashMap<PathBuf, CachedSession>>,
+    remote: Mutex<HashMap<String, HashMap<String, CachedSession>>>,
+}
+
 const MAX_TERMINALS: usize = 8;
 const MAX_REMOTE_HOSTS: usize = 16;
 const MAX_MCP_SERVERS: usize = 32;
@@ -1174,27 +1183,57 @@ fn parse_session_content(path: &Path, content: &str, modified: SystemTime, cwd_e
     Some(SessionSummary { id, path: path.to_string_lossy().into_owned(), name, project, cwd, cwd_exists, modified_at: unix_timestamp(modified), preview: preview.chars().take(100).collect(), message_count, api_cost, host_id: host_id.into(), host_name: host_name.into() })
 }
 
-fn parse_session(path: &Path) -> Option<SessionSummary> {
-    let content = fs::read_to_string(path).ok()?;
-    let modified = fs::metadata(path).and_then(|metadata| metadata.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
-    parse_session_content(path, &content, modified, true, "local", "Local").map(|mut session| { session.cwd_exists = Path::new(&session.cwd).is_dir(); session })
+fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<SessionSummary>, String> {
+    let mut cache = index.local.lock().map_err(|_| "Local session index lock was poisoned")?;
+    let mut seen = HashSet::new(); let mut sessions = Vec::new();
+    for entry in WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok).filter(|entry| entry.file_type().is_file() && entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")) {
+        let path = entry.path().to_path_buf(); let Ok(metadata) = entry.metadata() else { continue };
+        let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        let fingerprint = format!("{}:{}", modified.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos(), metadata.len());
+        seen.insert(path.clone());
+        let mut summary = if let Some(cached) = cache.get(&path).filter(|cached| cached.fingerprint == fingerprint) { cached.summary.clone() } else {
+            let Ok(content) = fs::read_to_string(&path) else { continue };
+            let Some(summary) = parse_session_content(&path, &content, modified, true, "local", "Local") else { continue };
+            cache.insert(path.clone(), CachedSession { fingerprint, summary: summary.clone() }); summary
+        };
+        summary.cwd_exists = Path::new(&summary.cwd).is_dir(); sessions.push(summary);
+    }
+    cache.retain(|path, _| seen.contains(path)); Ok(sessions)
 }
 
-fn list_remote_sessions(host: &RemoteHost) -> Result<Vec<SessionSummary>, String> {
-    let script = format!(r#"{} && find "$HOME/.pi-desktop/sessions" -type f -name '*.jsonl' -exec sh -c 'for path do printf "%s\000%s\000" "$path" "$(stat -c %Y "$path")"; cat "$path"; printf "\000"; done' sh {{}} + 2>/dev/null"#, remote_session_migration_script());
+fn list_remote_sessions(index: &SessionIndexRuntime, host: &RemoteHost) -> Result<Vec<SessionSummary>, String> {
+    let script = format!(r#"{} && find "$HOME/.pi-desktop/sessions" -type f -name '*.jsonl' -printf '%p\000%T@\000%s\000' 2>/dev/null"#, remote_session_migration_script());
     let output = ssh(host).arg(script).output().map_err(|error| format!("Could not run ssh for {}: {error}", host.name))?;
     if !output.status.success() { return Err(format!("Could not list sessions on {}: {}", host.name, String::from_utf8_lossy(&output.stderr).trim())); }
-    let chunks: Vec<&[u8]> = output.stdout.split(|byte| *byte == 0).collect();
-    let mut sessions = Vec::new();
-    for frame in chunks.chunks(3) {
-        if frame.len() < 3 || frame[0].is_empty() { continue; }
-        let path = PathBuf::from(String::from_utf8_lossy(frame[0]).into_owned());
-        let seconds = String::from_utf8_lossy(frame[1]).trim().parse::<u64>().unwrap_or(0);
-        let content = String::from_utf8_lossy(frame[2]);
-        // Remote CWD existence is validated when Pi starts; batch it here only if stale remote paths become common.
-        if let Some(session) = parse_session_content(&path, &content, SystemTime::UNIX_EPOCH + Duration::from_secs(seconds), true, &host.id, &host.name) { sessions.push(session); }
+    let fields: Vec<&[u8]> = output.stdout.split(|byte| *byte == 0).filter(|field| !field.is_empty()).collect();
+    let metadata: Vec<(String, String, u64)> = fields.chunks(3).filter_map(|frame| {
+        if frame.len() != 3 { return None; }
+        let path = String::from_utf8_lossy(frame[0]).into_owned(); let modified = String::from_utf8_lossy(frame[1]).into_owned(); let size = String::from_utf8_lossy(frame[2]).into_owned();
+        let seconds = modified.split('.').next().and_then(|value| value.parse().ok()).unwrap_or(0);
+        Some((path, format!("{modified}:{size}"), seconds))
+    }).collect();
+    let previous = index.remote.lock().map_err(|_| "Remote session index lock was poisoned")?.get(&host.id).cloned().unwrap_or_default();
+    let changed: Vec<_> = metadata.iter().filter(|(path, fingerprint, _)| previous.get(path).is_none_or(|cached| cached.fingerprint != *fingerprint)).collect();
+    let mut parsed = HashMap::new();
+    for batch in changed.chunks(128) {
+        let paths = batch.iter().map(|(path, _, _)| shell_quote(path)).collect::<Vec<_>>().join(" ");
+        let command = format!(r#"sh -c 'for path do printf "%s\000" "$path"; cat -- "$path"; printf "\000"; done' sh {paths}"#);
+        let output = ssh(host).arg(command).output().map_err(|error| format!("Could not update session index on {}: {error}", host.name))?;
+        if !output.status.success() { return Err(format!("Could not update session index on {}: {}", host.name, String::from_utf8_lossy(&output.stderr).trim())); }
+        let frames: Vec<&[u8]> = output.stdout.split(|byte| *byte == 0).collect();
+        for frame in frames.chunks(2) {
+            if frame.len() != 2 || frame[0].is_empty() { continue; }
+            let path = String::from_utf8_lossy(frame[0]).into_owned(); let Some((_, _, seconds)) = metadata.iter().find(|(candidate, _, _)| candidate == &path) else { continue };
+            let content = String::from_utf8_lossy(frame[1]); let path_buf = PathBuf::from(&path);
+            if let Some(summary) = parse_session_content(&path_buf, &content, SystemTime::UNIX_EPOCH + Duration::from_secs(*seconds), true, &host.id, &host.name) { parsed.insert(path, summary); }
+        }
     }
-    Ok(sessions)
+    let mut next = HashMap::new(); let mut sessions = Vec::new();
+    for (path, fingerprint, _) in metadata {
+        let mut summary = if let Some(summary) = parsed.remove(&path) { summary } else if let Some(cached) = previous.get(&path) { cached.summary.clone() } else { continue };
+        summary.host_name = host.name.clone(); sessions.push(summary.clone()); next.insert(path, CachedSession { fingerprint, summary });
+    }
+    index.remote.lock().map_err(|_| "Remote session index lock was poisoned")?.insert(host.id.clone(), next); Ok(sessions)
 }
 
 #[tauri::command(async)]
@@ -1284,9 +1323,9 @@ fn list_directories(app: AppHandle, host_id: String, path: Option<String>) -> Re
     Ok(DirectoryListing { path: current.to_string_lossy().into_owned(), parent: current.parent().map(|parent| parent.to_string_lossy().into_owned()), directories })
 }
 
-fn collect_sessions(app: &AppHandle) -> Result<Vec<SessionSummary>, String> {
+fn collect_sessions(app: &AppHandle, index: &SessionIndexRuntime) -> Result<Vec<SessionSummary>, String> {
     let home = home_dir()?; let root = migrate_local_desktop_sessions(&home)?;
-    let mut sessions: Vec<_> = if root.exists() { WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok).filter(|entry| entry.file_type().is_file() && entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")).filter_map(|entry| parse_session(entry.path())).collect() } else { vec![] };
+    let mut sessions = list_local_sessions(index, &root)?;
     let hosts = load_app_settings(app.clone())?.hosts;
     thread::scope(|scope| {
         let queue = Arc::new(Mutex::new(hosts));
@@ -1296,7 +1335,7 @@ fn collect_sessions(app: &AppHandle) -> Result<Vec<SessionSummary>, String> {
             scope.spawn(move || loop {
                 let host = queue.lock().ok().and_then(|mut items| items.pop());
                 let Some(host) = host else { break };
-                let _ = sender.send(list_remote_sessions(&host));
+                let _ = sender.send(list_remote_sessions(index, &host));
             });
         }
         drop(sender);
@@ -1306,7 +1345,7 @@ fn collect_sessions(app: &AppHandle) -> Result<Vec<SessionSummary>, String> {
 }
 
 #[tauri::command(async)]
-fn list_sessions(app: AppHandle) -> Result<Vec<SessionSummary>, String> { collect_sessions(&app) }
+fn list_sessions(app: AppHandle, index: State<SessionIndexRuntime>) -> Result<Vec<SessionSummary>, String> { collect_sessions(&app, &index) }
 
 fn session_entries(content: &str) -> Value {
     let entries: Vec<Value> = content.lines().skip(1).filter_map(|line| serde_json::from_str(line).ok()).collect();
@@ -1459,17 +1498,18 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
     if !authorized { broker_response(stream, "401 Unauthorized", json!({"error":"Unauthorized"})); return Ok(()); }
     if content_length > BROKER_BODY_BYTES { broker_response(stream, "413 Payload Too Large", json!({"error":"Message is too large"})); return Ok(()); }
     let mut body = vec![0; content_length]; reader.read_exact(&mut body).map_err(|error| error.to_string())?;
+    let session_index = app.state::<SessionIndexRuntime>();
     let result = match (method, path) {
         ("GET", "/agents") => {
             let active: Vec<_> = app.state::<PiRuntime>().active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values().cloned().collect();
-            collect_sessions(&app).map(|sessions| json!(sessions.into_iter().map(|session| json!({"hostId":session.host_id,"sessionId":session.id,"name":session.name,"project":session.project,"cwd":session.cwd,"active":active.iter().any(|agent| agent_is_active(&session, agent))})).collect::<Vec<_>>()))
+            collect_sessions(&app, &session_index).map(|sessions| json!(sessions.into_iter().map(|session| json!({"hostId":session.host_id,"sessionId":session.id,"name":session.name,"project":session.project,"cwd":session.cwd,"active":active.iter().any(|agent| agent_is_active(&session, agent))})).collect::<Vec<_>>()))
         },
         ("POST", "/message") => (|| {
             let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid message request".to_string())?;
             let host_id = value.get("hostId").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("hostId is required")?;
             let session_id = value.get("sessionId").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("sessionId is required")?;
             let message = value.get("message").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("message is required")?;
-            let sessions = collect_sessions(&app)?;
+            let sessions = collect_sessions(&app, &session_index)?;
             let active: Vec<_> = app.state::<PiRuntime>().active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values().cloned().collect();
             let session = resolve_agent(&sessions, host_id, session_id, &active)?;
             let _claim = claim_agent(&broker, host_id, session_id)?;
@@ -1510,5 +1550,5 @@ pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(feature = "webdriver")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
-    builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(broker.clone()).setup(move |app| start_session_broker(app.handle().clone(), broker.clone()).map_err(Into::into)).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_entries, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, git_branch, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(SessionIndexRuntime::default()).manage(broker.clone()).setup(move |app| start_session_broker(app.handle().clone(), broker.clone()).map_err(Into::into)).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_entries, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, git_branch, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }

@@ -32,10 +32,19 @@ export function useChatSession(transport: PiTransport, initialState: AgentState 
 
   const refresh = useCallback(async () => {
     const revision = liveRevision.current;
-    const [nextState, history, modelResponse, thinkingResponse, commandResponse, stats] = await Promise.all([
+    const [stateResult, historyResult, modelResult, thinkingResult, commandResult, statsResult] = await Promise.allSettled([
       transport.command<AgentState>({ type: "get_state" }), transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }), transport.command<{ models: Model[] }>({ type: "get_available_models" }), transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }), transport.command<{ commands: SlashCommand[] }>({ type: "get_commands" }), transport.command<{ contextUsage?: AgentState["contextUsage"] }>({ type: "get_session_stats" })
-    ]);
-    if (liveRevision.current === revision) { const visibleCommands = commandResponse.commands.filter((command) => command.sourceInfo?.source !== "inline" && command.name !== "pi-orchestration-next"); discardPendingUpdates(); setState({ ...nextState, contextUsage: stats.contextUsage }); setMessages(branchMessages(history.entries, history.leafId)); setModels(modelResponse.models); setThinkingLevels(thinkingResponse.levels); setCommands(visibleCommands.some((command) => command.name === "compact") ? visibleCommands : [{ name: "compact", description: "Compact conversation context", source: "builtin" }, ...visibleCommands]); }
+    ] as const);
+    if (stateResult.status === "rejected") throw stateResult.reason;
+    const nextState = stateResult.value;
+    if (liveRevision.current === revision) {
+      discardPendingUpdates();
+      setState({ ...nextState, ...(statsResult.status === "fulfilled" ? { contextUsage: statsResult.value.contextUsage } : {}) });
+      if (historyResult.status === "fulfilled") setMessages(branchMessages(historyResult.value.entries, historyResult.value.leafId));
+      if (modelResult.status === "fulfilled") setModels(modelResult.value.models);
+      if (thinkingResult.status === "fulfilled") setThinkingLevels(thinkingResult.value.levels);
+      if (commandResult.status === "fulfilled") { const visibleCommands = commandResult.value.commands.filter((command) => command.sourceInfo?.source !== "inline" && command.name !== "pi-orchestration-next"); setCommands(visibleCommands.some((command) => command.name === "compact") ? visibleCommands : [{ name: "compact", description: "Compact conversation context", source: "builtin" }, ...visibleCommands]); }
+    }
     return nextState;
   }, [discardPendingUpdates, transport]);
 
@@ -43,6 +52,7 @@ export function useChatSession(transport: PiTransport, initialState: AgentState 
     if (["agent_start", "agent_end", "agent_settled", "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end"].includes(event.type)) liveRevision.current += 1;
     if (event.type === "agent_start") setState((current) => ({ ...current, isStreaming: true }));
     if (event.type === "agent_end" || event.type === "agent_settled") setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
+    if (event.type === "disconnected") setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
     if (event.type === "message_start" || event.type === "message_end") {
       if (event.type === "message_end") flush();
       let message = normalizeMessage(event.message as Record<string, unknown>);

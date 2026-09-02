@@ -24,6 +24,7 @@ export class NativeTransport implements PiTransport {
   private stderrUnlisten?: UnlistenFn;
   private stderrLines: string[] = [];
   private connectionVersion = 0;
+  private connectPromise?: Promise<void>;
   private processLifecycle: Promise<unknown> = Promise.resolve();
   private settingsLifecycle: Promise<unknown> = Promise.resolve();
   private cwd?: string;
@@ -49,6 +50,11 @@ export class NativeTransport implements PiTransport {
   async connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string, ephemeral = false) {
     if (cwd !== undefined) this.cwd = cwd; if (sessionPath !== undefined) { this.sessionPath = sessionPath; this.sessionId = undefined; } if (hostId !== undefined) this.hostId = hostId;
     if (this.running) return;
+    if (this.connectPromise) return this.connectPromise;
+    const pending = this.establishConnection(forkPath, ephemeral); this.connectPromise = pending;
+    try { await pending; } finally { if (this.connectPromise === pending) this.connectPromise = undefined; }
+  }
+  private async establishConnection(forkPath?: string, ephemeral = false) {
     if (this.cwd === undefined && this.sessionPath === undefined) { const chat = await call<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId: this.hostId, e2e: import.meta.env.MODE === "e2e" }); this.cwd = chat.cwd; this.sessionId = chat.sessionId; this.temporaryChat = true; }
     const version = ++this.connectionVersion;
     this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.stderrLines = [];
