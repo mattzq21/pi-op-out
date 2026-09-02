@@ -140,6 +140,8 @@ struct AppSettings {
     context_window_cap: u64,
     auto_compaction: bool,
     auto_retry: bool,
+    #[serde(default)]
+    debug_mode: bool,
     #[serde(default = "default_keybindings")]
     keybindings: HashMap<String, String>,
     tools: Vec<Value>,
@@ -164,6 +166,7 @@ fn default_keybindings() -> HashMap<String, String> {
         ("newConversation", "Ctrl+N"),
         ("toggleConversations", "Ctrl+B"),
         ("toggleTerminal", "Ctrl+J"),
+        ("toggleDebugMode", "Ctrl+D"),
         ("focusComposer", "Ctrl+L"),
         ("openSettings", "Ctrl+,"),
     ].into_iter().map(|(action, shortcut)| (action.into(), shortcut.into())).collect()
@@ -325,7 +328,7 @@ fn prepare_btw_extension() -> Result<PathBuf, String> {
 
 fn default_settings() -> AppSettings {
     AppSettings {
-        default_model: DEFAULT_MODEL.into(), default_thinking: "medium".into(), context_window_cap: default_context_window_cap(), auto_compaction: true, auto_retry: true, keybindings: default_keybindings(),
+        default_model: DEFAULT_MODEL.into(), default_thinking: "medium".into(), context_window_cap: default_context_window_cap(), auto_compaction: true, auto_retry: true, debug_mode: false, keybindings: default_keybindings(),
         tools: ["read", "bash", "edit", "write", "grep", "find", "ls"].iter().map(|name| json!({"name": name, "description": "Pi built-in tool", "enabled": true, "builtin": true})).chain([
             json!({"name":"list_agents","description":"List agents by machine and session","enabled":true,"builtin":false}),
             json!({"name":"send_message","description":"Send a message to another agent","enabled":true,"builtin":false}),
@@ -478,11 +481,13 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     let migrated_filesystem_mcp = settings.mcp_servers.len() != previous_mcp_count;
     if migrated_model { settings.default_model = DEFAULT_MODEL.into(); settings.default_thinking = "medium".into(); }
     for shortcut in settings.keybindings.values_mut() { *shortcut = shortcut.replace("Mod+", "Ctrl+"); }
+    let mut keybindings_changed = false;
+    for (action, shortcut) in default_keybindings() { if let std::collections::hash_map::Entry::Vacant(entry) = settings.keybindings.entry(action) { entry.insert(shortcut); keybindings_changed = true; } }
     for tool in default_settings().tools { if !settings.tools.iter().any(|current| current.get("name") == tool.get("name")) { settings.tools.push(tool); } }
     merge_discovered_skills(&mut settings);
     let dictionaries_changed = load_dictionary_config(&mut settings)?;
     validate_dictionaries(&settings)?;
-    if migrated_model || migrated_filesystem_mcp || dictionaries_changed { fs::write(path, serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?; }
+    if migrated_model || migrated_filesystem_mcp || dictionaries_changed || keybindings_changed { fs::write(path, serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?; }
     Ok(settings)
 }
 

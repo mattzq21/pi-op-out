@@ -3,7 +3,7 @@ import { defaultKeybindings } from "./lib/keybindings";
 
 export const defaultSettings: AppSettings = {
   defaultModel: "openai-codex/gpt-5.6-sol", defaultThinking: "medium",
-  contextWindowCap: 200_000, autoCompaction: true, autoRetry: true,
+  contextWindowCap: 200_000, autoCompaction: true, autoRetry: true, debugMode: false,
   keybindings: { ...defaultKeybindings },
   tools: [
     { name: "read", description: "Read files from the active project", enabled: true, builtin: true },
