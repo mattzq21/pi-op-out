@@ -167,7 +167,7 @@ function ContainedPicker({ label, value, options, disabled, onChange }: { label:
   const toggle = () => {
     if (menuStyle) return close();
     const rect = trigger.current?.getBoundingClientRect(); if (!rect) return;
-    const width = Math.min(320, window.innerWidth - 16);
+    const width = Math.min(200, window.innerWidth - 16);
     setMenuStyle({ left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)), bottom: window.innerHeight - rect.top + 6, width, maxHeight: Math.max(0, rect.top - 14) });
   };
   useEffect(() => {
