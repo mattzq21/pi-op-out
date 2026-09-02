@@ -6,7 +6,7 @@ use std::{
     io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, Command, Stdio},
+    process::{Child, ChildStdin, Command, ExitStatus, Stdio},
     sync::{mpsc, Arc, Mutex},
     thread,
     time::{Duration, Instant, SystemTime},
@@ -39,6 +39,20 @@ struct TerminalRuntime {
 }
 
 const MAX_TERMINALS: usize = 8;
+const MAX_REMOTE_HOSTS: usize = 16;
+const MAX_MCP_SERVERS: usize = 32;
+const MAX_LOG_CAPABILITIES: usize = 128;
+const LOG_CAPABILITY_TTL: Duration = Duration::from_secs(15 * 60);
+const BROKER_WORKERS: usize = 8;
+const BROKER_QUEUE_DEPTH: usize = 32;
+const BROKER_HEADER_BYTES: usize = 16 * 1024;
+const BROKER_BODY_BYTES: usize = 1024 * 1024;
+const MAX_GIT_CHANGED_PATHS: usize = 4096;
+const MAX_GIT_PATH_LIST_BYTES: usize = 1024 * 1024;
+const MAX_GIT_SNAPSHOT_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_GIT_FILE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_GIT_PATCH_BYTES: usize = 4 * 1024 * 1024;
+const MAX_GIT_DIFFS_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Default)]
 struct PiRuntime {
@@ -51,7 +65,7 @@ struct PiRuntime {
 struct AgentAddress { host_id: String, session_id: Option<String>, session_path: Option<String> }
 
 #[derive(Clone)]
-struct LogSource { path: String, host_id: String }
+struct LogSource { path: String, host_id: String, expires_at: Instant }
 
 #[derive(Clone)]
 struct BrokerRuntime { port: Arc<Mutex<u16>>, token: String, busy: Arc<Mutex<HashSet<String>>>, logs: Arc<Mutex<HashMap<String, LogSource>>> }
@@ -311,6 +325,7 @@ fn validate_keybindings(settings: &AppSettings) -> Result<(), String> {
 }
 
 fn validate_mcp_servers(settings: &AppSettings) -> Result<(), String> {
+    if settings.mcp_servers.len() > MAX_MCP_SERVERS { return Err(format!("At most {MAX_MCP_SERVERS} MCP servers can be configured")); }
     let mut ids = HashSet::new();
     for server in &settings.mcp_servers {
         let id = server.get("id").and_then(Value::as_str).unwrap_or(""); let name = server.get("name").and_then(Value::as_str).unwrap_or("").trim();
@@ -427,7 +442,7 @@ fn discover_skills_in(root: &Path, include_root_markdown: bool) -> Vec<Value> {
 
     let mut skill_files: Vec<PathBuf> = WalkDir::new(root)
         .min_depth(1)
-        .follow_links(true)
+        .follow_links(false)
         .into_iter()
         .filter_entry(|entry| {
             if entry.depth() == 0 { return true; }
@@ -467,7 +482,7 @@ fn discover_skills_in(root: &Path, include_root_markdown: bool) -> Vec<Value> {
         if let Ok(entries) = fs::read_dir(root) {
             for entry in entries.filter_map(Result::ok) {
                 let path = entry.path();
-                if !path.is_file() || path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md") || path.extension().and_then(|extension| extension.to_str()) != Some("md") { continue; }
+                if !entry.file_type().map(|kind| kind.is_file()).unwrap_or(false) || path.file_name().and_then(|name| name.to_str()) == Some("SKILL.md") || path.extension().and_then(|extension| extension.to_str()) != Some("md") { continue; }
                 let content = fs::read_to_string(&path).unwrap_or_default();
                 let fallback = path.file_stem().and_then(|value| value.to_str()).unwrap_or("skill");
                 let claude_user_only = frontmatter_value(&content, "disable-model-invocation").is_some_and(|value| value.eq_ignore_ascii_case("true"));
@@ -525,6 +540,8 @@ fn merge_discovered_skills(settings: &mut AppSettings) {
 fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     let path = settings_path(&app)?;
     let mut settings = if !path.exists() { default_settings() } else { serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())? };
+    if settings.hosts.len() > MAX_REMOTE_HOSTS { return Err(format!("Settings contain more than {MAX_REMOTE_HOSTS} remote machines")); }
+    if settings.mcp_servers.len() > MAX_MCP_SERVERS { return Err(format!("Settings contain more than {MAX_MCP_SERVERS} MCP servers")); }
     let migrated_model = matches!(settings.default_model.as_str(), "openrouter/deepseek/deepseek-v4-flash" | "opencodex/gpt-5.6-sol");
     let previous_mcp_count = settings.mcp_servers.len();
     settings.mcp_servers.retain(|server| server.get("id").and_then(Value::as_str) != Some("filesystem"));
@@ -549,6 +566,7 @@ fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<(), String
     validate_dictionaries(&settings)?;
     validate_keybindings(&settings)?;
     validate_mcp_servers(&settings)?;
+    if settings.hosts.len() > MAX_REMOTE_HOSTS { return Err(format!("At most {MAX_REMOTE_HOSTS} remote machines can be configured")); }
     let mut host_ids = HashSet::new();
     let mut host_names = HashSet::from(["local".to_string()]);
     for host in &settings.hosts {
@@ -569,30 +587,114 @@ fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<(), String
 #[tauri::command]
 fn shell_quote(value: &str) -> String { format!("'{}'", value.replace('\'', "'\\''")) }
 
-fn local_git_tree(cwd: &str) -> Result<Option<String>, String> {
-    let requested = Path::new(cwd).canonicalize().map_err(|error| format!("Could not open project directory: {error}"))?;
-    let root = Command::new("git").args(["-C", cwd, "rev-parse", "--show-toplevel"]).output().map_err(|error| format!("Could not run Git: {error}"))?;
-    if !root.status.success() { return Ok(None); }
-    let root = PathBuf::from(String::from_utf8_lossy(&root.stdout).trim()).canonicalize().map_err(|error| format!("Could not resolve Git root: {error}"))?;
-    if root != requested { return Ok(None); }
-    let index = std::env::temp_dir().join(format!("pi-desktop-diff-{}.index", Uuid::new_v4()));
-    let has_head = Command::new("git").args(["-C", cwd, "rev-parse", "--verify", "HEAD"]).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|status| status.success()).unwrap_or(false);
-    let result = (|| {
-        let mut read_tree = Command::new("git"); read_tree.args(["-C", cwd, "read-tree"]).env("GIT_INDEX_FILE", &index); if has_head { read_tree.arg("HEAD"); } else { read_tree.arg("--empty"); }
-        let output = read_tree.output().map_err(|error| format!("Could not prepare Git snapshot: {error}"))?; if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-        let output = Command::new("git").args(["-C", cwd, "add", "-A", "--", "."]).env("GIT_INDEX_FILE", &index).output().map_err(|error| format!("Could not capture Git snapshot: {error}"))?; if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-        let output = Command::new("git").args(["-C", cwd, "write-tree"]).env("GIT_INDEX_FILE", &index).output().map_err(|error| format!("Could not finalize Git snapshot: {error}"))?; if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-    })();
-    let _ = fs::remove_file(index); result.map(Some)
+#[derive(Serialize, Deserialize)]
+struct GitSnapshotToken { root: String, tree: String }
+
+struct LimitedOutput { status: ExitStatus, stdout: Vec<u8>, stderr: Vec<u8> }
+
+fn run_limited(command: &mut Command, max_stdout: usize, context: &str) -> Result<LimitedOutput, String> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|error| format!("{context}: {error}"))?;
+    let stdout = child.stdout.take().ok_or_else(|| format!("{context}: stdout was unavailable"))?;
+    let stderr = child.stderr.take().ok_or_else(|| format!("{context}: stderr was unavailable"))?;
+    let stderr_reader = thread::spawn(move || { let mut bytes = Vec::new(); let _ = stderr.take(64 * 1024).read_to_end(&mut bytes); bytes });
+    let mut bytes = Vec::new(); stdout.take((max_stdout + 1) as u64).read_to_end(&mut bytes).map_err(|error| format!("{context}: {error}"))?;
+    let oversized = bytes.len() > max_stdout;
+    if oversized { let _ = child.kill(); }
+    let status = child.wait().map_err(|error| format!("{context}: {error}"))?;
+    let stderr = stderr_reader.join().unwrap_or_default();
+    if oversized { return Err(format!("{context}: output exceeded {} MiB", max_stdout / 1024 / 1024)); }
+    Ok(LimitedOutput { status, stdout: bytes, stderr })
 }
 
-fn local_git_diff(cwd: &str, base_tree: &str) -> Result<Option<String>, String> {
-    let Some(current_tree) = local_git_tree(cwd)? else { return Ok(None) };
-    let output = Command::new("git").args(["-C", cwd, "diff", "--no-color", "--no-ext-diff", "--find-renames", base_tree, &current_tree, "--"]).output().map_err(|error| format!("Could not read Git changes: {error}"))?;
+fn git_root_and_objects(cwd: &str) -> Result<Option<(PathBuf, PathBuf)>, String> {
+    let requested = Path::new(cwd).canonicalize().map_err(|error| format!("Could not open project directory: {error}"))?;
+    let output = run_limited(Command::new("git").args(["-C", cwd, "rev-parse", "--show-toplevel", "--git-path", "objects"]), 64 * 1024, "Could not locate Git repository")?;
+    if !output.status.success() { return Ok(None); }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut lines = text.lines().map(str::to_owned);
+    let root = PathBuf::from(lines.next().unwrap_or_default()).canonicalize().map_err(|error| format!("Could not resolve Git root: {error}"))?;
+    if root != requested { return Ok(None); }
+    let objects = PathBuf::from(lines.next().unwrap_or_default());
+    let objects = if objects.is_absolute() { objects } else { root.join(objects) }.canonicalize().map_err(|error| format!("Could not resolve Git objects: {error}"))?;
+    Ok(Some((root, objects)))
+}
+
+fn local_git_input_is_bounded(cwd: &str, root: &Path) -> Result<bool, String> {
+    let output = run_limited(Command::new("git").args(["-C", cwd, "ls-files", "-z", "-m", "-o", "--exclude-standard", "--"]), MAX_GIT_PATH_LIST_BYTES, "Could not inspect Git changes")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-    let patch = String::from_utf8_lossy(&output.stdout).into_owned();
-    Ok((!patch.trim().is_empty()).then_some(patch))
+    let mut total = 0u64; let mut count = 0usize;
+    for raw in output.stdout.split(|byte| *byte == 0).filter(|path| !path.is_empty()) {
+        count += 1; if count > MAX_GIT_CHANGED_PATHS { return Ok(false); }
+        let relative = String::from_utf8_lossy(raw); let path = root.join(relative.as_ref());
+        let Ok(metadata) = fs::symlink_metadata(path) else { continue };
+        let size = metadata.len(); if size > MAX_GIT_FILE_BYTES { return Ok(false); }
+        total = total.saturating_add(size); if total > MAX_GIT_SNAPSHOT_BYTES { return Ok(false); }
+    }
+    Ok(true)
+}
+
+fn local_snapshot_parent() -> Result<PathBuf, String> {
+    let parent = home_dir()?.join(".pi-desktop/git-snapshots"); fs::create_dir_all(&parent).map_err(|error| error.to_string())?; Ok(parent)
+}
+
+fn prune_local_snapshots(parent: &Path) {
+    let mut snapshots: Vec<_> = fs::read_dir(parent).into_iter().flatten().filter_map(Result::ok)
+        .filter(|entry| entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) && entry.file_name().to_string_lossy().starts_with("pi-desktop-diff-"))
+        .filter_map(|entry| Some((entry.path(), entry.metadata().ok()?.modified().ok()?))).collect();
+    snapshots.sort_by_key(|(_, modified)| std::cmp::Reverse(*modified));
+    for (index, (path, modified)) in snapshots.into_iter().enumerate() {
+        let stale = SystemTime::now().duration_since(modified).unwrap_or_default() > Duration::from_secs(24 * 60 * 60);
+        if stale || index >= 32 { let _ = fs::remove_dir_all(path); }
+    }
+}
+
+fn parse_local_snapshot(token: &str) -> Result<GitSnapshotToken, String> {
+    let snapshot: GitSnapshotToken = serde_json::from_str(token).map_err(|_| "Invalid Git snapshot token".to_string())?;
+    if snapshot.tree.len() < 40 || snapshot.tree.len() > 64 || !snapshot.tree.chars().all(|character| character.is_ascii_hexdigit()) { return Err("Invalid Git snapshot tree".into()); }
+    let parent = local_snapshot_parent()?.canonicalize().map_err(|error| error.to_string())?;
+    let root = PathBuf::from(&snapshot.root).canonicalize().map_err(|_| "Git snapshot expired".to_string())?;
+    if root.parent() != Some(parent.as_path()) || !root.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.starts_with("pi-desktop-diff-")) { return Err("Invalid Git snapshot location".into()); }
+    Ok(GitSnapshotToken { root: root.to_string_lossy().into_owned(), tree: snapshot.tree })
+}
+
+fn local_git_tree(cwd: &str) -> Result<Option<String>, String> {
+    let Some((root, repository_objects)) = git_root_and_objects(cwd)? else { return Ok(None) };
+    if !local_git_input_is_bounded(cwd, &root)? { return Ok(None); }
+    let snapshot_parent = local_snapshot_parent()?; prune_local_snapshots(&snapshot_parent);
+    let snapshot_root = snapshot_parent.join(format!("pi-desktop-diff-{}", Uuid::new_v4()));
+    let objects = snapshot_root.join("objects"); let index = snapshot_root.join("index");
+    fs::create_dir_all(&objects).map_err(|error| format!("Could not create Git snapshot: {error}"))?;
+    let has_head = Command::new("git").args(["-C", cwd, "rev-parse", "--verify", "HEAD"]).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|status| status.success()).unwrap_or(false);
+    let result = (|| {
+        let configure = |command: &mut Command| { command.env("GIT_INDEX_FILE", &index).env("GIT_OBJECT_DIRECTORY", &objects).env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &repository_objects); };
+        let mut read_tree = Command::new("git"); read_tree.args(["-C", cwd, "read-tree"]); if has_head { read_tree.arg("HEAD"); } else { read_tree.arg("--empty"); } configure(&mut read_tree);
+        let output = run_limited(&mut read_tree, 64 * 1024, "Could not prepare Git snapshot")?; if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+        let mut add = Command::new("git"); add.args(["-C", cwd, "add", "-A", "--", "."]); configure(&mut add);
+        let output = run_limited(&mut add, 64 * 1024, "Could not capture Git snapshot")?; if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+        let mut write_tree = Command::new("git"); write_tree.args(["-C", cwd, "write-tree"]); configure(&mut write_tree);
+        let output = run_limited(&mut write_tree, 64 * 1024, "Could not finalize Git snapshot")?; if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+        let tree = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        serde_json::to_string(&GitSnapshotToken { root: snapshot_root.to_string_lossy().into_owned(), tree }).map_err(|error| error.to_string())
+    })();
+    if result.is_err() { let _ = fs::remove_dir_all(&snapshot_root); }
+    result.map(Some)
+}
+
+fn local_git_diff(cwd: &str, base_token: &str) -> Result<Option<String>, String> {
+    let base = parse_local_snapshot(base_token)?;
+    let Some(current_token) = local_git_tree(cwd)? else { let _ = fs::remove_dir_all(&base.root); return Ok(None) };
+    let current = parse_local_snapshot(&current_token)?;
+    let result = (|| {
+        let Some((_, repository_objects)) = git_root_and_objects(cwd)? else { return Ok(None) };
+        let alternates = std::env::join_paths([Path::new(&base.root).join("objects"), repository_objects]).map_err(|error| error.to_string())?;
+        let mut command = Command::new("git"); command.args(["-C", cwd, "diff", "--no-color", "--no-ext-diff", "--find-renames", &base.tree, &current.tree, "--"])
+            .env("GIT_OBJECT_DIRECTORY", Path::new(&current.root).join("objects")).env("GIT_ALTERNATE_OBJECT_DIRECTORIES", alternates);
+        let output = run_limited(&mut command, MAX_GIT_PATCH_BYTES, "Git patch is too large")?;
+        if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+        let patch = String::from_utf8_lossy(&output.stdout).into_owned(); Ok((!patch.trim().is_empty()).then_some(patch))
+    })();
+    let _ = fs::remove_dir_all(&base.root); let _ = fs::remove_dir_all(&current.root); result
 }
 
 #[tauri::command(async)]
@@ -603,13 +705,22 @@ fn git_branch() -> Result<Option<String>, String> {
     Ok((!branch.is_empty()).then_some(branch))
 }
 
+fn valid_remote_snapshot(snapshot: &GitSnapshotToken) -> bool {
+    snapshot.root.contains("/.pi-desktop/git-snapshots/pi-desktop-diff-") && snapshot.root.rsplit('/').next().is_some_and(|name| name.starts_with("pi-desktop-diff-")) && snapshot.tree.len() >= 40 && snapshot.tree.len() <= 64 && snapshot.tree.chars().all(|character| character.is_ascii_hexdigit())
+}
+
 fn remote_git_tree(host: &RemoteHost, cwd: &str) -> Result<Option<String>, String> {
     let directory = shell_quote(cwd);
-    let script = format!("cd {directory} || exit 2; root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 3; [ \"$(pwd -P)\" = \"$(cd \"$root\" && pwd -P)\" ] || exit 4; idx=$(mktemp \"${{TMPDIR:-/tmp}}/pi-desktop-diff.XXXXXX\") || exit 5; rm -f \"$idx\"; trap 'rm -f \"$idx\"' EXIT; export GIT_INDEX_FILE=\"$idx\"; if git rev-parse --verify HEAD >/dev/null 2>&1; then git read-tree HEAD; else git read-tree --empty; fi && git add -A -- . && git write-tree");
-    let output = ssh(host).arg(script).output().map_err(|error| format!("Could not capture Git snapshot on {}: {error}", host.name))?;
-    match output.status.code() { Some(3 | 4) => return Ok(None), _ => {} }
+    let name = format!("pi-desktop-diff-{}", Uuid::new_v4());
+    let script = format!("cd {directory} || exit 2; root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 3; [ \"$(pwd -P)\" = \"$(cd \"$root\" && pwd -P)\" ] || exit 4; parent=\"$HOME/.pi-desktop/git-snapshots\"; mkdir -p \"$parent\" || exit 5; find \"$parent\" -mindepth 1 -maxdepth 1 -type d -name 'pi-desktop-diff-*' -mmin +60 -exec rm -rf -- {{}} + 2>/dev/null; snap=\"$parent/{name}\"; mkdir -p \"$snap/objects\" || exit 5; trap 'test -n \"$failed\" && rm -rf -- \"$snap\"' EXIT; repo_objects=$(git rev-parse --git-path objects) || exit 5; repo_objects=$(cd \"$repo_objects\" && pwd -P) || exit 5; export GIT_INDEX_FILE=\"$snap/index\" GIT_OBJECT_DIRECTORY=\"$snap/objects\" GIT_ALTERNATE_OBJECT_DIRECTORIES=\"$repo_objects\"; if git rev-parse --verify HEAD >/dev/null 2>&1; then git read-tree HEAD; else git read-tree --empty; fi && git add -A -- . && tree=$(git write-tree) || {{ failed=1; exit 5; }}; size=$(du -sk \"$snap\" | awk '{{print $1}}'); if [ \"${{size:-999999}}\" -gt 32768 ]; then failed=1; exit 6; fi; printf '%s\n%s\n' \"$(cd \"$snap\" && pwd -P)\" \"$tree\"");
+    let mut command = ssh(host); command.arg(script); let output = run_limited(&mut command, 64 * 1024, &format!("Could not capture Git snapshot on {}", host.name))?;
+    match output.status.code() { Some(3 | 4 | 6) => return Ok(None), _ => {} }
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-    let tree = String::from_utf8_lossy(&output.stdout).trim().to_string(); Ok((!tree.is_empty()).then_some(tree))
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut lines = text.lines().map(str::to_owned);
+    let snapshot = GitSnapshotToken { root: lines.next().unwrap_or_default(), tree: lines.next().unwrap_or_default() };
+    if !valid_remote_snapshot(&snapshot) { return Err("Remote Git snapshot was invalid".into()); }
+    serde_json::to_string(&snapshot).map(Some).map_err(|error| error.to_string())
 }
 
 #[tauri::command(async)]
@@ -619,13 +730,27 @@ fn capture_git_tree(app: AppHandle, cwd: String, host_id: Option<String>) -> Res
 }
 
 #[tauri::command(async)]
+fn discard_git_tree(app: AppHandle, snapshot: String, host_id: Option<String>) -> Result<(), String> {
+    let host_id = host_id.unwrap_or_else(|| "local".into());
+    if host_id == "local" { let snapshot = parse_local_snapshot(&snapshot)?; return fs::remove_dir_all(snapshot.root).map_err(|error| format!("Could not discard Git snapshot: {error}")); }
+    let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+    let snapshot: GitSnapshotToken = serde_json::from_str(&snapshot).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
+    if !valid_remote_snapshot(&snapshot) { return Err("Invalid remote Git snapshot location".into()); }
+    let output = ssh(host).arg(format!("rm -rf -- {}", shell_quote(&snapshot.root))).output().map_err(|error| format!("Could not discard Git snapshot on {}: {error}", host.name))?;
+    output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
+}
+
+#[tauri::command(async)]
 fn load_git_diff(app: AppHandle, cwd: String, base_tree: String, host_id: Option<String>) -> Result<Option<String>, String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     if host_id == "local" { return local_git_diff(&cwd, &base_tree); }
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
-    let Some(current_tree) = remote_git_tree(host, &cwd)? else { return Ok(None) };
-    let script = format!("cd {} && git diff --no-color --no-ext-diff --find-renames {} {} --", shell_quote(&cwd), shell_quote(&base_tree), shell_quote(&current_tree));
-    let output = ssh(host).arg(script).output().map_err(|error| format!("Could not read Git changes on {}: {error}", host.name))?;
+    let base: GitSnapshotToken = serde_json::from_str(&base_tree).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
+    if !valid_remote_snapshot(&base) { return Err("Invalid remote Git snapshot location".into()); }
+    let Some(current_token) = remote_git_tree(host, &cwd)? else { let _ = ssh(host).arg(format!("rm -rf -- {}", shell_quote(&base.root))).status(); return Ok(None) };
+    let current: GitSnapshotToken = serde_json::from_str(&current_token).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
+    let script = format!("cd {} || exit 2; trap 'rm -rf -- {} {}' EXIT; repo_objects=$(git rev-parse --git-path objects) || exit 3; repo_objects=$(cd \"$repo_objects\" && pwd -P) || exit 3; GIT_OBJECT_DIRECTORY={} GIT_ALTERNATE_OBJECT_DIRECTORIES={}:\"$repo_objects\" git diff --no-color --no-ext-diff --find-renames {} {} --", shell_quote(&cwd), shell_quote(&base.root), shell_quote(&current.root), shell_quote(&format!("{}/objects", current.root)), shell_quote(&format!("{}/objects", base.root)), shell_quote(&base.tree), shell_quote(&current.tree));
+    let mut command = ssh(host); command.arg(script); let output = run_limited(&mut command, MAX_GIT_PATCH_BYTES, &format!("Git patch on {} is too large", host.name))?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let patch = String::from_utf8_lossy(&output.stdout).into_owned();
     Ok((!patch.trim().is_empty()).then_some(patch))
@@ -638,10 +763,12 @@ fn load_git_diffs(app: AppHandle, session_path: String, host_id: Option<String>)
     let host_id = host_id.unwrap_or_else(|| "local".into()); let path = git_diffs_path(&session_path);
     let content = if host_id == "local" {
         if !path.exists() { return Ok(HashMap::new()); }
+        if fs::metadata(&path).map_err(|error| format!("Could not inspect saved diffs: {error}"))?.len() > MAX_GIT_DIFFS_BYTES as u64 { return Err("Saved diffs exceed the 16 MiB limit".into()); }
         fs::read_to_string(&path).map_err(|error| format!("Could not read saved diffs: {error}"))?
     } else {
         let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
-        let output = ssh(host).arg(format!("if [ -f {0} ]; then cat -- {0}; else printf '{{}}'; fi", shell_quote(&path.to_string_lossy()))).output().map_err(|error| format!("Could not read saved diffs on {}: {error}", host.name))?;
+        let mut command = ssh(host); command.arg(format!("if [ -f {0} ]; then cat -- {0}; else printf '{{}}'; fi", shell_quote(&path.to_string_lossy())));
+        let output = run_limited(&mut command, MAX_GIT_DIFFS_BYTES, &format!("Saved diffs on {} exceed the limit", host.name))?;
         if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
         String::from_utf8(output.stdout).map_err(|_| "Saved remote diffs were not valid UTF-8".to_string())?
     };
@@ -652,6 +779,7 @@ fn load_git_diffs(app: AppHandle, session_path: String, host_id: Option<String>)
 fn save_git_diffs(app: AppHandle, session_path: String, snapshots: GitDiffSnapshots, host_id: Option<String>) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into()); let path = git_diffs_path(&session_path);
     let body = serde_json::to_string(&snapshots).map_err(|error| format!("Could not serialize diffs: {error}"))?;
+    if body.len() > MAX_GIT_DIFFS_BYTES { return Err("Diff history exceeds the 16 MiB limit".into()); }
     if host_id == "local" { return fs::write(path, body).map_err(|error| format!("Could not save diffs: {error}")); }
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
     let output = ssh(host).arg(format!("printf %s {} > {}", shell_quote(&body), shell_quote(&path.to_string_lossy()))).output().map_err(|error| format!("Could not save diffs on {}: {error}", host.name))?;
@@ -823,7 +951,7 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
         }
     };
     if let Some(mut process) = stale { let _ = process.child.wait(); if let Some(session) = process.ephemeral_session { remove_ephemeral_session(session); } }
-    let settings = load_app_settings(app.clone()).unwrap_or_else(|_| default_settings());
+    let settings = load_app_settings(app.clone())?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let ephemeral = no_session.unwrap_or(false);
     let (ephemeral_path, ephemeral_session) = if ephemeral {
@@ -1014,10 +1142,17 @@ fn open_log_viewer(broker: State<BrokerRuntime>, session_path: String, host_id: 
         if session_path.contains("/../") || !session_path.contains("/.pi/agent/sessions/") || !session_path.ends_with(".jsonl") { return Err("Only remote Pi session files can be viewed".into()); }
         session_path
     };
-    let token = Uuid::new_v4().to_string();
-    broker.logs.lock().map_err(|_| "Log viewer lock was poisoned")?.insert(token.clone(), LogSource { path: session_path, host_id });
     let port = *broker.port.lock().map_err(|_| "Session broker lock was poisoned")?;
     if port == 0 { return Err("Request viewer is not ready".into()); }
+    let token = Uuid::new_v4().to_string();
+    let mut logs = broker.logs.lock().map_err(|_| "Log viewer lock was poisoned")?;
+    let now = Instant::now(); logs.retain(|_, source| source.expires_at > now);
+    while logs.len() >= MAX_LOG_CAPABILITIES {
+        let Some(oldest) = logs.iter().min_by_key(|(_, source)| source.expires_at).map(|(token, _)| token.clone()) else { break };
+        logs.remove(&oldest);
+    }
+    logs.insert(token.clone(), LogSource { path: session_path, host_id, expires_at: now + LOG_CAPABILITY_TTL });
+    drop(logs);
     open_url_in_browser(&format!("http://127.0.0.1:{port}/logs/{token}/"))
 }
 
@@ -1158,8 +1293,18 @@ fn collect_sessions(app: &AppHandle) -> Result<Vec<SessionSummary>, String> {
     let mut sessions: Vec<_> = if root.exists() { WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok).filter(|entry| entry.file_type().is_file() && entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")).filter_map(|entry| parse_session(entry.path())).collect() } else { vec![] };
     let hosts = load_app_settings(app.clone())?.hosts;
     thread::scope(|scope| {
-        let requests: Vec<_> = hosts.iter().map(|host| scope.spawn(move || list_remote_sessions(host))).collect();
-        for request in requests { if let Ok(Ok(mut remote)) = request.join() { sessions.append(&mut remote); } }
+        let queue = Arc::new(Mutex::new(hosts));
+        let (sender, receiver) = mpsc::channel();
+        for _ in 0..MAX_REMOTE_HOSTS.min(4).min(queue.lock().map(|items| items.len()).unwrap_or(0)) {
+            let queue = queue.clone(); let sender = sender.clone();
+            scope.spawn(move || loop {
+                let host = queue.lock().ok().and_then(|mut items| items.pop());
+                let Some(host) = host else { break };
+                let _ = sender.send(list_remote_sessions(&host));
+            });
+        }
+        drop(sender);
+        for result in receiver { if let Ok(mut remote) = result { sessions.append(&mut remote); } }
     });
     sessions.sort_by(|left, right| right.modified_at.cmp(&left.modified_at)); Ok(sessions)
 }
@@ -1281,7 +1426,7 @@ fn agent_is_active(session: &SessionSummary, agent: &AgentAddress) -> bool {
 }
 
 fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &SessionSummary, message: &str) -> Result<String, String> {
-    let settings = load_app_settings(app.clone()).unwrap_or_else(|_| default_settings());
+    let settings = load_app_settings(app.clone())?;
     let mut command = build_pi_command(app, broker, &settings, &session.host_id, PiLaunch::Print { cwd: &session.cwd, session_path: &session.path, message })?;
     let output = command.output().map_err(|error| format!("Could not message agent: {error}"))?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
@@ -1319,7 +1464,7 @@ fn handle_log_request(app: &AppHandle, broker: &BrokerRuntime, stream: TcpStream
     let clean_path = path.split('?').next().unwrap_or(path);
     let Some(rest) = clean_path.strip_prefix("/logs/") else { return false };
     let mut parts = rest.split('/'); let token = parts.next().unwrap_or(""); let endpoint = parts.next().unwrap_or("");
-    let source = broker.logs.lock().ok().and_then(|logs| logs.get(token).cloned());
+    let source = broker.logs.lock().ok().and_then(|mut logs| { let now = Instant::now(); logs.retain(|_, source| source.expires_at > now); logs.get(token).cloned() });
     let Some(source) = source else { raw_response(stream, "404 Not Found", "text/plain; charset=utf-8", b"Request viewer not found", ""); return true };
     if endpoint.is_empty() {
         raw_response(stream, "200 OK", "text/html; charset=utf-8", include_bytes!("../resources/log-viewer.html"), "Cache-Control: no-store\r\n"); return true;
@@ -1333,22 +1478,32 @@ fn handle_log_request(app: &AppHandle, broker: &BrokerRuntime, stream: TcpStream
     true
 }
 
+fn read_broker_line(reader: &mut BufReader<TcpStream>, remaining: &mut usize) -> Result<String, String> {
+    if *remaining == 0 { return Err("Request headers are too large".into()); }
+    let mut line = String::new();
+    let count = reader.take((*remaining + 1) as u64).read_line(&mut line).map_err(|error| error.to_string())?;
+    if count > *remaining { return Err("Request headers are too large".into()); }
+    *remaining -= count;
+    Ok(line)
+}
+
 fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStream) -> Result<(), String> {
     let mut reader = BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
-    let mut request_line = String::new(); reader.read_line(&mut request_line).map_err(|error| error.to_string())?;
+    let mut header_bytes = BROKER_HEADER_BYTES;
+    let request_line = read_broker_line(&mut reader, &mut header_bytes)?;
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or(""); let path = parts.next().unwrap_or("");
     if method == "GET" && handle_log_request(&app, &broker, stream.try_clone().map_err(|error| error.to_string())?, path) { return Ok(()); }
     let mut authorized = false; let mut content_length = 0usize;
     loop {
-        let mut line = String::new(); reader.read_line(&mut line).map_err(|error| error.to_string())?;
+        let line = read_broker_line(&mut reader, &mut header_bytes)?;
         if line == "\r\n" || line.is_empty() { break; }
         let Some((name, value)) = line.split_once(':') else { continue };
         if name.eq_ignore_ascii_case("authorization") { authorized = value.trim() == format!("Bearer {}", broker.token); }
         if name.eq_ignore_ascii_case("content-length") { content_length = value.trim().parse().unwrap_or(0); }
     }
     if !authorized { broker_response(stream, "401 Unauthorized", json!({"error":"Unauthorized"})); return Ok(()); }
-    if content_length > 1024 * 1024 { broker_response(stream, "413 Payload Too Large", json!({"error":"Message is too large"})); return Ok(()); }
+    if content_length > BROKER_BODY_BYTES { broker_response(stream, "413 Payload Too Large", json!({"error":"Message is too large"})); return Ok(()); }
     let mut body = vec![0; content_length]; reader.read_exact(&mut body).map_err(|error| error.to_string())?;
     let result = match (method, path) {
         ("GET", "/agents") => {
@@ -1375,7 +1530,23 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
 fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), String> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|error| format!("Could not start session broker: {error}"))?;
     *broker.port.lock().map_err(|_| "Session broker lock was poisoned")? = listener.local_addr().map_err(|error| error.to_string())?.port();
-    thread::spawn(move || for stream in listener.incoming().flatten() { let app = app.clone(); let broker = broker.clone(); thread::spawn(move || { let _ = handle_broker_request(app, broker, stream); }); });
+    thread::spawn(move || {
+        let (sender, receiver) = mpsc::sync_channel::<TcpStream>(BROKER_QUEUE_DEPTH);
+        let receiver = Arc::new(Mutex::new(receiver));
+        for _ in 0..BROKER_WORKERS {
+            let receiver = receiver.clone(); let app = app.clone(); let broker = broker.clone();
+            thread::spawn(move || loop {
+                let stream = match receiver.lock() { Ok(receiver) => receiver.recv(), Err(_) => return };
+                let Ok(stream) = stream else { return };
+                let _ = handle_broker_request(app.clone(), broker.clone(), stream);
+            });
+        }
+        for stream in listener.incoming().flatten() {
+            let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+            let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
+            if let Err(mpsc::TrySendError::Full(stream)) = sender.try_send(stream) { broker_response(stream, "503 Service Unavailable", json!({"error":"Session broker is busy"})); }
+        }
+    });
     Ok(())
 }
 
@@ -1385,5 +1556,5 @@ pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(feature = "webdriver")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
-    builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(broker.clone()).setup(move |app| start_session_broker(app.handle().clone(), broker.clone()).map_err(Into::into)).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_entries, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, git_branch, capture_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_log_viewer, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(broker.clone()).setup(move |app| start_session_broker(app.handle().clone(), broker.clone()).map_err(Into::into)).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_entries, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, git_branch, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_log_viewer, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }

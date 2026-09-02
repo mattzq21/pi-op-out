@@ -46,6 +46,7 @@ export interface PiTransport {
   listSessions(): Promise<SessionSummary[]>;
   loadSessionEntries(sessionPath: string, hostId?: string): Promise<SessionEntries>;
   captureGitTree(cwd: string, hostId?: string): Promise<string | null>;
+  discardGitTree(snapshot: string, hostId?: string): Promise<void>;
   loadGitDiff(cwd: string, baseTree: string, hostId?: string): Promise<GitDiffSnapshot | null>;
   loadGitDiffs(sessionPath: string, hostId?: string): Promise<GitDiffSnapshots>;
   saveGitDiffs(sessionPath: string, snapshots: GitDiffSnapshots, hostId?: string): Promise<void>;
