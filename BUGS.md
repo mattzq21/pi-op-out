@@ -78,3 +78,45 @@ Manually reproduced on 2026-09-03 against the latest release WebDriver build wit
 - **Reproduction:** Move the pointer away from the sidebar, focus a conversation button with the keyboard, then press Tab once.
 - **Observed:** Focus moves to that row's `Archive conversation` button, but the control remains at opacity 0 with pointer events disabled and no visible focus outline. Pressing Tab through the conversation list therefore visits an invisible destructive action after every session.
 - **Expected:** A keyboard-focused archive action should become visibly focused, or hover-only row actions should be removed from the tab sequence and exposed through an accessible menu.
+
+## 12. App modals do not trap keyboard focus or support Escape
+
+- **Severity:** Medium
+- **Reproduction:** Open either an extension dialog or the Open project dialog, then use Tab, Shift+Tab, or Escape. For the initial-focus case, focus a background control before opening a confirm/select extension dialog.
+- **Observed:** Confirm/select extension dialogs leave focus on the background conversation control. In both extension and project dialogs, tabbing past the final dialog button moves focus outside the modal (to the E2E bridge in the test build), despite `aria-modal="true"`. Pressing Escape does nothing in either dialog.
+- **Expected:** Opening a modal should move focus inside it, keep focus trapped there, close on Escape when cancellation is available, and restore focus appropriately after closing.
+
+## 13. Composer listboxes do not support listbox keyboard navigation
+
+- **Severity:** Low
+- **Reproduction:** Focus the Agent, Model, or Thinking trigger, press Enter to open it, then press Arrow Down or Arrow Up.
+- **Observed:** The menu opens with focus left on the trigger. Arrow keys do not move active focus or the selected option; the only implemented listbox key is Escape. Options can only be reached by tabbing through every button or using a pointer.
+- **Expected:** A control exposed as an ARIA listbox should move focus/active-descendant with Arrow keys and allow the focused option to be selected from the keyboard.
+
+## 14. Wide Markdown tables are clipped with no horizontal scroller
+
+- **Severity:** Medium
+- **Reproduction:** Display a Markdown table with enough ordinary short columns to exceed the message width (20 columns reproduces reliably at 900 × 640).
+- **Observed:** The rendered table is about 1,200 px wide inside a 596 px message body. The conversation viewport hides horizontal overflow, so columns past the right edge are inaccessible even though the cell content itself contains normal wrapping opportunities.
+- **Expected:** Wide tables should be contained by a horizontally scrollable wrapper or transformed into a responsive representation.
+
+## 15. Concurrent extension dialogs silently discard earlier requests
+
+- **Severity:** High
+- **Reproduction:** Emit interactive extension request A, then emit interactive request B before answering A. Cancel or answer B.
+- **Observed:** B immediately replaces A because the app stores only one dialog request. After B is dismissed, no dialog returns for A. The recorded backend calls contain a response for B only; A is neither answered nor cancelled, leaving its caller able to wait forever.
+- **Expected:** Interactive requests should be queued, or a superseded request should receive an explicit cancellation response before it is removed.
+
+## 16. Split-pane conversations ignore interactive extension requests
+
+- **Severity:** High
+- **Reproduction:** Open a real conversation in a split pane, then send an `input`, `editor`, `select`, or `confirm` extension UI request to that split runtime.
+- **Observed:** The split runtime receives extension UI events but handles only two special `setStatus` keys. The interactive request produces no dialog and no `extension_ui_response`; the requesting extension can wait indefinitely.
+- **Expected:** Split conversations should support the same interactive extension UI contract as the main conversation, or explicitly cancel unsupported requests so callers cannot hang.
+
+## 17. Multi-line extension widgets grow above the viewport
+
+- **Severity:** Medium
+- **Reproduction:** Emit a widget containing about 50 ordinary short lines at 900 × 640.
+- **Observed:** The widget becomes 818 px tall inside the bottom-pinned composer stack, placing its top at y=-281. The first 17 lines are above the viewport and there is no widget or stack scroller with which to reach them.
+- **Expected:** Widget height should be capped to the available space with internal scrolling, truncation, or an explicit expand/collapse affordance.

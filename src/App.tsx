@@ -27,6 +27,7 @@ type BtwRequest = { requestId: string; task: string; forkFrom: string };
 type SplitPaneState = { session: SessionSummary; btw?: BtwRequest };
 const BTW_REQUEST_TITLE = "__pi_desktop_btw__";
 const PROMPT_CONTEXT_STATUS_KEY = "pi-desktop-prompt-context";
+const MAX_TERMINALS = 8;
 const initialTerminals = (sessionId: string): SessionTerminals => { const id = `terminal-${sessionId}-1`; return { activeId: id, tabs: [{ id, output: "", outputEnd: 0, started: false }] }; };
 
 function appendTerminalOutputs(current: Record<string, SessionTerminals>, chunks: Map<string, QueuedTerminalOutput>) {
@@ -123,9 +124,15 @@ export default function App() {
     void syncSessionIndex(); const [nextState, nextSettings] = await Promise.all([refreshSession(), transport.loadSettings()]); runtimePool.bind(hostId ?? transport.currentHostId(), nextState.sessionId, transport); setSettings(nextSettings); return nextSettings;
   }, [refreshSession, runtimePool, syncSessionIndex, transport]);
 
-  const configureRuntime = useCallback((value: AppSettings) => Promise.all([
-    transport.command({ type: "set_auto_compaction", enabled: value.autoCompaction }), transport.command({ type: "set_auto_retry", enabled: value.autoRetry })
-  ]), [transport]);
+  const configureRuntime = useCallback(async (value: AppSettings) => {
+    const [{ models: availableModels }] = await Promise.all([
+      transport.command<{ models: Model[] }>({ type: "get_available_models" }),
+      transport.command({ type: "set_auto_compaction", enabled: value.autoCompaction }),
+      transport.command({ type: "set_auto_retry", enabled: value.autoRetry }),
+    ]);
+    const defaultModel = availableModels.find((model) => `${model.provider}/${model.id}` === value.defaultModel);
+    if (defaultModel) await transport.command({ type: "set_model", provider: defaultModel.provider, modelId: defaultModel.id });
+  }, [transport]);
   const resolveHomeDirectory = useCallback((hostId: string) => transport.homeDirectory(hostId), [transport]);
 
   useEffect(() => {
@@ -168,9 +175,9 @@ export default function App() {
       if (event.type === "session_info_changed") void refresh();
       if (event.type === "disconnected") setOrchestration(undefined);
     });
-    transport.connect().then(() => refresh()).then((value) => configureRuntime(value)).then(() => { if (!cancelled) { setError(undefined); setConnected(true); } }).catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); });
+    transport.connect().then(() => refresh()).then((value) => configureRuntime(value)).then(() => refreshSession()).then(() => { if (!cancelled) { setError(undefined); setConnected(true); } }).catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); });
     return () => { cancelled = true; unsubscribe(); if (terminalOutputFrame.current !== undefined) cancelAnimationFrame(terminalOutputFrame.current); terminalOutputFrame.current = undefined; queuedTerminalOutput.current.clear(); };
-  }, [configureRuntime, handleEvent, queueTerminalOutput, refresh, transport]);
+  }, [configureRuntime, handleEvent, queueTerminalOutput, refresh, refreshSession, transport]);
 
   useEffect(() => { const shutdown = () => { void runtimePool.disconnectAll(); }; window.addEventListener("beforeunload", shutdown); return () => window.removeEventListener("beforeunload", shutdown); }, [runtimePool]);
   useEffect(() => { runtimePool.activate(view === "chat" ? transport : undefined); }, [runtimePool, transport, view]);
@@ -254,7 +261,7 @@ export default function App() {
     if (!cwd) { queueTerminalOutput(terminalId, "\r\nCould not determine this session's working directory.\r\n"); return; }
     try { await transport.startTerminal(terminalId, cwd, cols, rows); } catch (reason) { queueTerminalOutput(terminalId, `\r\nCould not start terminal: ${String(reason)}\r\n`); }
   };
-  const addTerminal = () => setTerminalsBySession((current) => { const session = current[terminalSessionId] ?? initialTerminals(terminalSessionId); const id = `terminal-${terminalSessionId}-${Date.now()}`; return { ...current, [terminalSessionId]: { activeId: id, tabs: [...session.tabs, { id, output: "", outputEnd: 0, started: false }] } }; });
+  const addTerminal = () => setTerminalsBySession((current) => { const session = current[terminalSessionId] ?? initialTerminals(terminalSessionId); if (session.tabs.length >= MAX_TERMINALS) return current; const id = `terminal-${terminalSessionId}-${crypto.randomUUID()}`; return { ...current, [terminalSessionId]: { activeId: id, tabs: [...session.tabs, { id, output: "", outputEnd: 0, started: false }] } }; });
   const selectTerminal = (terminalId: string) => setTerminalsBySession((current) => { const session = current[terminalSessionId] ?? initialTerminals(terminalSessionId); return { ...current, [terminalSessionId]: { ...session, activeId: terminalId } }; });
   const deleteTerminal = () => {
     const terminalId = activeTerminal.id; const closingLast = sessionTerminals.tabs.length === 1;

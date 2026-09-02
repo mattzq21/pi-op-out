@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
@@ -31,6 +31,8 @@ struct TerminalProcess {
 struct TerminalRuntime {
     processes: Mutex<HashMap<String, TerminalProcess>>,
 }
+
+const MAX_TERMINALS: usize = 8;
 
 #[derive(Default)]
 struct PiRuntime {
@@ -136,7 +138,7 @@ type GitDiffSnapshots = HashMap<String, String>;
 struct AppSettings {
     default_model: String,
     default_thinking: String,
-    #[serde(default = "default_context_window_cap")]
+    #[serde(default = "default_context_window_cap", deserialize_with = "deserialize_context_window_cap")]
     context_window_cap: u64,
     auto_compaction: bool,
     auto_retry: bool,
@@ -159,6 +161,10 @@ struct AppSettings {
 
 fn default_pi_path() -> String { "pi".into() }
 fn default_context_window_cap() -> u64 { 200_000 }
+fn deserialize_context_window_cap<'de, D>(deserializer: D) -> Result<u64, D::Error> where D: Deserializer<'de> {
+    let value = Value::deserialize(deserializer)?;
+    value.as_u64().ok_or_else(|| de::Error::custom("Context window cap must be a whole number"))
+}
 const DEFAULT_MODEL: &str = "openai-codex/gpt-5.6-sol";
 
 fn default_keybindings() -> HashMap<String, String> {
@@ -486,14 +492,16 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     for tool in default_settings().tools { if !settings.tools.iter().any(|current| current.get("name") == tool.get("name")) { settings.tools.push(tool); } }
     merge_discovered_skills(&mut settings);
     let dictionaries_changed = load_dictionary_config(&mut settings)?;
+    let context_cap_changed = settings.context_window_cap < 1000;
+    if context_cap_changed { settings.context_window_cap = default_context_window_cap(); }
     validate_dictionaries(&settings)?;
-    if migrated_model || migrated_filesystem_mcp || dictionaries_changed || keybindings_changed { fs::write(path, serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?; }
+    if migrated_model || migrated_filesystem_mcp || dictionaries_changed || keybindings_changed || context_cap_changed { fs::write(path, serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?; }
     Ok(settings)
 }
 
 #[tauri::command(async)]
 fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<(), String> {
-    if settings.context_window_cap == 0 { return Err("Context window cap must be a positive integer".into()); }
+    if settings.context_window_cap < 1000 { return Err("Context window cap must be a whole number of at least 1000".into()); }
     validate_dictionaries(&settings)?;
     let mut host_ids = HashSet::new();
     for host in &settings.hosts {
@@ -707,7 +715,7 @@ fn build_pi_command(app: &AppHandle, broker: &BrokerRuntime, settings: &AppSetti
             PiLaunch::Print { cwd, session_path, .. } => { command.current_dir(cwd).arg("--session").arg(session_path); }
         }
         if !disabled_tools.is_empty() { command.arg("--exclude-tools").arg(disabled_tools.join(",")); }
-        if !default_model.trim().is_empty() { command.arg("--model").arg(default_model.trim()); }
+        if !is_rpc && !default_model.trim().is_empty() { command.arg("--model").arg(default_model.trim()); }
         if !settings.default_thinking.trim().is_empty() { command.arg("--thinking").arg(settings.default_thinking.trim()); }
         if let Some(message) = print_message { command.arg(message); }
         return Ok(command);
@@ -720,7 +728,7 @@ fn build_pi_command(app: &AppHandle, broker: &BrokerRuntime, settings: &AppSetti
         PiLaunch::Print { cwd, session_path, .. } => { arguments.extend(["--session".into(), shell_quote(session_path)]); Some(cwd) },
     };
     if !disabled_tools.is_empty() { arguments.extend(["--exclude-tools".into(), shell_quote(&disabled_tools.join(","))]); }
-    if !default_model.trim().is_empty() { arguments.extend(["--model".into(), shell_quote(default_model.trim())]); }
+    if !is_rpc && !default_model.trim().is_empty() { arguments.extend(["--model".into(), shell_quote(default_model.trim())]); }
     if !settings.default_thinking.trim().is_empty() { arguments.extend(["--thinking".into(), shell_quote(settings.default_thinking.trim())]); }
     if let Some(message) = print_message { arguments.push(shell_quote(message)); }
     let rpc_environment = if is_rpc { format!(" PI_DESKTOP_BTW=1 PI_DESKTOP_PI_EXECUTABLE={remote_pi}") } else { String::new() };
@@ -794,6 +802,7 @@ fn pi_command(runtime: State<PiRuntime>, runtime_id: String, mut command: Value)
 fn start_terminal(app: AppHandle, runtime: State<TerminalRuntime>, terminal_id: String, cwd: String, cols: u16, rows: u16, host_id: Option<String>) -> Result<(), String> {
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
     if processes.contains_key(&terminal_id) { return Ok(()); }
+    if processes.len() >= MAX_TERMINALS { return Err(format!("At most {MAX_TERMINALS} terminals may run at once")); }
     let pair = native_pty_system().openpty(PtySize { rows: rows.max(1), cols: cols.max(1), pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let mut command = if host_id == "local" {

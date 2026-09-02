@@ -23,6 +23,7 @@ export class NativeTransport implements PiTransport {
   private unlisten?: UnlistenFn;
   private connectionVersion = 0;
   private processLifecycle: Promise<unknown> = Promise.resolve();
+  private settingsLifecycle: Promise<unknown> = Promise.resolve();
   private cwd?: string;
   private sessionPath?: string;
   private sessionId?: string;
@@ -71,7 +72,12 @@ export class NativeTransport implements PiTransport {
   gitBranch() { return call<string | null>("git_branch"); }
   loadSettings() { return call<AppSettings>("load_app_settings"); }
   loadCodexUsage() { return call<CodexUsage>("codex_usage"); }
-  async saveSettings(settings: AppSettings, reconnect = true) { await call<void>("save_app_settings", { settings }); if (!reconnect) return; if (this.hostId !== "local" && !settings.hosts.some((host) => host.id === this.hostId)) this.hostId = "local"; await this.disconnect(); await this.connect(this.cwd, this.sessionPath, this.hostId); }
+  saveSettings(settings: AppSettings, reconnect = true) {
+    const save = async () => { await call<void>("save_app_settings", { settings }); if (!reconnect) return; if (this.hostId !== "local" && !settings.hosts.some((host) => host.id === this.hostId)) this.hostId = "local"; await this.disconnect(); await this.connect(this.cwd, this.sessionPath, this.hostId); };
+    const result = this.settingsLifecycle.then(save, save);
+    this.settingsLifecycle = result.then(() => undefined, () => undefined);
+    return result;
+  }
   async selectProjectDirectory(defaultPath?: string) { const selected = await open({ directory: true, multiple: false, title: "Open project", defaultPath }); return typeof selected === "string" ? selected : null; }
   homeDirectory(hostId: string) { return call<string>("home_directory", { hostId }); }
   listDirectories(hostId: string, path?: string) { return call<DirectoryListing>("list_directories", { hostId, path }); }

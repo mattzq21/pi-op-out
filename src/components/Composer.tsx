@@ -22,7 +22,7 @@ interface Props {
   draft?: string;
   onDraftChange?: (value: string) => void;
   restoredDraft?: { id: string; value: string };
-  onSend: (message: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void;
+  onSend: (message: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | Promise<void>;
   onAbort: () => void;
   onOpenTerminal?: () => void;
   onAgent: (name: string) => void;
@@ -60,6 +60,7 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [behavior, setBehavior] = useState<"steer" | "followUp">("steer");
   const [uploadError, setUploadError] = useState<string>();
+  const [sending, setSending] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState(0);
   const [paletteDismissed, setPaletteDismissed] = useState(false);
   const [editorScrollTop, setEditorScrollTop] = useState(0);
@@ -118,13 +119,19 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
     }
     setUploads((current) => [...current, ...next].slice(0, 12));
   };
-  const submit = () => {
+  const submit = async () => {
     const textFiles = uploads.filter((upload) => upload.kind === "text");
     const message = [expandSkillReference(applyDictionary(value.trim(), dictionaries), commands), ...textFiles.map((file) => `<file name="${file.name.replaceAll('"', "&quot;")}">\n${file.text}\n</file>`)].filter(Boolean).join("\n\n");
     const images = uploads.flatMap((upload) => upload.image ? [upload.image] : []);
     if (!message && !images.length) return;
-    onSend(message || "Describe the attached image.", streaming ? behavior : undefined, images);
-    setValue(""); setUploads([]); setUploadError(undefined);
+    if (sending) return;
+    setSending(true); setUploadError(undefined);
+    try {
+      await onSend(message || "Describe the attached image.", streaming ? behavior : undefined, images);
+      setValue(""); setUploads([]);
+    } catch (reason) {
+      setUploadError(reason instanceof Error ? reason.message : String(reason));
+    } finally { setSending(false); }
   };
   const chooseCommand = (command: SlashCommand) => {
     const name = skillName(command);
@@ -141,7 +148,7 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
       {uploadError && <div className="upload-error">{uploadError}</div>}
       <div className={`composer-editor${dictionaryHighlights.length ? " has-dictionary-matches" : ""}`}>
         {dictionaryHighlights.length > 0 && <div className="composer-highlight-viewport" aria-hidden="true"><div className="composer-highlight-layer" style={{ transform: `translateY(-${editorScrollTop}px)` }}>{dictionaryHighlights.map((match, index) => <span key={`${match.start}-${match.end}`}><span>{value.slice(index ? dictionaryHighlights[index - 1].end : 0, match.start)}</span><mark title={match.replacement} onPointerDown={(event) => { event.preventDefault(); ref.current?.focus(); ref.current?.setSelectionRange(match.start, match.end); }}>{value.slice(match.start, match.end)}</mark></span>)}<span>{value.slice(dictionaryHighlights.at(-1)?.end ?? 0)}</span></div></div>}
-        <textarea ref={ref} aria-label="Message Pi" placeholder={streaming ? (behavior === "steer" ? "Steer Pi while it works…" : "Queue a follow-up…") : "Ask Pi to build, explain, or change anything…"} value={value} rows={1} onScroll={(event) => setEditorScrollTop(event.currentTarget.scrollTop)} onChange={(event) => { setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={(event) => { if (event.key === "Escape" && matches.length) { event.preventDefault(); setPaletteDismissed(true); } else if (matches.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length); } else if (event.key === "Tab" && !event.shiftKey && matches[selectedMatch]) { event.preventDefault(); chooseCommand(matches[selectedMatch]); } else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); submit(); } }} />
+        <textarea ref={ref} aria-label="Message Pi" placeholder={streaming ? (behavior === "steer" ? "Steer Pi while it works…" : "Queue a follow-up…") : "Ask Pi to build, explain, or change anything…"} value={value} rows={1} onScroll={(event) => setEditorScrollTop(event.currentTarget.scrollTop)} onChange={(event) => { setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={(event) => { if (event.key === "Escape" && matches.length) { event.preventDefault(); setPaletteDismissed(true); } else if (matches.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length); } else if (event.key === "Tab" && !event.shiftKey && matches[selectedMatch]) { event.preventDefault(); chooseCommand(matches[selectedMatch]); } else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submit(); } }} />
       </div>
       <input ref={fileRef} className="hidden-input" type="file" multiple onChange={(event) => { void addFiles(event.target.files); event.target.value = ""; }} />
       <div className="composer-bar"><div className="composer-tools"><IconButton label="Attach files" onClick={() => fileRef.current?.click()}><Paperclip size={17} /></IconButton>{onOpenTerminal && <IconButton label="Open terminal" onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton>}{contextUsage && <ContextWheel usage={contextUsage} />}{sessionCache && <span className={`session-cache-hit${sessionCache.low ? " low" : ""}`} title={`${sessionCache.cachedTokens.toLocaleString()} of ${sessionCache.promptTokens.toLocaleString()} session prompt tokens read from cache`}>Cache {sessionCache.rate}%</span>}</div>
@@ -150,7 +157,7 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
         <ContainedPicker label="Model" value={model ? `${model.provider}/${model.id}` : ""} options={models.map((item) => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item), detail: item.provider }))} onChange={(value) => { const next = models.find((item) => `${item.provider}/${item.id}` === value); if (next) onModel(next); }} />
         <ContainedPicker label="Thinking level" value={thinkingLevel} menuWidth={120} centered compact options={thinkingLevels.map((level) => ({ value: level, label: level }))} onChange={onThinking} />
         <span className="composer-divider" />
-        {streaming && <IconButton label="Stop Pi" className="stop-compact" onClick={onAbort}><CircleStop size={17} /></IconButton>}<IconButton label={streaming ? (behavior === "steer" ? "Send steering message" : "Queue follow-up") : "Send message"} className="send" disabled={!value.trim() && uploads.length === 0} onClick={submit}><ArrowUp size={18} /></IconButton></div>
+        {streaming && <IconButton label="Stop Pi" className="stop-compact" onClick={onAbort}><CircleStop size={17} /></IconButton>}<IconButton label={streaming ? (behavior === "steer" ? "Send steering message" : "Queue follow-up") : "Send message"} className="send" disabled={sending || (!value.trim() && uploads.length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton></div>
       </div>
     </div>
   </div>;
