@@ -19,6 +19,7 @@ export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; se
 export class NativeTransport implements PiTransport {
   private readonly runtimeId = globalThis.crypto?.randomUUID?.() ?? `runtime-${Date.now()}-${Math.random()}`;
   private listeners = new Set<(event: RpcEvent) => void>();
+  private retainedStatuses = new Map<string, RpcEvent>();
   private unlisten?: UnlistenFn;
   private connectionVersion = 0;
   private processLifecycle: Promise<unknown> = Promise.resolve();
@@ -32,6 +33,12 @@ export class NativeTransport implements PiTransport {
   currentCwd() { return this.cwd; }
   currentSessionPath() { return this.sessionPath; }
   private runProcessCommand<T>(command: () => Promise<T>) { const result = this.processLifecycle.then(command, command); this.processLifecycle = result.then(() => undefined, () => undefined); return result; }
+  private emit(event: RpcEvent) {
+    if (event.type === "extension_ui_request" && event.method === "setStatus" && typeof event.statusKey === "string") {
+      if (event.statusText) this.retainedStatuses.set(event.statusKey, event); else this.retainedStatuses.delete(event.statusKey);
+    }
+    this.listeners.forEach((listener) => listener(event));
+  }
   async connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string) {
     if (cwd !== undefined) this.cwd = cwd; if (sessionPath !== undefined) { this.sessionPath = sessionPath; this.sessionId = undefined; } if (hostId !== undefined) this.hostId = hostId;
     if (this.running) return;
@@ -40,16 +47,16 @@ export class NativeTransport implements PiTransport {
     this.unlisten?.(); this.unlisten = undefined;
     const unlisten = await listen<RpcEvent | { runtimeId: string; event: RpcEvent }>("pi://event", ({ payload }) => {
       const envelope = payload as { runtimeId?: unknown; event?: RpcEvent };
-      if (typeof envelope.runtimeId === "string") { if (envelope.runtimeId === this.runtimeId && envelope.event) { if (envelope.event.type === "disconnected") this.running = false; this.listeners.forEach((listener) => listener(envelope.event!)); } }
-      else this.listeners.forEach((listener) => listener(payload as RpcEvent));
+      if (typeof envelope.runtimeId === "string") { if (envelope.runtimeId === this.runtimeId && envelope.event) { if (envelope.event.type === "disconnected") { this.running = false; this.retainedStatuses.clear(); } this.emit(envelope.event); } }
+      else this.emit(payload as RpcEvent);
     });
     if (version !== this.connectionVersion) { unlisten(); return; }
     this.unlisten = unlisten;
     await this.runProcessCommand(() => call("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, forkPath, hostId: this.hostId })); this.running = true;
   }
-  async disconnect() { ++this.connectionVersion; this.unlisten?.(); this.unlisten = undefined; if (this.running) await this.runProcessCommand(() => call("stop_pi", { runtimeId: this.runtimeId })); this.running = false; }
+  async disconnect() { ++this.connectionVersion; this.unlisten?.(); this.unlisten = undefined; if (this.running) await this.runProcessCommand(() => call("stop_pi", { runtimeId: this.runtimeId })); this.running = false; this.retainedStatuses.clear(); }
   async command<T>(command: RpcCommand) { const compact = command.type === "prompt" && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null; if (compact) command = { type: "compact", ...(compact[1]?.trim() ? { customInstructions: compact[1].trim() } : {}) }; const result = await call<T>("pi_command", { runtimeId: this.runtimeId, command }); if (command.type === "get_state") { this.sessionPath = (result as { sessionFile?: string }).sessionFile; this.sessionId = undefined; } return result; }
-  subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); this.retainedStatuses.forEach((event) => listener(event)); return () => this.listeners.delete(listener); }
   listSessions() { return call<SessionSummary[]>("list_sessions"); }
   loadSessionEntries(sessionPath: string, hostId = "local") { return call<SessionEntries>("load_session_entries", { sessionPath, hostId }); }
   captureGitTree(cwd: string, hostId = "local") { return call<string | null>("capture_git_tree", { cwd, hostId }); }
