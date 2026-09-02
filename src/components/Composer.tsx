@@ -1,10 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ArrowUp, CircleStop, FileText, ImagePlus, Paperclip, TerminalSquare, X } from "lucide-react";
-import type { AgentProfile, ContextUsage, ImageAttachment, Model, PromptDictionary, SequenceProfile, SlashCommand } from "../types";
+import type { AgentProfile, ComposerUpload, ContextUsage, ImageAttachment, Model, PromptDictionary, SequenceProfile, SlashCommand } from "../types";
 import { applyDictionary, dictionaryMatches } from "../lib/dictionaries";
 import { IconButton } from "./IconButton";
 
-type Upload = { id: string; name: string; kind: "image" | "text"; image?: ImageAttachment; text?: string };
 interface Props {
   streaming: boolean;
   queued: number;
@@ -21,6 +20,8 @@ interface Props {
   contextUsage?: ContextUsage;
   draft?: string;
   onDraftChange?: (value: string) => void;
+  uploads?: ComposerUpload[];
+  onUploadsChange?: (uploads: ComposerUpload[]) => void;
   restoredDraft?: { id: string; value: string };
   onSend: (message: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | Promise<void>;
   onAbort: () => void;
@@ -31,6 +32,9 @@ interface Props {
 }
 
 const TEXT_LIMIT = 200_000;
+const IMAGE_LIMIT = 10 * 1024 * 1024;
+const TOTAL_UPLOAD_LIMIT = 24 * 1024 * 1024;
+const UPLOAD_COUNT_LIMIT = 12;
 const COMPOSER_MAX_HEIGHT = 130;
 const displayModelName = (model: Model) => (model.name || model.id).replace(/^gpt-/i, "");
 const skillName = (command: SlashCommand) => command.source === "skill" ? command.name.replace(/^skill:/, "") : undefined;
@@ -53,11 +57,16 @@ const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((
   if (mode === "dataUrl") reader.readAsDataURL(file); else reader.readAsText(file);
 });
 
-export function Composer({ streaming, queued, commands, agents, sequences, activeAgent, dictionaries = [], models, model, thinkingLevel, thinkingLevels, sessionCache, contextUsage, draft, onDraftChange, restoredDraft, onSend, onAbort, onOpenTerminal, onAgent, onModel, onThinking }: Props) {
+export function Composer({ streaming, queued, commands, agents, sequences, activeAgent, dictionaries = [], models, model, thinkingLevel, thinkingLevels, sessionCache, contextUsage, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, onSend, onAbort, onOpenTerminal, onAgent, onModel, onThinking }: Props) {
   const [localValue, setLocalValue] = useState("");
   const value = draft ?? localValue;
   const setValue = (next: string) => { if (onDraftChange) onDraftChange(next); else setLocalValue(next); };
-  const [uploads, setUploads] = useState<Upload[]>([]);
+  const [localUploads, setLocalUploads] = useState<ComposerUpload[]>([]);
+  const uploads = controlledUploads ?? localUploads;
+  const updateUploads = (update: ComposerUpload[] | ((current: ComposerUpload[]) => ComposerUpload[])) => {
+    const next = typeof update === "function" ? update(uploads) : update;
+    if (onUploadsChange) onUploadsChange(next); else setLocalUploads(next);
+  };
   const [behavior, setBehavior] = useState<"steer" | "followUp">("steer");
   const [uploadError, setUploadError] = useState<string>();
   const [sending, setSending] = useState(false);
@@ -107,17 +116,24 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
   const addFiles = async (files: FileList | null) => {
     if (!files) return;
     setUploadError(undefined);
-    const next: Upload[] = [];
+    const next: ComposerUpload[] = [];
+    const errors: string[] = [];
+    let totalBytes = uploads.reduce((total, upload) => total + upload.byteSize, 0);
     for (const file of Array.from(files)) {
+      if (uploads.length + next.length >= UPLOAD_COUNT_LIMIT) { errors.push(`Only ${UPLOAD_COUNT_LIMIT} attachments are allowed`); break; }
+      if (file.size + totalBytes > TOTAL_UPLOAD_LIMIT) { errors.push(`${file.name} exceeds the 24 MB attachment limit`); continue; }
       if (file.type.startsWith("image/")) {
+        if (file.size > IMAGE_LIMIT) { errors.push(`${file.name} is larger than 10 MB`); continue; }
         const url = await readFile(file, "dataUrl");
-        next.push({ id: `${file.name}-${file.lastModified}`, name: file.name, kind: "image", image: { type: "image", data: url.slice(url.indexOf(",") + 1), mimeType: file.type || "image/png", name: file.name } });
+        next.push({ id: crypto.randomUUID(), name: file.name, kind: "image", byteSize: file.size, image: { type: "image", data: url.slice(url.indexOf(",") + 1), mimeType: file.type || "image/png", name: file.name } });
       } else {
-        if (file.size > TEXT_LIMIT) { setUploadError(`${file.name} is larger than 200 KB`); continue; }
-        next.push({ id: `${file.name}-${file.lastModified}`, name: file.name, kind: "text", text: await readFile(file, "text") });
+        if (file.size > TEXT_LIMIT) { errors.push(`${file.name} is larger than 200 KB`); continue; }
+        next.push({ id: crypto.randomUUID(), name: file.name, kind: "text", byteSize: file.size, text: await readFile(file, "text") });
       }
+      totalBytes += file.size;
     }
-    setUploads((current) => [...current, ...next].slice(0, 12));
+    if (errors.length) setUploadError([...new Set(errors)].join(". "));
+    updateUploads((current) => [...current, ...next]);
   };
   const submit = async () => {
     const textFiles = uploads.filter((upload) => upload.kind === "text");
@@ -128,7 +144,7 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
     setSending(true); setUploadError(undefined);
     try {
       await onSend(message || "Describe the attached image.", streaming ? behavior : undefined, images);
-      setValue(""); setUploads([]);
+      setValue(""); updateUploads([]);
     } catch (reason) {
       setUploadError(reason instanceof Error ? reason.message : String(reason));
     } finally { setSending(false); }
@@ -144,7 +160,7 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
     {streaming && <div className="stream-banner"><span className="pulse" />Pi is working {queued > 0 && `· ${queued} queued`}<label>Send as <select aria-label="Streaming message behavior" value={behavior} onChange={(event) => setBehavior(event.target.value as typeof behavior)}><option value="steer">Steer now</option><option value="followUp">Follow up</option></select></label><button onClick={onAbort}>Stop</button></div>}
     <div ref={composerRef} className="composer">
       {matches.length > 0 && <div className="command-palette" role="listbox" aria-label={skillQuery === undefined ? "Pi commands" : "Pi skills"}>{matches.map((command, index) => <button role="option" aria-selected={index === selectedMatch} key={`${command.source}:${command.name}`} type="button" onMouseEnter={() => setSelectedMatch(index)} onClick={() => chooseCommand(command)}><span><strong>{skillQuery !== undefined ? `$${skillName(command)}` : `/${command.name}`}</strong><small>{command.description || `${command.source} command`}</small></span><em>{command.source}</em></button>)}</div>}
-      {uploads.length > 0 && <div className="attachments">{uploads.map((upload) => <span key={upload.id}>{upload.kind === "image" ? <ImagePlus size={12} /> : <FileText size={12} />}<b>{upload.name}</b><button aria-label={`Remove ${upload.name}`} onClick={() => setUploads((current) => current.filter((item) => item.id !== upload.id))}><X size={11} /></button></span>)}</div>}
+      {uploads.length > 0 && <div className="attachments">{uploads.map((upload) => <span key={upload.id}>{upload.kind === "image" ? <ImagePlus size={12} /> : <FileText size={12} />}<b>{upload.name}</b><button aria-label={`Remove ${upload.name}`} onClick={() => updateUploads((current) => current.filter((item) => item.id !== upload.id))}><X size={11} /></button></span>)}</div>}
       {uploadError && <div className="upload-error">{uploadError}</div>}
       <div className={`composer-editor${dictionaryHighlights.length ? " has-dictionary-matches" : ""}`}>
         {dictionaryHighlights.length > 0 && <div className="composer-highlight-viewport" aria-hidden="true"><div className="composer-highlight-layer" style={{ transform: `translateY(-${editorScrollTop}px)` }}>{dictionaryHighlights.map((match, index) => <span key={`${match.start}-${match.end}`}><span>{value.slice(index ? dictionaryHighlights[index - 1].end : 0, match.start)}</span><mark title={match.replacement} onPointerDown={(event) => { event.preventDefault(); ref.current?.focus(); ref.current?.setSelectionRange(match.start, match.end); }}>{value.slice(match.start, match.end)}</mark></span>)}<span>{value.slice(dictionaryHighlights.at(-1)?.end ?? 0)}</span></div></div>}

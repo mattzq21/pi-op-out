@@ -105,6 +105,7 @@ export class SessionRuntimePool {
 
   bind(hostId: string, sessionId: string, transport: NativeTransport) {
     for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key);
+    if (!sessionId) { this.publishSessionStates(); return; }
     this.sessions.set(sessionKey(hostId, sessionId), transport);
     const sessionPath = transport.currentSessionPath(); if (sessionPath) void this.loadSavedDiffs(transport, sessionPath);
     this.publishSessionStates();
