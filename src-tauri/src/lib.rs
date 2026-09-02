@@ -582,6 +582,43 @@ fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<(), String
 #[tauri::command]
 fn shell_quote(value: &str) -> String { format!("'{}'", value.replace('\'', "'\\''")) }
 
+fn desktop_sessions_dir(home: &Path) -> PathBuf { home.join(".pi-desktop/sessions") }
+
+fn is_legacy_desktop_session(path: &Path) -> Result<bool, String> {
+    let file = fs::File::open(path).map_err(|error| format!("Could not inspect legacy session {}: {error}", path.display()))?;
+    for line in BufReader::new(file).lines() {
+        let line = line.map_err(|error| format!("Could not inspect legacy session {}: {error}", path.display()))?;
+        if !line.contains("pi-desktop-") { continue; }
+        let Ok(entry) = serde_json::from_str::<Value>(&line) else { continue };
+        if entry.get("type").and_then(Value::as_str) == Some("custom") && entry.get("customType").and_then(Value::as_str).is_some_and(|value| value.starts_with("pi-desktop-")) { return Ok(true); }
+    }
+    Ok(false)
+}
+
+fn migrate_local_desktop_sessions(home: &Path) -> Result<PathBuf, String> {
+    let destination_root = desktop_sessions_dir(home); fs::create_dir_all(&destination_root).map_err(|error| format!("Could not create Pi Desktop session directory: {error}"))?;
+    let marker = destination_root.join(".migration-from-pi-agent-v1"); if marker.exists() { return Ok(destination_root); }
+    let legacy_root = home.join(".pi/agent/sessions");
+    if legacy_root.is_dir() {
+        for entry in WalkDir::new(&legacy_root).follow_links(false).into_iter().filter_map(Result::ok).filter(|entry| entry.file_type().is_file() && entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")) {
+            let source = entry.path(); if !is_legacy_desktop_session(source)? { continue; }
+            let relative = source.strip_prefix(&legacy_root).map_err(|_| "Legacy session escaped its root".to_string())?;
+            let destination = destination_root.join(relative);
+            if destination.exists() { return Err(format!("Cannot migrate desktop session because {} already exists", destination.display())); }
+            if let Some(parent) = destination.parent() { fs::create_dir_all(parent).map_err(|error| format!("Could not create migrated session directory: {error}"))?; }
+            fs::rename(source, &destination).map_err(|error| format!("Could not migrate desktop session {}: {error}", source.display()))?;
+            let source_diff = source.with_extension("diffs.json");
+            if source_diff.is_file() { fs::rename(&source_diff, destination.with_extension("diffs.json")).map_err(|error| format!("Session migrated, but its diffs could not be migrated: {error}"))?; }
+        }
+    }
+    fs::write(&marker, b"Desktop sessions migrated from ~/.pi/agent/sessions\n").map_err(|error| format!("Could not finish desktop session migration: {error}"))?;
+    Ok(destination_root)
+}
+
+fn remote_session_migration_script() -> &'static str {
+    r#"new="$HOME/.pi-desktop/sessions"; marker="$new/.migration-from-pi-agent-v1"; mkdir -p "$new" || exit 20; if [ ! -f "$marker" ]; then old="$HOME/.pi/agent/sessions"; if [ -d "$old" ]; then find "$old" -type f -name '*.jsonl' -exec sh -c 'old=$1; new=$2; shift 2; for path do if grep -Eq '\"type\"[[:space:]]*:[[:space:]]*\"custom\"' "$path" && grep -Eq '\"customType\"[[:space:]]*:[[:space:]]*\"pi-desktop-' "$path"; then rel=${path#"$old"/}; target="$new/$rel"; [ ! -e "$target" ] || exit 21; mkdir -p "$(dirname -- "$target")" || exit 22; mv -- "$path" "$target" || exit 23; diff=${path%.jsonl}.diffs.json; [ ! -f "$diff" ] || mv -- "$diff" "${target%.jsonl}.diffs.json" || exit 24; fi; done' sh "$old" "$new" {} + || exit $?; fi; printf '%s\n' 'Desktop sessions migrated from ~/.pi/agent/sessions' > "$marker" || exit 25; fi"#
+}
+
 #[derive(Serialize, Deserialize)]
 struct GitSnapshotToken { root: String, tree: String }
 
@@ -827,12 +864,13 @@ fn remove_ephemeral_session(session: EphemeralSession) {
 
 fn create_ephemeral_fork(settings: &AppSettings, host_id: &str, source_path: &str) -> Result<(String, EphemeralSession), String> {
     if host_id == "local" {
+        let source = local_desktop_session_file(source_path)?;
         let path = std::env::temp_dir().join(format!("pi-desktop-btw-{}.jsonl", Uuid::new_v4()));
-        fs::copy(source_path, &path).map_err(|error| format!("Could not create temporary side conversation: {error}"))?;
+        fs::copy(source, &path).map_err(|error| format!("Could not create temporary side conversation: {error}"))?;
         return Ok((path.to_string_lossy().into_owned(), EphemeralSession::Local(path)));
     }
     let host = remote_host(settings, host_id)?.clone();
-    let remote = format!(r#"temporary=$(mktemp "${{TMPDIR:-/tmp}}/pi-desktop-btw.XXXXXX") && cp -- {} "$temporary" && printf %s "$temporary""#, shell_quote(source_path));
+    let remote = format!(r#"root=$(cd "$HOME/.pi-desktop/sessions" && pwd -P) && source=$(realpath -- {}) && case "$source" in "$root"/*.jsonl) temporary=$(mktemp "${{TMPDIR:-/tmp}}/pi-desktop-btw.XXXXXX") && cp -- "$source" "$temporary" && printf %s "$temporary" ;; *) printf 'Refusing to fork a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(source_path));
     let output = ssh(&host).arg(remote).output().map_err(|error| format!("Could not create temporary side conversation on {}: {error}", host.name))?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -877,7 +915,8 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let context_window_config = shell_quote(&serde_json::to_string_pretty(&json!({ "contextWindowCap": settings.context_window_cap })).map_err(|error| error.to_string())?);
     let mcp_bridge = shell_quote(include_str!("../resources/mcp-bridge.ts"));
     let mcp_config = shell_quote(&serde_json::to_string_pretty(&settings.mcp_servers).map_err(|error| error.to_string())?);
-    let remote = format!("mkdir -p \"$HOME/.pi-desktop/pi-context-window-cap\" \"$HOME/.pi/agent/extensions/pi-orchestration\" && printf %s {broker} > \"$HOME/.pi-desktop/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/.pi-desktop/pi-desktop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/.pi-desktop/pi-desktop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/.pi-desktop/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/.pi-desktop/pi-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/.pi-desktop/pi-context-window-cap/config.json\" && printf %s {btw} > \"$HOME/.pi/agent/extensions/pi-desktop-btw.ts\" && printf %s {orchestration} > \"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\"");
+    let migration = remote_session_migration_script();
+    let remote = format!("{migration} && mkdir -p \"$HOME/.pi-desktop/pi-context-window-cap\" \"$HOME/.pi/agent/extensions/pi-orchestration\" && printf %s {broker} > \"$HOME/.pi-desktop/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/.pi-desktop/pi-desktop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/.pi-desktop/pi-desktop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/.pi-desktop/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/.pi-desktop/pi-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/.pi-desktop/pi-context-window-cap/config.json\" && printf %s {btw} > \"$HOME/.pi/agent/extensions/pi-desktop-btw.ts\" && printf %s {orchestration} > \"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\"");
     let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not install Pi Desktop extensions on {}: {error}", host.name))?;
     output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
 }
@@ -900,8 +939,9 @@ fn build_pi_command(app: &AppHandle, broker: &BrokerRuntime, settings: &AppSetti
     let default_model = std::env::var("PI_DESKTOP_E2E_MODEL").ok().filter(|model| !model.trim().is_empty()).unwrap_or_else(|| settings.default_model.clone());
     if host_id == "local" {
         let (mcp_extension, mcp_config) = prepare_mcp_bridge(app, settings)?; let context_window_cap_extension = prepare_context_window_cap_extension(app, settings)?; let trace_reader_extension = prepare_trace_reader(app)?; let pi_path = pi_executable();
+        let session_dir = migrate_local_desktop_sessions(&desktop_home)?;
         let mut command = Command::new(&pi_path); command.arg(if is_rpc { "--mode" } else { "--print" }); if is_rpc { command.arg("rpc"); }
-        command.arg("--approve").arg("--no-skills").arg("--extension").arg(mcp_extension).arg("--extension").arg(prepare_session_broker(app)?).arg("--extension").arg(&trace_reader_extension).arg("--extension").arg(&context_window_cap_extension)
+        command.arg("--session-dir").arg(session_dir).arg("--approve").arg("--no-skills").arg("--extension").arg(mcp_extension).arg("--extension").arg(prepare_session_broker(app)?).arg("--extension").arg(&trace_reader_extension).arg("--extension").arg(&context_window_cap_extension)
             .env("PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION", &context_window_cap_extension).env("PI_DESKTOP_TRACE_READER_EXTENSION", &trace_reader_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config).env("PI_DESKTOP_BROKER_URL", format!("http://127.0.0.1:{broker_port}")).env("PI_DESKTOP_BROKER_TOKEN", &broker_token).env("PI_DESKTOP_ALLOWED_TOOLS", &allowed_tools).env("PI_DESKTOP_SKILL_PATHS", &local_skills);
         match launch {
             PiLaunch::Rpc { cwd, session_path, session_id, fork_path, no_session } => {
@@ -921,7 +961,7 @@ fn build_pi_command(app: &AppHandle, broker: &BrokerRuntime, settings: &AppSetti
     }
     let host = remote_host(settings, host_id)?; stage_remote_extensions(host, settings)?; let remote_port = remote_broker_port(); let remote_pi = remote_pi_path(&host.pi_path);
     let mut arguments = vec![remote_pi.clone()]; if is_rpc { arguments.extend(["--mode".into(), "rpc".into()]); } else { arguments.push("--print".into()); }
-    arguments.extend(["--approve".into(), "--no-skills".into(), "--extension".into(), "\"$HOME/.pi-desktop/pi-desktop-mcp-bridge.ts\"".into(), "--extension".into(), "\"$HOME/.pi-desktop/session-broker.ts\"".into(), "--extension".into(), "\"$HOME/.pi-desktop/pi-desktop-trace-reader.ts\"".into(), "--extension".into(), "\"$HOME/.pi-desktop/pi-context-window-cap/index.ts\"".into(), "--extension".into(), "\"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\"".into()]);
+    arguments.extend(["--session-dir".into(), "\"$HOME/.pi-desktop/sessions\"".into(), "--approve".into(), "--no-skills".into(), "--extension".into(), "\"$HOME/.pi-desktop/pi-desktop-mcp-bridge.ts\"".into(), "--extension".into(), "\"$HOME/.pi-desktop/session-broker.ts\"".into(), "--extension".into(), "\"$HOME/.pi-desktop/pi-desktop-trace-reader.ts\"".into(), "--extension".into(), "\"$HOME/.pi-desktop/pi-context-window-cap/index.ts\"".into(), "--extension".into(), "\"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\"".into()]);
     let cwd = match launch {
         PiLaunch::Rpc { cwd, session_path, session_id, fork_path, no_session } => { if let Some(path) = fork_path { arguments.extend(["--fork".into(), shell_quote(path)]); } else if let Some(path) = session_path { arguments.extend(["--session".into(), shell_quote(path)]); } else if let Some(id) = session_id { arguments.extend(["--session-id".into(), shell_quote(id)]); } if no_session { arguments.push("--no-session".into()); } cwd },
         PiLaunch::Print { cwd, session_path, .. } => { arguments.extend(["--session".into(), shell_quote(session_path)]); Some(cwd) },
@@ -1141,7 +1181,7 @@ fn parse_session(path: &Path) -> Option<SessionSummary> {
 }
 
 fn list_remote_sessions(host: &RemoteHost) -> Result<Vec<SessionSummary>, String> {
-    let script = r#"find "$HOME/.pi/agent/sessions" -type f -name '*.jsonl' -exec sh -c 'for path do printf "%s\000%s\000" "$path" "$(stat -c %Y "$path")"; cat "$path"; printf "\000"; done' sh {} + 2>/dev/null"#;
+    let script = format!(r#"{} && find "$HOME/.pi-desktop/sessions" -type f -name '*.jsonl' -exec sh -c 'for path do printf "%s\000%s\000" "$path" "$(stat -c %Y "$path")"; cat "$path"; printf "\000"; done' sh {{}} + 2>/dev/null"#, remote_session_migration_script());
     let output = ssh(host).arg(script).output().map_err(|error| format!("Could not run ssh for {}: {error}", host.name))?;
     if !output.status.success() { return Err(format!("Could not list sessions on {}: {}", host.name, String::from_utf8_lossy(&output.stderr).trim())); }
     let chunks: Vec<&[u8]> = output.stdout.split(|byte| *byte == 0).collect();
@@ -1245,7 +1285,7 @@ fn list_directories(app: AppHandle, host_id: String, path: Option<String>) -> Re
 }
 
 fn collect_sessions(app: &AppHandle) -> Result<Vec<SessionSummary>, String> {
-    let root = home_dir()?.join(".pi/agent/sessions");
+    let home = home_dir()?; let root = migrate_local_desktop_sessions(&home)?;
     let mut sessions: Vec<_> = if root.exists() { WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok).filter(|entry| entry.file_type().is_file() && entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")).filter_map(|entry| parse_session(entry.path())).collect() } else { vec![] };
     let hosts = load_app_settings(app.clone())?.hosts;
     thread::scope(|scope| {
@@ -1274,14 +1314,22 @@ fn session_entries(content: &str) -> Value {
     json!({ "entries": entries, "leafId": leaf_id })
 }
 
+fn local_desktop_session_file(session_path: &str) -> Result<PathBuf, String> {
+    let root = desktop_sessions_dir(&home_dir()?).canonicalize().map_err(|error| format!("Could not locate Pi Desktop sessions: {error}"))?;
+    let source = PathBuf::from(session_path).canonicalize().map_err(|error| format!("Could not locate session file: {error}"))?;
+    if !source.starts_with(&root) || source.extension().and_then(|value| value.to_str()) != Some("jsonl") || !source.is_file() { return Err("Only Pi Desktop session files can be accessed".into()); }
+    Ok(source)
+}
+
 #[tauri::command(async)]
 fn load_session_entries(app: AppHandle, session_path: String, host_id: Option<String>) -> Result<Value, String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let content = if host_id == "local" {
-        fs::read_to_string(&session_path).map_err(|error| format!("Could not read session: {error}"))?
+        fs::read_to_string(local_desktop_session_file(&session_path)?).map_err(|error| format!("Could not read session: {error}"))?
     } else {
         let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
-        let output = ssh(host).arg(format!("cat -- {}", shell_quote(&session_path))).output().map_err(|error| format!("Could not read session on {}: {error}", host.name))?;
+        let remote = format!(r#"root=$(cd "$HOME/.pi-desktop/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) cat -- "$target" ;; *) printf 'Refusing to read a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(&session_path));
+        let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not read session on {}: {error}", host.name))?;
         if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
         String::from_utf8(output.stdout).map_err(|_| "Remote session was not valid UTF-8".to_string())?
     };
@@ -1293,24 +1341,20 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
     let host_id = host_id.unwrap_or_else(|| "local".into());
     if let Some(state) = terminal_state.as_mut() { stop_terminals_for_state(&runtime, state)?; }
     if host_id != "local" {
-        if session_path.contains("/../") || !session_path.contains("/.pi/agent/sessions/") { return Err("Only remote Pi session files can be archived".into()); }
         let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
         let file_name = Path::new(&session_path).file_name().and_then(|name| name.to_str()).ok_or("Session path has no file name")?;
         let destination = format!("{}-{file_name}", Uuid::new_v4());
         let terminal_sidecar = terminal_state.as_ref().map(|state| {
             let sidecar = Path::new(&destination).with_extension("terminals.json").to_string_lossy().into_owned();
             let body = serde_json::to_string_pretty(state).unwrap_or_else(|_| "{}".into());
-            format!(" && printf '%s' {} > \"$HOME/.pi-desktop/archived/{}\"", shell_quote(&body), sidecar)
+            format!(" && printf '%s' {} > \"$HOME/.pi-desktop/archived\"/{}", shell_quote(&body), shell_quote(&sidecar))
         }).unwrap_or_default();
-        let diff_source = git_diffs_path(&session_path); let diff_destination = Path::new(&destination).with_extension("diffs.json").to_string_lossy().into_owned();
-        let remote = format!("mkdir -p \"$HOME/.pi-desktop/archived\"{terminal_sidecar} && mv -- {} \"$HOME/.pi-desktop/archived/{}\" && if [ -f {} ]; then mv -- {} \"$HOME/.pi-desktop/archived/{}\"; fi", shell_quote(&session_path), destination, shell_quote(&diff_source.to_string_lossy()), shell_quote(&diff_source.to_string_lossy()), diff_destination);
+        let diff_destination = Path::new(&destination).with_extension("diffs.json").to_string_lossy().into_owned();
+        let remote = format!(r#"root=$(cd "$HOME/.pi-desktop/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) mkdir -p "$HOME/.pi-desktop/archived"{} && mv -- "$target" "$HOME/.pi-desktop/archived"/{} && diff=${{target%.jsonl}}.diffs.json; if [ -f "$diff" ]; then mv -- "$diff" "$HOME/.pi-desktop/archived"/{}; fi ;; *) printf 'Refusing to archive a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(&session_path), terminal_sidecar, shell_quote(&destination), shell_quote(&diff_destination));
         let output = ssh(host).arg(remote).output().map_err(|error| error.to_string())?;
         return output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
-    let sessions_root = home_dir()?.join(".pi/agent/sessions").canonicalize().map_err(|error| format!("Could not locate Pi sessions: {error}"))?;
-    let source = PathBuf::from(&session_path).canonicalize().map_err(|error| format!("Could not locate session file: {error}"))?;
-    if !source.starts_with(&sessions_root) { return Err("Only Pi session files can be archived".into()); }
-    if !source.is_file() { return Err(format!("Session file does not exist: {}", source.display())); }
+    let source = local_desktop_session_file(&session_path)?;
     let archive_dir = home_dir()?.join(".pi-desktop/archived");
     fs::create_dir_all(&archive_dir).map_err(|error| format!("Could not create archive directory: {error}"))?;
     let file_name = source.file_name().ok_or("Session path has no file name")?;
@@ -1336,17 +1380,12 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
 fn delete_session(app: AppHandle, session_path: String, host_id: Option<String>) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     if host_id != "local" {
-        if session_path.contains("/../") || !session_path.contains("/.pi/agent/sessions/") || !session_path.ends_with(".jsonl") { return Err("Only remote Pi session files can be deleted".into()); }
         let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
-        let diff_path = git_diffs_path(&session_path);
-        let remote = format!(r#"root=$(cd "$HOME/.pi/agent/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) rm -- "$target"; rm -f -- {} ;; *) printf 'Refusing to delete a non-session file' >&2; exit 1 ;; esac"#, shell_quote(&session_path), shell_quote(&diff_path.to_string_lossy()));
+        let remote = format!(r#"root=$(cd "$HOME/.pi-desktop/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) diff=${{target%.jsonl}}.diffs.json; rm -- "$target"; rm -f -- "$diff" ;; *) printf 'Refusing to delete a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(&session_path));
         let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not delete session on {}: {error}", host.name))?;
         return output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
-    let sessions_root = home_dir()?.join(".pi/agent/sessions").canonicalize().map_err(|error| format!("Could not locate Pi sessions: {error}"))?;
-    let source = PathBuf::from(&session_path).canonicalize().map_err(|error| format!("Could not locate session file: {error}"))?;
-    if !source.starts_with(&sessions_root) || source.extension().and_then(|value| value.to_str()) != Some("jsonl") { return Err("Only Pi session files can be deleted".into()); }
-    if !source.is_file() { return Err(format!("Session file does not exist: {}", source.display())); }
+    let source = local_desktop_session_file(&session_path)?;
     fs::remove_file(&source).map_err(|error| format!("Could not delete session: {error}"))?;
     let diff_path = source.with_extension("diffs.json"); if diff_path.exists() { fs::remove_file(diff_path).map_err(|error| format!("Session deleted, but its diffs could not be deleted: {error}"))?; }
     Ok(())
@@ -1357,7 +1396,7 @@ fn relocate_session(session_path: String, cwd: String, host_id: Option<String>) 
     if host_id.as_deref().unwrap_or("local") != "local" { return Err("Relocating remote sessions is not supported yet".into()); }
     let replacement = PathBuf::from(cwd.trim());
     if !replacement.is_dir() { return Err(format!("Project directory does not exist: {}", replacement.display())); }
-    let path = PathBuf::from(session_path);
+    let path = local_desktop_session_file(&session_path)?;
     let content = fs::read_to_string(&path).map_err(|error| format!("Could not read session: {error}"))?;
     let (first, rest) = content.split_once('\n').unwrap_or((&content, ""));
     let mut header: Value = serde_json::from_str(first).map_err(|error| format!("Invalid session header: {error}"))?;
