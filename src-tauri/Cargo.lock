@@ -2486,6 +2486,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-wdio-webdriver",
+ "url",
  "uuid",
  "walkdir",
 ]

@@ -281,9 +281,47 @@ fn validate_dictionaries(settings: &AppSettings) -> Result<(), String> {
     for dictionary in &settings.dictionaries { if dictionary.id.trim().is_empty() || !ids.insert(dictionary.id.as_str()) { return Err("Every dictionary needs a unique id".into()); } }
     let mut active_ids = HashSet::new();
     for id in &settings.active_dictionary_ids { if !ids.contains(id.as_str()) { return Err("Active dictionary was not found".into()); } if !active_ids.insert(id.as_str()) { return Err("A dictionary can only be active once".into()); } }
-    let mut keys: HashMap<String, &str> = HashMap::new();
+    let mut keys = HashSet::new();
     for dictionary in settings.dictionaries.iter().filter(|dictionary| active_ids.contains(dictionary.id.as_str())) {
-        for entry in &dictionary.entries { let key = entry.word.trim().to_lowercase(); if key.is_empty() { continue; } if let Some(owner) = keys.insert(key.clone(), dictionary.id.as_str()) { if owner != dictionary.id.as_str() { return Err(format!("Key '{}' exists in more than one active dictionary", entry.word.trim())); } } }
+        for entry in &dictionary.entries { let key = entry.word.trim().to_lowercase(); if key.is_empty() { continue; } if !keys.insert(key) { return Err(format!("Key '{}' appears more than once in active dictionaries", entry.word.trim())); } }
+    }
+    Ok(())
+}
+
+fn canonical_shortcut(shortcut: &str) -> Result<Option<String>, String> {
+    let parts: Vec<String> = shortcut.split('+').map(|part| part.trim().to_lowercase()).filter(|part| !part.is_empty()).collect();
+    if parts.is_empty() { return Ok(None); }
+    let modifiers = ["ctrl", "meta", "alt", "shift", "mod"];
+    let key = parts.iter().find(|part| !modifiers.contains(&part.as_str())).ok_or_else(|| format!("Shortcut '{shortcut}' needs a key"))?;
+    let protected = parts.iter().any(|part| matches!(part.as_str(), "ctrl" | "meta" | "alt" | "mod"));
+    if key.chars().count() == 1 && !protected { return Err(format!("Shortcut '{shortcut}' needs Ctrl, Alt, or Meta")); }
+    let mut canonical: Vec<&str> = modifiers.iter().copied().filter(|modifier| parts.iter().any(|part| part == modifier)).collect(); canonical.push(key); Ok(Some(canonical.join("+")))
+}
+
+fn validate_keybindings(settings: &AppSettings) -> Result<(), String> {
+    let mut shortcuts = HashSet::new();
+    for shortcut in settings.keybindings.values() { if let Some(canonical) = canonical_shortcut(shortcut)? { if !shortcuts.insert(canonical) { return Err(format!("Shortcut '{shortcut}' is assigned more than once")); } } }
+    Ok(())
+}
+
+fn validate_mcp_servers(settings: &AppSettings) -> Result<(), String> {
+    let mut ids = HashSet::new();
+    for server in &settings.mcp_servers {
+        let id = server.get("id").and_then(Value::as_str).unwrap_or(""); let name = server.get("name").and_then(Value::as_str).unwrap_or("").trim();
+        if id.trim().is_empty() || !ids.insert(id) { return Err("Every MCP server needs a unique id".into()); }
+        if name.is_empty() { return Err("Every MCP server needs a name".into()); }
+        match server.get("transport").and_then(Value::as_str).unwrap_or("stdio") {
+            "stdio" => if server.get("command").and_then(Value::as_str).unwrap_or("").trim().is_empty() { return Err(format!("{name}: command can't be empty")); },
+            "http" => {
+                let raw_url = server.get("url").and_then(Value::as_str).unwrap_or("").trim(); let parsed = url::Url::parse(raw_url).map_err(|_| format!("{name}: enter a valid HTTP URL"))?;
+                if !matches!(parsed.scheme(), "http" | "https") { return Err(format!("{name}: URL must use HTTP or HTTPS")); }
+                if let Some(headers) = server.get("headers") {
+                    let parsed = match headers { Value::Null => None, Value::String(value) if value.trim().is_empty() => None, Value::String(value) => Some(serde_json::from_str::<Value>(value).map_err(|_| format!("{name}: headers must be valid JSON"))?), Value::Object(_) => Some(headers.clone()), _ => return Err(format!("{name}: headers must be a JSON object containing string values")) };
+                    if let Some(parsed) = parsed { let object = parsed.as_object().ok_or_else(|| format!("{name}: headers must be a JSON object containing string values"))?; if object.values().any(|value| !value.is_string()) { return Err(format!("{name}: headers must be a JSON object containing string values")); } }
+                }
+            }
+            transport => return Err(format!("{name}: unsupported MCP transport '{transport}'")),
+        }
     }
     Ok(())
 }
@@ -503,9 +541,15 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
 fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<(), String> {
     if settings.context_window_cap < 1000 { return Err("Context window cap must be a whole number of at least 1000".into()); }
     validate_dictionaries(&settings)?;
+    validate_keybindings(&settings)?;
+    validate_mcp_servers(&settings)?;
     let mut host_ids = HashSet::new();
+    let mut host_names = HashSet::from(["local".to_string()]);
     for host in &settings.hosts {
         if host.id.trim().is_empty() || !host_ids.insert(host.id.as_str()) { return Err("Every machine needs a unique id".into()); }
+        let name = host.name.trim().to_lowercase();
+        if name.is_empty() { return Err("Every machine needs a name".into()); }
+        if !host_names.insert(name) { return Err(format!("Machine name '{}' is already in use", host.name.trim())); }
         validate_remote_host(host)?;
     }
     let body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;

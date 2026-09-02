@@ -24,6 +24,7 @@ type McpClient = {
 
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 const REQUEST_TIMEOUT_MS = 10_000;
+const MCP_STATUS_KEY = "pi-desktop-mcp-status";
 
 function splitArgs(input = ""): string[] {
   const result: string[] = []; let current = ""; let quote: "'" | '"' | undefined; let escaped = false;
@@ -236,7 +237,8 @@ export default async function mcpBridge(pi: ExtensionAPI) {
   const desktopSkillPaths = (() => { try { const value = JSON.parse(process.env.PI_DESKTOP_SKILL_PATHS || "[]"); return Array.isArray(value) ? value.filter((path): path is string => typeof path === "string") : []; } catch { return []; } })();
   pi.on("resources_discover", () => process.env.PI_DESKTOP_ORCHESTRATION_ACTIVE === "1" || !desktopSkillPaths.length ? undefined : { skillPaths: desktopSkillPaths });
   const clients: McpClient[] = []; const loaded: Array<{ server: string; tools: string[] }> = [];
-  for (const server of servers.filter((item) => item.enabled && (!allowed || allowed.has(item.id)) && (item.transport === "http" ? item.url?.trim() : item.command?.trim()))) {
+  const statuses = new Map(servers.map((server) => [server.id, { id: server.id, status: "stopped" as "stopped" | "connected" | "error", error: undefined as string | undefined }]));
+  for (const server of servers.filter((item) => item.enabled && (!allowed || allowed.has(item.id)))) {
     try {
       const client = createClient(server); await client.initialize(); const tools = await client.tools(); clients.push(client);
       const registered: string[] = [];
@@ -254,8 +256,10 @@ export default async function mcpBridge(pi: ExtensionAPI) {
         });
       }
       loaded.push({ server: server.name, tools: registered });
-    } catch (error) { process.stderr.write(`[mcp:${server.name}] ${error instanceof Error ? error.message : String(error)}\n`); }
+      statuses.set(server.id, { id: server.id, status: "connected", error: undefined });
+    } catch (error) { const message = error instanceof Error ? error.message : String(error); statuses.set(server.id, { id: server.id, status: "error", error: message }); process.stderr.write(`[mcp:${server.name}] ${message}\n`); }
   }
+  pi.on("session_start", (_event, ctx) => ctx.ui.setStatus(MCP_STATUS_KEY, `json:${JSON.stringify([...statuses.values()])}`));
   pi.registerCommand("mcp-status", { description: "Show MCP servers and tools loaded by Pi Desktop", handler: async (_args, ctx) => ctx.ui.notify(loaded.length ? loaded.map((entry) => `${entry.server}: ${entry.tools.join(", ") || "no tools"}`).join("\n") : "No MCP servers loaded", loaded.length ? "info" : "warning") });
   pi.on("session_shutdown", () => { for (const client of clients) client.close(); });
 }

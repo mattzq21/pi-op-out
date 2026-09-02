@@ -16,6 +16,7 @@ const keyName = (key: string) => key === " " ? "Space" : key.length === 1 ? key.
 
 export function shortcutFromEvent(event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">) {
   if (["Meta", "Control", "Alt", "Shift"].includes(event.key)) return null;
+  if ([...event.key].length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) return null;
   const parts: string[] = [];
   if (event.ctrlKey) parts.push("Ctrl");
   if (event.metaKey) parts.push("Meta");
@@ -37,6 +38,7 @@ export function matchesShortcut(event: Pick<KeyboardEvent, "key" | "metaKey" | "
   };
   const key = parts.find((part) => !["mod", "ctrl", "meta", "alt", "shift"].includes(part.toLowerCase()));
   if (!key) return false;
+  if ([...key].length === 1 && !expected.mod && !expected.ctrl && !expected.meta && !expected.alt) return false;
   const primaryMatches = expected.mod ? event.metaKey || event.ctrlKey : expected.ctrl === event.ctrlKey && expected.meta === event.metaKey;
   return primaryMatches
     && expected.alt === event.altKey
