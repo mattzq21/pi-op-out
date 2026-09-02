@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 
 const DESKTOP_TITLE = "__pi_desktop_btw__";
 const CUSTOM_TYPE = "pi-desktop-btw";
+const OUTPUT_LIMIT = 4 * 1024 * 1024;
 
 type PiApi = {
   registerCommand(name: string, command: { description: string; handler(args: string, ctx: CommandContext): Promise<void> }): void;
@@ -29,12 +30,24 @@ function runFork(sessionFile: string, cwd: string, task: string): Promise<string
     const child = spawn(command, args, { cwd, env: { ...process.env, PI_DESKTOP_BTW: "0" }, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let exceeded = false;
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
-    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+    const append = (current: string, bytes: number, chunk: string, stream: string) => {
+      const nextBytes = bytes + Buffer.byteLength(chunk);
+      if (nextBytes <= OUTPUT_LIMIT) return { value: current + chunk, bytes: nextBytes };
+      exceeded = true;
+      child.kill();
+      reject(new Error(`/btw ${stream} exceeded 4 MiB`));
+      return { value: current, bytes };
+    };
+    child.stdout.on("data", (chunk: string) => { if (!exceeded) { const next = append(stdout, stdoutBytes, chunk, "stdout"); stdout = next.value; stdoutBytes = next.bytes; } });
+    child.stderr.on("data", (chunk: string) => { if (!exceeded) { const next = append(stderr, stderrBytes, chunk, "stderr"); stderr = next.value; stderrBytes = next.bytes; } });
     child.on("error", reject);
     child.on("close", (code) => {
+      if (exceeded) return;
       const answer = stdout.trim();
       if (code === 0 && answer) resolve(answer);
       else reject(new Error(stderr.trim() || answer || `The /btw branch exited with status ${code ?? "unknown"}`));

@@ -19,9 +19,18 @@ function nodeText(node: ReactNode): string {
 }
 
 function CodeBlock({ children, node: _node, ...props }: ComponentPropsWithoutRef<"pre"> & { node?: unknown }) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => { await navigator.clipboard?.writeText(nodeText(children).replace(/\n$/, "")); setCopied(true); window.setTimeout(() => setCopied(false), 1400); };
-  return <div className="code-block"><pre {...props}>{children}</pre><IconButton label={copied ? "Code copied" : "Copy code"} className="code-copy" onClick={copy}>{copied ? <Check size={14} /> : <Copy size={14} />}</IconButton></div>;
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+  const copy = async () => {
+    try {
+      if (!navigator.clipboard) throw new Error("Clipboard access is unavailable");
+      await navigator.clipboard.writeText(nodeText(children).replace(/\n$/, ""));
+      setCopyState("copied");
+    } catch {
+      setCopyState("error");
+    }
+    window.setTimeout(() => setCopyState("idle"), 1800);
+  };
+  return <div className="code-block"><pre {...props}>{children}</pre>{copyState === "error" && <span className="copy-feedback" role="status">Could not copy</span>}<IconButton label={copyState === "copied" ? "Code copied" : copyState === "error" ? "Copy failed" : "Copy code"} className="code-copy" onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton></div>;
 }
 
 const markdownComponents: Components = { pre: CodeBlock };
@@ -33,14 +42,23 @@ function userMessageParts(content: string) {
 }
 
 export function Message({ message, diff, expanded = false, toolCount = 1, debug = false, onBranch, onRetry }: Props) {
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   if (message.role === "tool") { const output = textOf(message.content); const status = message.toolStatus ?? "done"; return <details className={`tool-event ${status}`} open={status === "running" || (expanded && status !== "done")}><summary><Wrench size={14} /><span><strong>{message.toolName || "tool"}{toolCount > 1 ? ` x${toolCount}` : ""}</strong><small>{status === "running" ? "Running…" : status === "error" ? "Failed" : "Completed"}</small></span><span className="tool-chevron">›</span></summary>{output && <pre>{output}</pre>}</details>; }
   if (message.role === "user") { const { skills, text, literalSkill } = userMessageParts(textOf(message.content)); return <article className="message user-message"><div className="message-body">{skills.map((skill) => <span className="skill-reference" key={skill}>${skill}</span>)}{text && (literalSkill ? <span className="literal-skill-content">{text}</span> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>)}</div></article>; }
   const output = textOf(message.content);
   const thinking = thinkingOf(message.content);
   const cache = cacheHitStats(message.usage);
   const failure = message.stopReason === "aborted" ? (message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
-  const copy = async () => { await navigator.clipboard?.writeText(textOf(message.content)); setCopied(true); window.setTimeout(() => setCopied(false), 1400); };
+  const copy = async () => {
+    try {
+      if (!navigator.clipboard) throw new Error("Clipboard access is unavailable");
+      await navigator.clipboard.writeText(textOf(message.content));
+      setCopyState("copied");
+    } catch {
+      setCopyState("error");
+    }
+    window.setTimeout(() => setCopyState("idle"), 1800);
+  };
   return <article className={`message assistant-message ${thinking ? "reasoning-message" : ""}`}>
     <div className="message-body">
       {debug && message.promptContext && <PromptContextBar context={message.promptContext} />}
@@ -50,7 +68,8 @@ export function Message({ message, diff, expanded = false, toolCount = 1, debug 
       {message.streaming && <span className="stream-caret" />}
       {diff && <DiffViewer snapshot={diff} />}
       {!message.streaming && output.trim().length > 0 && <div className="message-actions">
-        <IconButton label="Copy response" onClick={copy}>{copied ? <Check size={14} /> : <Copy size={14} />}</IconButton>
+        <IconButton label={copyState === "copied" ? "Response copied" : copyState === "error" ? "Copy failed" : "Copy response"} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>
+        {copyState === "error" && <span className="copy-feedback" role="status">Could not copy response</span>}
         <button className="branch-button" aria-label="Branch from here" title="Branch from here" onClick={() => onBranch(message)}><GitBranch size={14} /></button>
         {debug && cache && <span className={`cache-hit-rate${cache.low ? " low" : ""}`} title={`${cache.cachedTokens.toLocaleString()} of ${cache.promptTokens.toLocaleString()} prompt tokens read from cache`}>Cache {cache.rate}%</span>}
       </div>}

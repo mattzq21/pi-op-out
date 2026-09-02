@@ -17,6 +17,8 @@ const STATUS_KEY = "pi-desktop-orchestration";
 const STATE_ENTRY = "pi-orchestration-state";
 const RUN_ENTRY = "pi-orchestration-run";
 const HANDOFF = /^<!-- pi-desktop-sequence:/;
+const PREPROMPTER_STATUS = "pi-desktop-preprompter";
+const CHILD_OUTPUT_LIMIT = 4 * 1024 * 1024;
 const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
 const extensionPath = fileURLToPath(import.meta.url);
 const fallbackConfig: Config = { preprompter: { enabled: false, model: "", systemPrompt: "Correct the user's prompt. Return only the corrected prompt.", agentsMd: "" }, agents: [{ name: "default", description: "General-purpose agent", model: "", effort: "high", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: ["read", "bash", "edit", "write", "grep", "find", "ls", "read_trace"], skills: [], mcpServers: [] }], sequences: [] };
@@ -38,15 +40,25 @@ function normalize(value: Partial<Config>): Config {
 
 
 async function loadConfig() {
-  try { return normalize(JSON.parse(await readFile(configPath, "utf8"))); }
-  catch {
+  let content: string;
+  try { content = await readFile(configPath, "utf8"); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     const fallback = structuredClone(fallbackConfig); await writeFile(configPath, `${JSON.stringify(fallback, null, 2)}\n`, { mode: 0o600 }); return fallback;
   }
+  try { return normalize(JSON.parse(content)); }
+  catch (error) { throw new Error(`Could not parse orchestration config ${configPath}: ${error instanceof Error ? error.message : String(error)}`); }
 }
 function encode(value: unknown) { return Buffer.from(JSON.stringify(value), "utf8").toString("base64url"); }
 function decode<T>(value: string): T { return JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as T; }
 function marker(text: string, sequence: Sequence, index: number) { return `<!-- pi-desktop-sequence:${encodeURIComponent(JSON.stringify({ sequence: sequence.name, step: index, agent: sequence.agents[index], visible: true }))} -->\n${text}`; }
-function finalText(messages: any[]) { for (let index = messages.length - 1; index >= 0; index -= 1) { const message = messages[index]; if (message?.role !== "assistant") continue; const text = message.content?.filter((part: any) => part.type === "text").map((part: any) => part.text).join("") || ""; if (text.trim()) return { text: text.trim(), failed: message.stopReason === "error" || message.stopReason === "aborted" }; } return { text: "", failed: true }; }
+function finalText(messages: any[]) {
+  const userIndex = messages.findLastIndex((message) => message?.role === "user");
+  const message = messages.slice(userIndex + 1).findLast((candidate) => candidate?.role === "assistant");
+  if (!message) return { text: "", failed: true };
+  const text = message.content?.filter((part: any) => part.type === "text").map((part: any) => part.text).join("") || "";
+  return { text: text.trim(), failed: !text.trim() || message.stopReason === "error" || message.stopReason === "aborted" };
+}
 function safeName(value: string) { return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool"; }
 function multiAgentMode(value: string): "final-only" | "own+final" | undefined { return value === "orchestrator" ? "final-only" : value === "final-only" || value === "own+final" ? value : undefined; }
 function desktopList(name: string) { try { const value = JSON.parse(process.env[name] || "null"); return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined; } catch { return undefined; } }
@@ -86,10 +98,17 @@ async function runChild(agent: Agent, task: string, cwd: string, signal?: AbortS
   const invocation = piInvocation([...agentArgs(agent, session), task]);
   return await new Promise<string>((resolve, reject) => {
     const child = spawn(invocation.command, invocation.args, { cwd, env: { ...process.env, PI_ORCHESTRATION_CHILD: encode(agent), PI_DESKTOP_MCP_ALLOWED_SERVER_IDS: agent.mcpServers.join(",") }, stdio: ["ignore", "pipe", "pipe"] });
-    let output = ""; let error = "";
-    child.stdout.on("data", (chunk) => { output += String(chunk); }); child.stderr.on("data", (chunk) => { error += String(chunk); });
-    child.once("error", reject); child.once("close", (code) => code === 0 ? resolve(output.trim() || "(no response)") : reject(new Error(error.trim() || `Agent exited with code ${code}`)));
-    signal?.addEventListener("abort", () => child.kill(), { once: true });
+    let output = ""; let error = ""; let outputBytes = 0; let errorBytes = 0; let exceeded = false;
+    const append = (current: string, bytes: number, chunk: unknown, stream: string) => {
+      const text = String(chunk); const nextBytes = bytes + Buffer.byteLength(text);
+      if (nextBytes <= CHILD_OUTPUT_LIMIT) return { value: current + text, bytes: nextBytes };
+      exceeded = true; child.kill(); reject(new Error(`${agent.name} ${stream} exceeded 4 MiB`)); return { value: current, bytes };
+    };
+    child.stdout.on("data", (chunk) => { if (!exceeded) { const next = append(output, outputBytes, chunk, "stdout"); output = next.value; outputBytes = next.bytes; } });
+    child.stderr.on("data", (chunk) => { if (!exceeded) { const next = append(error, errorBytes, chunk, "stderr"); error = next.value; errorBytes = next.bytes; } });
+    const abort = () => child.kill();
+    child.once("error", reject); child.once("close", (code) => { signal?.removeEventListener("abort", abort); if (exceeded) return; code === 0 ? resolve(output.trim() || "(no response)") : reject(new Error(error.trim() || (signal?.aborted ? "Agent was stopped" : `Agent exited with code ${code}`))); });
+    if (signal?.aborted) abort(); else signal?.addEventListener("abort", abort, { once: true });
   });
 }
 
@@ -106,7 +125,7 @@ export default async function orchestration(pi: ExtensionAPI) {
     return;
   }
   process.env.PI_DESKTOP_ORCHESTRATION_ACTIVE = "1";
-  let config = await loadConfig(); let active = "default"; let run: Run | undefined; let pendingHandoff: string | undefined; let activeToolError: string | undefined; let originalTask = ""; let delegations: Delegation[] = [];
+  let config = await loadConfig(); let active = "default"; let run: Run | undefined; let pendingHandoff: string | undefined; let activeToolError: string | undefined; let originalTask = ""; let delegations: Delegation[] = []; let preprompter: AbortController | undefined;
 
   const findAgent = (name: string) => config.agents.find((agent) => agent.name === name);
   const findSequence = (name: string) => config.sequences.find((sequence) => sequence.name === name);
@@ -115,7 +134,11 @@ export default async function orchestration(pi: ExtensionAPI) {
   const saveActive = (ctx: ExtensionContext) => { pi.appendEntry(STATE_ENTRY, { active }); publish(ctx); };
   const activate = async (agent: Agent, ctx: ExtensionContext) => {
     const toolError = agentToolError(pi, agent); if (toolError) { pi.setActiveTools([]); return toolError; }
-    if (agent.model.trim()) { const [provider, ...parts] = agent.model.trim().split("/"); const model = ctx.modelRegistry.find(provider, parts.join("/")); if (model) try { await pi.setModel(model); } catch (error) { ctx.ui.notify(`Could not select ${agent.model}: ${error instanceof Error ? error.message : String(error)}`, "warning"); } }
+    if (agent.model.trim()) {
+      const [provider, ...parts] = agent.model.trim().split("/"); const model = ctx.modelRegistry.find(provider, parts.join("/"));
+      if (!model) { pi.setActiveTools([]); return `Agent "${agent.name}" cannot run because model ${agent.model} is unavailable`; }
+      try { await pi.setModel(model); } catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" could not select ${agent.model}: ${error instanceof Error ? error.message : String(error)}`; }
+    }
     if (agent.effort.trim()) pi.setThinkingLevel(agent.effort.trim() as any);
     const tools = new Set(agent.tools);
     for (const info of pi.getAllTools()) if (agent.mcpServers.some((server) => info.name.startsWith(`mcp_${safeName(server)}_`))) tools.add(info.name);
@@ -135,7 +158,7 @@ export default async function orchestration(pi: ExtensionAPI) {
     }
     return skillPaths.length ? { skillPaths } : undefined;
   });
-  pi.on("session_shutdown", () => { delete process.env.PI_DESKTOP_ORCHESTRATION_ACTIVE; });
+  pi.on("session_shutdown", () => { preprompter?.abort(); preprompter = undefined; delete process.env.PI_DESKTOP_ORCHESTRATION_ACTIVE; });
 
   const registerTool = () => pi.registerTool({
     name: "call_agent", label: "Call agent or sequence",
@@ -170,6 +193,7 @@ export default async function orchestration(pi: ExtensionAPI) {
     if (!sequence || next.index < 0 || next.index >= sequence.agents.length || typeof next.handoff !== "string") throw new Error("Invalid sequence handoff");
     pi.appendEntry(RUN_ENTRY, next); await ctx.reload();
   }});
+  pi.registerCommand("pi-orchestration-cancel-preprompter", { description: "Stop an active pre-prompter", handler: async () => { preprompter?.abort(); } });
 
   pi.on("session_start", async (_event, ctx) => {
     let savedRun: { sequence?: string; index?: number; handoff?: string } | undefined;
@@ -192,7 +216,10 @@ export default async function orchestration(pi: ExtensionAPI) {
     let text = event.text;
     if (config.preprompter.enabled) {
       const promptAgent: Agent = { name: "preprompter", description: "", model: config.preprompter.model, effort: "", systemPrompt: config.preprompter.systemPrompt, developerPrompt: "", agentsMd: config.preprompter.agentsMd, tools: [], skills: [], mcpServers: [] };
-      try { text = await runChild(promptAgent, text, ctx.cwd); } catch (error) { ctx.ui.notify(`Pre-prompter failed; sending the original prompt: ${error instanceof Error ? error.message : String(error)}`, "warning"); }
+      const controller = new AbortController(); preprompter = controller; ctx.ui.setStatus(PREPROMPTER_STATUS, "Rewriting prompt…");
+      try { text = await runChild(promptAgent, text, ctx.cwd, controller.signal); }
+      catch (error) { if (controller.signal.aborted) return { action: "handled" }; ctx.ui.notify(`Pre-prompter failed; sending the original prompt: ${error instanceof Error ? error.message : String(error)}`, "warning"); }
+      finally { if (preprompter === controller) preprompter = undefined; ctx.ui.setStatus(PREPROMPTER_STATUS, undefined); }
     }
     const sequence = findSequence(active);
     if (sequence) { run = { sequence, index: 0, final: "", failed: false }; pi.appendEntry(RUN_ENTRY, { sequence: sequence.name, index: 0 }); const agent = findAgent(sequence.agents[0]); activeToolError = agent ? await activate(agent, ctx) : undefined; if (activeToolError) { pi.appendEntry(RUN_ENTRY, null); run = undefined; ctx.ui.notify(activeToolError, "error"); return { action: "handled" }; } return { action: "transform", text: marker(text, sequence, 0), images: event.images }; }

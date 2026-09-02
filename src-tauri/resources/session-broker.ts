@@ -13,7 +13,17 @@ async function request(path: string, body?: unknown) {
 }
 
 export default function sessionBroker(pi: ExtensionAPI) {
-  pi.on("before_provider_request", (event) => { pi.appendEntry("pi-desktop-llm-context", event.payload); });
+  pi.on("before_provider_request", (event) => {
+    if (!event.payload || typeof event.payload !== "object") return;
+    const payload = event.payload as Record<string, unknown>;
+    // The context bar only needs prompt/tool metadata. Never persist provider
+    // messages here: they can contain duplicate base64 attachment payloads.
+    pi.appendEntry("pi-desktop-llm-context", {
+      ...(typeof payload.instructions === "string" ? { instructions: payload.instructions } : {}),
+      ...(typeof payload.system === "string" ? { system: payload.system } : {}),
+      ...(Array.isArray(payload.tools) ? { tools: payload.tools } : {}),
+    });
+  });
   pi.registerTool({
     name: "list_agents", label: "List agents", description: "List Pi agents addressable through Pi Desktop", promptSnippet: "List agents by hostId and sessionId",
     parameters: Type.Object({}),
