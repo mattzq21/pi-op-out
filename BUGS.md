@@ -41,7 +41,7 @@ Manually reproduced on 2026-09-03 against the latest release WebDriver build wit
 
 - **Severity:** Medium
 - **Reproduction:** Open Settings with the window between 900 and 950 px wide.
-- **Observed:** At 900 px the settings content has a 660 px client width but a 730 px scroll width. The context-window cap control is clipped, the default-model field runs off-screen, and a horizontal scrollbar is required. Overflow remains at 950 px and disappears around 1,000 px.
+- **Observed:** At 900 px the settings content has a 660 px client width but a 730 px scroll width. The context-window cap control is clipped, the default-model field runs off-screen, and a horizontal scrollbar is required. The Agents section expands the shell further to 891 px and cuts off its editor fields and add control. Baseline overflow remains at 950 px and disappears around 1,000 px.
 - **Expected:** Settings should adapt to the documented minimum window width without clipping fields or requiring page-level horizontal scrolling.
 
 ## 7. Long unbroken extension text is clipped across toast, widget, and status surfaces
@@ -120,3 +120,10 @@ Manually reproduced on 2026-09-03 against the latest release WebDriver build wit
 - **Reproduction:** Emit a widget containing about 50 ordinary short lines at 900 × 640.
 - **Observed:** The widget becomes 818 px tall inside the bottom-pinned composer stack, placing its top at y=-281. The first 17 lines are above the viewport and there is no widget or stack scroller with which to reach them.
 - **Expected:** Widget height should be capped to the available space with internal scrolling, truncation, or an explicit expand/collapse affordance.
+
+## 18. Diff preview overflow cannot be reached by keyboard
+
+- **Severity:** Low
+- **Reproduction:** Focus a changed-file chip whose preview contains a line wider than the viewer. Try Arrow Right, then Tab.
+- **Observed:** Focus opens the preview, but Arrow Right leaves the diff stream at `scrollLeft = 0`. The scrollable diff stream is not focusable. Tabbing onward blurs the chip and immediately unmounts the preview, so keyboard users cannot reach horizontally hidden diff content.
+- **Expected:** The preview should remain open long enough for focus to enter its scrollable region, and that region should be keyboard-scrollable.
