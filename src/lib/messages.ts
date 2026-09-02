@@ -15,12 +15,20 @@ function skillsFromSystemPrompt(systemPrompt: string) {
   return { block, skills };
 }
 
+function instructionsFromSystemPrompt(systemPrompt: string) {
+  const block = systemPrompt.match(/\n\n<project_context>[\s\S]*?<\/project_context>\n?/)?.[0] ?? "";
+  const instructions = [...block.matchAll(/<project_instructions path="([^"]*)">\n?([\s\S]*?)\n?<\/project_instructions>/g)]
+    .map((match) => ({ path: decodeXml(match[1]), content: match[2] }));
+  return { block, instructions };
+}
+
 function promptContextFromProviderPayload(value: unknown): PromptContextInfo | undefined {
   if (!value || typeof value !== "object") return undefined;
   const payload = value as Record<string, unknown>;
   const systemPrompt = typeof payload.instructions === "string" ? payload.instructions : typeof payload.system === "string" ? payload.system : "";
   if (!systemPrompt) return undefined;
   const { block: skillPrompt, skills } = skillsFromSystemPrompt(systemPrompt);
+  const { block: instructionPrompt, instructions } = instructionsFromSystemPrompt(systemPrompt);
   const tools = Array.isArray(payload.tools) ? payload.tools.flatMap((value) => {
     if (!value || typeof value !== "object") return [];
     const tool = value as Record<string, unknown>; const fn = tool.function && typeof tool.function === "object" ? tool.function as Record<string, unknown> : tool;
@@ -29,7 +37,7 @@ function promptContextFromProviderPayload(value: unknown): PromptContextInfo | u
     return [{ name, description: typeof fn.description === "string" ? fn.description : "", parameters: fn.parameters ?? fn.input_schema }];
   }) : [];
   const estimate = (item: unknown) => Math.ceil((typeof item === "string" ? item : JSON.stringify(item) ?? "").length / 4);
-  return { systemPrompt, tools, skills, tokens: { system: estimate(systemPrompt.replace(skillPrompt, "")), tools: estimate(tools), skills: estimate(skillPrompt) } };
+  return { systemPrompt, instructions, tools, skills, tokens: { system: estimate(systemPrompt.replace(skillPrompt, "").replace(instructionPrompt, "")), instructions: estimate(instructionPrompt), tools: estimate(tools), skills: estimate(skillPrompt) } };
 }
 
 export function cacheHitStats(usage?: { input: number; cacheRead: number }) {

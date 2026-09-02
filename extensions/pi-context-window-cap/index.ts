@@ -38,6 +38,14 @@ function skillsFromPrompt(prompt: string) {
   return { block, skills };
 }
 
+function instructionsFromPrompt(prompt: string) {
+  const block = prompt.match(/\n\n<project_context>[\s\S]*?<\/project_context>\n?/)?.[0] ?? "";
+  const decode = (value: string) => value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"').replaceAll("&apos;", "'").replaceAll("&amp;", "&");
+  const instructions = [...block.matchAll(/<project_instructions path="([^"]*)">\n?([\s\S]*?)\n?<\/project_instructions>/g)]
+    .map((match) => ({ path: decode(match[1]), content: match[2] }));
+  return { block, instructions };
+}
+
 export default async function contextWindowCap(pi: ExtensionAPI) {
   const cap = await loadCap();
   let lastStatus = "";
@@ -45,14 +53,16 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
   const publishPromptContext = (ctx: ExtensionContext, persist = false) => {
     const systemPrompt = ctx.getSystemPrompt();
     const { block: skillPrompt, skills } = skillsFromPrompt(systemPrompt);
+    const { block: instructionPrompt, instructions } = instructionsFromPrompt(systemPrompt);
     const activeTools = new Set(pi.getActiveTools());
     const tools = pi.getAllTools().filter((tool) => activeTools.has(tool.name)).map(({ name, description, parameters }) => ({ name, description, parameters }));
     const estimate = (value: unknown) => Math.ceil((typeof value === "string" ? value : JSON.stringify(value)).length / 4);
     const snapshot = {
       systemPrompt,
+      instructions,
       tools,
       skills,
-      tokens: { system: estimate(systemPrompt.replace(skillPrompt, "")), tools: estimate(tools), skills: estimate(skillPrompt) },
+      tokens: { system: estimate(systemPrompt.replace(skillPrompt, "").replace(instructionPrompt, "")), instructions: estimate(instructionPrompt), tools: estimate(tools), skills: estimate(skillPrompt) },
     };
     if (persist) pi.appendEntry(STATUS_KEY, snapshot);
     const status = `json:${JSON.stringify(snapshot)}`;
