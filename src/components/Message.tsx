@@ -27,15 +27,15 @@ function CodeBlock({ children, node: _node, ...props }: ComponentPropsWithoutRef
 const markdownComponents: Components = { pre: CodeBlock };
 
 function userMessageParts(content: string) {
-  const skills: string[] = [];
-  const text = content.replace(/<skill\s+name="([^"]+)"[^>]*>[\s\S]*?<\/skill>/g, (_match, name: string) => { skills.push(name); return ""; }).trim();
-  return { skills, text };
+  const invocation = content.match(/^<skill\s+name="([^"]+)"\s+location="[^"]+">\nReferences are relative to [^\n]+\.\n\n[\s\S]*?<\/skill>(?:\n\n([\s\S]*))?$/);
+  if (!invocation) return { skills: [] as string[], text: content, literalSkill: /<\/?skill\b/i.test(content) };
+  return { skills: [invocation[1]], text: (invocation[2] ?? "").trim(), literalSkill: false };
 }
 
 export function Message({ message, diff, expanded = false, toolCount = 1, debug = false, onBranch, onRetry }: Props) {
   const [copied, setCopied] = useState(false);
   if (message.role === "tool") { const output = textOf(message.content); const status = message.toolStatus ?? "done"; return <details className={`tool-event ${status}`} open={status === "running" || (expanded && status !== "done")}><summary><Wrench size={14} /><span><strong>{message.toolName || "tool"}{toolCount > 1 ? ` x${toolCount}` : ""}</strong><small>{status === "running" ? "Running…" : status === "error" ? "Failed" : "Completed"}</small></span><span className="tool-chevron">›</span></summary>{output && <pre>{output}</pre>}</details>; }
-  if (message.role === "user") { const { skills, text } = userMessageParts(textOf(message.content)); return <article className="message user-message"><div className="message-body">{skills.map((skill) => <span className="skill-reference" key={skill}>${skill}</span>)}{text && <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>}</div></article>; }
+  if (message.role === "user") { const { skills, text, literalSkill } = userMessageParts(textOf(message.content)); return <article className="message user-message"><div className="message-body">{skills.map((skill) => <span className="skill-reference" key={skill}>${skill}</span>)}{text && (literalSkill ? <span className="literal-skill-content">{text}</span> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>)}</div></article>; }
   const output = textOf(message.content);
   const thinking = thinkingOf(message.content);
   const cache = cacheHitStats(message.usage);

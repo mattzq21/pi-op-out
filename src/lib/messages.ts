@@ -76,8 +76,8 @@ export function applyAssistantMessageEvent(message: ChatMessage, value: unknown)
 }
 
 export function branchMessages(entries: PiEntry[], leafId: string | null): ChatMessage[] {
-  const byId = new Map(entries.map((entry) => [entry.id, entry])); const branch: PiEntry[] = []; let cursor = leafId;
-  while (cursor) { const entry = byId.get(cursor); if (!entry) break; branch.unshift(entry); cursor = entry.parentId; }
+  const byId = new Map(entries.map((entry) => [entry.id, entry])); const branch: PiEntry[] = []; const visited = new Set<string>(); let cursor = leafId;
+  while (cursor && !visited.has(cursor)) { visited.add(cursor); const entry = byId.get(cursor); if (!entry) break; branch.unshift(entry); cursor = entry.parentId; }
   const messages: ChatMessage[] = []; let promptContext: PromptContextInfo | undefined;
   for (const entry of branch) {
     if (entry.type === "custom" && entry.customType === "pi-desktop-prompt-context") { promptContext = entry.data as PromptContextInfo; continue; }
