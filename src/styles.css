@@ -73,7 +73,6 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 
 .composer-wrap { width: min(740px, calc(100% - 72px)); margin: 0 auto; padding-bottom: 13px; }
 .message-body .prompt-context { margin: 0 0 14px; }
-.work-group-content > .prompt-context { margin: 0 0 3px; }
 .composer-stack { position: absolute; z-index: 2; right: 0; bottom: 0; left: 0; min-width: 0; }.extension-widget, .extension-status { width: min(740px, calc(100% - 72px)); margin: 0 auto 6px; border: 1px solid var(--line); border-radius: 7px; background: #f1eee8; color: var(--muted); padding: 8px 10px; font: 11px/1.5 "DM Sans"; }.extension-status { border: 0; background: transparent; padding: 0 8px; }
 .new-chat-project { width: min(740px, calc(100% - 72px)); margin: 0 auto 7px; }.new-chat-project button { height: 29px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--dark-subtle); color: var(--muted); font-size: 12px; }.new-chat-project button:hover { background: var(--dark-control); color: var(--ink); }.new-chat-project button.selected { color: var(--accent); }
 .composer { position: relative; background: white; border: 1px solid #d8d4cc; border-radius: 11px; padding: 11px 11px 8px; box-shadow: 0 9px 30px #4b433616; }.composer:focus-within { border-color: #bbb5aa; box-shadow: 0 10px 35px #4b433620, 0 0 0 2px #d46a240c; }
