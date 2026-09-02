@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { DirectoryListing, RemoteHost } from "../types";
+import { useModalFocus } from "../lib/modalFocus";
 
 interface Props {
   initialPath: string;
@@ -25,8 +26,9 @@ export function ProjectDialog({ initialPath, hosts, initialHostId, onHomeDirecto
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setChoosing(false); }
   };
+  const modal = useModalFocus(onCancel, "project-dialog");
   return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
-    <section className="extension-dialog" role="dialog" aria-modal="true" aria-labelledby="project-dialog-title">
+    <section ref={modal} className="extension-dialog" role="dialog" aria-modal="true" aria-labelledby="project-dialog-title">
       <p className="eyebrow">Project</p><h2 id="project-dialog-title">Open project</h2><p>Open Pi in a project directory.</p>
       <label className="field"><span>Machine</span><select aria-label="Machine" value={hostId} onChange={(event) => { setHostId(event.target.value); setPath(""); setListing(undefined); setError(undefined); }}><option value="local">Local</option>{hosts.map((host) => <option key={host.id} value={host.id}>{host.name}</option>)}</select></label>
       <input autoFocus aria-label="Project directory" value={path} placeholder="/path/to/project" onChange={(event) => { setPath(event.target.value); setError(undefined); }} onKeyDown={(event) => { if (event.key === "Enter") open(); }} />

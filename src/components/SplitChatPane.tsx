@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
-import type { AgentState, AppSettings, ChatMessage, ImageAttachment, OrchestrationCapability, PromptContextInfo, RpcEvent, SessionSummary } from "../types";
+import type { AgentState, AppSettings, ChatMessage, ExtensionUiRequest, ImageAttachment, OrchestrationCapability, PromptContextInfo, RpcEvent, SessionSummary } from "../types";
 import { useChatSession } from "../lib/useChatSession";
 import { SessionRuntimePool, useTurnDiffs } from "../lib/sessionRuntimePool";
 import { decodeOrchestrationValue, encodeOrchestrationValue, ORCHESTRATION_STATUS_KEY } from "../lib/orchestrationProtocol";
 import { ChatView } from "./ChatView";
+import { ExtensionDialog } from "./ExtensionDialog";
 
 interface Props { runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: string) => void; forkFrom?: string; initialPrompt?: string; onClose: () => void; }
 const initialState = (session: SessionSummary): AgentState => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, pendingMessageCount: 0 });
@@ -15,14 +16,16 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
   const { state, setState, messages, models, commands, thinkingLevels, refresh, handleEvent } = runtime; const [error, setError] = useState<string>();
   const [promptContext, setPromptContext] = useState<PromptContextInfo>();
   const [orchestration, setOrchestration] = useState<OrchestrationCapability>();
+  const [dialogs, setDialogs] = useState<ExtensionUiRequest[]>([]);
   const initialPromptStarted = useRef(false);
   useEffect(() => {
     let closing = false;
     const unsubscribe = transport.subscribe((event: RpcEvent) => {
       handleEvent(event);
-      if (event.type === "extension_ui_request") { const request = event as unknown as { method?: string; statusKey?: string; statusText?: string };
+      if (event.type === "extension_ui_request") { const request = event as unknown as ExtensionUiRequest;
         if (request.method === "setStatus" && request.statusKey === "pi-desktop-prompt-context") try { setPromptContext(request.statusText?.startsWith("json:") ? JSON.parse(request.statusText.slice(5)) as PromptContextInfo : undefined); } catch { setPromptContext(undefined); }
-        if (request.method === "setStatus" && request.statusKey === ORCHESTRATION_STATUS_KEY) try { setOrchestration(request.statusText?.startsWith("json:") ? decodeOrchestrationValue<OrchestrationCapability>(request.statusText.slice(5)) : undefined); } catch { setOrchestration(undefined); }
+        else if (request.method === "setStatus" && request.statusKey === ORCHESTRATION_STATUS_KEY) try { setOrchestration(request.statusText?.startsWith("json:") ? decodeOrchestrationValue<OrchestrationCapability>(request.statusText.slice(5)) : undefined); } catch { setOrchestration(undefined); }
+        else if (["input", "editor", "select", "confirm"].includes(request.method)) setDialogs((current) => [...current, request]);
       }
       if (event.type === "message_end") window.setTimeout(() => void refresh(), 30);
       if (event.type === "disconnected") { setOrchestration(undefined); if (!closing) setError("Pi disconnected before responding"); }
@@ -41,5 +44,6 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
   return <section className="split-chat" aria-label={`Split conversation: ${session.name}`}>
     <button className="split-pane-close" aria-label="Close split pane" title="Close split pane" onClick={onClose}><X size={15} /></button>
     {error ? <div className="split-pane-status error">{error}</div> : <ChatView state={state} messages={messages} gitDiffs={gitDiffs} promptContext={promptContext} debug={settings.debugMode} agents={orchestration?.config.agents ?? []} sequences={orchestration?.config.sequences ?? []} activeAgent={orchestration?.active} dictionaries={settings.dictionaries.filter((item) => settings.activeDictionaryIds.includes(item.id))} models={models} commands={commands} thinkingLevels={thinkingLevels} widgets={[]} statuses={[]} projectCwd={session.cwd} draft={draft} onDraftChange={onDraftChange} onSend={send} onAbort={() => void transport.command({ type: "abort" })} onOpenProject={() => undefined} onBranch={branch} onAgent={(name) => void transport.command({ type: "prompt", message: `/pi-orchestration-use ${encodeOrchestrationValue(name)}` })} onModel={(model) => void transport.command({ type: "set_model", provider: model.provider, modelId: model.id }).then(() => refresh())} onThinking={(level) => void transport.command({ type: "set_thinking_level", level }).then(() => setState((current) => ({ ...current, thinkingLevel: level })))} />}
+    {dialogs[0] && <ExtensionDialog request={dialogs[0]} onRespond={(response) => { const request = dialogs[0]; void transport.command({ type: "extension_ui_response", id: request.id, ...response }); setDialogs((current) => current.filter((item) => item.id !== request.id)); }} />}
   </section>;
 }

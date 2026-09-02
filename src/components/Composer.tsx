@@ -52,6 +52,7 @@ const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((
   const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error);
   if (mode === "dataUrl") reader.readAsDataURL(file); else reader.readAsText(file);
 });
+const escapeAttribute = (value: string) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]!);
 
 export function Composer({ streaming, queued, commands, agents, sequences, activeAgent, dictionaries = [], models, model, thinkingLevel, thinkingLevels, sessionCache, contextUsage, draft, onDraftChange, restoredDraft, onSend, onAbort, onOpenTerminal, onAgent, onModel, onThinking }: Props) {
   const [localValue, setLocalValue] = useState("");
@@ -111,17 +112,17 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
     for (const file of Array.from(files)) {
       if (file.type.startsWith("image/")) {
         const url = await readFile(file, "dataUrl");
-        next.push({ id: `${file.name}-${file.lastModified}`, name: file.name, kind: "image", image: { type: "image", data: url.slice(url.indexOf(",") + 1), mimeType: file.type || "image/png", name: file.name } });
+        next.push({ id: crypto.randomUUID(), name: file.name, kind: "image", image: { type: "image", data: url.slice(url.indexOf(",") + 1), mimeType: file.type || "image/png", name: file.name } });
       } else {
         if (file.size > TEXT_LIMIT) { setUploadError(`${file.name} is larger than 200 KB`); continue; }
-        next.push({ id: `${file.name}-${file.lastModified}`, name: file.name, kind: "text", text: await readFile(file, "text") });
+        next.push({ id: crypto.randomUUID(), name: file.name, kind: "text", text: await readFile(file, "text") });
       }
     }
     setUploads((current) => [...current, ...next].slice(0, 12));
   };
   const submit = async () => {
     const textFiles = uploads.filter((upload) => upload.kind === "text");
-    const message = [expandSkillReference(applyDictionary(value.trim(), dictionaries), commands), ...textFiles.map((file) => `<file name="${file.name.replaceAll('"', "&quot;")}">\n${file.text}\n</file>`)].filter(Boolean).join("\n\n");
+    const message = [expandSkillReference(applyDictionary(value.trim(), dictionaries), commands), ...textFiles.map((file) => `<file name="${escapeAttribute(file.name)}">\n${file.text}\n</file>`)].filter(Boolean).join("\n\n");
     const images = uploads.flatMap((upload) => upload.image ? [upload.image] : []);
     if (!message && !images.length) return;
     if (sending) return;
@@ -167,15 +168,21 @@ type PickerOption = { value: string; label: string; detail?: string; disabled?: 
 
 function ContainedPicker({ label, value, options, disabled, menuWidth = 200, centered = false, compact = false, onChange }: { label: string; value: string; options: PickerOption[]; disabled?: boolean; menuWidth?: number; centered?: boolean; compact?: boolean; onChange: (value: string) => void }) {
   const [menuStyle, setMenuStyle] = useState<CSSProperties>();
+  const [activeIndex, setActiveIndex] = useState(0);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const selectedOption = options.find((option) => option.value === value);
   const close = () => setMenuStyle(undefined);
   const toggle = () => {
     if (menuStyle) return close();
     const rect = trigger.current?.getBoundingClientRect(); if (!rect) return;
     const width = Math.min(menuWidth, window.innerWidth - 16);
+    const selectedIndex = options.findIndex((option) => option.value === value && !option.disabled);
+    const index = Math.max(0, selectedIndex >= 0 ? selectedIndex : options.findIndex((option) => !option.disabled));
+    setActiveIndex(index);
     setMenuStyle({ left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)), bottom: window.innerHeight - rect.top + 6, width, maxHeight: Math.max(0, rect.top - 14) });
+    requestAnimationFrame(() => optionRefs.current[index]?.focus());
   };
   useEffect(() => {
     if (!menuStyle) return;
@@ -183,9 +190,15 @@ function ContainedPicker({ label, value, options, disabled, menuWidth = 200, cen
     document.addEventListener("pointerdown", dismiss); window.addEventListener("resize", close);
     return () => { document.removeEventListener("pointerdown", dismiss); window.removeEventListener("resize", close); };
   }, [menuStyle]);
-  return <div ref={root} className="composer-picker" onKeyDown={(event) => { if (event.key === "Escape") { close(); trigger.current?.focus(); } }}>
+  const move = (direction: 1 | -1) => {
+    if (!options.some((option) => !option.disabled)) return;
+    let next = activeIndex;
+    for (let count = 0; count < options.length; count += 1) { next = (next + direction + options.length) % options.length; if (!options[next].disabled) break; }
+    setActiveIndex(next); optionRefs.current[next]?.focus();
+  };
+  return <div ref={root} className="composer-picker" onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); close(); trigger.current?.focus(); } else if (menuStyle && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); move(event.key === "ArrowDown" ? 1 : -1); } }}>
     <button ref={trigger} type="button" className="select-control composer-picker-trigger" aria-label={label} aria-haspopup="listbox" aria-expanded={Boolean(menuStyle)} title={selectedOption?.label} disabled={disabled} onClick={toggle}>{selectedOption?.label || label}</button>
-    {menuStyle && <div className={`composer-picker-menu${centered ? " centered" : ""}${compact ? " compact" : ""}`} role="listbox" aria-label={`${label} options`} style={menuStyle}>{options.map((option) => <button key={`${option.detail ?? label}:${option.value}`} type="button" role="option" aria-selected={option.value === value} disabled={option.disabled} onClick={() => { onChange(option.value); close(); }}><span>{option.label}</span>{option.detail && <small>{option.detail}</small>}</button>)}</div>}
+    {menuStyle && <div className={`composer-picker-menu${centered ? " centered" : ""}${compact ? " compact" : ""}`} role="listbox" aria-label={`${label} options`} style={menuStyle}>{options.map((option, index) => <button ref={(element) => { optionRefs.current[index] = element; }} key={`${option.detail ?? label}:${option.value}`} type="button" role="option" aria-selected={option.value === value} disabled={option.disabled} onFocus={() => setActiveIndex(index)} onClick={() => { onChange(option.value); close(); trigger.current?.focus(); }}><span>{option.label}</span>{option.detail && <small>{option.detail}</small>}</button>)}</div>}
   </div>;
 }
 
