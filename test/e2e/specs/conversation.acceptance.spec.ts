@@ -1126,6 +1126,88 @@ describe("Conversation acceptance", () => {
     }
   });
 
+  it("stacks simultaneous application and extension notices", async () => {
+    await mockBackend({ save_app_settings: { error: "Settings write deliberately failed" } });
+    const debug = $('button[aria-label$="debug mode"]');
+    try {
+      await debug.click();
+      await emitPiEvent({ type: "extension_ui_request", id: "stacked-notice", method: "notify", notifyType: "warning", message: "Review generated changes" });
+      const toasts = await $$(".error-toast");
+      await expect(toasts).toBeElementsArrayOfSize(2);
+      expect(new Set(await Promise.all(toasts.map((toast) => toast.getLocation("y")))).size).toBe(2);
+    } finally {
+      await updateBackendResponse("save_app_settings", {});
+      await debug.click();
+      while (await $(".error-toast button").isExisting()) await $(".error-toast button").click();
+      await resetBackend();
+    }
+  });
+
+  it("queues extension dialogs behind the project picker", async () => {
+    await mockBackend({ home_directory: "/tmp", "pi_command:extension_ui_response": {} });
+    try {
+      await app.openProjectChooser();
+      await emitPiEvent({ type: "extension_ui_request", id: "queued-confirm", method: "confirm", title: "Confirm extension action" });
+      await expect($$("[role='dialog']")).toBeElementsArrayOfSize(1);
+      await expect(app.projectDialogHeading).toBeDisplayed();
+      await app.cancelProjectButton.click();
+      await expect($("#extension-dialog-title")).toHaveText("Confirm extension action");
+      await $('//section[@role="dialog"]//button[normalize-space(.)="Cancel"]').click();
+    } finally {
+      if (await app.projectDialogHeading.isExisting()) await app.cancelProjectButton.click();
+      if (await $("#extension-dialog-title").isExisting()) await $('//section[@role="dialog"]//button[normalize-space(.)="Cancel"]').click();
+      await resetBackend();
+    }
+  });
+
+  it("keeps extension input when sending its response fails", async () => {
+    await mockBackend({ "pi_command:extension_ui_response": { error: "Extension response channel closed" } });
+    try {
+      await emitPiEvent({ type: "extension_ui_request", id: "failed-response", method: "input", title: "Required value", placeholder: "Label" });
+      const input = $('input[aria-label="Label"]');
+      await input.setValue("release-candidate");
+      await $('//section[@role="dialog"]//button[normalize-space(.)="Continue"]').click();
+      await expect($(".dialog-error")).toHaveText("Extension response channel closed");
+      await expect(input).toHaveValue("release-candidate");
+    } finally {
+      if (await $("#extension-dialog-title").isExisting()) {
+        await updateBackendResponse("pi_command:extension_ui_response", {});
+        await $('//section[@role="dialog"]//button[normalize-space(.)="Continue"]').click();
+      }
+      await resetBackend();
+    }
+  });
+
+  it("uses Enter to choose the selected slash command", async () => {
+    await mockBackend({ "pi_command:prompt": {} });
+    try {
+      await app.prepareMessage("/");
+      await expect($('[role="option"][aria-selected="true"]')).toHaveText(expect.stringContaining("/compact"));
+      await browser.keys("Enter");
+      await expect(app.composer).toHaveValue("/compact ");
+      expect((await backendCalls()).filter(({ args }) => (args.command as { type?: string })?.type === "prompt")).toHaveLength(0);
+    } finally {
+      await app.clearMessage();
+      await resetBackend();
+    }
+  });
+
+  it("ignores global layout shortcuts while a modal is open", async () => {
+    await app.openSettings();
+    await app.openSettingsSection("Keybinds");
+    const panelShortcut = await $('input[aria-label="Toggle conversations shortcut"]').getValue();
+    await app.openConversations();
+    await app.openProjectChooser();
+    try {
+      await pressShortcut(panelShortcut);
+      await expect($(".session-panel")).toBeDisplayed();
+      await expect(app.projectDialogHeading).toBeDisplayed();
+    } finally {
+      if (!(await $(".session-panel").isExisting())) await pressShortcut(panelShortcut);
+      await app.cancelProjectButton.click();
+    }
+  });
+
 });
 
 describe("/btw acceptance", () => {

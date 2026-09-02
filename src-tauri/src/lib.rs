@@ -40,17 +40,25 @@ struct TerminalRuntime {
 
 const MAX_TERMINALS: usize = 8;
 const MAX_REMOTE_HOSTS: usize = 16;
+<<<<<<< HEAD
 const MAX_MCP_SERVERS: usize = 32;
+=======
+const MAX_LOG_CAPABILITIES: usize = 128;
+const LOG_CAPABILITY_TTL: Duration = Duration::from_secs(15 * 60);
+>>>>>>> 98555178a3113140dba7e3dd4335260ab475f4de
 const BROKER_WORKERS: usize = 8;
 const BROKER_QUEUE_DEPTH: usize = 32;
 const BROKER_HEADER_BYTES: usize = 16 * 1024;
 const BROKER_BODY_BYTES: usize = 1024 * 1024;
+<<<<<<< HEAD
 const MAX_GIT_CHANGED_PATHS: usize = 4096;
 const MAX_GIT_PATH_LIST_BYTES: usize = 1024 * 1024;
 const MAX_GIT_SNAPSHOT_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_GIT_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_GIT_PATCH_BYTES: usize = 4 * 1024 * 1024;
 const MAX_GIT_DIFFS_BYTES: usize = 16 * 1024 * 1024;
+=======
+>>>>>>> 98555178a3113140dba7e3dd4335260ab475f4de
 
 #[derive(Default)]
 struct PiRuntime {
@@ -63,7 +71,14 @@ struct PiRuntime {
 struct AgentAddress { host_id: String, session_id: Option<String>, session_path: Option<String> }
 
 #[derive(Clone)]
+<<<<<<< HEAD
 struct BrokerRuntime { port: Arc<Mutex<u16>>, token: String, busy: Arc<Mutex<HashSet<String>>> }
+=======
+struct LogSource { path: String, host_id: String, expires_at: Instant }
+
+#[derive(Clone)]
+struct BrokerRuntime { port: Arc<Mutex<u16>>, token: String, busy: Arc<Mutex<HashSet<String>>>, logs: Arc<Mutex<HashMap<String, LogSource>>> }
+>>>>>>> 98555178a3113140dba7e3dd4335260ab475f4de
 
 impl Default for BrokerRuntime {
     fn default() -> Self { Self { port: Arc::new(Mutex::new(0)), token: Uuid::new_v4().to_string(), busy: Arc::new(Mutex::new(HashSet::new())) } }
