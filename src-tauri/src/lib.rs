@@ -42,9 +42,9 @@ const MAX_TERMINALS: usize = 8;
 
 #[derive(Default)]
 struct PiRuntime {
-    processes: Mutex<HashMap<String, PiProcess>>,
+    processes: Arc<Mutex<HashMap<String, PiProcess>>>,
     pending: Arc<Mutex<HashMap<(String, String), mpsc::Sender<Result<Value, String>>>>>,
-    active_agents: Mutex<HashMap<String, AgentAddress>>,
+    active_agents: Arc<Mutex<HashMap<String, AgentAddress>>>,
 }
 
 #[derive(Clone)]
@@ -560,7 +560,10 @@ fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<(), String
     }
     let body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
     write_dictionary_config(&settings)?;
-    fs::write(settings_path(&app)?, body).map_err(|error| error.to_string())
+    let path = settings_path(&app)?;
+    let temporary = path.with_extension(format!("json.{}.tmp", Uuid::new_v4()));
+    fs::write(&temporary, body).map_err(|error| error.to_string())?;
+    fs::rename(&temporary, &path).map_err(|error| { let _ = fs::remove_file(&temporary); error.to_string() })
 }
 
 #[tauri::command]
@@ -811,7 +814,15 @@ fn build_pi_command(app: &AppHandle, broker: &BrokerRuntime, settings: &AppSetti
 
 #[tauri::command(async)]
 fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, no_session: Option<bool>, host_id: Option<String>) -> Result<(), String> {
-    if runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.contains_key(&runtime_id) { return Ok(()); }
+    let stale = {
+        let mut processes = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?;
+        match processes.get_mut(&runtime_id).map(|process| process.child.try_wait()) {
+            Some(Ok(None)) => return Ok(()),
+            Some(_) => processes.remove(&runtime_id),
+            None => None,
+        }
+    };
+    if let Some(mut process) = stale { let _ = process.child.wait(); if let Some(session) = process.ephemeral_session { remove_ephemeral_session(session); } }
     let settings = load_app_settings(app.clone()).unwrap_or_else(|_| default_settings());
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let ephemeral = no_session.unwrap_or(false);
@@ -835,7 +846,9 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
     let stdin = Arc::new(Mutex::new(child.stdin.take().ok_or("Pi stdin was unavailable")?));
     let stdout = child.stdout.take().ok_or("Pi stdout was unavailable")?;
     let stderr = child.stderr.take().ok_or("Pi stderr was unavailable")?;
-    let pending = runtime.pending.clone(); let event_app = app.clone(); let event_runtime_id = runtime_id.clone();
+    runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { child, stdin: stdin.clone(), ephemeral_session });
+    runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id.clone(), AgentAddress { host_id: host_id.clone(), session_id: session_id.clone(), session_path: session_path.clone() });
+    let pending = runtime.pending.clone(); let processes = runtime.processes.clone(); let active_agents = runtime.active_agents.clone(); let event_app = app.clone(); let event_runtime_id = runtime_id.clone();
     thread::spawn(move || {
         for line in BufReader::new(stdout).split(b'\n') {
             let Ok(bytes) = line else { break }; let Ok(value) = serde_json::from_slice::<Value>(&bytes) else { continue };
@@ -849,13 +862,14 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
             }
             let _ = event_app.emit("pi://event", json!({"runtimeId":event_runtime_id,"event":value}));
         }
+        let exited = processes.lock().ok().and_then(|mut values| values.remove(&event_runtime_id));
+        if let Some(mut process) = exited { let _ = process.child.wait(); if let Some(session) = process.ephemeral_session { remove_ephemeral_session(session); } }
+        if let Ok(mut agents) = active_agents.lock() { agents.remove(&event_runtime_id); }
         fail_pending(&pending, &event_runtime_id, "Pi disconnected before responding");
         let _ = event_app.emit("pi://event", json!({"runtimeId":event_runtime_id,"event":{"type":"disconnected"}}));
     });
-    let error_app = app.clone();
-    thread::spawn(move || for line in BufReader::new(stderr).lines().map_while(Result::ok) { let _ = error_app.emit("pi://stderr", line); });
-    runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { child, stdin, ephemeral_session });
-    runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id, AgentAddress { host_id, session_id, session_path });
+    let error_app = app.clone(); let error_runtime_id = runtime_id.clone();
+    thread::spawn(move || for line in BufReader::new(stderr).lines().map_while(Result::ok) { let _ = error_app.emit("pi://stderr", json!({"runtimeId":error_runtime_id,"line":line})); });
     Ok(())
 }
 
@@ -1065,7 +1079,46 @@ fn home_directory(app: AppHandle, host_id: String) -> Result<String, String> {
 fn create_local_temporary_chat(home: &Path, session_id: &str) -> Result<PathBuf, String> {
     let cwd = home.join("pi-desktop/tmp").join(session_id);
     fs::create_dir_all(&cwd).map_err(|error| format!("Could not create temporary chat directory: {error}"))?;
+    fs::write(cwd.join(".pi-desktop-temporary-chat"), b"").map_err(|error| format!("Could not mark temporary chat directory: {error}"))?;
     Ok(cwd)
+}
+
+fn temporary_chat_id(path: &str) -> Option<&str> {
+    let value = Path::new(path); let id = value.file_name()?.to_str()?;
+    Uuid::parse_str(id).ok()?;
+    (value.parent()?.file_name()?.to_str()? == "tmp" && value.parent()?.parent()?.file_name()?.to_str()? == "pi-desktop").then_some(id)
+}
+
+#[tauri::command(async)]
+fn remove_temporary_chat(app: AppHandle, path: String, host_id: String) -> Result<(), String> {
+    temporary_chat_id(&path).ok_or("Refusing to remove a directory not created as a temporary chat")?;
+    if host_id == "local" {
+        let expected_root = home_dir()?.join("pi-desktop/tmp");
+        let candidate = PathBuf::from(&path);
+        if candidate.parent() != Some(expected_root.as_path()) { return Err("Refusing to remove a directory outside the temporary chat root".into()); }
+        if !candidate.join(".pi-desktop-temporary-chat").is_file() { return Err("Refusing to remove an unmarked directory".into()); }
+        if candidate.exists() { fs::remove_dir_all(candidate).map_err(|error| format!("Could not remove temporary chat directory: {error}"))?; }
+        return Ok(());
+    }
+    let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+    let script = format!("candidate={}; root=\"$HOME/pi-desktop/tmp\"; [ \"$(dirname -- \"$candidate\")\" = \"$root\" ] && [ -f \"$candidate/.pi-desktop-temporary-chat\" ] && rm -rf -- \"$candidate\"", shell_quote(&path));
+    let output = ssh(host).arg(script).output().map_err(|error| format!("Could not remove temporary chat directory on {}: {error}", host.name))?;
+    if !output.status.success() { return Err(format!("Could not remove temporary chat directory on {}: {}", host.name, String::from_utf8_lossy(&output.stderr).trim())); }
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn validate_project_directory(app: AppHandle, path: String, host_id: String) -> Result<String, String> {
+    if path.trim().is_empty() { return Err("Path can't be empty".into()); }
+    if host_id == "local" {
+        let metadata = fs::metadata(&path).map_err(|error| format!("Could not open project directory: {error}"))?;
+        if !metadata.is_dir() { return Err("Project path is not a directory".into()); }
+        return Ok(path);
+    }
+    let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+    let output = ssh(host).arg(format!("test -d {0} && cd {0} && pwd -P", shell_quote(&path))).output().map_err(|error| format!("Could not validate project directory on {}: {error}", host.name))?;
+    if !output.status.success() { return Err(format!("Could not open project directory on {}: {}", host.name, String::from_utf8_lossy(&output.stderr).trim())); }
+    Ok(path)
 }
 
 #[tauri::command(async)]
@@ -1077,7 +1130,7 @@ fn create_temporary_chat(app: AppHandle, host_id: String, e2e: Option<bool>) -> 
         cwd.to_string_lossy().into_owned()
     } else {
         let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
-        let remote = format!("mkdir -p \"$HOME/pi-desktop/tmp/{session_id}\" && cd \"$HOME/pi-desktop/tmp/{session_id}\" && pwd -P");
+        let remote = format!("mkdir -p \"$HOME/pi-desktop/tmp/{session_id}\" && : > \"$HOME/pi-desktop/tmp/{session_id}/.pi-desktop-temporary-chat\" && cd \"$HOME/pi-desktop/tmp/{session_id}\" && pwd -P");
         let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not create temporary chat directory on {}: {error}", host.name))?;
         if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
         let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -1332,5 +1385,5 @@ pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(feature = "webdriver")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
-    builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(broker.clone()).setup(move |app| start_session_broker(app.handle().clone(), broker.clone()).map_err(Into::into)).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_entries, home_directory, create_temporary_chat, list_directories, git_branch, capture_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_log_viewer, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(broker.clone()).setup(move |app| start_session_broker(app.handle().clone(), broker.clone()).map_err(Into::into)).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_entries, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, git_branch, capture_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_log_viewer, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }

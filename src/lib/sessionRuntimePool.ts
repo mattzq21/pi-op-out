@@ -118,14 +118,14 @@ export class SessionRuntimePool {
     if (transport) await this.release(transport);
   }
 
-  async release(transport: NativeTransport) { for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key); const diffState = this.diffStates.get(transport); if (diffState?.timer) clearTimeout(diffState.timer); this.transports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport); this.diffStates.delete(transport); this.publishSessionStates(); await transport.disconnect(); }
+  async release(transport: NativeTransport) { for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key); const diffState = this.diffStates.get(transport); if (diffState?.timer) clearTimeout(diffState.timer); this.transports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport); this.diffStates.delete(transport); this.publishSessionStates(); await transport.dispose(); }
 
   subscribe(listener: () => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   runningSessions() { return this.runningSessionKeys; }
   unseenSessions() { return this.unseenSessionKeys; }
   gitDiffs(transport: NativeTransport) { return this.diffStates.get(transport)?.snapshots ?? EMPTY_DIFFS; }
 
-  async disconnectAll() { await Promise.allSettled([...this.transports].map((transport) => transport.disconnect())); }
+  async disconnectAll() { await Promise.allSettled([...this.transports].map((transport) => transport.dispose())); }
 }
 
 export function useTurnDiffs(pool: SessionRuntimePool, transport: NativeTransport) { return useSyncExternalStore((listener) => pool.subscribe(listener), () => pool.gitDiffs(transport)); }

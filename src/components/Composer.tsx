@@ -18,6 +18,7 @@ interface Props {
   thinkingLevels: string[];
   sessionCache?: { rate: number; low: boolean; cachedTokens: number; promptTokens: number };
   contextUsage?: ContextUsage;
+  controlsDisabled?: boolean;
   draft?: string;
   onDraftChange?: (value: string) => void;
   uploads?: ComposerUpload[];
@@ -58,7 +59,7 @@ const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((
 });
 const escapeAttribute = (value: string) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]!);
 
-export function Composer({ streaming, queued, commands, agents, sequences, activeAgent, dictionaries = [], models, model, thinkingLevel, thinkingLevels, sessionCache, contextUsage, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, onSend, onAbort, onOpenTerminal, onAgent, onModel, onThinking }: Props) {
+export function Composer({ streaming, queued, commands, agents, sequences, activeAgent, dictionaries = [], models, model, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, onSend, onAbort, onOpenTerminal, onAgent, onModel, onThinking }: Props) {
   const [localValue, setLocalValue] = useState("");
   const value = draft ?? localValue;
   const setValue = (next: string) => { if (onDraftChange) onDraftChange(next); else setLocalValue(next); };
@@ -170,9 +171,9 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
       <input ref={fileRef} className="hidden-input" type="file" multiple onChange={(event) => { void addFiles(event.target.files); event.target.value = ""; }} />
       <div className="composer-bar"><div className="composer-tools"><IconButton label="Attach files" onClick={() => fileRef.current?.click()}><Paperclip size={17} /></IconButton>{onOpenTerminal && <IconButton label="Open terminal" onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton>}{contextUsage && <ContextWheel usage={contextUsage} />}{sessionCache && <span className={`session-cache-hit${sessionCache.low ? " low" : ""}`} title={`${sessionCache.cachedTokens.toLocaleString()} of ${sessionCache.promptTokens.toLocaleString()} session prompt tokens read from cache`}>Cache {sessionCache.rate}%</span>}</div>
         <div className="composer-actions">
-        <ContainedPicker label="Agent" value={activeAgent ?? "default"} disabled={streaming} menuWidth={120} centered options={[...(agents.length ? agents : [{ name: "default" }]).map((agent) => ({ value: agent.name, label: agent.name, detail: "Agent" })), ...sequences.map((sequence) => ({ value: sequence.name, label: sequence.name, detail: "Sequence" })), { value: "final-only", label: "final-only", detail: "Multi-agent" }, { value: "own+final", label: "own+final", detail: "Multi-agent" }]} onChange={onAgent} />
-        <ContainedPicker label="Model" value={model ? `${model.provider}/${model.id}` : ""} options={models.map((item) => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item), detail: item.provider }))} onChange={(value) => { const next = models.find((item) => `${item.provider}/${item.id}` === value); if (next) onModel(next); }} />
-        <ContainedPicker label="Thinking level" value={thinkingLevel} menuWidth={120} centered compact options={thinkingLevels.map((level) => ({ value: level, label: level }))} onChange={onThinking} />
+        <ContainedPicker label="Agent" value={activeAgent ?? "default"} disabled={streaming || controlsDisabled} menuWidth={120} centered options={[...(agents.length ? agents : [{ name: "default" }]).map((agent) => ({ value: agent.name, label: agent.name, detail: "Agent" })), ...sequences.map((sequence) => ({ value: sequence.name, label: sequence.name, detail: "Sequence" })), { value: "final-only", label: "final-only", detail: "Multi-agent" }, { value: "own+final", label: "own+final", detail: "Multi-agent" }]} onChange={onAgent} />
+        <ContainedPicker label="Model" value={model ? `${model.provider}/${model.id}` : ""} disabled={streaming || controlsDisabled} options={models.map((item) => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item), detail: item.provider }))} onChange={(value) => { const next = models.find((item) => `${item.provider}/${item.id}` === value); if (next) onModel(next); }} />
+        <ContainedPicker label="Thinking level" value={thinkingLevel} disabled={streaming || controlsDisabled} menuWidth={120} centered compact options={thinkingLevels.map((level) => ({ value: level, label: level }))} onChange={onThinking} />
         <span className="composer-divider" />
         {streaming && <IconButton label="Stop Pi" className="stop-compact" onClick={onAbort}><CircleStop size={17} /></IconButton>}<IconButton label={streaming ? (behavior === "steer" ? "Send steering message" : "Queue follow-up") : "Send message"} className="send" disabled={sending || (!value.trim() && uploads.length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton></div>
       </div>
@@ -190,6 +191,7 @@ function ContainedPicker({ label, value, options, disabled, menuWidth = 200, cen
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const selectedOption = options.find((option) => option.value === value);
   const close = () => setMenuStyle(undefined);
+  useEffect(() => { if (disabled) close(); }, [disabled]);
   const toggle = () => {
     if (menuStyle) return close();
     const rect = trigger.current?.getBoundingClientRect(); if (!rect) return;
@@ -214,7 +216,7 @@ function ContainedPicker({ label, value, options, disabled, menuWidth = 200, cen
   };
   return <div ref={root} className="composer-picker" onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); close(); trigger.current?.focus(); } else if (menuStyle && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); move(event.key === "ArrowDown" ? 1 : -1); } }}>
     <button ref={trigger} type="button" className="select-control composer-picker-trigger" aria-label={label} aria-haspopup="listbox" aria-expanded={Boolean(menuStyle)} title={selectedOption?.label} disabled={disabled} onClick={toggle}>{selectedOption?.label || label}</button>
-    {menuStyle && <div className={`composer-picker-menu${centered ? " centered" : ""}${compact ? " compact" : ""}`} role="listbox" aria-label={`${label} options`} style={menuStyle}>{options.map((option, index) => <button ref={(element) => { optionRefs.current[index] = element; }} key={`${option.detail ?? label}:${option.value}`} type="button" role="option" aria-selected={option.value === value} disabled={option.disabled} onFocus={() => setActiveIndex(index)} onClick={() => { onChange(option.value); close(); trigger.current?.focus(); }}><span>{option.label}</span>{option.detail && <small>{option.detail}</small>}</button>)}</div>}
+    {menuStyle && <div className={`composer-picker-menu${centered ? " centered" : ""}${compact ? " compact" : ""}`} role="listbox" aria-label={`${label} options`} style={menuStyle}>{options.map((option, index) => <button ref={(element) => { optionRefs.current[index] = element; }} key={`${option.detail ?? label}:${option.value}`} type="button" role="option" aria-selected={option.value === value} disabled={disabled || option.disabled} onFocus={() => setActiveIndex(index)} onClick={() => { if (disabled) return; onChange(option.value); close(); trigger.current?.focus(); }}><span>{option.label}</span>{option.detail && <small>{option.detail}</small>}</button>)}</div>}
   </div>;
 }
 
