@@ -19,6 +19,12 @@ use walkdir::WalkDir;
 struct PiProcess {
     child: Child,
     stdin: Arc<Mutex<ChildStdin>>,
+    ephemeral_session: Option<EphemeralSession>,
+}
+
+enum EphemeralSession {
+    Local(PathBuf),
+    Remote { host: RemoteHost, path: String },
 }
 
 struct TerminalProcess {
@@ -686,6 +692,28 @@ fn remote_directory_path(path: Option<&str>) -> String {
     }
 }
 
+fn remove_ephemeral_session(session: EphemeralSession) {
+    match session {
+        EphemeralSession::Local(path) => { let _ = fs::remove_file(path); }
+        EphemeralSession::Remote { host, path } => { let _ = ssh(&host).arg(format!("rm -f -- {}", shell_quote(&path))).status(); }
+    }
+}
+
+fn create_ephemeral_fork(settings: &AppSettings, host_id: &str, source_path: &str) -> Result<(String, EphemeralSession), String> {
+    if host_id == "local" {
+        let path = std::env::temp_dir().join(format!("pi-desktop-btw-{}.jsonl", Uuid::new_v4()));
+        fs::copy(source_path, &path).map_err(|error| format!("Could not create temporary side conversation: {error}"))?;
+        return Ok((path.to_string_lossy().into_owned(), EphemeralSession::Local(path)));
+    }
+    let host = remote_host(settings, host_id)?.clone();
+    let remote = format!(r#"temporary=$(mktemp "${{TMPDIR:-/tmp}}/pi-desktop-btw.XXXXXX") && cp -- {} "$temporary" && printf %s "$temporary""#, shell_quote(source_path));
+    let output = ssh(&host).arg(remote).output().map_err(|error| format!("Could not create temporary side conversation on {}: {error}", host.name))?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() { return Err("Temporary side conversation path was unavailable".into()); }
+    Ok((path.clone(), EphemeralSession::Remote { host, path }))
+}
+
 fn enabled_tool_names(settings: &AppSettings) -> Vec<&str> {
     settings.tools.iter().filter(|tool| tool.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|tool| tool.get("name").and_then(Value::as_str)).collect()
 }
@@ -786,9 +814,24 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
     if runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.contains_key(&runtime_id) { return Ok(()); }
     let settings = load_app_settings(app.clone()).unwrap_or_else(|_| default_settings());
     let host_id = host_id.unwrap_or_else(|| "local".into());
-    let mut command = build_pi_command(&app, &broker, &settings, &host_id, PiLaunch::Rpc { cwd: cwd.as_deref(), session_path: session_path.as_deref(), session_id: session_id.as_deref(), fork_path: fork_path.as_deref(), no_session: no_session.unwrap_or(false) })?;
+    let ephemeral = no_session.unwrap_or(false);
+    let (ephemeral_path, ephemeral_session) = if ephemeral {
+        match fork_path.as_deref() {
+            Some(source_path) => { let (path, cleanup) = create_ephemeral_fork(&settings, &host_id, source_path)?; (Some(path), Some(cleanup)) }
+            None => (None, None),
+        }
+    } else { (None, None) };
+    let launch_session_path = ephemeral_path.as_deref().or(session_path.as_deref());
+    let launch_fork_path = if ephemeral_path.is_some() { None } else { fork_path.as_deref() };
+    let mut command = match build_pi_command(&app, &broker, &settings, &host_id, PiLaunch::Rpc { cwd: cwd.as_deref(), session_path: launch_session_path, session_id: session_id.as_deref(), fork_path: launch_fork_path, no_session: ephemeral && ephemeral_path.is_none() }) {
+        Ok(command) => command,
+        Err(error) => { if let Some(cleanup) = ephemeral_session { remove_ephemeral_session(cleanup); } return Err(error); }
+    };
     command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = command.spawn().map_err(|error| format!("Could not start pi: {error}"))?;
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => { if let Some(cleanup) = ephemeral_session { remove_ephemeral_session(cleanup); } return Err(format!("Could not start pi: {error}")); }
+    };
     let stdin = Arc::new(Mutex::new(child.stdin.take().ok_or("Pi stdin was unavailable")?));
     let stdout = child.stdout.take().ok_or("Pi stdout was unavailable")?;
     let stderr = child.stderr.take().ok_or("Pi stderr was unavailable")?;
@@ -811,14 +854,15 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
     });
     let error_app = app.clone();
     thread::spawn(move || for line in BufReader::new(stderr).lines().map_while(Result::ok) { let _ = error_app.emit("pi://stderr", line); });
-    runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { child, stdin });
+    runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { child, stdin, ephemeral_session });
     runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id, AgentAddress { host_id, session_id, session_path });
     Ok(())
 }
 
 #[tauri::command(async)]
 fn stop_pi(runtime: State<PiRuntime>, runtime_id: String) -> Result<(), String> {
-    if let Some(mut process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.remove(&runtime_id) { let _ = process.child.kill(); let _ = process.child.wait(); }
+    let process = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.remove(&runtime_id);
+    if let Some(mut process) = process { let _ = process.child.kill(); let _ = process.child.wait(); if let Some(session) = process.ephemeral_session { remove_ephemeral_session(session); } }
     runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.remove(&runtime_id);
     fail_pending(&runtime.pending, &runtime_id, "Pi disconnected before responding");
     Ok(())
