@@ -1,6 +1,8 @@
-# Confirmed UI bugs
+# Resolved UI bugs
 
-Manually reproduced on 2026-09-03 against the latest release WebDriver build with the WDIO MCP. Unless noted otherwise, the window was at the app's supported minimum size of 900 × 640. Product code was not changed during testing.
+Manually reproduced on 2026-09-03 against the latest release WebDriver build with the WDIO MCP. Unless noted otherwise, the window was at the app's supported minimum size of 900 × 640. The original reproductions are retained below; all 18 were revalidated against the implementation and fixed on 2026-09-03.
+
+The repairs are grouped at their shared seams: viewport-safe modal behavior and request queues (1, 12, 15, 16), conversation-scoped composer state and safe attachment serialization (2, 8, 9), responsive containment and wrapping (3–7, 10, 14, 17), and keyboard-visible interaction behavior (11, 13, 18).
 
 ## 1. Extension dialogs can put all actions outside the viewport
 
