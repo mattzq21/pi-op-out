@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ArrowUp, CircleStop, FileText, ImagePlus, Paperclip, TerminalSquare, X } from "lucide-react";
 import type { AgentProfile, ContextUsage, ImageAttachment, Model, PromptDictionary, SequenceProfile, SlashCommand } from "../types";
 import { applyDictionary, dictionaryMatches } from "../lib/dictionaries";
@@ -146,12 +146,35 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
       <div className="composer-bar"><div className="composer-tools"><IconButton label="Attach files" onClick={() => fileRef.current?.click()}><Paperclip size={17} /></IconButton>{onOpenTerminal && <IconButton label="Open terminal" onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton>}{contextUsage && <ContextWheel usage={contextUsage} />}{sessionCache && <span className={`session-cache-hit${sessionCache.low ? " low" : ""}`} title={`${sessionCache.cachedTokens.toLocaleString()} of ${sessionCache.promptTokens.toLocaleString()} session prompt tokens read from cache`}>Cache {sessionCache.rate}%</span>}</div>
         <div className="composer-actions">
         {activeAgent !== undefined && <label className="select-control agent-select"><select aria-label="Agent" value={activeAgent} disabled={streaming} onChange={(event) => onAgent(event.target.value)}><optgroup label="Agents">{agents.map((agent) => <option key={agent.name} value={agent.name}>{agent.name}</option>)}</optgroup>{sequences.length > 0 && <optgroup label="Sequences">{sequences.map((sequence) => <option key={sequence.name} value={sequence.name}>{sequence.name}</option>)}</optgroup>}<optgroup label="Multi-agent"><option value="final-only">final-only</option><option value="own+final">own+final</option></optgroup></select></label>}
-        <label className="select-control"><select aria-label="Model" value={model ? `${model.provider}/${model.id}` : ""} onChange={(event) => { const next = models.find((item) => `${item.provider}/${item.id}` === event.target.value); if (next) onModel(next); }}>{models.map((item) => <option key={`${item.provider}/${item.id}`} value={`${item.provider}/${item.id}`}>{item.name || item.id}</option>)}</select></label>
+        <ModelPicker models={models} model={model} onModel={onModel} />
         <label className="select-control thinking"><select aria-label="Thinking level" value={thinkingLevel} onChange={(event) => onThinking(event.target.value)}>{thinkingLevels.map((level) => <option key={level}>{level}</option>)}</select></label>
         <span className="composer-divider" />
         {streaming && <IconButton label="Stop Pi" className="stop-compact" onClick={onAbort}><CircleStop size={17} /></IconButton>}<IconButton label={streaming ? (behavior === "steer" ? "Send steering message" : "Queue follow-up") : "Send message"} className="send" disabled={!value.trim() && uploads.length === 0} onClick={submit}><ArrowUp size={18} /></IconButton></div>
       </div>
     </div>
+  </div>;
+}
+
+function ModelPicker({ models, model, onModel }: { models: Model[]; model: Model | null; onModel: (model: Model) => void }) {
+  const [menuStyle, setMenuStyle] = useState<CSSProperties>();
+  const root = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const close = () => setMenuStyle(undefined);
+  const toggle = () => {
+    if (menuStyle) return close();
+    const rect = trigger.current?.getBoundingClientRect(); if (!rect) return;
+    const width = Math.min(320, window.innerWidth - 16);
+    setMenuStyle({ left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)), bottom: window.innerHeight - rect.top + 6, width, maxHeight: Math.max(0, rect.top - 14) });
+  };
+  useEffect(() => {
+    if (!menuStyle) return;
+    const dismiss = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) close(); };
+    document.addEventListener("pointerdown", dismiss); window.addEventListener("resize", close);
+    return () => { document.removeEventListener("pointerdown", dismiss); window.removeEventListener("resize", close); };
+  }, [menuStyle]);
+  return <div ref={root} className="model-picker" onKeyDown={(event) => { if (event.key === "Escape") { close(); trigger.current?.focus(); } }}>
+    <button ref={trigger} type="button" className="select-control model-picker-trigger" aria-label="Model" aria-haspopup="listbox" aria-expanded={Boolean(menuStyle)} title={model?.name || model?.id} onClick={toggle}>{model?.name || model?.id || "Model"}</button>
+    {menuStyle && <div className="model-picker-menu" role="listbox" aria-label="Models" style={menuStyle}>{models.map((item) => { const selected = item.provider === model?.provider && item.id === model.id; return <button key={`${item.provider}/${item.id}`} type="button" role="option" aria-selected={selected} onClick={() => { onModel(item); close(); }}><span>{item.name || item.id}</span><small>{item.provider}</small></button>; })}</div>}
   </div>;
 }
 
