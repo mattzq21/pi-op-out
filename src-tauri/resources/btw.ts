@@ -48,7 +48,7 @@ export default function btwExtension(pi: PiApi) {
     handler: async (rawArgs, ctx) => {
       const task = rawArgs.trim();
       if (!task) {
-        ctx.ui.notify("Usage: /btw <message>", "warning");
+        ctx.ui.notify("/btw needs a message to send", "warning");
         return;
       }
       const sessionFile = ctx.sessionManager.getSessionFile();
