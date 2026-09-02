@@ -2,7 +2,7 @@
 
 This is a consolidated product record of the human-authored requests found in the Codex session traces associated with the `pi-ui` project through 2026-09-03. It records desired behavior, feature requests, UI decisions, constraints, and reported defects. It is not an implementation-status audit.
 
-The extraction covered 50 trace files and 30 logical session IDs. Environment payloads, plugin catalogs, injected skill bodies, `AGENTS.md`, goal-state payloads, guardian/reviewer prompts, tool calls, and assistant messages were excluded. Replayed history and exact duplicate prompts were deduplicated. When the user corrected an earlier request, the latest clear correction is treated as authoritative; notable reversals are recorded at the end.
+The extraction covered 50 trace files and 30 logical session IDs. Environment payloads, plugin catalogs, injected skill bodies, `AGENTS.md`, goal-state payloads, guardian/reviewer prompts, tool calls, and assistant messages were excluded. Replayed history and exact duplicate prompts were deduplicated. Requirements are resolved in message chronology: a later clear instruction overrides an earlier conflicting instruction. The main sections contain only the resulting effective requirements; the dated override chains are recorded at the end.
 
 ## Product and platform
 
@@ -24,7 +24,7 @@ The extraction covered 50 trace files and 30 logical session IDs. Environment pa
 - Do not show user or Pi/assistant avatars.
 - Remove the app logo from the normal shell. In an empty chat, retain only the Pi character and display it at 96 px.
 - Remove the system top bar without replacing its occupied space.
-- Remove the chat header, including in new and split chats. Historical title requirements—centered, truncated to 50 characters, without the ready label or status dot—are superseded by this removal.
+- Do not render a chat header in main, new, or split chats.
 - The navigation itself should be horizontal.
 - The icon rail should be narrow by default, but still wide enough for the session panel.
 - The sidebar/session area should extend to the bottom of the complete chat shell, not merely to the end of the message list.
@@ -43,7 +43,7 @@ The extraction covered 50 trace files and 30 logical session IDs. Environment pa
 - Remove secondary project-label text and session metadata from session-list items.
 - Session titles must stay synchronized with Pi CLI titles in both directions. If Pi's title is the first user message, Desktop should show that same title.
 - Session state must be visibly distinct when completed but not yet seen; the requested color is light blue.
-- Do not show the proposed yellow running-session line; that request was explicitly withdrawn.
+- Do not render a yellow running-session line.
 - Remove the global hide-conversations control and the conversation-menu button.
 - Remove the project switcher, native-status block, panel headings, and the leftover span in `session-copy`.
 - Session actions belong in the session item's context menu or as an explicitly requested hover action.
@@ -179,7 +179,7 @@ The extraction covered 50 trace files and 30 logical session IDs. Environment pa
 - Cache-hit information in the composer and responses is also controlled by the debug toggle.
 - Show per-response cache hit rate and mark it red when the cache read is below the greater of 50% of eligible tokens or 1,000 tokens.
 - Show a session-wide, non-interactive cache counter next to the terminal control.
-- Do not retain the later proposed previous-message cache comparison counter; it was explicitly undone.
+- Do not show a previous-message or adjacent-message cache comparison counter.
 - After compaction, the context gauge must account for compacted context rather than incorrectly displaying zero.
 - Show Codex usage remaining near Settings, aligned to the right, including time until reset; display only days when more than 24 hours remain.
 - Show each session's estimated equivalent API cost beside its name, but only on hover.
@@ -194,7 +194,7 @@ The extraction covered 50 trace files and 30 logical session IDs. Environment pa
 
 ## Logs, traces, and export
 
-- The latest session action is named **Open logs in browser**, replacing the earlier Export to HTML wording.
+- Name the session action **Open logs in browser**.
 - Opening logs should launch them in a browser, not a text editor, and should not show a `conversation exported` notification.
 - The request/log viewer should parse literal request bodies sent by Pi, show what was actually transmitted, and support filtering.
 - Link back to the source session JSONL and make request sequence numbers more prominent.
@@ -244,15 +244,19 @@ The extraction covered 50 trace files and 30 logical session IDs. Environment pa
 - Export/log opening can route to a text editor instead of the browser.
 - Unbounded terminal retention can push the process past the system kill threshold.
 
-## Explicit reversals and superseded requests
+## Chronological override ledger
 
-- `control` wording was corrected to `Ctrl`.
-- A generic Retry response button was removed; a narrowly scoped retry control for the latest aborted response was later requested.
-- Export to HTML was initially removed, later restored as a session action, then evolved into **Open logs in browser**. The latest name and behavior win.
-- A yellow running-session line was requested and then explicitly withdrawn.
-- The context strip moved from last response, to last three, to a work disclosure, and finally to every response outside work when debug mode is enabled. The last behavior wins.
-- A second cache metric comparing adjacent messages was requested and then undone.
-- A 25-character title limit was revised to 50, then the entire chat header was removed.
-- The session panel placement was corrected repeatedly; the final shell intent is a narrow rail/sidebar reaching the full chat-shell height.
-- Skill rendering was revised from hiding content, to highlighting it, to rendering `$skillname`; `$skillname` is the final form.
-- Fixed development ports (`1423`, then increments) were discussed, but the later requirement is to choose an available port automatically.
+The chains below preserve conflicting history for traceability. In each chain, the rightmost instruction is the effective requirement represented in the main specification.
+
+| Resolved subject | Instruction chain, earliest → latest | Effective requirement |
+| --- | --- | --- |
+| Shortcut terminology (2026-08-24) | Use “control” → correct it to `Ctrl` | Display `Ctrl`. |
+| Chat title/header (2026-08-24 → 2026-08-25) | Limit the title to 25 characters → limit it to 50 → remove status/ready decoration → remove the chat header → remove split-chat headers | Render no chat header in any chat shell. |
+| Retry UI and behavior (2026-08-24 → 2026-08-25) | Add a generic Retry response action → remove generic Retry → add retry only for the latest aborted response → retry through a clean continuation and remove the abandoned session | Expose retry only for the latest aborted turn and perform it as the specified clean continuation. |
+| Log export action (2026-08-24 → 2026-08-25) | Remove Export HTML → restore session-context-menu export → open the export automatically in a browser → rename the action to **Open logs in browser** and remove the export notification | Provide **Open logs in browser**, launch the browser, and show no export notification. |
+| Running-session indicator (2026-08-25) | Add a yellow line for a running session → “nvm remove” | Do not render the yellow running-session line. |
+| Session panel geometry (2026-08-24 → 2026-08-25) | Place the panel between navigation and `rail-bottom` → move it below navigation/above the icon rail → correction referring back to `rail-bottom` → make the icon rail narrow and extend the sidebar to the bottom of the complete chat shell | Use the final narrow rail/sidebar geometry and full chat-shell height. |
+| Skill mention rendering (2026-08-24 → 2026-08-25) | Hide injected skill content → highlight the skill reference → drop the intermediate treatment → render `$skillname`; allow skill commands anywhere in the composer | Render a lightly highlighted `$skillname`; never show injected skill content as the mention. |
+| Development ports (2026-08-25) | Fix the port at 1423 → increment by 1 per worktree → increment by 3 → choose an unused port automatically | Automatically select a free port for each development run. |
+| Cache comparison metric (2026-08-25) | Add per-response cache rate → add a session-wide counter → add a previous-message comparison counter → undo the comparison counter | Keep the per-response rate and session-wide counter; omit the adjacent-message comparison. |
+| Context disclosure placement (2026-09-01 → 2026-09-02) | Show it on the latest response → show it on the last three → put older disclosure inside Work → show only the first Work disclosure → undo that restriction → gate it behind debug mode → report that only the last response is shown → show it on every response outside Work | With debug enabled, show context information on every response outside the collapsed Work section; with debug disabled, hide it. |
