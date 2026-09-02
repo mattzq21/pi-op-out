@@ -44,7 +44,7 @@ function runFork(sessionFile: string, cwd: string, task: string): Promise<string
 
 export default function btwExtension(pi: PiApi) {
   pi.registerCommand("btw", {
-    description: "Ask something in a temporary branch and add its final answer to this context",
+    description: "Open an ephemeral side conversation branched from the current response",
     handler: async (rawArgs, ctx) => {
       const task = rawArgs.trim();
       if (!task) {
@@ -61,12 +61,11 @@ export default function btwExtension(pi: PiApi) {
       ctx.ui.setStatus("btw", "Running side conversation…");
       void (async () => {
         try {
-          let answer: string | undefined;
           if (ctx.mode === "rpc" && process.env.PI_DESKTOP_BTW === "1") {
-            answer = await ctx.ui.input(DESKTOP_TITLE, JSON.stringify({ task, sessionFile, leafId: parentLeafId, cwd: ctx.cwd }));
-          } else {
-            answer = await runFork(sessionFile, ctx.cwd, task);
+            await ctx.ui.input(DESKTOP_TITLE, JSON.stringify({ task, sessionFile, leafId: parentLeafId, cwd: ctx.cwd }));
+            return;
           }
+          const answer = await runFork(sessionFile, ctx.cwd, task);
           if (!answer?.trim()) {
             ctx.ui.notify("The /btw conversation did not return an answer", "warning");
             return;

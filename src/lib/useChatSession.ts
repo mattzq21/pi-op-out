@@ -46,6 +46,7 @@ export function useChatSession(transport: PiTransport, initialState: AgentState 
     if (event.type === "message_start" || event.type === "message_end") {
       if (event.type === "message_end") flush();
       let message = normalizeMessage(event.message as Record<string, unknown>);
+      if (message.customType === "pi-desktop-btw") return;
       if (message.role === "assistant" && event.type === "message_start") { message = { ...message, streaming: true }; activeAssistantId.current = message.id; }
       if (message.role === "assistant" && event.type === "message_end") { message = { ...message, ...(activeAssistantId.current ? { id: activeAssistantId.current } : {}), completedAt: Date.now(), streaming: false }; activeAssistantId.current = undefined; }
       setMessages((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? message : item) : [...current, message]);

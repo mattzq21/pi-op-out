@@ -1,6 +1,6 @@
 export type Role = "user" | "assistant" | "tool" | "system";
 export type ContentPart = { type: "text"; text: string } | { type: "thinking"; thinking: string } | { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown>; partialArgs?: string };
-export interface ChatMessage { id: string; entryId?: string; role: Role; content: string | ContentPart[]; customType?: string; details?: Record<string, unknown>; timestamp?: number; completedAt?: number; model?: string; streaming?: boolean; stopReason?: "stop" | "length" | "toolUse" | "error" | "aborted"; errorMessage?: string; toolName?: string; toolStatus?: "running" | "done" | "error"; promptContext?: PromptContextInfo; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning?: number; totalTokens: number }; }
+export interface ChatMessage { id: string; entryId?: string; role: Role; content: string | ContentPart[]; customType?: string; timestamp?: number; completedAt?: number; model?: string; streaming?: boolean; stopReason?: "stop" | "length" | "toolUse" | "error" | "aborted"; errorMessage?: string; toolName?: string; toolStatus?: "running" | "done" | "error"; promptContext?: PromptContextInfo; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning?: number; totalTokens: number }; }
 export interface SessionSummary { id: string; path: string; name: string; project: string; cwd: string; cwdExists?: boolean; preview: string; messageCount: number; apiCost: number; hostId?: string; hostName?: string; }
 export interface ContextUsage { tokens: number | null; contextWindow: number; percent: number | null; }
 export interface PromptContextInfo {
@@ -38,7 +38,7 @@ export type GitDiffSnapshot = string;
 export type GitDiffSnapshots = Record<string, GitDiffSnapshot>;
 
 export interface PiTransport {
-  connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string): Promise<void>;
+  connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string, ephemeral?: boolean): Promise<void>;
   disconnect(): Promise<void>;
   command<T = unknown>(command: RpcCommand): Promise<T>;
   subscribe(listener: (event: RpcEvent) => void): () => void;
