@@ -64,3 +64,17 @@ Manually reproduced on 2026-09-03 against the latest release WebDriver build wit
 - **Reproduction:** Attach the same file twice, then remove either one of the two chips.
 - **Observed:** Two identical chips are shown, but clicking either Remove button deletes both. This reproduces regardless of which duplicate is removed because both files receive the same name-and-last-modified identifier.
 - **Expected:** Either prevent duplicate attachments or give each chip a unique identity so one removal affects one item.
+
+## 10. Long unbroken message content is clipped and unreadable
+
+- **Severity:** Medium
+- **Reproduction:** Display a user or assistant message containing a long unbroken path, URL, hash, identifier, or token.
+- **Observed:** With a 240-character token, the user message body has 487 px of client width but 2,407 px of scroll width, and the assistant body has 596 px of client width but 2,390 px of scroll width. The enclosing message viewport hides horizontal overflow, so the content runs beyond the right edge and cannot be scrolled into view.
+- **Expected:** Ordinary message text should wrap within the conversation or provide a local horizontal scrolling affordance for content that must remain unbroken.
+
+## 11. Keyboard focus lands on invisible Archive controls
+
+- **Severity:** Medium
+- **Reproduction:** Move the pointer away from the sidebar, focus a conversation button with the keyboard, then press Tab once.
+- **Observed:** Focus moves to that row's `Archive conversation` button, but the control remains at opacity 0 with pointer events disabled and no visible focus outline. Pressing Tab through the conversation list therefore visits an invisible destructive action after every session.
+- **Expected:** A keyboard-focused archive action should become visibly focused, or hover-only row actions should be removed from the tab sequence and exposed through an accessible menu.
