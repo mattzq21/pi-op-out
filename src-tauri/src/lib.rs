@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
+    io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, ExitStatus, Stdio},
@@ -41,8 +41,6 @@ struct TerminalRuntime {
 const MAX_TERMINALS: usize = 8;
 const MAX_REMOTE_HOSTS: usize = 16;
 const MAX_MCP_SERVERS: usize = 32;
-const MAX_LOG_CAPABILITIES: usize = 128;
-const LOG_CAPABILITY_TTL: Duration = Duration::from_secs(15 * 60);
 const BROKER_WORKERS: usize = 8;
 const BROKER_QUEUE_DEPTH: usize = 32;
 const BROKER_HEADER_BYTES: usize = 16 * 1024;
@@ -65,13 +63,10 @@ struct PiRuntime {
 struct AgentAddress { host_id: String, session_id: Option<String>, session_path: Option<String> }
 
 #[derive(Clone)]
-struct LogSource { path: String, host_id: String, expires_at: Instant }
-
-#[derive(Clone)]
-struct BrokerRuntime { port: Arc<Mutex<u16>>, token: String, busy: Arc<Mutex<HashSet<String>>>, logs: Arc<Mutex<HashMap<String, LogSource>>> }
+struct BrokerRuntime { port: Arc<Mutex<u16>>, token: String, busy: Arc<Mutex<HashSet<String>>> }
 
 impl Default for BrokerRuntime {
-    fn default() -> Self { Self { port: Arc::new(Mutex::new(0)), token: Uuid::new_v4().to_string(), busy: Arc::new(Mutex::new(HashSet::new())), logs: Arc::new(Mutex::new(HashMap::new())) } }
+    fn default() -> Self { Self { port: Arc::new(Mutex::new(0)), token: Uuid::new_v4().to_string(), busy: Arc::new(Mutex::new(HashSet::new())) } }
 }
 
 struct BusyAgent { key: String, busy: Arc<Mutex<HashSet<String>>> }
@@ -1105,19 +1100,6 @@ fn open_system_path(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn open_url_in_browser(url: &str) -> Result<(), String> {
-    if !cfg!(target_os = "linux") {
-        let program = if cfg!(target_os = "macos") { "open" } else { "explorer" };
-        Command::new(program).arg(url).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|error| format!("Could not open the request viewer: {error}"))?;
-        return Ok(());
-    }
-    let output = Command::new("xdg-settings").args(["get", "default-web-browser"]).output().map_err(|error| format!("Could not find the default browser: {error}"))?;
-    let browser = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    if !output.status.success() || browser.is_empty() { return Err("Could not find the default browser".into()); }
-    Command::new("gtk-launch").arg(browser).arg(url).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|error| format!("Could not open the request viewer: {error}"))?;
-    Ok(())
-}
-
 #[tauri::command(async)]
 fn open_project_directory(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<(), String> {
     if host_id.as_deref().unwrap_or("local") != "local" {
@@ -1128,32 +1110,6 @@ fn open_project_directory(app: AppHandle, cwd: String, host_id: Option<String>) 
     let path = PathBuf::from(cwd);
     if !path.is_dir() { return Err(format!("Project directory does not exist: {}", path.display())); }
     open_system_path(&path)
-}
-
-#[tauri::command(async)]
-fn open_log_viewer(broker: State<BrokerRuntime>, session_path: String, host_id: Option<String>) -> Result<(), String> {
-    let host_id = host_id.unwrap_or_else(|| "local".into());
-    let session_path = if host_id == "local" {
-        let root = home_dir()?.join(".pi/agent/sessions").canonicalize().map_err(|error| format!("Could not locate Pi sessions: {error}"))?;
-        let source = PathBuf::from(session_path).canonicalize().map_err(|error| format!("Could not locate session file: {error}"))?;
-        if !source.starts_with(root) || source.extension().and_then(|value| value.to_str()) != Some("jsonl") || !source.is_file() { return Err("Only Pi session files can be viewed".into()); }
-        source.to_string_lossy().into_owned()
-    } else {
-        if session_path.contains("/../") || !session_path.contains("/.pi/agent/sessions/") || !session_path.ends_with(".jsonl") { return Err("Only remote Pi session files can be viewed".into()); }
-        session_path
-    };
-    let port = *broker.port.lock().map_err(|_| "Session broker lock was poisoned")?;
-    if port == 0 { return Err("Request viewer is not ready".into()); }
-    let token = Uuid::new_v4().to_string();
-    let mut logs = broker.logs.lock().map_err(|_| "Log viewer lock was poisoned")?;
-    let now = Instant::now(); logs.retain(|_, source| source.expires_at > now);
-    while logs.len() >= MAX_LOG_CAPABILITIES {
-        let Some(oldest) = logs.iter().min_by_key(|(_, source)| source.expires_at).map(|(token, _)| token.clone()) else { break };
-        logs.remove(&oldest);
-    }
-    logs.insert(token.clone(), LogSource { path: session_path, host_id, expires_at: now + LOG_CAPABILITY_TTL });
-    drop(logs);
-    open_url_in_browser(&format!("http://127.0.0.1:{port}/logs/{token}/"))
 }
 
 fn text_content(message: &Value) -> String {
@@ -1438,46 +1394,6 @@ fn broker_response(mut stream: TcpStream, status: &str, body: Value) {
     let _ = write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len());
 }
 
-const LOG_CHUNK_SIZE: usize = 256 * 1024;
-
-fn raw_response(mut stream: TcpStream, status: &str, content_type: &str, body: &[u8], headers: &str) {
-    let _ = write!(stream, "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nX-Content-Type-Options: nosniff\r\n{headers}Connection: close\r\n\r\n", body.len());
-    let _ = stream.write_all(body);
-}
-
-fn log_chunk(app: &AppHandle, source: &LogSource, offset: u64) -> Result<Vec<u8>, String> {
-    if offset % LOG_CHUNK_SIZE as u64 != 0 { return Err("Invalid log offset".into()); }
-    if source.host_id == "local" {
-        let mut file = fs::File::open(&source.path).map_err(|error| format!("Could not read session: {error}"))?;
-        file.seek(SeekFrom::Start(offset)).map_err(|error| error.to_string())?;
-        let mut bytes = vec![0; LOG_CHUNK_SIZE];
-        let count = file.read(&mut bytes).map_err(|error| error.to_string())?; bytes.truncate(count); return Ok(bytes);
-    }
-    let settings = load_app_settings(app.clone())?; let host = remote_host(&settings, &source.host_id)?;
-    let block = offset / LOG_CHUNK_SIZE as u64;
-    let command = format!("dd if={} bs={} skip={block} count=1 status=none", shell_quote(&source.path), LOG_CHUNK_SIZE);
-    let output = ssh(host).arg(command).output().map_err(|error| format!("Could not read session on {}: {error}", host.name))?;
-    output.status.success().then_some(output.stdout).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
-}
-
-fn handle_log_request(app: &AppHandle, broker: &BrokerRuntime, stream: TcpStream, path: &str) -> bool {
-    let clean_path = path.split('?').next().unwrap_or(path);
-    let Some(rest) = clean_path.strip_prefix("/logs/") else { return false };
-    let mut parts = rest.split('/'); let token = parts.next().unwrap_or(""); let endpoint = parts.next().unwrap_or("");
-    let source = broker.logs.lock().ok().and_then(|mut logs| { let now = Instant::now(); logs.retain(|_, source| source.expires_at > now); logs.get(token).cloned() });
-    let Some(source) = source else { raw_response(stream, "404 Not Found", "text/plain; charset=utf-8", b"Request viewer not found", ""); return true };
-    if endpoint.is_empty() {
-        raw_response(stream, "200 OK", "text/html; charset=utf-8", include_bytes!("../resources/log-viewer.html"), "Cache-Control: no-store\r\n"); return true;
-    }
-    if endpoint != "chunk" { raw_response(stream, "404 Not Found", "text/plain; charset=utf-8", b"Not found", ""); return true; }
-    let offset = path.split('?').nth(1).and_then(|query| query.split('&').find_map(|pair| pair.strip_prefix("offset="))).and_then(|value| value.parse().ok()).unwrap_or(0);
-    match log_chunk(app, &source, offset) {
-        Ok(bytes) => { let next = offset + bytes.len() as u64; let done = bytes.len() < LOG_CHUNK_SIZE; raw_response(stream, "200 OK", "application/octet-stream", &bytes, &format!("X-Next-Offset: {next}\r\nX-Log-Done: {done}\r\nCache-Control: no-store\r\n")); },
-        Err(error) => raw_response(stream, "400 Bad Request", "text/plain; charset=utf-8", error.as_bytes(), ""),
-    }
-    true
-}
-
 fn read_broker_line(reader: &mut BufReader<TcpStream>, remaining: &mut usize) -> Result<String, String> {
     if *remaining == 0 { return Err("Request headers are too large".into()); }
     let mut line = String::new();
@@ -1493,7 +1409,6 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
     let request_line = read_broker_line(&mut reader, &mut header_bytes)?;
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or(""); let path = parts.next().unwrap_or("");
-    if method == "GET" && handle_log_request(&app, &broker, stream.try_clone().map_err(|error| error.to_string())?, path) { return Ok(()); }
     let mut authorized = false; let mut content_length = 0usize;
     loop {
         let line = read_broker_line(&mut reader, &mut header_bytes)?;
@@ -1556,5 +1471,5 @@ pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(feature = "webdriver")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
-    builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(broker.clone()).setup(move |app| start_session_broker(app.handle().clone(), broker.clone()).map_err(Into::into)).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_entries, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, git_branch, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_log_viewer, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(broker.clone()).setup(move |app| start_session_broker(app.handle().clone(), broker.clone()).map_err(Into::into)).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_entries, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, git_branch, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }
