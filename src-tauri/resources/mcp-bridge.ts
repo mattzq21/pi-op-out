@@ -24,6 +24,7 @@ type McpClient = {
 
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 const REQUEST_TIMEOUT_MS = 10_000;
+const MAX_MCP_MESSAGE_BYTES = 4 * 1024 * 1024;
 const MCP_STATUS_KEY = "pi-desktop-mcp-status";
 
 function splitArgs(input = ""): string[] {
@@ -48,7 +49,7 @@ function safeName(value: string): string {
 class StdioMcpClient {
   private process: ChildProcessWithoutNullStreams;
   private nextId = 1;
-  private pending = new Map<number, { resolve: (value: unknown) => void; reject: (reason: Error) => void; timeout: ReturnType<typeof setTimeout> }>();
+  private pending = new Map<number, { resolve: (value: unknown) => void; reject: (reason: Error) => void; timeout: ReturnType<typeof setTimeout>; abort?: { signal: AbortSignal; listener: () => void } }>();
   private buffer = "";
 
   constructor(readonly config: ServerConfig) {
@@ -64,6 +65,9 @@ class StdioMcpClient {
 
   private consume(chunk: string) {
     this.buffer += chunk;
+    if (Buffer.byteLength(this.buffer) > MAX_MCP_MESSAGE_BYTES) {
+      this.buffer = ""; this.failAll(new Error(`MCP server ${this.config.name} sent an oversized message`)); this.process.kill(); return;
+    }
     for (;;) {
       const newline = this.buffer.indexOf("\n"); if (newline < 0) return;
       const record = this.buffer.slice(0, newline).replace(/\r$/, ""); this.buffer = this.buffer.slice(newline + 1);
@@ -71,17 +75,24 @@ class StdioMcpClient {
       let message: JsonRpcMessage; try { message = JSON.parse(record) as JsonRpcMessage; } catch { continue; }
       if (typeof message.id !== "number") continue;
       const pending = this.pending.get(message.id); if (!pending) continue; this.pending.delete(message.id); clearTimeout(pending.timeout);
+      if (pending.abort) pending.abort.signal.removeEventListener("abort", pending.abort.listener);
       if (message.error) pending.reject(new Error(`${message.error.message} (${message.error.code})`)); else pending.resolve(message.result);
     }
   }
 
-  private failAll(error: Error) { for (const pending of this.pending.values()) { clearTimeout(pending.timeout); pending.reject(error); } this.pending.clear(); }
+  private failAll(error: Error) { for (const pending of this.pending.values()) { clearTimeout(pending.timeout); if (pending.abort) pending.abort.signal.removeEventListener("abort", pending.abort.listener); pending.reject(error); } this.pending.clear(); }
   private write(message: JsonRpcMessage) { this.process.stdin.write(`${JSON.stringify(message)}\n`); }
-  private request(method: string, params?: unknown): Promise<unknown> {
+  private request(method: string, params?: unknown, signal?: AbortSignal): Promise<unknown> {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => { this.pending.delete(id); reject(new Error(`MCP request timed out: ${method}`)); }, REQUEST_TIMEOUT_MS);
-      this.pending.set(id, { resolve, reject, timeout });
+      if (signal?.aborted) { reject(new Error("MCP tool call aborted")); return; }
+      const timeout = setTimeout(() => { const pending = this.pending.get(id); if (!pending) return; this.pending.delete(id); if (pending.abort) pending.abort.signal.removeEventListener("abort", pending.abort.listener); this.cancel(id); reject(new Error(`MCP request timed out: ${method}`)); }, REQUEST_TIMEOUT_MS);
+      const pending: NonNullable<ReturnType<typeof this.pending.get>> = { resolve, reject, timeout };
+      if (signal) {
+        const listener = () => { const active = this.pending.get(id); if (!active) return; this.pending.delete(id); clearTimeout(active.timeout); this.cancel(id); reject(new Error("MCP tool call aborted")); };
+        pending.abort = { signal, listener }; signal.addEventListener("abort", listener, { once: true });
+      }
+      this.pending.set(id, pending);
       this.write({ jsonrpc: "2.0", id, method, ...(params === undefined ? {} : { params }) } as JsonRpcMessage);
     });
   }
@@ -92,7 +103,7 @@ class StdioMcpClient {
     this.notify("notifications/initialized");
   }
   async tools(): Promise<McpTool[]> { const result = await this.request("tools/list") as { tools?: McpTool[] }; return result.tools ?? []; }
-  callTool(name: string, args: unknown, _signal?: AbortSignal) { return this.request("tools/call", { name, arguments: args }); }
+  callTool(name: string, args: unknown, signal?: AbortSignal) { return this.request("tools/call", { name, arguments: args }, signal); }
   cancel(requestId: number) { this.notify("notifications/cancelled", { requestId, reason: "Pi tool call aborted" }); }
   close() { this.process.kill(); }
 }
@@ -116,6 +127,15 @@ function responseFromPayload(payload: unknown, requestId: number): JsonRpcMessag
   return messages.find((message): message is JsonRpcMessage => Boolean(message && typeof message === "object" && (message as JsonRpcMessage).id === requestId));
 }
 
+async function readTextLimited(response: Response): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader(); const decoder = new TextDecoder(); let text = ""; let bytes = 0;
+  try {
+    for (;;) { const { done, value } = await reader.read(); if (done) break; bytes += value.byteLength; if (bytes > MAX_MCP_MESSAGE_BYTES) { await reader.cancel(); throw new Error("MCP HTTP response was too large"); } text += decoder.decode(value, { stream: true }); }
+    text += decoder.decode(); return text;
+  } finally { reader.releaseLock(); }
+}
+
 async function readSseResponse(response: Response, requestId: number): Promise<JsonRpcMessage> {
   if (!response.body) throw new Error("MCP HTTP server returned an empty SSE stream");
   const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
@@ -127,6 +147,7 @@ async function readSseResponse(response: Response, requestId: number): Promise<J
   try {
     for (;;) {
       const { done, value } = await reader.read(); buffer += decoder.decode(value, { stream: !done });
+      if (Buffer.byteLength(buffer) > MAX_MCP_MESSAGE_BYTES) { await reader.cancel(); throw new Error("MCP SSE event was too large"); }
       let boundary = buffer.search(/\r?\n\r?\n/);
       while (boundary >= 0) {
         const separator = buffer.slice(boundary).match(/^\r?\n\r?\n/)?.[0].length ?? 2;
@@ -172,11 +193,11 @@ class HttpMcpClient implements McpClient {
     try {
       const response = await fetch(this.url, { method: "POST", headers: this.requestHeaders(), body: JSON.stringify(message), signal: controller.signal });
       if (response.status === 404 && this.sessionId) throw new ExpiredMcpSessionError("MCP HTTP session expired");
-      if (!response.ok) { const body = (await response.text()).trim(); throw new Error(`MCP HTTP ${response.status}${body ? `: ${body}` : ""}`); }
+      if (!response.ok) { const body = (await readTextLimited(response)).trim(); throw new Error(`MCP HTTP ${response.status}${body ? `: ${body}` : ""}`); }
       const returnedSessionId = response.headers.get("mcp-session-id"); if (returnedSessionId) this.sessionId = returnedSessionId;
       if (message.id === undefined || response.status === 202) return undefined;
       const contentType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
-      if (contentType === "application/json") return responseFromPayload(await response.json(), message.id);
+      if (contentType === "application/json") return responseFromPayload(JSON.parse(await readTextLimited(response)), message.id);
       if (contentType === "text/event-stream") return readSseResponse(response, message.id);
       throw new Error(`Unsupported MCP HTTP response type: ${contentType || "missing Content-Type"}`);
     } finally { clearTimeout(timeout); signal?.removeEventListener("abort", abort); }
@@ -238,7 +259,7 @@ export default async function mcpBridge(pi: ExtensionAPI) {
   pi.on("resources_discover", () => process.env.PI_DESKTOP_ORCHESTRATION_ACTIVE === "1" || !desktopSkillPaths.length ? undefined : { skillPaths: desktopSkillPaths });
   const clients: McpClient[] = []; const loaded: Array<{ server: string; tools: string[] }> = [];
   const statuses = new Map(servers.map((server) => [server.id, { id: server.id, status: "stopped" as "stopped" | "connected" | "error", error: undefined as string | undefined }]));
-  for (const server of servers.filter((item) => item.enabled && (!allowed || allowed.has(item.id)))) {
+  await Promise.all(servers.filter((item) => item.enabled && (!allowed || allowed.has(item.id))).map(async (server) => {
     try {
       const client = createClient(server); await client.initialize(); const tools = await client.tools(); clients.push(client);
       const registered: string[] = [];
@@ -258,7 +279,7 @@ export default async function mcpBridge(pi: ExtensionAPI) {
       loaded.push({ server: server.name, tools: registered });
       statuses.set(server.id, { id: server.id, status: "connected", error: undefined });
     } catch (error) { const message = error instanceof Error ? error.message : String(error); statuses.set(server.id, { id: server.id, status: "error", error: message }); process.stderr.write(`[mcp:${server.name}] ${message}\n`); }
-  }
+  }));
   pi.on("session_start", (_event, ctx) => ctx.ui.setStatus(MCP_STATUS_KEY, `json:${JSON.stringify([...statuses.values()])}`));
   pi.registerCommand("mcp-status", { description: "Show MCP servers and tools loaded by Pi Desktop", handler: async (_args, ctx) => ctx.ui.notify(loaded.length ? loaded.map((entry) => `${entry.server}: ${entry.tools.join(", ") || "no tools"}`).join("\n") : "No MCP servers loaded", loaded.length ? "info" : "warning") });
   pi.on("session_shutdown", () => { for (const client of clients) client.close(); });

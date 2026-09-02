@@ -39,6 +39,13 @@ struct TerminalRuntime {
 }
 
 const MAX_TERMINALS: usize = 8;
+const MAX_REMOTE_HOSTS: usize = 16;
+const MAX_LOG_CAPABILITIES: usize = 128;
+const LOG_CAPABILITY_TTL: Duration = Duration::from_secs(15 * 60);
+const BROKER_WORKERS: usize = 8;
+const BROKER_QUEUE_DEPTH: usize = 32;
+const BROKER_HEADER_BYTES: usize = 16 * 1024;
+const BROKER_BODY_BYTES: usize = 1024 * 1024;
 
 #[derive(Default)]
 struct PiRuntime {
@@ -51,7 +58,7 @@ struct PiRuntime {
 struct AgentAddress { host_id: String, session_id: Option<String>, session_path: Option<String> }
 
 #[derive(Clone)]
-struct LogSource { path: String, host_id: String }
+struct LogSource { path: String, host_id: String, expires_at: Instant }
 
 #[derive(Clone)]
 struct BrokerRuntime { port: Arc<Mutex<u16>>, token: String, busy: Arc<Mutex<HashSet<String>>>, logs: Arc<Mutex<HashMap<String, LogSource>>> }
@@ -427,7 +434,7 @@ fn discover_skills_in(root: &Path, include_root_markdown: bool) -> Vec<Value> {
 
     let mut skill_files: Vec<PathBuf> = WalkDir::new(root)
         .min_depth(1)
-        .follow_links(true)
+        .follow_links(false)
         .into_iter()
         .filter_entry(|entry| {
             if entry.depth() == 0 { return true; }
@@ -549,6 +556,7 @@ fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<(), String
     validate_dictionaries(&settings)?;
     validate_keybindings(&settings)?;
     validate_mcp_servers(&settings)?;
+    if settings.hosts.len() > MAX_REMOTE_HOSTS { return Err(format!("At most {MAX_REMOTE_HOSTS} remote machines can be configured")); }
     let mut host_ids = HashSet::new();
     let mut host_names = HashSet::from(["local".to_string()]);
     for host in &settings.hosts {
@@ -823,7 +831,7 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
         }
     };
     if let Some(mut process) = stale { let _ = process.child.wait(); if let Some(session) = process.ephemeral_session { remove_ephemeral_session(session); } }
-    let settings = load_app_settings(app.clone()).unwrap_or_else(|_| default_settings());
+    let settings = load_app_settings(app.clone())?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let ephemeral = no_session.unwrap_or(false);
     let (ephemeral_path, ephemeral_session) = if ephemeral {
@@ -1281,7 +1289,7 @@ fn agent_is_active(session: &SessionSummary, agent: &AgentAddress) -> bool {
 }
 
 fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &SessionSummary, message: &str) -> Result<String, String> {
-    let settings = load_app_settings(app.clone()).unwrap_or_else(|_| default_settings());
+    let settings = load_app_settings(app.clone())?;
     let mut command = build_pi_command(app, broker, &settings, &session.host_id, PiLaunch::Print { cwd: &session.cwd, session_path: &session.path, message })?;
     let output = command.output().map_err(|error| format!("Could not message agent: {error}"))?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
