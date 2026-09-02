@@ -42,6 +42,91 @@ const acceptanceOrchestration = (): OrchestrationCapability => ({
     sequences: [],
   },
 });
+
+describe("BUGS-3 regressions", () => {
+  beforeEach(async () => {
+    await app.openConversations();
+    await app.clearMessage();
+  });
+
+  afterEach(async () => {
+    if (await $(".error-toast").isExisting()) await $(".error-toast button").click();
+    if (await app.terminalPanel.isExisting()) await app.closeTerminalButton.click();
+    await app.conversationSearch.clearValue();
+    await emitPiEvent({ type: "disconnected" });
+    await resetBackend();
+  });
+
+  it("keeps a failed rename available for retry", async () => {
+    const indexed = { id: "bugs3-rename", path: "/tmp/bugs3-rename.jsonl", name: "Rename target", project: "BUGS-3", cwd: "/tmp", preview: "Rename", messageCount: 1, hostId: "local" };
+    await mockBackend({ list_sessions: [indexed], ...connectedSessionResponses(indexed.id), "pi_command:set_session_name": { error: "Rename failed" } });
+    await emitPiEvent({ type: "session_switched" });
+    await app.conversationSearch.setValue(indexed.name);
+    await browser.execute(() => document.querySelector(".session-item")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 })));
+    await $('//div[@role="menu"]//button[normalize-space(.)="Rename conversation"]').click();
+
+    const input = $('input[aria-label="Rename conversation"]');
+    await input.setValue("Name to retry");
+    await $('//section[@role="dialog"]//button[normalize-space(.)="Continue"]').click();
+
+    await expect(input).toHaveValue("Name to retry");
+    await expect($(".dialog-error")).toHaveText("Rename failed");
+    await $('//section[@role="dialog"]//button[normalize-space(.)="Cancel"]').click();
+  });
+
+  it("isolates drafts and terminals between fresh conversations", async () => {
+    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
+    await mockBackend({ create_temporary_chat: { cwd: "/tmp/bugs3-fresh", sessionId: "bugs3-fresh" }, start_pi: {}, stop_pi: {}, list_sessions: [], load_app_settings: settings, ...connectedSessionResponses(""), "pi_command:set_model": {}, start_terminal: {}, resize_terminal: {} });
+    await $('button[aria-label="New conversation"]').click();
+    await browser.waitUntil(async () => (await backendCalls()).filter(({ command }) => command === "create_temporary_chat").length === 1);
+    await app.prepareMessage("First fresh draft");
+    await app.openTerminalButton.click();
+    await app.addTerminalButton.click();
+    await expect($$(".terminal-tab")).toBeElementsArrayOfSize(2);
+
+    await $('button[aria-label="New conversation"]').click();
+    await browser.waitUntil(async () => (await backendCalls()).filter(({ command }) => command === "create_temporary_chat").length === 2);
+
+    await expect(app.composer).toHaveValue("");
+    await expect($$(".terminal-tab")).toBeElementsArrayOfSize(1);
+  });
+
+  it("keeps a terminal tab when closing its process fails", async () => {
+    await mockBackend({ start_terminal: {}, resize_terminal: {}, close_terminal: { error: "Terminal close failed" } });
+    await app.openTerminalButton.click();
+    await app.addTerminalButton.click();
+    await expect($$(".terminal-tab")).toBeElementsArrayOfSize(2);
+
+    await app.deleteTerminalButton.click();
+
+    await expect($$(".terminal-tab")).toBeElementsArrayOfSize(2);
+    await expect($(".error-toast strong")).toHaveText("Could not close terminal");
+    await expect($(".error-toast span")).toHaveText("Terminal close failed");
+  });
+
+  it("reports a failed agent selection", async () => {
+    await enableOrchestration();
+    await mockBackend({ "pi_command:prompt": { error: "Agent switch failed" } });
+    await $('button[aria-label="Agent"]').click();
+    await $('//div[@role="listbox" and @aria-label="Agent options"]//button[.//span[normalize-space(.)="reviewer"]]').click();
+
+    await expect($('button[aria-label="Agent"]')).toHaveText("default");
+    await expect($(".error-toast strong")).toHaveText("Could not change agent");
+    await expect($(".error-toast span")).toHaveText("Agent switch failed");
+  });
+
+  it("does not enable debug mode when persistence fails", async () => {
+    const toggle = $('button[aria-label="Enable debug mode"], button[aria-label="Disable debug mode"]');
+    const initialLabel = await toggle.getAttribute("aria-label");
+    await mockBackend({ load_app_settings: defaultSettings, save_app_settings: { error: "Settings persistence failed" } });
+
+    await toggle.click();
+
+    await expect(toggle).toHaveAttribute("aria-label", initialLabel!);
+    await expect($(".error-toast strong")).toHaveText("Could not change debug mode");
+    await expect($(".error-toast span")).toHaveText("Settings persistence failed");
+  });
+});
 const installedOrchestration = (): OrchestrationCapability => {
   const config = JSON.parse(readFileSync(installedOrchestrationConfigPath, "utf8")) as Partial<OrchestrationConfig>;
   const agents = config.agents ?? [];

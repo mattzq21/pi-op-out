@@ -78,13 +78,14 @@ export default function App() {
   const [relocatingSession, setRelocatingSession] = useState<SessionSummary>(); const [relocationError, setRelocationError] = useState<string>();
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>({});
+  const [unsavedSessionId, setUnsavedSessionId] = useState(() => crypto.randomUUID());
   const [uploadsByTransport, setUploadsByTransport] = useState<Map<NativeTransport, ComposerUpload[]>>(() => new Map());
   const newSessionPending = useRef(false);
   const [splitPane, setSplitPane] = useState<SplitPaneState>();
   const pendingBtwRequest = useRef<{ id: string; transport: NativeTransport } | undefined>(undefined);
   const [terminalsBySession, setTerminalsBySession] = useState<Record<string, SessionTerminals>>({});
   const queuedTerminalOutput = useRef(new Map<string, QueuedTerminalOutput>()); const terminalOutputFrame = useRef<number | undefined>(undefined);
-  const terminalSessionId = `${activeHostId}:${state.sessionId || "new-session"}`;
+  const terminalSessionId = `${activeHostId}:${state.sessionId || unsavedSessionId}`;
   const splitSessionId = splitPane ? `${splitPane.session.hostId ?? "local"}:${splitPane.session.id}` : "";
   const composerDraft = composerDrafts[terminalSessionId] ?? "";
   const composerUploads = uploadsByTransport.get(transport) ?? [];
@@ -250,7 +251,7 @@ export default function App() {
     }
   };
   const branch = async (message: ChatMessage) => { try { const index = messages.findIndex((item) => item.id === message.id); const user = messages.slice(0, index + 1).reverse().find((item) => item.role === "user" && item.entryId); if (!user) throw new Error("Could not find the message to branch from"); await transport.command({ type: "fork", entryId: user.entryId }); await refresh(); } catch (reason) { setNotice({ title: "Could not branch conversation", message: reason instanceof Error ? reason.message : String(reason) }); } };
-  const newSession = async () => { if (newSessionPending.current || !canLeaveSettings()) return; newSessionPending.current = true; const hostId = activeHostIdRef.current; const projectCwd = selectedProjectCwd(activeCwd, transport.isTemporaryChat()); setView("chat"); closeSplitPane(); setConnected(false); setOrchestration(undefined); discardPendingUpdates(); setMessages([]); const nextTransport = runtimePool.create(projectCwd ? { cwd: projectCwd, hostId } : { hostId }); try { if (projectCwd) setActiveCwd(projectCwd); else setActiveCwd(await nextTransport.prepareTemporaryChat(hostId)); setActiveHostId(hostId); setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, activity: undefined, contextUsage: undefined })); activateTransport(nextTransport); } catch (reason) { newSessionPending.current = false; void runtimePool.release(nextTransport); setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); } };
+  const newSession = async () => { if (newSessionPending.current || !canLeaveSettings()) return; newSessionPending.current = true; const hostId = activeHostIdRef.current; const projectCwd = selectedProjectCwd(activeCwd, transport.isTemporaryChat()); setView("chat"); closeSplitPane(); setConnected(false); setOrchestration(undefined); discardPendingUpdates(); setMessages([]); const nextTransport = runtimePool.create(projectCwd ? { cwd: projectCwd, hostId } : { hostId }); try { if (projectCwd) setActiveCwd(projectCwd); else setActiveCwd(await nextTransport.prepareTemporaryChat(hostId)); setActiveHostId(hostId); setUnsavedSessionId(crypto.randomUUID()); setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, activity: undefined, contextUsage: undefined })); activateTransport(nextTransport); } catch (reason) { newSessionPending.current = false; void runtimePool.release(nextTransport); setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); } };
   const selectSession = (session: SessionSummary) => {
     const hostId = session.hostId ?? "local"; if (session.id === state.sessionId && hostId === activeHostId) return transport;
     if (splitPane?.session.id === session.id && (splitPane.session.hostId ?? "local") === hostId) closeSplitPane();
@@ -277,7 +278,7 @@ export default function App() {
     setSettings(next); if (activeHostId !== "local" && !next.hosts.some((host) => host.id === activeHostId)) setActiveHostId("local"); await refresh();
   };
   const setAgent = async (name: string) => { try { await transport.command({ type: "prompt", message: `/pi-orchestration-use ${encodeOrchestrationValue(name)}` }); } catch (reason) { setNotice({ title: "Could not change agent", message: reason instanceof Error ? reason.message : String(reason) }); } };
-  const openProject = async (cwd: string, hostId: string) => { if (!canLeaveSettings()) return; const validatedCwd = await transport.validateProjectDirectory(cwd, hostId); if (!projectOpenRef.current) return; projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setConnected(false); setOrchestration(undefined); discardPendingUpdates(); setMessages([]); setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, activity: undefined, contextUsage: undefined })); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); const nextTransport = runtimePool.create({ cwd: validatedCwd, hostId }); activateTransport(nextTransport); };
+  const openProject = async (cwd: string, hostId: string) => { if (!canLeaveSettings()) return; const validatedCwd = await transport.validateProjectDirectory(cwd, hostId); if (!projectOpenRef.current) return; projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setConnected(false); setOrchestration(undefined); discardPendingUpdates(); setMessages([]); setUnsavedSessionId(crypto.randomUUID()); setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, activity: undefined, contextUsage: undefined })); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); const nextTransport = runtimePool.create({ cwd: validatedCwd, hostId }); activateTransport(nextTransport); };
   const chooseChatProject = () => setProjectOpen(true);
   const openSplitPane = (session: SessionSummary) => { closeSplitPane(); setSplitPane({ session }); };
   const sessionAction = async (session: SessionSummary, action: SessionAction) => {
@@ -312,9 +313,9 @@ export default function App() {
   };
   const addTerminal = () => setTerminalsBySession((current) => { const session = current[terminalSessionId] ?? initialTerminals(terminalSessionId); if (session.tabs.length >= MAX_TERMINALS) return current; const id = `terminal-${terminalSessionId}-${crypto.randomUUID()}`; return { ...current, [terminalSessionId]: { activeId: id, tabs: [...session.tabs, { id, output: "", outputEnd: 0, started: false }] } }; });
   const selectTerminal = (terminalId: string) => setTerminalsBySession((current) => { const session = current[terminalSessionId] ?? initialTerminals(terminalSessionId); return { ...current, [terminalSessionId]: { ...session, activeId: terminalId } }; });
-  const deleteTerminal = () => {
+  const deleteTerminal = async () => {
     const terminalId = activeTerminal.id; const closingLast = sessionTerminals.tabs.length === 1;
-    void transport.closeTerminal(terminalId).catch(() => undefined);
+    try { await transport.closeTerminal(terminalId); } catch (reason) { setNotice({ title: "Could not close terminal", message: reason instanceof Error ? reason.message : String(reason) }); return; }
     if (closingLast) setTerminalOpen(false);
     setTerminalsBySession((current) => { const session = current[terminalSessionId] ?? initialTerminals(terminalSessionId); const tabs = session.tabs.filter((terminal) => terminal.id !== terminalId); const next = { ...current }; if (!tabs.length) delete next[terminalSessionId]; else next[terminalSessionId] = { activeId: tabs[0].id, tabs }; return next; });
   };
@@ -322,12 +323,9 @@ export default function App() {
   const setSplitComposerDraft = (value: string) => setComposerDrafts((current) => { if (value) return { ...current, [splitSessionId]: value }; const next = { ...current }; delete next[splitSessionId]; return next; });
   const toggleTerminal = () => { if (!canLeaveSettings()) return; setView("chat"); setTerminalOpen((open) => !open); };
   const toggleDebugMode = useCallback(() => {
-    setSettings((current) => {
-      const next = { ...current, debugMode: !current.debugMode };
-      void transport.saveSettings(next, false).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
-      return next;
-    });
-  }, [transport]);
+    const next = { ...settings, debugMode: !settings.debugMode };
+    void transport.saveSettings(next, false).then(() => setSettings(next)).catch((reason) => setNotice({ title: "Could not change debug mode", message: reason instanceof Error ? reason.message : String(reason) }));
+  }, [settings, transport]);
 
   useEffect(() => {
     const handleKeybind = (event: KeyboardEvent) => {
