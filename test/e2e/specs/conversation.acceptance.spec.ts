@@ -1581,25 +1581,23 @@ describe("Orchestration acceptance", () => {
     await browser.refresh();
     await app.waitUntilReady();
     await resetBackend();
+    await enableOrchestration(installedOrchestration());
 
     try {
       await app.openSettings();
-      await app.settingsSection("Agents").waitForDisplayed(); // [DEBUG-a4f2] Synchronize with the real extension status.
       await app.openSettingsSection("Agents");
       await $('//button[normalize-space(.)="Add agent"]').click();
       await $('input[aria-label="Agent name"]').setValue(agentName);
       await $('input[aria-label="Agent description"]').setValue("Saved by the native acceptance test");
       await $('textarea[aria-label="System prompt"]').setValue("Verify the saved agent configuration.");
-      await expect($(`//div[contains(@class,"agent-list")]//button[.//span[normalize-space(.)="${agentName}"]]`)).toBeExisting(); // [DEBUG-a4f2]
       await expect(app.saveSettingsButton).toBeClickable();
       await app.saveSettingsButton.click();
 
-      await browser.waitUntil(async () => {
+      await browser.waitUntil(() => {
         const saved = JSON.parse(readFileSync(installedOrchestrationConfigPath, "utf8")) as OrchestrationConfig;
-        return saved.agents.some((agent) => agent.name === agentName) || await app.saveSettingsButton.getText() === "Saved" || await $(".settings-save [role='alert']").isExisting();
+        return saved.agents.some((agent) => agent.name === agentName);
       }, { timeout: 30_000, timeoutMsg: "The GUI-created agent was not written to the installed orchestration config" });
       const saved = JSON.parse(readFileSync(installedOrchestrationConfigPath, "utf8")) as OrchestrationConfig;
-      if (!saved.agents.some((agent) => agent.name === agentName)) throw new Error(`[DEBUG-a4f2] ${JSON.stringify({ button: await app.saveSettingsButton.getText(), alert: await $(".settings-save [role='alert']").isExisting() ? await $(".settings-save [role='alert']").getText() : undefined, calls: await backendCalls(), agents: saved.agents.map((agent) => agent.name) })}`);
       expect(saved.agents.find((agent) => agent.name === agentName)).toMatchObject({
         description: "Saved by the native acceptance test",
         systemPrompt: "Verify the saved agent configuration.",
@@ -2017,21 +2015,19 @@ describe("Conversation lifecycle", () => {
   it("keeps a separate composer draft for each conversation", async () => {
     const current = { id: "draft-current", path: "/tmp/draft-current.jsonl", name: "Draft current conversation", project: "Draft project", cwd: "/tmp", preview: "Current draft", messageCount: 1, hostId: "local" };
     const target = { id: "draft-target", path: "/tmp/draft-target.jsonl", name: "Draft target conversation", project: "Draft project", cwd: "/tmp", preview: "Target draft", messageCount: 1, hostId: "local" };
-    const state = (sessionId: string) => ({ model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 1, pendingMessageCount: 0 });
+    const state = (sessionId: string) => ({ model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 0, pendingMessageCount: 0 });
     await mockBackend({ list_sessions: [current, target], start_pi: {}, stop_pi: {}, load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance" }, ...connectedSessionResponses(""), "pi_command:set_model": {} });
     try {
       await emitPiEvent({ type: "session_switched" });
       await updateBackendResponse("pi_command:get_state", state(current.id));
       await app.conversationSearch.setValue(current.name);
       await $(".session-item .session-main").click();
-      await expect($(".session-item.active strong")).toHaveText(current.name); // [DEBUG-a4f2] Wait for the selected conversation render.
       await app.composer.waitForEnabled();
       await app.prepareMessage("Draft belonging to the current conversation");
 
       await updateBackendResponse("pi_command:get_state", state(target.id));
       await app.conversationSearch.setValue(target.name);
       await $(".session-item .session-main").click();
-      await expect($(".session-item.active strong")).toHaveText(target.name); // [DEBUG-a4f2] Wait for the selected conversation render.
       await app.composer.waitForEnabled();
       await expect(app.composer).toHaveValue("");
       await app.prepareMessage("Draft belonging to the target conversation");
@@ -2039,14 +2035,12 @@ describe("Conversation lifecycle", () => {
       await updateBackendResponse("pi_command:get_state", state(current.id));
       await app.conversationSearch.setValue(current.name);
       await $(".session-item .session-main").click();
-      await expect($(".session-item.active strong")).toHaveText(current.name); // [DEBUG-a4f2] Wait for the selected conversation render.
       await app.composer.waitForEnabled();
-      if (await app.composer.getValue() !== "Draft belonging to the current conversation") throw new Error(`[DEBUG-a4f2] ${JSON.stringify(await browser.execute(() => (window as unknown as { __debugDraftState?: unknown }).__debugDraftState))}`);
+      await expect(app.composer).toHaveValue("Draft belonging to the current conversation");
 
       await updateBackendResponse("pi_command:get_state", state(target.id));
       await app.conversationSearch.setValue(target.name);
       await $(".session-item .session-main").click();
-      await expect($(".session-item.active strong")).toHaveText(target.name); // [DEBUG-a4f2] Wait for the selected conversation render.
       await app.composer.waitForEnabled();
       await expect(app.composer).toHaveValue("Draft belonging to the target conversation");
       await app.clearMessage();

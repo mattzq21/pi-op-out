@@ -97,7 +97,6 @@ export default function App() {
   const terminalSessionIdRef = useRef(terminalSessionId); terminalSessionIdRef.current = terminalSessionId;
   const splitSessionId = splitPane ? `${splitPane.session.hostId ?? "local"}:${splitPane.session.id}` : "";
   const composerDraft = composerDrafts[terminalSessionId] ?? "";
-  if (import.meta.env.MODE === "e2e") (window as unknown as { __debugDraftState?: unknown }).__debugDraftState = { activeConversationKey, composerDrafts }; // [DEBUG-a4f2]
   const composerUploads = uploadsByTransport.get(transport) ?? [];
   const splitComposerDraft = composerDrafts[splitSessionId] ?? "";
   const sessionTerminals = terminalsBySession[terminalSessionId] ?? initialTerminals(terminalSessionId);
