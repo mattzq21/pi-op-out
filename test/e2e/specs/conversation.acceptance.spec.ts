@@ -1286,9 +1286,9 @@ describe("/btw acceptance", () => {
     title: "__pi_desktop_btw__",
     placeholder: JSON.stringify(payload),
   });
-  const runtimeResponses = (lastText: string | null = "Acceptance branch answer") => ({
+  const runtimeResponses = () => ({
     start_pi: {}, stop_pi: {}, ...connectedSessionResponses("btw-runtime"),
-    "pi_command:prompt": {}, "pi_command:get_last_assistant_text": { text: lastText }, "pi_command:extension_ui_response": {},
+    "pi_command:prompt": {}, "pi_command:extension_ui_response": {},
   });
 
   beforeEach(async () => {
@@ -1302,7 +1302,7 @@ describe("/btw acceptance", () => {
     await resetBackend();
   });
 
-  it("runs a forked side conversation and returns its final answer", async () => {
+  it("opens a persistent forked side conversation", async () => {
     await mockBackend(runtimeResponses());
     await request("btw-success", { task: "Review the changed API", sessionFile: "/tmp/source-session.jsonl", cwd: "/tmp/acceptance-btw" });
 
@@ -1312,22 +1312,25 @@ describe("/btw acceptance", () => {
     expect((await backendCalls()).find(({ command }) => command === "start_pi")?.args).toEqual(expect.objectContaining({ cwd: "/tmp/acceptance-btw", forkPath: "/tmp/source-session.jsonl", hostId: "local" }));
     expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "prompt")?.args.command).toEqual({ type: "prompt", message: "Review the changed API" });
 
-    await emitPiEvent({ type: "agent_settled" });
-    await expect(split).not.toBeExisting();
     await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { id?: string; type?: string })?.id === "btw-success"));
-    expect((await backendCalls()).find(({ args }) => (args.command as { id?: string })?.id === "btw-success")?.args.command).toEqual({ type: "extension_ui_response", id: "btw-success", value: "Acceptance branch answer" });
+    expect((await backendCalls()).find(({ args }) => (args.command as { id?: string })?.id === "btw-success")?.args.command).toEqual({ type: "extension_ui_response", id: "btw-success", value: "opened" });
+
+    await emitPiEvent({ type: "agent_settled" });
+    await expect(split).toBeDisplayed();
   });
 
-  it("cancels the extension request when the side conversation is closed", async () => {
+  it("closes an opened side conversation without cancelling its acknowledged request", async () => {
     await mockBackend(runtimeResponses());
     await request("btw-cancel", { task: "Investigate separately", sessionFile: "/tmp/source-session.jsonl", cwd: "/tmp/acceptance-btw" });
 
     const split = $('section[aria-label="Split conversation: BTW"]');
     await expect(split).toBeDisplayed();
+    await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { id?: string })?.id === "btw-cancel"));
     await split.$('button[aria-label="Close split pane"]').click();
     await expect(split).not.toBeExisting();
-    await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { id?: string })?.id === "btw-cancel"));
-    expect((await backendCalls()).find(({ args }) => (args.command as { id?: string })?.id === "btw-cancel")?.args.command).toEqual({ type: "extension_ui_response", id: "btw-cancel", cancelled: true });
+    const responses = (await backendCalls()).filter(({ args }) => (args.command as { id?: string })?.id === "btw-cancel");
+    expect(responses).toHaveLength(1);
+    expect(responses[0].args.command).toEqual({ type: "extension_ui_response", id: "btw-cancel", value: "opened" });
     await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "stop_pi"));
   });
 
@@ -1346,25 +1349,24 @@ describe("/btw acceptance", () => {
     await mockBackend({ ...runtimeResponses(), start_pi: { error: "Fork runtime unavailable" } });
     await request("btw-start-failure", { task: "Review separately", sessionFile: "/tmp/source-session.jsonl", cwd: "/tmp/acceptance-btw" });
 
-    await expect($(".error-toast strong")).toHaveText("/btw failed");
-    await expect($(".error-toast span")).toHaveText("Fork runtime unavailable");
-    await expect($('section[aria-label="Split conversation: BTW"]')).not.toBeExisting();
+    const split = $('section[aria-label="Split conversation: BTW"]');
+    await expect(split).toBeDisplayed();
+    await expect(split.$(".split-pane-status.error")).toHaveText("Fork runtime unavailable");
     await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { id?: string })?.id === "btw-start-failure"));
     expect((await backendCalls()).find(({ args }) => (args.command as { id?: string })?.id === "btw-start-failure")?.args.command).toEqual({ type: "extension_ui_response", id: "btw-start-failure", cancelled: true });
   });
 
-  it("reports when a completed side conversation has no answer", async () => {
-    await mockBackend(runtimeResponses(null));
+  it("keeps a settled side conversation open when it has no answer", async () => {
+    await mockBackend(runtimeResponses());
     await request("btw-no-answer", { task: "Find an answer", sessionFile: "/tmp/source-session.jsonl", cwd: "/tmp/acceptance-btw" });
     await expect($('section[aria-label="Split conversation: BTW"]')).toBeDisplayed();
     await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "prompt"));
 
     await emitPiEvent({ type: "agent_settled" });
-    await expect($(".error-toast strong")).toHaveText("/btw failed");
-    await expect($(".error-toast span")).toHaveText("The /btw conversation finished without an answer");
-    await expect($('section[aria-label="Split conversation: BTW"]')).not.toBeExisting();
+    await expect($('section[aria-label="Split conversation: BTW"]')).toBeDisplayed();
+    await expect($(".error-toast")).not.toBeExisting();
     await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { id?: string })?.id === "btw-no-answer"));
-    expect((await backendCalls()).find(({ args }) => (args.command as { id?: string })?.id === "btw-no-answer")?.args.command).toEqual({ type: "extension_ui_response", id: "btw-no-answer", cancelled: true });
+    expect((await backendCalls()).find(({ args }) => (args.command as { id?: string })?.id === "btw-no-answer")?.args.command).toEqual({ type: "extension_ui_response", id: "btw-no-answer", value: "opened" });
   });
 });
 
@@ -1514,13 +1516,14 @@ describe("Orchestration acceptance", () => {
     await enableOrchestration();
     await expect(app.modelPicker).toHaveAttribute("data-options", expect.stringContaining("e2e/acceptance"));
     await app.openSettings();
+    await setSelectValue('select[aria-label="Default model"]', "e2e/acceptance");
+    await expect($('select[aria-label="Default model"]')).toHaveValue("e2e/acceptance");
     await app.openSettingsSection("Agents");
     await $('//div[contains(@class,"agent-list")]//button[.//span[normalize-space(.)="reviewer"]]').click();
     await $('input[aria-label="Agent description"]').setValue("Reviews the packaged acceptance suite");
 
     await app.saveSettingsButton.click();
-    await browser.waitUntil(async () => await app.saveSettingsButton.getText() === "Saved" || await $(".settings-save [role='alert']").isExisting());
-    if (await $(".settings-save [role='alert']").isExisting()) throw new Error(`Orchestration save failed: ${await $(".settings-save [role='alert']").getText()}\nCalls: ${JSON.stringify(await backendCalls())}`);
+    await expect(app.saveSettingsButton).toHaveText("Saved");
     const prompt = (await backendCalls()).find(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-orchestration-config "))?.args.command as { message: string };
     const saved = decodeOrchestrationValue<OrchestrationConfig>(prompt.message.slice("/pi-orchestration-config ".length));
     expect(saved.agents.find((agent) => agent.name === "reviewer")?.description).toBe("Reviews the packaged acceptance suite");
