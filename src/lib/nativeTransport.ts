@@ -88,7 +88,7 @@ export class NativeTransport {
   deleteSession(sessionPath: string, hostId = "local") { return call<void>("delete_session", { sessionPath, hostId }); }
   relocateSession(sessionPath: string, cwd: string, hostId = "local") { return call<void>("relocate_session", { sessionPath, cwd, hostId }); }
   openProjectDirectory(cwd: string, hostId = "local") { return call<void>("open_project_directory", { cwd, hostId }); }
-  gitBranch() { return call<string | null>("git_branch"); }
+  async gitBranch() { const branch = await call<unknown>("git_branch"); return typeof branch === "string" ? branch : null; }
   loadSettings() { return call<AppSettings>("load_app_settings"); }
   loadCodexUsage() { return call<CodexUsage>("codex_usage"); }
   saveSettings(settings: AppSettings, reconnect = true) {

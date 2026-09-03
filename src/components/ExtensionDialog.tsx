@@ -7,8 +7,10 @@ export function ExtensionDialog({ request, onRespond }: { request: ExtensionUiRe
   const [responding, setResponding] = useState(false);
   const respondingRef = useRef(false);
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const returnFocusRef = useRef(document.activeElement instanceof HTMLElement ? document.activeElement : undefined);
   useEffect(() => { setValue(request.prefill ?? ""); setResponseError(undefined); respondingRef.current = false; setResponding(false); }, [request.id, request.prefill]);
   useEffect(() => { const dialog = dialogRef.current; dialog?.showModal(); return () => { if (dialog?.open) dialog.close(); }; }, [request.id]);
+  useEffect(() => () => { requestAnimationFrame(() => returnFocusRef.current?.focus()); }, []);
   const respond = async (response: Record<string, unknown>) => {
     if (respondingRef.current) return;
     respondingRef.current = true; setResponding(true); setResponseError(undefined);

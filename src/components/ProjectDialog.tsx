@@ -13,12 +13,13 @@ interface Props {
 
 export function ProjectDialog({ initialPath, hosts, initialHostId, onHomeDirectory, onChooseDirectory, onOpen, onCancel }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const returnFocusRef = useRef(document.activeElement instanceof HTMLElement ? document.activeElement : undefined);
   const [path, setPath] = useState(initialPath);
   const [hostId, setHostId] = useState(initialHostId);
   const [error, setError] = useState<string>();
   const [choosing, setChoosing] = useState(false);
   const [listing, setListing] = useState<DirectoryListing>();
-  useEffect(() => { const dialog = dialogRef.current; dialog?.showModal(); return () => { if (dialog?.open) dialog.close(); }; }, []);
+  useEffect(() => { const dialog = dialogRef.current; dialog?.showModal(); return () => { if (dialog?.open) dialog.close(); requestAnimationFrame(() => returnFocusRef.current?.focus()); }; }, []);
   useEffect(() => { let cancelled = false; setChoosing(true); setError(undefined); void onHomeDirectory(hostId).then((home) => { if (!cancelled) setPath(home); }).catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); }).finally(() => { if (!cancelled) setChoosing(false); }); return () => { cancelled = true; }; }, [hostId, onHomeDirectory]);
   const open = async () => { if (!path.trim()) { setError("Path can't be empty"); return; } setChoosing(true); setError(undefined); try { await onOpen(path, hostId); } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); } finally { setChoosing(false); } };
   const choose = async (directory = path) => {
