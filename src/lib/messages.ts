@@ -9,12 +9,20 @@ export function cacheHitStats(usage?: { input: number; cacheRead: number }) {
   return { rate: Math.round(usage.cacheRead / promptTokens * 100), low: usage.cacheRead < Math.max(promptTokens * .5, 1000), cachedTokens: usage.cacheRead, promptTokens };
 }
 
+const injectedChangeContext = /^<project_context>\nChanged files since last message:\n[\s\S]*?\n<\/project_context>\n\n/;
+
+function visibleUserContent(content: unknown) {
+  if (typeof content === "string") return content.replace(injectedChangeContext, "");
+  if (!Array.isArray(content)) return content;
+  return content.map((part, index) => index === 0 && part && typeof part === "object" && (part as { type?: unknown }).type === "text" && typeof (part as { text?: unknown }).text === "string" ? { ...part, text: (part as { text: string }).text.replace(injectedChangeContext, "") } : part);
+}
+
 export function normalizeMessage(message: Record<string, unknown>, entryId?: string, completedAt?: string, fallbackId?: string): ChatMessage {
   const numericStamp = Number(message.timestamp || Date.now());
   const stamp = Number.isFinite(numericStamp) ? numericStamp : Date.parse(String(message.timestamp)) || Date.now();
   const completionStamp = completedAt ? Date.parse(completedAt) : NaN;
   const isBtw = message.role === "custom" && message.customType === "pi-desktop-btw";
-  return { ...(message as unknown as ChatMessage), id: entryId || fallbackId || (typeof message.id === "string" ? message.id : undefined) || `live-${message.role}-${stamp}`, entryId, role: (message.role === "toolResult" ? "tool" : isBtw ? "assistant" : message.role) as ChatMessage["role"], toolStatus: message.role === "toolResult" ? (message.isError ? "error" : "done") : undefined, timestamp: stamp, ...(Number.isFinite(completionStamp) ? { completedAt: completionStamp } : {}) };
+  return { ...(message as unknown as ChatMessage), ...(message.role === "user" ? { content: visibleUserContent(message.content) as ChatMessage["content"] } : {}), id: entryId || fallbackId || (typeof message.id === "string" ? message.id : undefined) || `live-${message.role}-${stamp}`, entryId, role: (message.role === "toolResult" ? "tool" : isBtw ? "assistant" : message.role) as ChatMessage["role"], toolStatus: message.role === "toolResult" ? (message.isError ? "error" : "done") : undefined, timestamp: stamp, ...(Number.isFinite(completionStamp) ? { completedAt: completionStamp } : {}) };
 }
 
 export function applyAssistantMessageEvent(message: ChatMessage, value: unknown): ChatMessage {

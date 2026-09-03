@@ -7,9 +7,10 @@ worktree with that snapshot and prepends a compact `<project_context>` block con
 - changed paths relative to the repository root;
 - a ready-to-run `git diff` command for the complete patch.
 
-The block is inserted after the existing conversation history and immediately before
-the user's new text. It is omitted until the session has a baseline snapshot and when
-there are no changes to report.
+The block is injected as a hidden custom message after the existing conversation
+history and positioned immediately before the user's new message in model context. It
+does not appear in the chat transcript. It is omitted until the session has a baseline
+snapshot and when there are no changes to report.
 
 Pi emits `message_end` for more than successful answers. The extension snapshots only
 assistant messages whose `stopReason` is `stop`. It deliberately ignores intermediate

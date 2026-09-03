@@ -45,6 +45,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
     if (event.type === "message_start" || event.type === "message_end") {
       if (event.type === "message_end") flush();
       const rawMessage = event.message as Record<string, unknown>; const roleKey = String(rawMessage.role ?? "message");
+      if (rawMessage.role === "custom" && rawMessage.display === false) return;
       const liveId = event.type === "message_start" ? nextLiveMessageId(roleKey) : activeMessageIds.current.get(roleKey) ?? nextLiveMessageId(roleKey);
       if (event.type === "message_start") activeMessageIds.current.set(roleKey, liveId); else activeMessageIds.current.delete(roleKey);
       let message = normalizeMessage(rawMessage, undefined, undefined, liveId);

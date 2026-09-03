@@ -7,6 +7,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 const REF_ROOT = "refs/pi-session-snapshots";
 const SNAPSHOT_ENTRY = "pi-git-change-snapshot";
+const CHANGE_CONTEXT_MESSAGE = "pi-git-change-context";
 const MAX_LISTED_FILES = 200;
 const MAX_GIT_OUTPUT = 4 * 1024 * 1024;
 
@@ -144,6 +145,7 @@ ${command}
 
 export default function gitChangeContext(pi: ExtensionAPI) {
   let snapshotQueue = Promise.resolve();
+  let pendingContext: string | undefined;
   let lastError = "";
 
   const reportError = (ctx: ExtensionContext, error: unknown) => {
@@ -164,6 +166,7 @@ export default function gitChangeContext(pi: ExtensionAPI) {
   });
 
   pi.on("input", async (event, ctx) => {
+    pendingContext = undefined;
     if (event.source === "extension" || !event.text.trim() || event.text.startsWith("/")) {
       return { action: "continue" };
     }
@@ -178,10 +181,36 @@ export default function gitChangeContext(pi: ExtensionAPI) {
       const files = rawPaths.split("\0").filter(Boolean);
       if (!files.length) return { action: "continue" };
       lastError = "";
-      return { action: "transform", text: `${projectContext(root, snapshot.commit, current, files)}\n\n${event.text}`, images: event.images };
+      pendingContext = projectContext(root, snapshot.commit, current, files);
+      return { action: "continue" };
     } catch (error) {
       reportError(ctx, error);
       return { action: "continue" };
     }
+  });
+
+  pi.on("before_agent_start", () => {
+    const content = pendingContext;
+    pendingContext = undefined;
+    if (!content) return;
+    return { message: { customType: CHANGE_CONTEXT_MESSAGE, content, display: false } };
+  });
+
+  pi.on("context", (event) => {
+    let contextIndex = -1;
+    for (let index = event.messages.length - 1; index >= 0; index -= 1) {
+      const message = event.messages[index];
+      if (message.role === "custom" && message.customType === CHANGE_CONTEXT_MESSAGE) { contextIndex = index; break; }
+    }
+    if (contextIndex < 0) return;
+    let userIndex = -1;
+    for (let index = contextIndex - 1; index >= 0; index -= 1) {
+      if (event.messages[index].role === "user") { userIndex = index; break; }
+    }
+    if (userIndex < 0 || contextIndex !== userIndex + 1) return;
+    const messages = [...event.messages];
+    const [context] = messages.splice(contextIndex, 1);
+    messages.splice(userIndex, 0, context);
+    return { messages };
   });
 }
