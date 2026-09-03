@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomInt } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 
@@ -11,6 +12,8 @@ const defaultBinary = path.resolve(
 const testWindow = { width: 1_100, height: 720 };
 const defaultActualCallModel = "openai-codex/gpt-5.6-luna";
 const actualCallModel = process.env.PI_E2E_ACTUAL_MODEL?.trim() || defaultActualCallModel;
+const driverProvider = process.platform === "linux" ? "external" : "embedded";
+const webdriverPort = randomInt(20_000, 60_000);
 const sessionsRoot = path.join(homedir(), ".pi-desktop", "sessions");
 const temporaryProjectsRoot = path.join(homedir(), "pi-desktop", "tmp");
 const orchestrationConfigPath = path.join(homedir(), ".pi", "agent", "extensions", "pi-orchestration", "config.json");
@@ -68,7 +71,9 @@ export const config: WebdriverIO.Config = {
   capabilities: [{ browserName: "tauri" }],
   services: [["@wdio/tauri-service", {
     appBinaryPath: process.env.PI_E2E_BINARY ?? defaultBinary,
-    driverProvider: "embedded",
+    driverProvider,
+    tauriDriverPort: webdriverPort,
+    embeddedPort: webdriverPort,
     captureBackendLogs: true,
   }]],
   framework: "mocha",
