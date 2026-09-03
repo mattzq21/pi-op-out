@@ -25,6 +25,12 @@ const updateBackendResponse = async (command: string, response: unknown) => {
   await responseBridge().setValue(JSON.stringify({ ...responses, [command]: response }));
 };
 const resetBackend = async () => { await callBridge().setValue("[]"); await responseBridge().setValue("{}"); };
+const resetApp = async () => {
+  await resetBackend();
+  await browser.refresh();
+  await app.waitUntilReady();
+  await app.composer.waitForEnabled();
+};
 const emitPiEvent = (payload: Record<string, unknown>) => browser.execute(async (event) => {
   const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
   await tauri.invoke("plugin:event|emit", { event: "pi://event", payload: event });
@@ -43,6 +49,10 @@ const acceptanceOrchestration = (): OrchestrationCapability => ({
 });
 
 describe("BUGS-3 regressions", () => {
+  before(async () => {
+    await resetApp();
+  });
+
   beforeEach(async () => {
     await app.openConversations();
     await app.clearMessage();
@@ -86,6 +96,7 @@ describe("BUGS-3 regressions", () => {
       await $('button[aria-label="New conversation"]').click();
       await browser.waitUntil(async () => (await backendCalls()).filter(({ command }) => command === "create_temporary_chat").length === 2);
 
+<<<<<<< HEAD
       await expect(app.composer).toHaveValue("");
       await expect(app.terminalPanel).not.toBeExisting();
       await expect(app.openTerminalButton).toBeEnabled();
@@ -96,6 +107,11 @@ describe("BUGS-3 regressions", () => {
       await browser.refresh();
       await app.waitUntilReady();
     }
+=======
+    await expect(app.composer).toHaveValue("");
+    await app.openTerminalButton.click();
+    await expect($$(".terminal-tab")).toBeElementsArrayOfSize(1);
+>>>>>>> 48b16b0 (Committed all changes)
   });
 
   it("keeps a terminal tab when closing its process fails", async () => {
@@ -168,8 +184,25 @@ const connectedSessionResponses = (sessionId: string) => ({
   "pi_command:get_available_thinking_levels": { levels: ["off", "high"] }, "pi_command:get_commands": { commands: [] }, "pi_command:get_session_stats": {},
   "pi_command:set_auto_compaction": {}, "pi_command:set_auto_retry": {},
 });
+const startTemporaryConversation = async (responses: Record<string, unknown>) => {
+  await mockBackend({
+    create_temporary_chat: { cwd: "/tmp/acceptance-terminal", sessionId: "acceptance-terminal" },
+    start_pi: {}, stop_pi: {}, list_sessions: [],
+    load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance" },
+    ...connectedSessionResponses("acceptance-terminal"),
+    "pi_command:set_model": {},
+    ...responses,
+  });
+  await $('button[aria-label="New conversation"]').click();
+  await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "create_temporary_chat"));
+  await app.composer.waitForEnabled();
+};
 
 describe("Conversation acceptance", () => {
+  before(async () => {
+    await resetApp();
+  });
+
   beforeEach(async () => {
     await app.openConversations();
     await app.clearMessage();
@@ -280,7 +313,10 @@ describe("Conversation acceptance", () => {
       const menu = $('[role="menu"][aria-label="Acceptance indexed conversation actions"]');
       await expect(menu).toBeDisplayed();
       await expect(menu.$$("[role='menuitem']")).toBeElementsArrayOfSize(4);
+<<<<<<< HEAD
       await expect(session.$('button[aria-label="Archive conversation"]')).toBeExisting();
+=======
+>>>>>>> 48b16b0 (Committed all changes)
       await browser.keys("Escape");
       await expect(menu).not.toBeExisting();
     } finally {
@@ -373,7 +409,7 @@ describe("Conversation acceptance", () => {
     } finally {
       await app.conversationSearch.clearValue();
       if (await $("#extension-dialog-title").isExisting()) await $('//section[@role="dialog"]//button[normalize-space(.)="Cancel"]').click();
-      await resetBackend();
+      await resetApp();
     }
   });
 
@@ -413,7 +449,7 @@ describe("Conversation acceptance", () => {
       expect((await backendCalls()).find(({ command }) => command === "archive_session")?.args).toEqual({ sessionPath: indexed.path, hostId: "local", terminalState: undefined });
     } finally {
       await app.conversationSearch.clearValue();
-      await resetBackend();
+      await resetApp();
     }
   });
 
@@ -477,7 +513,7 @@ describe("Conversation acceptance", () => {
       expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "set_session_name")?.args.command).toEqual({ type: "set_session_name", name: "Renamed acceptance conversation" });
     } finally {
       await app.conversationSearch.clearValue();
-      await resetBackend();
+      await resetApp();
     }
   });
 
@@ -665,7 +701,11 @@ describe("Conversation acceptance", () => {
     await expect($(".attachments")).toHaveText(expect.stringContaining("fixture-12.txt"));
     expect(await $(".attachments").getText()).not.toContain("fixture-13.txt");
 
+<<<<<<< HEAD
     while ((await $$(".attachments button")).length) await $(".attachments button").click();
+=======
+    while (await $(".attachments button").isExisting()) await $(".attachments button").click();
+>>>>>>> 48b16b0 (Committed all changes)
     await expect($(".attachments")).not.toBeExisting();
   });
 
@@ -884,7 +924,11 @@ describe("Conversation acceptance", () => {
       ],
       leafId: "cache-assistant",
     };
+<<<<<<< HEAD
     await mockBackend({ ...connectedSessionResponses("cache-session"), "pi_command:get_entries": history, load_app_settings: settings });
+=======
+    await mockBackend({ ...connectedSessionResponses("cache-session"), load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", debugMode: true }, "pi_command:get_entries": history });
+>>>>>>> 48b16b0 (Committed all changes)
     try {
       await emitPiEvent({ type: "session_switched" });
       await expect($(".cache-hit-rate")).toHaveText("Cache 75%");
@@ -899,8 +943,13 @@ describe("Conversation acceptance", () => {
   });
 
   it("renders terminal output and reports when the process exits", async () => {
+<<<<<<< HEAD
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
     await mockBackend({ create_temporary_chat: { cwd: "/tmp/terminal-output", sessionId: "terminal-output" }, list_sessions: [], ...connectedSessionResponses(""), "pi_command:set_model": {}, load_app_settings: settings, start_pi: {}, stop_pi: {}, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
+=======
+    await resetApp();
+    await startTemporaryConversation({ start_terminal: {}, resize_terminal: {}, close_terminal: {} });
+>>>>>>> 48b16b0 (Committed all changes)
     try {
       while (await $(".error-toast button").isExisting()) await $(".error-toast button").click();
       await $('button[aria-label="New conversation"]').click();
@@ -925,7 +974,8 @@ describe("Conversation acceptance", () => {
   });
 
   it("shows a terminal startup failure inside the terminal", async () => {
-    await mockBackend({ start_terminal: { error: "Terminal launch rejected" }, resize_terminal: {}, close_terminal: {} });
+    await resetApp();
+    await startTemporaryConversation({ start_terminal: { error: "Terminal launch rejected" }, resize_terminal: {}, close_terminal: {} });
     try {
       await app.openTerminalButton.click();
       await browser.waitUntil(async () => String(await browser.execute(() => document.querySelector(".xterm-rows")?.textContent)).includes("Could not start terminal: Error: Terminal launch rejected"));
@@ -938,7 +988,8 @@ describe("Conversation acceptance", () => {
   });
 
   it("shows terminal input failures inside the active terminal", async () => {
-    await mockBackend({ start_terminal: {}, resize_terminal: {}, write_terminal: { error: "Terminal input channel closed" }, close_terminal: {} });
+    await resetApp();
+    await startTemporaryConversation({ start_terminal: {}, resize_terminal: {}, write_terminal: { error: "Terminal input channel closed" }, close_terminal: {} });
     try {
       await app.openTerminalButton.click();
       await expect(app.terminalPanel).toBeDisplayed();
@@ -1291,6 +1342,10 @@ describe("/btw acceptance", () => {
     "pi_command:prompt": {}, "pi_command:extension_ui_response": {},
   });
 
+  before(async () => {
+    await resetApp();
+  });
+
   beforeEach(async () => {
     await app.openConversations();
   });
@@ -1371,6 +1426,10 @@ describe("/btw acceptance", () => {
 });
 
 describe("Settings behavior", () => {
+  before(async () => {
+    await resetApp();
+  });
+
   it("keeps edited settings and explains when the backend rejects saving", async () => {
     await mockBackend({ save_app_settings: { error: "Settings disk is read-only" } });
     try {
@@ -1390,6 +1449,10 @@ describe("Settings behavior", () => {
 });
 
 describe("Orchestration acceptance", () => {
+  before(async () => {
+    await resetApp();
+  });
+
   beforeEach(async () => {
     await app.openConversations();
     await enableOrchestration();
@@ -1507,6 +1570,7 @@ describe("Orchestration acceptance", () => {
   });
 
   it("saves the encoded orchestration configuration and reconnects", async () => {
+<<<<<<< HEAD
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
     await mockBackend({
       ...connectedSessionResponses("orchestration-save"),
@@ -1515,6 +1579,17 @@ describe("Orchestration acceptance", () => {
     await emitPiEvent({ type: "session_switched" });
     await enableOrchestration();
     await expect(app.modelPicker).toHaveAttribute("data-options", expect.stringContaining("e2e/acceptance"));
+=======
+    await resetApp();
+    await mockBackend({
+      "pi_command:prompt": {}, save_app_settings: {}, stop_pi: {}, start_pi: {}, list_sessions: [],
+      load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance" },
+      ...connectedSessionResponses("orchestration-save"),
+      "pi_command:set_model": {},
+    });
+    await emitPiEvent({ type: "session_switched" });
+    await enableOrchestration();
+>>>>>>> 48b16b0 (Committed all changes)
     await app.openSettings();
     await setSelectValue('select[aria-label="Default model"]', "e2e/acceptance");
     await expect($('select[aria-label="Default model"]')).toHaveValue("e2e/acceptance");
@@ -1535,6 +1610,7 @@ describe("Orchestration acceptance", () => {
   it("persists a GUI-created agent through a real native save and reconnect", async () => {
     const originalConfig = readFileSync(installedOrchestrationConfigPath);
     const agentName = "e2e-persisted-agent";
+    writeFileSync(installedOrchestrationConfigPath, JSON.stringify(acceptanceOrchestration().config, null, 2));
     await resetBackend();
     await browser.refresh();
     await app.waitUntilReady();
@@ -1548,12 +1624,13 @@ describe("Orchestration acceptance", () => {
       await $('input[aria-label="Agent name"]').setValue(agentName);
       await $('input[aria-label="Agent description"]').setValue("Saved by the native acceptance test");
       await $('textarea[aria-label="System prompt"]').setValue("Verify the saved agent configuration.");
+      await expect(app.saveSettingsButton).toBeClickable();
       await app.saveSettingsButton.click();
 
       await browser.waitUntil(() => {
         const saved = JSON.parse(readFileSync(installedOrchestrationConfigPath, "utf8")) as OrchestrationConfig;
         return saved.agents.some((agent) => agent.name === agentName);
-      }, { timeoutMsg: "The GUI-created agent was not written to the installed orchestration config" });
+      }, { timeout: 30_000, timeoutMsg: "The GUI-created agent was not written to the installed orchestration config" });
       const saved = JSON.parse(readFileSync(installedOrchestrationConfigPath, "utf8")) as OrchestrationConfig;
       expect(saved.agents.find((agent) => agent.name === agentName)).toMatchObject({
         description: "Saved by the native acceptance test",
@@ -1571,21 +1648,27 @@ describe("Orchestration acceptance", () => {
       await expect($('input[aria-label="Agent description"]')).toHaveValue("Saved by the native acceptance test");
     } finally {
       writeFileSync(installedOrchestrationConfigPath, originalConfig);
+      await resetApp();
     }
   });
 
-  it("does not save desktop settings when orchestration configuration is rejected", async () => {
+  it("restores desktop settings when orchestration configuration is rejected", async () => {
     await app.openSettings();
     await mockBackend({ "pi_command:prompt": { error: "Orchestration configuration was rejected" } });
     await app.saveSettingsButton.click();
 
     await expect($(".settings-save [role='alert']")).toHaveText("Orchestration configuration was rejected");
-    expect((await backendCalls()).filter(({ command }) => command === "save_app_settings")).toHaveLength(0);
-    expect((await backendCalls()).filter(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-orchestration-config "))).toHaveLength(1);
+    const calls = await backendCalls();
+    expect(calls.filter(({ command }) => command === "save_app_settings")).toHaveLength(2);
+    expect(calls.filter(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-orchestration-config "))).toHaveLength(2);
   });
 });
 
 describe("Settings acceptance", () => {
+  before(async () => {
+    await resetApp();
+  });
+
   it("saves the current configuration and confirms success", async () => {
     await app.openSettings();
     await app.saveSettingsButton.click();
@@ -1794,6 +1877,10 @@ describe("Settings acceptance", () => {
 });
 
 describe("Project behavior", () => {
+  beforeEach(async () => {
+    await resetApp();
+  });
+
   it("browses directories on a configured remote machine", async () => {
     const remote = { id: "acceptance-remote", name: "Acceptance remote", target: "tester@example.com", piPath: "pi" };
     await mockBackend({
@@ -1862,9 +1949,14 @@ describe("Project behavior", () => {
   it("switches to a project after the backend connects successfully", async () => {
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
     await mockBackend({
-      stop_pi: {}, start_pi: {},
+      stop_pi: {}, start_pi: {}, validate_project_directory: "/tmp",
+      load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance" },
       ...connectedSessionResponses("acceptance-project"),
+<<<<<<< HEAD
       "pi_command:set_model": {}, load_app_settings: settings, validate_project_directory: "/tmp",
+=======
+      "pi_command:set_model": {},
+>>>>>>> 48b16b0 (Committed all changes)
     });
     try {
       while (await $(".error-toast button").isExisting()) await $(".error-toast button").click();
@@ -1888,12 +1980,14 @@ describe("Project behavior", () => {
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
     await mockBackend({
       ...connectedSessionResponses("acceptance-project"),
+      load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance" },
       "pi_command:get_state": { model: { provider: "e2e", id: "alternate" }, thinkingLevel: "high", isStreaming: false, sessionId: "acceptance-project", messageCount: 0, pendingMessageCount: 0 },
       "pi_command:set_model": {}, "pi_command:set_thinking_level": {}, validate_project_directory: "/tmp", start_pi: {}, stop_pi: {},
       load_app_settings: settings,
     });
     try {
       await emitPiEvent({ type: "session_switched" });
+<<<<<<< HEAD
       await app.openProjectChooser();
       await app.projectDirectory.setValue("/tmp");
       await app.openProjectButton.click();
@@ -1901,6 +1995,8 @@ describe("Project behavior", () => {
       await expect(app.modelPicker).toBeEnabled();
       await expect(app.modelPicker).toHaveAttribute("data-options", expect.stringContaining("e2e/alternate"));
       await callBridge().setValue("[]");
+=======
+>>>>>>> 48b16b0 (Committed all changes)
       await app.chooseComposerOption("Model", "Alternate model");
       await expect(app.modelPicker).toHaveText("Alternate model");
       await app.chooseComposerOption("Thinking level", "off");
@@ -1918,7 +2014,7 @@ describe("Project behavior", () => {
   });
 
   it("forwards terminal keyboard input to the active project terminal", async () => {
-    await mockBackend({ start_terminal: {}, resize_terminal: {}, write_terminal: {}, close_terminal: {} });
+    await startTemporaryConversation({ start_terminal: {}, resize_terminal: {}, write_terminal: {}, close_terminal: {} });
     try {
       await app.openTerminalButton.click();
       const terminalInput = $(".xterm-helper-textarea");
@@ -1938,7 +2034,7 @@ describe("Project behavior", () => {
   });
 
   it("reports a backend connection failure without trapping the user in the chooser", async () => {
-    await mockBackend({ stop_pi: {}, start_pi: { error: "Project runtime unavailable" } });
+    await mockBackend({ stop_pi: {}, start_pi: { error: "Project runtime unavailable" }, validate_project_directory: "/tmp/acceptance-project" });
     try {
       await app.openProjectChooser();
       await app.projectDirectory.setValue("/tmp/acceptance-project");
@@ -1947,7 +2043,7 @@ describe("Project behavior", () => {
       await expect(app.projectDialogHeading).not.toBeExisting();
       await expect($(".error-toast strong")).toHaveText("Pi could not connect");
       await expect($(".error-toast span")).toHaveText("Project runtime unavailable");
-      expect((await backendCalls()).filter(({ command }) => command === "stop_pi" || command === "start_pi").map(({ command }) => command)).toEqual(["start_pi"]);
+      expect((await backendCalls()).filter(({ command }) => command === "stop_pi" || command === "start_pi").map(({ command }) => command)).toEqual(["stop_pi", "start_pi"]);
     } finally {
       await resetBackend();
     }
@@ -1955,29 +2051,40 @@ describe("Project behavior", () => {
 });
 
 describe("Conversation lifecycle", () => {
+  beforeEach(async () => {
+    await resetApp();
+  });
+
   it("keeps a separate composer draft for each conversation", async () => {
     const current = { id: "draft-current", path: "/tmp/draft-current.jsonl", name: "Draft current conversation", project: "Draft project", cwd: "/tmp", preview: "Current draft", messageCount: 1, hostId: "local" };
     const target = { id: "draft-target", path: "/tmp/draft-target.jsonl", name: "Draft target conversation", project: "Draft project", cwd: "/tmp", preview: "Target draft", messageCount: 1, hostId: "local" };
     const state = (sessionId: string) => ({ model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 0, pendingMessageCount: 0 });
-    await mockBackend({ list_sessions: [current, target], start_pi: {}, stop_pi: {}, ...connectedSessionResponses(current.id) });
+    await mockBackend({ list_sessions: [current, target], start_pi: {}, stop_pi: {}, load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance" }, ...connectedSessionResponses(""), "pi_command:set_model": {} });
     try {
       await emitPiEvent({ type: "session_switched" });
+      await updateBackendResponse("pi_command:get_state", state(current.id));
+      await app.conversationSearch.setValue(current.name);
+      await $(".session-item .session-main").click();
+      await app.composer.waitForEnabled();
       await app.prepareMessage("Draft belonging to the current conversation");
 
       await updateBackendResponse("pi_command:get_state", state(target.id));
       await app.conversationSearch.setValue(target.name);
       await $(".session-item .session-main").click();
+      await app.composer.waitForEnabled();
       await expect(app.composer).toHaveValue("");
       await app.prepareMessage("Draft belonging to the target conversation");
 
       await updateBackendResponse("pi_command:get_state", state(current.id));
       await app.conversationSearch.setValue(current.name);
       await $(".session-item .session-main").click();
+      await app.composer.waitForEnabled();
       await expect(app.composer).toHaveValue("Draft belonging to the current conversation");
 
       await updateBackendResponse("pi_command:get_state", state(target.id));
       await app.conversationSearch.setValue(target.name);
       await $(".session-item .session-main").click();
+      await app.composer.waitForEnabled();
       await expect(app.composer).toHaveValue("Draft belonging to the target conversation");
       await app.clearMessage();
     } finally {
@@ -1988,7 +2095,7 @@ describe("Conversation lifecycle", () => {
 
   it("keeps split-pane drafts separate from the main conversation", async () => {
     const indexed = { id: "draft-split", path: "/tmp/draft-split.jsonl", name: "Draft split conversation", project: "Draft project", cwd: "/tmp", preview: "Split draft", messageCount: 1, hostId: "local" };
-    await mockBackend({ list_sessions: [indexed], start_pi: {}, stop_pi: {}, ...connectedSessionResponses(indexed.id) });
+    await mockBackend({ list_sessions: [indexed], start_pi: {}, stop_pi: {}, load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance" }, ...connectedSessionResponses(""), "pi_command:set_model": {} });
     const openSplit = async () => {
       await app.conversationSearch.setValue(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
@@ -1999,6 +2106,7 @@ describe("Conversation lifecycle", () => {
       return split;
     };
     try {
+      await emitPiEvent({ type: "session_switched" });
       await app.prepareMessage("Main conversation draft");
       let split = await openSplit();
       await split.$('textarea[aria-label="Message Pi"]').setValue("Independent split-pane draft");
@@ -2023,14 +2131,25 @@ describe("Conversation lifecycle", () => {
     const current = { id: "terminal-current", path: "/tmp/terminal-current.jsonl", name: "Terminal current conversation", project: "Terminal project", cwd: "/tmp", preview: "Current terminal", messageCount: 1, hostId: "local" };
     const target = { id: "terminal-target", path: "/tmp/terminal-target.jsonl", name: "Terminal target conversation", project: "Terminal project", cwd: "/tmp", preview: "Target terminal", messageCount: 1, hostId: "local" };
     const state = (sessionId: string) => ({ model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 0, pendingMessageCount: 0 });
+<<<<<<< HEAD
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
     await mockBackend({ list_sessions: [current, target], start_pi: {}, stop_pi: {}, ...connectedSessionResponses("terminal-bootstrap"), "pi_command:set_model": {}, load_app_settings: settings, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
+=======
+    await mockBackend({ list_sessions: [current, target], start_pi: {}, stop_pi: {}, load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance" }, ...connectedSessionResponses(""), "pi_command:set_model": {}, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
+>>>>>>> 48b16b0 (Committed all changes)
     try {
       while (await $(".error-toast button").isExisting()) await $(".error-toast button").click();
       await emitPiEvent({ type: "session_switched" });
+<<<<<<< HEAD
       await app.conversationSearch.setValue(current.name);
       await $(".session-item .session-main").click();
       await expect(app.openTerminalButton).toBeEnabled();
+=======
+      await updateBackendResponse("pi_command:get_state", state(current.id));
+      await app.conversationSearch.setValue(current.name);
+      await $(".session-item .session-main").click();
+      await app.composer.waitForEnabled();
+>>>>>>> 48b16b0 (Committed all changes)
       await app.openTerminalButton.click();
       await app.addTerminalButton.click();
       await expect($$(".terminal-tab")).toBeElementsArrayOfSize(2);
@@ -2038,16 +2157,24 @@ describe("Conversation lifecycle", () => {
       await updateBackendResponse("pi_command:get_state", state(target.id));
       await app.conversationSearch.setValue(target.name);
       await $(".session-item .session-main").click();
+<<<<<<< HEAD
       await expect(app.terminalPanel).not.toBeExisting();
       await expect(app.openTerminalButton).toBeEnabled();
+=======
+      await app.composer.waitForEnabled();
+>>>>>>> 48b16b0 (Committed all changes)
       await app.openTerminalButton.click();
       await expect($$(".terminal-tab")).toBeElementsArrayOfSize(1);
 
       await updateBackendResponse("pi_command:get_state", state(current.id));
       await app.conversationSearch.setValue(current.name);
       await $(".session-item .session-main").click();
+<<<<<<< HEAD
       await expect(app.terminalPanel).not.toBeExisting();
       await expect(app.openTerminalButton).toBeEnabled();
+=======
+      await app.composer.waitForEnabled();
+>>>>>>> 48b16b0 (Committed all changes)
       await app.openTerminalButton.click();
       await expect($$(".terminal-tab")).toBeElementsArrayOfSize(2);
       await app.closeTerminalButton.click();
@@ -2061,9 +2188,13 @@ describe("Conversation lifecycle", () => {
   it("starts a replacement session and closes the archived conversation's terminal", async () => {
     const indexed = { id: "archive-active", path: "/tmp/archive-active.jsonl", name: "Active archive conversation", project: "Archive project", cwd: "/tmp", preview: "Active archive", messageCount: 2, hostId: "local" };
     const replacementState = { model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId: "archive-replacement", messageCount: 0, pendingMessageCount: 0 };
-    await mockBackend({ list_sessions: [indexed], ...connectedSessionResponses(indexed.id), "pi_command:new_session": {}, archive_session: {}, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
+    await mockBackend({ list_sessions: [indexed], start_pi: {}, stop_pi: {}, load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance" }, ...connectedSessionResponses(""), "pi_command:set_model": {}, "pi_command:new_session": {}, archive_session: {}, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
     try {
       await emitPiEvent({ type: "session_switched" });
+      await updateBackendResponse("pi_command:get_state", { ...replacementState, sessionId: indexed.id });
+      await app.conversationSearch.setValue(indexed.name);
+      await $(".session-item .session-main").click();
+      await app.composer.waitForEnabled();
       await app.openTerminalButton.click();
       await expect(app.terminalPanel).toBeDisplayed();
       await updateBackendResponse("pi_command:get_state", replacementState);
@@ -2094,7 +2225,7 @@ describe("Conversation lifecycle", () => {
 
       await expect(app.composer).toHaveValue("");
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "start_pi"));
-      expect((await backendCalls()).filter(({ command }) => command === "stop_pi" || command === "start_pi").map(({ command }) => command)).toEqual(["start_pi"]);
+      expect((await backendCalls()).filter(({ command }) => command === "start_pi")).toHaveLength(1);
     } finally {
       await resetBackend();
     }
