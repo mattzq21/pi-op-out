@@ -46,14 +46,26 @@ function instructionsFromPrompt(prompt: string) {
   return { block, instructions };
 }
 
+function changeInstructionFromMessages(messages: unknown[]) {
+  const latestUser = [...messages].reverse().find((message) => message && typeof message === "object" && (message as { role?: unknown }).role === "user") as { content?: unknown } | undefined;
+  if (!latestUser) return undefined;
+  const text = Array.isArray(latestUser.content)
+    ? latestUser.content.flatMap((part) => part && typeof part === "object" && (part as { type?: unknown }).type === "text" && typeof (part as { text?: unknown }).text === "string" ? [(part as { text: string }).text] : []).join("\n")
+    : typeof latestUser.content === "string" ? latestUser.content : "";
+  const match = text.match(/^<project_context>\n([\s\S]*?)\n<\/project_context>(?:\n\n|$)/);
+  return match ? { path: "Git changes since last message", content: match[1], block: match[0] } : undefined;
+}
+
 export default async function contextWindowCap(pi: ExtensionAPI) {
   const cap = await loadCap();
   let lastStatus = "";
 
-  const publishPromptContext = (ctx: ExtensionContext, persist = false) => {
+  const publishPromptContext = (ctx: ExtensionContext, messages: unknown[] = [], persist = false) => {
     const systemPrompt = ctx.getSystemPrompt();
     const { block: skillPrompt, skills } = skillsFromPrompt(systemPrompt);
     const { block: instructionPrompt, instructions } = instructionsFromPrompt(systemPrompt);
+    const changeInstruction = changeInstructionFromMessages(messages);
+    if (changeInstruction) instructions.push({ path: changeInstruction.path, content: changeInstruction.content });
     const activeTools = new Set(pi.getActiveTools());
     const tools = pi.getAllTools().filter((tool) => activeTools.has(tool.name)).map(({ name, description, parameters }) => ({ name, description, parameters }));
     const estimate = (value: unknown) => Math.ceil((typeof value === "string" ? value : JSON.stringify(value)).length / 4);
@@ -62,7 +74,7 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
       instructions,
       tools,
       skills,
-      tokens: { system: estimate(systemPrompt.replace(skillPrompt, "").replace(instructionPrompt, "")), instructions: estimate(instructionPrompt), tools: estimate(tools), skills: estimate(skillPrompt) },
+      tokens: { system: estimate(systemPrompt.replace(skillPrompt, "").replace(instructionPrompt, "")), instructions: estimate(instructionPrompt) + estimate(changeInstruction?.block ?? ""), tools: estimate(tools), skills: estimate(skillPrompt) },
     };
     if (persist) pi.appendEntry(STATUS_KEY, snapshot);
     const status = `json:${JSON.stringify(snapshot)}`;
@@ -79,7 +91,7 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
     capModel(event.model, cap);
   });
 
-  pi.on("context", (_event, ctx) => {
-    publishPromptContext(ctx, true);
+  pi.on("context", (event, ctx) => {
+    publishPromptContext(ctx, event.messages, true);
   });
 }
