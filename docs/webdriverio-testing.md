@@ -29,6 +29,10 @@ PI_E2E_ACTUAL_MODEL=provider/model npm run test:e2e
 
 The runner uses one application instance and captures native backend logs. Specs have a 60-second timeout; WebDriver commands use a 10-second wait timeout.
 
+## Agent-driven sessions
+
+When using the WebdriverIO MCP, do not enable trace recording. Omit the `trace` argument or set `trace: false` when starting or attaching to a session. Trace recording creates screenshot-heavy archives in `.trace/` that are not needed for normal agent operation.
+
 ## Add a scenario
 
 Acceptance specs live in `test/e2e/specs`. Reusable selectors and user interactions belong in `test/e2e/pageobjects/app.page.ts`.
