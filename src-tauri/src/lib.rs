@@ -60,7 +60,6 @@ const MAX_GIT_SNAPSHOT_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_GIT_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_GIT_PATCH_BYTES: usize = 4 * 1024 * 1024;
 const MAX_GIT_DIFFS_BYTES: usize = 16 * 1024 * 1024;
-const MAX_ARCHIVED_TERMINAL_BYTES: usize = 64 * 1024;
 
 #[derive(Default)]
 struct PiRuntime {
@@ -1224,28 +1223,6 @@ fn stop_terminals_for_state(runtime: &TerminalRuntime, state: &mut Value) -> Res
     Ok(())
 }
 
-fn utf8_tail(value: &str, limit: usize) -> String {
-    if value.len() <= limit { return value.to_owned(); }
-    let mut start = value.len() - limit;
-    while !value.is_char_boundary(start) { start += 1; }
-    value[start..].to_owned()
-}
-
-fn bound_archived_terminal_state(state: &mut Value) -> Result<(), String> {
-    let size = serde_json::to_vec(state).map_err(|error| format!("Could not serialize terminal state: {error}"))?.len();
-    if size <= MAX_ARCHIVED_TERMINAL_BYTES { return Ok(()); }
-    let Some(tabs) = state.get_mut("tabs").and_then(Value::as_array_mut) else { return Err("Archived terminal state exceeds the 64 KiB limit".into()) };
-    let per_tab = MAX_ARCHIVED_TERMINAL_BYTES.saturating_sub(16 * 1024) / tabs.len().max(1);
-    for tab in tabs {
-        if let Some(output) = tab.get_mut("output") {
-            if let Some(text) = output.as_str() { *output = Value::String(utf8_tail(text, per_tab)); }
-        }
-    }
-    let bounded_size = serde_json::to_vec(state).map_err(|error| format!("Could not serialize terminal state: {error}"))?.len();
-    if bounded_size > MAX_ARCHIVED_TERMINAL_BYTES { return Err("Archived terminal metadata exceeds the 64 KiB limit".into()); }
-    Ok(())
-}
-
 fn open_system_path(path: &Path) -> Result<(), String> {
     let program = if cfg!(target_os = "macos") { "open" } else if cfg!(target_os = "windows") { "explorer" } else { "xdg-open" };
     Command::new(program).arg(path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|error| format!("Could not open {}: {error}", path.display()))?;
@@ -1460,18 +1437,12 @@ fn local_desktop_session_file(session_path: &str) -> Result<PathBuf, String> {
 #[tauri::command(async)]
 fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path: String, host_id: Option<String>, mut terminal_state: Option<Value>) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
-    if let Some(state) = terminal_state.as_mut() { bound_archived_terminal_state(state)?; }
     if host_id != "local" {
         let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
         let file_name = Path::new(&session_path).file_name().and_then(|name| name.to_str()).ok_or("Session path has no file name")?;
         let destination = format!("{}-{file_name}", Uuid::new_v4());
-        let terminal_sidecar = terminal_state.as_ref().map(|state| {
-            let sidecar = Path::new(&destination).with_extension("terminals.json").to_string_lossy().into_owned();
-            let body = serde_json::to_string_pretty(state).unwrap_or_else(|_| "{}".into());
-            (format!("if ! printf '%s' {} > \"$archive\"/{}; then exit 1; fi;", shell_quote(&body), shell_quote(&sidecar)), format!("rm -f -- \"$archive\"/{};", shell_quote(&sidecar)))
-        }).unwrap_or_default();
         let diff_destination = Path::new(&destination).with_extension("diffs.json").to_string_lossy().into_owned();
-        let remote = format!(r#"root=$(cd "$HOME/.pi-desktop/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) archive="$HOME/.pi-desktop/archived"; mkdir -p "$archive" || exit 1; {} diff=${{target%.jsonl}}.diffs.json; diff_target="$archive"/{}; moved_diff=0; if [ -f "$diff" ]; then mv -- "$diff" "$diff_target" || {{ {} exit 1; }}; moved_diff=1; fi; if ! mv -- "$target" "$archive"/{}; then if [ "$moved_diff" = 1 ]; then mv -- "$diff_target" "$diff" || true; fi; {} exit 1; fi ;; *) printf 'Refusing to archive a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(&session_path), terminal_sidecar.0, shell_quote(&diff_destination), terminal_sidecar.1, shell_quote(&destination), terminal_sidecar.1);
+        let remote = format!(r#"root=$(cd "$HOME/.pi-desktop/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) archive="$HOME/.pi-desktop/archived"; mkdir -p "$archive" || exit 1; diff=${{target%.jsonl}}.diffs.json; diff_target="$archive"/{}; moved_diff=0; if [ -f "$diff" ]; then mv -- "$diff" "$diff_target" || exit 1; moved_diff=1; fi; if ! mv -- "$target" "$archive"/{}; then if [ "$moved_diff" = 1 ]; then mv -- "$diff_target" "$diff" || true; fi; exit 1; fi ;; *) printf 'Refusing to archive a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(&session_path), shell_quote(&diff_destination), shell_quote(&destination));
         let output = ssh(host).arg(remote).output().map_err(|error| error.to_string())?;
         if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
         if let Some(state) = terminal_state.as_mut() { let _ = stop_terminals_for_state(&runtime, state); }
@@ -1487,18 +1458,13 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
         let extension = source.extension().and_then(|value| value.to_str()).unwrap_or("jsonl");
         destination = archive_dir.join(format!("{stem}-{}.{}", Uuid::new_v4(), extension));
     }
-    let state_path = destination.with_extension("terminals.json");
-    if let Some(state) = terminal_state.as_ref() {
-        fs::write(&state_path, serde_json::to_vec_pretty(state).map_err(|error| format!("Could not serialize terminal state: {error}"))?).map_err(|error| format!("Could not save terminal state: {error}"))?;
-    }
     let diff_source = source.with_extension("diffs.json"); let diff_destination = destination.with_extension("diffs.json");
     let moved_diff = if diff_source.exists() {
-        if let Err(error) = fs::rename(&diff_source, &diff_destination) { if terminal_state.is_some() { let _ = fs::remove_file(&state_path); } return Err(format!("Could not archive session diffs: {error}")); }
+        if let Err(error) = fs::rename(&diff_source, &diff_destination) { return Err(format!("Could not archive session diffs: {error}")); }
         true
     } else { false };
     if let Err(error) = fs::rename(&source, &destination) {
         if moved_diff { let _ = fs::rename(&diff_destination, &diff_source); }
-        if terminal_state.is_some() { let _ = fs::remove_file(&state_path); }
         return Err(format!("Could not archive session: {error}"));
     }
     if let Some(state) = terminal_state.as_mut() { let _ = stop_terminals_for_state(&runtime, state); }
