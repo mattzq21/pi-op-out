@@ -23,8 +23,8 @@ class AppPage {
   get saveSettingsButton() { return $(".settings-save button"); }
   get projectDialogHeading() { return $("#project-dialog-title"); }
   get projectDirectory() { return $('input[aria-label="Project directory"]'); }
-  get cancelProjectButton() { return $('//section[@role="dialog"]//button[normalize-space(.)="Cancel"]'); }
-  get openProjectButton() { return $('//section[@role="dialog"]//button[normalize-space(.)="Open project"]'); }
+  get cancelProjectButton() { return $('//dialog//button[normalize-space(.)="Cancel"]'); }
+  get openProjectButton() { return $('//dialog//button[normalize-space(.)="Open project"]'); }
   get chooseDirectoryButton() { return $(".browse-directory"); }
   get dialogAlert() { return $('[role="alert"]'); }
   get automaticRetryToggle() { return $('[role="switch"][aria-label="Automatic retry"]'); }
