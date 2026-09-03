@@ -40,7 +40,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .session-copy strong { min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; font-weight: 600; }
 .session-api-cost { flex: 0 0 auto; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; visibility: hidden; opacity: 0; }
 .session-activity { flex: 0 0 auto; color: var(--faint); font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
-.session-item.running .session-activity { color: #b99a33; }.session-item.unseen .session-activity { color: #4b98c4; }
+.session-item.unseen .session-activity { color: #4b98c4; }
 .session-item:hover .session-api-cost { visibility: visible; opacity: 1; }
 .empty-small { text-align: center; color: var(--muted); font-size: 13px; padding: 40px 10px; }
 
