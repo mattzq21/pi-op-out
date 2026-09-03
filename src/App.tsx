@@ -72,7 +72,8 @@ export default function App() {
   const activeHostIdRef = useRef(activeHostId); activeHostIdRef.current = activeHostId;
   const [codexUsage, setCodexUsage] = useState<CodexUsage>();
   const [, setUsageClock] = useState(0);
-  const [dialogs, setDialogs] = useState<OwnedExtensionDialog[]>([]); const [notice, setNotice] = useState<{ title: string; message: string }>();
+  const [dialogs, setDialogs] = useState<OwnedExtensionDialog[]>([]); const [notices, setNotices] = useState<Array<{ id: string; title: string; message: string }>>([]);
+  const addNotice = useCallback((notice: { title: string; message: string }) => setNotices((current) => [...current, { ...notice, id: crypto.randomUUID() }]), []);
   const [statuses, setStatuses] = useState<Record<string, string>>({}); const [widgets, setWidgets] = useState<Record<string, string[]>>({});
   const [extensionOwner, setExtensionOwner] = useState(transport);
   const [promptContext, setPromptContext] = useState<PromptContextInfo>();
@@ -177,10 +178,10 @@ export default function App() {
       if (event.type === "message_end") window.setTimeout(() => void refresh(), 30);
       if (event.type === "terminal_output") queueTerminalOutput(String(event.terminalId ?? ""), String(event.data ?? ""));
       if (event.type === "terminal_exit") setTerminalsBySession((current) => Object.fromEntries(Object.entries(current).map(([sessionId, session]) => [sessionId, { ...session, tabs: session.tabs.map((terminal) => terminal.id === event.terminalId ? { ...terminal, exited: true } : terminal) }])));
-      if (event.type === "extension_error") { const message = String(event.error ?? "An extension failed"); if (!message.startsWith(staleExtensionContext)) setNotice({ title: "Extension error", message }); }
+      if (event.type === "extension_error") { const message = String(event.error ?? "An extension failed"); if (!message.startsWith(staleExtensionContext)) addNotice({ title: "Extension error", message }); }
       if (event.type === "extension_ui_request") { const request = event as unknown as ExtensionUiRequest;
         if (transport !== activeTransportRef.current) { if (["input", "editor", "select", "confirm"].includes(request.method)) void transport.command({ type: "extension_ui_response", id: request.id, cancelled: true }).catch(() => undefined); return; }
-        if (request.method === "notify") setNotice({ title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "Pi extension", message: request.message || "Notification" });
+        if (request.method === "notify") addNotice({ title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "Pi extension", message: request.message || "Notification" });
         else if (request.method === "input" && request.title === BTW_REQUEST_TITLE) {
           try {
             const payload = JSON.parse(request.placeholder || "{}") as { task?: unknown; sessionFile?: unknown; cwd?: unknown };
@@ -195,7 +196,7 @@ export default function App() {
             });
           } catch (reason) {
             void transport.command({ type: "extension_ui_response", id: request.id, cancelled: true });
-            setNotice({ title: "Could not start /btw", message: reason instanceof Error ? reason.message : String(reason) });
+            addNotice({ title: "Could not start /btw", message: reason instanceof Error ? reason.message : String(reason) });
           }
         }
         else if (request.method === "setStatus" && request.statusKey === ORCHESTRATION_STATUS_KEY) { setExtensionOwner(transport); try {
@@ -224,7 +225,7 @@ export default function App() {
     });
     transport.connect().then(() => refresh()).then((value) => configureRuntime(value)).then(() => refreshSession()).then(() => { if (!cancelled) { setError(undefined); updateConnected(true); } }).catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); });
     return () => { cancelled = true; unsubscribe(); if (terminalOutputFrame.current !== undefined) window.clearTimeout(terminalOutputFrame.current); terminalOutputFrame.current = undefined; queuedTerminalOutput.current.clear(); };
-  }, [configureRuntime, handleEvent, queueTerminalOutput, refresh, refreshSession, transport]);
+  }, [addNotice, configureRuntime, handleEvent, queueTerminalOutput, refresh, refreshSession, transport]);
 
   useEffect(() => { const shutdown = () => { void runtimePool.disconnectAll(); }; window.addEventListener("pagehide", shutdown); return () => window.removeEventListener("pagehide", shutdown); }, [runtimePool]);
   useEffect(() => { if (!settingsDirty) return; const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; }; window.addEventListener("beforeunload", warn); return () => window.removeEventListener("beforeunload", warn); }, [settingsDirty]);
@@ -259,7 +260,7 @@ export default function App() {
   const respondToBtw = (requestId: string, response: { value?: string; cancelled?: boolean }) => {
     const pending = pendingBtwRequest.current; if (!pending || pending.id !== requestId) return;
     pendingBtwRequest.current = undefined;
-    void pending.transport.command({ type: "extension_ui_response", id: requestId, ...response }).catch((reason) => setNotice({ title: "Could not finish /btw request", message: reason instanceof Error ? reason.message : String(reason) }));
+    void pending.transport.command({ type: "extension_ui_response", id: requestId, ...response }).catch((reason) => addNotice({ title: "Could not finish /btw request", message: reason instanceof Error ? reason.message : String(reason) }));
   };
   const closeSplitPane = () => { if (splitPane?.btw) respondToBtw(splitPane.btw.requestId, { cancelled: true }); setSplitPane(undefined); setActivePane("main"); };
   const canLeaveSettings = () => view !== "settings" || !settingsDirty || window.confirm("Discard unsaved settings changes?");
@@ -277,7 +278,7 @@ export default function App() {
       void runtimePool.release(previousTransport).finally(() => transportConversationKeys.current.delete(previousTransport));
     }
   };
-  const branch = async (message: ChatMessage) => { try { const index = messages.findIndex((item) => item.id === message.id); const user = messages.slice(0, index + 1).reverse().find((item) => item.role === "user" && item.entryId); if (!user) throw new Error("Could not find the message to branch from"); await transport.command({ type: "fork", entryId: user.entryId }); await refresh(); } catch (reason) { setNotice({ title: "Could not branch conversation", message: reason instanceof Error ? reason.message : String(reason) }); } };
+  const branch = async (message: ChatMessage) => { try { const index = messages.findIndex((item) => item.id === message.id); const user = messages.slice(0, index + 1).reverse().find((item) => item.role === "user" && item.entryId); if (!user) throw new Error("Could not find the message to branch from"); await transport.command({ type: "fork", entryId: user.entryId }); await refresh(); } catch (reason) { addNotice({ title: "Could not branch conversation", message: reason instanceof Error ? reason.message : String(reason) }); } };
   const newSession = async () => { if (newSessionPending.current || !canLeaveSettings()) return; newSessionPending.current = true; const hostId = activeHostIdRef.current; const projectCwd = selectedProjectCwd(activeCwd, transport.isTemporaryChat()); const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; activateConversationKey(conversationKey); setView("chat"); closeSplitPane(); setTerminalOpen(false); updateConnected(false); setOrchestration(undefined); discardPendingUpdates(); setMessages([]); setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, activity: undefined, contextUsage: undefined })); const nextTransport = runtimePool.create(projectCwd ? { cwd: projectCwd, hostId } : { hostId }); transportConversationKeys.current.set(nextTransport, conversationKey); try { if (projectCwd) setActiveCwd(projectCwd); else setActiveCwd(await nextTransport.prepareTemporaryChat(hostId)); setActiveHostId(hostId); activateTransport(nextTransport); } catch (reason) { newSessionPending.current = false; transportConversationKeys.current.delete(nextTransport); void runtimePool.release(nextTransport); updateConnected(false); setError(reason instanceof Error ? reason.message : String(reason)); } };
   const selectSession = (session: SessionSummary) => {
     const hostId = session.hostId ?? "local"; if (session.id === state.sessionId && hostId === activeHostId) return transport;
@@ -286,9 +287,9 @@ export default function App() {
     const nextTransport = runtimePool.forSession(session);
     const conversationKey = `${hostId}:${session.id}`; transportConversationKeys.current.set(nextTransport, conversationKey); activateConversationKey(conversationKey); discardPendingUpdates(); setView("chat"); setTerminalOpen(false); updateConnected(false); setOrchestration(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd); setMessages([]); setState((value) => ({ ...value, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, isStreaming: false, activity: undefined })); activateTransport(nextTransport); return nextTransport;
   };
-  const setModel = async (model: Model) => { try { await transport.command({ type: "set_model", provider: model.provider, modelId: model.id }); await refreshSession(); } catch (reason) { setNotice({ title: "Could not change model", message: reason instanceof Error ? reason.message : String(reason) }); } };
-  const setThinking = async (level: string) => { try { await transport.command({ type: "set_thinking_level", level }); setState((current) => ({ ...current, thinkingLevel: level })); } catch (reason) { setNotice({ title: "Could not change thinking level", message: reason instanceof Error ? reason.message : String(reason) }); } };
-  const abortInteraction = () => { void transport.command({ type: "abort" }).catch((reason) => setNotice({ title: "Could not stop Pi", message: reason instanceof Error ? reason.message : String(reason) })); };
+  const setModel = async (model: Model) => { try { await transport.command({ type: "set_model", provider: model.provider, modelId: model.id }); await refreshSession(); } catch (reason) { addNotice({ title: "Could not change model", message: reason instanceof Error ? reason.message : String(reason) }); } };
+  const setThinking = async (level: string) => { try { await transport.command({ type: "set_thinking_level", level }); setState((current) => ({ ...current, thinkingLevel: level })); } catch (reason) { addNotice({ title: "Could not change thinking level", message: reason instanceof Error ? reason.message : String(reason) }); } };
+  const abortInteraction = () => { void transport.command({ type: "abort" }).catch((reason) => addNotice({ title: "Could not stop Pi", message: reason instanceof Error ? reason.message : String(reason) })); };
   const saveSettings = async (value: AppSettings, nextConfig?: OrchestrationConfig) => {
     const clean = (source: AppSettings) => ({ ...source, mcpServers: source.mcpServers.map(({ error: _error, ...server }) => ({ ...server, status: "stopped" as const })) });
     const previous = clean(settings); const previousConfig = orchestration?.config; const next = { ...clean(value), debugMode: settings.debugMode }; let settingsApplied = false; let orchestrationAttempted = false;
@@ -300,9 +301,9 @@ export default function App() {
       if (settingsApplied) try { await transport.saveSettings(previous); await configureRuntime(previous); } catch { /* Keep the original failure; NativeTransport owns persistence and reconnect rollback. */ }
       throw reason;
     }
-    setSettings(next); if (activeHostId !== "local" && !next.hosts.some((host) => host.id === activeHostId)) setActiveHostId("local"); void refresh().catch((reason) => setNotice({ title: "Settings saved, but the view could not refresh", message: reason instanceof Error ? reason.message : String(reason) }));
+    setSettings(next); if (activeHostId !== "local" && !next.hosts.some((host) => host.id === activeHostId)) setActiveHostId("local"); void refresh().catch((reason) => addNotice({ title: "Settings saved, but the view could not refresh", message: reason instanceof Error ? reason.message : String(reason) }));
   };
-  const setAgent = async (name: string) => { try { await transport.command({ type: "prompt", message: `/pi-orchestration-use ${encodeOrchestrationValue(name)}` }); } catch (reason) { setNotice({ title: "Could not change agent", message: reason instanceof Error ? reason.message : String(reason) }); } };
+  const setAgent = async (name: string) => { try { await transport.command({ type: "prompt", message: `/pi-orchestration-use ${encodeOrchestrationValue(name)}` }); } catch (reason) { addNotice({ title: "Could not change agent", message: reason instanceof Error ? reason.message : String(reason) }); } };
   const openProject = async (cwd: string, hostId: string) => { if (!canLeaveSettings()) return; const validatedCwd = await transport.validateProjectDirectory(cwd, hostId); if (!projectOpenRef.current) return; const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setTerminalOpen(false); updateConnected(false); setOrchestration(undefined); discardPendingUpdates(); setMessages([]); activateConversationKey(conversationKey); setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, activity: undefined, contextUsage: undefined })); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); const nextTransport = runtimePool.create({ cwd: validatedCwd, hostId }); transportConversationKeys.current.set(nextTransport, conversationKey); activateTransport(nextTransport); };
   const chooseChatProject = () => setProjectOpen(true);
   const openSplitPane = (session: SessionSummary) => { closeSplitPane(); setSplitPane({ session }); };
@@ -310,7 +311,7 @@ export default function App() {
     if (action === "split") { openSplitPane(session); return; }
     if (action === "open-directory") {
       try { await transport.openProjectDirectory(session.cwd, session.hostId); }
-      catch (reason) { setNotice({ title: "Could not open project directory", message: reason instanceof Error ? reason.message : String(reason) }); }
+      catch (reason) { addNotice({ title: "Could not open project directory", message: reason instanceof Error ? reason.message : String(reason) }); }
       return;
     }
     if (action === "archive") {
@@ -326,12 +327,12 @@ export default function App() {
         setTerminalsBySession((current) => { const next = { ...current }; delete next[archivedTerminalSessionId]; return next; });
         if (archivedTerminalSessionId === terminalSessionId) setTerminalOpen(false);
         await refresh();
-      } catch (reason) { if (isActiveSession) updateConnected(true); setNotice({ title: "Could not archive conversation", message: reason instanceof Error ? reason.message : String(reason) }); }
+      } catch (reason) { if (isActiveSession) updateConnected(true); addNotice({ title: "Could not archive conversation", message: reason instanceof Error ? reason.message : String(reason) }); }
       return;
     }
     const selectedTransport = selectSession(session); if (!selectedTransport) return;
     if (action === "rename") { setRenameSession(session); return; }
-    if (action === "clone") { try { await selectedTransport.connect(); await selectedTransport.command({ type: "clone" }); await syncSessionIndex(); } catch (reason) { setNotice({ title: "Could not clone conversation", message: reason instanceof Error ? reason.message : String(reason) }); } }
+    if (action === "clone") { try { await selectedTransport.connect(); await selectedTransport.command({ type: "clone" }); await syncSessionIndex(); } catch (reason) { addNotice({ title: "Could not clone conversation", message: reason instanceof Error ? reason.message : String(reason) }); } }
   };
   const startTerminal = async (terminalId: string, cols: number, rows: number) => {
     if (!connectionReadyRef.current) return;
@@ -347,7 +348,7 @@ export default function App() {
   const deleteTerminal = async () => {
     if (!connectionReadyRef.current) return;
     const terminalId = activeTerminal.id; const closingLast = sessionTerminals.tabs.length === 1;
-    try { await transport.closeTerminal(terminalId); } catch (reason) { setNotice({ title: "Could not close terminal", message: reason instanceof Error ? reason.message : String(reason) }); return; }
+    try { await transport.closeTerminal(terminalId); } catch (reason) { addNotice({ title: "Could not close terminal", message: reason instanceof Error ? reason.message : String(reason) }); return; }
     if (closingLast) setTerminalOpen(false);
     const sessionKey = activeConversationKeyRef.current;
     setTerminalsBySession((current) => { const session = current[sessionKey] ?? initialTerminals(sessionKey); const tabs = session.tabs.filter((terminal) => terminal.id !== terminalId); const next = { ...current }; if (!tabs.length) delete next[sessionKey]; else next[sessionKey] = { activeId: tabs[0].id, tabs }; return next; });
@@ -357,8 +358,8 @@ export default function App() {
   const toggleTerminal = () => { if (!canLeaveSettings()) return; setView("chat"); setTerminalOpen((open) => !open); };
   const toggleDebugMode = useCallback(() => {
     const next = { ...settings, debugMode: !settings.debugMode };
-    void transport.saveSettings(next, false).then(() => setSettings(next)).catch((reason) => setNotice({ title: "Could not change debug mode", message: reason instanceof Error ? reason.message : String(reason) }));
-  }, [settings, transport]);
+    void transport.saveSettings(next, false).then(() => setSettings(next)).catch((reason) => addNotice({ title: "Could not change debug mode", message: reason instanceof Error ? reason.message : String(reason) }));
+  }, [addNotice, settings, transport]);
 
   useEffect(() => {
     const handleKeybind = (event: KeyboardEvent) => {
@@ -384,9 +385,9 @@ export default function App() {
     {import.meta.env.MODE === "e2e" && <div className="e2e-bridge"><textarea id="pi-e2e-responses" aria-label="E2E responses" placeholder="E2E responses" /><textarea id="pi-e2e-calls" aria-label="E2E calls" placeholder="E2E calls" /></div>}
     <aside className="icon-rail">{activeBranch && <div className="rail-branch" title={activeBranch}><GitBranch size={13} /><span>{activeBranch}</span></div>}<nav><IconButton label="New conversation" onClick={newSession}><Plus size={19} /></IconButton><IconButton label="Conversations" className={view === "chat" ? "active" : ""} onClick={() => { if (canLeaveSettings()) setView("chat"); }}><MessageSquare size={18} /></IconButton><IconButton label="New project" onClick={() => setProjectOpen(true)}><FolderGit2 size={18} /></IconButton><IconButton label={settings.debugMode ? "Disable debug mode" : "Enable debug mode"} className={settings.debugMode ? "active" : ""} onClick={toggleDebugMode}><Bug size={18} /></IconButton><IconButton label="Settings" className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}><Settings size={19} /></IconButton></nav>{view === "chat" && panelOpen && <SessionPanel sessions={sessions} activeId={state.sessionId} activeHostId={activeHostId} runningSessions={runningSessions} unseenSessions={unseenSessions} query={query} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} />}<div className="rail-bottom">{codexUsage !== undefined && <span className="codex-usage" aria-label="Codex usage remaining" title="Codex usage remaining">{codexUsage.remainingPercent}% left{codexUsage.resetAt ? ` · ${formatCodexReset(codexUsage.resetAt)}` : ""}</span>}</div></aside>
     {view === "chat" ? <div className="chat-workspace"><div className={`chat-panes ${splitPane ? "split" : ""}`}><ChatView state={state} messages={messages} gitDiffs={gitDiffs} promptContext={extensionStateIsCurrent ? promptContext : undefined} debug={settings.debugMode} agents={extensionStateIsCurrent ? orchestration?.config.agents ?? [] : []} sequences={extensionStateIsCurrent ? orchestration?.config.sequences ?? [] : []} activeAgent={extensionStateIsCurrent ? orchestration?.active : undefined} dictionaries={settings.dictionaries.filter((item) => settings.activeDictionaryIds.includes(item.id))} models={models} commands={commands} thinkingLevels={thinkingLevels} widgets={extensionStateIsCurrent ? Object.values(widgets).flat() : []} statuses={extensionStateIsCurrent ? Object.values(statuses) : []} projectCwd={selectedProjectCwd(activeCwd, transport.isTemporaryChat())} controlsDisabled={!connected} draft={composerDraft} onDraftChange={setComposerDraft} focusRequest={mainComposerFocusRequest} onActivate={() => setActivePane("main")} uploads={composerUploads} onUploadsChange={setComposerUploads} onSend={send} onAbort={abortInteraction} onOpenTerminal={() => setTerminalOpen(true)} onOpenProject={chooseChatProject} onBranch={branch} onAgent={setAgent} onModel={setModel} onThinking={setThinking} />{splitPane && <SplitChatPane key={splitSessionId} runtimePool={runtimePool} session={splitPane.session} settings={settings} draft={splitComposerDraft} onDraftChange={setSplitComposerDraft} focusRequest={splitComposerFocusRequest} onActivate={() => setActivePane("split")} forkFrom={splitPane.btw?.forkFrom} initialPrompt={splitPane.btw?.task} onReady={splitPane.btw ? () => respondToBtw(splitPane.btw!.requestId, { value: "opened" }) : undefined} onFailed={splitPane.btw ? () => respondToBtw(splitPane.btw!.requestId, { cancelled: true }) : undefined} onClose={closeSplitPane} />}</div>{terminalOpen && <TerminalView key={`${terminalSessionId}:${activeTerminal.id}`} cwd={activeCwd ?? sessions.find((session) => session.id === state.sessionId && (session.hostId ?? "local") === activeHostId)?.cwd} terminals={sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={activeTerminal.id} output={activeTerminal.output} outputEnd={activeTerminal.outputEnd} snapshot={activeTerminal.snapshot} snapshotEnd={activeTerminal.snapshotEnd} started={activeTerminal.started} exited={activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { if (!connectionReadyRef.current) return; void transport.writeTerminal(activeTerminal.id, data).catch((reason) => queueTerminalOutput(activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { if (!connectionReadyRef.current) return; void transport.resizeTerminal(activeTerminal.id, cols, rows).catch(() => undefined); }} onSnapshot={(value, outputEnd) => saveTerminalSnapshot(terminalSessionId, activeTerminal.id, value, outputEnd)} onDelete={deleteTerminal} onClose={() => setTerminalOpen(false)} />}</div> : <SettingsView settings={settingsWithMcpStatuses} orchestration={extensionStateIsCurrent ? orchestration?.config : undefined} models={models} thinkingLevels={thinkingLevels} onSave={saveSettings} onDirtyChange={setSettingsDirty} />}
-    {(error || notice) && <div className="toast-stack">
+    {(error || notices.length > 0) && <div className="toast-stack">
       {error && <div className="error-toast"><strong>Pi could not connect</strong><span>{error}</span><button onClick={() => setError(undefined)}>×</button></div>}
-      {notice && <div className="error-toast"><strong>{notice.title}</strong><span>{notice.message}</span><button onClick={() => setNotice(undefined)}>×</button></div>}
+      {notices.map((notice) => <div className="error-toast" key={notice.id}><strong>{notice.title}</strong><span>{notice.message}</span><button onClick={() => setNotices((current) => current.filter((item) => item.id !== notice.id))}>×</button></div>)}
     </div>}
     {activeDialog && !projectOpen && !renameSession && !relocatingSession && <ExtensionDialog request={activeDialog.request} onRespond={async (response) => { await activeDialog.transport.command({ type: "extension_ui_response", id: activeDialog.request.id, ...response }); setDialogs((current) => current.filter((item) => item !== activeDialog)); }} />}
     {projectOpen && <ProjectDialog initialPath="" hosts={settings.hosts} initialHostId={activeHostId} onHomeDirectory={resolveHomeDirectory} onChooseDirectory={(currentPath, hostId) => hostId === "local" ? transport.selectProjectDirectory(currentPath || undefined) : transport.listDirectories(hostId, currentPath || undefined)} onOpen={openProject} onCancel={() => { projectOpenRef.current = false; setProjectOpen(false); }} />}

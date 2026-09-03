@@ -75,18 +75,27 @@ describe("BUGS-3 regressions", () => {
   it("isolates drafts and terminals between fresh conversations", async () => {
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
     await mockBackend({ create_temporary_chat: { cwd: "/tmp/bugs3-fresh", sessionId: "bugs3-fresh" }, start_pi: {}, stop_pi: {}, list_sessions: [], load_app_settings: settings, ...connectedSessionResponses(""), "pi_command:set_model": {}, start_terminal: {}, resize_terminal: {} });
-    await $('button[aria-label="New conversation"]').click();
-    await browser.waitUntil(async () => (await backendCalls()).filter(({ command }) => command === "create_temporary_chat").length === 1);
-    await app.prepareMessage("First fresh draft");
-    await app.openTerminalButton.click();
-    await app.addTerminalButton.click();
-    await expect($$(".terminal-tab")).toBeElementsArrayOfSize(2);
+    try {
+      await $('button[aria-label="New conversation"]').click();
+      await browser.waitUntil(async () => (await backendCalls()).filter(({ command }) => command === "create_temporary_chat").length === 1);
+      await app.prepareMessage("First fresh draft");
+      await app.openTerminalButton.click();
+      await app.addTerminalButton.click();
+      await expect($$(".terminal-tab")).toBeElementsArrayOfSize(2);
 
-    await $('button[aria-label="New conversation"]').click();
-    await browser.waitUntil(async () => (await backendCalls()).filter(({ command }) => command === "create_temporary_chat").length === 2);
+      await $('button[aria-label="New conversation"]').click();
+      await browser.waitUntil(async () => (await backendCalls()).filter(({ command }) => command === "create_temporary_chat").length === 2);
 
-    await expect(app.composer).toHaveValue("");
-    await expect($$(".terminal-tab")).toBeElementsArrayOfSize(1);
+      await expect(app.composer).toHaveValue("");
+      await expect(app.terminalPanel).not.toBeExisting();
+      await expect(app.openTerminalButton).toBeEnabled();
+      await app.openTerminalButton.click();
+      await expect($$(".terminal-tab")).toBeElementsArrayOfSize(1);
+    } finally {
+      await resetBackend();
+      await browser.refresh();
+      await app.waitUntilReady();
+    }
   });
 
   it("keeps a terminal tab when closing its process fails", async () => {
@@ -270,7 +279,8 @@ describe("Conversation acceptance", () => {
 
       const menu = $('[role="menu"][aria-label="Acceptance indexed conversation actions"]');
       await expect(menu).toBeDisplayed();
-      await expect(menu.$$("[role='menuitem']")).toBeElementsArrayOfSize(5);
+      await expect(menu.$$("[role='menuitem']")).toBeElementsArrayOfSize(4);
+      await expect(session.$('button[aria-label="Archive conversation"]')).toBeDisplayed();
       await browser.keys("Escape");
       await expect(menu).not.toBeExisting();
     } finally {
@@ -655,7 +665,7 @@ describe("Conversation acceptance", () => {
     await expect($(".attachments")).toHaveText(expect.stringContaining("fixture-12.txt"));
     expect(await $(".attachments").getText()).not.toContain("fixture-13.txt");
 
-    await browser.execute(() => document.querySelectorAll<HTMLButtonElement>(".attachments button").forEach((button) => button.click()));
+    while ((await $$(".attachments button")).length) await $(".attachments button").click();
     await expect($(".attachments")).not.toBeExisting();
   });
 
@@ -866,6 +876,7 @@ describe("Conversation acceptance", () => {
   });
 
   it("shows cache reuse for both a response and the whole session", async () => {
+    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", debugMode: true };
     const history = {
       entries: [
         { type: "message", id: "cache-user", parentId: null, message: { role: "user", content: "Reuse the cached context", timestamp: 1 } },
@@ -873,7 +884,7 @@ describe("Conversation acceptance", () => {
       ],
       leafId: "cache-assistant",
     };
-    await mockBackend({ ...connectedSessionResponses("cache-session"), "pi_command:get_entries": history });
+    await mockBackend({ ...connectedSessionResponses("cache-session"), "pi_command:get_entries": history, load_app_settings: settings });
     try {
       await emitPiEvent({ type: "session_switched" });
       await expect($(".cache-hit-rate")).toHaveText("Cache 75%");
@@ -882,12 +893,19 @@ describe("Conversation acceptance", () => {
       expect((await $(".session-cache-hit").getAttribute("title"))?.replaceAll(",", "")).toBe("3000 of 4000 session prompt tokens read from cache");
     } finally {
       await resetBackend();
+      await browser.refresh();
+      await app.waitUntilReady();
     }
   });
 
   it("renders terminal output and reports when the process exits", async () => {
-    await mockBackend({ start_terminal: {}, resize_terminal: {}, close_terminal: {} });
+    const indexed = { id: "terminal-output", path: "/tmp/terminal-output.jsonl", name: "Terminal output conversation", project: "Terminal project", cwd: "/tmp", preview: "Terminal output", messageCount: 1, hostId: "local" };
+    await mockBackend({ list_sessions: [indexed], ...connectedSessionResponses(indexed.id), start_pi: {}, stop_pi: {}, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
     try {
+      await emitPiEvent({ type: "session_switched" });
+      await app.conversationSearch.setValue(indexed.name);
+      await $(".session-item .session-main").click();
+      await expect(app.openTerminalButton).toBeEnabled();
       await app.openTerminalButton.click();
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "start_terminal"));
       const terminalId = (await backendCalls()).find(({ command }) => command === "start_terminal")?.args.terminalId as string;
@@ -902,6 +920,8 @@ describe("Conversation acceptance", () => {
     } finally {
       if (await app.terminalPanel.isExisting()) await app.deleteTerminalButton.click();
       await resetBackend();
+      await browser.refresh();
+      await app.waitUntilReady();
     }
   });
 
@@ -961,7 +981,7 @@ describe("Conversation acceptance", () => {
   it("presents skill references and compacts repeated intermediate work", async () => {
     const history = {
       entries: [
-        { type: "message", id: "work-user", parentId: null, message: { role: "user", content: '<skill name="ponytail">hidden skill instructions</skill>\nReview the implementation', timestamp: 1_000 } },
+        { type: "message", id: "work-user", parentId: null, message: { role: "user", content: '<skill name="ponytail" location="/tmp/ponytail/SKILL.md">\nReferences are relative to /tmp/ponytail.\n\nhidden skill instructions</skill>\n\nReview the implementation', timestamp: 1_000 } },
         { type: "message", id: "work-thinking", parentId: "work-user", message: { role: "assistant", content: [{ type: "thinking", thinking: "Inspecting the behavior carefully" }], timestamp: 1_500 } },
         { type: "message", id: "work-tool-one", parentId: "work-thinking", message: { role: "toolResult", toolName: "read", content: "First file inspected", timestamp: 2_000 } },
         { type: "message", id: "work-tool-two", parentId: "work-tool-one", message: { role: "toolResult", toolName: "read", content: "Second file inspected", timestamp: 2_500 } },
@@ -1182,7 +1202,7 @@ describe("Conversation acceptance", () => {
       await emitPiEvent({ type: "extension_ui_request", id: "stacked-notice", method: "notify", notifyType: "warning", message: "Review generated changes" });
       const toasts = await $$(".error-toast");
       await expect(toasts).toBeElementsArrayOfSize(2);
-      expect(new Set(await Promise.all(toasts.map((toast) => toast.getLocation("y")))).size).toBe(2);
+      expect(await toasts[0].getLocation("y")).not.toBe(await toasts[1].getLocation("y"));
     } finally {
       await updateBackendResponse("save_app_settings", {});
       await debug.click();
@@ -1485,14 +1505,16 @@ describe("Orchestration acceptance", () => {
   });
 
   it("saves the encoded orchestration configuration and reconnects", async () => {
+    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
+    await mockBackend({
+      "pi_command:prompt": {}, save_app_settings: {}, stop_pi: {}, start_pi: {}, list_sessions: [], load_app_settings: settings,
+      ...connectedSessionResponses("orchestration-save"),
+    });
+    await emitPiEvent({ type: "session_switched" });
     await app.openSettings();
     await app.openSettingsSection("Agents");
     await $('//div[contains(@class,"agent-list")]//button[.//span[normalize-space(.)="reviewer"]]').click();
     await $('input[aria-label="Agent description"]').setValue("Reviews the packaged acceptance suite");
-    await mockBackend({
-      "pi_command:prompt": {}, save_app_settings: {}, stop_pi: {}, start_pi: {}, list_sessions: [], load_app_settings: defaultSettings,
-      ...connectedSessionResponses("orchestration-save"),
-    });
 
     await app.saveSettingsButton.click();
     await expect(app.saveSettingsButton).toHaveText("Saved");
@@ -1832,11 +1854,14 @@ describe("Project behavior", () => {
   });
 
   it("switches to a project after the backend connects successfully", async () => {
+    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
     await mockBackend({
       stop_pi: {}, start_pi: {},
       ...connectedSessionResponses("acceptance-project"),
+      load_app_settings: settings, validate_project_directory: "/tmp",
     });
     try {
+      await emitPiEvent({ type: "session_switched" });
       await app.openProjectChooser();
       await app.projectDirectory.setValue("/tmp");
       await app.openProjectButton.click();
@@ -1847,16 +1872,21 @@ describe("Project behavior", () => {
       expect((await backendCalls()).filter(({ command }) => command === "stop_pi" || command === "start_pi").map(({ command }) => command)).toEqual(["start_pi"]);
     } finally {
       await resetBackend();
+      await browser.refresh();
+      await app.waitUntilReady();
     }
   });
 
   it("changes the model and thinking level for the active project", async () => {
+    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
     await mockBackend({
       ...connectedSessionResponses("acceptance-project"),
       "pi_command:get_state": { model: { provider: "e2e", id: "alternate" }, thinkingLevel: "high", isStreaming: false, sessionId: "acceptance-project", messageCount: 0, pendingMessageCount: 0 },
       "pi_command:set_model": {}, "pi_command:set_thinking_level": {},
+      load_app_settings: settings,
     });
     try {
+      await emitPiEvent({ type: "session_switched" });
       await app.chooseComposerOption("Model", "Alternate model");
       await expect(app.modelPicker).toHaveText("Alternate model");
       await app.chooseComposerOption("Thinking level", "off");
@@ -1987,11 +2017,15 @@ describe("Conversation lifecycle", () => {
       await updateBackendResponse("pi_command:get_state", state(target.id));
       await app.conversationSearch.setValue(target.name);
       await $(".session-item .session-main").click();
+      await expect(app.terminalPanel).not.toBeExisting();
+      await app.openTerminalButton.click();
       await expect($$(".terminal-tab")).toBeElementsArrayOfSize(1);
 
       await updateBackendResponse("pi_command:get_state", state(current.id));
       await app.conversationSearch.setValue(current.name);
       await $(".session-item .session-main").click();
+      await expect(app.terminalPanel).not.toBeExisting();
+      await app.openTerminalButton.click();
       await expect($$(".terminal-tab")).toBeElementsArrayOfSize(2);
       await app.closeTerminalButton.click();
     } finally {
