@@ -1157,13 +1157,10 @@ fn close_terminal(runtime: State<TerminalRuntime>, terminal_id: String) -> Resul
     Ok(())
 }
 
-fn stop_terminals_for_state(runtime: &TerminalRuntime, state: &mut Value) -> Result<(), String> {
-    let Some(tabs) = state.get_mut("tabs").and_then(Value::as_array_mut) else { return Ok(()) };
+fn stop_terminals(runtime: &TerminalRuntime, terminal_ids: &[String]) -> Result<(), String> {
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
-    for tab in tabs {
-        let Some(id) = tab.get("id").and_then(Value::as_str).map(str::to_owned) else { continue };
-        if let Some(mut process) = processes.remove(&id) { let _ = process.child.kill(); let _ = process.child.wait(); }
-        if let Some(tab) = tab.as_object_mut() { tab.insert("exited".into(), Value::Bool(true)); }
+    for id in terminal_ids {
+        if let Some(mut process) = processes.remove(id) { let _ = process.child.kill(); let _ = process.child.wait(); }
     }
     Ok(())
 }
@@ -1380,7 +1377,7 @@ fn local_desktop_session_file(session_path: &str) -> Result<PathBuf, String> {
 }
 
 #[tauri::command(async)]
-fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path: String, host_id: Option<String>, mut terminal_state: Option<Value>) -> Result<(), String> {
+fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path: String, host_id: Option<String>, terminal_ids: Vec<String>) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     if host_id != "local" {
         let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
@@ -1390,7 +1387,7 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
         let remote = format!(r#"root=$(cd "$HOME/.pi-desktop/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) archive="$HOME/.pi-desktop/archived"; mkdir -p "$archive" || exit 1; diff=${{target%.jsonl}}.diffs.json; diff_target="$archive"/{}; moved_diff=0; if [ -f "$diff" ]; then mv -- "$diff" "$diff_target" || exit 1; moved_diff=1; fi; if ! mv -- "$target" "$archive"/{}; then if [ "$moved_diff" = 1 ]; then mv -- "$diff_target" "$diff" || true; fi; exit 1; fi ;; *) printf 'Refusing to archive a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(&session_path), shell_quote(&diff_destination), shell_quote(&destination));
         let output = ssh(host).arg(remote).output().map_err(|error| error.to_string())?;
         if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-        if let Some(state) = terminal_state.as_mut() { let _ = stop_terminals_for_state(&runtime, state); }
+        let _ = stop_terminals(&runtime, &terminal_ids);
         return Ok(());
     }
     let source = local_desktop_session_file(&session_path)?;
@@ -1412,7 +1409,7 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
         if moved_diff { let _ = fs::rename(&diff_destination, &diff_source); }
         return Err(format!("Could not archive session: {error}"));
     }
-    if let Some(state) = terminal_state.as_mut() { let _ = stop_terminals_for_state(&runtime, state); }
+    let _ = stop_terminals(&runtime, &terminal_ids);
     Ok(())
 }
 

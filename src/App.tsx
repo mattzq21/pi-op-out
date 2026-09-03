@@ -323,8 +323,8 @@ export default function App() {
       if (isActiveSession) updateConnected(false);
       try {
         const archivedTerminalSessionId = `${session.hostId ?? "local"}:${session.id}`;
-        const terminalState = terminalsBySession[archivedTerminalSessionId];
-        await transport.archiveSession(session.path, session.hostId, terminalState);
+        const terminalIds = terminalsBySession[archivedTerminalSessionId]?.tabs.map((terminal) => terminal.id) ?? [];
+        await transport.archiveSession(session.path, session.hostId, terminalIds);
         if (isActiveSession) { const conversationKey = `${activeHostId}:draft-${crypto.randomUUID()}`; transportConversationKeys.current.set(transport, conversationKey); activateConversationKey(conversationKey); await transport.command({ type: "new_session" }); await refresh(); updateConnected(true); }
         else await runtimePool.remove(session);
         setTerminalsBySession((current) => { const next = { ...current }; delete next[archivedTerminalSessionId]; return next; });
