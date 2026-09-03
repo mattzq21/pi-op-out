@@ -1519,7 +1519,8 @@ describe("Orchestration acceptance", () => {
     await $('input[aria-label="Agent description"]').setValue("Reviews the packaged acceptance suite");
 
     await app.saveSettingsButton.click();
-    await expect(app.saveSettingsButton).toHaveText("Saved");
+    await browser.waitUntil(async () => await app.saveSettingsButton.getText() === "Saved" || await $(".settings-save [role='alert']").isExisting());
+    if (await $(".settings-save [role='alert']").isExisting()) throw new Error(`Orchestration save failed: ${await $(".settings-save [role='alert']").getText()}\nCalls: ${JSON.stringify(await backendCalls())}`);
     const prompt = (await backendCalls()).find(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-orchestration-config "))?.args.command as { message: string };
     const saved = decodeOrchestrationValue<OrchestrationConfig>(prompt.message.slice("/pi-orchestration-config ".length));
     expect(saved.agents.find((agent) => agent.name === "reviewer")?.description).toBe("Reviews the packaged acceptance suite");
