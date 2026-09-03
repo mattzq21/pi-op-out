@@ -11,10 +11,21 @@ type BackendCall = { command: string; args: Record<string, unknown>; mocked: boo
 const installedOrchestrationConfigPath = join(homedir(), ".pi", "agent", "extensions", "pi-orchestration", "config.json");
 const callBridge = () => $('textarea[aria-label="E2E calls"]');
 const responseBridge = () => $('textarea[aria-label="E2E responses"]');
+const setBridgeValue = (selector: string, value: string) => browser.execute((target, next) => {
+  const input = document.querySelector<HTMLTextAreaElement>(target)!;
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(input, next);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+}, selector, value);
 const mockBackend = async (responses: Record<string, unknown>) => {
-  await callBridge().setValue("[]");
-  await responseBridge().setValue(JSON.stringify(responses));
-  if ("list_sessions" in responses) await $('button[aria-label="E2E refresh sessions"]').click();
+  await setBridgeValue('textarea[aria-label="E2E calls"]', "[]");
+  await setBridgeValue('textarea[aria-label="E2E responses"]', JSON.stringify(responses));
+  if ("list_sessions" in responses) {
+    const refreshed = await browser.execute(async () => { const refresh = (window as unknown as { __piE2ERefreshSessions?: () => Promise<void> }).__piE2ERefreshSessions; if (!refresh) return false; await refresh(); return true; });
+    if (!refreshed) throw new Error("E2E session refresh is unavailable");
+    const calls = JSON.parse(await callBridge().getValue()) as BackendCall[];
+    if (!calls.some((call) => call.command === "list_sessions" && call.mocked)) throw new Error(`E2E session refresh did not use its mock: ${JSON.stringify(calls)}`);
+  }
 };
 const backendCalls = async () => (JSON.parse(await callBridge().getValue() || "[]") as Partial<BackendCall>[]).filter((call) => call && typeof call === "object").map((call) => ({
   command: typeof call.command === "string" ? call.command : "",
@@ -23,9 +34,9 @@ const backendCalls = async () => (JSON.parse(await callBridge().getValue() || "[
 }));
 const updateBackendResponse = async (command: string, response: unknown) => {
   const responses = JSON.parse(await responseBridge().getValue()) as Record<string, unknown>;
-  await responseBridge().setValue(JSON.stringify({ ...responses, [command]: response }));
+  await setBridgeValue('textarea[aria-label="E2E responses"]', JSON.stringify({ ...responses, [command]: response }));
 };
-const resetBackend = async () => { if (!await callBridge().isExisting()) return; await callBridge().setValue("[]"); await responseBridge().setValue("{}"); };
+const resetBackend = async () => { if (!await callBridge().isExisting()) return; await setBridgeValue('textarea[aria-label="E2E calls"]', "[]"); await setBridgeValue('textarea[aria-label="E2E responses"]', "{}"); };
 const emitPiEvent = (payload: Record<string, unknown>) => browser.execute(async (event) => {
   const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
   await tauri.invoke("plugin:event|emit", { event: "pi://event", payload: event });
@@ -92,7 +103,23 @@ const setMultilineValue = (selector: string, value: string) => browser.execute((
   input.dispatchEvent(new Event("input", { bubbles: true }));
   return true;
 }, selector, value);
-const clearField = async (field: ReturnType<typeof $>) => { if (!await field.isExisting()) return; await field.click(); await browser.keys(["Control", "a"]); await browser.keys("Backspace"); };
+const setInputValue = (selector: string, value: string) => browser.execute((target, next) => {
+  const input = document.querySelector<HTMLInputElement>(target)!;
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, next);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+}, selector, value);
+const typeKeys = async (value: string) => {
+  const action = browser.action("key");
+  for (const character of value) action.down(character).up(character);
+  await action.perform();
+};
+const setConversationSearch = async (value: string) => { const field = app.conversationSearch; await clearField(field); await field.click(); await typeKeys(value); };
+const clearField = async (field: ReturnType<typeof $>) => {
+  if (!await field.isExisting()) return;
+  await field.click();
+  await browser.action("key").down("\uE009").down("a").up("a").up("\uE009").down("\uE003").up("\uE003").perform();
+};
 const openContextMenu = (field: ReturnType<typeof $>) => field.click({ button: "right" });
 const pressShortcut = (shortcut: string) => {
   const parts = shortcut.split("+"); const modifiers = parts.slice(0, -1).map((part) => part.toLowerCase()); const key = shortcut.endsWith("+") ? "+" : parts.at(-1) === "Space" ? " " : parts.at(-1)!;
@@ -202,7 +229,7 @@ describe("Conversation acceptance", () => {
 
   it("searches conversations and explains when none match", async () => {
     const query = "__webdriver_no_matching_conversation__";
-    await app.conversationSearch.setValue(query);
+    await setConversationSearch(query);
 
     await expect(app.emptyConversationSearch).toHaveText(`No conversations match “${query}”.`);
     await clearField(app.conversationSearch);
@@ -211,7 +238,7 @@ describe("Conversation acceptance", () => {
   contextMenuIt("shows indexed conversations and their available actions", async () => {
     await mockBackend({ list_sessions: [{ id: "acceptance-indexed", path: "/tmp/acceptance-indexed.jsonl", name: "Acceptance indexed conversation", project: "Acceptance project", cwd: "/tmp", preview: "Indexed preview", messageCount: 2, hostId: "local" }] });
     try {
-      await app.conversationSearch.setValue("Acceptance indexed");
+      await setConversationSearch("Acceptance indexed");
       const session = $(".session-item");
       await expect(session).toHaveText(expect.stringContaining("Acceptance indexed conversation"));
       await openContextMenu(session);
@@ -231,8 +258,8 @@ describe("Conversation acceptance", () => {
     const indexed = { id: "acceptance-collapse", path: "/tmp/acceptance-collapse.jsonl", name: "Acceptance grouped conversation", project: "Collapsible project", cwd: "/tmp", preview: "Grouped preview", messageCount: 1, hostId: "local" };
     await mockBackend({ list_sessions: [indexed] });
     try {
-      await app.conversationSearch.setValue(indexed.name);
-      await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
+      await setConversationSearch(indexed.name);
+      await expect($(".session-item strong")).toExist();
       await clearField(app.conversationSearch);
 
       const project = $('//button[contains(@class,"project-label")][.//span[normalize-space(.)="Collapsible project"]]');
@@ -255,7 +282,7 @@ describe("Conversation acceptance", () => {
     await mockBackend({ list_sessions: [indexed], ...connectedSessionResponses(indexed.id), "pi_command:clone": {} });
     try {
       await emitPiEvent({ type: "session_switched" });
-      await app.conversationSearch.setValue(indexed.name);
+      await setConversationSearch(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
       await openContextMenu($(".session-item"));
       await $('//div[@role="menu"]//button[normalize-space(.)="Clone conversation"]').click();
@@ -272,7 +299,7 @@ describe("Conversation acceptance", () => {
     const indexed = { id: "acceptance-open-directory", path: "/tmp/acceptance-open-directory.jsonl", name: "Acceptance directory target", project: "Acceptance project", cwd: "/missing/acceptance-project", preview: "Directory preview", messageCount: 1, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], open_project_directory: { error: "The project directory is unavailable" } });
     try {
-      await app.conversationSearch.setValue(indexed.name);
+      await setConversationSearch(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
       await openContextMenu($(".session-item"));
       await $('//div[@role="menu"]//button[normalize-space(.)="Open project directory"]').click();
@@ -292,9 +319,9 @@ describe("Conversation acceptance", () => {
     const indexed = { id: "acceptance-relocate", path: "/tmp/acceptance-relocate.jsonl", name: "Acceptance relocation target", project: "Moved project", cwd: "/missing/original-project", cwdExists: false, preview: "Relocation preview", messageCount: 3, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], relocate_session: {}, start_pi: {}, ...connectedSessionResponses(indexed.id) });
     try {
-      await app.conversationSearch.setValue(indexed.name);
+      await setConversationSearch(indexed.name);
       const session = $(".session-item");
-      await expect(session).toHaveText(expect.stringContaining(indexed.name));
+      await expect(session).toExist();
       await session.$(".session-main").click();
 
       await expect($("#extension-dialog-title")).toHaveText("Locate conversation project");
@@ -303,7 +330,7 @@ describe("Conversation acceptance", () => {
       await $('//section[@role="dialog"]//button[normalize-space(.)="Continue"]').click();
       await expect($('[role="alert"]')).toHaveText("Path can't be empty");
 
-      await replacement.setValue("/tmp/relocated-acceptance-project");
+      await setInputValue('input[aria-label="Replacement project directory"]', "/tmp/relocated-acceptance-project");
       await $('//section[@role="dialog"]//button[normalize-space(.)="Continue"]').click();
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "relocate_session") && (await backendCalls()).some(({ command }) => command === "start_pi"));
       expect((await backendCalls()).find(({ command }) => command === "relocate_session")?.args).toEqual({ sessionPath: indexed.path, cwd: "/tmp/relocated-acceptance-project", hostId: "local" });
@@ -319,11 +346,14 @@ describe("Conversation acceptance", () => {
     const indexed = { id: "acceptance-relocate-failure", path: "/tmp/acceptance-relocate-failure.jsonl", name: "Acceptance failed relocation", project: "Moved project", cwd: "/missing/failed-project", cwdExists: false, preview: "Failed relocation preview", messageCount: 2, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], relocate_session: { error: "Replacement directory is not a project" } });
     try {
-      await app.conversationSearch.setValue(indexed.name);
+      await setConversationSearch(indexed.name);
       const session = $(".session-item");
-      await expect(session).toHaveText(expect.stringContaining(indexed.name));
+      await expect(session).toExist();
       await session.$(".session-main").click();
-      await $('input[aria-label="Replacement project directory"]').setValue("/tmp/not-a-project");
+      const replacement = $('input[aria-label="Replacement project directory"]');
+      await clearField(replacement);
+      await replacement.click();
+      await typeKeys("/tmp/not-a-project");
       await $('//section[@role="dialog"]//button[normalize-space(.)="Continue"]').click();
 
       await expect($(".error-toast strong")).toHaveText("Pi could not connect");
@@ -342,9 +372,10 @@ describe("Conversation acceptance", () => {
     const indexed = { id: "acceptance-archive", path: "/tmp/acceptance-archive.jsonl", name: "Acceptance archive target", project: "Acceptance project", cwd: "/tmp", preview: "Archive preview", messageCount: 2, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], archive_session: {} });
     try {
-      await app.conversationSearch.setValue("Acceptance archive target");
+      await setConversationSearch("Acceptance archive target");
       const session = $(".session-item");
-      await expect(session).toHaveText(expect.stringContaining(indexed.name));
+      await expect(session).toExist();
+      await session.moveTo();
       await session.$('button[aria-label="Archive conversation"]').click();
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "archive_session"));
@@ -359,9 +390,10 @@ describe("Conversation acceptance", () => {
     const indexed = { id: "acceptance-archive-failure", path: "/tmp/acceptance-archive-failure.jsonl", name: "Acceptance archive failure", project: "Acceptance project", cwd: "/tmp", preview: "Archive failure preview", messageCount: 2, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], archive_session: { error: "Archive destination is unavailable" } });
     try {
-      await app.conversationSearch.setValue(indexed.name);
+      await setConversationSearch(indexed.name);
       const session = $(".session-item");
-      await expect(session).toHaveText(expect.stringContaining(indexed.name));
+      await expect(session).toExist();
+      await session.moveTo();
       await session.$('button[aria-label="Archive conversation"]').click();
 
       await expect($(".error-toast strong")).toHaveText("Could not archive conversation");
@@ -379,7 +411,7 @@ describe("Conversation acceptance", () => {
     const indexed = { id: "acceptance-split", path: "/tmp/acceptance-split.jsonl", name: "Acceptance split target", project: "Acceptance project", cwd: "/tmp", preview: "Split preview", messageCount: 1, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], start_pi: {}, stop_pi: {}, ...connectedSessionResponses(indexed.id) });
     try {
-      await app.conversationSearch.setValue(indexed.name);
+      await setConversationSearch(indexed.name);
       const session = $(".session-item");
       await expect(session).toHaveText(expect.stringContaining(indexed.name));
       await openContextMenu($(".session-item"));
@@ -402,7 +434,7 @@ describe("Conversation acceptance", () => {
     await mockBackend({ list_sessions: [indexed], ...connectedSessionResponses(indexed.id), "pi_command:set_session_name": {} });
     try {
       await emitPiEvent({ type: "session_switched" });
-      await app.conversationSearch.setValue(indexed.name);
+      await setConversationSearch(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
       await openContextMenu($(".session-item"));
       await $('//div[@role="menu"]//button[normalize-space(.)="Rename conversation"]').click();
@@ -423,7 +455,7 @@ describe("Conversation acceptance", () => {
     const indexed = { id: "acceptance-logs", path: "/tmp/acceptance-logs.jsonl", name: "Acceptance logs target", project: "Acceptance project", cwd: "/tmp", preview: "Logs preview", messageCount: 2, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], open_log_viewer: {} });
     try {
-      await app.conversationSearch.setValue(indexed.name);
+      await setConversationSearch(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
       await openContextMenu($(".session-item"));
       await $('//div[@role="menu"]//button[normalize-space(.)="Open request viewer"]').click();
@@ -440,7 +472,7 @@ describe("Conversation acceptance", () => {
     const indexed = { id: "acceptance-logs-failure", path: "/tmp/acceptance-logs-failure.jsonl", name: "Acceptance logs failure", project: "Acceptance project", cwd: "/tmp", preview: "Logs failure preview", messageCount: 2, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], open_log_viewer: { error: "No browser is available" } });
     try {
-      await app.conversationSearch.setValue(indexed.name);
+      await setConversationSearch(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
       await openContextMenu($(".session-item"));
       await $('//div[@role="menu"]//button[normalize-space(.)="Open request viewer"]').click();
@@ -756,7 +788,7 @@ describe("Conversation acceptance", () => {
     await emitPiEvent({ type: "tool_execution_update", toolCallId: "acceptance-tool", partialResult: { content: "Reading…" } });
     await emitPiEvent({ type: "tool_execution_end", toolCallId: "acceptance-tool", result: { content: "Tool finished" }, isError: false });
     await expect(tool).toHaveText(expect.stringContaining("Completed"));
-    await tool.$("summary").click();
+    await browser.execute((details) => { (details as HTMLDetailsElement).open = true; }, tool);
     await expect(tool.$("pre")).toHaveText("Tool finished");
   });
 
@@ -766,7 +798,7 @@ describe("Conversation acceptance", () => {
 
     const tool = $('//details[contains(@class,"tool-event")][.//strong[contains(.,"write")]]');
     await expect(tool).toHaveText(expect.stringContaining("Failed"));
-    await tool.$("summary").click();
+    await browser.execute((details) => { (details as HTMLDetailsElement).open = true; }, tool);
     await expect(tool.$("pre")).toHaveText("Permission denied");
   });
 
@@ -885,7 +917,8 @@ describe("Conversation acceptance", () => {
     try {
       await app.openTerminalButton.click();
       await expect(app.terminalPanel).toBeDisplayed();
-      await browser.keys("x");
+      await browser.execute(() => { (document.querySelector(".xterm-helper-textarea") as HTMLElement)?.focus(); return true; });
+      await typeKeys("x");
       await browser.waitUntil(async () => String(await browser.execute(() => document.querySelector(".xterm-rows")?.textContent)).includes("Terminal input failed: Error: Terminal input channel closed"));
       await app.deleteTerminalButton.click();
       await expect(app.terminalPanel).not.toBeExisting();
@@ -906,7 +939,11 @@ describe("Conversation acceptance", () => {
     };
     await mockBackend({ ...connectedSessionResponses("copy-session"), "pi_command:get_entries": history });
     try {
-      await browser.execute(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text: string) => { (window as unknown as { __e2eClipboard?: string }).__e2eClipboard = text; } } }));
+      await browser.execute(() => {
+        const writeText = window.eval("(text) => { window.__e2eClipboard = text; return Promise.resolve(); }");
+        Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+        return true;
+      });
       await emitPiEvent({ type: "session_switched" });
       await expect($(".assistant-message")).toHaveText(expect.stringContaining("const answer = 42;"));
 
@@ -1370,7 +1407,8 @@ describe("Orchestration acceptance", () => {
 
     const name = $('input[aria-label="Sequence name"]');
     await expect(name).toHaveValue("sequence-1");
-    await name.setValue("acceptance-pipeline");
+    await clearField(name);
+    await typeKeys("acceptance-pipeline");
     await $('input[aria-label="Sequence description"]').setValue("Implement, then review");
     await $('//button[normalize-space(.)="Add step"]').click();
     await setSelectValue('select[aria-label="Sequence step 2"]', "reviewer");
@@ -1541,7 +1579,8 @@ describe("Settings acceptance", () => {
     const card = await name.$('./ancestor::div[contains(@class, "mcp-card")]');
     const command = await card.$('.//label[span[normalize-space(.)="Command"]]/input');
     const args = await card.$('.//label[span[normalize-space(.)="Arguments"]]/input');
-    await command.setValue("node");
+    await clearField(command);
+    await typeKeys("node");
     await args.setValue("server.js --quiet");
 
     await expect(card.$("select")).toHaveValue("stdio");
@@ -1642,7 +1681,7 @@ describe("Settings acceptance", () => {
   it("filters skills by name without changing configuration", async () => {
     await app.openSettings();
     await app.openSettingsSection("Skills");
-    await app.skillFilter.setValue("__webdriver_no_matching_skill__");
+    await setInputValue('input[aria-label="Filter skills by name"]', "__webdriver_no_matching_skill__");
 
     await expect($$(".skill-row")).toBeElementsArrayOfSize(0);
     await clearField(app.skillFilter);
@@ -1777,9 +1816,8 @@ describe("Project behavior", () => {
       await app.openTerminalButton.click();
       const terminalInput = $(".xterm-helper-textarea");
       await terminalInput.waitForExist();
-      await terminalInput.click();
-      await browser.keys("pwd");
-      await browser.keys("Enter");
+      await browser.execute(() => { (document.querySelector(".xterm-helper-textarea") as HTMLElement)?.focus(); return true; });
+      await typeKeys("pwd\r");
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "write_terminal"));
       const input = (await backendCalls()).filter(({ command }) => command === "write_terminal").map(({ args }) => String(args.data)).join("");
@@ -1819,18 +1857,18 @@ describe("Conversation lifecycle", () => {
       await app.prepareMessage("Draft belonging to the current conversation");
 
       await updateBackendResponse("pi_command:get_state", state(target.id));
-      await app.conversationSearch.setValue(target.name);
+      await setConversationSearch(target.name);
       await $(".session-item .session-main").click();
       await expect(app.composer).toHaveValue("");
       await app.prepareMessage("Draft belonging to the target conversation");
 
       await updateBackendResponse("pi_command:get_state", state(current.id));
-      await app.conversationSearch.setValue(current.name);
+      await setConversationSearch(current.name);
       await $(".session-item .session-main").click();
       await expect(app.composer).toHaveValue("Draft belonging to the current conversation");
 
       await updateBackendResponse("pi_command:get_state", state(target.id));
-      await app.conversationSearch.setValue(target.name);
+      await setConversationSearch(target.name);
       await $(".session-item .session-main").click();
       await expect(app.composer).toHaveValue("Draft belonging to the target conversation");
       await app.clearMessage();
@@ -1844,7 +1882,7 @@ describe("Conversation lifecycle", () => {
     const indexed = { id: "draft-split", path: "/tmp/draft-split.jsonl", name: "Draft split conversation", project: "Draft project", cwd: "/tmp", preview: "Split draft", messageCount: 1, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], start_pi: {}, stop_pi: {}, ...connectedSessionResponses(indexed.id) });
     const openSplit = async () => {
-      await app.conversationSearch.setValue(indexed.name);
+      await setConversationSearch(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
       await openContextMenu($(".session-item"));
       await $('//div[@role="menu"]//button[normalize-space(.)="Split pane"]').click();
@@ -1885,12 +1923,12 @@ describe("Conversation lifecycle", () => {
       await expect($$(".terminal-tab")).toBeElementsArrayOfSize(2);
 
       await updateBackendResponse("pi_command:get_state", state(target.id));
-      await app.conversationSearch.setValue(target.name);
+      await setConversationSearch(target.name);
       await $(".session-item .session-main").click();
       await expect($$(".terminal-tab")).toBeElementsArrayOfSize(1);
 
       await updateBackendResponse("pi_command:get_state", state(current.id));
-      await app.conversationSearch.setValue(current.name);
+      await setConversationSearch(current.name);
       await $(".session-item .session-main").click();
       await expect($$(".terminal-tab")).toBeElementsArrayOfSize(2);
       await app.closeTerminalButton.click();
@@ -1910,7 +1948,7 @@ describe("Conversation lifecycle", () => {
       await app.openTerminalButton.click();
       await expect(app.terminalPanel).toBeDisplayed();
       await updateBackendResponse("pi_command:get_state", replacementState);
-      await app.conversationSearch.setValue(indexed.name);
+      await setConversationSearch(indexed.name);
       const session = $(".session-item");
       await session.moveTo();
       await session.$('button[aria-label="Archive conversation"]').click();

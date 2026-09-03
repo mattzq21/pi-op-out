@@ -9,7 +9,7 @@ const actions = [
   ["split", Columns2, "Split pane"], ["rename", Pencil, "Rename conversation"], ["clone", CopyPlus, "Clone conversation"], ["logs", FileDown, "Open request viewer"], ["open-directory", FolderOpen, "Open project directory"]
 ] as const;
 
-function formatApiCost(cost: number) {
+function formatApiCost(cost = 0) {
   if (cost > 0 && cost < .01) return `$${cost.toFixed(3)}`;
   return `$${cost.toFixed(2)}`;
 }

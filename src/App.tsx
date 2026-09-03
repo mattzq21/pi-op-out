@@ -91,7 +91,7 @@ export default function App() {
   const queueTerminalOutput = useCallback((terminalId: string, data: string) => {
     const queued = queuedTerminalOutput.current.get(terminalId); const combined = `${queued?.data ?? ""}${data}`;
     queuedTerminalOutput.current.set(terminalId, { data: combined.slice(-TERMINAL_OUTPUT_LIMIT), length: (queued?.length ?? 0) + data.length });
-    if (terminalOutputFrame.current === undefined) terminalOutputFrame.current = requestAnimationFrame(flushTerminalOutput);
+    if (terminalOutputFrame.current === undefined) terminalOutputFrame.current = window.setTimeout(flushTerminalOutput, 0);
   }, [flushTerminalOutput]);
 
   useEffect(() => { void transport.loadCodexUsage().then(setCodexUsage).catch(() => undefined); }, [transport]);
@@ -118,6 +118,12 @@ export default function App() {
     }).catch(() => undefined).finally(() => { sessionIndexRequest.current = undefined; });
     return sessionIndexRequest.current;
   }, [transport]);
+  useEffect(() => {
+    if (import.meta.env.MODE !== "e2e") return;
+    const target = window as unknown as { __piE2ERefreshSessions?: () => Promise<void> };
+    target.__piE2ERefreshSessions = async () => { await sessionIndexRequest.current; await syncSessionIndex(); };
+    return () => { delete target.__piE2ERefreshSessions; };
+  }, [syncSessionIndex]);
 
   const refresh = useCallback(async (hostId?: string) => {
     void syncSessionIndex(); const [nextState, nextSettings] = await Promise.all([refreshSession(), transport.loadSettings()]); runtimePool.bind(hostId ?? transport.currentHostId(), nextState.sessionId, transport); setSettings(nextSettings); return nextSettings;
@@ -169,7 +175,7 @@ export default function App() {
       if (event.type === "disconnected") setOrchestration(undefined);
     });
     transport.connect().then(() => refresh()).then((value) => configureRuntime(value)).then(() => { if (!cancelled) { setError(undefined); setConnected(true); } }).catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); });
-    return () => { cancelled = true; unsubscribe(); if (terminalOutputFrame.current !== undefined) cancelAnimationFrame(terminalOutputFrame.current); terminalOutputFrame.current = undefined; queuedTerminalOutput.current.clear(); };
+    return () => { cancelled = true; unsubscribe(); if (terminalOutputFrame.current !== undefined) window.clearTimeout(terminalOutputFrame.current); terminalOutputFrame.current = undefined; queuedTerminalOutput.current.clear(); };
   }, [configureRuntime, handleEvent, queueTerminalOutput, refresh, transport]);
 
   useEffect(() => { const shutdown = () => { void runtimePool.disconnectAll(); }; window.addEventListener("beforeunload", shutdown); return () => window.removeEventListener("beforeunload", shutdown); }, [runtimePool]);
@@ -291,7 +297,7 @@ export default function App() {
   }, [settings.keybindings, toggleDebugMode]);
 
   return <div className="app dark">
-    {import.meta.env.MODE === "e2e" && <div className="e2e-bridge"><textarea id="pi-e2e-responses" aria-label="E2E responses" placeholder="E2E responses" /><textarea id="pi-e2e-calls" aria-label="E2E calls" placeholder="E2E calls" /><button aria-label="E2E refresh sessions" onClick={() => void syncSessionIndex()} /></div>}
+    {import.meta.env.MODE === "e2e" && <div className="e2e-bridge"><textarea id="pi-e2e-responses" aria-label="E2E responses" placeholder="E2E responses" /><textarea id="pi-e2e-calls" aria-label="E2E calls" placeholder="E2E calls" /></div>}
     <aside className="icon-rail">{activeBranch && <div className="rail-branch" title={activeBranch}><GitBranch size={13} /><span>{activeBranch}</span></div>}<nav><IconButton label="New conversation" onClick={newSession}><Plus size={19} /></IconButton><IconButton label="Conversations" className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}><MessageSquare size={18} /></IconButton><IconButton label="New project" onClick={() => setProjectOpen(true)}><FolderGit2 size={18} /></IconButton><IconButton label={settings.debugMode ? "Disable debug mode" : "Enable debug mode"} className={settings.debugMode ? "active" : ""} onClick={toggleDebugMode}><Bug size={18} /></IconButton><IconButton label="Settings" className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}><Settings size={19} /></IconButton></nav>{view === "chat" && panelOpen && <SessionPanel sessions={sessions} activeId={state.sessionId} activeHostId={activeHostId} runningSessions={runningSessions} unseenSessions={unseenSessions} query={query} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} />}<div className="rail-bottom">{codexUsage !== undefined && <span className="codex-usage" aria-label="Codex usage remaining" title="Codex usage remaining">{codexUsage.remainingPercent}% left{codexUsage.resetAt ? ` · ${formatCodexReset(codexUsage.resetAt)}` : ""}</span>}</div></aside>
     {view === "chat" ? <div className="chat-workspace"><div className={`chat-panes ${splitPane ? "split" : ""}`}><ChatView state={state} messages={messages} gitDiffs={gitDiffs} promptContext={promptContext} debug={settings.debugMode} agents={orchestration?.config.agents ?? []} sequences={orchestration?.config.sequences ?? []} activeAgent={orchestration?.active} dictionaries={settings.dictionaries.filter((item) => settings.activeDictionaryIds.includes(item.id))} models={models} commands={commands} thinkingLevels={thinkingLevels} widgets={Object.values(widgets).flat()} statuses={Object.values(statuses)} projectCwd={selectedProjectCwd(activeCwd)} draft={composerDraft} onDraftChange={setComposerDraft} onSend={send} onAbort={() => transport.command({ type: "abort" })} onOpenTerminal={() => setTerminalOpen(true)} onOpenProject={chooseChatProject} onBranch={branch} onAgent={setAgent} onModel={setModel} onThinking={setThinking} />{splitPane && <SplitChatPane key={splitSessionId} runtimePool={runtimePool} session={splitPane.session} settings={settings} draft={splitComposerDraft} onDraftChange={setSplitComposerDraft} forkFrom={splitPane.btw?.forkFrom} initialPrompt={splitPane.btw?.task} onClose={closeSplitPane} onComplete={(answer) => { const requestId = splitPane.btw?.requestId; setSplitPane(undefined); if (requestId) void transport.command({ type: "extension_ui_response", id: requestId, value: answer }); }} onFailure={(message) => { const requestId = splitPane.btw?.requestId; setSplitPane(undefined); if (requestId) void transport.command({ type: "extension_ui_response", id: requestId, cancelled: true }); setNotice({ title: "/btw failed", message }); }} />}</div>{terminalOpen && <TerminalView key={`${terminalSessionId}:${activeTerminal.id}`} cwd={activeCwd ?? sessions.find((session) => session.id === state.sessionId && (session.hostId ?? "local") === activeHostId)?.cwd} terminals={sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={activeTerminal.id} output={activeTerminal.output} outputEnd={activeTerminal.outputEnd} exited={activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { void transport.writeTerminal(activeTerminal.id, data).catch((reason) => queueTerminalOutput(activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { void transport.resizeTerminal(activeTerminal.id, cols, rows).catch(() => undefined); }} onDelete={deleteTerminal} onClose={() => setTerminalOpen(false)} />}</div> : <SettingsView settings={settings} orchestration={orchestration?.config} models={models} thinkingLevels={thinkingLevels} onSave={saveSettings} />}
     {error && <div className="error-toast"><strong>Pi could not connect</strong><span>{error}</span><button onClick={() => setError(undefined)}>×</button></div>}
