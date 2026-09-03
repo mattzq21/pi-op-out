@@ -52,7 +52,6 @@ describe("BUGS-3 regressions", () => {
     if (await $(".error-toast").isExisting()) await $(".error-toast button").click();
     if (await app.terminalPanel.isExisting()) await app.closeTerminalButton.click();
     await app.conversationSearch.clearValue();
-    await emitPiEvent({ type: "disconnected" });
     await resetBackend();
   });
 
@@ -1376,7 +1375,6 @@ describe("Orchestration acceptance", () => {
 
   afterEach(async () => {
     if (await app.settingsHeading.isExisting()) await app.openConversations();
-    await emitPiEvent({ type: "disconnected" });
     await resetBackend();
   });
 
