@@ -1560,17 +1560,6 @@ fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), Str
     Ok(())
 }
 
-fn apply_start_bounds(app: &tauri::App) {
-    let Ok(bounds) = std::env::var("PI_START_BOUNDS") else { return };
-    let mut values = bounds.split(',');
-    let (Some(x), Some(y), Some(width), Some(height), None) = (values.next(), values.next(), values.next(), values.next(), values.next()) else { return };
-    let (Ok(x), Ok(y), Ok(width), Ok(height)) = (x.parse::<i32>(), y.parse::<i32>(), width.parse::<u32>(), height.parse::<u32>()) else { return };
-    let Some(window) = app.get_webview_window("main") else { return };
-    let _ = window.set_size(tauri::PhysicalSize::new(width, height));
-    let scaled_y = if y > 56 { (f64::from(y) * window.scale_factor().unwrap_or(1.0)).round() as i32 } else { y };
-    let _ = window.set_position(tauri::PhysicalPosition::new(x, scaled_y));
-}
-
 pub fn run() {
     let broker = BrokerRuntime::default();
     let builder = tauri::Builder::default();
@@ -1578,7 +1567,6 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
     builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(SessionIndexRuntime::default()).manage(broker.clone()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
-        apply_start_bounds(app);
         Ok(())
     }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, git_branch, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }
