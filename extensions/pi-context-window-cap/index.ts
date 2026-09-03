@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Model } from "@earendil-works/pi-ai";
@@ -41,8 +42,10 @@ function skillsFromPrompt(prompt: string) {
 function instructionsFromPrompt(prompt: string) {
   const block = prompt.match(/\n\n<project_context>[\s\S]*?<\/project_context>\n?/)?.[0] ?? "";
   const decode = (value: string) => value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"').replaceAll("&apos;", "'").replaceAll("&amp;", "&");
+  const home = homedir();
+  const displayPath = (value: string) => value === home ? "~" : value.startsWith(`${home}/`) ? `~/${value.slice(home.length + 1)}` : value;
   const instructions = [...block.matchAll(/<project_instructions path="([^"]*)">\n?([\s\S]*?)\n?<\/project_instructions>/g)]
-    .map((match) => ({ path: decode(match[1]), content: match[2] }));
+    .map((match) => ({ path: displayPath(decode(match[1])), content: match[2] }));
   return { block, instructions };
 }
 
