@@ -1548,10 +1548,7 @@ fn apply_start_bounds(app: &AppHandle) {
     let (Some(x), Some(y), Some(width), Some(height), None) = (values.next(), values.next(), values.next(), values.next(), values.next()) else { return };
     let (Ok(x), Ok(y), Ok(width), Ok(height)) = (x.parse::<i32>(), y.parse::<i32>(), width.parse::<u32>(), height.parse::<u32>()) else { return };
     let Some(window) = app.get_webview_window("main") else { return };
-    let (Ok(inner_size), Ok(outer_size)) = (window.inner_size(), window.outer_size()) else { return };
-    let frame_width = outer_size.width.saturating_sub(inner_size.width);
-    let frame_height = outer_size.height.saturating_sub(inner_size.height);
-    let _ = window.set_size(tauri::PhysicalSize::new(width.saturating_sub(frame_width), height.saturating_sub(frame_height)));
+    let _ = window.set_size(tauri::PhysicalSize::new(width, height));
     let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
