@@ -109,16 +109,22 @@ describe("BUGS-3 regressions", () => {
   });
 
   it("keeps a terminal tab when closing its process fails", async () => {
-    await mockBackend({ start_terminal: {}, resize_terminal: {}, close_terminal: { error: "Terminal close failed" } });
-    await app.openTerminalButton.click();
-    await app.addTerminalButton.click();
-    await expect($$(".terminal-tab")).toBeElementsArrayOfSize(2);
+    await startTemporaryConversation({ start_terminal: {}, resize_terminal: {}, close_terminal: { error: "Terminal close failed" } });
+    try {
+      await expect(app.openTerminalButton).toBeEnabled();
+      await app.openTerminalButton.click();
+      await expect(app.terminalPanel).toBeExisting();
+      await app.addTerminalButton.click();
+      await expect($$(".terminal-tab")).toBeElementsArrayOfSize(2);
 
-    await app.deleteTerminalButton.click();
+      await app.deleteTerminalButton.click();
 
-    await expect($$(".terminal-tab")).toBeElementsArrayOfSize(2);
-    await expect($(".error-toast strong")).toHaveText("Could not close terminal");
-    await expect($(".error-toast span")).toHaveText("Terminal close failed");
+      await expect($$(".terminal-tab")).toBeElementsArrayOfSize(2);
+      await expect($(".error-toast strong")).toHaveText("Could not close terminal");
+      await expect($(".error-toast span")).toHaveText("Terminal close failed");
+    } finally {
+      await resetApp();
+    }
   });
 
   it("reports a failed agent selection", async () => {
