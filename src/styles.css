@@ -6,6 +6,7 @@ body { margin: 0; min-width: 900px; min-height: 100vh; overflow: hidden; }
 button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 .app { height: 100vh; display: flex; background: var(--paper); }
+.app-loading { width: 100vw; height: 100vh; display: grid; place-content: center; justify-items: center; gap: 6px; padding: 32px; background: var(--paper); color: var(--ink); text-align: center; }.app-loading h1, .app-loading p { margin: 0; }.app-loading h1 { font: 31px "Instrument Serif"; }.app-loading > p:last-child:not(.eyebrow) { max-width: 560px; color: #d77865; font-size: 13px; white-space: pre-wrap; }
 .icon-rail { width: var(--rail-width); flex: 0 0 var(--rail-width); background: #292824; color: #bdb9b0; display: flex; flex-direction: column; align-items: center; padding: 13px 0 12px; z-index: 3; }
 .rail-branch { width: calc(100% - 28px); min-width: 0; height: 34px; margin: 0 14px 4px; padding: 0 8px; display: flex; align-items: center; justify-content: center; gap: 7px; color: var(--accent); font-size: 18px; }.rail-branch svg { width: 17px; height: 17px; flex: 0 0 auto; }.rail-branch span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .icon-rail nav { width: 100%; display: flex; flex-direction: row; justify-content: center; align-items: center; gap: 5px; }
