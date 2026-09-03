@@ -19,6 +19,9 @@ if (args[0] === "dev") {
 }
 
 const tauri = fileURLToPath(new URL("../node_modules/.bin/tauri", import.meta.url));
-const child = spawn(tauri, args, { stdio: "inherit" });
+const env = process.platform === "linux" && args[0] === "dev"
+  ? { ...process.env, GDK_BACKEND: "x11", PI_START_POSITION: "secondary-top-right" }
+  : process.env;
+const child = spawn(tauri, args, { stdio: "inherit", env });
 child.once("error", (error) => { console.error(error.message); process.exitCode = 1; });
 child.once("exit", (code, signal) => { if (signal) process.kill(process.pid, signal); else process.exitCode = code ?? 1; });

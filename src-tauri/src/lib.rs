@@ -1542,10 +1542,30 @@ fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), Str
     Ok(())
 }
 
+fn position_main_window(app: &tauri::App) {
+    if std::env::var("PI_START_POSITION").as_deref() != Ok("secondary-top-right") { return; }
+    let Some(window) = app.get_webview_window("main") else { return };
+    let Ok(monitors) = window.available_monitors() else { return };
+    let primary = window.primary_monitor().ok().flatten();
+    let target = monitors.iter().find(|monitor| match primary.as_ref() {
+        Some(primary) => monitor.position() != primary.position(),
+        None => false,
+    }).or_else(|| primary.as_ref()).or_else(|| monitors.first());
+    let (Some(target), Ok(window_size)) = (target, window.outer_size()) else { return };
+    let work_area = target.work_area();
+    let x = work_area.position.x + work_area.size.width.saturating_sub(window_size.width) as i32;
+    let y = work_area.position.y;
+    let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+}
+
 pub fn run() {
     let broker = BrokerRuntime::default();
     let builder = tauri::Builder::default();
     #[cfg(feature = "webdriver")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
-    builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(SessionIndexRuntime::default()).manage(broker.clone()).setup(move |app| start_session_broker(app.handle().clone(), broker.clone()).map_err(Into::into)).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, git_branch, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(SessionIndexRuntime::default()).manage(broker.clone()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
+        start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
+        position_main_window(app);
+        Ok(())
+    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, git_branch, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }
