@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "npm run build:mcp-bridge && tsc -b && vite build",
     "build:mcp-bridge": "node scripts/build-mcp-bridge.mjs",
-    "pretauri": "npm run build:mcp-bridge",
+    "pretauri": "npm install && npm run build:mcp-bridge",
     "test:e2e": "npm run test:e2e:build && npm run test:e2e:run",
     "test:e2e:build": "tsc -b && vite build --mode e2e && TAURI_CONFIG='{\"build\":{\"devUrl\":null}}' cargo build --manifest-path src-tauri/Cargo.toml --release --features webdriver",
     "test:e2e:run": "wdio run wdio.conf.ts",
