@@ -14,12 +14,6 @@ type ServerConfig = {
   headers?: string | Record<string, string>;
   enabled: boolean;
 };
-type McpTool = { name: string; description?: string; inputSchema?: Record<string, unknown> };
-type McpClient = {
-  tools(): Promise<McpTool[]>;
-  callTool(name: string, args: unknown, signal?: AbortSignal): Promise<unknown>;
-  close(): Promise<void>;
-};
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const TOOL_TIMEOUT_MS = 120_000;
@@ -57,7 +51,7 @@ function parseHeaders(value: ServerConfig["headers"]): Record<string, string> {
   return headers;
 }
 
-async function createClient(config: ServerConfig): Promise<McpClient> {
+async function createClient(config: ServerConfig): Promise<Client> {
   const client = new Client({ name: "pi-desktop", version: "0.1.0" });
   client.onerror = (error) => process.stderr.write(`[mcp:${config.name}] ${error.message}\n`);
   const transport = config.transport === "http"
@@ -79,13 +73,7 @@ async function createClient(config: ServerConfig): Promise<McpClient> {
       })();
   try { await client.connect(transport, { timeout: REQUEST_TIMEOUT_MS }); }
   catch (error) { await client.close().catch(() => undefined); throw error; }
-  return {
-    async tools() { return (await client.listTools(undefined, { timeout: REQUEST_TIMEOUT_MS })).tools as McpTool[]; },
-    callTool(name, args, signal) {
-      return client.callTool({ name, arguments: args as Record<string, unknown> }, { signal, timeout: TOOL_TIMEOUT_MS });
-    },
-    close() { return client.close(); },
-  };
+  return client;
 }
 
 function resultContent(result: unknown) {
@@ -106,11 +94,11 @@ export default async function mcpBridge(pi: ExtensionAPI) {
   const allowed = allowedServerIds ? new Set(allowedServerIds) : undefined;
   const desktopSkillPaths = (() => { try { const value = JSON.parse(process.env.PI_DESKTOP_SKILL_PATHS || "[]"); return Array.isArray(value) ? value.filter((path): path is string => typeof path === "string") : []; } catch { return []; } })();
   pi.on("resources_discover", () => process.env.PI_DESKTOP_ORCHESTRATION_ACTIVE === "1" || !desktopSkillPaths.length ? undefined : { skillPaths: desktopSkillPaths });
-  const clients: McpClient[] = []; const loaded: Array<{ server: string; tools: string[] }> = [];
+  const clients: Client[] = []; const loaded: Array<{ server: string; tools: string[] }> = [];
   const statuses = new Map(servers.map((server) => [server.id, { id: server.id, status: "stopped" as "stopped" | "connected" | "error", error: undefined as string | undefined }]));
   await Promise.all(servers.filter((item) => item.enabled && (!allowed || allowed.has(item.id))).map(async (server) => {
     try {
-      const client = await createClient(server); const tools = await client.tools(); clients.push(client);
+      const client = await createClient(server); const tools = (await client.listTools(undefined, { timeout: REQUEST_TIMEOUT_MS })).tools; clients.push(client);
       const registered: string[] = [];
       for (const tool of tools) {
         const name = `mcp_${safeName(server.id || server.name)}_${safeName(tool.name)}`; registered.push(name);
@@ -119,7 +107,7 @@ export default async function mcpBridge(pi: ExtensionAPI) {
           promptSnippet: `Use ${tool.name} from the ${server.name} MCP server`, parameters: Type.Unsafe(tool.inputSchema ?? { type: "object", properties: {} }),
           async execute(_toolCallId, params, signal) {
             if (signal?.aborted) throw new Error("MCP tool call aborted");
-            const result = await client.callTool(tool.name, params, signal); const response = result as { isError?: boolean };
+            const result = await client.callTool({ name: tool.name, arguments: params as Record<string, unknown> }, { signal, timeout: TOOL_TIMEOUT_MS }); const response = result as { isError?: boolean };
             if (response?.isError) throw new Error(resultContent(result).map((part) => part.type === "text" ? part.text : "MCP image result").join("\n"));
             return { content: resultContent(result), details: { server: server.name, tool: tool.name, result } };
           },
