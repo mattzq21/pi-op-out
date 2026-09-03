@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const REF_ROOT = "refs/pi-session-snapshots";
+const SNAPSHOT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_LISTED_FILES = 200;
 const MAX_GIT_OUTPUT = 4 * 1024 * 1024;
 
@@ -40,7 +41,10 @@ function runGit(cwd: string, args: string[], env: Record<string, string> = {}, i
 
 async function repositoryRoot(cwd: string) {
   try { return (await runGit(cwd, ["rev-parse", "--show-toplevel"])).trim(); }
-  catch { return undefined; }
+  catch (error) {
+    if (error instanceof GitError && error.exitCode === 128) return undefined;
+    throw error;
+  }
 }
 
 function sessionRef(sessionId: string) {
@@ -80,9 +84,21 @@ async function saveSnapshot(root: string, sessionId: string) {
     GIT_AUTHOR_DATE: timestamp,
     GIT_COMMITTER_DATE: timestamp,
   };
-  const commit = (await runGit(root, ["commit-tree", tree, ...(parent ? ["-p", parent] : [])], identity, `Pi session snapshot ${sessionId} ${timestamp}\n`)).trim();
+  const commit = (await runGit(root, ["commit-tree", tree], identity, `Pi session snapshot ${sessionId} ${timestamp}\n`)).trim();
   await runGit(root, ["update-ref", ref, commit, ...(parent ? [parent] : [])]);
-  return commit;
+  await pruneStaleSnapshots(root, ref);
+}
+
+async function pruneStaleSnapshots(root: string, currentRef: string) {
+  const cutoff = Math.floor((Date.now() - SNAPSHOT_RETENTION_MS) / 1000);
+  const refs = await runGit(root, ["for-each-ref", "--format=%(refname)%09%(objectname)%09%(committerdate:unix)", REF_ROOT]);
+  for (const line of refs.split("\n")) {
+    const [ref, objectId, rawTimestamp] = line.split("\t");
+    const timestamp = Number(rawTimestamp);
+    if (ref !== currentRef && Number.isFinite(timestamp) && timestamp < cutoff) {
+      await runGit(root, ["update-ref", "-d", ref, objectId]);
+    }
+  }
 }
 
 function shellQuote(value: string) { return `'${value.replaceAll("'", `'\\''`)}'`; }
@@ -128,9 +144,9 @@ export default function gitChangeContext(pi: ExtensionAPI) {
       return { action: "continue" };
     }
     await snapshotQueue;
-    const root = await repositoryRoot(ctx.cwd);
-    if (!root) return { action: "continue" };
     try {
+      const root = await repositoryRoot(ctx.cwd);
+      if (!root) return { action: "continue" };
       const baseline = await resolveRef(root, sessionRef(ctx.sessionManager.getSessionId()));
       if (!baseline) return { action: "continue" };
       const current = await worktreeTree(root);

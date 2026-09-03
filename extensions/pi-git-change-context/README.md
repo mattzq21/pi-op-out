@@ -14,6 +14,8 @@ there are no changes to report.
 Snapshots contain tracked files and non-ignored untracked files. They use a temporary
 Git index, so the extension does not alter the real staging area, branch, `HEAD`, or
 working tree. Ignored files and changes inside submodule worktrees are not captured.
+When Pi's working directory is not inside a Git repository, the extension quietly
+does nothing and leaves user input unchanged.
 
 Each session owns one hidden ref:
 
@@ -21,8 +23,11 @@ Each session owns one hidden ref:
 refs/pi-session-snapshots/<session-id>
 ```
 
-The ref points to a chain of hidden commits whose messages include the session ID and
-timestamp. These commits do not appear in normal branch history and are not pushed by
+The ref points to the session's latest hidden commit, whose message includes the
+session ID and timestamp. Snapshots are deliberately not parent-linked, so replacing
+a snapshot makes its predecessor eligible for normal Git garbage collection. Whenever
+a snapshot is saved, refs belonging to sessions inactive for more than 30 days are
+deleted. Hidden commits do not appear in normal branch history and are not pushed by
 ordinary branch pushes.
 
 Run it directly:
