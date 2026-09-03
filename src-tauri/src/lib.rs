@@ -193,8 +193,6 @@ struct AppSettings {
     dictionaries: Vec<PromptDictionary>,
     #[serde(default)]
     active_dictionary_ids: Vec<String>,
-    #[serde(default, skip_serializing)]
-    active_dictionary_id: String,
 }
 
 fn default_pi_path() -> String { "pi".into() }
@@ -384,7 +382,7 @@ fn default_settings() -> AppSettings {
             json!({"name":"send_message","description":"Send a message to another agent","enabled":true,"builtin":false}),
             json!({"name":"read_trace","description":"Extract clean user and final assistant messages from a Pi trace","enabled":true,"builtin":false}),
         ]).collect(),
-        skills: vec![], mcp_servers: vec![], hosts: vec![], dictionaries: vec![], active_dictionary_ids: vec![], active_dictionary_id: String::new(),
+        skills: vec![], mcp_servers: vec![], hosts: vec![], dictionaries: vec![], active_dictionary_ids: vec![],
     }
 }
 
@@ -527,22 +525,8 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     let mut settings = if !path.exists() { default_settings() } else { serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())? };
     if settings.hosts.len() > MAX_REMOTE_HOSTS { return Err(format!("Settings contain more than {MAX_REMOTE_HOSTS} remote machines")); }
     if settings.mcp_servers.len() > MAX_MCP_SERVERS { return Err(format!("Settings contain more than {MAX_MCP_SERVERS} MCP servers")); }
-    let migrated_model = matches!(settings.default_model.as_str(), "openrouter/deepseek/deepseek-v4-flash" | "opencodex/gpt-5.6-sol");
-    let previous_mcp_count = settings.mcp_servers.len();
-    settings.mcp_servers.retain(|server| server.get("id").and_then(Value::as_str) != Some("filesystem"));
-    let migrated_filesystem_mcp = settings.mcp_servers.len() != previous_mcp_count;
-    if migrated_model { settings.default_model = DEFAULT_MODEL.into(); settings.default_thinking = "medium".into(); }
-    for shortcut in settings.keybindings.values_mut() { *shortcut = shortcut.replace("Mod+", "Ctrl+"); }
-    let mut keybindings_changed = false;
-    for (action, shortcut) in default_keybindings() { if let std::collections::hash_map::Entry::Vacant(entry) = settings.keybindings.entry(action) { entry.insert(shortcut); keybindings_changed = true; } }
-    for tool in default_settings().tools { if !settings.tools.iter().any(|current| current.get("name") == tool.get("name")) { settings.tools.push(tool); } }
     merge_discovered_skills(&mut settings);
-    let migrated_dictionary_selection = settings.active_dictionary_ids.is_empty() && !settings.active_dictionary_id.is_empty();
-    if migrated_dictionary_selection { settings.active_dictionary_ids.push(settings.active_dictionary_id.clone()); }
-    let context_cap_changed = settings.context_window_cap < 1000;
-    if context_cap_changed { settings.context_window_cap = default_context_window_cap(); }
     validate_dictionaries(&settings)?;
-    if migrated_model || migrated_filesystem_mcp || migrated_dictionary_selection || keybindings_changed || context_cap_changed { fs::write(path, serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?; }
     Ok(settings)
 }
 
@@ -570,39 +554,10 @@ fn shell_quote(value: &str) -> String { format!("'{}'", value.replace('\'', "'\\
 
 fn desktop_sessions_dir(home: &Path) -> PathBuf { home.join(".pi-desktop/sessions") }
 
-fn is_legacy_desktop_session(path: &Path) -> Result<bool, String> {
-    let file = fs::File::open(path).map_err(|error| format!("Could not inspect legacy session {}: {error}", path.display()))?;
-    for line in BufReader::new(file).lines() {
-        let line = line.map_err(|error| format!("Could not inspect legacy session {}: {error}", path.display()))?;
-        if !line.contains("pi-desktop-") { continue; }
-        let Ok(entry) = serde_json::from_str::<Value>(&line) else { continue };
-        if entry.get("type").and_then(Value::as_str) == Some("custom") && entry.get("customType").and_then(Value::as_str).is_some_and(|value| value.starts_with("pi-desktop-")) { return Ok(true); }
-    }
-    Ok(false)
-}
-
-fn migrate_local_desktop_sessions(home: &Path) -> Result<PathBuf, String> {
-    let destination_root = desktop_sessions_dir(home); fs::create_dir_all(&destination_root).map_err(|error| format!("Could not create Pi Desktop session directory: {error}"))?;
-    let marker = destination_root.join(".migration-from-pi-agent-v1"); if marker.exists() { return Ok(destination_root); }
-    let legacy_root = home.join(".pi/agent/sessions");
-    if legacy_root.is_dir() {
-        for entry in WalkDir::new(&legacy_root).follow_links(false).into_iter().filter_map(Result::ok).filter(|entry| entry.file_type().is_file() && entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")) {
-            let source = entry.path(); if !is_legacy_desktop_session(source)? { continue; }
-            let relative = source.strip_prefix(&legacy_root).map_err(|_| "Legacy session escaped its root".to_string())?;
-            let destination = destination_root.join(relative);
-            if destination.exists() { return Err(format!("Cannot migrate desktop session because {} already exists", destination.display())); }
-            if let Some(parent) = destination.parent() { fs::create_dir_all(parent).map_err(|error| format!("Could not create migrated session directory: {error}"))?; }
-            fs::rename(source, &destination).map_err(|error| format!("Could not migrate desktop session {}: {error}", source.display()))?;
-            let source_diff = source.with_extension("diffs.json");
-            if source_diff.is_file() { fs::rename(&source_diff, destination.with_extension("diffs.json")).map_err(|error| format!("Session migrated, but its diffs could not be migrated: {error}"))?; }
-        }
-    }
-    fs::write(&marker, b"Desktop sessions migrated from ~/.pi/agent/sessions\n").map_err(|error| format!("Could not finish desktop session migration: {error}"))?;
-    Ok(destination_root)
-}
-
-fn remote_session_migration_script() -> &'static str {
-    r#"new="$HOME/.pi-desktop/sessions"; marker="$new/.migration-from-pi-agent-v1"; mkdir -p "$new" || exit 20; if [ ! -f "$marker" ]; then old="$HOME/.pi/agent/sessions"; if [ -d "$old" ]; then find "$old" -type f -name '*.jsonl' -exec sh -c 'old=$1; new=$2; shift 2; for path do if grep -Eq '\"type\"[[:space:]]*:[[:space:]]*\"custom\"' "$path" && grep -Eq '\"customType\"[[:space:]]*:[[:space:]]*\"pi-desktop-' "$path"; then rel=${path#"$old"/}; target="$new/$rel"; [ ! -e "$target" ] || exit 21; mkdir -p "$(dirname -- "$target")" || exit 22; mv -- "$path" "$target" || exit 23; diff=${path%.jsonl}.diffs.json; [ ! -f "$diff" ] || mv -- "$diff" "${target%.jsonl}.diffs.json" || exit 24; fi; done' sh "$old" "$new" {} + || exit $?; fi; printf '%s\n' 'Desktop sessions migrated from ~/.pi/agent/sessions' > "$marker" || exit 25; fi"#
+fn ensure_desktop_sessions_dir(home: &Path) -> Result<PathBuf, String> {
+    let root = desktop_sessions_dir(home);
+    fs::create_dir_all(&root).map_err(|error| format!("Could not create Pi Desktop session directory: {error}"))?;
+    Ok(root)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -901,8 +856,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let context_window_config = shell_quote(&serde_json::to_string_pretty(&json!({ "contextWindowCap": settings.context_window_cap })).map_err(|error| error.to_string())?);
     let mcp_bridge = shell_quote(include_str!("../resources/mcp-bridge.bundle.mjs"));
     let mcp_config = shell_quote(&serde_json::to_string_pretty(&settings.mcp_servers).map_err(|error| error.to_string())?);
-    let migration = remote_session_migration_script();
-    let remote = format!("{migration} && mkdir -p \"$HOME/.pi-desktop/pi-context-window-cap\" \"$HOME/.pi/agent/extensions/pi-orchestration\" && printf %s {broker} > \"$HOME/.pi-desktop/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/.pi-desktop/pi-desktop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/.pi-desktop/pi-desktop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/.pi-desktop/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/.pi-desktop/pi-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/.pi-desktop/pi-context-window-cap/config.json\" && printf %s {btw} > \"$HOME/.pi/agent/extensions/pi-desktop-btw.ts\" && printf %s {orchestration} > \"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\"");
+    let remote = format!("mkdir -p \"$HOME/.pi-desktop/sessions\" \"$HOME/.pi-desktop/pi-context-window-cap\" \"$HOME/.pi/agent/extensions/pi-orchestration\" && printf %s {broker} > \"$HOME/.pi-desktop/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/.pi-desktop/pi-desktop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/.pi-desktop/pi-desktop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/.pi-desktop/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/.pi-desktop/pi-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/.pi-desktop/pi-context-window-cap/config.json\" && printf %s {btw} > \"$HOME/.pi/agent/extensions/pi-desktop-btw.ts\" && printf %s {orchestration} > \"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\"");
     let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not install Pi Desktop extensions on {}: {error}", host.name))?;
     output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
 }
@@ -925,7 +879,7 @@ fn build_pi_command(app: &AppHandle, broker: &BrokerRuntime, settings: &AppSetti
     let default_model = std::env::var("PI_DESKTOP_E2E_MODEL").ok().filter(|model| !model.trim().is_empty()).unwrap_or_else(|| settings.default_model.clone());
     if host_id == "local" {
         let (mcp_extension, mcp_config) = prepare_mcp_bridge(app, settings)?; let context_window_cap_extension = prepare_context_window_cap_extension(app, settings)?; let trace_reader_extension = prepare_trace_reader(app)?; let pi_path = pi_executable();
-        let session_dir = migrate_local_desktop_sessions(&desktop_home)?;
+        let session_dir = ensure_desktop_sessions_dir(&desktop_home)?;
         let mut command = Command::new(&pi_path); command.arg(if is_rpc { "--mode" } else { "--print" }); if is_rpc { command.arg("rpc"); }
         command.arg("--session-dir").arg(session_dir).arg("--approve").arg("--no-skills").arg("--extension").arg(mcp_extension).arg("--extension").arg(prepare_session_broker(app)?).arg("--extension").arg(&trace_reader_extension).arg("--extension").arg(&context_window_cap_extension)
             .env("PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION", &context_window_cap_extension).env("PI_DESKTOP_TRACE_READER_EXTENSION", &trace_reader_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config).env("PI_DESKTOP_BROKER_URL", format!("http://127.0.0.1:{broker_port}")).env("PI_DESKTOP_BROKER_TOKEN", &broker_token).env("PI_DESKTOP_ALLOWED_TOOLS", &allowed_tools).env("PI_DESKTOP_SKILL_PATHS", &local_skills);
@@ -1224,7 +1178,7 @@ fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<S
 }
 
 fn list_remote_sessions(index: &SessionIndexRuntime, host: &RemoteHost) -> Result<Vec<SessionSummary>, String> {
-    let script = format!(r#"{} && find "$HOME/.pi-desktop/sessions" -type f -name '*.jsonl' -printf '%p\000%T@\000%s\000' 2>/dev/null"#, remote_session_migration_script());
+    let script = r#"mkdir -p "$HOME/.pi-desktop/sessions" && find "$HOME/.pi-desktop/sessions" -type f -name '*.jsonl' -printf '%p\000%T@\000%s\000' 2>/dev/null"#;
     let output = ssh(host).arg(script).output().map_err(|error| format!("Could not run ssh for {}: {error}", host.name))?;
     if !output.status.success() { return Err(format!("Could not list sessions on {}: {}", host.name, String::from_utf8_lossy(&output.stderr).trim())); }
     let fields: Vec<&[u8]> = output.stdout.split(|byte| *byte == 0).filter(|field| !field.is_empty()).collect();
@@ -1346,7 +1300,7 @@ fn list_directories(app: AppHandle, host_id: String, path: Option<String>) -> Re
 }
 
 fn collect_sessions(app: &AppHandle, index: &SessionIndexRuntime) -> Result<Vec<SessionSummary>, String> {
-    let home = home_dir()?; let root = migrate_local_desktop_sessions(&home)?;
+    let home = home_dir()?; let root = ensure_desktop_sessions_dir(&home)?;
     let mut sessions = list_local_sessions(index, &root)?;
     let hosts = load_app_settings(app.clone())?.hosts;
     thread::scope(|scope| {
