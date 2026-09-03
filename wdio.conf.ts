@@ -12,7 +12,7 @@ const defaultBinary = path.resolve(
 const testWindow = { width: 1_100, height: 720 };
 const defaultActualCallModel = "openai-codex/gpt-5.6-luna";
 const actualCallModel = process.env.PI_E2E_ACTUAL_MODEL?.trim() || defaultActualCallModel;
-const driverProvider = process.platform === "linux" ? "external" : "embedded";
+const driverProvider = "embedded";
 const webdriverPort = randomInt(20_000, 60_000);
 const sessionsRoot = path.join(homedir(), ".pi-desktop", "sessions");
 const temporaryProjectsRoot = path.join(homedir(), "pi-desktop", "tmp");

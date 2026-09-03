@@ -1,6 +1,6 @@
 # WebdriverIO acceptance testing
 
-The acceptance suite exercises the native Tauri application with WebdriverIO. It builds the frontend in E2E mode and builds the native binary with Cargo's release profile and the test-only `webdriver` feature. Linux connects through the external `tauri-driver` and `WebKitWebDriver`; other platforms use the embedded Tauri WebDriver provider. Normal application builds do not register the test plugin.
+The acceptance suite exercises the native Tauri application with WebdriverIO. It builds the frontend in E2E mode, builds the native binary with Cargo's release profile and the test-only `webdriver` feature, and connects through the embedded Tauri WebDriver provider. Normal application builds do not register the test plugin, and the suite does not require a separate `tauri-driver` process.
 
 ## Run the suite
 
@@ -19,9 +19,7 @@ npm run test:e2e:run
 
 The default executable is `src-tauri/target/release/pi-desktop` (`pi-desktop.exe` on Windows). Set `PI_E2E_BINARY` to run the specs against another executable.
 
-Linux requires `tauri-driver` and `WebKitWebDriver` on `PATH`. The external provider avoids the embedded Linux session-creation path, which can become ready at `/status` but hang while handling `POST /session`.
-
-Each run chooses a new high-numbered WebDriver port. On Linux, the Tauri service checks availability and allocates an available port pair for the proxy and native driver; the embedded provider receives the new port directly on other platforms. An abandoned process on a previous run's port therefore does not block the next run.
+Each run chooses a new high-numbered port for the embedded WebDriver server. An abandoned process on a previous run's port therefore does not block the next run.
 
 The suite includes a real provider call. Before starting, it verifies that Pi's installed model catalog and authentication contain the selected provider. The default is `openai-codex/gpt-5.6-luna`; override it with `PI_E2E_ACTUAL_MODEL`:
 

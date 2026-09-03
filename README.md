@@ -42,7 +42,7 @@ cd src-tauri && cargo build --locked
 
 ## End-to-end tests
 
-The acceptance-oriented WebdriverIO suite builds a release-profile native app with its test-only `webdriver` Cargo feature, then exercises user-visible frontend workflows through a native Tauri WebDriver provider. Linux uses the external `tauri-driver` and `WebKitWebDriver`; other platforms use the embedded provider. The release profile ensures Tauri embeds the tested frontend rather than loading the development server. Normal builds do not register the test plugin.
+The acceptance-oriented WebdriverIO suite builds a release-profile native app with its test-only `webdriver` Cargo feature, then exercises user-visible frontend workflows through the embedded Tauri WebDriver provider. The release profile ensures Tauri embeds the tested frontend rather than loading the development server. Normal builds do not register the test plugin, and no external `tauri-driver` is required.
 
 ```bash
 npm run test:e2e
