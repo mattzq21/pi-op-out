@@ -1581,10 +1581,10 @@ describe("Orchestration acceptance", () => {
     await browser.refresh();
     await app.waitUntilReady();
     await resetBackend();
-    await enableOrchestration(installedOrchestration());
 
     try {
       await app.openSettings();
+      await app.settingsSection("Agents").waitForDisplayed(); // [DEBUG-a4f2] Synchronize with the real extension status.
       await app.openSettingsSection("Agents");
       await $('//button[normalize-space(.)="Add agent"]').click();
       await $('input[aria-label="Agent name"]').setValue(agentName);
