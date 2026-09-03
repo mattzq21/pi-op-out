@@ -373,7 +373,7 @@ fn validate_mcp_servers(settings: &AppSettings) -> Result<(), String> {
         match server.get("transport").and_then(Value::as_str).unwrap_or("stdio") {
             "stdio" => if server.get("command").and_then(Value::as_str).unwrap_or("").trim().is_empty() { return Err(format!("{name}: command can't be empty")); },
             "http" => {
-                let raw_url = server.get("url").and_then(Value::as_str).unwrap_or("").trim(); let parsed = url::Url::parse(raw_url).map_err(|_| format!("{name}: enter a valid HTTP URL"))?;
+                let raw_url = server.get("url").and_then(Value::as_str).unwrap_or("").trim(); let parsed = tauri::Url::parse(raw_url).map_err(|_| format!("{name}: enter a valid HTTP URL"))?;
                 if !matches!(parsed.scheme(), "http" | "https") { return Err(format!("{name}: URL must use HTTP or HTTPS")); }
                 if let Some(headers) = server.get("headers") {
                     let parsed = match headers { Value::Null => None, Value::String(value) if value.trim().is_empty() => None, Value::String(value) => Some(serde_json::from_str::<Value>(value).map_err(|_| format!("{name}: headers must be valid JSON"))?), Value::Object(_) => Some(headers.clone()), _ => return Err(format!("{name}: headers must be a JSON object containing string values")) };
@@ -1450,32 +1450,11 @@ fn collect_sessions(app: &AppHandle, index: &SessionIndexRuntime) -> Result<Vec<
 #[tauri::command(async)]
 fn list_sessions(app: AppHandle, index: State<SessionIndexRuntime>) -> Result<Vec<SessionSummary>, String> { collect_sessions(&app, &index) }
 
-fn session_entries(content: &str) -> Value {
-    let entries: Vec<Value> = content.lines().skip(1).filter_map(|line| serde_json::from_str(line).ok()).collect();
-    let leaf_id = entries.iter().rev().find_map(|entry| entry.get("id").and_then(Value::as_str));
-    json!({ "entries": entries, "leafId": leaf_id })
-}
-
 fn local_desktop_session_file(session_path: &str) -> Result<PathBuf, String> {
     let root = desktop_sessions_dir(&home_dir()?).canonicalize().map_err(|error| format!("Could not locate Pi Desktop sessions: {error}"))?;
     let source = PathBuf::from(session_path).canonicalize().map_err(|error| format!("Could not locate session file: {error}"))?;
     if !source.starts_with(&root) || source.extension().and_then(|value| value.to_str()) != Some("jsonl") || !source.is_file() { return Err("Only Pi Desktop session files can be accessed".into()); }
     Ok(source)
-}
-
-#[tauri::command(async)]
-fn load_session_entries(app: AppHandle, session_path: String, host_id: Option<String>) -> Result<Value, String> {
-    let host_id = host_id.unwrap_or_else(|| "local".into());
-    let content = if host_id == "local" {
-        fs::read_to_string(local_desktop_session_file(&session_path)?).map_err(|error| format!("Could not read session: {error}"))?
-    } else {
-        let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
-        let remote = format!(r#"root=$(cd "$HOME/.pi-desktop/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) cat -- "$target" ;; *) printf 'Refusing to read a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(&session_path));
-        let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not read session on {}: {error}", host.name))?;
-        if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-        String::from_utf8(output.stdout).map_err(|_| "Remote session was not valid UTF-8".to_string())?
-    };
-    Ok(session_entries(&content))
 }
 
 #[tauri::command(async)]
@@ -1707,5 +1686,5 @@ pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(feature = "webdriver")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
-    builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(SessionIndexRuntime::default()).manage(broker.clone()).setup(move |app| start_session_broker(app.handle().clone(), broker.clone()).map_err(Into::into)).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_entries, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, git_branch, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(SessionIndexRuntime::default()).manage(broker.clone()).setup(move |app| start_session_broker(app.handle().clone(), broker.clone()).map_err(Into::into)).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, git_branch, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }

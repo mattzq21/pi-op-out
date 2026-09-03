@@ -470,42 +470,6 @@ describe("Conversation acceptance", () => {
     }
   });
 
-  it("opens the request viewer for an indexed conversation", async () => {
-    const indexed = { id: "acceptance-logs", path: "/tmp/acceptance-logs.jsonl", name: "Acceptance logs target", project: "Acceptance project", cwd: "/tmp", preview: "Logs preview", messageCount: 2, hostId: "local" };
-    await mockBackend({ list_sessions: [indexed], open_log_viewer: {} });
-    try {
-      await app.conversationSearch.setValue(indexed.name);
-      await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
-      await browser.execute(() => document.querySelector(".session-item")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 })));
-      await $('//div[@role="menu"]//button[normalize-space(.)="Open request viewer"]').click();
-
-      await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "open_log_viewer"));
-      expect((await backendCalls()).find(({ command }) => command === "open_log_viewer")?.args).toEqual({ sessionPath: indexed.path, hostId: "local" });
-    } finally {
-      await app.conversationSearch.clearValue();
-      await resetBackend();
-    }
-  });
-
-  it("reports when the request viewer cannot be opened", async () => {
-    const indexed = { id: "acceptance-logs-failure", path: "/tmp/acceptance-logs-failure.jsonl", name: "Acceptance logs failure", project: "Acceptance project", cwd: "/tmp", preview: "Logs failure preview", messageCount: 2, hostId: "local" };
-    await mockBackend({ list_sessions: [indexed], open_log_viewer: { error: "No browser is available" } });
-    try {
-      await app.conversationSearch.setValue(indexed.name);
-      await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
-      await browser.execute(() => document.querySelector(".session-item")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 })));
-      await $('//div[@role="menu"]//button[normalize-space(.)="Open request viewer"]').click();
-
-      await expect($(".error-toast strong")).toHaveText("Could not open request viewer");
-      await expect($(".error-toast span")).toHaveText("No browser is available");
-      await $(".error-toast button").click();
-    } finally {
-      await app.conversationSearch.clearValue();
-      if (await $(".error-toast").isExisting()) await $(".error-toast button").click();
-      await resetBackend();
-    }
-  });
-
   it("opens, adds, deletes, and closes an ephemeral terminal", async () => {
     await mockBackend({ start_terminal: {}, resize_terminal: {}, close_terminal: {} });
     try {

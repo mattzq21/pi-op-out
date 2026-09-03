@@ -22,7 +22,6 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
   const [dialogs, setDialogs] = useState<ExtensionUiRequest[]>([]);
   const dialogsRef = useRef(dialogs); dialogsRef.current = dialogs;
   const [extensionFocusRequest, setExtensionFocusRequest] = useState(0);
-  const initialPromptStarted = useRef(false);
   useEffect(() => {
     let closing = false;
     const unsubscribe = transport.subscribe((event: RpcEvent) => {
@@ -40,7 +39,6 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
       transport.command({ type: "set_auto_compaction", enabled: settings.autoCompaction }), transport.command({ type: "set_auto_retry", enabled: settings.autoRetry })
     ])).then(() => { if (closing) return; updateConnected(true);
       if (!initialPrompt) return;
-      initialPromptStarted.current = true;
       return transport.command({ type: "prompt", message: initialPrompt }).then(() => { if (!closing) onReady?.(); });
     }).catch((reason) => { if (!closing) { setError(reason instanceof Error ? reason.message : String(reason)); onFailed?.(reason); } });
     return () => { closing = true; const cancellations = dialogsRef.current.map((request) => transport.command({ type: "extension_ui_response", id: request.id, cancelled: true })); dialogsRef.current = []; unsubscribe(); void Promise.allSettled(cancellations).finally(() => runtimePool.release(transport)); };

@@ -32,39 +32,5 @@ export interface ComposerUpload { id: string; name: string; kind: "image" | "tex
 export interface SavedTerminalState { activeId: string; tabs: Array<{ id: string; output: string; started: boolean; exited?: boolean }> }
 export interface AppSettings { defaultModel: string; defaultThinking: string; contextWindowCap: number; autoCompaction: boolean; autoRetry: boolean; debugMode: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; mcpServers: McpServer[]; hosts: RemoteHost[]; dictionaries: PromptDictionary[]; activeDictionaryIds: string[]; }
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
-export interface SessionEntries { entries: Array<Record<string, unknown>>; leafId: string | null; }
-
 export type GitDiffSnapshot = string;
 export type GitDiffSnapshots = Record<string, GitDiffSnapshot>;
-
-export interface PiTransport {
-  connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string, ephemeral?: boolean): Promise<void>;
-  disconnect(): Promise<void>;
-  command<T = unknown>(command: RpcCommand): Promise<T>;
-  subscribe(listener: (event: RpcEvent) => void): () => void;
-  listSessions(): Promise<SessionSummary[]>;
-  loadSessionEntries(sessionPath: string, hostId?: string): Promise<SessionEntries>;
-  captureGitTree(cwd: string, hostId?: string): Promise<string | null>;
-  discardGitTree(snapshot: string, hostId?: string): Promise<void>;
-  loadGitDiff(cwd: string, baseTree: string, hostId?: string): Promise<GitDiffSnapshot | null>;
-  loadGitDiffs(sessionPath: string, hostId?: string): Promise<GitDiffSnapshots>;
-  saveGitDiffs(sessionPath: string, snapshots: GitDiffSnapshots, hostId?: string): Promise<void>;
-  archiveSession(sessionPath: string, hostId?: string, terminalState?: SavedTerminalState): Promise<void>;
-  deleteSession(sessionPath: string, hostId?: string): Promise<void>;
-  relocateSession(sessionPath: string, cwd: string, hostId?: string): Promise<void>;
-  openProjectDirectory(cwd: string, hostId?: string): Promise<void>;
-  gitBranch(): Promise<string | null>;
-  loadSettings(): Promise<AppSettings>;
-  loadCodexUsage(): Promise<CodexUsage>;
-  saveSettings(settings: AppSettings, reconnect?: boolean): Promise<void>;
-  selectProjectDirectory(defaultPath?: string): Promise<string | null>;
-  homeDirectory(hostId: string): Promise<string>;
-  listDirectories(hostId: string, path?: string): Promise<DirectoryListing>;
-  newTemporaryChat(hostId: string): Promise<string>;
-  newChat(cwd: string, hostId?: string): Promise<void>;
-  openProject(cwd: string, hostId?: string): Promise<void>;
-  startTerminal(terminalId: string, cwd: string, cols: number, rows: number): Promise<void>;
-  writeTerminal(terminalId: string, data: string): Promise<void>;
-  resizeTerminal(terminalId: string, cols: number, rows: number): Promise<void>;
-  closeTerminal(terminalId: string): Promise<void>;
-}

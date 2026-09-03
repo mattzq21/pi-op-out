@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import type { AgentState, ChatMessage, Model, PiTransport, RpcEvent, SlashCommand } from "../types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { AgentState, ChatMessage, Model, RpcEvent, SlashCommand } from "../types";
+import type { NativeTransport } from "./nativeTransport";
 import { applyAssistantMessageEvent, branchMessages, normalizeMessage, type PiEntry } from "./messages";
 import { contextUsageAfterCompaction } from "./contextUsage";
 
@@ -7,20 +8,7 @@ type MessageUpdate = (messages: ChatMessage[]) => ChatMessage[];
 const emptyState: AgentState = { model: null, thinkingLevel: "off", isStreaming: false, sessionId: "", messageCount: 0, pendingMessageCount: 0 };
 const rpcContent = (value: unknown): ChatMessage["content"] => (value as { content?: ChatMessage["content"] })?.content ?? "";
 
-export interface ChatSessionRuntime {
-  state: AgentState;
-  setState: Dispatch<SetStateAction<AgentState>>;
-  messages: ChatMessage[];
-  setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
-  models: Model[];
-  commands: SlashCommand[];
-  thinkingLevels: string[];
-  refresh: () => Promise<AgentState>;
-  handleEvent: (event: RpcEvent) => void;
-  discardPendingUpdates: () => void;
-}
-
-export function useChatSession(transport: PiTransport, initialState: AgentState = emptyState): ChatSessionRuntime {
+export function useChatSession(transport: Pick<NativeTransport, "command" | "subscribe">, initialState: AgentState = emptyState) {
   const [state, setState] = useState(initialState); const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [models, setModels] = useState<Model[]>([]); const [commands, setCommands] = useState<SlashCommand[]>([]); const [thinkingLevels, setThinkingLevels] = useState<string[]>(["off"]);
   const liveRevision = useRef(0); const activeAssistantId = useRef<string | undefined>(undefined); const activeMessageIds = useRef(new Map<string, string>()); const liveMessageSequence = useRef(0); const pendingUpdates = useRef<MessageUpdate[]>([]); const frame = useRef<number | undefined>(undefined);

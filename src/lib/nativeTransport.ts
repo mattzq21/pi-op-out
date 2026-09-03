@@ -2,7 +2,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, PiTransport, RpcCommand, RpcEvent, SavedTerminalState, SessionEntries, SessionSummary } from "../types";
+import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, RpcCommand, RpcEvent, SavedTerminalState, SessionSummary } from "../types";
 
 const call = <T>(command: string, args?: Record<string, unknown>) => {
   if (import.meta.env.MODE !== "e2e") return invoke<T>(command, args);
@@ -16,7 +16,7 @@ const call = <T>(command: string, args?: Record<string, unknown>) => {
 
 export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; sessionId?: string; hostId?: string; }
 
-export class NativeTransport implements PiTransport {
+export class NativeTransport {
   private readonly runtimeId = globalThis.crypto?.randomUUID?.() ?? `runtime-${Date.now()}-${Math.random()}`;
   private listeners = new Set<(event: RpcEvent) => void>();
   private retainedStatuses = new Map<string, RpcEvent>();
@@ -79,7 +79,6 @@ export class NativeTransport implements PiTransport {
   async command<T>(command: RpcCommand) { const compact = command.type === "prompt" && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null; if (compact) command = { type: "compact", ...(compact[1]?.trim() ? { customInstructions: compact[1].trim() } : {}) }; try { const result = await call<T>("pi_command", { runtimeId: this.runtimeId, command }); if (command.type === "get_state") { const state = result as { sessionFile?: string; sessionId?: string }; this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; } if (command.type === "prompt") this.temporaryChatUsed = true; return result; } catch (reason) { const message = reason instanceof Error ? reason.message : String(reason); const diagnostics = this.stderrLines.join("\n"); throw new Error(diagnostics && /disconnect|connect|start|running/i.test(message) ? `${message}\n${diagnostics}` : message); } }
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); this.retainedStatuses.forEach((event) => listener(event)); return () => this.listeners.delete(listener); }
   listSessions() { return call<SessionSummary[]>("list_sessions"); }
-  loadSessionEntries(sessionPath: string, hostId = "local") { return call<SessionEntries>("load_session_entries", { sessionPath, hostId }); }
   captureGitTree(cwd: string, hostId = "local") { return call<string | null>("capture_git_tree", { cwd, hostId }); }
   discardGitTree(snapshot: string, hostId = "local") { return call<void>("discard_git_tree", { snapshot, hostId }); }
   loadGitDiff(cwd: string, baseTree: string, hostId = "local") { return call<GitDiffSnapshot | null>("load_git_diff", { cwd, baseTree, hostId }); }
@@ -111,10 +110,7 @@ export class NativeTransport implements PiTransport {
   homeDirectory(hostId: string) { return call<string>("home_directory", { hostId }); }
   validateProjectDirectory(path: string, hostId: string) { return call<string>("validate_project_directory", { path, hostId }); }
   listDirectories(hostId: string, path?: string) { return call<DirectoryListing>("list_directories", { hostId, path }); }
-  async newTemporaryChat(hostId: string) { await this.disconnect(); const chat = await call<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId, e2e: import.meta.env.MODE === "e2e" }); this.cwd = chat.cwd; this.sessionPath = undefined; this.sessionId = chat.sessionId; this.hostId = hostId; this.temporaryChat = true; this.temporaryChatUsed = false; await this.connect(chat.cwd, undefined, hostId); return chat.cwd; }
   async prepareTemporaryChat(hostId: string) { const chat = await call<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId, e2e: import.meta.env.MODE === "e2e" }); this.cwd = chat.cwd; this.sessionPath = undefined; this.sessionId = chat.sessionId; this.hostId = hostId; this.temporaryChat = true; this.temporaryChatUsed = false; return chat.cwd; }
-  async newChat(cwd: string, hostId = "local") { await this.disconnect(); this.cwd = cwd; this.sessionPath = undefined; this.sessionId = undefined; this.hostId = hostId; this.temporaryChat = false; this.temporaryChatUsed = false; await this.connect(cwd, undefined, hostId); }
-  openProject(cwd: string, hostId = "local") { return this.newChat(cwd, hostId); }
   startTerminal(terminalId: string, cwd: string, cols: number, rows: number) { return call<void>("start_terminal", { terminalId, cwd, cols, rows, hostId: this.hostId }); }
   writeTerminal(terminalId: string, data: string) { return call<void>("write_terminal", { terminalId, data }); }
   resizeTerminal(terminalId: string, cols: number, rows: number) { return call<void>("resize_terminal", { terminalId, cols, rows }); }
