@@ -2,9 +2,8 @@ import { $, $$, browser, expect } from "@wdio/globals";
 import { readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { defaultSettings } from "../../../src/defaults.js";
 import { decodeOrchestrationValue, encodeOrchestrationValue } from "../../../src/lib/orchestrationProtocol.js";
-import type { OrchestrationCapability, OrchestrationConfig } from "../../../src/types.js";
+import type { AppSettings, OrchestrationCapability, OrchestrationConfig } from "../../../src/types.js";
 import { app } from "../pageobjects/app.page.js";
 
 type BackendCall = { command: string; args: Record<string, unknown>; mocked: boolean };
@@ -35,6 +34,13 @@ const emitPiEvent = (payload: Record<string, unknown>) => browser.execute(async 
   const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
   await tauri.invoke("plugin:event|emit", { event: "pi://event", payload: event });
 }, payload);
+let defaultSettings: AppSettings;
+before(async () => {
+  defaultSettings = await browser.execute(async () => {
+    const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: <T>(command: string, args?: unknown) => Promise<T> } }).__TAURI_INTERNALS__;
+    return tauri.invoke<AppSettings>("load_app_settings");
+  });
+});
 const acceptanceOrchestration = (): OrchestrationCapability => ({
   version: 1,
   active: "default",
@@ -75,11 +81,11 @@ describe("BUGS-3 regressions", () => {
 
     const input = $('input[aria-label="Rename conversation"]');
     await input.setValue("Name to retry");
-    await $('//section[@role="dialog"]//button[normalize-space(.)="Continue"]').click();
+    await $('//dialog//button[normalize-space(.)="Continue"]').click();
 
     await expect(input).toHaveValue("Name to retry");
     await expect($(".dialog-error")).toHaveText("Rename failed");
-    await $('//section[@role="dialog"]//button[normalize-space(.)="Cancel"]').click();
+    await $('//dialog//button[normalize-space(.)="Cancel"]').click();
   });
 
   it("isolates drafts and terminals between fresh conversations", async () => {
@@ -395,17 +401,17 @@ describe("Conversation acceptance", () => {
       await expect($("#extension-dialog-title")).toHaveText("Locate conversation project");
       const replacement = $('input[aria-label="Replacement project directory"]');
       await replacement.clearValue();
-      await $('//section[@role="dialog"]//button[normalize-space(.)="Continue"]').click();
+      await $('//dialog//button[normalize-space(.)="Continue"]').click();
       await expect($('[role="alert"]')).toHaveText("Path can't be empty");
 
       await replacement.setValue("/tmp/relocated-acceptance-project");
-      await $('//section[@role="dialog"]//button[normalize-space(.)="Continue"]').click();
+      await $('//dialog//button[normalize-space(.)="Continue"]').click();
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "relocate_session") && (await backendCalls()).some(({ command }) => command === "start_pi"));
       expect((await backendCalls()).find(({ command }) => command === "relocate_session")?.args).toEqual({ sessionPath: indexed.path, cwd: "/tmp/relocated-acceptance-project", hostId: "local" });
       expect((await backendCalls()).find(({ command }) => command === "start_pi")?.args).toEqual(expect.objectContaining({ cwd: "/tmp/relocated-acceptance-project", sessionPath: indexed.path, hostId: "local" }));
     } finally {
       await app.conversationSearch.clearValue();
-      if (await $("#extension-dialog-title").isExisting()) await $('//section[@role="dialog"]//button[normalize-space(.)="Cancel"]').click();
+      if (await $("#extension-dialog-title").isExisting()) await $('//dialog//button[normalize-space(.)="Cancel"]').click();
       await resetApp();
     }
   });
@@ -419,7 +425,7 @@ describe("Conversation acceptance", () => {
       await expect(session).toHaveText(expect.stringContaining(indexed.name));
       await session.$(".session-main").click();
       await $('input[aria-label="Replacement project directory"]').setValue("/tmp/not-a-project");
-      await $('//section[@role="dialog"]//button[normalize-space(.)="Continue"]').click();
+      await $('//dialog//button[normalize-space(.)="Continue"]').click();
 
       await expect($(".error-toast strong")).toHaveText("Pi could not connect");
       await expect($(".error-toast span")).toHaveText("Replacement directory is not a project");
@@ -427,7 +433,7 @@ describe("Conversation acceptance", () => {
       await $(".error-toast button").click();
     } finally {
       await app.conversationSearch.clearValue();
-      if (await $("#extension-dialog-title").isExisting()) await $('//section[@role="dialog"]//button[normalize-space(.)="Cancel"]').click();
+      if (await $("#extension-dialog-title").isExisting()) await $('//dialog//button[normalize-space(.)="Cancel"]').click();
       if (await $(".error-toast").isExisting()) await $(".error-toast button").click();
       await resetBackend();
     }
@@ -505,7 +511,7 @@ describe("Conversation acceptance", () => {
       const input = $('input[aria-label="Rename conversation"]');
       await expect(input).toHaveValue(indexed.name);
       await input.setValue("Renamed acceptance conversation");
-      await $('//section[@role="dialog"]//button[normalize-space(.)="Continue"]').click();
+      await $('//dialog//button[normalize-space(.)="Continue"]').click();
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "set_session_name"));
       expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "set_session_name")?.args.command).toEqual({ type: "set_session_name", name: "Renamed acceptance conversation" });
     } finally {
@@ -1114,7 +1120,7 @@ describe("Conversation acceptance", () => {
       const input = $('input[aria-label="Release name"]');
       await expect(input).toHaveValue("alpha");
       await input.setValue("beta");
-      await $('//section[@role="dialog"]//button[normalize-space(.)="Continue"]').click();
+      await $('//dialog//button[normalize-space(.)="Continue"]').click();
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "extension_ui_response"));
       expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "extension_ui_response")?.args.command).toEqual({ type: "extension_ui_response", id: "acceptance-input", value: "beta" });
@@ -1134,7 +1140,7 @@ describe("Conversation acceptance", () => {
       await expect($("#extension-dialog-title")).not.toBeExisting();
 
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-no-confirm", method: "confirm", title: "Publish release?" });
-      await $('//section[@role="dialog"]//button[normalize-space(.)="No"]').click();
+      await $('//dialog//button[normalize-space(.)="No"]').click();
       await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => (args.command as { type?: string })?.type === "extension_ui_response").length === 2);
       expect((await backendCalls()).filter(({ args }) => (args.command as { type?: string })?.type === "extension_ui_response").map(({ args }) => args.command)).toEqual([
         { type: "extension_ui_response", id: "acceptance-enter-input", value: "beta" },
@@ -1151,7 +1157,7 @@ describe("Conversation acceptance", () => {
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-editor-content", method: "editor", title: "Release notes", placeholder: "Release notes", prefill: "Initial line" });
       const editor = $('textarea[aria-label="Release notes"]');
       await editor.setValue("First line\nSecond line");
-      await $('//section[@role="dialog"]//button[normalize-space(.)="Continue"]').click();
+      await $('//dialog//button[normalize-space(.)="Continue"]').click();
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { id?: string })?.id === "acceptance-editor-content"));
       expect((await backendCalls()).find(({ args }) => (args.command as { id?: string })?.id === "acceptance-editor-content")?.args.command).toEqual({ type: "extension_ui_response", id: "acceptance-editor-content", value: "First line\nSecond line" });
@@ -1164,16 +1170,16 @@ describe("Conversation acceptance", () => {
     await mockBackend({ "pi_command:extension_ui_response": {} });
     try {
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-select", method: "select", title: "Choose a target", options: ["Alpha", "Beta"] });
-      await $('//section[@role="dialog"]//button[normalize-space(.)="Beta"]').click();
+      await $('//dialog//button[normalize-space(.)="Beta"]').click();
       await expect($("#extension-dialog-title")).not.toBeExisting();
 
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-confirm", method: "confirm", title: "Deploy now?", message: "This will deploy the acceptance build." });
       await expect($("#extension-dialog-title")).toHaveText("Deploy now?");
-      await $('//section[@role="dialog"]//button[normalize-space(.)="Confirm"]').click();
+      await $('//dialog//button[normalize-space(.)="Confirm"]').click();
 
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-editor", method: "editor", title: "Edit release notes", prefill: "Initial notes" });
       await expect($('textarea[aria-label="Edit release notes"]')).toHaveValue("Initial notes");
-      await $('//section[@role="dialog"]//button[normalize-space(.)="Cancel"]').click();
+      await $('//dialog//button[normalize-space(.)="Cancel"]').click();
 
       await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => (args.command as { type?: string })?.type === "extension_ui_response").length === 3);
       expect((await backendCalls()).filter(({ args }) => (args.command as { type?: string })?.type === "extension_ui_response").map(({ args }) => args.command)).toEqual([
@@ -1250,14 +1256,14 @@ describe("Conversation acceptance", () => {
     try {
       await app.openProjectChooser();
       await emitPiEvent({ type: "extension_ui_request", id: "queued-confirm", method: "confirm", title: "Confirm extension action" });
-      await expect($$("[role='dialog']")).toBeElementsArrayOfSize(1);
+      await expect($$("dialog[open]")).toBeElementsArrayOfSize(1);
       await expect(app.projectDialogHeading).toBeDisplayed();
       await app.cancelProjectButton.click();
       await expect($("#extension-dialog-title")).toHaveText("Confirm extension action");
-      await $('//section[@role="dialog"]//button[normalize-space(.)="Cancel"]').click();
+      await $('//dialog//button[normalize-space(.)="Cancel"]').click();
     } finally {
       if (await app.projectDialogHeading.isExisting()) await app.cancelProjectButton.click();
-      if (await $("#extension-dialog-title").isExisting()) await $('//section[@role="dialog"]//button[normalize-space(.)="Cancel"]').click();
+      if (await $("#extension-dialog-title").isExisting()) await $('//dialog//button[normalize-space(.)="Cancel"]').click();
       await resetBackend();
     }
   });
@@ -1268,13 +1274,13 @@ describe("Conversation acceptance", () => {
       await emitPiEvent({ type: "extension_ui_request", id: "failed-response", method: "input", title: "Required value", placeholder: "Label" });
       const input = $('input[aria-label="Label"]');
       await input.setValue("release-candidate");
-      await $('//section[@role="dialog"]//button[normalize-space(.)="Continue"]').click();
+      await $('//dialog//button[normalize-space(.)="Continue"]').click();
       await expect($(".dialog-error")).toHaveText("Extension response channel closed");
       await expect(input).toHaveValue("release-candidate");
     } finally {
       if (await $("#extension-dialog-title").isExisting()) {
         await updateBackendResponse("pi_command:extension_ui_response", {});
-        await $('//section[@role="dialog"]//button[normalize-space(.)="Continue"]').click();
+        await $('//dialog//button[normalize-space(.)="Continue"]').click();
       }
       await resetBackend();
     }

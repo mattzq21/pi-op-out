@@ -10,7 +10,7 @@ A Tauri-only native interface for the Pi coding agent. It is not a standalone br
 - Pi extension UI support for prompts, confirms, selects, editors, notifications, status lines, widgets, titles, and editor text
 - Settings for retry/compaction behavior, context-window cap, default model, tools, discovered skills, agents, sequences, remote machines, and MCP servers
 - Live context-window usage gauge in the composer
-- A dependency-free MCP stdio/HTTP bridge that discovers server tools and registers them as namespaced Pi tools
+- An MCP SDK-backed stdio/HTTP bridge that discovers server tools and registers them as namespaced Pi tools
 - A `read_trace` Pi tool that finds local or remote session JSONL and returns only user prompts and completed assistant messages
 - A shared session runtime for primary and split chats, with animation-frame batching for streaming message and tool updates
 

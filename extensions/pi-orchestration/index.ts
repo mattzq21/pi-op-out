@@ -1,8 +1,9 @@
-import { spawn } from "node:child_process";
+import { execFile as execFileCallback } from "node:child_process";
 import { copyFile, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -17,6 +18,7 @@ const STATE_ENTRY = "pi-orchestration-state";
 const RUN_ENTRY = "pi-orchestration-run";
 const HANDOFF = /^<!-- pi-desktop-sequence:/;
 const CHILD_OUTPUT_LIMIT = 4 * 1024 * 1024;
+const execFile = promisify(execFileCallback);
 const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
 const extensionPath = fileURLToPath(import.meta.url);
 const fallbackConfig: Config = { agents: [{ name: "default", description: "General-purpose agent", model: "", effort: "high", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: ["read", "bash", "edit", "write", "grep", "find", "ls", "read_trace"], skills: [], mcpServers: [] }], sequences: [] };
@@ -98,20 +100,20 @@ function agentArgs(agent: Agent, session?: string) {
 
 async function runChild(agent: Agent, task: string, cwd: string, signal?: AbortSignal, session?: string) {
   const invocation = piInvocation([...agentArgs(agent, session), task]);
-  return await new Promise<string>((resolve, reject) => {
-    const child = spawn(invocation.command, invocation.args, { cwd, env: { ...process.env, PI_ORCHESTRATION_CHILD: encode(agent), PI_DESKTOP_MCP_ALLOWED_SERVER_IDS: agent.mcpServers.join(",") }, stdio: ["ignore", "pipe", "pipe"] });
-    let output = ""; let error = ""; let outputBytes = 0; let errorBytes = 0; let exceeded = false;
-    const append = (current: string, bytes: number, chunk: unknown, stream: string) => {
-      const text = String(chunk); const nextBytes = bytes + Buffer.byteLength(text);
-      if (nextBytes <= CHILD_OUTPUT_LIMIT) return { value: current + text, bytes: nextBytes };
-      exceeded = true; child.kill(); reject(new Error(`${agent.name} ${stream} exceeded 4 MiB`)); return { value: current, bytes };
-    };
-    child.stdout.on("data", (chunk) => { if (!exceeded) { const next = append(output, outputBytes, chunk, "stdout"); output = next.value; outputBytes = next.bytes; } });
-    child.stderr.on("data", (chunk) => { if (!exceeded) { const next = append(error, errorBytes, chunk, "stderr"); error = next.value; errorBytes = next.bytes; } });
-    const abort = () => child.kill();
-    child.once("error", reject); child.once("close", (code) => { signal?.removeEventListener("abort", abort); if (exceeded) return; code === 0 ? resolve(output.trim() || "(no response)") : reject(new Error(error.trim() || (signal?.aborted ? "Agent was stopped" : `Agent exited with code ${code}`))); });
-    if (signal?.aborted) abort(); else signal?.addEventListener("abort", abort, { once: true });
-  });
+  try {
+    const { stdout } = await execFile(invocation.command, invocation.args, {
+      cwd,
+      env: { ...process.env, PI_ORCHESTRATION_CHILD: encode(agent), PI_DESKTOP_MCP_ALLOWED_SERVER_IDS: agent.mcpServers.join(",") },
+      encoding: "utf8",
+      maxBuffer: CHILD_OUTPUT_LIMIT,
+      signal,
+    });
+    return stdout.trim() || "(no response)";
+  } catch (error) {
+    const failure = error as Error & { code?: number | string; stderr?: string };
+    if (signal?.aborted) throw new Error("Agent was stopped");
+    throw new Error(failure.stderr?.trim() || (typeof failure.code === "number" ? `Agent exited with code ${failure.code}` : failure.message));
+  }
 }
 
 export default async function orchestration(pi: ExtensionAPI) {

@@ -2,44 +2,6 @@ import type { ChatMessage, ContentPart, PromptContextInfo } from "../types";
 
 export type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number }; customType?: string; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string };
 
-function decodeXml(value: string) {
-  return value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"').replaceAll("&apos;", "'").replaceAll("&amp;", "&");
-}
-
-function skillsFromSystemPrompt(systemPrompt: string) {
-  const element = systemPrompt.match(/<available_skills>[\s\S]*?<\/available_skills>/)?.[0] ?? "";
-  const prefixStart = element ? systemPrompt.lastIndexOf("\n\nThe following skills provide specialized instructions", systemPrompt.indexOf(element)) : -1;
-  const block = prefixStart >= 0 ? systemPrompt.slice(prefixStart, systemPrompt.indexOf(element) + element.length) : element;
-  const skills = [...element.matchAll(/<skill>[\s\S]*?<name>([\s\S]*?)<\/name>[\s\S]*?<description>([\s\S]*?)<\/description>[\s\S]*?<location>([\s\S]*?)<\/location>[\s\S]*?<\/skill>/g)]
-    .map((match) => ({ name: decodeXml(match[1]), description: decodeXml(match[2]), filePath: decodeXml(match[3]) }));
-  return { block, skills };
-}
-
-function instructionsFromSystemPrompt(systemPrompt: string) {
-  const block = systemPrompt.match(/\n\n<project_context>[\s\S]*?<\/project_context>\n?/)?.[0] ?? "";
-  const instructions = [...block.matchAll(/<project_instructions path="([^"]*)">\n?([\s\S]*?)\n?<\/project_instructions>/g)]
-    .map((match) => ({ path: decodeXml(match[1]), content: match[2] }));
-  return { block, instructions };
-}
-
-function promptContextFromProviderPayload(value: unknown): PromptContextInfo | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const payload = value as Record<string, unknown>;
-  const systemPrompt = typeof payload.instructions === "string" ? payload.instructions : typeof payload.system === "string" ? payload.system : "";
-  if (!systemPrompt) return undefined;
-  const { block: skillPrompt, skills } = skillsFromSystemPrompt(systemPrompt);
-  const { block: instructionPrompt, instructions } = instructionsFromSystemPrompt(systemPrompt);
-  const tools = Array.isArray(payload.tools) ? payload.tools.flatMap((value) => {
-    if (!value || typeof value !== "object") return [];
-    const tool = value as Record<string, unknown>; const fn = tool.function && typeof tool.function === "object" ? tool.function as Record<string, unknown> : tool;
-    const name = typeof fn.name === "string" ? fn.name : "";
-    if (!name) return [];
-    return [{ name, description: typeof fn.description === "string" ? fn.description : "", parameters: fn.parameters ?? fn.input_schema }];
-  }) : [];
-  const estimate = (item: unknown) => Math.ceil((typeof item === "string" ? item : JSON.stringify(item) ?? "").length / 4);
-  return { systemPrompt, instructions, tools, skills, tokens: { system: estimate(systemPrompt.replace(skillPrompt, "").replace(instructionPrompt, "")), instructions: estimate(instructionPrompt), tools: estimate(tools), skills: estimate(skillPrompt) } };
-}
-
 export function cacheHitStats(usage?: { input: number; cacheRead: number }) {
   if (!usage) return undefined;
   const promptTokens = usage.input + usage.cacheRead;
@@ -81,7 +43,6 @@ export function branchMessages(entries: PiEntry[], leafId: string | null): ChatM
   const messages: ChatMessage[] = []; let promptContext: PromptContextInfo | undefined;
   for (const entry of branch) {
     if (entry.type === "custom" && entry.customType === "pi-desktop-prompt-context") { promptContext = entry.data as PromptContextInfo; continue; }
-    if (entry.type === "custom" && entry.customType === "pi-desktop-llm-context") { promptContext ??= promptContextFromProviderPayload(entry.data); continue; }
     if (entry.type === "message" && entry.message) {
       const message = normalizeMessage(entry.message as unknown as Record<string, unknown>, entry.id, entry.timestamp);
       messages.push(message.role === "assistant" && promptContext ? { ...message, promptContext } : message);

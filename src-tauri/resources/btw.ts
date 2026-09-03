@@ -1,8 +1,10 @@
-import { spawn } from "node:child_process";
+import { execFile as execFileCallback } from "node:child_process";
+import { promisify } from "node:util";
 
 const DESKTOP_TITLE = "__pi_desktop_btw__";
 const CUSTOM_TYPE = "pi-desktop-btw";
 const OUTPUT_LIMIT = 4 * 1024 * 1024;
+const execFile = promisify(execFileCallback);
 
 type PiApi = {
   registerCommand(name: string, command: { description: string; handler(args: string, ctx: CommandContext): Promise<void> }): void;
@@ -20,39 +22,26 @@ type CommandContext = {
   };
 };
 
-function runFork(sessionFile: string, cwd: string, task: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const executable = process.env.PI_DESKTOP_PI_EXECUTABLE;
-    const command = executable || process.execPath;
-    const args = executable
-      ? ["--print", "--approve", "--fork", sessionFile, task]
-      : [process.argv[1], "--print", "--approve", "--fork", sessionFile, task];
-    const child = spawn(command, args, { cwd, env: { ...process.env, PI_DESKTOP_BTW: "0" }, stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    let stdoutBytes = 0;
-    let stderrBytes = 0;
-    let exceeded = false;
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    const append = (current: string, bytes: number, chunk: string, stream: string) => {
-      const nextBytes = bytes + Buffer.byteLength(chunk);
-      if (nextBytes <= OUTPUT_LIMIT) return { value: current + chunk, bytes: nextBytes };
-      exceeded = true;
-      child.kill();
-      reject(new Error(`/btw ${stream} exceeded 4 MiB`));
-      return { value: current, bytes };
-    };
-    child.stdout.on("data", (chunk: string) => { if (!exceeded) { const next = append(stdout, stdoutBytes, chunk, "stdout"); stdout = next.value; stdoutBytes = next.bytes; } });
-    child.stderr.on("data", (chunk: string) => { if (!exceeded) { const next = append(stderr, stderrBytes, chunk, "stderr"); stderr = next.value; stderrBytes = next.bytes; } });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (exceeded) return;
-      const answer = stdout.trim();
-      if (code === 0 && answer) resolve(answer);
-      else reject(new Error(stderr.trim() || answer || `The /btw branch exited with status ${code ?? "unknown"}`));
+async function runFork(sessionFile: string, cwd: string, task: string): Promise<string> {
+  const executable = process.env.PI_DESKTOP_PI_EXECUTABLE;
+  const command = executable || process.execPath;
+  const args = executable
+    ? ["--print", "--approve", "--fork", sessionFile, task]
+    : [process.argv[1], "--print", "--approve", "--fork", sessionFile, task];
+  try {
+    const { stdout } = await execFile(command, args, {
+      cwd,
+      env: { ...process.env, PI_DESKTOP_BTW: "0" },
+      encoding: "utf8",
+      maxBuffer: OUTPUT_LIMIT,
     });
-  });
+    const answer = stdout.trim();
+    if (answer) return answer;
+    throw new Error("The /btw branch returned no output");
+  } catch (error) {
+    const failure = error as Error & { stdout?: string; stderr?: string };
+    throw new Error(failure.stderr?.trim() || failure.stdout?.trim() || failure.message);
+  }
 }
 
 export default function btwExtension(pi: PiApi) {

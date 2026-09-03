@@ -60,7 +60,6 @@ const MAX_GIT_SNAPSHOT_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_GIT_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_GIT_PATCH_BYTES: usize = 4 * 1024 * 1024;
 const MAX_GIT_DIFFS_BYTES: usize = 16 * 1024 * 1024;
-const MAX_ARCHIVED_TERMINAL_BYTES: usize = 64 * 1024;
 
 #[derive(Default)]
 struct PiRuntime {
@@ -194,8 +193,6 @@ struct AppSettings {
     dictionaries: Vec<PromptDictionary>,
     #[serde(default)]
     active_dictionary_ids: Vec<String>,
-    #[serde(default, skip_serializing)]
-    active_dictionary_id: String,
 }
 
 fn default_pi_path() -> String { "pi".into() }
@@ -282,59 +279,6 @@ fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("settings.json"))
 }
 
-fn pi_desktop_config_path() -> Result<PathBuf, String> {
-    Ok(home_dir()?.join(".pi-desktop/config.json"))
-}
-
-fn dictionary_config_body(settings: &AppSettings) -> Result<(PathBuf, Vec<u8>), String> {
-    let path = pi_desktop_config_path()?;
-    let mut config = if path.exists() {
-        serde_json::from_slice::<Value>(&fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| format!("Could not parse {}: {error}", path.display()))?
-    } else { json!({}) };
-    let object = config.as_object_mut().ok_or_else(|| format!("{} must contain a JSON object", path.display()))?;
-    object.remove("activeDictionaryId");
-    object.insert("activeDictionaryIds".into(), serde_json::to_value(&settings.active_dictionary_ids).map_err(|error| error.to_string())?);
-    object.insert("dictionaries".into(), serde_json::to_value(&settings.dictionaries).map_err(|error| error.to_string())?);
-    Ok((path, serde_json::to_vec_pretty(&config).map_err(|error| error.to_string())?))
-}
-
-fn atomic_write(path: &Path, body: &[u8]) -> Result<(), String> {
-    if let Some(parent) = path.parent() { fs::create_dir_all(parent).map_err(|error| error.to_string())?; }
-    let temporary = path.with_extension(format!("{}.{}.tmp", path.extension().and_then(|value| value.to_str()).unwrap_or("data"), Uuid::new_v4()));
-    fs::write(&temporary, body).map_err(|error| error.to_string())?;
-    fs::rename(&temporary, path).map_err(|error| { let _ = fs::remove_file(&temporary); error.to_string() })
-}
-
-fn write_dictionary_config(settings: &AppSettings) -> Result<(), String> {
-    let (path, body) = dictionary_config_body(settings)?; atomic_write(&path, &body)
-}
-
-fn persist_settings_transaction(settings_path: &Path, settings_body: &[u8], dictionary_path: &Path, dictionary_body: &[u8]) -> Result<(), String> {
-    let previous_dictionary = fs::read(dictionary_path).ok();
-    atomic_write(dictionary_path, dictionary_body)?;
-    if let Err(error) = atomic_write(settings_path, settings_body) {
-        match previous_dictionary { Some(body) => { let _ = atomic_write(dictionary_path, &body); }, None => { let _ = fs::remove_file(dictionary_path); } }
-        return Err(error);
-    }
-    Ok(())
-}
-
-fn load_dictionary_config(settings: &mut AppSettings) -> Result<bool, String> {
-    let migrated_legacy = settings.active_dictionary_ids.is_empty() && !settings.active_dictionary_id.is_empty();
-    if migrated_legacy { settings.active_dictionary_ids.push(settings.active_dictionary_id.clone()); }
-    let path = pi_desktop_config_path()?;
-    if !path.exists() { write_dictionary_config(settings)?; return Ok(migrated_legacy); }
-    let config: Value = serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| format!("Could not parse {}: {error}", path.display()))?;
-    let object = config.as_object().ok_or_else(|| format!("{} must contain a JSON object", path.display()))?;
-    let config_legacy = !object.contains_key("activeDictionaryIds") && object.contains_key("activeDictionaryId");
-    let previous_dictionaries = settings.dictionaries.clone(); let previous_active = settings.active_dictionary_ids.clone();
-    if let Some(value) = object.get("dictionaries") { settings.dictionaries = serde_json::from_value(value.clone()).map_err(|error| format!("Invalid dictionaries in {}: {error}", path.display()))?; }
-    if let Some(value) = object.get("activeDictionaryIds") { settings.active_dictionary_ids = serde_json::from_value(value.clone()).map_err(|error| format!("Invalid activeDictionaryIds in {}: {error}", path.display()))?; }
-    else if let Some(value) = object.get("activeDictionaryId") { let id = value.as_str().ok_or_else(|| "activeDictionaryId must be a string".to_string())?; settings.active_dictionary_ids = if id.is_empty() { vec![] } else { vec![id.into()] }; }
-    if config_legacy { write_dictionary_config(settings)?; }
-    Ok(migrated_legacy || config_legacy || settings.dictionaries != previous_dictionaries || settings.active_dictionary_ids != previous_active)
-}
-
 fn validate_dictionaries(settings: &AppSettings) -> Result<(), String> {
     let mut ids = HashSet::new();
     for dictionary in &settings.dictionaries { if dictionary.id.trim().is_empty() || !ids.insert(dictionary.id.as_str()) { return Err("Every dictionary needs a unique id".into()); } }
@@ -391,7 +335,7 @@ fn prepare_mcp_bridge(app: &AppHandle, settings: &AppSettings) -> Result<(PathBu
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     let extension_path = dir.join("pi-desktop-mcp-bridge.ts");
     let config_path = dir.join("mcp-servers.json");
-    fs::write(&extension_path, include_str!("../resources/mcp-bridge.ts")).map_err(|error| error.to_string())?;
+    fs::write(&extension_path, include_str!("../resources/mcp-bridge.bundle.mjs")).map_err(|error| error.to_string())?;
     fs::write(&config_path, serde_json::to_vec_pretty(&settings.mcp_servers).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
     Ok((extension_path, config_path))
 }
@@ -438,7 +382,7 @@ fn default_settings() -> AppSettings {
             json!({"name":"send_message","description":"Send a message to another agent","enabled":true,"builtin":false}),
             json!({"name":"read_trace","description":"Extract clean user and final assistant messages from a Pi trace","enabled":true,"builtin":false}),
         ]).collect(),
-        skills: vec![], mcp_servers: vec![], hosts: vec![], dictionaries: vec![], active_dictionary_ids: vec![], active_dictionary_id: String::new(),
+        skills: vec![], mcp_servers: vec![], hosts: vec![], dictionaries: vec![], active_dictionary_ids: vec![],
     }
 }
 
@@ -581,21 +525,8 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     let mut settings = if !path.exists() { default_settings() } else { serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())? };
     if settings.hosts.len() > MAX_REMOTE_HOSTS { return Err(format!("Settings contain more than {MAX_REMOTE_HOSTS} remote machines")); }
     if settings.mcp_servers.len() > MAX_MCP_SERVERS { return Err(format!("Settings contain more than {MAX_MCP_SERVERS} MCP servers")); }
-    let migrated_model = matches!(settings.default_model.as_str(), "openrouter/deepseek/deepseek-v4-flash" | "opencodex/gpt-5.6-sol");
-    let previous_mcp_count = settings.mcp_servers.len();
-    settings.mcp_servers.retain(|server| server.get("id").and_then(Value::as_str) != Some("filesystem"));
-    let migrated_filesystem_mcp = settings.mcp_servers.len() != previous_mcp_count;
-    if migrated_model { settings.default_model = DEFAULT_MODEL.into(); settings.default_thinking = "medium".into(); }
-    for shortcut in settings.keybindings.values_mut() { *shortcut = shortcut.replace("Mod+", "Ctrl+"); }
-    let mut keybindings_changed = false;
-    for (action, shortcut) in default_keybindings() { if let std::collections::hash_map::Entry::Vacant(entry) = settings.keybindings.entry(action) { entry.insert(shortcut); keybindings_changed = true; } }
-    for tool in default_settings().tools { if !settings.tools.iter().any(|current| current.get("name") == tool.get("name")) { settings.tools.push(tool); } }
     merge_discovered_skills(&mut settings);
-    let dictionaries_changed = load_dictionary_config(&mut settings)?;
-    let context_cap_changed = settings.context_window_cap < 1000;
-    if context_cap_changed { settings.context_window_cap = default_context_window_cap(); }
     validate_dictionaries(&settings)?;
-    if migrated_model || migrated_filesystem_mcp || dictionaries_changed || keybindings_changed || context_cap_changed { fs::write(path, serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?; }
     Ok(settings)
 }
 
@@ -615,10 +546,7 @@ fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<(), String
         if !host_names.insert(name) { return Err(format!("Machine name '{}' is already in use", host.name.trim())); }
         validate_remote_host(host)?;
     }
-    let settings_body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
-    let settings_path = settings_path(&app)?;
-    let (dictionary_path, dictionary_body) = dictionary_config_body(&settings)?;
-    persist_settings_transaction(&settings_path, &settings_body, &dictionary_path, &dictionary_body)
+    fs::write(settings_path(&app)?, serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -626,39 +554,10 @@ fn shell_quote(value: &str) -> String { format!("'{}'", value.replace('\'', "'\\
 
 fn desktop_sessions_dir(home: &Path) -> PathBuf { home.join(".pi-desktop/sessions") }
 
-fn is_legacy_desktop_session(path: &Path) -> Result<bool, String> {
-    let file = fs::File::open(path).map_err(|error| format!("Could not inspect legacy session {}: {error}", path.display()))?;
-    for line in BufReader::new(file).lines() {
-        let line = line.map_err(|error| format!("Could not inspect legacy session {}: {error}", path.display()))?;
-        if !line.contains("pi-desktop-") { continue; }
-        let Ok(entry) = serde_json::from_str::<Value>(&line) else { continue };
-        if entry.get("type").and_then(Value::as_str) == Some("custom") && entry.get("customType").and_then(Value::as_str).is_some_and(|value| value.starts_with("pi-desktop-")) { return Ok(true); }
-    }
-    Ok(false)
-}
-
-fn migrate_local_desktop_sessions(home: &Path) -> Result<PathBuf, String> {
-    let destination_root = desktop_sessions_dir(home); fs::create_dir_all(&destination_root).map_err(|error| format!("Could not create Pi Desktop session directory: {error}"))?;
-    let marker = destination_root.join(".migration-from-pi-agent-v1"); if marker.exists() { return Ok(destination_root); }
-    let legacy_root = home.join(".pi/agent/sessions");
-    if legacy_root.is_dir() {
-        for entry in WalkDir::new(&legacy_root).follow_links(false).into_iter().filter_map(Result::ok).filter(|entry| entry.file_type().is_file() && entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")) {
-            let source = entry.path(); if !is_legacy_desktop_session(source)? { continue; }
-            let relative = source.strip_prefix(&legacy_root).map_err(|_| "Legacy session escaped its root".to_string())?;
-            let destination = destination_root.join(relative);
-            if destination.exists() { return Err(format!("Cannot migrate desktop session because {} already exists", destination.display())); }
-            if let Some(parent) = destination.parent() { fs::create_dir_all(parent).map_err(|error| format!("Could not create migrated session directory: {error}"))?; }
-            fs::rename(source, &destination).map_err(|error| format!("Could not migrate desktop session {}: {error}", source.display()))?;
-            let source_diff = source.with_extension("diffs.json");
-            if source_diff.is_file() { fs::rename(&source_diff, destination.with_extension("diffs.json")).map_err(|error| format!("Session migrated, but its diffs could not be migrated: {error}"))?; }
-        }
-    }
-    fs::write(&marker, b"Desktop sessions migrated from ~/.pi/agent/sessions\n").map_err(|error| format!("Could not finish desktop session migration: {error}"))?;
-    Ok(destination_root)
-}
-
-fn remote_session_migration_script() -> &'static str {
-    r#"new="$HOME/.pi-desktop/sessions"; marker="$new/.migration-from-pi-agent-v1"; mkdir -p "$new" || exit 20; if [ ! -f "$marker" ]; then old="$HOME/.pi/agent/sessions"; if [ -d "$old" ]; then find "$old" -type f -name '*.jsonl' -exec sh -c 'old=$1; new=$2; shift 2; for path do if grep -Eq '\"type\"[[:space:]]*:[[:space:]]*\"custom\"' "$path" && grep -Eq '\"customType\"[[:space:]]*:[[:space:]]*\"pi-desktop-' "$path"; then rel=${path#"$old"/}; target="$new/$rel"; [ ! -e "$target" ] || exit 21; mkdir -p "$(dirname -- "$target")" || exit 22; mv -- "$path" "$target" || exit 23; diff=${path%.jsonl}.diffs.json; [ ! -f "$diff" ] || mv -- "$diff" "${target%.jsonl}.diffs.json" || exit 24; fi; done' sh "$old" "$new" {} + || exit $?; fi; printf '%s\n' 'Desktop sessions migrated from ~/.pi/agent/sessions' > "$marker" || exit 25; fi"#
+fn ensure_desktop_sessions_dir(home: &Path) -> Result<PathBuf, String> {
+    let root = desktop_sessions_dir(home);
+    fs::create_dir_all(&root).map_err(|error| format!("Could not create Pi Desktop session directory: {error}"))?;
+    Ok(root)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -955,10 +854,9 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let orchestration = shell_quote(include_str!("../../extensions/pi-orchestration/index.ts"));
     let context_window_cap = shell_quote(include_str!("../../extensions/pi-context-window-cap/index.ts"));
     let context_window_config = shell_quote(&serde_json::to_string_pretty(&json!({ "contextWindowCap": settings.context_window_cap })).map_err(|error| error.to_string())?);
-    let mcp_bridge = shell_quote(include_str!("../resources/mcp-bridge.ts"));
+    let mcp_bridge = shell_quote(include_str!("../resources/mcp-bridge.bundle.mjs"));
     let mcp_config = shell_quote(&serde_json::to_string_pretty(&settings.mcp_servers).map_err(|error| error.to_string())?);
-    let migration = remote_session_migration_script();
-    let remote = format!("{migration} && mkdir -p \"$HOME/.pi-desktop/pi-context-window-cap\" \"$HOME/.pi/agent/extensions/pi-orchestration\" && printf %s {broker} > \"$HOME/.pi-desktop/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/.pi-desktop/pi-desktop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/.pi-desktop/pi-desktop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/.pi-desktop/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/.pi-desktop/pi-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/.pi-desktop/pi-context-window-cap/config.json\" && printf %s {btw} > \"$HOME/.pi/agent/extensions/pi-desktop-btw.ts\" && printf %s {orchestration} > \"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\"");
+    let remote = format!("mkdir -p \"$HOME/.pi-desktop/sessions\" \"$HOME/.pi-desktop/pi-context-window-cap\" \"$HOME/.pi/agent/extensions/pi-orchestration\" && printf %s {broker} > \"$HOME/.pi-desktop/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/.pi-desktop/pi-desktop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/.pi-desktop/pi-desktop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/.pi-desktop/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/.pi-desktop/pi-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/.pi-desktop/pi-context-window-cap/config.json\" && printf %s {btw} > \"$HOME/.pi/agent/extensions/pi-desktop-btw.ts\" && printf %s {orchestration} > \"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\"");
     let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not install Pi Desktop extensions on {}: {error}", host.name))?;
     output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
 }
@@ -981,7 +879,7 @@ fn build_pi_command(app: &AppHandle, broker: &BrokerRuntime, settings: &AppSetti
     let default_model = std::env::var("PI_DESKTOP_E2E_MODEL").ok().filter(|model| !model.trim().is_empty()).unwrap_or_else(|| settings.default_model.clone());
     if host_id == "local" {
         let (mcp_extension, mcp_config) = prepare_mcp_bridge(app, settings)?; let context_window_cap_extension = prepare_context_window_cap_extension(app, settings)?; let trace_reader_extension = prepare_trace_reader(app)?; let pi_path = pi_executable();
-        let session_dir = migrate_local_desktop_sessions(&desktop_home)?;
+        let session_dir = ensure_desktop_sessions_dir(&desktop_home)?;
         let mut command = Command::new(&pi_path); command.arg(if is_rpc { "--mode" } else { "--print" }); if is_rpc { command.arg("rpc"); }
         command.arg("--session-dir").arg(session_dir).arg("--approve").arg("--no-skills").arg("--extension").arg(mcp_extension).arg("--extension").arg(prepare_session_broker(app)?).arg("--extension").arg(&trace_reader_extension).arg("--extension").arg(&context_window_cap_extension)
             .env("PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION", &context_window_cap_extension).env("PI_DESKTOP_TRACE_READER_EXTENSION", &trace_reader_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config).env("PI_DESKTOP_BROKER_URL", format!("http://127.0.0.1:{broker_port}")).env("PI_DESKTOP_BROKER_TOKEN", &broker_token).env("PI_DESKTOP_ALLOWED_TOOLS", &allowed_tools).env("PI_DESKTOP_SKILL_PATHS", &local_skills);
@@ -1213,36 +1111,11 @@ fn close_terminal(runtime: State<TerminalRuntime>, terminal_id: String) -> Resul
     Ok(())
 }
 
-fn stop_terminals_for_state(runtime: &TerminalRuntime, state: &mut Value) -> Result<(), String> {
-    let Some(tabs) = state.get_mut("tabs").and_then(Value::as_array_mut) else { return Ok(()) };
+fn stop_terminals(runtime: &TerminalRuntime, terminal_ids: &[String]) -> Result<(), String> {
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
-    for tab in tabs {
-        let Some(id) = tab.get("id").and_then(Value::as_str).map(str::to_owned) else { continue };
-        if let Some(mut process) = processes.remove(&id) { let _ = process.child.kill(); let _ = process.child.wait(); }
-        if let Some(tab) = tab.as_object_mut() { tab.insert("exited".into(), Value::Bool(true)); }
+    for id in terminal_ids {
+        if let Some(mut process) = processes.remove(id) { let _ = process.child.kill(); let _ = process.child.wait(); }
     }
-    Ok(())
-}
-
-fn utf8_tail(value: &str, limit: usize) -> String {
-    if value.len() <= limit { return value.to_owned(); }
-    let mut start = value.len() - limit;
-    while !value.is_char_boundary(start) { start += 1; }
-    value[start..].to_owned()
-}
-
-fn bound_archived_terminal_state(state: &mut Value) -> Result<(), String> {
-    let size = serde_json::to_vec(state).map_err(|error| format!("Could not serialize terminal state: {error}"))?.len();
-    if size <= MAX_ARCHIVED_TERMINAL_BYTES { return Ok(()); }
-    let Some(tabs) = state.get_mut("tabs").and_then(Value::as_array_mut) else { return Err("Archived terminal state exceeds the 64 KiB limit".into()) };
-    let per_tab = MAX_ARCHIVED_TERMINAL_BYTES.saturating_sub(16 * 1024) / tabs.len().max(1);
-    for tab in tabs {
-        if let Some(output) = tab.get_mut("output") {
-            if let Some(text) = output.as_str() { *output = Value::String(utf8_tail(text, per_tab)); }
-        }
-    }
-    let bounded_size = serde_json::to_vec(state).map_err(|error| format!("Could not serialize terminal state: {error}"))?.len();
-    if bounded_size > MAX_ARCHIVED_TERMINAL_BYTES { return Err("Archived terminal metadata exceeds the 64 KiB limit".into()); }
     Ok(())
 }
 
@@ -1305,7 +1178,7 @@ fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<S
 }
 
 fn list_remote_sessions(index: &SessionIndexRuntime, host: &RemoteHost) -> Result<Vec<SessionSummary>, String> {
-    let script = format!(r#"{} && find "$HOME/.pi-desktop/sessions" -type f -name '*.jsonl' -printf '%p\000%T@\000%s\000' 2>/dev/null"#, remote_session_migration_script());
+    let script = r#"mkdir -p "$HOME/.pi-desktop/sessions" && find "$HOME/.pi-desktop/sessions" -type f -name '*.jsonl' -printf '%p\000%T@\000%s\000' 2>/dev/null"#;
     let output = ssh(host).arg(script).output().map_err(|error| format!("Could not run ssh for {}: {error}", host.name))?;
     if !output.status.success() { return Err(format!("Could not list sessions on {}: {}", host.name, String::from_utf8_lossy(&output.stderr).trim())); }
     let fields: Vec<&[u8]> = output.stdout.split(|byte| *byte == 0).filter(|field| !field.is_empty()).collect();
@@ -1427,7 +1300,7 @@ fn list_directories(app: AppHandle, host_id: String, path: Option<String>) -> Re
 }
 
 fn collect_sessions(app: &AppHandle, index: &SessionIndexRuntime) -> Result<Vec<SessionSummary>, String> {
-    let home = home_dir()?; let root = migrate_local_desktop_sessions(&home)?;
+    let home = home_dir()?; let root = ensure_desktop_sessions_dir(&home)?;
     let mut sessions = list_local_sessions(index, &root)?;
     let hosts = load_app_settings(app.clone())?.hosts;
     thread::scope(|scope| {
@@ -1458,23 +1331,17 @@ fn local_desktop_session_file(session_path: &str) -> Result<PathBuf, String> {
 }
 
 #[tauri::command(async)]
-fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path: String, host_id: Option<String>, mut terminal_state: Option<Value>) -> Result<(), String> {
+fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path: String, host_id: Option<String>, terminal_ids: Vec<String>) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
-    if let Some(state) = terminal_state.as_mut() { bound_archived_terminal_state(state)?; }
     if host_id != "local" {
         let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
         let file_name = Path::new(&session_path).file_name().and_then(|name| name.to_str()).ok_or("Session path has no file name")?;
         let destination = format!("{}-{file_name}", Uuid::new_v4());
-        let terminal_sidecar = terminal_state.as_ref().map(|state| {
-            let sidecar = Path::new(&destination).with_extension("terminals.json").to_string_lossy().into_owned();
-            let body = serde_json::to_string_pretty(state).unwrap_or_else(|_| "{}".into());
-            (format!("if ! printf '%s' {} > \"$archive\"/{}; then exit 1; fi;", shell_quote(&body), shell_quote(&sidecar)), format!("rm -f -- \"$archive\"/{};", shell_quote(&sidecar)))
-        }).unwrap_or_default();
         let diff_destination = Path::new(&destination).with_extension("diffs.json").to_string_lossy().into_owned();
-        let remote = format!(r#"root=$(cd "$HOME/.pi-desktop/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) archive="$HOME/.pi-desktop/archived"; mkdir -p "$archive" || exit 1; {} diff=${{target%.jsonl}}.diffs.json; diff_target="$archive"/{}; moved_diff=0; if [ -f "$diff" ]; then mv -- "$diff" "$diff_target" || {{ {} exit 1; }}; moved_diff=1; fi; if ! mv -- "$target" "$archive"/{}; then if [ "$moved_diff" = 1 ]; then mv -- "$diff_target" "$diff" || true; fi; {} exit 1; fi ;; *) printf 'Refusing to archive a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(&session_path), terminal_sidecar.0, shell_quote(&diff_destination), terminal_sidecar.1, shell_quote(&destination), terminal_sidecar.1);
+        let remote = format!(r#"root=$(cd "$HOME/.pi-desktop/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) archive="$HOME/.pi-desktop/archived"; mkdir -p "$archive" || exit 1; diff=${{target%.jsonl}}.diffs.json; diff_target="$archive"/{}; moved_diff=0; if [ -f "$diff" ]; then mv -- "$diff" "$diff_target" || exit 1; moved_diff=1; fi; if ! mv -- "$target" "$archive"/{}; then if [ "$moved_diff" = 1 ]; then mv -- "$diff_target" "$diff" || true; fi; exit 1; fi ;; *) printf 'Refusing to archive a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(&session_path), shell_quote(&diff_destination), shell_quote(&destination));
         let output = ssh(host).arg(remote).output().map_err(|error| error.to_string())?;
         if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-        if let Some(state) = terminal_state.as_mut() { let _ = stop_terminals_for_state(&runtime, state); }
+        let _ = stop_terminals(&runtime, &terminal_ids);
         return Ok(());
     }
     let source = local_desktop_session_file(&session_path)?;
@@ -1487,21 +1354,16 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
         let extension = source.extension().and_then(|value| value.to_str()).unwrap_or("jsonl");
         destination = archive_dir.join(format!("{stem}-{}.{}", Uuid::new_v4(), extension));
     }
-    let state_path = destination.with_extension("terminals.json");
-    if let Some(state) = terminal_state.as_ref() {
-        fs::write(&state_path, serde_json::to_vec_pretty(state).map_err(|error| format!("Could not serialize terminal state: {error}"))?).map_err(|error| format!("Could not save terminal state: {error}"))?;
-    }
     let diff_source = source.with_extension("diffs.json"); let diff_destination = destination.with_extension("diffs.json");
     let moved_diff = if diff_source.exists() {
-        if let Err(error) = fs::rename(&diff_source, &diff_destination) { if terminal_state.is_some() { let _ = fs::remove_file(&state_path); } return Err(format!("Could not archive session diffs: {error}")); }
+        if let Err(error) = fs::rename(&diff_source, &diff_destination) { return Err(format!("Could not archive session diffs: {error}")); }
         true
     } else { false };
     if let Err(error) = fs::rename(&source, &destination) {
         if moved_diff { let _ = fs::rename(&diff_destination, &diff_source); }
-        if terminal_state.is_some() { let _ = fs::remove_file(&state_path); }
         return Err(format!("Could not archive session: {error}"));
     }
-    if let Some(state) = terminal_state.as_mut() { let _ = stop_terminals_for_state(&runtime, state); }
+    let _ = stop_terminals(&runtime, &terminal_ids);
     Ok(())
 }
 
@@ -1680,7 +1542,6 @@ fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), Str
     Ok(())
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let broker = BrokerRuntime::default();
     let builder = tauri::Builder::default();

@@ -8,7 +8,6 @@ import { ExtensionDialog } from "./components/ExtensionDialog";
 import { TerminalView } from "./components/TerminalView";
 import { ProjectDialog } from "./components/ProjectDialog";
 import { SplitChatPane } from "./components/SplitChatPane";
-import { defaultSettings } from "./defaults";
 import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
 import { findReplaceableAbortedTurn } from "./lib/abortedTurn";
 import { NativeTransport } from "./lib/nativeTransport";
@@ -62,7 +61,7 @@ export default function App() {
   const unseenSessions = useSyncExternalStore((listener) => runtimePool.subscribe(listener), () => runtimePool.unseenSessions());
   const gitDiffs = useTurnDiffs(runtimePool, transport);
   const sessionRuntime = useChatSession(transport); const { state, setState, messages, setMessages, models, commands, thinkingLevels, refresh: refreshSession, handleEvent, discardPendingUpdates } = sessionRuntime;
-  const [sessions, setSessions] = useState<SessionSummary[]>([]); const [settings, setSettings] = useState<AppSettings>(defaultSettings); const [orchestration, setOrchestration] = useState<OrchestrationCapability>();
+  const [sessions, setSessions] = useState<SessionSummary[]>([]); const [settings, setSettings] = useState<AppSettings>(); const [orchestration, setOrchestration] = useState<OrchestrationCapability>();
   const [settingsDirty, setSettingsDirty] = useState(false);
   const sessionIndexRequest = useRef<Promise<void> | undefined>(undefined);
   const [panelOpen, setPanelOpen] = useState(true); const [query, setQuery] = useState(""); const [connected, setConnected] = useState(false); const connectionReadyRef = useRef(connected); connectionReadyRef.current = connected; const updateConnected = (value: boolean) => { connectionReadyRef.current = value; setConnected(value); }; const [error, setError] = useState<string>();
@@ -157,7 +156,9 @@ export default function App() {
   }, [transport]);
 
   const refresh = useCallback(async (hostId?: string) => {
-    void syncSessionIndex(); const [nextState, nextSettings] = await Promise.all([refreshSession(), transport.loadSettings()]); runtimePool.bind(hostId ?? transport.currentHostId(), nextState.sessionId, transport); setSettings(nextSettings); return nextSettings;
+    void syncSessionIndex();
+    const settingsRequest = transport.loadSettings().then((nextSettings) => { setSettings(nextSettings); return nextSettings; });
+    const [nextState, nextSettings] = await Promise.all([refreshSession(), settingsRequest]); runtimePool.bind(hostId ?? transport.currentHostId(), nextState.sessionId, transport); return nextSettings;
   }, [refreshSession, runtimePool, syncSessionIndex, transport]);
 
   const configureRuntime = useCallback(async (value: AppSettings) => {
@@ -233,10 +234,10 @@ export default function App() {
   useEffect(() => { runtimePool.activate(view === "chat" ? transport : undefined); }, [runtimePool, transport, view]);
 
   useEffect(() => {
-    if (!connected) return;
+    if (!connected || !settings) return;
     const interval = window.setInterval(() => void syncSessionIndex(), settings.hosts.length ? 5000 : 1500);
     return () => window.clearInterval(interval);
-  }, [connected, settings.hosts.length, syncSessionIndex]);
+  }, [connected, settings, syncSessionIndex]);
 
   const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => {
     if (!connectionReadyRef.current) throw new Error("Pi is still connecting");
@@ -292,6 +293,7 @@ export default function App() {
   const setThinking = async (level: string) => { try { await transport.command({ type: "set_thinking_level", level }); setState((current) => ({ ...current, thinkingLevel: level })); } catch (reason) { addNotice({ title: "Could not change thinking level", message: reason instanceof Error ? reason.message : String(reason) }); } };
   const abortInteraction = () => { void transport.command({ type: "abort" }).catch((reason) => addNotice({ title: "Could not stop Pi", message: reason instanceof Error ? reason.message : String(reason) })); };
   const saveSettings = async (value: AppSettings, nextConfig?: OrchestrationConfig) => {
+    if (!settings) throw new Error("Settings are still loading");
     const clean = (source: AppSettings) => ({ ...source, mcpServers: source.mcpServers.map(({ error: _error, ...server }) => ({ ...server, status: "stopped" as const })) });
     const previous = clean(settings); const previousConfig = orchestration?.config; const next = { ...clean(value), debugMode: settings.debugMode }; let settingsApplied = false; let orchestrationAttempted = false;
     try {
@@ -321,8 +323,8 @@ export default function App() {
       if (isActiveSession) updateConnected(false);
       try {
         const archivedTerminalSessionId = `${session.hostId ?? "local"}:${session.id}`;
-        const terminalState = terminalsBySession[archivedTerminalSessionId];
-        await transport.archiveSession(session.path, session.hostId, terminalState);
+        const terminalIds = terminalsBySession[archivedTerminalSessionId]?.tabs.map((terminal) => terminal.id) ?? [];
+        await transport.archiveSession(session.path, session.hostId, terminalIds);
         if (isActiveSession) { const conversationKey = `${activeHostId}:draft-${crypto.randomUUID()}`; transportConversationKeys.current.set(transport, conversationKey); activateConversationKey(conversationKey); await transport.command({ type: "new_session" }); await refresh(); updateConnected(true); }
         else await runtimePool.remove(session);
         setTerminalsBySession((current) => { const next = { ...current }; delete next[archivedTerminalSessionId]; return next; });
@@ -358,13 +360,15 @@ export default function App() {
   const setSplitComposerDraft = (value: string) => setComposerDrafts((current) => { if (value) return { ...current, [splitSessionId]: value }; const next = { ...current }; delete next[splitSessionId]; return next; });
   const toggleTerminal = () => { if (!canLeaveSettings()) return; setView("chat"); setTerminalOpen((open) => !open); };
   const toggleDebugMode = useCallback(() => {
+    if (!settings) return;
     const next = { ...settings, debugMode: !settings.debugMode };
     void transport.saveSettings(next, false).then(() => setSettings(next)).catch((reason) => addNotice({ title: "Could not change debug mode", message: reason instanceof Error ? reason.message : String(reason) }));
   }, [addNotice, settings, transport]);
 
   useEffect(() => {
+    if (!settings) return;
     const handleKeybind = (event: KeyboardEvent) => {
-      if (event.repeat || document.querySelector('[aria-modal="true"]')) return;
+      if (event.repeat || document.querySelector("dialog[open]")) return;
       const binding = keybindDefinitions.find((item) => matchesShortcut(event, settings.keybindings[item.action]));
       if (!binding) return;
       event.preventDefault();
@@ -377,7 +381,13 @@ export default function App() {
     };
     window.addEventListener("keydown", handleKeybind);
     return () => window.removeEventListener("keydown", handleKeybind);
-  }, [settings.keybindings, toggleDebugMode, settingsDirty, view, activePane, splitPane]);
+  }, [settings, toggleDebugMode, settingsDirty, view, activePane, splitPane]);
+
+  if (!settings) return <main className="app-loading" role={error ? "alert" : "status"}>
+    <p className="eyebrow">Pi desktop</p>
+    <h1>{error ? "Could not load settings" : "Loading settings…"}</h1>
+    {error && <p>{error}</p>}
+  </main>;
 
   const extensionStateIsCurrent = extensionOwner === transport;
   const settingsWithMcpStatuses = { ...settings, mcpServers: settings.mcpServers.map((server) => ({ ...server, ...(extensionStateIsCurrent ? mcpStatuses[server.id] : undefined) })) };
