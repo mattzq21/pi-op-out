@@ -1,8 +1,8 @@
 # Pi Git change-context extension
 
-This extension gives each Pi session a private Git snapshot after every completed
-assistant message. Before the next user prompt, it compares the current worktree with
-that snapshot and prepends a compact `<project_context>` block containing:
+This extension gives each Pi session a private Git snapshot after every successfully
+completed assistant message. Before the next user prompt, it compares the current
+worktree with that snapshot and prepends a compact `<project_context>` block containing:
 
 - changed paths relative to the repository root;
 - a ready-to-run `git diff` command for the complete patch.
@@ -10,6 +10,13 @@ that snapshot and prepends a compact `<project_context>` block containing:
 The block is inserted after the existing conversation history and immediately before
 the user's new text. It is omitted until the session has a baseline snapshot and when
 there are no changes to report.
+
+Pi emits `message_end` for more than successful answers. The extension snapshots only
+assistant messages whose `stopReason` is `stop`. It deliberately ignores intermediate
+tool-use messages, user aborts, provider or network errors, truncated responses,
+deferred responses, and recoverable failures that Pi may retry. If tools changed files
+before an abort or error, the previous baseline remains in place, so those changes are
+reported with the next user message.
 
 Snapshots contain tracked files and non-ignored untracked files. They use a temporary
 Git index, so the extension does not alter the real staging area, branch, `HEAD`, or

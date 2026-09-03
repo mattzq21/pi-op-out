@@ -154,7 +154,7 @@ export default function gitChangeContext(pi: ExtensionAPI) {
   };
 
   pi.on("message_end", (event, ctx) => {
-    if (event.message.role !== "assistant") return;
+    if (event.message.role !== "assistant" || event.message.stopReason !== "stop") return;
     snapshotQueue = snapshotQueue.then(async () => {
       const root = await repositoryRoot(ctx.cwd);
       if (!root) return;
