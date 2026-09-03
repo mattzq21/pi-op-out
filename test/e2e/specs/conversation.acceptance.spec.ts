@@ -1505,24 +1505,21 @@ describe("Orchestration acceptance", () => {
   });
 
   it("saves the encoded orchestration configuration and reconnects", async () => {
+    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
+    await mockBackend({
+      ...connectedSessionResponses("orchestration-save"),
+      "pi_command:set_model": {}, "pi_command:prompt": {}, save_app_settings: {}, stop_pi: {}, start_pi: {}, list_sessions: [], load_app_settings: settings,
+    });
+    await emitPiEvent({ type: "session_switched" });
+    await enableOrchestration();
+    await expect(app.modelPicker).toHaveAttribute("data-options", expect.stringContaining("e2e/acceptance"));
     await app.openSettings();
-    const defaultModel = await $('select[aria-label="Default model"]').getValue();
     await app.openSettingsSection("Agents");
     await $('//div[contains(@class,"agent-list")]//button[.//span[normalize-space(.)="reviewer"]]').click();
     await $('input[aria-label="Agent description"]').setValue("Reviews the packaged acceptance suite");
-    const [provider, ...modelParts] = defaultModel.split("/");
-    const modelId = modelParts.join("/");
-    const settings = { ...defaultSettings, defaultModel };
-    await mockBackend({
-      ...connectedSessionResponses("orchestration-save"),
-      "pi_command:get_state": { model: { provider, id: modelId }, thinkingLevel: "high", isStreaming: false, sessionId: "orchestration-save", messageCount: 0, pendingMessageCount: 0 },
-      "pi_command:get_available_models": { models: [{ provider, id: modelId, name: modelId }] },
-      "pi_command:prompt": {}, save_app_settings: {}, stop_pi: {}, start_pi: {}, list_sessions: [], load_app_settings: settings,
-    });
 
     await app.saveSettingsButton.click();
-    await browser.waitUntil(async () => await app.saveSettingsButton.getText() === "Saved" || await $(".settings-save [role='alert']").isExisting());
-    if (await $(".settings-save [role='alert']").isExisting()) throw new Error(`Orchestration save failed: ${await $(".settings-save [role='alert']").getText()}\nCalls: ${JSON.stringify(await backendCalls())}`);
+    await expect(app.saveSettingsButton).toHaveText("Saved");
     const prompt = (await backendCalls()).find(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-orchestration-config "))?.args.command as { message: string };
     const saved = decodeOrchestrationValue<OrchestrationConfig>(prompt.message.slice("/pi-orchestration-config ".length));
     expect(saved.agents.find((agent) => agent.name === "reviewer")?.description).toBe("Reviews the packaged acceptance suite");
