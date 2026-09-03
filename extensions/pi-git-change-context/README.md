@@ -17,18 +17,21 @@ working tree. Ignored files and changes inside submodule worktrees are not captu
 When Pi's working directory is not inside a Git repository, the extension quietly
 does nothing and leaves user input unchanged.
 
-Each session owns one hidden ref:
+Each session owns exactly one hidden ref. Every snapshot has its own timestamped name:
 
 ```text
-refs/pi-session-snapshots/<session-id>
+refs/pi-session-snapshots/chats/<session-id>/<timestamp>-<commit-prefix>-<nonce>
 ```
 
-The ref points to the session's latest hidden commit, whose message includes the
-session ID and timestamp. Snapshots are deliberately not parent-linked, so replacing
-a snapshot makes its predecessor eligible for normal Git garbage collection. Whenever
-a snapshot is saved, refs belonging to sessions inactive for more than 30 days are
-deleted. Hidden commits do not appear in normal branch history and are not pushed by
-ordinary branch pushes.
+Creating a snapshot and deleting that chat's previous ref happen in one Git ref
+transaction. Snapshots are not parent-linked, so the replaced commit becomes eligible
+for normal Git garbage collection. There is no retention window: one ref remains for
+each chat unless it is explicitly removed.
+
+The extension also writes the current snapshot identity as a custom session entry.
+Custom entries are excluded from LLM context but remain in the session JSONL, so when
+the chat is archived its snapshot association is archived with it. Hidden commits do
+not appear in normal branch history and are not pushed by ordinary branch pushes.
 
 Run it directly:
 

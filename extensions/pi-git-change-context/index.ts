@@ -1,11 +1,12 @@
 import { mkdtemp, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const REF_ROOT = "refs/pi-session-snapshots";
-const SNAPSHOT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const SNAPSHOT_ENTRY = "pi-git-change-snapshot";
 const MAX_LISTED_FILES = 200;
 const MAX_GIT_OUTPUT = 4 * 1024 * 1024;
 
@@ -47,14 +48,38 @@ async function repositoryRoot(cwd: string) {
   }
 }
 
-function sessionRef(sessionId: string) {
+function safeSessionId(sessionId: string) {
   const safeId = sessionId.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^\.+|\.+$/g, "") || "session";
-  return `${REF_ROOT}/${safeId}`;
+  return safeId;
+}
+
+function sessionRefPrefix(sessionId: string) {
+  return `${REF_ROOT}/chats/${safeSessionId(sessionId)}/`;
+}
+
+function legacySessionRef(sessionId: string) {
+  return `${REF_ROOT}/${safeSessionId(sessionId)}`;
 }
 
 async function resolveRef(root: string, ref: string) {
   try { return (await runGit(root, ["rev-parse", "--verify", ref])).trim(); }
   catch (error) { if (error instanceof GitError && error.exitCode === 128) return undefined; throw error; }
+}
+
+async function sessionSnapshots(root: string, sessionId: string) {
+  const output = await runGit(root, ["for-each-ref", "--sort=-refname", "--format=%(refname)%09%(objectname)", sessionRefPrefix(sessionId)]);
+  return output.split("\n").flatMap((line) => {
+    const [ref, commit] = line.split("\t");
+    return ref && commit ? [{ ref, commit }] : [];
+  });
+}
+
+async function currentSnapshot(root: string, sessionId: string) {
+  const [snapshot] = await sessionSnapshots(root, sessionId);
+  if (snapshot) return snapshot;
+  const ref = legacySessionRef(sessionId);
+  const commit = await resolveRef(root, ref);
+  return commit ? { ref, commit } : undefined;
 }
 
 async function worktreeTree(root: string) {
@@ -72,8 +97,9 @@ async function worktreeTree(root: string) {
 }
 
 async function saveSnapshot(root: string, sessionId: string) {
-  const ref = sessionRef(sessionId);
-  const parent = await resolveRef(root, ref);
+  const previous = await sessionSnapshots(root, sessionId);
+  const legacyRef = legacySessionRef(sessionId);
+  const legacyCommit = await resolveRef(root, legacyRef);
   const tree = await worktreeTree(root);
   const timestamp = new Date().toISOString();
   const identity = {
@@ -85,20 +111,19 @@ async function saveSnapshot(root: string, sessionId: string) {
     GIT_COMMITTER_DATE: timestamp,
   };
   const commit = (await runGit(root, ["commit-tree", tree], identity, `Pi session snapshot ${sessionId} ${timestamp}\n`)).trim();
-  await runGit(root, ["update-ref", ref, commit, ...(parent ? [parent] : [])]);
-  await pruneStaleSnapshots(root, ref);
-}
-
-async function pruneStaleSnapshots(root: string, currentRef: string) {
-  const cutoff = Math.floor((Date.now() - SNAPSHOT_RETENTION_MS) / 1000);
-  const refs = await runGit(root, ["for-each-ref", "--format=%(refname)%09%(objectname)%09%(committerdate:unix)", REF_ROOT]);
-  for (const line of refs.split("\n")) {
-    const [ref, objectId, rawTimestamp] = line.split("\t");
-    const timestamp = Number(rawTimestamp);
-    if (ref !== currentRef && Number.isFinite(timestamp) && timestamp < cutoff) {
-      await runGit(root, ["update-ref", "-d", ref, objectId]);
-    }
-  }
+  const snapshotName = `${timestamp.replace(/[-:.]/g, "")}-${commit.slice(0, 12)}-${randomUUID().slice(0, 8)}`;
+  const ref = `${sessionRefPrefix(sessionId)}${snapshotName}`;
+  const deletes = [...previous, ...(legacyCommit ? [{ ref: legacyRef, commit: legacyCommit }] : [])];
+  const transaction = [
+    "start",
+    `create ${ref} ${commit}`,
+    ...deletes.map((snapshot) => `delete ${snapshot.ref} ${snapshot.commit}`),
+    "prepare",
+    "commit",
+    "",
+  ].join("\n");
+  await runGit(root, ["update-ref", "--stdin"], {}, transaction);
+  return { version: 1, repositoryRoot: root, ref, commit, capturedAt: timestamp };
 }
 
 function shellQuote(value: string) { return `'${value.replaceAll("'", `'\\''`)}'`; }
@@ -133,7 +158,8 @@ export default function gitChangeContext(pi: ExtensionAPI) {
     snapshotQueue = snapshotQueue.then(async () => {
       const root = await repositoryRoot(ctx.cwd);
       if (!root) return;
-      await saveSnapshot(root, ctx.sessionManager.getSessionId());
+      const snapshot = await saveSnapshot(root, ctx.sessionManager.getSessionId());
+      pi.appendEntry(SNAPSHOT_ENTRY, snapshot);
       lastError = "";
     }).catch((error) => reportError(ctx, error));
     return snapshotQueue;
@@ -147,14 +173,14 @@ export default function gitChangeContext(pi: ExtensionAPI) {
     try {
       const root = await repositoryRoot(ctx.cwd);
       if (!root) return { action: "continue" };
-      const baseline = await resolveRef(root, sessionRef(ctx.sessionManager.getSessionId()));
-      if (!baseline) return { action: "continue" };
+      const snapshot = await currentSnapshot(root, ctx.sessionManager.getSessionId());
+      if (!snapshot) return { action: "continue" };
       const current = await worktreeTree(root);
-      const rawPaths = await runGit(root, ["diff", "--name-only", "-z", "--find-renames", baseline, current, "--"]);
+      const rawPaths = await runGit(root, ["diff", "--name-only", "-z", "--find-renames", snapshot.commit, current, "--"]);
       const files = rawPaths.split("\0").filter(Boolean);
       if (!files.length) return { action: "continue" };
       lastError = "";
-      return { action: "transform", text: `${projectContext(root, baseline, current, files)}\n\n${event.text}`, images: event.images };
+      return { action: "transform", text: `${projectContext(root, snapshot.commit, current, files)}\n\n${event.text}`, images: event.images };
     } catch (error) {
       reportError(ctx, error);
       return { action: "continue" };
