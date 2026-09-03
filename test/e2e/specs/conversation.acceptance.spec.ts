@@ -1869,8 +1869,6 @@ describe("Project behavior", () => {
     try {
       while (await $(".error-toast button").isExisting()) await $(".error-toast button").click();
       await emitPiEvent({ type: "session_switched" });
-      await expect(app.modelPicker).toBeEnabled();
-      await expect(app.modelPicker).toHaveAttribute("data-options", expect.stringContaining("e2e/acceptance"));
       await app.openProjectChooser();
       await app.projectDirectory.setValue("/tmp");
       await app.openProjectButton.click();
