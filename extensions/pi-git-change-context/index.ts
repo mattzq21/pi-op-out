@@ -134,7 +134,7 @@ function projectContext(root: string, baseline: string, current: string, files: 
   const paths = shown.map((path) => `- ${JSON.stringify(path)}`).join("\n");
   const command = `git -C ${shellQuote(root)} diff --find-renames ${baseline} ${current} --`;
   return `<project_context>
-Changed files since last message.
+Changed files since last message:
 ${paths}${omitted ? `\n- … ${omitted} more changed file${omitted === 1 ? "" : "s"}` : ""}
 
 If full diff is relevant, run:
