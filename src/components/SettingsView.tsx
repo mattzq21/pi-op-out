@@ -3,7 +3,6 @@ import { Blocks, BookOpen, Bot, Check, CircleGauge, CirclePlus, Cpu, GitBranch, 
 import type { AgentProfile, AppSettings, McpServer, Model, OrchestrationConfig, PromptDictionary, RemoteHost, SequenceProfile } from "../types";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutFromEvent, type KeybindAction } from "../lib/keybindings";
-import { settingsValidationError } from "../lib/settingsValidation";
 import { IconButton } from "./IconButton";
 import { Toggle } from "./Toggle";
 
@@ -67,18 +66,15 @@ export function SettingsView({ settings, orchestration, models = [], thinkingLev
   const agentNames = new Set(agentDrafts.map((item) => item.name));
   const agentsValid = !orchestration || (agentDrafts.some((item) => item.name === "default") && agentDrafts.every((item) => item.name.length > 0) && new Set(agentDrafts.map((item) => item.name)).size === agentDrafts.length);
   const sequencesValid = !orchestration || (sequenceDrafts.every((item) => item.name.length > 0 && !agentNames.has(item.name) && item.agents.length > 0 && item.agents.every((name) => agentNames.has(name)) && item.visibleSteps >= 1 && item.visibleSteps <= item.agents.length) && new Set(sequenceDrafts.map((item) => item.name)).size === sequenceDrafts.length);
-  const dictionaryConflict = activeDictionaryConflict(draft.dictionaries, draft.activeDictionaryIds);
-  const contextCapValid = Number.isSafeInteger(draft.contextWindowCap) && draft.contextWindowCap >= 1000;
-  const modelValid = models.some((model) => `${model.provider}/${model.id}` === draft.defaultModel);
-  const validationError = !contextCapValid ? "Context window cap must be a whole number of at least 1,000" : !modelValid ? "Choose an available default model" : settingsValidationError(draft);
-  return <main className="settings-shell"><header className="settings-header"><div><p className="eyebrow">Pi desktop</p><h1>Settings</h1><p>Configure how Pi works across your projects.</p></div><div className="settings-save">{(saveError || validationError) && <small role="alert">{saveError || validationError}</small>}<button className="primary-button" disabled={saving || !agentsValid || !sequencesValid || Boolean(validationError)} onClick={() => void save()}>{saved ? <Check size={15} /> : <Save size={15} />}{saved ? "Saved" : saving ? "Saving…" : "Save changes"}</button></div></header>
+  const modelAvailable = models.some((model) => `${model.provider}/${model.id}` === draft.defaultModel);
+  return <main className="settings-shell"><header className="settings-header"><div><p className="eyebrow">Pi desktop</p><h1>Settings</h1><p>Configure how Pi works across your projects.</p></div><div className="settings-save">{saveError && <small role="alert">{saveError}</small>}<button className="primary-button" disabled={saving || !agentsValid || !sequencesValid} onClick={() => void save()}>{saved ? <Check size={15} /> : <Save size={15} />}{saved ? "Saved" : saving ? "Saving…" : "Save changes"}</button></div></header>
     <div className="settings-layout"><nav className="settings-nav">{sections.filter((item) => orchestration || (item.id !== "agents" && item.id !== "sequences")).map((item) => <button key={item.id} className={section === item.id ? "active" : ""} onClick={() => setSection(item.id)}><item.icon size={16} /><span>{item.label}</span></button>)}</nav>
       <section className="settings-content">
         {section === "general" && <SettingsSection title="General" description="Agent behavior.">
           <SettingRow icon={<Cpu />} title="Auto compaction" description="Compact context before it reaches the model limit."><Toggle label="Auto compaction" checked={draft.autoCompaction} onChange={(autoCompaction) => patch({ autoCompaction })} /></SettingRow>
           <SettingRow icon={<CircleGauge />} title="Context window cap" description="Treat larger model contexts as this many tokens for compaction."><input className="setting-number" aria-label="Context window cap" type="number" min={1000} step={1000} value={draft.contextWindowCap} onChange={(event) => patch({ contextWindowCap: Number(event.target.value) })} /></SettingRow>
           <SettingRow icon={<ShieldCheck />} title="Automatic retry" description="Retry transient provider and network errors."><Toggle label="Automatic retry" checked={draft.autoRetry} onChange={(autoRetry) => patch({ autoRetry })} /></SettingRow>
-          <label className="field"><span>Default model</span><select aria-label="Default model" value={draft.defaultModel} onChange={(event) => patch({ defaultModel: event.target.value })}>{!modelValid && <option value={draft.defaultModel} disabled>Unavailable: {draft.defaultModel}</option>}{models.map((model) => <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>{model.name || model.id}</option>)}</select></label>
+          <label className="field"><span>Default model</span><select aria-label="Default model" value={draft.defaultModel} onChange={(event) => patch({ defaultModel: event.target.value })}>{!modelAvailable && <option value={draft.defaultModel} disabled>Unavailable: {draft.defaultModel}</option>}{models.map((model) => <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>{model.name || model.id}</option>)}</select></label>
           <label className="field"><span>Thinking level</span><select value={draft.defaultThinking} onChange={(e) => patch({ defaultThinking: e.target.value })}>{["off", "minimal", "low", "medium", "high", "xhigh", "max"].map((level) => <option key={level}>{level}</option>)}</select></label>
         </SettingsSection>}
         {section === "dictionaries" && <SettingsSection title="Dictionaries" description="Highlight configured words while typing and replace them only when a prompt is submitted." headerAction={<button className="secondary-button" onClick={addDictionary}><CirclePlus size={15} />Add dictionary</button>}>
