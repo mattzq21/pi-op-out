@@ -7,9 +7,8 @@ import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 type Agent = { name: string; description: string; model: string; effort: string; systemPrompt: string; developerPrompt: string; agentsMd: string; tools: string[]; skills: string[]; mcpServers: string[] };
-type Preprompter = { enabled: boolean; model: string; systemPrompt: string; agentsMd: string };
 type Sequence = { name: string; description: string; agents: string[]; visibleSteps: number };
-type Config = { preprompter: Preprompter; agents: Agent[]; sequences: Sequence[] };
+type Config = { agents: Agent[]; sequences: Sequence[] };
 type Run = { sequence: Sequence; index: number; final: string; failed: boolean };
 type Delegation = { agent: string; task: string; final: string };
 
@@ -17,15 +16,12 @@ const STATUS_KEY = "pi-desktop-orchestration";
 const STATE_ENTRY = "pi-orchestration-state";
 const RUN_ENTRY = "pi-orchestration-run";
 const HANDOFF = /^<!-- pi-desktop-sequence:/;
-const PREPROMPTER_STATUS = "pi-desktop-preprompter";
 const CHILD_OUTPUT_LIMIT = 4 * 1024 * 1024;
 const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
 const extensionPath = fileURLToPath(import.meta.url);
-const fallbackConfig: Config = { preprompter: { enabled: false, model: "", systemPrompt: "Correct the user's prompt. Return only the corrected prompt.", agentsMd: "" }, agents: [{ name: "default", description: "General-purpose agent", model: "", effort: "high", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: ["read", "bash", "edit", "write", "grep", "find", "ls", "read_trace"], skills: [], mcpServers: [] }], sequences: [] };
+const fallbackConfig: Config = { agents: [{ name: "default", description: "General-purpose agent", model: "", effort: "high", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: ["read", "bash", "edit", "write", "grep", "find", "ls", "read_trace"], skills: [], mcpServers: [] }], sequences: [] };
 
 function normalize(value: Partial<Config>): Config {
-  const source = value.preprompter;
-  const preprompter = { enabled: source?.enabled === true, model: typeof source?.model === "string" ? source.model : "", systemPrompt: typeof source?.systemPrompt === "string" ? source.systemPrompt : fallbackConfig.preprompter.systemPrompt, agentsMd: typeof source?.agentsMd === "string" ? source.agentsMd : "" };
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => agent && typeof agent.name === "string" && agent.name.length > 0).map((agent) => ({
     name: agent.name, description: typeof agent.description === "string" ? agent.description : "", model: typeof agent.model === "string" ? agent.model : "", effort: typeof agent.effort === "string" ? agent.effort : fallbackConfig.agents[0].effort,
     systemPrompt: typeof agent.systemPrompt === "string" ? agent.systemPrompt : "", developerPrompt: typeof agent.developerPrompt === "string" ? agent.developerPrompt : "", agentsMd: typeof agent.agentsMd === "string" ? agent.agentsMd : "",
@@ -35,7 +31,7 @@ function normalize(value: Partial<Config>): Config {
   const agents = unique.some((agent) => agent.name === "default") ? unique : [structuredClone(fallbackConfig.agents[0]), ...unique];
   const names = new Set(agents.map((agent) => agent.name));
   const sequences = Array.isArray(value.sequences) ? value.sequences.filter((sequence) => sequence && typeof sequence.name === "string" && sequence.name.length > 0 && Array.isArray(sequence.agents) && sequence.agents.length > 0 && sequence.agents.every((name) => names.has(name))).map((sequence) => ({ ...sequence, description: sequence.description || "", visibleSteps: Math.max(1, Math.min(sequence.agents.length, Number(sequence.visibleSteps) || sequence.agents.length)) })) : [];
-  return { preprompter, agents, sequences };
+  return { agents, sequences };
 }
 
 
@@ -125,7 +121,7 @@ export default async function orchestration(pi: ExtensionAPI) {
     return;
   }
   process.env.PI_DESKTOP_ORCHESTRATION_ACTIVE = "1";
-  let config = await loadConfig(); let active = "default"; let run: Run | undefined; let pendingHandoff: string | undefined; let activeToolError: string | undefined; let originalTask = ""; let delegations: Delegation[] = []; let preprompter: AbortController | undefined;
+  let config = await loadConfig(); let active = "default"; let run: Run | undefined; let pendingHandoff: string | undefined; let activeToolError: string | undefined; let originalTask = ""; let delegations: Delegation[] = [];
 
   const findAgent = (name: string) => config.agents.find((agent) => agent.name === name);
   const findSequence = (name: string) => config.sequences.find((sequence) => sequence.name === name);
@@ -158,7 +154,7 @@ export default async function orchestration(pi: ExtensionAPI) {
     }
     return skillPaths.length ? { skillPaths } : undefined;
   });
-  pi.on("session_shutdown", () => { preprompter?.abort(); preprompter = undefined; delete process.env.PI_DESKTOP_ORCHESTRATION_ACTIVE; });
+  pi.on("session_shutdown", () => { delete process.env.PI_DESKTOP_ORCHESTRATION_ACTIVE; });
 
   const registerTool = () => pi.registerTool({
     name: "call_agent", label: "Call agent or sequence",
@@ -193,8 +189,6 @@ export default async function orchestration(pi: ExtensionAPI) {
     if (!sequence || next.index < 0 || next.index >= sequence.agents.length || typeof next.handoff !== "string") throw new Error("Invalid sequence handoff");
     pi.appendEntry(RUN_ENTRY, next); await ctx.reload();
   }});
-  pi.registerCommand("pi-orchestration-cancel-preprompter", { description: "Stop an active pre-prompter", handler: async () => { preprompter?.abort(); } });
-
   pi.on("session_start", async (_event, ctx) => {
     let savedRun: { sequence?: string; index?: number; handoff?: string } | undefined;
     for (const entry of ctx.sessionManager.getBranch()) if (entry.type === "custom") {
@@ -213,14 +207,7 @@ export default async function orchestration(pi: ExtensionAPI) {
     if (event.text.startsWith("/")) return { action: "continue" };
     if (activeToolError) { if (run) pi.appendEntry(RUN_ENTRY, null); run = undefined; ctx.ui.notify(activeToolError, "error"); return { action: "handled" }; }
     if (HANDOFF.test(event.text)) return { action: "continue" };
-    let text = event.text;
-    if (config.preprompter.enabled) {
-      const promptAgent: Agent = { name: "preprompter", description: "", model: config.preprompter.model, effort: "", systemPrompt: config.preprompter.systemPrompt, developerPrompt: "", agentsMd: config.preprompter.agentsMd, tools: [], skills: [], mcpServers: [] };
-      const controller = new AbortController(); preprompter = controller; ctx.ui.setStatus(PREPROMPTER_STATUS, "Rewriting prompt…");
-      try { text = await runChild(promptAgent, text, ctx.cwd, controller.signal); }
-      catch (error) { if (controller.signal.aborted) return { action: "handled" }; ctx.ui.notify(`Pre-prompter failed; sending the original prompt: ${error instanceof Error ? error.message : String(error)}`, "warning"); }
-      finally { if (preprompter === controller) preprompter = undefined; ctx.ui.setStatus(PREPROMPTER_STATUS, undefined); }
-    }
+    const text = event.text;
     const sequence = findSequence(active);
     if (sequence) { run = { sequence, index: 0, final: "", failed: false }; pi.appendEntry(RUN_ENTRY, { sequence: sequence.name, index: 0 }); const agent = findAgent(sequence.agents[0]); activeToolError = agent ? await activate(agent, ctx) : undefined; if (activeToolError) { pi.appendEntry(RUN_ENTRY, null); run = undefined; ctx.ui.notify(activeToolError, "error"); return { action: "handled" }; } return { action: "transform", text: marker(text, sequence, 0), images: event.images }; }
     if (multiAgentMode(active)) { originalTask = text; delegations = []; pi.setActiveTools(["call_agent"]); return text === event.text ? { action: "continue" } : { action: "transform", text, images: event.images }; }

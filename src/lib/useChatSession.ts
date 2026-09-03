@@ -43,7 +43,7 @@ export function useChatSession(transport: PiTransport, initialState: AgentState 
       if (historyResult.status === "fulfilled") setMessages(branchMessages(historyResult.value.entries, historyResult.value.leafId));
       if (modelResult.status === "fulfilled") setModels(modelResult.value.models);
       if (thinkingResult.status === "fulfilled") setThinkingLevels(thinkingResult.value.levels);
-      if (commandResult.status === "fulfilled") { const hiddenCommands = new Set(["pi-orchestration-next", "pi-orchestration-cancel-preprompter"]); const visibleCommands = commandResult.value.commands.filter((command) => command.sourceInfo?.source !== "inline" && !hiddenCommands.has(command.name)); setCommands(visibleCommands.some((command) => command.name === "compact") ? visibleCommands : [{ name: "compact", description: "Compact conversation context", source: "builtin" }, ...visibleCommands]); }
+      if (commandResult.status === "fulfilled") { const visibleCommands = commandResult.value.commands.filter((command) => command.sourceInfo?.source !== "inline" && command.name !== "pi-orchestration-next"); setCommands(visibleCommands.some((command) => command.name === "compact") ? visibleCommands : [{ name: "compact", description: "Compact conversation context", source: "builtin" }, ...visibleCommands]); }
     }
     return nextState;
   }, [discardPendingUpdates, transport]);

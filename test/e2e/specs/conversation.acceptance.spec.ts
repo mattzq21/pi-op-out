@@ -34,7 +34,6 @@ const acceptanceOrchestration = (): OrchestrationCapability => ({
   active: "default",
   currentAgent: "default",
   config: {
-    preprompter: { enabled: false, model: "", systemPrompt: "", agentsMd: "" },
     agents: [
       { name: "default", description: "Default acceptance agent", model: "e2e/acceptance", effort: "high", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: ["read"], skills: [], mcpServers: [] },
       { name: "reviewer", description: "Reviews acceptance changes", model: "e2e/alternate", effort: "off", systemPrompt: "Review carefully.", developerPrompt: "", agentsMd: "", tools: ["read"], skills: [], mcpServers: [] },
@@ -135,7 +134,6 @@ const installedOrchestration = (): OrchestrationCapability => {
     active: agents.some((agent) => agent.name === "default") ? "default" : agents[0]?.name ?? "default",
     currentAgent: agents.some((agent) => agent.name === "default") ? "default" : agents[0]?.name,
     config: {
-      preprompter: config.preprompter ?? { enabled: false, model: "", systemPrompt: "Correct the user's prompt. Return only the corrected prompt.", agentsMd: "" },
       agents,
       sequences: config.sequences ?? [],
     },
@@ -1425,8 +1423,6 @@ describe("Orchestration acceptance", () => {
     await app.openSettings();
     await expect(app.settingsSection("Agents")).toBeDisplayed();
     await expect(app.settingsSection("Sequences")).toBeDisplayed();
-    await app.openSettingsSection("General");
-    await expect($('[role="switch"][aria-label="Pre-prompter"]')).toBeDisplayed();
   });
 
   it("selects an agent by sending the orchestration use command", async () => {
@@ -1458,23 +1454,6 @@ describe("Orchestration acceptance", () => {
     await expect($('input[aria-label="Agent description"]')).toHaveValue("Handles acceptance checks");
     await expect($('textarea[aria-label="System prompt"]')).toHaveValue("Verify observable behavior.");
     await $('button[aria-label="Remove acceptance-agent"]').click();
-  });
-
-  it("keeps pre-prompter edits while reviewing another settings section", async () => {
-    await app.openSettings();
-    const enabled = $('[role="switch"][aria-label="Pre-prompter"]');
-    await expect(enabled).toHaveAttribute("aria-checked", "false");
-    await enabled.click();
-    const systemPrompt = $('//label[contains(@class,"field")][span[normalize-space(.)="Pre-prompter system prompt"]]/textarea');
-    const agentsMd = $('//label[contains(@class,"field")][span[normalize-space(.)="Pre-prompter AGENTS.md"]]/textarea');
-    await systemPrompt.setValue("Rewrite requests as acceptance criteria.");
-    await agentsMd.setValue("Preserve observable behavior.");
-
-    await app.openSettingsSection("Agents");
-    await app.openSettingsSection("General");
-    await expect(enabled).toHaveAttribute("aria-checked", "true");
-    await expect(systemPrompt).toHaveValue("Rewrite requests as acceptance criteria.");
-    await expect(agentsMd).toHaveValue("Preserve observable behavior.");
   });
 
   it("prevents saving duplicate agent names", async () => {
