@@ -1,4 +1,5 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { readFile } from "node:fs/promises";
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -13,16 +14,13 @@ type ServerConfig = {
   headers?: string | Record<string, string>;
   enabled: boolean;
 };
-type JsonRpcMessage = { jsonrpc: "2.0"; id?: number; method?: string; result?: unknown; error?: { code: number; message: string; data?: unknown } };
 type McpTool = { name: string; description?: string; inputSchema?: Record<string, unknown> };
 type McpClient = {
-  initialize(): Promise<void>;
   tools(): Promise<McpTool[]>;
   callTool(name: string, args: unknown, signal?: AbortSignal): Promise<unknown>;
-  close(): void;
+  close(): Promise<void>;
 };
 
-const MCP_PROTOCOL_VERSION = "2025-06-18";
 const REQUEST_TIMEOUT_MS = 10_000;
 const TOOL_TIMEOUT_MS = 120_000;
 const MAX_MCP_MESSAGE_BYTES = 4 * 1024 * 1024;
@@ -47,70 +45,6 @@ function safeName(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool";
 }
 
-class StdioMcpClient {
-  private process: ChildProcessWithoutNullStreams;
-  private nextId = 1;
-  private pending = new Map<number, { resolve: (value: unknown) => void; reject: (reason: Error) => void; timeout: ReturnType<typeof setTimeout>; abort?: { signal: AbortSignal; listener: () => void } }>();
-  private buffer = "";
-
-  constructor(readonly config: ServerConfig) {
-    if (!config.command?.trim()) throw new Error("Command is required for stdio transport");
-    this.process = spawn(config.command, splitArgs(config.args), { stdio: ["pipe", "pipe", "pipe"], env: process.env });
-    this.process.stdout.setEncoding("utf8");
-    this.process.stdout.on("data", (chunk: string) => this.consume(chunk));
-    this.process.stderr.setEncoding("utf8");
-    this.process.stderr.on("data", (chunk: string) => process.stderr.write(`[mcp:${config.name}] ${chunk}`));
-    this.process.once("error", (error) => this.failAll(error));
-    this.process.once("exit", (code, signal) => this.failAll(new Error(`MCP server ${config.name} exited (${code ?? signal ?? "unknown"})`)));
-  }
-
-  private consume(chunk: string) {
-    this.buffer += chunk;
-    if (Buffer.byteLength(this.buffer) > MAX_MCP_MESSAGE_BYTES) {
-      this.buffer = ""; this.failAll(new Error(`MCP server ${this.config.name} sent an oversized message`)); this.process.kill(); return;
-    }
-    for (;;) {
-      const newline = this.buffer.indexOf("\n"); if (newline < 0) return;
-      const record = this.buffer.slice(0, newline).replace(/\r$/, ""); this.buffer = this.buffer.slice(newline + 1);
-      if (!record.trim()) continue;
-      let message: JsonRpcMessage; try { message = JSON.parse(record) as JsonRpcMessage; } catch { continue; }
-      if (typeof message.id !== "number") continue;
-      const pending = this.pending.get(message.id); if (!pending) continue; this.pending.delete(message.id); clearTimeout(pending.timeout);
-      if (pending.abort) pending.abort.signal.removeEventListener("abort", pending.abort.listener);
-      if (message.error) pending.reject(new Error(`${message.error.message} (${message.error.code})`)); else pending.resolve(message.result);
-    }
-  }
-
-  private failAll(error: Error) { for (const pending of this.pending.values()) { clearTimeout(pending.timeout); if (pending.abort) pending.abort.signal.removeEventListener("abort", pending.abort.listener); pending.reject(error); } this.pending.clear(); }
-  private write(message: JsonRpcMessage) { this.process.stdin.write(`${JSON.stringify(message)}\n`); }
-  private request(method: string, params?: unknown, signal?: AbortSignal): Promise<unknown> {
-    const id = this.nextId++;
-    return new Promise((resolve, reject) => {
-      if (signal?.aborted) { reject(new Error("MCP tool call aborted")); return; }
-      const timeout = setTimeout(() => { const pending = this.pending.get(id); if (!pending) return; this.pending.delete(id); if (pending.abort) pending.abort.signal.removeEventListener("abort", pending.abort.listener); this.cancel(id); this.process.kill(); this.failAll(new Error(`MCP server stopped after request timed out: ${method}`)); reject(new Error(`MCP request timed out: ${method}`)); }, REQUEST_TIMEOUT_MS);
-      const pending: NonNullable<ReturnType<typeof this.pending.get>> = { resolve, reject, timeout };
-      if (signal) {
-        const listener = () => { const active = this.pending.get(id); if (!active) return; this.pending.delete(id); clearTimeout(active.timeout); this.cancel(id); this.process.kill(); this.failAll(new Error("MCP server stopped because a tool call was aborted")); reject(new Error("MCP tool call aborted")); };
-        pending.abort = { signal, listener }; signal.addEventListener("abort", listener, { once: true });
-      }
-      this.pending.set(id, pending);
-      this.write({ jsonrpc: "2.0", id, method, ...(params === undefined ? {} : { params }) } as JsonRpcMessage);
-    });
-  }
-  private notify(method: string, params?: unknown) { this.write({ jsonrpc: "2.0", method, ...(params === undefined ? {} : { params }) } as JsonRpcMessage); }
-
-  async initialize() {
-    await this.request("initialize", { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: "pi-desktop", version: "0.1.0" } });
-    this.notify("notifications/initialized");
-  }
-  async tools(): Promise<McpTool[]> { const result = await this.request("tools/list") as { tools?: McpTool[] }; return result.tools ?? []; }
-  callTool(name: string, args: unknown, signal?: AbortSignal) { return this.request("tools/call", { name, arguments: args }, signal); }
-  cancel(requestId: number) { this.notify("notifications/cancelled", { requestId, reason: "Pi tool call aborted" }); }
-  close() { this.process.kill(); }
-}
-
-class ExpiredMcpSessionError extends Error {}
-
 function parseHeaders(value: ServerConfig["headers"]): Record<string, string> {
   if (!value) return {};
   const parsed: unknown = typeof value === "string" ? JSON.parse(value) : value;
@@ -123,147 +57,45 @@ function parseHeaders(value: ServerConfig["headers"]): Record<string, string> {
   return headers;
 }
 
-function responseFromPayload(payload: unknown, requestId: number): JsonRpcMessage | undefined {
-  const messages = Array.isArray(payload) ? payload : [payload];
-  return messages.find((message): message is JsonRpcMessage => Boolean(message && typeof message === "object" && (message as JsonRpcMessage).id === requestId));
-}
-
-async function readTextLimited(response: Response): Promise<string> {
-  if (!response.body) return "";
-  const reader = response.body.getReader(); const decoder = new TextDecoder(); let text = ""; let bytes = 0;
-  try {
-    for (;;) { const { done, value } = await reader.read(); if (done) break; bytes += value.byteLength; if (bytes > MAX_MCP_MESSAGE_BYTES) { await reader.cancel(); throw new Error("MCP HTTP response was too large"); } text += decoder.decode(value, { stream: true }); }
-    text += decoder.decode(); return text;
-  } finally { reader.releaseLock(); }
-}
-
-async function readSseResponse(response: Response, requestId: number): Promise<JsonRpcMessage> {
-  if (!response.body) throw new Error("MCP HTTP server returned an empty SSE stream");
-  const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
-  const consumeEvent = (record: string) => {
-    const data = record.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
-    if (!data) return undefined;
-    try { return responseFromPayload(JSON.parse(data), requestId); } catch { return undefined; }
+async function createClient(config: ServerConfig): Promise<McpClient> {
+  const client = new Client({ name: "pi-desktop", version: "0.1.0" });
+  client.onerror = (error) => process.stderr.write(`[mcp:${config.name}] ${error.message}\n`);
+  const transport = config.transport === "http"
+    ? (() => {
+        if (!config.url?.trim()) throw new Error("URL is required for HTTP transport");
+        const url = new URL(config.url);
+        if (!/^https?:$/.test(url.protocol)) throw new Error("MCP URL must use HTTP or HTTPS");
+        return new StreamableHTTPClientTransport(url, { requestInit: { headers: parseHeaders(config.headers) } });
+      })()
+    : (() => {
+        if (!config.command?.trim()) throw new Error("Command is required for stdio transport");
+        return new StdioClientTransport({
+          command: config.command,
+          args: splitArgs(config.args),
+          env: Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)),
+          stderr: "inherit",
+          maxBufferSize: MAX_MCP_MESSAGE_BYTES,
+        });
+      })();
+  try { await client.connect(transport, { timeout: REQUEST_TIMEOUT_MS }); }
+  catch (error) { await client.close().catch(() => undefined); throw error; }
+  return {
+    async tools() { return (await client.listTools(undefined, { timeout: REQUEST_TIMEOUT_MS })).tools as McpTool[]; },
+    callTool(name, args, signal) {
+      return client.callTool({ name, arguments: args as Record<string, unknown> }, { signal, timeout: TOOL_TIMEOUT_MS });
+    },
+    close() { return client.close(); },
   };
-  try {
-    for (;;) {
-      const { done, value } = await reader.read(); buffer += decoder.decode(value, { stream: !done });
-      if (Buffer.byteLength(buffer) > MAX_MCP_MESSAGE_BYTES) { await reader.cancel(); throw new Error("MCP SSE event was too large"); }
-      let boundary = buffer.search(/\r?\n\r?\n/);
-      while (boundary >= 0) {
-        const separator = buffer.slice(boundary).match(/^\r?\n\r?\n/)?.[0].length ?? 2;
-        const message = consumeEvent(buffer.slice(0, boundary)); buffer = buffer.slice(boundary + separator);
-        if (message) { await reader.cancel(); return message; }
-        boundary = buffer.search(/\r?\n\r?\n/);
-      }
-      if (done) break;
-    }
-    const finalMessage = consumeEvent(buffer); if (finalMessage) return finalMessage;
-  } finally { reader.releaseLock(); }
-  throw new Error(`MCP SSE stream ended without response ${requestId}`);
-}
-
-class HttpMcpClient implements McpClient {
-  private nextId = 1;
-  private sessionId?: string;
-  private protocolVersion = MCP_PROTOCOL_VERSION;
-  private initialized = false;
-  private readonly url: URL;
-  private readonly configuredHeaders: Record<string, string>;
-
-  constructor(readonly config: ServerConfig) {
-    if (!config.url?.trim()) throw new Error("URL is required for HTTP transport");
-    this.url = new URL(config.url);
-    if (this.url.protocol !== "http:" && this.url.protocol !== "https:") throw new Error("MCP URL must use HTTP or HTTPS");
-    this.configuredHeaders = parseHeaders(config.headers);
-  }
-
-  private requestHeaders() {
-    const headers = new Headers(this.configuredHeaders);
-    headers.set("Content-Type", "application/json");
-    headers.set("Accept", "application/json, text/event-stream");
-    if (this.sessionId) headers.set("Mcp-Session-Id", this.sessionId);
-    if (this.initialized) headers.set("MCP-Protocol-Version", this.protocolVersion);
-    return headers;
-  }
-
-  private async acceptedResponse(location: string | null, requestId: number, signal: AbortSignal): Promise<JsonRpcMessage> {
-    const target = location ? new URL(location, this.url) : this.url;
-    if (target.origin !== this.url.origin) throw new Error("MCP asynchronous response redirected to a different origin");
-    for (;;) {
-      const response = await fetch(target, { method: "GET", headers: this.requestHeaders(), signal });
-      if (response.status === 404 && this.sessionId) throw new ExpiredMcpSessionError("MCP HTTP session expired");
-      if (response.status === 202 || response.status === 204) { await response.body?.cancel(); await new Promise<void>((resolve, reject) => { const abort = () => { clearTimeout(timer); reject(signal.reason ?? new Error("MCP tool call aborted")); }; const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, 100); signal.addEventListener("abort", abort, { once: true }); }); continue; }
-      if (!response.ok) { const body = (await readTextLimited(response)).trim(); throw new Error(`MCP HTTP ${response.status}${body ? `: ${body}` : ""}`); }
-      const contentType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
-      if (contentType === "text/event-stream") return readSseResponse(response, requestId);
-      if (contentType === "application/json") { const message = responseFromPayload(JSON.parse(await readTextLimited(response)), requestId); if (message) return message; }
-      throw new Error(`MCP asynchronous response did not contain response ${requestId}`);
-    }
-  }
-
-  private async post(message: JsonRpcMessage, signal?: AbortSignal, timeoutMs = REQUEST_TIMEOUT_MS): Promise<JsonRpcMessage | undefined> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(new Error(`MCP request timed out: ${message.method ?? "notification"}`)), timeoutMs);
-    const abort = () => controller.abort(signal?.reason); signal?.addEventListener("abort", abort, { once: true });
-    try {
-      const response = await fetch(this.url, { method: "POST", headers: this.requestHeaders(), body: JSON.stringify(message), signal: controller.signal });
-      if (response.status === 404 && this.sessionId) throw new ExpiredMcpSessionError("MCP HTTP session expired");
-      if (!response.ok) { const body = (await readTextLimited(response)).trim(); throw new Error(`MCP HTTP ${response.status}${body ? `: ${body}` : ""}`); }
-      const returnedSessionId = response.headers.get("mcp-session-id"); if (returnedSessionId) this.sessionId = returnedSessionId;
-      if (message.id === undefined) return undefined;
-      if (response.status === 202) return this.acceptedResponse(response.headers.get("location"), message.id, controller.signal);
-      const contentType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
-      if (contentType === "application/json") return responseFromPayload(JSON.parse(await readTextLimited(response)), message.id);
-      if (contentType === "text/event-stream") return readSseResponse(response, message.id);
-      throw new Error(`Unsupported MCP HTTP response type: ${contentType || "missing Content-Type"}`);
-    } finally { clearTimeout(timeout); signal?.removeEventListener("abort", abort); }
-  }
-
-  private async request(method: string, params?: unknown, signal?: AbortSignal, recoverSession = true): Promise<unknown> {
-    const id = this.nextId++;
-    try {
-      const response = await this.post({ jsonrpc: "2.0", id, method, ...(params === undefined ? {} : { params }) } as JsonRpcMessage, signal, method === "tools/call" ? TOOL_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
-      if (!response) throw new Error(`MCP HTTP server returned no response for ${method}`);
-      if (response.error) throw new Error(`${response.error.message} (${response.error.code})`);
-      return response.result;
-    } catch (error) {
-      if (!(error instanceof ExpiredMcpSessionError) || !recoverSession || method === "initialize") throw error;
-      this.sessionId = undefined; this.initialized = false; await this.initialize();
-      return this.request(method, params, signal, false);
-    }
-  }
-
-  private async notify(method: string, params?: unknown) {
-    await this.post({ jsonrpc: "2.0", method, ...(params === undefined ? {} : { params }) } as JsonRpcMessage);
-  }
-
-  async initialize() {
-    const result = await this.request("initialize", { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: "pi-desktop", version: "0.1.0" } }, undefined, false) as { protocolVersion?: string };
-    if (result?.protocolVersion) this.protocolVersion = result.protocolVersion;
-    this.initialized = true; await this.notify("notifications/initialized");
-  }
-  async tools(): Promise<McpTool[]> { const result = await this.request("tools/list") as { tools?: McpTool[] }; return result.tools ?? []; }
-  callTool(name: string, args: unknown, signal?: AbortSignal) { return this.request("tools/call", { name, arguments: args }, signal); }
-  close() {
-    if (!this.sessionId) return;
-    const headers = this.requestHeaders();
-    void fetch(this.url, { method: "DELETE", headers }).catch(() => undefined);
-    this.sessionId = undefined; this.initialized = false;
-  }
-}
-
-function createClient(server: ServerConfig): McpClient {
-  return server.transport === "http" ? new HttpMcpClient(server) : new StdioMcpClient(server);
 }
 
 function resultContent(result: unknown) {
   const content = (result as { content?: Array<Record<string, unknown>> })?.content ?? [];
-  const mapped = content.flatMap((part) => {
-    if (part.type === "text" && typeof part.text === "string") return [{ type: "text" as const, text: part.text }];
-    if (part.type === "image" && typeof part.data === "string" && typeof part.mimeType === "string") return [{ type: "image" as const, data: part.data, mimeType: part.mimeType }];
-    return [{ type: "text" as const, text: JSON.stringify(part, null, 2) }];
-  });
+  const mapped: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }> = [];
+  for (const part of content) {
+    if (part.type === "text" && typeof part.text === "string") mapped.push({ type: "text", text: part.text });
+    else if (part.type === "image" && typeof part.data === "string" && typeof part.mimeType === "string") mapped.push({ type: "image", data: part.data, mimeType: part.mimeType });
+    else mapped.push({ type: "text", text: JSON.stringify(part, null, 2) });
+  }
   return mapped.length ? mapped : [{ type: "text" as const, text: JSON.stringify(result, null, 2) }];
 }
 
@@ -278,7 +110,7 @@ export default async function mcpBridge(pi: ExtensionAPI) {
   const statuses = new Map(servers.map((server) => [server.id, { id: server.id, status: "stopped" as "stopped" | "connected" | "error", error: undefined as string | undefined }]));
   await Promise.all(servers.filter((item) => item.enabled && (!allowed || allowed.has(item.id))).map(async (server) => {
     try {
-      const client = createClient(server); await client.initialize(); const tools = await client.tools(); clients.push(client);
+      const client = await createClient(server); const tools = await client.tools(); clients.push(client);
       const registered: string[] = [];
       for (const tool of tools) {
         const name = `mcp_${safeName(server.id || server.name)}_${safeName(tool.name)}`; registered.push(name);
@@ -299,5 +131,5 @@ export default async function mcpBridge(pi: ExtensionAPI) {
   }));
   pi.on("session_start", (_event, ctx) => ctx.ui.setStatus(MCP_STATUS_KEY, `json:${JSON.stringify([...statuses.values()])}`));
   pi.registerCommand("mcp-status", { description: "Show MCP servers and tools loaded by Pi Desktop", handler: async (_args, ctx) => ctx.ui.notify(loaded.length ? loaded.map((entry) => `${entry.server}: ${entry.tools.join(", ") || "no tools"}`).join("\n") : "No MCP servers loaded", loaded.length ? "info" : "warning") });
-  pi.on("session_shutdown", () => { for (const client of clients) client.close(); });
+  pi.on("session_shutdown", () => { for (const client of clients) void client.close(); });
 }

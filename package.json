@@ -5,13 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "npm run build:mcp-bridge && tsc -b && vite build",
+    "build:mcp-bridge": "node scripts/build-mcp-bridge.mjs",
+    "pretauri": "npm run build:mcp-bridge",
     "test:e2e": "npm run test:e2e:build && npm run test:e2e:run",
     "test:e2e:build": "tsc -b && vite build --mode e2e && TAURI_CONFIG='{\"build\":{\"devUrl\":null}}' cargo build --manifest-path src-tauri/Cargo.toml --release --features webdriver",
     "test:e2e:run": "wdio run wdio.conf.ts",
     "tauri": "node scripts/tauri.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/client": "2.0.0",
     "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/plugin-dialog": "^2.7.2",
     "@xterm/addon-fit": "^0.10.0",
@@ -30,6 +33,7 @@
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^4.3.4",
+    "esbuild": "^0.25.0",
     "@wdio/cli": "^9.31.3",
     "@wdio/globals": "^9.31.3",
     "@wdio/local-runner": "^9.31.3",

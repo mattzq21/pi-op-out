@@ -337,7 +337,7 @@ fn prepare_mcp_bridge(app: &AppHandle, settings: &AppSettings) -> Result<(PathBu
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     let extension_path = dir.join("pi-desktop-mcp-bridge.ts");
     let config_path = dir.join("mcp-servers.json");
-    fs::write(&extension_path, include_str!("../resources/mcp-bridge.ts")).map_err(|error| error.to_string())?;
+    fs::write(&extension_path, include_str!("../resources/mcp-bridge.bundle.mjs")).map_err(|error| error.to_string())?;
     fs::write(&config_path, serde_json::to_vec_pretty(&settings.mcp_servers).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
     Ok((extension_path, config_path))
 }
@@ -899,7 +899,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let orchestration = shell_quote(include_str!("../../extensions/pi-orchestration/index.ts"));
     let context_window_cap = shell_quote(include_str!("../../extensions/pi-context-window-cap/index.ts"));
     let context_window_config = shell_quote(&serde_json::to_string_pretty(&json!({ "contextWindowCap": settings.context_window_cap })).map_err(|error| error.to_string())?);
-    let mcp_bridge = shell_quote(include_str!("../resources/mcp-bridge.ts"));
+    let mcp_bridge = shell_quote(include_str!("../resources/mcp-bridge.bundle.mjs"));
     let mcp_config = shell_quote(&serde_json::to_string_pretty(&settings.mcp_servers).map_err(|error| error.to_string())?);
     let migration = remote_session_migration_script();
     let remote = format!("{migration} && mkdir -p \"$HOME/.pi-desktop/pi-context-window-cap\" \"$HOME/.pi/agent/extensions/pi-orchestration\" && printf %s {broker} > \"$HOME/.pi-desktop/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/.pi-desktop/pi-desktop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/.pi-desktop/pi-desktop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/.pi-desktop/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/.pi-desktop/pi-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/.pi-desktop/pi-context-window-cap/config.json\" && printf %s {btw} > \"$HOME/.pi/agent/extensions/pi-desktop-btw.ts\" && printf %s {orchestration} > \"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\"");
