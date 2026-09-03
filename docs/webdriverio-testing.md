@@ -21,7 +21,7 @@ The default executable is `src-tauri/target/release/pi-desktop` (`pi-desktop.exe
 
 Linux requires `tauri-driver` and `WebKitWebDriver` on `PATH`. The external provider avoids the embedded Linux session-creation path, which can become ready at `/status` but hang while handling `POST /session`.
 
-Each run chooses a new high-numbered WebDriver port. The Tauri service checks availability and allocates an available port pair for the proxy and native driver, so an abandoned process on a previous run's port does not block the next run.
+Each run chooses a new high-numbered WebDriver port. On Linux, the Tauri service checks availability and allocates an available port pair for the proxy and native driver; the embedded provider receives the new port directly on other platforms. An abandoned process on a previous run's port therefore does not block the next run.
 
 The suite includes a real provider call. Before starting, it verifies that Pi's installed model catalog and authentication contain the selected provider. The default is `openai-codex/gpt-5.6-luna`; override it with `PI_E2E_ACTUAL_MODEL`:
 
