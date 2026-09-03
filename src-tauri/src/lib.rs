@@ -1567,7 +1567,7 @@ fn apply_start_bounds(app: &tauri::App) {
     let (Ok(x), Ok(y), Ok(width), Ok(height)) = (x.parse::<i32>(), y.parse::<i32>(), width.parse::<u32>(), height.parse::<u32>()) else { return };
     let Some(window) = app.get_webview_window("main") else { return };
     let _ = window.set_size(tauri::PhysicalSize::new(width, height));
-    let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
+    let _ = window.set_position(tauri::LogicalPosition::new(f64::from(x), f64::from(y)));
 }
 
 pub fn run() {
