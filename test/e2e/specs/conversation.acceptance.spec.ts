@@ -449,7 +449,7 @@ describe("Conversation acceptance", () => {
       await session.$('button[aria-label="Archive conversation"]').click();
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "archive_session"));
-      expect((await backendCalls()).find(({ command }) => command === "archive_session")?.args).toEqual({ sessionPath: indexed.path, hostId: "local", terminalState: undefined });
+      expect((await backendCalls()).find(({ command }) => command === "archive_session")?.args).toEqual({ sessionPath: indexed.path, hostId: "local", terminalIds: [] });
     } finally {
       await app.conversationSearch.clearValue();
       await resetApp();
@@ -2156,9 +2156,9 @@ describe("Conversation lifecycle", () => {
       await expect(app.terminalPanel).not.toBeExisting();
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "archive_session"));
       expect((await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "new_session")).toBe(true);
-      const terminalState = (await backendCalls()).find(({ command }) => command === "archive_session")?.args.terminalState as { activeId: string; tabs: Array<{ started: boolean }> };
-      expect(terminalState.tabs).toHaveLength(1);
-      expect(terminalState.tabs[0].started).toBe(true);
+      const calls = await backendCalls();
+      const terminalId = calls.find(({ command }) => command === "start_terminal")?.args.terminalId;
+      expect(calls.find(({ command }) => command === "archive_session")?.args.terminalIds).toEqual([terminalId]);
     } finally {
       if (await app.terminalPanel.isExisting()) await app.closeTerminalButton.click();
       await app.conversationSearch.clearValue();
