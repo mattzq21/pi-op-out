@@ -2,11 +2,31 @@ export type DiffPart = { text: string; changed: boolean };
 export type DiffLine = { kind: "add" | "delete" | "context" | "meta"; text: string; oldLine?: number; newLine?: number; parts?: DiffPart[] };
 export type DiffFile = { id: string; path: string; lines: DiffLine[]; additions: number; deletions: number };
 
+const MAX_DIFF_INPUT_CHARS = 4 * 1024 * 1024;
+const MAX_RENDERED_DIFF_LINES = 10_000;
+const MAX_RENDERED_LINE_CHARS = 20_000;
+const MAX_ANNOTATED_LINE_CHARS = 4_000;
+const MAX_PAIR_MATRIX_CELLS = 400;
+const MAX_TOKEN_MATRIX_CELLS = 40_000;
+
+function decodeGitPath(value: string) {
+  if (!value.startsWith('"') || !value.endsWith('"')) return value;
+  const source = value.slice(1, -1); const bytes: number[] = []; const encoder = new TextEncoder();
+  const escapes: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, "\\": 92, '"': 34 };
+  for (let index = 0; index < source.length; index += 1) {
+    if (source[index] !== "\\") { const character = String.fromCodePoint(source.codePointAt(index)!); bytes.push(...encoder.encode(character)); index += character.length - 1; continue; }
+    const next = source[++index]; if (next === undefined) break;
+    if (/[0-7]/.test(next)) { let octal = next; while (octal.length < 3 && /[0-7]/.test(source[index + 1] ?? "")) octal += source[++index]; bytes.push(Number.parseInt(octal, 8)); }
+    else if (escapes[next] !== undefined) bytes.push(escapes[next]);
+    else bytes.push(...encoder.encode(next));
+  }
+  return new TextDecoder().decode(new Uint8Array(bytes));
+}
+
 function displayPath(header: string) {
-  const quotedMarker = header.lastIndexOf(' "b/');
-  const marker = quotedMarker >= 0 ? quotedMarker : header.lastIndexOf(" b/");
-  const raw = marker >= 0 ? header.slice(marker + (quotedMarker >= 0 ? 4 : 3)) : header.replace(/^diff --git /, "");
-  return raw.replace(/^"|"$/g, "").replace(/\\([\\"])/g, "$1");
+  const fields = header.replace(/^diff --git\s+/, "").match(/"(?:\\.|[^"])*"|\S+/g) ?? [];
+  const decoded = decodeGitPath(fields[1] ?? fields[0] ?? "");
+  return decoded.replace(/^b\//, "");
 }
 
 const tokens = (text: string) => text.match(/#[\da-fA-F]{3,8}\b|\s+|[\p{L}\p{N}_$]+|./gu) ?? [];
@@ -20,7 +40,7 @@ function appendPart(parts: DiffPart[], text: string, changed: boolean) {
 
 function intralineParts(before: string, after: string): [DiffPart[], DiffPart[]] {
   const left = tokens(before); const right = tokens(after);
-  if (left.length > 1200 || right.length > 1200) {
+  if (left.length * right.length > MAX_TOKEN_MATRIX_CELLS) {
     let prefix = 0; while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix += 1;
     let suffix = 0; while (suffix < before.length - prefix && suffix < after.length - prefix && before[before.length - suffix - 1] === after[after.length - suffix - 1]) suffix += 1;
     const split = (text: string) => [{ text: text.slice(0, prefix), changed: false }, { text: text.slice(prefix, text.length - suffix), changed: true }, { text: suffix ? text.slice(-suffix) : "", changed: false }].filter((part) => part.text);
@@ -47,7 +67,7 @@ function similarity(left: string, right: string) {
 
 function annotateBlock(block: DiffLine[]) {
   const deleted = block.filter((line) => line.kind === "delete"); const added = block.filter((line) => line.kind === "add");
-  if (!deleted.length || !added.length || deleted.length > 100 || added.length > 100) return;
+  if (!deleted.length || !added.length || deleted.length * added.length > MAX_PAIR_MATRIX_CELLS || [...deleted, ...added].some((line) => line.text.length > MAX_ANNOTATED_LINE_CHARS)) return;
   const scores = deleted.map((line) => added.map((candidate) => similarity(line.text, candidate.text)));
   const table = Array.from({ length: deleted.length + 1 }, () => new Float32Array(added.length + 1));
   for (let i = deleted.length - 1; i >= 0; i -= 1) for (let j = added.length - 1; j >= 0; j -= 1) table[i][j] = Math.max(table[i + 1][j], table[i][j + 1], scores[i][j] >= .35 ? scores[i][j] + table[i + 1][j + 1] : 0);
@@ -72,20 +92,22 @@ function annotateIntraline(files: DiffFile[]) {
 export function parseDiff(patch: string): DiffFile[] {
   const files: DiffFile[] = [];
   let file: DiffFile | undefined;
-  let oldLine = 0; let newLine = 0;
-  for (const text of patch.split("\n")) {
+  let oldLine = 0; let newLine = 0; let renderedLines = 0;
+  const boundedPatch = patch.slice(0, MAX_DIFF_INPUT_CHARS);
+  const pushLine = (line: DiffLine) => { if (!file || renderedLines >= MAX_RENDERED_DIFF_LINES) return; file.lines.push(line.text.length > MAX_RENDERED_LINE_CHARS ? { ...line, text: `${line.text.slice(0, MAX_RENDERED_LINE_CHARS)}…` } : line); renderedLines += 1; };
+  for (const text of boundedPatch.split("\n")) {
     if (text.startsWith("diff --git ")) {
       file = { id: `${files.length}:${text}`, path: displayPath(text), lines: [], additions: 0, deletions: 0 };
       files.push(file); continue;
     }
     if (!file) continue;
     const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
-    if (hunk) { oldLine = Number(hunk[1]); newLine = Number(hunk[2]); file.lines.push({ kind: "meta", text }); continue; }
-    if (text.startsWith("+") && !text.startsWith("+++")) { file.lines.push({ kind: "add", text: text.slice(1), newLine: newLine++ }); file.additions += 1; continue; }
-    if (text.startsWith("-") && !text.startsWith("---")) { file.lines.push({ kind: "delete", text: text.slice(1), oldLine: oldLine++ }); file.deletions += 1; continue; }
-    if (text.startsWith(" ")) { file.lines.push({ kind: "context", text: text.slice(1), oldLine: oldLine++, newLine: newLine++ }); continue; }
-    if (text && !text.startsWith("index ") && !text.startsWith("--- ") && !text.startsWith("+++ ")) file.lines.push({ kind: "meta", text });
+    if (hunk) { oldLine = Number(hunk[1]); newLine = Number(hunk[2]); pushLine({ kind: "meta", text }); continue; }
+    if (text.startsWith("+") && !text.startsWith("+++")) { pushLine({ kind: "add", text: text.slice(1), newLine: newLine++ }); file.additions += 1; continue; }
+    if (text.startsWith("-") && !text.startsWith("---")) { pushLine({ kind: "delete", text: text.slice(1), oldLine: oldLine++ }); file.deletions += 1; continue; }
+    if (text.startsWith(" ")) { pushLine({ kind: "context", text: text.slice(1), oldLine: oldLine++, newLine: newLine++ }); continue; }
+    if (text && !text.startsWith("index ") && !text.startsWith("--- ") && !text.startsWith("+++ ")) pushLine({ kind: "meta", text });
   }
+  if (patch.length > boundedPatch.length || renderedLines >= MAX_RENDERED_DIFF_LINES) files.at(-1)?.lines.push({ kind: "meta", text: "Diff display truncated for performance." });
   annotateIntraline(files); return files;
 }
-

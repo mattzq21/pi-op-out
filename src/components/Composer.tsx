@@ -24,7 +24,8 @@ interface Props {
   uploads?: ComposerUpload[];
   onUploadsChange?: (uploads: ComposerUpload[]) => void;
   restoredDraft?: { id: string; value: string };
-  onSend: (message: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | Promise<void>;
+  focusRequest?: number;
+  onSend: (message: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>;
   onAbort: () => void;
   onOpenTerminal?: () => void;
   onAgent: (name: string) => void;
@@ -59,7 +60,7 @@ const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((
 });
 const escapeAttribute = (value: string) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]!);
 
-export function Composer({ streaming, queued, commands, agents, sequences, activeAgent, dictionaries = [], models, model, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, onSend, onAbort, onOpenTerminal, onAgent, onModel, onThinking }: Props) {
+export function Composer({ streaming, queued, commands, agents, sequences, activeAgent, dictionaries = [], models, model, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onOpenTerminal, onAgent, onModel, onThinking }: Props) {
   const [localValue, setLocalValue] = useState("");
   const value = draft ?? localValue;
   const setValue = (next: string) => { if (onDraftChange) onDraftChange(next); else setLocalValue(next); };
@@ -79,7 +80,6 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
   const composerRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const restoredDraftId = useRef<string | undefined>(undefined);
-  const setValueRef = useRef(setValue); setValueRef.current = setValue;
   const commandQuery = value.match(/^\/([^\s]*)$/)?.[1]?.toLowerCase();
   const skillQuery = commandQuery === undefined ? skillReference(value) : undefined;
   const dictionaryHighlights = useMemo(() => dictionaryMatches(value, dictionaries), [value, dictionaries]);
@@ -106,13 +106,11 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
   useLayoutEffect(resizeEditor, [value]);
 
   useEffect(() => {
-    const setEditor = (event: Event) => { setValueRef.current((event as CustomEvent<string>).detail); ref.current?.focus(); };
-    const focusComposer = () => ref.current?.focus();
     const resize = () => resizeEditor();
-    window.addEventListener("pi:set-editor-text", setEditor); window.addEventListener("pi:focus-composer", focusComposer);
     window.addEventListener("resize", resize);
-    return () => { window.removeEventListener("pi:set-editor-text", setEditor); window.removeEventListener("pi:focus-composer", focusComposer); window.removeEventListener("resize", resize); };
+    return () => window.removeEventListener("resize", resize);
   }, []);
+  useEffect(() => { if (focusRequest) ref.current?.focus(); }, [focusRequest]);
   useEffect(() => { if (restoredDraft && restoredDraft.id !== restoredDraftId.current) { restoredDraftId.current = restoredDraft.id; setValue(restoredDraft.value); } }, [restoredDraft]);
 
   const addFiles = async (files: FileList | null) => {
@@ -145,7 +143,8 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
     if (sending) return;
     setSending(true); setUploadError(undefined);
     try {
-      await onSend(message || "Describe the attached image.", streaming ? behavior : undefined, images);
+      const accepted = await onSend(message || "Describe the attached image.", streaming ? behavior : undefined, images);
+      if (accepted === false) return;
       setValue(""); updateUploads([]);
     } catch (reason) {
       setUploadError(reason instanceof Error ? reason.message : String(reason));

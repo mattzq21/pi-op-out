@@ -35,7 +35,7 @@ struct TerminalProcess {
 
 #[derive(Default)]
 struct TerminalRuntime {
-    processes: Mutex<HashMap<String, TerminalProcess>>,
+    processes: Arc<Mutex<HashMap<String, TerminalProcess>>>,
 }
 
 #[derive(Clone)]
@@ -60,6 +60,7 @@ const MAX_GIT_SNAPSHOT_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_GIT_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_GIT_PATCH_BYTES: usize = 4 * 1024 * 1024;
 const MAX_GIT_DIFFS_BYTES: usize = 16 * 1024 * 1024;
+const MAX_ARCHIVED_TERMINAL_BYTES: usize = 64 * 1024;
 
 #[derive(Default)]
 struct PiRuntime {
@@ -1096,7 +1097,7 @@ fn start_terminal(app: AppHandle, runtime: State<TerminalRuntime>, terminal_id: 
     drop(pair.slave);
     let mut reader = pair.master.try_clone_reader().map_err(|error| error.to_string())?;
     let writer = pair.master.take_writer().map_err(|error| error.to_string())?;
-    let event_app = app.clone(); let event_id = terminal_id.clone();
+    let event_app = app.clone(); let event_id = terminal_id.clone(); let terminal_processes = runtime.processes.clone();
     thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
         loop {
@@ -1106,6 +1107,7 @@ fn start_terminal(app: AppHandle, runtime: State<TerminalRuntime>, terminal_id: 
                 Err(_) => break,
             }
         }
+        if let Some(mut process) = terminal_processes.lock().ok().and_then(|mut values| values.remove(&event_id)) { let _ = process.child.wait(); }
         let _ = event_app.emit("pi://event", json!({ "type": "terminal_exit", "terminalId": event_id }));
     });
     processes.insert(terminal_id, TerminalProcess { master: pair.master, child, writer });
@@ -1140,6 +1142,28 @@ fn stop_terminals_for_state(runtime: &TerminalRuntime, state: &mut Value) -> Res
         if let Some(mut process) = processes.remove(&id) { let _ = process.child.kill(); let _ = process.child.wait(); }
         if let Some(tab) = tab.as_object_mut() { tab.insert("exited".into(), Value::Bool(true)); }
     }
+    Ok(())
+}
+
+fn utf8_tail(value: &str, limit: usize) -> String {
+    if value.len() <= limit { return value.to_owned(); }
+    let mut start = value.len() - limit;
+    while !value.is_char_boundary(start) { start += 1; }
+    value[start..].to_owned()
+}
+
+fn bound_archived_terminal_state(state: &mut Value) -> Result<(), String> {
+    let size = serde_json::to_vec(state).map_err(|error| format!("Could not serialize terminal state: {error}"))?.len();
+    if size <= MAX_ARCHIVED_TERMINAL_BYTES { return Ok(()); }
+    let Some(tabs) = state.get_mut("tabs").and_then(Value::as_array_mut) else { return Err("Archived terminal state exceeds the 64 KiB limit".into()) };
+    let per_tab = MAX_ARCHIVED_TERMINAL_BYTES.saturating_sub(16 * 1024) / tabs.len().max(1);
+    for tab in tabs {
+        if let Some(output) = tab.get_mut("output") {
+            if let Some(text) = output.as_str() { *output = Value::String(utf8_tail(text, per_tab)); }
+        }
+    }
+    let bounded_size = serde_json::to_vec(state).map_err(|error| format!("Could not serialize terminal state: {error}"))?.len();
+    if bounded_size > MAX_ARCHIVED_TERMINAL_BYTES { return Err("Archived terminal metadata exceeds the 64 KiB limit".into()); }
     Ok(())
 }
 
@@ -1378,7 +1402,7 @@ fn load_session_entries(app: AppHandle, session_path: String, host_id: Option<St
 #[tauri::command(async)]
 fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path: String, host_id: Option<String>, mut terminal_state: Option<Value>) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
-    if let Some(state) = terminal_state.as_mut() { stop_terminals_for_state(&runtime, state)?; }
+    if let Some(state) = terminal_state.as_mut() { bound_archived_terminal_state(state)?; stop_terminals_for_state(&runtime, state)?; }
     if host_id != "local" {
         let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
         let file_name = Path::new(&session_path).file_name().and_then(|name| name.to_str()).ok_or("Session path has no file name")?;

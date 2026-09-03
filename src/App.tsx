@@ -25,6 +25,7 @@ type SessionTerminals = { activeId: string; tabs: TerminalTabState[] };
 type QueuedTerminalOutput = { data: string; length: number };
 type BtwRequest = { task: string; forkFrom: string; requestId: string };
 type SplitPaneState = { session: SessionSummary; btw?: BtwRequest };
+type OwnedExtensionDialog = { request: ExtensionUiRequest; transport: NativeTransport };
 const BTW_REQUEST_TITLE = "__pi_desktop_btw__";
 const PROMPT_CONTEXT_STATUS_KEY = "pi-desktop-prompt-context";
 const MCP_STATUS_KEY = "pi-desktop-mcp-status";
@@ -52,6 +53,7 @@ export function formatCodexReset(resetAt: number, now = Date.now()) {
 
 export default function App() {
   const runtimePool = useMemo(() => new SessionRuntimePool(), []); const [transport, setTransport] = useState(() => { const initial = runtimePool.create(); runtimePool.activate(initial); return initial; }); const [view, setView] = useState<"chat" | "settings">("chat");
+  const activeTransportRef = useRef(transport); activeTransportRef.current = transport;
   const runningSessions = useSyncExternalStore((listener) => runtimePool.subscribe(listener), () => runtimePool.runningSessions());
   const unseenSessions = useSyncExternalStore((listener) => runtimePool.subscribe(listener), () => runtimePool.unseenSessions());
   const gitDiffs = useTurnDiffs(runtimePool, transport);
@@ -66,8 +68,9 @@ export default function App() {
   const activeHostIdRef = useRef(activeHostId); activeHostIdRef.current = activeHostId;
   const [codexUsage, setCodexUsage] = useState<CodexUsage>();
   const [, setUsageClock] = useState(0);
-  const [dialogs, setDialogs] = useState<ExtensionUiRequest[]>([]); const [notice, setNotice] = useState<{ title: string; message: string }>();
+  const [dialogs, setDialogs] = useState<OwnedExtensionDialog[]>([]); const [notice, setNotice] = useState<{ title: string; message: string }>();
   const [statuses, setStatuses] = useState<Record<string, string>>({}); const [widgets, setWidgets] = useState<Record<string, string[]>>({});
+  const [extensionOwner, setExtensionOwner] = useState(transport);
   const [promptContext, setPromptContext] = useState<PromptContextInfo>();
   const [mcpStatuses, setMcpStatuses] = useState<Record<string, { status: "connected" | "stopped" | "error"; error?: string }>>({});
   const [renameSession, setRenameSession] = useState<SessionSummary>();
@@ -80,10 +83,14 @@ export default function App() {
   const [uploadsByTransport, setUploadsByTransport] = useState<Map<NativeTransport, ComposerUpload[]>>(() => new Map());
   const newSessionPending = useRef(false);
   const [splitPane, setSplitPane] = useState<SplitPaneState>();
+  const [mainComposerFocusRequest, setMainComposerFocusRequest] = useState(0);
+  const [splitComposerFocusRequest, setSplitComposerFocusRequest] = useState(0);
+  const [activePane, setActivePane] = useState<"main" | "split">("main");
   const pendingBtwRequest = useRef<{ id: string; transport: NativeTransport } | undefined>(undefined);
   const [terminalsBySession, setTerminalsBySession] = useState<Record<string, SessionTerminals>>({});
   const queuedTerminalOutput = useRef(new Map<string, QueuedTerminalOutput>()); const terminalOutputFrame = useRef<number | undefined>(undefined);
   const terminalSessionId = `${activeHostId}:${state.sessionId || unsavedSessionId}`;
+  const terminalSessionIdRef = useRef(terminalSessionId); terminalSessionIdRef.current = terminalSessionId;
   const splitSessionId = splitPane ? `${splitPane.session.hostId ?? "local"}:${splitPane.session.id}` : "";
   const composerDraft = composerDrafts[terminalSessionId] ?? "";
   const composerUploads = uploadsByTransport.get(transport) ?? [];
@@ -104,6 +111,14 @@ export default function App() {
   useEffect(() => { let cancelled = false; void transport.loadCodexUsage().then((usage) => { if (!cancelled) setCodexUsage(usage); }).catch(() => undefined); return () => { cancelled = true; }; }, []);
   useEffect(() => { newSessionPending.current = false; }, [transport]);
   useEffect(() => { setPromptContext(undefined); }, [transport]);
+  useEffect(() => {
+    document.title = "Pi";
+    setStatuses({}); setWidgets({});
+    setDialogs((current) => {
+      for (const dialog of current) if (dialog.transport !== transport) void dialog.transport.command({ type: "extension_ui_response", id: dialog.request.id, cancelled: true }).catch(() => undefined);
+      return current.filter((dialog) => dialog.transport === transport);
+    });
+  }, [transport]);
   useEffect(() => {
     let cancelled = false;
     void transport.gitBranch().then((branch) => { if (!cancelled) setActiveBranch(branch ?? undefined); }).catch(() => undefined);
@@ -152,6 +167,7 @@ export default function App() {
       if (event.type === "terminal_exit") setTerminalsBySession((current) => Object.fromEntries(Object.entries(current).map(([sessionId, session]) => [sessionId, { ...session, tabs: session.tabs.map((terminal) => terminal.id === event.terminalId ? { ...terminal, exited: true } : terminal) }])));
       if (event.type === "extension_error") { const message = String(event.error ?? "An extension failed"); if (!message.startsWith(staleExtensionContext)) setNotice({ title: "Extension error", message }); }
       if (event.type === "extension_ui_request") { const request = event as unknown as ExtensionUiRequest;
+        if (transport !== activeTransportRef.current) { if (["input", "editor", "select", "confirm"].includes(request.method)) void transport.command({ type: "extension_ui_response", id: request.id, cancelled: true }).catch(() => undefined); return; }
         if (request.method === "notify") setNotice({ title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "Pi extension", message: request.message || "Notification" });
         else if (request.method === "input" && request.title === BTW_REQUEST_TITLE) {
           try {
@@ -170,18 +186,18 @@ export default function App() {
             setNotice({ title: "Could not start /btw", message: reason instanceof Error ? reason.message : String(reason) });
           }
         }
-        else if (request.method === "setStatus" && request.statusKey === ORCHESTRATION_STATUS_KEY) { try {
+        else if (request.method === "setStatus" && request.statusKey === ORCHESTRATION_STATUS_KEY) { setExtensionOwner(transport); try {
           const capability = request.statusText?.startsWith("json:") ? decodeOrchestrationValue<OrchestrationCapability>(request.statusText.slice(5)) : undefined;
           setOrchestration(capability);
           if (capability) void refreshSession().catch(() => undefined);
         } catch { setOrchestration(undefined); } }
-        else if (request.method === "setStatus" && request.statusKey === PROMPT_CONTEXT_STATUS_KEY) { try { setPromptContext(request.statusText?.startsWith("json:") ? JSON.parse(request.statusText.slice(5)) as PromptContextInfo : undefined); } catch { setPromptContext(undefined); } }
-        else if (request.method === "setStatus" && request.statusKey === MCP_STATUS_KEY) { try { const values = request.statusText?.startsWith("json:") ? JSON.parse(request.statusText.slice(5)) as Array<{ id: string; status: "connected" | "stopped" | "error"; error?: string }> : []; setMcpStatuses(Object.fromEntries(values.map((value) => [value.id, { status: value.status, error: value.error }]))); } catch { setMcpStatuses({}); } }
-        else if (request.method === "setStatus" && request.statusKey) setStatuses((current) => { const next = { ...current }; if (request.statusText) next[request.statusKey!] = request.statusText; else delete next[request.statusKey!]; return next; });
-        else if (request.method === "setWidget" && request.widgetKey) setWidgets((current) => { const next = { ...current }; if (request.widgetLines) next[request.widgetKey!] = request.widgetLines; else delete next[request.widgetKey!]; return next; });
-        else if (request.method === "setTitle" && request.title) document.title = request.title;
-        else if (request.method === "set_editor_text") window.dispatchEvent(new CustomEvent("pi:set-editor-text", { detail: request.text || "" }));
-        else setDialogs((current) => [...current, request]);
+        else if (request.method === "setStatus" && request.statusKey === PROMPT_CONTEXT_STATUS_KEY) { setExtensionOwner(transport); try { setPromptContext(request.statusText?.startsWith("json:") ? JSON.parse(request.statusText.slice(5)) as PromptContextInfo : undefined); } catch { setPromptContext(undefined); } }
+        else if (request.method === "setStatus" && request.statusKey === MCP_STATUS_KEY) { setExtensionOwner(transport); try { const values = request.statusText?.startsWith("json:") ? JSON.parse(request.statusText.slice(5)) as Array<{ id: string; status: "connected" | "stopped" | "error"; error?: string }> : []; setMcpStatuses(Object.fromEntries(values.map((value) => [value.id, { status: value.status, error: value.error }]))); } catch { setMcpStatuses({}); } }
+        else if (request.method === "setStatus" && request.statusKey) { setExtensionOwner(transport); setStatuses((current) => { const next = { ...current }; if (request.statusText) next[request.statusKey!] = request.statusText; else delete next[request.statusKey!]; return next; }); }
+        else if (request.method === "setWidget" && request.widgetKey) { setExtensionOwner(transport); setWidgets((current) => { const next = { ...current }; if (request.widgetLines) next[request.widgetKey!] = request.widgetLines; else delete next[request.widgetKey!]; return next; }); }
+        else if (request.method === "setTitle") document.title = request.title || "Pi";
+        else if (request.method === "set_editor_text") { setComposerDrafts((current) => { const key = terminalSessionIdRef.current; const next = { ...current }; if (request.text) next[key] = request.text; else delete next[key]; return next; }); setActivePane("main"); setMainComposerFocusRequest((value) => value + 1); }
+        else setDialogs((current) => [...current, { request, transport }]);
       }
       if (event.type === "session_switched") void refresh();
       if (event.type === "session_info_changed") void refresh();
@@ -219,19 +235,20 @@ export default function App() {
       if (!entryId) { const response = await transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }); entryId = findReplaceableAbortedTurn(branchMessages(response.entries, response.leafId))?.user.entryId; }
       if (!entryId) throw new Error("Cannot find the abandoned turn in the saved session");
       const fork = await transport.command<{ cancelled?: boolean }>({ type: "fork", entryId });
-      if (fork.cancelled) return;
+      if (fork.cancelled) return false;
       await transport.deleteSession(oldSessionPath, activeHostId);
       setSessions((current) => current.filter((session) => session.path !== oldSessionPath || (session.hostId ?? "local") !== activeHostId));
       await refresh();
     }
     await transport.command({ type: "prompt", message: text, ...(images.length ? { images } : {}) });
+    return true;
   };
   const respondToBtw = (requestId: string, response: { value?: string; cancelled?: boolean }) => {
     const pending = pendingBtwRequest.current; if (!pending || pending.id !== requestId) return;
     pendingBtwRequest.current = undefined;
     void pending.transport.command({ type: "extension_ui_response", id: requestId, ...response }).catch((reason) => setNotice({ title: "Could not finish /btw request", message: reason instanceof Error ? reason.message : String(reason) }));
   };
-  const closeSplitPane = () => { if (splitPane?.btw) respondToBtw(splitPane.btw.requestId, { cancelled: true }); setSplitPane(undefined); };
+  const closeSplitPane = () => { if (splitPane?.btw) respondToBtw(splitPane.btw.requestId, { cancelled: true }); setSplitPane(undefined); setActivePane("main"); };
   const canLeaveSettings = () => view !== "settings" || !settingsDirty || window.confirm("Discard unsaved settings changes?");
   const setComposerUploads = (uploads: ComposerUpload[]) => setUploadsByTransport((current) => {
     const next = new Map(current);
@@ -283,12 +300,13 @@ export default function App() {
       return;
     }
     if (action === "archive") {
+      if (!window.confirm(`Archive “${session.name}”?`)) return;
       try {
         const archivedTerminalSessionId = `${session.hostId ?? "local"}:${session.id}`;
         const terminalState = terminalsBySession[archivedTerminalSessionId];
+        await transport.archiveSession(session.path, session.hostId, terminalState);
         if (session.id === state.sessionId && (session.hostId ?? "local") === activeHostId) { await transport.command({ type: "new_session" }); await refresh(); }
         else await runtimePool.remove(session);
-        await transport.archiveSession(session.path, session.hostId, terminalState);
         setTerminalsBySession((current) => { const next = { ...current }; delete next[archivedTerminalSessionId]; return next; });
         if (archivedTerminalSessionId === terminalSessionId) setTerminalOpen(false);
         await refresh();
@@ -332,22 +350,24 @@ export default function App() {
       if (binding.action === "toggleTerminal") { toggleTerminal(); return; }
       if (binding.action === "toggleDebugMode") { toggleDebugMode(); return; }
       if (binding.action === "openSettings") { setView("settings"); return; }
-      if (!canLeaveSettings()) return; setView("chat"); window.setTimeout(() => window.dispatchEvent(new Event("pi:focus-composer")), 0);
+      if (!canLeaveSettings()) return; setView("chat"); window.setTimeout(() => { if (activePane === "split" && splitPane) setSplitComposerFocusRequest((value) => value + 1); else setMainComposerFocusRequest((value) => value + 1); }, 0);
     };
     window.addEventListener("keydown", handleKeybind);
     return () => window.removeEventListener("keydown", handleKeybind);
-  }, [settings.keybindings, toggleDebugMode, settingsDirty, view]);
+  }, [settings.keybindings, toggleDebugMode, settingsDirty, view, activePane, splitPane]);
 
-  const settingsWithMcpStatuses = { ...settings, mcpServers: settings.mcpServers.map((server) => ({ ...server, ...mcpStatuses[server.id] })) };
+  const extensionStateIsCurrent = extensionOwner === transport;
+  const settingsWithMcpStatuses = { ...settings, mcpServers: settings.mcpServers.map((server) => ({ ...server, ...(extensionStateIsCurrent ? mcpStatuses[server.id] : undefined) })) };
+  const activeDialog = dialogs.find((dialog) => dialog.transport === transport);
   return <div className="app dark">
     {import.meta.env.MODE === "e2e" && <div className="e2e-bridge"><textarea id="pi-e2e-responses" aria-label="E2E responses" placeholder="E2E responses" /><textarea id="pi-e2e-calls" aria-label="E2E calls" placeholder="E2E calls" /></div>}
     <aside className="icon-rail">{activeBranch && <div className="rail-branch" title={activeBranch}><GitBranch size={13} /><span>{activeBranch}</span></div>}<nav><IconButton label="New conversation" onClick={newSession}><Plus size={19} /></IconButton><IconButton label="Conversations" className={view === "chat" ? "active" : ""} onClick={() => { if (canLeaveSettings()) setView("chat"); }}><MessageSquare size={18} /></IconButton><IconButton label="New project" onClick={() => setProjectOpen(true)}><FolderGit2 size={18} /></IconButton><IconButton label={settings.debugMode ? "Disable debug mode" : "Enable debug mode"} className={settings.debugMode ? "active" : ""} onClick={toggleDebugMode}><Bug size={18} /></IconButton><IconButton label="Settings" className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}><Settings size={19} /></IconButton></nav>{view === "chat" && panelOpen && <SessionPanel sessions={sessions} activeId={state.sessionId} activeHostId={activeHostId} runningSessions={runningSessions} unseenSessions={unseenSessions} query={query} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} />}<div className="rail-bottom">{codexUsage !== undefined && <span className="codex-usage" aria-label="Codex usage remaining" title="Codex usage remaining">{codexUsage.remainingPercent}% left{codexUsage.resetAt ? ` · ${formatCodexReset(codexUsage.resetAt)}` : ""}</span>}</div></aside>
-    {view === "chat" ? <div className="chat-workspace"><div className={`chat-panes ${splitPane ? "split" : ""}`}><ChatView state={state} messages={messages} gitDiffs={gitDiffs} promptContext={promptContext} debug={settings.debugMode} agents={orchestration?.config.agents ?? []} sequences={orchestration?.config.sequences ?? []} activeAgent={orchestration?.active} dictionaries={settings.dictionaries.filter((item) => settings.activeDictionaryIds.includes(item.id))} models={models} commands={commands} thinkingLevels={thinkingLevels} widgets={Object.values(widgets).flat()} statuses={Object.values(statuses)} projectCwd={selectedProjectCwd(activeCwd, transport.isTemporaryChat())} controlsDisabled={!connected} draft={composerDraft} onDraftChange={setComposerDraft} uploads={composerUploads} onUploadsChange={setComposerUploads} onSend={send} onAbort={abortInteraction} onOpenTerminal={() => setTerminalOpen(true)} onOpenProject={chooseChatProject} onBranch={branch} onAgent={setAgent} onModel={setModel} onThinking={setThinking} />{splitPane && <SplitChatPane key={splitSessionId} runtimePool={runtimePool} session={splitPane.session} settings={settings} draft={splitComposerDraft} onDraftChange={setSplitComposerDraft} forkFrom={splitPane.btw?.forkFrom} initialPrompt={splitPane.btw?.task} onReady={splitPane.btw ? () => respondToBtw(splitPane.btw!.requestId, { value: "opened" }) : undefined} onFailed={splitPane.btw ? () => respondToBtw(splitPane.btw!.requestId, { cancelled: true }) : undefined} onClose={closeSplitPane} />}</div>{terminalOpen && <TerminalView key={`${terminalSessionId}:${activeTerminal.id}`} cwd={activeCwd ?? sessions.find((session) => session.id === state.sessionId && (session.hostId ?? "local") === activeHostId)?.cwd} terminals={sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={activeTerminal.id} output={activeTerminal.output} outputEnd={activeTerminal.outputEnd} exited={activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { void transport.writeTerminal(activeTerminal.id, data).catch((reason) => queueTerminalOutput(activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { void transport.resizeTerminal(activeTerminal.id, cols, rows).catch(() => undefined); }} onDelete={deleteTerminal} onClose={() => setTerminalOpen(false)} />}</div> : <SettingsView settings={settingsWithMcpStatuses} orchestration={orchestration?.config} models={models} thinkingLevels={thinkingLevels} onSave={saveSettings} onDirtyChange={setSettingsDirty} />}
+    {view === "chat" ? <div className="chat-workspace"><div className={`chat-panes ${splitPane ? "split" : ""}`}><ChatView state={state} messages={messages} gitDiffs={gitDiffs} promptContext={extensionStateIsCurrent ? promptContext : undefined} debug={settings.debugMode} agents={extensionStateIsCurrent ? orchestration?.config.agents ?? [] : []} sequences={extensionStateIsCurrent ? orchestration?.config.sequences ?? [] : []} activeAgent={extensionStateIsCurrent ? orchestration?.active : undefined} dictionaries={settings.dictionaries.filter((item) => settings.activeDictionaryIds.includes(item.id))} models={models} commands={commands} thinkingLevels={thinkingLevels} widgets={extensionStateIsCurrent ? Object.values(widgets).flat() : []} statuses={extensionStateIsCurrent ? Object.values(statuses) : []} projectCwd={selectedProjectCwd(activeCwd, transport.isTemporaryChat())} controlsDisabled={!connected} draft={composerDraft} onDraftChange={setComposerDraft} focusRequest={mainComposerFocusRequest} onActivate={() => setActivePane("main")} uploads={composerUploads} onUploadsChange={setComposerUploads} onSend={send} onAbort={abortInteraction} onOpenTerminal={() => setTerminalOpen(true)} onOpenProject={chooseChatProject} onBranch={branch} onAgent={setAgent} onModel={setModel} onThinking={setThinking} />{splitPane && <SplitChatPane key={splitSessionId} runtimePool={runtimePool} session={splitPane.session} settings={settings} draft={splitComposerDraft} onDraftChange={setSplitComposerDraft} focusRequest={splitComposerFocusRequest} onActivate={() => setActivePane("split")} forkFrom={splitPane.btw?.forkFrom} initialPrompt={splitPane.btw?.task} onReady={splitPane.btw ? () => respondToBtw(splitPane.btw!.requestId, { value: "opened" }) : undefined} onFailed={splitPane.btw ? () => respondToBtw(splitPane.btw!.requestId, { cancelled: true }) : undefined} onClose={closeSplitPane} />}</div>{terminalOpen && <TerminalView key={`${terminalSessionId}:${activeTerminal.id}`} cwd={activeCwd ?? sessions.find((session) => session.id === state.sessionId && (session.hostId ?? "local") === activeHostId)?.cwd} terminals={sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={activeTerminal.id} output={activeTerminal.output} outputEnd={activeTerminal.outputEnd} exited={activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { void transport.writeTerminal(activeTerminal.id, data).catch((reason) => queueTerminalOutput(activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { void transport.resizeTerminal(activeTerminal.id, cols, rows).catch(() => undefined); }} onDelete={deleteTerminal} onClose={() => setTerminalOpen(false)} />}</div> : <SettingsView settings={settingsWithMcpStatuses} orchestration={extensionStateIsCurrent ? orchestration?.config : undefined} models={models} thinkingLevels={thinkingLevels} onSave={saveSettings} onDirtyChange={setSettingsDirty} />}
     {(error || notice) && <div className="toast-stack">
       {error && <div className="error-toast"><strong>Pi could not connect</strong><span>{error}</span><button onClick={() => setError(undefined)}>×</button></div>}
       {notice && <div className="error-toast"><strong>{notice.title}</strong><span>{notice.message}</span><button onClick={() => setNotice(undefined)}>×</button></div>}
     </div>}
-    {dialogs[0] && !projectOpen && !renameSession && !relocatingSession && <ExtensionDialog request={dialogs[0]} onRespond={async (response) => { const request = dialogs[0]; await transport.command({ type: "extension_ui_response", id: request.id, ...response }); setDialogs((current) => current.filter((item) => item.id !== request.id)); }} />}
+    {activeDialog && !projectOpen && !renameSession && !relocatingSession && <ExtensionDialog request={activeDialog.request} onRespond={async (response) => { await activeDialog.transport.command({ type: "extension_ui_response", id: activeDialog.request.id, ...response }); setDialogs((current) => current.filter((item) => item !== activeDialog)); }} />}
     {projectOpen && <ProjectDialog initialPath="" hosts={settings.hosts} initialHostId={activeHostId} onHomeDirectory={resolveHomeDirectory} onChooseDirectory={(currentPath, hostId) => hostId === "local" ? transport.selectProjectDirectory(currentPath || undefined) : transport.listDirectories(hostId, currentPath || undefined)} onOpen={openProject} onCancel={() => { projectOpenRef.current = false; setProjectOpen(false); }} />}
     {renameSession && <ExtensionDialog request={{ type: "extension_ui_request", id: "rename-session", method: "input", title: "Rename conversation", prefill: renameSession.name }} onRespond={async (response) => { if (response.cancelled) { setRenameSession(undefined); return; } if (typeof response.value !== "string" || !response.value.trim()) throw new Error("Conversation name can't be empty"); const name = response.value.trim(); await transport.command({ type: "set_session_name", name }); setState((current) => ({ ...current, sessionName: name })); await refresh(); setRenameSession(undefined); }} />}
     {relocatingSession && <ExtensionDialog request={{ type: "extension_ui_request", id: `relocate-${relocatingSession.id}`, method: "input", title: "Locate conversation project", message: `The original project directory no longer exists: ${relocatingSession.cwd}. Enter its new location to open this conversation.`, error: relocationError, placeholder: "Replacement project directory", prefill: sessions.find((session) => session.id === state.sessionId && (session.hostId ?? "local") === activeHostId && session.cwdExists !== false)?.cwd || "" }} onRespond={(response) => { if (response.cancelled) { setRelocationError(undefined); setRelocatingSession(undefined); return; } const cwd = typeof response.value === "string" ? response.value.trim() : ""; if (!cwd) { setRelocationError("Path can't be empty"); return; } const session = relocatingSession; setRelocationError(undefined); setRelocatingSession(undefined); void transport.relocateSession(session.path, cwd, session.hostId).then(() => { selectSession({ ...session, cwd, cwdExists: true }); }).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason))); }} />}
