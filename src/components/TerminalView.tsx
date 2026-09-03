@@ -13,7 +13,7 @@ interface Props {
 }
 
 export function TerminalView({ cwd, terminals, activeId, output, outputEnd, snapshot, snapshotEnd, started, exited, onAdd, onSelect, onStart, onData, onResize, onSnapshot, onDelete, onClose }: Props) {
-  const host = useRef<HTMLDivElement>(null); const terminal = useRef<Terminal | undefined>(undefined); const lastOutputEnd = useRef(0);
+  const host = useRef<HTMLDivElement>(null); const terminal = useRef<Terminal | undefined>(undefined); const lastOutputEnd = useRef(0); const tabRefs = useRef(new Map<string, HTMLButtonElement>());
   const callbacks = useRef({ onData, onResize, onStart, onSnapshot }); callbacks.current = { onData, onResize, onStart, onSnapshot };
 
   useEffect(() => {
@@ -36,9 +36,10 @@ export function TerminalView({ cwd, terminals, activeId, output, outputEnd, snap
     if (lastOutputEnd.current >= outputStart && lastOutputEnd.current <= outputEnd) instance.write(output.slice(lastOutputEnd.current - outputStart)); else { instance.reset(); instance.write(output); }
     lastOutputEnd.current = outputEnd;
   }, [output, outputEnd]);
+  useEffect(() => { tabRefs.current.get(activeId)?.scrollIntoView({ block: "nearest", inline: "nearest" }); }, [activeId, terminals.length]);
 
   const canAdd = terminals.length < 8;
-  return <section className="terminal-shell" aria-label="Session terminal"><header><div className="terminal-tabs">{terminals.map((item) => <button key={item.id} className={`terminal-tab ${item.id === activeId ? "active" : ""}`} onClick={() => onSelect(item.id)}><TerminalSquare size={14} /><strong>{item.label}</strong></button>)}<IconButton label={canAdd ? "Add terminal" : "Terminal limit reached"} disabled={!canAdd} onClick={onAdd}><Plus size={16} /></IconButton></div><div>{exited && <span className="terminal-exited">exited</span>}<IconButton label="Delete terminal" onClick={onDelete}><Trash2 size={15} /></IconButton><IconButton label="Close terminal panel" onClick={onClose}><X size={16} /></IconButton></div></header>
+  return <section className="terminal-shell" aria-label="Session terminal"><header><div className="terminal-tabs">{terminals.map((item) => <button ref={(element) => { if (element) tabRefs.current.set(item.id, element); else tabRefs.current.delete(item.id); }} key={item.id} className={`terminal-tab ${item.id === activeId ? "active" : ""}`} onClick={() => onSelect(item.id)}><TerminalSquare size={14} /><strong>{item.label}</strong></button>)}<IconButton label={canAdd ? "Add terminal" : "Terminal limit reached"} disabled={!canAdd} onClick={onAdd}><Plus size={16} /></IconButton></div><div>{exited && <span className="terminal-exited">exited</span>}<IconButton label="Delete terminal" onClick={onDelete}><Trash2 size={15} /></IconButton><IconButton label="Close terminal panel" onClick={onClose}><X size={16} /></IconButton></div></header>
     {cwd ? <div className="terminal-host" ref={host} onMouseDown={() => terminal.current?.focus()} /> : <div className="terminal-unavailable">Start the conversation to get a CWD</div>}
   </section>;
 }

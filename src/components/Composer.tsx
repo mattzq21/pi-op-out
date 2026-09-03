@@ -38,6 +38,7 @@ const IMAGE_LIMIT = 10 * 1024 * 1024;
 const TOTAL_UPLOAD_LIMIT = 24 * 1024 * 1024;
 const UPLOAD_COUNT_LIMIT = 12;
 const COMPOSER_MAX_HEIGHT = 130;
+const DICTIONARY_HIGHLIGHT_LIMIT = 1_000;
 const displayModelName = (model: Model) => (model.name || model.id).replace(/^gpt-/i, "");
 const skillName = (command: SlashCommand) => command.source === "skill" ? command.name.replace(/^skill:/, "") : undefined;
 const skillReference = (value: string) => value.match(/(?:^|[\s([{])\$([a-zA-Z0-9_-]*)$/)?.[1]?.toLowerCase();
@@ -73,6 +74,8 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
   const [behavior, setBehavior] = useState<"steer" | "followUp">("steer");
   const [uploadError, setUploadError] = useState<string>();
   const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
+  const abortingRef = useRef(false);
   const [selectedMatch, setSelectedMatch] = useState(0);
   const [paletteDismissed, setPaletteDismissed] = useState(false);
   const [editorScrollTop, setEditorScrollTop] = useState(0);
@@ -82,7 +85,7 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
   const restoredDraftId = useRef<string | undefined>(undefined);
   const commandQuery = value.match(/^\/([^\s]*)$/)?.[1]?.toLowerCase();
   const skillQuery = commandQuery === undefined ? skillReference(value) : undefined;
-  const dictionaryHighlights = useMemo(() => dictionaryMatches(value, dictionaries), [value, dictionaries]);
+  const dictionaryHighlights = useMemo(() => dictionaryMatches(value, dictionaries, DICTIONARY_HIGHLIGHT_LIMIT), [value, dictionaries]);
   const matches = useMemo(() => paletteDismissed ? [] : commandQuery !== undefined
     ? commands.filter((command) => command.name.toLowerCase().includes(commandQuery)).slice(0, 7)
     : skillQuery !== undefined
@@ -140,15 +143,20 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
     const message = [expandSkillReference(applyDictionary(value.trim(), dictionaries), commands), ...textFiles.map((file) => `<file name="${escapeAttribute(file.name)}">\n${file.text}\n</file>`)].filter(Boolean).join("\n\n");
     const images = uploads.flatMap((upload) => upload.image ? [upload.image] : []);
     if (!message && !images.length) return;
-    if (sending) return;
-    setSending(true); setUploadError(undefined);
+    if (sendingRef.current) return;
+    sendingRef.current = true; setSending(true); setUploadError(undefined);
     try {
       const accepted = await onSend(message || "Describe the attached image.", streaming ? behavior : undefined, images);
       if (accepted === false) return;
       setValue(""); updateUploads([]);
     } catch (reason) {
       setUploadError(reason instanceof Error ? reason.message : String(reason));
-    } finally { setSending(false); }
+    } finally { sendingRef.current = false; setSending(false); }
+  };
+  const abort = async () => {
+    if (abortingRef.current) return;
+    abortingRef.current = true;
+    try { await onAbort(); } finally { abortingRef.current = false; }
   };
   const chooseCommand = (command: SlashCommand) => {
     const name = skillName(command);
@@ -158,11 +166,11 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
   };
 
   return <div className="composer-wrap">
-    {streaming && <div className="stream-banner"><span className="pulse" />Pi is working {queued > 0 && `· ${queued} queued`}<label>Send as <select aria-label="Streaming message behavior" value={behavior} onChange={(event) => setBehavior(event.target.value as typeof behavior)}><option value="steer">Steer now</option><option value="followUp">Follow up</option></select></label><button onClick={onAbort}>Stop</button></div>}
+    {streaming && <div className="stream-banner"><span className="pulse" />Pi is working {queued > 0 && `· ${queued} queued`}<label>Send as <select aria-label="Streaming message behavior" value={behavior} onChange={(event) => setBehavior(event.target.value as typeof behavior)}><option value="steer">Steer now</option><option value="followUp">Follow up</option></select></label><button onClick={() => void abort()}>Stop</button></div>}
     <div ref={composerRef} className="composer">
       {matches.length > 0 && <div className="command-palette" role="listbox" aria-label={skillQuery === undefined ? "Pi commands" : "Pi skills"}>{matches.map((command, index) => <button role="option" aria-selected={index === selectedMatch} key={`${command.source}:${command.name}`} type="button" onMouseEnter={() => setSelectedMatch(index)} onClick={() => chooseCommand(command)}><span><strong>{skillQuery !== undefined ? `$${skillName(command)}` : `/${command.name}`}</strong><small>{command.description || `${command.source} command`}</small></span><em>{command.source}</em></button>)}</div>}
       {uploads.length > 0 && <div className="attachments">{uploads.map((upload) => <span key={upload.id}>{upload.kind === "image" ? <ImagePlus size={12} /> : <FileText size={12} />}<b>{upload.name}</b><button aria-label={`Remove ${upload.name}`} onClick={() => updateUploads((current) => current.filter((item) => item.id !== upload.id))}><X size={11} /></button></span>)}</div>}
-      {uploadError && <div className="upload-error">{uploadError}</div>}
+      {uploadError && <div className="upload-error" role="alert">{uploadError}</div>}
       <div className={`composer-editor${dictionaryHighlights.length ? " has-dictionary-matches" : ""}`}>
         {dictionaryHighlights.length > 0 && <div className="composer-highlight-viewport" aria-hidden="true"><div className="composer-highlight-layer" style={{ transform: `translateY(-${editorScrollTop}px)` }}>{dictionaryHighlights.map((match, index) => <span key={`${match.start}-${match.end}`}><span>{value.slice(index ? dictionaryHighlights[index - 1].end : 0, match.start)}</span><mark title={match.replacement} onPointerDown={(event) => { event.preventDefault(); ref.current?.focus(); ref.current?.setSelectionRange(match.start, match.end); }}>{value.slice(match.start, match.end)}</mark></span>)}<span>{value.slice(dictionaryHighlights.at(-1)?.end ?? 0)}</span></div></div>}
         <textarea ref={ref} aria-label="Message Pi" disabled={controlsDisabled} placeholder={controlsDisabled ? "Connecting to Pi…" : streaming ? (behavior === "steer" ? "Steer Pi while it works…" : "Queue a follow-up…") : "Ask Pi to build, explain, or change anything…"} value={value} rows={1} onScroll={(event) => setEditorScrollTop(event.currentTarget.scrollTop)} onChange={(event) => { setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape" && matches.length) { event.preventDefault(); setPaletteDismissed(true); } else if (matches.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length); } else if ((event.key === "Tab" || event.key === "Enter") && !event.shiftKey && matches[selectedMatch]) { event.preventDefault(); chooseCommand(matches[selectedMatch]); } else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submit(); } }} />
@@ -174,7 +182,7 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
         <ContainedPicker label="Model" value={model ? `${model.provider}/${model.id}` : ""} disabled={streaming || controlsDisabled} options={models.map((item) => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item), detail: item.provider }))} onChange={(value) => { const next = models.find((item) => `${item.provider}/${item.id}` === value); if (next) onModel(next); }} />
         <ContainedPicker label="Thinking level" value={thinkingLevel} disabled={streaming || controlsDisabled} menuWidth={120} centered compact options={thinkingLevels.map((level) => ({ value: level, label: level }))} onChange={onThinking} />
         <span className="composer-divider" />
-        {streaming && <IconButton label="Stop Pi" className="stop-compact" onClick={onAbort}><CircleStop size={17} /></IconButton>}<IconButton label={streaming ? (behavior === "steer" ? "Send steering message" : "Queue follow-up") : "Send message"} className="send" disabled={controlsDisabled || sending || (!value.trim() && uploads.length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton></div>
+        {streaming && <IconButton label="Stop Pi" className="stop-compact" onClick={() => void abort()}><CircleStop size={17} /></IconButton>}<IconButton label={streaming ? (behavior === "steer" ? "Send steering message" : "Queue follow-up") : "Send message"} className="send" disabled={controlsDisabled || sending || (!value.trim() && uploads.length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton></div>
       </div>
     </div>
   </div>;

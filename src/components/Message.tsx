@@ -1,4 +1,4 @@
-import { isValidElement, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
+import { isValidElement, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import { Check, CircleAlert, Copy, GitBranch, Wrench } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -9,7 +9,7 @@ import { IconButton } from "./IconButton";
 import { DiffViewer } from "./DiffViewer";
 import { PromptContextBar } from "./PromptContextBar";
 
-interface Props { message: ChatMessage; diff?: GitDiffSnapshot; expanded?: boolean; toolCount?: number; debug?: boolean; onBranch: (message: ChatMessage) => void; onRetry?: () => void; }
+interface Props { message: ChatMessage; diff?: GitDiffSnapshot; expanded?: boolean; toolCount?: number; debug?: boolean; onBranch: (message: ChatMessage) => void | Promise<void>; onRetry?: () => void; }
 
 function nodeText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -43,6 +43,8 @@ function userMessageParts(content: string) {
 
 export function Message({ message, diff, expanded = false, toolCount = 1, debug = false, onBranch, onRetry }: Props) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+  const [branching, setBranching] = useState(false);
+  const branchingRef = useRef(false);
   if (message.role === "tool") { const output = textOf(message.content); const status = message.toolStatus ?? "done"; return <details className={`tool-event ${status}`} open={status === "running" || (expanded && status !== "done")}><summary><Wrench size={14} /><span><strong>{message.toolName || "tool"}{toolCount > 1 ? ` x${toolCount}` : ""}</strong><small>{status === "running" ? "Running…" : status === "error" ? "Failed" : "Completed"}</small></span><span className="tool-chevron">›</span></summary>{output && <pre>{output}</pre>}</details>; }
   if (message.role === "user") { const { skills, text, literalSkill } = userMessageParts(textOf(message.content)); return <article className="message user-message"><div className="message-body">{skills.map((skill) => <span className="skill-reference" key={skill}>${skill}</span>)}{text && (literalSkill ? <span className="literal-skill-content">{text}</span> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>)}</div></article>; }
   const output = textOf(message.content);
@@ -59,6 +61,11 @@ export function Message({ message, diff, expanded = false, toolCount = 1, debug 
     }
     window.setTimeout(() => setCopyState("idle"), 1800);
   };
+  const branch = async () => {
+    if (branchingRef.current) return;
+    branchingRef.current = true; setBranching(true);
+    try { await onBranch(message); } finally { branchingRef.current = false; setBranching(false); }
+  };
   return <article className={`message assistant-message ${thinking ? "reasoning-message" : ""}`}>
     <div className="message-body">
       {debug && message.promptContext && <PromptContextBar context={message.promptContext} />}
@@ -70,7 +77,7 @@ export function Message({ message, diff, expanded = false, toolCount = 1, debug 
       {!message.streaming && output.trim().length > 0 && <div className="message-actions">
         <IconButton label={copyState === "copied" ? "Response copied" : copyState === "error" ? "Copy failed" : "Copy response"} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>
         {copyState === "error" && <span className="copy-feedback" role="status">Could not copy response</span>}
-        <button className="branch-button" aria-label="Branch from here" title="Branch from here" onClick={() => onBranch(message)}><GitBranch size={14} /></button>
+        <button className="branch-button" aria-label="Branch from here" title="Branch from here" disabled={branching} onClick={() => void branch()}><GitBranch size={14} /></button>
         {debug && cache && <span className={`cache-hit-rate${cache.low ? " low" : ""}`} title={`${cache.cachedTokens.toLocaleString()} of ${cache.promptTokens.toLocaleString()} prompt tokens read from cache`}>Cache {cache.rate}%</span>}
       </div>}
     </div>

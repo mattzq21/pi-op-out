@@ -5,7 +5,7 @@ export interface DictionaryMatch { start: number; end: number; replacement: stri
 const wordCharacter = /[\p{L}\p{N}_]/u;
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-export function dictionaryMatches(value: string, dictionaries: PromptDictionary[] = []): DictionaryMatch[] {
+export function dictionaryMatches(value: string, dictionaries: PromptDictionary[] = [], limit = Number.POSITIVE_INFINITY): DictionaryMatch[] {
   const entries = new Map<string, string>();
   for (const dictionary of dictionaries) for (const entry of dictionary.entries) {
     const word = entry.word.trim(); const replacement = entry.replacement.trim();
@@ -20,7 +20,10 @@ export function dictionaryMatches(value: string, dictionaries: PromptDictionary[
     const end = start + match[0].length;
     if ((start > 0 && wordCharacter.test(value[start - 1])) || (end < value.length && wordCharacter.test(value[end]))) continue;
     const replacement = entries.get(match[0].toLocaleLowerCase());
-    if (replacement !== undefined) matches.push({ start, end, replacement });
+    if (replacement !== undefined) {
+      matches.push({ start, end, replacement });
+      if (matches.length >= limit) break;
+    }
   }
   return matches;
 }
