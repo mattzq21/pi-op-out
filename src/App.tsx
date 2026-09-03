@@ -109,7 +109,7 @@ export default function App() {
   const queueTerminalOutput = useCallback((terminalId: string, data: string) => {
     const queued = queuedTerminalOutput.current.get(terminalId); const combined = `${queued?.data ?? ""}${data}`;
     queuedTerminalOutput.current.set(terminalId, { data: combined.slice(-TERMINAL_OUTPUT_LIMIT), length: (queued?.length ?? 0) + data.length });
-    if (terminalOutputFrame.current === undefined) terminalOutputFrame.current = requestAnimationFrame(flushTerminalOutput);
+    if (terminalOutputFrame.current === undefined) terminalOutputFrame.current = window.setTimeout(flushTerminalOutput, 0);
   }, [flushTerminalOutput]);
 
   useEffect(() => { let cancelled = false; void transport.loadCodexUsage().then((usage) => { if (!cancelled) setCodexUsage(usage); }).catch(() => undefined); return () => { cancelled = true; }; }, []);
@@ -223,7 +223,7 @@ export default function App() {
       }
     });
     transport.connect().then(() => refresh()).then((value) => configureRuntime(value)).then(() => refreshSession()).then(() => { if (!cancelled) { setError(undefined); updateConnected(true); } }).catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); });
-    return () => { cancelled = true; unsubscribe(); if (terminalOutputFrame.current !== undefined) cancelAnimationFrame(terminalOutputFrame.current); terminalOutputFrame.current = undefined; queuedTerminalOutput.current.clear(); };
+    return () => { cancelled = true; unsubscribe(); if (terminalOutputFrame.current !== undefined) window.clearTimeout(terminalOutputFrame.current); terminalOutputFrame.current = undefined; queuedTerminalOutput.current.clear(); };
   }, [configureRuntime, handleEvent, queueTerminalOutput, refresh, refreshSession, transport]);
 
   useEffect(() => { const shutdown = () => { void runtimePool.disconnectAll(); }; window.addEventListener("pagehide", shutdown); return () => window.removeEventListener("pagehide", shutdown); }, [runtimePool]);
