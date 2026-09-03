@@ -9,6 +9,11 @@ const actions = [
   ["split", Columns2, "Split pane"], ["rename", Pencil, "Rename conversation"], ["clone", CopyPlus, "Clone conversation"], ["open-directory", FolderOpen, "Open project directory"]
 ] as const;
 const COLLAPSED_PROJECTS_KEY = "pi-desktop-collapsed-projects";
+const sidebarCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
+function stableSessionOrder(left: SessionSummary, right: SessionSummary) {
+  return sidebarCollator.compare(left.name, right.name) || sidebarCollator.compare(left.id, right.id);
+}
 
 function savedCollapsedProjects() {
   try { const value = JSON.parse(localStorage.getItem(COLLAPSED_PROJECTS_KEY) || "[]"); return new Set<string>(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []); }
@@ -44,7 +49,11 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   const filtered = sessions.filter((session) => `${session.name} ${session.project} ${session.preview}`.toLowerCase().includes(query.toLowerCase()));
   const groups = Object.entries(filtered.reduce<Record<string, SessionSummary[]>>((result, session) => {
     (result[`${session.hostId ?? "local"}:${session.project}`] ??= []).push(session); return result;
-  }, {}));
+  }, {})).map(([projectKey, projectSessions]) => [projectKey, projectSessions.sort(stableSessionOrder)] as const).sort(([, left], [, right]) => {
+    const leftHost = left[0].hostName ?? left[0].hostId ?? "local";
+    const rightHost = right[0].hostName ?? right[0].hostId ?? "local";
+    return sidebarCollator.compare(leftHost, rightHost) || sidebarCollator.compare(left[0].project, right[0].project);
+  });
   return <aside className="session-panel">
     <label className="search"><Search size={15} /><input aria-label="Search conversations" placeholder="Search conversations" value={query} onChange={(event) => onQuery(event.target.value)} /><kbd>Ctrl K</kbd></label>
     <div className="session-scroll">
