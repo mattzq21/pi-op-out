@@ -120,6 +120,7 @@ export default function App() {
     const previousKey = activeConversationKeyRef.current;
     if (!state.sessionId || !previousKey.includes(":draft-")) return;
     const canonicalKey = `${activeHostId}:${state.sessionId}`;
+    if (previousKey === canonicalKey) return;
     setComposerDrafts((current) => { if (!(previousKey in current)) return current; const next = { ...current, [canonicalKey]: current[previousKey] }; delete next[previousKey]; return next; });
     setTerminalsBySession((current) => { if (!(previousKey in current)) return current; const next = { ...current, [canonicalKey]: current[previousKey] }; delete next[previousKey]; return next; });
     transportConversationKeys.current.set(transport, canonicalKey); activateConversationKey(canonicalKey);
