@@ -73,10 +73,24 @@ struct PiRuntime {
 struct AgentAddress { host_id: String, session_id: Option<String>, session_path: Option<String> }
 
 #[derive(Clone)]
-struct BrokerRuntime { port: Arc<Mutex<u16>>, token: String, busy: Arc<Mutex<HashSet<String>>> }
+struct BrokerRuntime {
+    port: Arc<Mutex<u16>>,
+    token: String,
+    busy: Arc<Mutex<HashSet<String>>>,
+    jobs: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
+    cancelled: Arc<Mutex<HashSet<String>>>,
+}
 
 impl Default for BrokerRuntime {
-    fn default() -> Self { Self { port: Arc::new(Mutex::new(0)), token: Uuid::new_v4().to_string(), busy: Arc::new(Mutex::new(HashSet::new())) } }
+    fn default() -> Self {
+        Self {
+            port: Arc::new(Mutex::new(0)),
+            token: Uuid::new_v4().to_string(),
+            busy: Arc::new(Mutex::new(HashSet::new())),
+            jobs: Arc::new(Mutex::new(HashMap::new())),
+            cancelled: Arc::new(Mutex::new(HashSet::new())),
+        }
+    }
 }
 
 struct BusyAgent { key: String, busy: Arc<Mutex<HashSet<String>>> }
@@ -272,9 +286,8 @@ fn pi_desktop_config_path() -> Result<PathBuf, String> {
     Ok(home_dir()?.join(".pi-desktop/config.json"))
 }
 
-fn write_dictionary_config(settings: &AppSettings) -> Result<(), String> {
+fn dictionary_config_body(settings: &AppSettings) -> Result<(PathBuf, Vec<u8>), String> {
     let path = pi_desktop_config_path()?;
-    if let Some(parent) = path.parent() { fs::create_dir_all(parent).map_err(|error| error.to_string())?; }
     let mut config = if path.exists() {
         serde_json::from_slice::<Value>(&fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| format!("Could not parse {}: {error}", path.display()))?
     } else { json!({}) };
@@ -282,7 +295,28 @@ fn write_dictionary_config(settings: &AppSettings) -> Result<(), String> {
     object.remove("activeDictionaryId");
     object.insert("activeDictionaryIds".into(), serde_json::to_value(&settings.active_dictionary_ids).map_err(|error| error.to_string())?);
     object.insert("dictionaries".into(), serde_json::to_value(&settings.dictionaries).map_err(|error| error.to_string())?);
-    fs::write(path, serde_json::to_vec_pretty(&config).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
+    Ok((path, serde_json::to_vec_pretty(&config).map_err(|error| error.to_string())?))
+}
+
+fn atomic_write(path: &Path, body: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() { fs::create_dir_all(parent).map_err(|error| error.to_string())?; }
+    let temporary = path.with_extension(format!("{}.{}.tmp", path.extension().and_then(|value| value.to_str()).unwrap_or("data"), Uuid::new_v4()));
+    fs::write(&temporary, body).map_err(|error| error.to_string())?;
+    fs::rename(&temporary, path).map_err(|error| { let _ = fs::remove_file(&temporary); error.to_string() })
+}
+
+fn write_dictionary_config(settings: &AppSettings) -> Result<(), String> {
+    let (path, body) = dictionary_config_body(settings)?; atomic_write(&path, &body)
+}
+
+fn persist_settings_transaction(settings_path: &Path, settings_body: &[u8], dictionary_path: &Path, dictionary_body: &[u8]) -> Result<(), String> {
+    let previous_dictionary = fs::read(dictionary_path).ok();
+    atomic_write(dictionary_path, dictionary_body)?;
+    if let Err(error) = atomic_write(settings_path, settings_body) {
+        match previous_dictionary { Some(body) => { let _ = atomic_write(dictionary_path, &body); }, None => { let _ = fs::remove_file(dictionary_path); } }
+        return Err(error);
+    }
+    Ok(())
 }
 
 fn load_dictionary_config(settings: &mut AppSettings) -> Result<bool, String> {
@@ -581,12 +615,10 @@ fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<(), String
         if !host_names.insert(name) { return Err(format!("Machine name '{}' is already in use", host.name.trim())); }
         validate_remote_host(host)?;
     }
-    let body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
-    write_dictionary_config(&settings)?;
-    let path = settings_path(&app)?;
-    let temporary = path.with_extension(format!("json.{}.tmp", Uuid::new_v4()));
-    fs::write(&temporary, body).map_err(|error| error.to_string())?;
-    fs::rename(&temporary, &path).map_err(|error| { let _ = fs::remove_file(&temporary); error.to_string() })
+    let settings_body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
+    let settings_path = settings_path(&app)?;
+    let (dictionary_path, dictionary_body) = dictionary_config_body(&settings)?;
+    persist_settings_transaction(&settings_path, &settings_body, &dictionary_path, &dictionary_body)
 }
 
 #[tauri::command]
@@ -1055,23 +1087,41 @@ fn stop_pi(runtime: State<PiRuntime>, runtime_id: String) -> Result<(), String> 
     Ok(())
 }
 
-#[tauri::command(async)]
-fn pi_command(runtime: State<PiRuntime>, runtime_id: String, mut command: Value) -> Result<Value, String> {
+fn execute_pi_command(runtime: &PiRuntime, runtime_id: &str, mut command: Value) -> Result<Value, String> {
     let fire_and_forget = command.get("type").and_then(Value::as_str) == Some("extension_ui_response");
     let id = command.get("id").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| Uuid::new_v4().to_string());
     command.as_object_mut().ok_or("RPC command must be an object")?.insert("id".into(), Value::String(id.clone()));
     let (sender, receiver) = mpsc::channel();
-    runtime.pending.lock().map_err(|_| "Pending command lock was poisoned")?.insert((runtime_id.clone(), id.clone()), sender);
+    runtime.pending.lock().map_err(|_| "Pending command lock was poisoned")?.insert((runtime_id.to_string(), id.clone()), sender);
     let write_result = (|| {
         let process_guard = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?;
-        let process = process_guard.get(&runtime_id).ok_or("Pi is not running")?;
+        let process = process_guard.get(runtime_id).ok_or("Pi is not running")?;
         let mut stdin = process.stdin.lock().map_err(|_| "Pi stdin lock was poisoned")?;
         serde_json::to_writer(&mut *stdin, &command).map_err(|error| error.to_string())?;
         stdin.write_all(b"\n").and_then(|_| stdin.flush()).map_err(|error| error.to_string())
     })();
-    if let Err(error) = write_result { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.clone(), id.clone()))); return Err(error); }
-    if fire_and_forget { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.clone(), id.clone()))); return Ok(Value::Null); }
-    receiver.recv_timeout(Duration::from_secs(30)).map_err(|_| { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id, id))); "Pi command timed out".to_string() })?
+    if let Err(error) = write_result { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.to_string(), id.clone()))); return Err(error); }
+    if fire_and_forget { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.to_string(), id.clone()))); return Ok(Value::Null); }
+    receiver.recv_timeout(Duration::from_secs(30)).map_err(|_| { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.to_string(), id))); "Pi command timed out".to_string() })?
+}
+
+fn update_active_agent(runtime: &PiRuntime, runtime_id: &str, state: &Value) -> Result<(), String> {
+    let mut agents = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?;
+    let Some(agent) = agents.get_mut(runtime_id) else { return Ok(()); };
+    agent.session_id = state.get("sessionId").and_then(Value::as_str).map(str::to_owned);
+    agent.session_path = state.get("sessionFile").and_then(Value::as_str).map(str::to_owned);
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn pi_command(runtime: State<PiRuntime>, runtime_id: String, command: Value) -> Result<Value, String> {
+    let command_type = command.get("type").and_then(Value::as_str).unwrap_or_default().to_string();
+    let result = execute_pi_command(&runtime, &runtime_id, command)?;
+    if command_type == "get_state" { update_active_agent(&runtime, &runtime_id, &result)?; }
+    else if matches!(command_type.as_str(), "fork" | "clone" | "new_session") {
+        if let Ok(state) = execute_pi_command(&runtime, &runtime_id, json!({"type":"get_state"})) { update_active_agent(&runtime, &runtime_id, &state)?; }
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -1431,7 +1481,7 @@ fn load_session_entries(app: AppHandle, session_path: String, host_id: Option<St
 #[tauri::command(async)]
 fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path: String, host_id: Option<String>, mut terminal_state: Option<Value>) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
-    if let Some(state) = terminal_state.as_mut() { bound_archived_terminal_state(state)?; stop_terminals_for_state(&runtime, state)?; }
+    if let Some(state) = terminal_state.as_mut() { bound_archived_terminal_state(state)?; }
     if host_id != "local" {
         let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
         let file_name = Path::new(&session_path).file_name().and_then(|name| name.to_str()).ok_or("Session path has no file name")?;
@@ -1444,7 +1494,9 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
         let diff_destination = Path::new(&destination).with_extension("diffs.json").to_string_lossy().into_owned();
         let remote = format!(r#"root=$(cd "$HOME/.pi-desktop/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) archive="$HOME/.pi-desktop/archived"; mkdir -p "$archive" || exit 1; {} diff=${{target%.jsonl}}.diffs.json; diff_target="$archive"/{}; moved_diff=0; if [ -f "$diff" ]; then mv -- "$diff" "$diff_target" || {{ {} exit 1; }}; moved_diff=1; fi; if ! mv -- "$target" "$archive"/{}; then if [ "$moved_diff" = 1 ]; then mv -- "$diff_target" "$diff" || true; fi; {} exit 1; fi ;; *) printf 'Refusing to archive a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(&session_path), terminal_sidecar.0, shell_quote(&diff_destination), terminal_sidecar.1, shell_quote(&destination), terminal_sidecar.1);
         let output = ssh(host).arg(remote).output().map_err(|error| error.to_string())?;
-        return output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string());
+        if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+        if let Some(state) = terminal_state.as_mut() { let _ = stop_terminals_for_state(&runtime, state); }
+        return Ok(());
     }
     let source = local_desktop_session_file(&session_path)?;
     let archive_dir = home_dir()?.join(".pi-desktop/archived");
@@ -1470,6 +1522,7 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
         if terminal_state.is_some() { let _ = fs::remove_file(&state_path); }
         return Err(format!("Could not archive session: {error}"));
     }
+    if let Some(state) = terminal_state.as_mut() { let _ = stop_terminals_for_state(&runtime, state); }
     Ok(())
 }
 
@@ -1501,7 +1554,16 @@ fn relocate_session(session_path: String, cwd: String, host_id: Option<String>) 
     header.as_object_mut().ok_or("Invalid session header")?.insert("cwd".into(), Value::String(replacement.to_string_lossy().into_owned()));
     let first = serde_json::to_string(&header).map_err(|error| error.to_string())?;
     let updated = if rest.is_empty() { first } else { format!("{first}\n{rest}") };
-    fs::write(path, updated).map_err(|error| format!("Could not update session: {error}"))
+    let permissions = fs::metadata(&path).map_err(|error| format!("Could not inspect session: {error}"))?.permissions();
+    let temporary = path.with_extension(format!("jsonl.{}.tmp", Uuid::new_v4()));
+    let result = (|| {
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(|error| format!("Could not prepare relocated session: {error}"))?;
+        file.set_permissions(permissions).map_err(|error| format!("Could not preserve session permissions: {error}"))?;
+        file.write_all(updated.as_bytes()).and_then(|_| file.sync_all()).map_err(|error| format!("Could not write relocated session: {error}"))?;
+        fs::rename(&temporary, &path).map_err(|error| format!("Could not commit relocated session: {error}"))
+    })();
+    if result.is_err() { let _ = fs::remove_file(&temporary); }
+    result
 }
 
 fn resolve_agent<'a>(sessions: &'a [SessionSummary], host_id: &str, session_id: &str, active: &[AgentAddress]) -> Result<&'a SessionSummary, String> {
@@ -1517,12 +1579,39 @@ fn agent_is_active(session: &SessionSummary, agent: &AgentAddress) -> bool {
     agent.host_id == session.host_id && (agent.session_id.as_deref() == Some(session.id.as_str()) || agent.session_path.as_deref() == Some(session.path.as_str()))
 }
 
-fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &SessionSummary, message: &str) -> Result<String, String> {
+fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &SessionSummary, message: &str, request_id: &str) -> Result<String, String> {
     let settings = load_app_settings(app.clone())?;
     let mut command = build_pi_command(app, broker, &settings, &session.host_id, PiLaunch::Print { cwd: &session.cwd, session_path: &session.path, message })?;
-    let output = command.output().map_err(|error| format!("Could not message agent: {error}"))?;
-    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    let output_root = std::env::temp_dir().join(format!("pi-desktop-broker-{}", Uuid::new_v4()));
+    fs::create_dir(&output_root).map_err(|error| format!("Could not prepare agent message: {error}"))?;
+    let stdout_path = output_root.join("stdout"); let stderr_path = output_root.join("stderr");
+    let stdout = fs::File::create(&stdout_path).map_err(|error| format!("Could not capture agent output: {error}"))?;
+    let stderr = fs::File::create(&stderr_path).map_err(|error| format!("Could not capture agent errors: {error}"))?;
+    command.stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr));
+    if broker.cancelled.lock().map_err(|_| "Broker cancellation lock was poisoned")?.remove(request_id) { let _ = fs::remove_dir_all(&output_root); return Err("Agent message was cancelled".into()); }
+    let spawned = command.spawn();
+    let child = match spawned { Ok(child) => Arc::new(Mutex::new(child)), Err(error) => { let _ = fs::remove_dir_all(&output_root); return Err(format!("Could not message agent: {error}")); } };
+    match broker.jobs.lock() { Ok(mut jobs) => { jobs.insert(request_id.to_string(), child.clone()); }, Err(_) => { if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); } let _ = fs::remove_dir_all(&output_root); return Err("Broker job lock was poisoned".into()); } }
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let status = loop {
+        if broker.cancelled.lock().map_err(|_| "Broker cancellation lock was poisoned")?.contains(request_id) {
+            if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); }
+            break Err("Agent message was cancelled".to_string());
+        }
+        let status = child.lock().map_err(|_| "Agent process lock was poisoned")?.try_wait().map_err(|error| format!("Could not wait for agent: {error}"))?;
+        if let Some(status) = status { break Ok(status); }
+        if Instant::now() >= deadline {
+            if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); }
+            break Err("Agent message timed out after 120 seconds".to_string());
+        }
+        thread::sleep(Duration::from_millis(25));
+    };
+    broker.jobs.lock().ok().map(|mut jobs| jobs.remove(request_id));
+    broker.cancelled.lock().ok().map(|mut cancelled| cancelled.remove(request_id));
+    let stdout = fs::read(&stdout_path).unwrap_or_default(); let stderr = fs::read(&stderr_path).unwrap_or_default(); let _ = fs::remove_dir_all(&output_root);
+    let status = status?;
+    if !status.success() { return Err(String::from_utf8_lossy(&stderr).trim().to_string()); }
+    Ok(String::from_utf8_lossy(&stdout).trim().to_string())
 }
 
 fn broker_response(mut stream: TcpStream, status: &str, body: Value) {
@@ -1564,6 +1653,7 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
         },
         ("POST", "/message") => (|| {
             let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid message request".to_string())?;
+            let request_id = value.get("requestId").and_then(Value::as_str).filter(|value| Uuid::parse_str(value).is_ok()).ok_or("requestId is required")?;
             let host_id = value.get("hostId").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("hostId is required")?;
             let session_id = value.get("sessionId").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("sessionId is required")?;
             let message = value.get("message").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("message is required")?;
@@ -1571,7 +1661,16 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
             let active: Vec<_> = app.state::<PiRuntime>().active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values().cloned().collect();
             let session = resolve_agent(&sessions, host_id, session_id, &active)?;
             let _claim = claim_agent(&broker, host_id, session_id)?;
-            dispatch_agent_message(&app, &broker, session, message).map(|reply| json!({"reply":reply}))
+            dispatch_agent_message(&app, &broker, session, message, request_id).map(|reply| json!({"reply":reply}))
+        })(),
+        ("POST", "/cancel") => (|| {
+            let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid cancellation request".to_string())?;
+            let request_id = value.get("requestId").and_then(Value::as_str).filter(|value| Uuid::parse_str(value).is_ok()).ok_or("requestId is required")?;
+            let mut cancelled = broker.cancelled.lock().map_err(|_| "Broker cancellation lock was poisoned")?;
+            if cancelled.len() >= BROKER_QUEUE_DEPTH * 2 { cancelled.clear(); }
+            cancelled.insert(request_id.to_string()); drop(cancelled);
+            if let Some(child) = broker.jobs.lock().map_err(|_| "Broker job lock was poisoned")?.get(request_id) { if let Ok(mut child) = child.lock() { let _ = child.kill(); } }
+            Ok(json!({"cancelled":true}))
         })(),
         _ => Err("Unknown session broker endpoint".into()),
     };

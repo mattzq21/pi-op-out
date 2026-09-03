@@ -291,15 +291,16 @@ export default function App() {
   const abortInteraction = () => { void transport.command({ type: "abort" }).catch((reason) => setNotice({ title: "Could not stop Pi", message: reason instanceof Error ? reason.message : String(reason) })); };
   const saveSettings = async (value: AppSettings, nextConfig?: OrchestrationConfig) => {
     const clean = (source: AppSettings) => ({ ...source, mcpServers: source.mcpServers.map(({ error: _error, ...server }) => ({ ...server, status: "stopped" as const })) });
-    const previous = clean(settings); const next = { ...clean(value), debugMode: settings.debugMode };
+    const previous = clean(settings); const previousConfig = orchestration?.config; const next = { ...clean(value), debugMode: settings.debugMode }; let orchestrationAttempted = false;
     try {
       await transport.saveSettings(next); await configureRuntime(next);
-      if (nextConfig) await transport.command({ type: "prompt", message: `/pi-orchestration-config ${encodeOrchestrationValue(nextConfig)}` });
+      if (nextConfig) { orchestrationAttempted = true; await transport.command({ type: "prompt", message: `/pi-orchestration-config ${encodeOrchestrationValue(nextConfig)}` }); }
     } catch (reason) {
+      if (orchestrationAttempted && previousConfig) await transport.command({ type: "prompt", message: `/pi-orchestration-config ${encodeOrchestrationValue(previousConfig)}` }).catch(() => undefined);
       try { await transport.saveSettings(previous, false); await transport.disconnect(); await transport.connect(); await configureRuntime(previous); } catch { /* Keep the original save failure; persisted settings remain rolled back. */ }
       throw reason;
     }
-    setSettings(next); if (activeHostId !== "local" && !next.hosts.some((host) => host.id === activeHostId)) setActiveHostId("local"); await refresh();
+    setSettings(next); if (activeHostId !== "local" && !next.hosts.some((host) => host.id === activeHostId)) setActiveHostId("local"); void refresh().catch((reason) => setNotice({ title: "Settings saved, but the view could not refresh", message: reason instanceof Error ? reason.message : String(reason) }));
   };
   const setAgent = async (name: string) => { try { await transport.command({ type: "prompt", message: `/pi-orchestration-use ${encodeOrchestrationValue(name)}` }); } catch (reason) { setNotice({ title: "Could not change agent", message: reason instanceof Error ? reason.message : String(reason) }); } };
   const openProject = async (cwd: string, hostId: string) => { if (!canLeaveSettings()) return; const validatedCwd = await transport.validateProjectDirectory(cwd, hostId); if (!projectOpenRef.current) return; const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setTerminalOpen(false); updateConnected(false); setOrchestration(undefined); discardPendingUpdates(); setMessages([]); activateConversationKey(conversationKey); setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, activity: undefined, contextUsage: undefined })); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); const nextTransport = runtimePool.create({ cwd: validatedCwd, hostId }); transportConversationKeys.current.set(nextTransport, conversationKey); activateTransport(nextTransport); };

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,6 +21,12 @@ const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
 const extensionPath = fileURLToPath(import.meta.url);
 const fallbackConfig: Config = { agents: [{ name: "default", description: "General-purpose agent", model: "", effort: "high", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: ["read", "bash", "edit", "write", "grep", "find", "ls", "read_trace"], skills: [], mcpServers: [] }], sequences: [] };
 
+async function writeConfig(value: Config) {
+  const temporary = `${configPath}.${process.pid}.${Date.now()}.tmp`;
+  try { await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 }); await rename(temporary, configPath); }
+  catch (error) { await rm(temporary, { force: true }).catch(() => undefined); throw error; }
+}
+
 function normalize(value: Partial<Config>): Config {
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => agent && typeof agent.name === "string" && agent.name.length > 0).map((agent) => ({
     name: agent.name, description: typeof agent.description === "string" ? agent.description : "", model: typeof agent.model === "string" ? agent.model : "", effort: typeof agent.effort === "string" ? agent.effort : fallbackConfig.agents[0].effort,
@@ -40,7 +46,7 @@ async function loadConfig() {
   try { content = await readFile(configPath, "utf8"); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    const fallback = structuredClone(fallbackConfig); await writeFile(configPath, `${JSON.stringify(fallback, null, 2)}\n`, { mode: 0o600 }); return fallback;
+    const fallback = structuredClone(fallbackConfig); await writeConfig(fallback); return fallback;
   }
   try { return normalize(JSON.parse(content)); }
   catch (error) { throw new Error(`Could not parse orchestration config ${configPath}: ${error instanceof Error ? error.message : String(error)}`); }
@@ -180,9 +186,11 @@ export default async function orchestration(pi: ExtensionAPI) {
     active = name; run = undefined; pi.appendEntry(RUN_ENTRY, null); saveActive(ctx); await ctx.reload();
   }});
   pi.registerCommand("pi-orchestration-config", { description: "Update Pi orchestration configuration", handler: async (args, ctx) => {
-    const next = normalize(decode<Config>(args.trim())); await writeFile(configPath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 }); config = next;
-    if (!multiAgentMode(active) && !findAgent(active) && !findSequence(active)) active = config.agents[0]?.name || "default";
-    run = undefined; pi.appendEntry(RUN_ENTRY, null); saveActive(ctx); await ctx.reload();
+    const next = normalize(decode<Config>(args.trim())); const previous = config; const previousActive = active; await writeConfig(next); config = next;
+    try {
+      if (!multiAgentMode(active) && !findAgent(active) && !findSequence(active)) active = config.agents[0]?.name || "default";
+      run = undefined; pi.appendEntry(RUN_ENTRY, null); saveActive(ctx); await ctx.reload();
+    } catch (error) { await writeConfig(previous); config = previous; active = previousActive; throw error; }
   }});
   pi.registerCommand("pi-orchestration-next", { description: "Continue an orchestration sequence after reloading its resources", handler: async (args, ctx) => {
     const next = decode<{ sequence: string; index: number; handoff: string }>(args.trim()); const sequence = findSequence(next.sequence);

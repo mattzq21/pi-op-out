@@ -24,6 +24,7 @@ type McpClient = {
 
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 const REQUEST_TIMEOUT_MS = 10_000;
+const TOOL_TIMEOUT_MS = 120_000;
 const MAX_MCP_MESSAGE_BYTES = 4 * 1024 * 1024;
 const MCP_STATUS_KEY = "pi-desktop-mcp-status";
 
@@ -86,10 +87,10 @@ class StdioMcpClient {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       if (signal?.aborted) { reject(new Error("MCP tool call aborted")); return; }
-      const timeout = setTimeout(() => { const pending = this.pending.get(id); if (!pending) return; this.pending.delete(id); if (pending.abort) pending.abort.signal.removeEventListener("abort", pending.abort.listener); this.cancel(id); reject(new Error(`MCP request timed out: ${method}`)); }, REQUEST_TIMEOUT_MS);
+      const timeout = setTimeout(() => { const pending = this.pending.get(id); if (!pending) return; this.pending.delete(id); if (pending.abort) pending.abort.signal.removeEventListener("abort", pending.abort.listener); this.cancel(id); this.process.kill(); this.failAll(new Error(`MCP server stopped after request timed out: ${method}`)); reject(new Error(`MCP request timed out: ${method}`)); }, REQUEST_TIMEOUT_MS);
       const pending: NonNullable<ReturnType<typeof this.pending.get>> = { resolve, reject, timeout };
       if (signal) {
-        const listener = () => { const active = this.pending.get(id); if (!active) return; this.pending.delete(id); clearTimeout(active.timeout); this.cancel(id); reject(new Error("MCP tool call aborted")); };
+        const listener = () => { const active = this.pending.get(id); if (!active) return; this.pending.delete(id); clearTimeout(active.timeout); this.cancel(id); this.process.kill(); this.failAll(new Error("MCP server stopped because a tool call was aborted")); reject(new Error("MCP tool call aborted")); };
         pending.abort = { signal, listener }; signal.addEventListener("abort", listener, { once: true });
       }
       this.pending.set(id, pending);
@@ -186,16 +187,32 @@ class HttpMcpClient implements McpClient {
     return headers;
   }
 
-  private async post(message: JsonRpcMessage, signal?: AbortSignal): Promise<JsonRpcMessage | undefined> {
+  private async acceptedResponse(location: string | null, requestId: number, signal: AbortSignal): Promise<JsonRpcMessage> {
+    const target = location ? new URL(location, this.url) : this.url;
+    if (target.origin !== this.url.origin) throw new Error("MCP asynchronous response redirected to a different origin");
+    for (;;) {
+      const response = await fetch(target, { method: "GET", headers: this.requestHeaders(), signal });
+      if (response.status === 404 && this.sessionId) throw new ExpiredMcpSessionError("MCP HTTP session expired");
+      if (response.status === 202 || response.status === 204) { await response.body?.cancel(); await new Promise<void>((resolve, reject) => { const abort = () => { clearTimeout(timer); reject(signal.reason ?? new Error("MCP tool call aborted")); }; const timer = setTimeout(() => { signal.removeEventListener("abort", abort); resolve(); }, 100); signal.addEventListener("abort", abort, { once: true }); }); continue; }
+      if (!response.ok) { const body = (await readTextLimited(response)).trim(); throw new Error(`MCP HTTP ${response.status}${body ? `: ${body}` : ""}`); }
+      const contentType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
+      if (contentType === "text/event-stream") return readSseResponse(response, requestId);
+      if (contentType === "application/json") { const message = responseFromPayload(JSON.parse(await readTextLimited(response)), requestId); if (message) return message; }
+      throw new Error(`MCP asynchronous response did not contain response ${requestId}`);
+    }
+  }
+
+  private async post(message: JsonRpcMessage, signal?: AbortSignal, timeoutMs = REQUEST_TIMEOUT_MS): Promise<JsonRpcMessage | undefined> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(new Error(`MCP request timed out: ${message.method ?? "notification"}`)), REQUEST_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(new Error(`MCP request timed out: ${message.method ?? "notification"}`)), timeoutMs);
     const abort = () => controller.abort(signal?.reason); signal?.addEventListener("abort", abort, { once: true });
     try {
       const response = await fetch(this.url, { method: "POST", headers: this.requestHeaders(), body: JSON.stringify(message), signal: controller.signal });
       if (response.status === 404 && this.sessionId) throw new ExpiredMcpSessionError("MCP HTTP session expired");
       if (!response.ok) { const body = (await readTextLimited(response)).trim(); throw new Error(`MCP HTTP ${response.status}${body ? `: ${body}` : ""}`); }
       const returnedSessionId = response.headers.get("mcp-session-id"); if (returnedSessionId) this.sessionId = returnedSessionId;
-      if (message.id === undefined || response.status === 202) return undefined;
+      if (message.id === undefined) return undefined;
+      if (response.status === 202) return this.acceptedResponse(response.headers.get("location"), message.id, controller.signal);
       const contentType = response.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
       if (contentType === "application/json") return responseFromPayload(JSON.parse(await readTextLimited(response)), message.id);
       if (contentType === "text/event-stream") return readSseResponse(response, message.id);
@@ -206,7 +223,7 @@ class HttpMcpClient implements McpClient {
   private async request(method: string, params?: unknown, signal?: AbortSignal, recoverSession = true): Promise<unknown> {
     const id = this.nextId++;
     try {
-      const response = await this.post({ jsonrpc: "2.0", id, method, ...(params === undefined ? {} : { params }) } as JsonRpcMessage, signal);
+      const response = await this.post({ jsonrpc: "2.0", id, method, ...(params === undefined ? {} : { params }) } as JsonRpcMessage, signal, method === "tools/call" ? TOOL_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
       if (!response) throw new Error(`MCP HTTP server returned no response for ${method}`);
       if (response.error) throw new Error(`${response.error.message} (${response.error.code})`);
       return response.result;
