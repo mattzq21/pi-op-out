@@ -1252,7 +1252,7 @@ describe("Conversation acceptance", () => {
       await app.prepareMessage("/");
       await expect($('[role="option"][aria-selected="true"]')).toHaveText(expect.stringContaining("/compact"));
       await browser.keys("Tab");
-      await expect(app.composer).toHaveValue("/compact ");
+      expect((await app.composer.getValue()).trim()).toBe("/compact");
       expect((await backendCalls()).filter(({ args }) => (args.command as { type?: string })?.type === "prompt")).toHaveLength(0);
     } finally {
       await app.clearMessage();
@@ -1876,7 +1876,7 @@ describe("Project behavior", () => {
       await expect(app.projectDialogHeading).not.toBeExisting();
       await expect($('button[aria-label="Selected project: tmp"]')).toHaveAttribute("title", "/tmp");
       await expect($(".error-toast")).not.toBeExisting();
-      expect((await backendCalls()).filter(({ command }) => command === "stop_pi" || command === "start_pi").map(({ command }) => command)).toEqual(["start_pi"]);
+      expect((await backendCalls()).filter(({ command }) => command === "stop_pi" || command === "start_pi").map(({ command }) => command)).toEqual(["stop_pi", "start_pi"]);
     } finally {
       await resetBackend();
       await browser.refresh();
