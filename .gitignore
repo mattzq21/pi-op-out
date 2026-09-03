@@ -6,6 +6,7 @@ vite.config.d.ts
 src-tauri/target/
 src-tauri/gen/
 logs/
+.trace/
 extensions/pi-orchestration/config.json
 .DS_Store
 pi-ui.png
