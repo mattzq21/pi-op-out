@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Blocks, BookOpen, Bot, Check, CircleGauge, CirclePlus, Cpu, GitBranch, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Sparkles, Trash2, Wrench } from "lucide-react";
-import type { AgentProfile, AppSettings, McpServer, Model, OrchestrationConfig, PromptDictionary, RemoteHost, SequenceProfile } from "../types";
+import type { AgentProfile, AppSettings, McpServer, Model, OrchestrationConfig, RemoteHost, SequenceProfile } from "../types";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutFromEvent, type KeybindAction } from "../lib/keybindings";
 import { IconButton } from "./IconButton";
@@ -17,18 +17,6 @@ const sections = [
   { id: "skills" as const, label: "Skills", icon: Sparkles }, { id: "tools" as const, label: "Tools", icon: Wrench }, { id: "mcp" as const, label: "MCP servers", icon: Blocks }
 ];
 const firstEditableAgent = (agents: AgentProfile[]) => agents.findIndex((agent) => agent.name !== "default");
-function activeDictionaryConflict(dictionaries: PromptDictionary[], activeIds: string[]) {
-  const keys = new Set<string>();
-  for (const dictionary of dictionaries) {
-    if (!activeIds.includes(dictionary.id)) continue;
-    for (const entry of dictionary.entries) {
-      const key = entry.word.trim().toLocaleLowerCase(); if (!key) continue;
-      if (keys.has(key)) return entry.word.trim();
-      keys.add(key);
-    }
-  }
-  return undefined;
-}
 
 function settingsSnapshot(settings: AppSettings, orchestration?: OrchestrationConfig) {
   const mcpServers = settings.mcpServers.map(({ status: _status, error: _error, ...server }) => server);
@@ -79,7 +67,7 @@ export function SettingsView({ settings, orchestration, models = [], thinkingLev
         </SettingsSection>}
         {section === "dictionaries" && <SettingsSection title="Dictionaries" description="Highlight configured words while typing and replace them only when a prompt is submitted." headerAction={<button className="secondary-button" onClick={addDictionary}><CirclePlus size={15} />Add dictionary</button>}>
           <div className="dictionary-list">{draft.dictionaries.map((dictionary) => <div className="mcp-card dictionary-card" key={dictionary.id}>
-            <div className="dictionary-card-head"><span className="config-icon dictionary"><BookOpen size={16} /></span><input aria-label="Dictionary name" value={dictionary.name} onChange={(event) => setDraft((current) => ({ ...current, dictionaries: current.dictionaries.map((item) => item.id === dictionary.id ? { ...item, name: event.target.value } : item) }))} />{(() => { const active = draft.activeDictionaryIds.includes(dictionary.id); const conflict = active ? undefined : activeDictionaryConflict(draft.dictionaries, [...draft.activeDictionaryIds, dictionary.id]); return <Toggle label={`${active ? "Disable" : "Enable"} ${dictionary.name}`} checked={active} disabled={Boolean(conflict)} title={conflict ? `Conflicts on “${conflict}”` : undefined} onChange={(enabled) => patch({ activeDictionaryIds: enabled ? [...draft.activeDictionaryIds, dictionary.id] : draft.activeDictionaryIds.filter((id) => id !== dictionary.id) })} />; })()}<IconButton label={`Remove ${dictionary.name}`} onClick={() => setDraft((current) => ({ ...current, activeDictionaryIds: current.activeDictionaryIds.filter((id) => id !== dictionary.id), dictionaries: current.dictionaries.filter((item) => item.id !== dictionary.id) }))}><Trash2 size={15} /></IconButton></div>
+            <div className="dictionary-card-head"><span className="config-icon dictionary"><BookOpen size={16} /></span><input aria-label="Dictionary name" value={dictionary.name} onChange={(event) => setDraft((current) => ({ ...current, dictionaries: current.dictionaries.map((item) => item.id === dictionary.id ? { ...item, name: event.target.value } : item) }))} /><Toggle label={`${draft.activeDictionaryIds.includes(dictionary.id) ? "Disable" : "Enable"} ${dictionary.name}`} checked={draft.activeDictionaryIds.includes(dictionary.id)} onChange={(enabled) => patch({ activeDictionaryIds: enabled ? [...draft.activeDictionaryIds, dictionary.id] : draft.activeDictionaryIds.filter((id) => id !== dictionary.id) })} /><IconButton label={`Remove ${dictionary.name}`} onClick={() => setDraft((current) => ({ ...current, activeDictionaryIds: current.activeDictionaryIds.filter((id) => id !== dictionary.id), dictionaries: current.dictionaries.filter((item) => item.id !== dictionary.id) }))}><Trash2 size={15} /></IconButton></div>
             <div className="dictionary-entries">{dictionary.entries.map((entry, entryIndex) => <div className="dictionary-entry" key={entryIndex}><input aria-label={`Word ${entryIndex + 1}`} placeholder="Word" value={entry.word} onChange={(event) => setDraft((current) => ({ ...current, dictionaries: current.dictionaries.map((item) => item.id === dictionary.id ? { ...item, entries: item.entries.map((candidate, index) => index === entryIndex ? { ...candidate, word: event.target.value } : candidate) } : item) }))} /><span>→</span><input aria-label={`Replacement ${entryIndex + 1}`} placeholder="Replacement" value={entry.replacement} onChange={(event) => setDraft((current) => ({ ...current, dictionaries: current.dictionaries.map((item) => item.id === dictionary.id ? { ...item, entries: item.entries.map((candidate, index) => index === entryIndex ? { ...candidate, replacement: event.target.value } : candidate) } : item) }))} /><IconButton label={`Remove entry ${entryIndex + 1}`} onClick={() => setDraft((current) => ({ ...current, dictionaries: current.dictionaries.map((item) => item.id === dictionary.id ? { ...item, entries: item.entries.filter((_, index) => index !== entryIndex) } : item) }))}><Trash2 size={14} /></IconButton></div>)}</div>
             <button className="secondary-button dictionary-add-entry" onClick={() => setDraft((current) => ({ ...current, dictionaries: current.dictionaries.map((item) => item.id === dictionary.id ? { ...item, entries: [...item.entries, { word: "", replacement: "" }] } : item) }))}><CirclePlus size={14} />Add word</button>
           </div>)}</div>
