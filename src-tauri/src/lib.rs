@@ -1288,6 +1288,15 @@ fn create_temporary_chat(app: AppHandle, host_id: String, e2e: Option<bool>) -> 
 
 #[tauri::command(async)]
 fn list_directories(app: AppHandle, host_id: String, path: Option<String>) -> Result<DirectoryListing, String> {
+    if host_id == "local" {
+        let requested = path.filter(|value| !value.trim().is_empty()).map(PathBuf::from).unwrap_or(home_dir()?);
+        let current = requested.canonicalize().map_err(|error| format!("Could not browse {}: {error}", requested.display()))?;
+        if !current.is_dir() { return Err(format!("{} is not a directory", current.display())); }
+        let entries = fs::read_dir(&current).map_err(|error| format!("Could not browse {}: {error}", current.display()))?;
+        let mut directories: Vec<String> = entries.filter_map(Result::ok).map(|entry| entry.path()).filter(|entry| entry.is_dir()).map(|entry| entry.to_string_lossy().into_owned()).collect();
+        directories.sort_by_key(|directory| directory.to_lowercase());
+        return Ok(DirectoryListing { path: current.to_string_lossy().into_owned(), parent: current.parent().map(|parent| parent.to_string_lossy().into_owned()), directories });
+    }
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
     let remote = format!("cd {} && printf '%s\\000' \"$PWD\" && find . -mindepth 1 -maxdepth 1 -type d -printf '%f\\000'", remote_directory_path(path.as_deref()));
     let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not browse {}: {error}", host.name))?;
