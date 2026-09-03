@@ -368,7 +368,7 @@ export default function App() {
   useEffect(() => {
     if (!settings) return;
     const handleKeybind = (event: KeyboardEvent) => {
-      if (event.repeat || document.querySelector('[aria-modal="true"]')) return;
+      if (event.repeat || document.querySelector("dialog[open]")) return;
       const binding = keybindDefinitions.find((item) => matchesShortcut(event, settings.keybindings[item.action]));
       if (!binding) return;
       event.preventDefault();
