@@ -1680,7 +1680,6 @@ fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), Str
     Ok(())
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let broker = BrokerRuntime::default();
     let builder = tauri::Builder::default();
