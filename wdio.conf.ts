@@ -1,5 +1,5 @@
 import path from "node:path";
-import { randomInt } from "node:crypto";
+import { createServer } from "node:net";
 import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 
@@ -13,7 +13,21 @@ const testWindow = { width: 1_100, height: 720 };
 const defaultActualCallModel = "openai-codex/gpt-5.6-luna";
 const actualCallModel = process.env.PI_E2E_ACTUAL_MODEL?.trim() || defaultActualCallModel;
 const driverProvider = "embedded";
-const webdriverPort = randomInt(20_000, 60_000);
+const getOsAssignedPort = () => new Promise<number>((resolve, reject) => {
+  const server = createServer();
+  server.unref();
+  server.once("error", reject);
+  server.listen(0, "127.0.0.1", () => {
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      server.close();
+      reject(new Error("Could not allocate an ephemeral WebDriver port"));
+      return;
+    }
+    server.close((error) => error ? reject(error) : resolve(address.port));
+  });
+});
+const webdriverPort = await getOsAssignedPort();
 const sessionsRoot = path.join(homedir(), ".pi-desktop", "sessions");
 const temporaryProjectsRoot = path.join(homedir(), "pi-desktop", "tmp");
 const orchestrationConfigPath = path.join(homedir(), ".pi", "agent", "extensions", "pi-orchestration", "config.json");
@@ -72,7 +86,6 @@ export const config: WebdriverIO.Config = {
   services: [["@wdio/tauri-service", {
     appBinaryPath: process.env.PI_E2E_BINARY ?? defaultBinary,
     driverProvider,
-    tauriDriverPort: webdriverPort,
     embeddedPort: webdriverPort,
     captureBackendLogs: true,
   }]],

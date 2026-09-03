@@ -19,7 +19,7 @@ npm run test:e2e:run
 
 The default executable is `src-tauri/target/release/pi-desktop` (`pi-desktop.exe` on Windows). Set `PI_E2E_BINARY` to run the specs against another executable.
 
-Each run chooses a new high-numbered port for the embedded WebDriver server. An abandoned process on a previous run's port therefore does not block the next run.
+Each run asks the operating system to allocate an available ephemeral loopback port, then passes that port to the embedded WebDriver server. An abandoned process on a previous run's port therefore does not block the next run.
 
 The suite includes a real provider call. Before starting, it verifies that Pi's installed model catalog and authentication contain the selected provider. The default is `openai-codex/gpt-5.6-luna`; override it with `PI_E2E_ACTUAL_MODEL`:
 
