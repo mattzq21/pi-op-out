@@ -81,11 +81,13 @@
 - Preserve accurate context and cache accounting across response completion, history reloads, and compaction.
 - Show session-wide cache information, Codex usage remaining and reset timing, and estimated per-session API cost without obstructing normal work.
 
-## Request logs
+## Logs and traces
 
 - Let users open session logs in a browser and inspect the literal requests Pi transmitted.
-- Make request logs filterable and link them to their source sessions.
+- Make request logs filterable and link them to their source session traces.
 - Expose request sequence, tool schemas, and skills as clear inspectable information.
+- Provide a Pi tool that extracts a clean conversation of genuine user prompts and completed assistant messages from a session trace.
+- Interpret Pi CLI and Pi Desktop traces from their actual structured fields.
 
 ## Settings
 
