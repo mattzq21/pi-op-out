@@ -20,7 +20,7 @@ function savedCollapsedProjects() {
   catch { return new Set<string>(); }
 }
 
-function formatApiCost(cost: number) {
+function formatApiCost(cost = 0) {
   if (cost > 0 && cost < .01) return `$${cost.toFixed(3)}`;
   return `$${cost.toFixed(2)}`;
 }
