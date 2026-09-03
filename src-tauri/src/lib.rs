@@ -281,59 +281,6 @@ fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("settings.json"))
 }
 
-fn pi_desktop_config_path() -> Result<PathBuf, String> {
-    Ok(home_dir()?.join(".pi-desktop/config.json"))
-}
-
-fn dictionary_config_body(settings: &AppSettings) -> Result<(PathBuf, Vec<u8>), String> {
-    let path = pi_desktop_config_path()?;
-    let mut config = if path.exists() {
-        serde_json::from_slice::<Value>(&fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| format!("Could not parse {}: {error}", path.display()))?
-    } else { json!({}) };
-    let object = config.as_object_mut().ok_or_else(|| format!("{} must contain a JSON object", path.display()))?;
-    object.remove("activeDictionaryId");
-    object.insert("activeDictionaryIds".into(), serde_json::to_value(&settings.active_dictionary_ids).map_err(|error| error.to_string())?);
-    object.insert("dictionaries".into(), serde_json::to_value(&settings.dictionaries).map_err(|error| error.to_string())?);
-    Ok((path, serde_json::to_vec_pretty(&config).map_err(|error| error.to_string())?))
-}
-
-fn atomic_write(path: &Path, body: &[u8]) -> Result<(), String> {
-    if let Some(parent) = path.parent() { fs::create_dir_all(parent).map_err(|error| error.to_string())?; }
-    let temporary = path.with_extension(format!("{}.{}.tmp", path.extension().and_then(|value| value.to_str()).unwrap_or("data"), Uuid::new_v4()));
-    fs::write(&temporary, body).map_err(|error| error.to_string())?;
-    fs::rename(&temporary, path).map_err(|error| { let _ = fs::remove_file(&temporary); error.to_string() })
-}
-
-fn write_dictionary_config(settings: &AppSettings) -> Result<(), String> {
-    let (path, body) = dictionary_config_body(settings)?; atomic_write(&path, &body)
-}
-
-fn persist_settings_transaction(settings_path: &Path, settings_body: &[u8], dictionary_path: &Path, dictionary_body: &[u8]) -> Result<(), String> {
-    let previous_dictionary = fs::read(dictionary_path).ok();
-    atomic_write(dictionary_path, dictionary_body)?;
-    if let Err(error) = atomic_write(settings_path, settings_body) {
-        match previous_dictionary { Some(body) => { let _ = atomic_write(dictionary_path, &body); }, None => { let _ = fs::remove_file(dictionary_path); } }
-        return Err(error);
-    }
-    Ok(())
-}
-
-fn load_dictionary_config(settings: &mut AppSettings) -> Result<bool, String> {
-    let migrated_legacy = settings.active_dictionary_ids.is_empty() && !settings.active_dictionary_id.is_empty();
-    if migrated_legacy { settings.active_dictionary_ids.push(settings.active_dictionary_id.clone()); }
-    let path = pi_desktop_config_path()?;
-    if !path.exists() { write_dictionary_config(settings)?; return Ok(migrated_legacy); }
-    let config: Value = serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| format!("Could not parse {}: {error}", path.display()))?;
-    let object = config.as_object().ok_or_else(|| format!("{} must contain a JSON object", path.display()))?;
-    let config_legacy = !object.contains_key("activeDictionaryIds") && object.contains_key("activeDictionaryId");
-    let previous_dictionaries = settings.dictionaries.clone(); let previous_active = settings.active_dictionary_ids.clone();
-    if let Some(value) = object.get("dictionaries") { settings.dictionaries = serde_json::from_value(value.clone()).map_err(|error| format!("Invalid dictionaries in {}: {error}", path.display()))?; }
-    if let Some(value) = object.get("activeDictionaryIds") { settings.active_dictionary_ids = serde_json::from_value(value.clone()).map_err(|error| format!("Invalid activeDictionaryIds in {}: {error}", path.display()))?; }
-    else if let Some(value) = object.get("activeDictionaryId") { let id = value.as_str().ok_or_else(|| "activeDictionaryId must be a string".to_string())?; settings.active_dictionary_ids = if id.is_empty() { vec![] } else { vec![id.into()] }; }
-    if config_legacy { write_dictionary_config(settings)?; }
-    Ok(migrated_legacy || config_legacy || settings.dictionaries != previous_dictionaries || settings.active_dictionary_ids != previous_active)
-}
-
 fn validate_dictionaries(settings: &AppSettings) -> Result<(), String> {
     let mut ids = HashSet::new();
     for dictionary in &settings.dictionaries { if dictionary.id.trim().is_empty() || !ids.insert(dictionary.id.as_str()) { return Err("Every dictionary needs a unique id".into()); } }
@@ -590,11 +537,12 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     for (action, shortcut) in default_keybindings() { if let std::collections::hash_map::Entry::Vacant(entry) = settings.keybindings.entry(action) { entry.insert(shortcut); keybindings_changed = true; } }
     for tool in default_settings().tools { if !settings.tools.iter().any(|current| current.get("name") == tool.get("name")) { settings.tools.push(tool); } }
     merge_discovered_skills(&mut settings);
-    let dictionaries_changed = load_dictionary_config(&mut settings)?;
+    let migrated_dictionary_selection = settings.active_dictionary_ids.is_empty() && !settings.active_dictionary_id.is_empty();
+    if migrated_dictionary_selection { settings.active_dictionary_ids.push(settings.active_dictionary_id.clone()); }
     let context_cap_changed = settings.context_window_cap < 1000;
     if context_cap_changed { settings.context_window_cap = default_context_window_cap(); }
     validate_dictionaries(&settings)?;
-    if migrated_model || migrated_filesystem_mcp || dictionaries_changed || keybindings_changed || context_cap_changed { fs::write(path, serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?; }
+    if migrated_model || migrated_filesystem_mcp || migrated_dictionary_selection || keybindings_changed || context_cap_changed { fs::write(path, serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?; }
     Ok(settings)
 }
 
@@ -614,10 +562,7 @@ fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<(), String
         if !host_names.insert(name) { return Err(format!("Machine name '{}' is already in use", host.name.trim())); }
         validate_remote_host(host)?;
     }
-    let settings_body = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
-    let settings_path = settings_path(&app)?;
-    let (dictionary_path, dictionary_body) = dictionary_config_body(&settings)?;
-    persist_settings_transaction(&settings_path, &settings_body, &dictionary_path, &dictionary_body)
+    fs::write(settings_path(&app)?, serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
