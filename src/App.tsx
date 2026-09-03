@@ -54,6 +54,10 @@ export function formatCodexReset(resetAt: number, now = Date.now()) {
 export default function App() {
   const runtimePool = useMemo(() => new SessionRuntimePool(), []); const [transport, setTransport] = useState(() => { const initial = runtimePool.create(); runtimePool.activate(initial); return initial; }); const [view, setView] = useState<"chat" | "settings">("chat");
   const activeTransportRef = useRef(transport); activeTransportRef.current = transport;
+  const initialConversationKey = useRef(`local:draft-${crypto.randomUUID()}`);
+  const [activeConversationKey, setActiveConversationKey] = useState(initialConversationKey.current);
+  const activeConversationKeyRef = useRef(activeConversationKey); activeConversationKeyRef.current = activeConversationKey;
+  const transportConversationKeys = useRef(new Map<NativeTransport, string>([[transport, initialConversationKey.current]]));
   const runningSessions = useSyncExternalStore((listener) => runtimePool.subscribe(listener), () => runtimePool.runningSessions());
   const unseenSessions = useSyncExternalStore((listener) => runtimePool.subscribe(listener), () => runtimePool.unseenSessions());
   const gitDiffs = useTurnDiffs(runtimePool, transport);
@@ -61,7 +65,7 @@ export default function App() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]); const [settings, setSettings] = useState<AppSettings>(defaultSettings); const [orchestration, setOrchestration] = useState<OrchestrationCapability>();
   const [settingsDirty, setSettingsDirty] = useState(false);
   const sessionIndexRequest = useRef<Promise<void> | undefined>(undefined);
-  const [panelOpen, setPanelOpen] = useState(true); const [query, setQuery] = useState(""); const [connected, setConnected] = useState(false); const [error, setError] = useState<string>();
+  const [panelOpen, setPanelOpen] = useState(true); const [query, setQuery] = useState(""); const [connected, setConnected] = useState(false); const connectionReadyRef = useRef(connected); connectionReadyRef.current = connected; const updateConnected = (value: boolean) => { connectionReadyRef.current = value; setConnected(value); }; const [error, setError] = useState<string>();
   const [activeHostId, setActiveHostId] = useState("local");
   const [activeCwd, setActiveCwd] = useState<string>();
   const [activeBranch, setActiveBranch] = useState<string>();
@@ -79,7 +83,6 @@ export default function App() {
   const [relocatingSession, setRelocatingSession] = useState<SessionSummary>(); const [relocationError, setRelocationError] = useState<string>();
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>({});
-  const [unsavedSessionId, setUnsavedSessionId] = useState(() => crypto.randomUUID());
   const [uploadsByTransport, setUploadsByTransport] = useState<Map<NativeTransport, ComposerUpload[]>>(() => new Map());
   const newSessionPending = useRef(false);
   const [splitPane, setSplitPane] = useState<SplitPaneState>();
@@ -89,7 +92,7 @@ export default function App() {
   const pendingBtwRequest = useRef<{ id: string; transport: NativeTransport } | undefined>(undefined);
   const [terminalsBySession, setTerminalsBySession] = useState<Record<string, SessionTerminals>>({});
   const queuedTerminalOutput = useRef(new Map<string, QueuedTerminalOutput>()); const terminalOutputFrame = useRef<number | undefined>(undefined);
-  const terminalSessionId = `${activeHostId}:${state.sessionId || unsavedSessionId}`;
+  const terminalSessionId = activeConversationKey;
   const terminalSessionIdRef = useRef(terminalSessionId); terminalSessionIdRef.current = terminalSessionId;
   const splitSessionId = splitPane ? `${splitPane.session.hostId ?? "local"}:${splitPane.session.id}` : "";
   const composerDraft = composerDrafts[terminalSessionId] ?? "";
@@ -97,6 +100,7 @@ export default function App() {
   const splitComposerDraft = composerDrafts[splitSessionId] ?? "";
   const sessionTerminals = terminalsBySession[terminalSessionId] ?? initialTerminals(terminalSessionId);
   const activeTerminal = sessionTerminals.tabs.find((terminal) => terminal.id === sessionTerminals.activeId) ?? sessionTerminals.tabs[0];
+  const activateConversationKey = (key: string) => { activeConversationKeyRef.current = key; setActiveConversationKey(key); };
 
   const flushTerminalOutput = useCallback(() => {
     terminalOutputFrame.current = undefined; const chunks = queuedTerminalOutput.current; queuedTerminalOutput.current = new Map();
@@ -111,6 +115,14 @@ export default function App() {
   useEffect(() => { let cancelled = false; void transport.loadCodexUsage().then((usage) => { if (!cancelled) setCodexUsage(usage); }).catch(() => undefined); return () => { cancelled = true; }; }, []);
   useEffect(() => { newSessionPending.current = false; }, [transport]);
   useEffect(() => { setPromptContext(undefined); }, [transport]);
+  useEffect(() => {
+    const previousKey = activeConversationKeyRef.current;
+    if (!state.sessionId || !previousKey.includes(":draft-")) return;
+    const canonicalKey = `${activeHostId}:${state.sessionId}`;
+    setComposerDrafts((current) => { if (!(previousKey in current)) return current; const next = { ...current, [canonicalKey]: current[previousKey] }; delete next[previousKey]; return next; });
+    setTerminalsBySession((current) => { if (!(previousKey in current)) return current; const next = { ...current, [canonicalKey]: current[previousKey] }; delete next[previousKey]; return next; });
+    transportConversationKeys.current.set(transport, canonicalKey); activateConversationKey(canonicalKey);
+  }, [activeHostId, state.sessionId, transport]);
   useEffect(() => {
     document.title = "Pi";
     setStatuses({}); setWidgets({});
@@ -196,21 +208,21 @@ export default function App() {
         else if (request.method === "setStatus" && request.statusKey) { setExtensionOwner(transport); setStatuses((current) => { const next = { ...current }; if (request.statusText) next[request.statusKey!] = request.statusText; else delete next[request.statusKey!]; return next; }); }
         else if (request.method === "setWidget" && request.widgetKey) { setExtensionOwner(transport); setWidgets((current) => { const next = { ...current }; if (request.widgetLines) next[request.widgetKey!] = request.widgetLines; else delete next[request.widgetKey!]; return next; }); }
         else if (request.method === "setTitle") document.title = request.title || "Pi";
-        else if (request.method === "set_editor_text") { setComposerDrafts((current) => { const key = terminalSessionIdRef.current; const next = { ...current }; if (request.text) next[key] = request.text; else delete next[key]; return next; }); setActivePane("main"); setMainComposerFocusRequest((value) => value + 1); }
+        else if (request.method === "set_editor_text") { setComposerDrafts((current) => { const key = transportConversationKeys.current.get(transport) ?? terminalSessionIdRef.current; const next = { ...current }; if (request.text) next[key] = request.text; else delete next[key]; return next; }); setActivePane("main"); setMainComposerFocusRequest((value) => value + 1); }
         else setDialogs((current) => [...current, { request, transport }]);
       }
       if (event.type === "session_switched") void refresh();
       if (event.type === "session_info_changed") void refresh();
       if (event.type === "disconnected") {
-        setOrchestration(undefined); setMcpStatuses({}); setConnected(false);
+        setOrchestration(undefined); setMcpStatuses({}); updateConnected(false);
         if (reconnecting) return; reconnecting = true;
         window.setTimeout(() => {
           if (cancelled) return; const diagnostic = transport.lastDiagnostic();
-          void transport.connect().then(() => refresh()).then((value) => configureRuntime(value)).then(() => refreshSession()).then(() => { if (!cancelled) { setError(undefined); setConnected(true); } }).catch((reason: unknown) => { if (!cancelled) { const message = reason instanceof Error ? reason.message : String(reason); setError(diagnostic && !message.includes(diagnostic) ? `${message}\n${diagnostic}` : message); } }).finally(() => { reconnecting = false; });
+          void transport.connect().then(() => refresh()).then((value) => configureRuntime(value)).then(() => refreshSession()).then(() => { if (!cancelled) { setError(undefined); updateConnected(true); } }).catch((reason: unknown) => { if (!cancelled) { const message = reason instanceof Error ? reason.message : String(reason); setError(diagnostic && !message.includes(diagnostic) ? `${message}\n${diagnostic}` : message); } }).finally(() => { reconnecting = false; });
         }, 50);
       }
     });
-    transport.connect().then(() => refresh()).then((value) => configureRuntime(value)).then(() => refreshSession()).then(() => { if (!cancelled) { setError(undefined); setConnected(true); } }).catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); });
+    transport.connect().then(() => refresh()).then((value) => configureRuntime(value)).then(() => refreshSession()).then(() => { if (!cancelled) { setError(undefined); updateConnected(true); } }).catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); });
     return () => { cancelled = true; unsubscribe(); if (terminalOutputFrame.current !== undefined) cancelAnimationFrame(terminalOutputFrame.current); terminalOutputFrame.current = undefined; queuedTerminalOutput.current.clear(); };
   }, [configureRuntime, handleEvent, queueTerminalOutput, refresh, refreshSession, transport]);
 
@@ -225,6 +237,7 @@ export default function App() {
   }, [connected, settings.hosts.length, syncSessionIndex]);
 
   const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => {
+    if (!connectionReadyRef.current) throw new Error("Pi is still connecting");
     if (behavior) { await transport.command({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...(images.length ? { images } : {}) }); setState((current) => ({ ...current, pendingMessageCount: current.pendingMessageCount + 1 })); return; }
     const abandoned = findReplaceableAbortedTurn(messages);
     if (abandoned) {
@@ -261,17 +274,17 @@ export default function App() {
     runtimePool.activate(nextTransport); setTransport(nextTransport);
     if (discardPrevious) {
       setUploadsByTransport((current) => { const next = new Map(current); next.delete(previousTransport); return next; });
-      void runtimePool.release(previousTransport);
+      void runtimePool.release(previousTransport).finally(() => transportConversationKeys.current.delete(previousTransport));
     }
   };
   const branch = async (message: ChatMessage) => { try { const index = messages.findIndex((item) => item.id === message.id); const user = messages.slice(0, index + 1).reverse().find((item) => item.role === "user" && item.entryId); if (!user) throw new Error("Could not find the message to branch from"); await transport.command({ type: "fork", entryId: user.entryId }); await refresh(); } catch (reason) { setNotice({ title: "Could not branch conversation", message: reason instanceof Error ? reason.message : String(reason) }); } };
-  const newSession = async () => { if (newSessionPending.current || !canLeaveSettings()) return; newSessionPending.current = true; const hostId = activeHostIdRef.current; const projectCwd = selectedProjectCwd(activeCwd, transport.isTemporaryChat()); setView("chat"); closeSplitPane(); setConnected(false); setOrchestration(undefined); discardPendingUpdates(); setMessages([]); const nextTransport = runtimePool.create(projectCwd ? { cwd: projectCwd, hostId } : { hostId }); try { if (projectCwd) setActiveCwd(projectCwd); else setActiveCwd(await nextTransport.prepareTemporaryChat(hostId)); setActiveHostId(hostId); setUnsavedSessionId(crypto.randomUUID()); setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, activity: undefined, contextUsage: undefined })); activateTransport(nextTransport); } catch (reason) { newSessionPending.current = false; void runtimePool.release(nextTransport); setConnected(true); setError(reason instanceof Error ? reason.message : String(reason)); } };
+  const newSession = async () => { if (newSessionPending.current || !canLeaveSettings()) return; newSessionPending.current = true; const hostId = activeHostIdRef.current; const projectCwd = selectedProjectCwd(activeCwd, transport.isTemporaryChat()); const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; activateConversationKey(conversationKey); setView("chat"); closeSplitPane(); setTerminalOpen(false); updateConnected(false); setOrchestration(undefined); discardPendingUpdates(); setMessages([]); setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, activity: undefined, contextUsage: undefined })); const nextTransport = runtimePool.create(projectCwd ? { cwd: projectCwd, hostId } : { hostId }); transportConversationKeys.current.set(nextTransport, conversationKey); try { if (projectCwd) setActiveCwd(projectCwd); else setActiveCwd(await nextTransport.prepareTemporaryChat(hostId)); setActiveHostId(hostId); activateTransport(nextTransport); } catch (reason) { newSessionPending.current = false; transportConversationKeys.current.delete(nextTransport); void runtimePool.release(nextTransport); updateConnected(false); setError(reason instanceof Error ? reason.message : String(reason)); } };
   const selectSession = (session: SessionSummary) => {
     const hostId = session.hostId ?? "local"; if (session.id === state.sessionId && hostId === activeHostId) return transport;
     if (splitPane?.session.id === session.id && (splitPane.session.hostId ?? "local") === hostId) closeSplitPane();
     if (session.cwdExists === false) { setRelocationError(undefined); setRelocatingSession(session); return undefined; }
     const nextTransport = runtimePool.forSession(session);
-    discardPendingUpdates(); setView("chat"); setConnected(false); setOrchestration(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd); setMessages([]); setState((value) => ({ ...value, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, isStreaming: false, activity: undefined })); activateTransport(nextTransport); return nextTransport;
+    const conversationKey = `${hostId}:${session.id}`; transportConversationKeys.current.set(nextTransport, conversationKey); activateConversationKey(conversationKey); discardPendingUpdates(); setView("chat"); setTerminalOpen(false); updateConnected(false); setOrchestration(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd); setMessages([]); setState((value) => ({ ...value, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, isStreaming: false, activity: undefined })); activateTransport(nextTransport); return nextTransport;
   };
   const setModel = async (model: Model) => { try { await transport.command({ type: "set_model", provider: model.provider, modelId: model.id }); await refreshSession(); } catch (reason) { setNotice({ title: "Could not change model", message: reason instanceof Error ? reason.message : String(reason) }); } };
   const setThinking = async (level: string) => { try { await transport.command({ type: "set_thinking_level", level }); setState((current) => ({ ...current, thinkingLevel: level })); } catch (reason) { setNotice({ title: "Could not change thinking level", message: reason instanceof Error ? reason.message : String(reason) }); } };
@@ -289,7 +302,7 @@ export default function App() {
     setSettings(next); if (activeHostId !== "local" && !next.hosts.some((host) => host.id === activeHostId)) setActiveHostId("local"); await refresh();
   };
   const setAgent = async (name: string) => { try { await transport.command({ type: "prompt", message: `/pi-orchestration-use ${encodeOrchestrationValue(name)}` }); } catch (reason) { setNotice({ title: "Could not change agent", message: reason instanceof Error ? reason.message : String(reason) }); } };
-  const openProject = async (cwd: string, hostId: string) => { if (!canLeaveSettings()) return; const validatedCwd = await transport.validateProjectDirectory(cwd, hostId); if (!projectOpenRef.current) return; projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setConnected(false); setOrchestration(undefined); discardPendingUpdates(); setMessages([]); setUnsavedSessionId(crypto.randomUUID()); setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, activity: undefined, contextUsage: undefined })); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); const nextTransport = runtimePool.create({ cwd: validatedCwd, hostId }); activateTransport(nextTransport); };
+  const openProject = async (cwd: string, hostId: string) => { if (!canLeaveSettings()) return; const validatedCwd = await transport.validateProjectDirectory(cwd, hostId); if (!projectOpenRef.current) return; const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setTerminalOpen(false); updateConnected(false); setOrchestration(undefined); discardPendingUpdates(); setMessages([]); activateConversationKey(conversationKey); setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, activity: undefined, contextUsage: undefined })); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); const nextTransport = runtimePool.create({ cwd: validatedCwd, hostId }); transportConversationKeys.current.set(nextTransport, conversationKey); activateTransport(nextTransport); };
   const chooseChatProject = () => setProjectOpen(true);
   const openSplitPane = (session: SessionSummary) => { closeSplitPane(); setSplitPane({ session }); };
   const sessionAction = async (session: SessionSummary, action: SessionAction) => {
@@ -301,16 +314,18 @@ export default function App() {
     }
     if (action === "archive") {
       if (!window.confirm(`Archive “${session.name}”?`)) return;
+      const isActiveSession = session.id === state.sessionId && (session.hostId ?? "local") === activeHostId;
+      if (isActiveSession) updateConnected(false);
       try {
         const archivedTerminalSessionId = `${session.hostId ?? "local"}:${session.id}`;
         const terminalState = terminalsBySession[archivedTerminalSessionId];
         await transport.archiveSession(session.path, session.hostId, terminalState);
-        if (session.id === state.sessionId && (session.hostId ?? "local") === activeHostId) { await transport.command({ type: "new_session" }); await refresh(); }
+        if (isActiveSession) { const conversationKey = `${activeHostId}:draft-${crypto.randomUUID()}`; transportConversationKeys.current.set(transport, conversationKey); activateConversationKey(conversationKey); await transport.command({ type: "new_session" }); await refresh(); updateConnected(true); }
         else await runtimePool.remove(session);
         setTerminalsBySession((current) => { const next = { ...current }; delete next[archivedTerminalSessionId]; return next; });
         if (archivedTerminalSessionId === terminalSessionId) setTerminalOpen(false);
         await refresh();
-      } catch (reason) { setNotice({ title: "Could not archive conversation", message: reason instanceof Error ? reason.message : String(reason) }); }
+      } catch (reason) { if (isActiveSession) updateConnected(true); setNotice({ title: "Could not archive conversation", message: reason instanceof Error ? reason.message : String(reason) }); }
       return;
     }
     const selectedTransport = selectSession(session); if (!selectedTransport) return;
@@ -318,20 +333,24 @@ export default function App() {
     if (action === "clone") { try { await selectedTransport.connect(); await selectedTransport.command({ type: "clone" }); await syncSessionIndex(); } catch (reason) { setNotice({ title: "Could not clone conversation", message: reason instanceof Error ? reason.message : String(reason) }); } }
   };
   const startTerminal = async (terminalId: string, cols: number, rows: number) => {
-    setTerminalsBySession((current) => { const session = current[terminalSessionId] ?? initialTerminals(terminalSessionId); return { ...current, [terminalSessionId]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, started: true, exited: false } : terminal) } }; });
+    if (!connectionReadyRef.current) return;
+    const sessionKey = activeConversationKeyRef.current;
+    setTerminalsBySession((current) => { const session = current[sessionKey] ?? initialTerminals(sessionKey); return { ...current, [sessionKey]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, started: true, exited: false } : terminal) } }; });
     const cwd = activeCwd ?? sessions.find((session) => session.id === state.sessionId && (session.hostId ?? "local") === activeHostId)?.cwd;
     if (!cwd) { queueTerminalOutput(terminalId, "\r\nCould not determine this session's working directory.\r\n"); return; }
     try { await transport.startTerminal(terminalId, cwd, cols, rows); } catch (reason) { queueTerminalOutput(terminalId, `\r\nCould not start terminal: ${String(reason)}\r\n`); }
   };
-  const addTerminal = () => setTerminalsBySession((current) => { const session = current[terminalSessionId] ?? initialTerminals(terminalSessionId); if (session.tabs.length >= MAX_TERMINALS) return current; const id = `terminal-${terminalSessionId}-${crypto.randomUUID()}`; return { ...current, [terminalSessionId]: { activeId: id, tabs: [...session.tabs, { id, output: "", outputEnd: 0, started: false }] } }; });
-  const selectTerminal = (terminalId: string) => setTerminalsBySession((current) => { const session = current[terminalSessionId] ?? initialTerminals(terminalSessionId); return { ...current, [terminalSessionId]: { ...session, activeId: terminalId } }; });
+  const addTerminal = () => { if (!connectionReadyRef.current) return; const sessionKey = activeConversationKeyRef.current; setTerminalsBySession((current) => { const session = current[sessionKey] ?? initialTerminals(sessionKey); if (session.tabs.length >= MAX_TERMINALS) return current; const id = `terminal-${sessionKey}-${crypto.randomUUID()}`; return { ...current, [sessionKey]: { activeId: id, tabs: [...session.tabs, { id, output: "", outputEnd: 0, started: false }] } }; }); };
+  const selectTerminal = (terminalId: string) => { if (!connectionReadyRef.current) return; const sessionKey = activeConversationKeyRef.current; setTerminalsBySession((current) => { const session = current[sessionKey] ?? initialTerminals(sessionKey); return { ...current, [sessionKey]: { ...session, activeId: terminalId } }; }); };
   const deleteTerminal = async () => {
+    if (!connectionReadyRef.current) return;
     const terminalId = activeTerminal.id; const closingLast = sessionTerminals.tabs.length === 1;
     try { await transport.closeTerminal(terminalId); } catch (reason) { setNotice({ title: "Could not close terminal", message: reason instanceof Error ? reason.message : String(reason) }); return; }
     if (closingLast) setTerminalOpen(false);
-    setTerminalsBySession((current) => { const session = current[terminalSessionId] ?? initialTerminals(terminalSessionId); const tabs = session.tabs.filter((terminal) => terminal.id !== terminalId); const next = { ...current }; if (!tabs.length) delete next[terminalSessionId]; else next[terminalSessionId] = { activeId: tabs[0].id, tabs }; return next; });
+    const sessionKey = activeConversationKeyRef.current;
+    setTerminalsBySession((current) => { const session = current[sessionKey] ?? initialTerminals(sessionKey); const tabs = session.tabs.filter((terminal) => terminal.id !== terminalId); const next = { ...current }; if (!tabs.length) delete next[sessionKey]; else next[sessionKey] = { activeId: tabs[0].id, tabs }; return next; });
   };
-  const setComposerDraft = (value: string) => setComposerDrafts((current) => { if (value) return { ...current, [terminalSessionId]: value }; const next = { ...current }; delete next[terminalSessionId]; return next; });
+  const setComposerDraft = (value: string) => { const sessionKey = activeConversationKeyRef.current; setComposerDrafts((current) => { if (value) return { ...current, [sessionKey]: value }; const next = { ...current }; delete next[sessionKey]; return next; }); };
   const setSplitComposerDraft = (value: string) => setComposerDrafts((current) => { if (value) return { ...current, [splitSessionId]: value }; const next = { ...current }; delete next[splitSessionId]; return next; });
   const toggleTerminal = () => { if (!canLeaveSettings()) return; setView("chat"); setTerminalOpen((open) => !open); };
   const toggleDebugMode = useCallback(() => {
@@ -362,7 +381,7 @@ export default function App() {
   return <div className="app dark">
     {import.meta.env.MODE === "e2e" && <div className="e2e-bridge"><textarea id="pi-e2e-responses" aria-label="E2E responses" placeholder="E2E responses" /><textarea id="pi-e2e-calls" aria-label="E2E calls" placeholder="E2E calls" /></div>}
     <aside className="icon-rail">{activeBranch && <div className="rail-branch" title={activeBranch}><GitBranch size={13} /><span>{activeBranch}</span></div>}<nav><IconButton label="New conversation" onClick={newSession}><Plus size={19} /></IconButton><IconButton label="Conversations" className={view === "chat" ? "active" : ""} onClick={() => { if (canLeaveSettings()) setView("chat"); }}><MessageSquare size={18} /></IconButton><IconButton label="New project" onClick={() => setProjectOpen(true)}><FolderGit2 size={18} /></IconButton><IconButton label={settings.debugMode ? "Disable debug mode" : "Enable debug mode"} className={settings.debugMode ? "active" : ""} onClick={toggleDebugMode}><Bug size={18} /></IconButton><IconButton label="Settings" className={view === "settings" ? "active" : ""} onClick={() => setView("settings")}><Settings size={19} /></IconButton></nav>{view === "chat" && panelOpen && <SessionPanel sessions={sessions} activeId={state.sessionId} activeHostId={activeHostId} runningSessions={runningSessions} unseenSessions={unseenSessions} query={query} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} />}<div className="rail-bottom">{codexUsage !== undefined && <span className="codex-usage" aria-label="Codex usage remaining" title="Codex usage remaining">{codexUsage.remainingPercent}% left{codexUsage.resetAt ? ` · ${formatCodexReset(codexUsage.resetAt)}` : ""}</span>}</div></aside>
-    {view === "chat" ? <div className="chat-workspace"><div className={`chat-panes ${splitPane ? "split" : ""}`}><ChatView state={state} messages={messages} gitDiffs={gitDiffs} promptContext={extensionStateIsCurrent ? promptContext : undefined} debug={settings.debugMode} agents={extensionStateIsCurrent ? orchestration?.config.agents ?? [] : []} sequences={extensionStateIsCurrent ? orchestration?.config.sequences ?? [] : []} activeAgent={extensionStateIsCurrent ? orchestration?.active : undefined} dictionaries={settings.dictionaries.filter((item) => settings.activeDictionaryIds.includes(item.id))} models={models} commands={commands} thinkingLevels={thinkingLevels} widgets={extensionStateIsCurrent ? Object.values(widgets).flat() : []} statuses={extensionStateIsCurrent ? Object.values(statuses) : []} projectCwd={selectedProjectCwd(activeCwd, transport.isTemporaryChat())} controlsDisabled={!connected} draft={composerDraft} onDraftChange={setComposerDraft} focusRequest={mainComposerFocusRequest} onActivate={() => setActivePane("main")} uploads={composerUploads} onUploadsChange={setComposerUploads} onSend={send} onAbort={abortInteraction} onOpenTerminal={() => setTerminalOpen(true)} onOpenProject={chooseChatProject} onBranch={branch} onAgent={setAgent} onModel={setModel} onThinking={setThinking} />{splitPane && <SplitChatPane key={splitSessionId} runtimePool={runtimePool} session={splitPane.session} settings={settings} draft={splitComposerDraft} onDraftChange={setSplitComposerDraft} focusRequest={splitComposerFocusRequest} onActivate={() => setActivePane("split")} forkFrom={splitPane.btw?.forkFrom} initialPrompt={splitPane.btw?.task} onReady={splitPane.btw ? () => respondToBtw(splitPane.btw!.requestId, { value: "opened" }) : undefined} onFailed={splitPane.btw ? () => respondToBtw(splitPane.btw!.requestId, { cancelled: true }) : undefined} onClose={closeSplitPane} />}</div>{terminalOpen && <TerminalView key={`${terminalSessionId}:${activeTerminal.id}`} cwd={activeCwd ?? sessions.find((session) => session.id === state.sessionId && (session.hostId ?? "local") === activeHostId)?.cwd} terminals={sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={activeTerminal.id} output={activeTerminal.output} outputEnd={activeTerminal.outputEnd} exited={activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { void transport.writeTerminal(activeTerminal.id, data).catch((reason) => queueTerminalOutput(activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { void transport.resizeTerminal(activeTerminal.id, cols, rows).catch(() => undefined); }} onDelete={deleteTerminal} onClose={() => setTerminalOpen(false)} />}</div> : <SettingsView settings={settingsWithMcpStatuses} orchestration={extensionStateIsCurrent ? orchestration?.config : undefined} models={models} thinkingLevels={thinkingLevels} onSave={saveSettings} onDirtyChange={setSettingsDirty} />}
+    {view === "chat" ? <div className="chat-workspace"><div className={`chat-panes ${splitPane ? "split" : ""}`}><ChatView state={state} messages={messages} gitDiffs={gitDiffs} promptContext={extensionStateIsCurrent ? promptContext : undefined} debug={settings.debugMode} agents={extensionStateIsCurrent ? orchestration?.config.agents ?? [] : []} sequences={extensionStateIsCurrent ? orchestration?.config.sequences ?? [] : []} activeAgent={extensionStateIsCurrent ? orchestration?.active : undefined} dictionaries={settings.dictionaries.filter((item) => settings.activeDictionaryIds.includes(item.id))} models={models} commands={commands} thinkingLevels={thinkingLevels} widgets={extensionStateIsCurrent ? Object.values(widgets).flat() : []} statuses={extensionStateIsCurrent ? Object.values(statuses) : []} projectCwd={selectedProjectCwd(activeCwd, transport.isTemporaryChat())} controlsDisabled={!connected} draft={composerDraft} onDraftChange={setComposerDraft} focusRequest={mainComposerFocusRequest} onActivate={() => setActivePane("main")} uploads={composerUploads} onUploadsChange={setComposerUploads} onSend={send} onAbort={abortInteraction} onOpenTerminal={() => setTerminalOpen(true)} onOpenProject={chooseChatProject} onBranch={branch} onAgent={setAgent} onModel={setModel} onThinking={setThinking} />{splitPane && <SplitChatPane key={splitSessionId} runtimePool={runtimePool} session={splitPane.session} settings={settings} draft={splitComposerDraft} onDraftChange={setSplitComposerDraft} focusRequest={splitComposerFocusRequest} onActivate={() => setActivePane("split")} forkFrom={splitPane.btw?.forkFrom} initialPrompt={splitPane.btw?.task} onReady={splitPane.btw ? () => respondToBtw(splitPane.btw!.requestId, { value: "opened" }) : undefined} onFailed={splitPane.btw ? () => respondToBtw(splitPane.btw!.requestId, { cancelled: true }) : undefined} onClose={closeSplitPane} />}</div>{terminalOpen && <TerminalView key={`${terminalSessionId}:${activeTerminal.id}`} cwd={activeCwd ?? sessions.find((session) => session.id === state.sessionId && (session.hostId ?? "local") === activeHostId)?.cwd} terminals={sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={activeTerminal.id} output={activeTerminal.output} outputEnd={activeTerminal.outputEnd} exited={activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { if (!connectionReadyRef.current) return; void transport.writeTerminal(activeTerminal.id, data).catch((reason) => queueTerminalOutput(activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { if (!connectionReadyRef.current) return; void transport.resizeTerminal(activeTerminal.id, cols, rows).catch(() => undefined); }} onDelete={deleteTerminal} onClose={() => setTerminalOpen(false)} />}</div> : <SettingsView settings={settingsWithMcpStatuses} orchestration={extensionStateIsCurrent ? orchestration?.config : undefined} models={models} thinkingLevels={thinkingLevels} onSave={saveSettings} onDirtyChange={setSettingsDirty} />}
     {(error || notice) && <div className="toast-stack">
       {error && <div className="error-toast"><strong>Pi could not connect</strong><span>{error}</span><button onClick={() => setError(undefined)}>×</button></div>}
       {notice && <div className="error-toast"><strong>{notice.title}</strong><span>{notice.message}</span><button onClick={() => setNotice(undefined)}>×</button></div>}

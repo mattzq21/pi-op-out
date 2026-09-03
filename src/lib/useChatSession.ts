@@ -23,12 +23,13 @@ export interface ChatSessionRuntime {
 export function useChatSession(transport: PiTransport, initialState: AgentState = emptyState): ChatSessionRuntime {
   const [state, setState] = useState(initialState); const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [models, setModels] = useState<Model[]>([]); const [commands, setCommands] = useState<SlashCommand[]>([]); const [thinkingLevels, setThinkingLevels] = useState<string[]>(["off"]);
-  const liveRevision = useRef(0); const activeAssistantId = useRef<string | undefined>(undefined); const pendingUpdates = useRef<MessageUpdate[]>([]); const frame = useRef<number | undefined>(undefined);
+  const liveRevision = useRef(0); const activeAssistantId = useRef<string | undefined>(undefined); const activeMessageIds = useRef(new Map<string, string>()); const liveMessageSequence = useRef(0); const pendingUpdates = useRef<MessageUpdate[]>([]); const frame = useRef<number | undefined>(undefined);
+  const nextLiveMessageId = (role: unknown) => `live-${String(role)}-${Date.now()}-${++liveMessageSequence.current}`;
   const flush = useCallback(() => { if (frame.current !== undefined) cancelAnimationFrame(frame.current); frame.current = undefined; const updates = pendingUpdates.current.splice(0); if (updates.length) setMessages((current) => updates.reduce((next, update) => update(next), current)); }, []);
   const queue = useCallback((update: MessageUpdate) => { pendingUpdates.current.push(update); if (frame.current === undefined) frame.current = requestAnimationFrame(flush); }, [flush]);
   const discardPendingUpdates = useCallback(() => { if (frame.current !== undefined) cancelAnimationFrame(frame.current); frame.current = undefined; pendingUpdates.current.length = 0; }, []);
   useEffect(() => discardPendingUpdates, [discardPendingUpdates]);
-  useEffect(() => { liveRevision.current += 1; activeAssistantId.current = undefined; discardPendingUpdates(); }, [discardPendingUpdates, transport]);
+  useEffect(() => { liveRevision.current += 1; activeAssistantId.current = undefined; activeMessageIds.current.clear(); discardPendingUpdates(); }, [discardPendingUpdates, transport]);
 
   const refresh = useCallback(async () => {
     const revision = liveRevision.current;
@@ -55,7 +56,10 @@ export function useChatSession(transport: PiTransport, initialState: AgentState 
     if (event.type === "disconnected") setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
     if (event.type === "message_start" || event.type === "message_end") {
       if (event.type === "message_end") flush();
-      let message = normalizeMessage(event.message as Record<string, unknown>);
+      const rawMessage = event.message as Record<string, unknown>; const roleKey = String(rawMessage.role ?? "message");
+      const liveId = event.type === "message_start" ? nextLiveMessageId(roleKey) : activeMessageIds.current.get(roleKey) ?? nextLiveMessageId(roleKey);
+      if (event.type === "message_start") activeMessageIds.current.set(roleKey, liveId); else activeMessageIds.current.delete(roleKey);
+      let message = normalizeMessage(rawMessage, undefined, undefined, liveId);
       if (message.customType === "pi-desktop-btw") return;
       if (message.role === "assistant" && event.type === "message_start") { message = { ...message, streaming: true }; activeAssistantId.current = message.id; }
       if (message.role === "assistant" && event.type === "message_end") { message = { ...message, ...(activeAssistantId.current ? { id: activeAssistantId.current } : {}), completedAt: Date.now(), streaming: false }; activeAssistantId.current = undefined; }
@@ -63,7 +67,7 @@ export function useChatSession(transport: PiTransport, initialState: AgentState 
     }
     if (event.type === "message_update") {
       if (event.assistantMessageEvent) queue((current) => { let index = -1; for (let candidate = current.length - 1; candidate >= 0; candidate -= 1) { const message = current[candidate]; if (message.role === "assistant" && (message.id === activeAssistantId.current || message.streaming)) { index = candidate; break; } } if (index < 0) return current; const next = [...current]; next[index] = applyAssistantMessageEvent(next[index], event.assistantMessageEvent); return next; });
-      else if (event.message) { const message = { ...normalizeMessage(event.message as Record<string, unknown>), streaming: true }; queue((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? message : item) : [...current, message]); }
+      else if (event.message) { const rawMessage = event.message as Record<string, unknown>; const roleKey = String(rawMessage.role ?? "message"); let liveId = activeMessageIds.current.get(roleKey); if (!liveId) { liveId = nextLiveMessageId(roleKey); activeMessageIds.current.set(roleKey, liveId); } const message = { ...normalizeMessage(rawMessage, undefined, undefined, liveId), streaming: true }; queue((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? message : item) : [...current, message]); }
     }
     if (event.type === "tool_execution_start") { const target = event.toolName === "call_agent" && event.args && typeof event.args === "object" ? String((event.args as { target?: unknown }).target ?? "") : ""; const message: ChatMessage = { id: String(event.toolCallId), role: "tool", toolName: target ? `${target} called` : String(event.toolName), toolStatus: "running", content: JSON.stringify(event.args ?? {}, null, 2), timestamp: Date.now() }; setMessages((current) => [...current.filter((item) => item.id !== message.id), message]); }
     if (event.type === "tool_execution_update") queue((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.partialResult), toolStatus: "running" } : item));
