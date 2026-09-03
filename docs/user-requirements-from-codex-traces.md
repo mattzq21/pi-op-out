@@ -18,15 +18,15 @@
 
 ## Conversations and live work
 
-- Stream assistant text, reasoning, and tool activity promptly and reliably.
+- Stream assistant text, reasoning, and tool activity as it arrives.
 - Separate in-progress work from the final answer, then present completed work in a compact, inspectable form.
-- Render conversations, Markdown, code, tool output, changed files, and diffs clearly and efficiently.
+- Render conversations, Markdown, code, tool output, changed files, and diffs.
 - Keep active output responsive without repeatedly processing stable conversation history.
 - Preserve correct conversation and diff state independently for every main and split session.
 
 ## Failure recovery
 
-- Represent successful, failed, and aborted turns accurately.
+- Represent successful, failed, and aborted turns.
 - Honor configured automatic retry behavior for eligible failures.
 - Let users recover from the latest aborted turn by retrying its original prompt through a clean continuation or by editing and sending a replacement.
 - Preserve the user's prompt when a turn is aborted.
@@ -65,7 +65,7 @@
 
 ## Remote machines and projects
 
-- Make chats, projects, terminals, project browsing, and project creation work consistently on local and remote hosts.
+- Make chats, projects, terminals, project browsing, and project creation work on local and remote hosts.
 - Scope project browsing and creation to the selected machine.
 - Isolate host and session processing so slow remote or local work cannot freeze unrelated conversations.
 
@@ -87,10 +87,10 @@
 - Make request logs filterable and link them to their source session traces.
 - Expose request sequence, tool schemas, and skills as clear inspectable information.
 - Provide a Pi tool that extracts a clean conversation of genuine user prompts and completed assistant messages from a session trace.
-- Interpret Pi CLI and Pi Desktop traces consistently from their actual structured fields.
+- Interpret Pi CLI and Pi Desktop traces from their actual structured fields.
 
 ## Settings
 
 - Organize settings around the capabilities users can understand and control, including models, retry, compaction, skills, tools, agents, dictionaries, and keybindings.
-- Apply saved runtime-capability changes to the interface immediately and reliably.
+- Apply saved runtime-capability changes to the interface immediately.
 - Provide configurable keybindings with practical defaults for common desktop actions.
