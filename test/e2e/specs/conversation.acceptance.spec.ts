@@ -900,8 +900,9 @@ describe("Conversation acceptance", () => {
 
   it("renders terminal output and reports when the process exits", async () => {
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
-    await mockBackend({ create_temporary_chat: { cwd: "/tmp/terminal-output", sessionId: "terminal-output" }, list_sessions: [], ...connectedSessionResponses(""), load_app_settings: settings, start_pi: {}, stop_pi: {}, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
+    await mockBackend({ create_temporary_chat: { cwd: "/tmp/terminal-output", sessionId: "terminal-output" }, list_sessions: [], ...connectedSessionResponses(""), "pi_command:set_model": {}, load_app_settings: settings, start_pi: {}, stop_pi: {}, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
     try {
+      while (await $(".error-toast button").isExisting()) await $(".error-toast button").click();
       await $('button[aria-label="New conversation"]').click();
       await expect(app.openTerminalButton).toBeEnabled();
       await app.openTerminalButton.click();
@@ -1244,12 +1245,13 @@ describe("Conversation acceptance", () => {
     }
   });
 
-  it("uses Enter to choose the selected slash command", async () => {
-    await mockBackend({ "pi_command:prompt": {} });
+  it("uses Tab to complete the selected slash command without submitting", async () => {
+    await mockBackend({ ...connectedSessionResponses("tab-command-session"), "pi_command:prompt": {} });
     try {
+      await emitPiEvent({ type: "session_switched" });
       await app.prepareMessage("/");
       await expect($('[role="option"][aria-selected="true"]')).toHaveText(expect.stringContaining("/compact"));
-      await browser.keys("Enter");
+      await browser.keys("Tab");
       await expect(app.composer).toHaveValue("/compact ");
       expect((await backendCalls()).filter(({ args }) => (args.command as { type?: string })?.type === "prompt")).toHaveLength(0);
     } finally {
@@ -1860,7 +1862,7 @@ describe("Project behavior", () => {
     await mockBackend({
       stop_pi: {}, start_pi: {},
       ...connectedSessionResponses("acceptance-project"),
-      load_app_settings: settings, validate_project_directory: "/tmp",
+      "pi_command:set_model": {}, load_app_settings: settings, validate_project_directory: "/tmp",
     });
     try {
       while (await $(".error-toast button").isExisting()) await $(".error-toast button").click();
@@ -2022,8 +2024,9 @@ describe("Conversation lifecycle", () => {
     const target = { id: "terminal-target", path: "/tmp/terminal-target.jsonl", name: "Terminal target conversation", project: "Terminal project", cwd: "/tmp", preview: "Target terminal", messageCount: 1, hostId: "local" };
     const state = (sessionId: string) => ({ model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 0, pendingMessageCount: 0 });
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
-    await mockBackend({ list_sessions: [current, target], start_pi: {}, stop_pi: {}, ...connectedSessionResponses("terminal-bootstrap"), load_app_settings: settings, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
+    await mockBackend({ list_sessions: [current, target], start_pi: {}, stop_pi: {}, ...connectedSessionResponses("terminal-bootstrap"), "pi_command:set_model": {}, load_app_settings: settings, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
     try {
+      while (await $(".error-toast button").isExisting()) await $(".error-toast button").click();
       await emitPiEvent({ type: "session_switched" });
       await app.conversationSearch.setValue(current.name);
       await $(".session-item .session-main").click();
