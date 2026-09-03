@@ -4,8 +4,9 @@ class AppPage {
   get root() { return $(".app"); }
   get composer() { return $('textarea[aria-label="Message Pi"]'); }
   get sendMessageButton() { return $('button[aria-label="Send message"]'); }
-  get modelSelect() { return $('select[aria-label="Model"]'); }
-  get thinkingLevelSelect() { return $('select[aria-label="Thinking level"]'); }
+  get agentPicker() { return $('button[aria-label="Agent"]'); }
+  get modelPicker() { return $('button[aria-label="Model"]'); }
+  get thinkingLevelPicker() { return $('button[aria-label="Thinking level"]'); }
   get attachFilesButton() { return $('button[aria-label="Attach files"]'); }
   get openTerminalButton() { return $('button[aria-label="Open terminal"]'); }
   get terminalPanel() { return $('section[aria-label="Session terminal"]'); }
@@ -68,6 +69,13 @@ class AppPage {
   async openProjectChooser() {
     await this.newProjectButton.click();
     await this.projectDialogHeading.waitForDisplayed();
+  }
+
+  async chooseComposerOption(label: "Agent" | "Model" | "Thinking level", option: string) {
+    await $(`button[aria-label="${label}"]`).click();
+    const choice = $(`//div[@role="listbox" and @aria-label="${label} options"]//button[.//span[normalize-space(.)="${option}"]]`);
+    await choice.waitForClickable();
+    await choice.click();
   }
 }
 

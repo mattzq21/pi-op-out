@@ -171,9 +171,11 @@ describe("Conversation acceptance", () => {
     await expect(app.composer).toBeDisplayed();
     await expect(app.attachFilesButton).toBeClickable();
     await expect(app.openTerminalButton).toBeClickable();
-    await expect(app.modelSelect).toBeDisplayed();
-    await expect(app.thinkingLevelSelect).toBeDisplayed();
-    expect((await app.thinkingLevelSelect.$$("option")).length).toBeGreaterThan(0);
+    await expect(app.modelPicker).toBeDisplayed();
+    await expect(app.thinkingLevelPicker).toBeDisplayed();
+    await app.thinkingLevelPicker.click();
+    expect((await $$('[role="listbox"][aria-label="Thinking level options"] [role="option"]')).length).toBeGreaterThan(0);
+    await browser.keys("Escape");
     await expect(app.sendMessageButton).toBeDisabled();
   });
 
@@ -837,9 +839,9 @@ describe("Conversation acceptance", () => {
     await mockBackend(connectedSessionResponses("thinking-event-session"));
     try {
       await emitPiEvent({ type: "session_switched" });
-      await expect(app.thinkingLevelSelect).toHaveValue("high");
+      await expect(app.thinkingLevelPicker).toHaveText("high");
       await emitPiEvent({ type: "thinking_level_changed", level: "off" });
-      await expect(app.thinkingLevelSelect).toHaveValue("off");
+      await expect(app.thinkingLevelPicker).toHaveText("off");
     } finally {
       await resetBackend();
     }
@@ -1379,10 +1381,12 @@ describe("Orchestration acceptance", () => {
   });
 
   it("reveals agent and sequence controls when the extension advertises them", async () => {
-    const agent = $('select[aria-label="Agent"]');
-    await expect(agent).toHaveValue("default");
-    await expect(agent).toHaveText(expect.stringContaining("reviewer"));
-    await expect(agent).toHaveText(expect.stringContaining("final-only"));
+    await expect(app.agentPicker).toHaveText("default");
+    await app.agentPicker.click();
+    const agents = $('[role="listbox"][aria-label="Agent options"]');
+    await expect(agents).toHaveText(expect.stringContaining("reviewer"));
+    await expect(agents).toHaveText(expect.stringContaining("final-only"));
+    await browser.keys("Escape");
 
     await app.openSettings();
     await expect(app.settingsSection("Agents")).toBeDisplayed();
@@ -1391,7 +1395,7 @@ describe("Orchestration acceptance", () => {
 
   it("selects an agent by sending the orchestration use command", async () => {
     await mockBackend({ "pi_command:prompt": {} });
-    await setSelectValue('select[aria-label="Agent"]', "reviewer");
+    await app.chooseComposerOption("Agent", "reviewer");
 
     await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-orchestration-use ")));
     const message = ((await backendCalls()).find(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-orchestration-use "))?.args.command as { message: string }).message;
@@ -1532,7 +1536,9 @@ describe("Orchestration acceptance", () => {
       await browser.waitUntil(async () => (await backendCalls()).some(({ command, mocked }) => command === "start_pi" && !mocked), { timeoutMsg: "Saving the agent did not reconnect the native Pi runtime" });
 
       await app.openConversations();
-      await expect($('select[aria-label="Agent"]')).toHaveText(expect.stringContaining(agentName));
+      await app.agentPicker.click();
+      await expect($('[role="listbox"][aria-label="Agent options"]')).toHaveText(expect.stringContaining(agentName));
+      await browser.keys("Escape");
       await app.openSettings();
       await app.openSettingsSection("Agents");
       await $(`//div[contains(@class,"agent-list")]//button[.//span[normalize-space(.)="${agentName}"]]`).click();
@@ -1853,10 +1859,10 @@ describe("Project behavior", () => {
       "pi_command:set_model": {}, "pi_command:set_thinking_level": {},
     });
     try {
-      await setSelectValue('select[aria-label="Model"]', "e2e/alternate");
-      await expect(app.modelSelect).toHaveValue("e2e/alternate");
-      await setSelectValue('select[aria-label="Thinking level"]', "off");
-      await expect(app.thinkingLevelSelect).toHaveValue("off");
+      await app.chooseComposerOption("Model", "Alternate model");
+      await expect(app.modelPicker).toHaveText("Alternate model");
+      await app.chooseComposerOption("Thinking level", "off");
+      await expect(app.thinkingLevelPicker).toHaveText("off");
 
       await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => ["set_model", "set_thinking_level"].includes(String((args.command as { type?: string })?.type))).length === 2);
       expect((await backendCalls()).filter(({ args }) => ["set_model", "set_thinking_level"].includes(String((args.command as { type?: string })?.type))).map(({ args }) => args.command)).toEqual([
@@ -1909,7 +1915,7 @@ describe("Conversation lifecycle", () => {
     const current = { id: "draft-current", path: "/tmp/draft-current.jsonl", name: "Draft current conversation", project: "Draft project", cwd: "/tmp", preview: "Current draft", messageCount: 1, hostId: "local" };
     const target = { id: "draft-target", path: "/tmp/draft-target.jsonl", name: "Draft target conversation", project: "Draft project", cwd: "/tmp", preview: "Target draft", messageCount: 1, hostId: "local" };
     const state = (sessionId: string) => ({ model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 0, pendingMessageCount: 0 });
-    await mockBackend({ list_sessions: [current, target], ...connectedSessionResponses(current.id), "pi_command:switch_session": {} });
+    await mockBackend({ list_sessions: [current, target], start_pi: {}, stop_pi: {}, ...connectedSessionResponses(current.id) });
     try {
       await emitPiEvent({ type: "session_switched" });
       await app.prepareMessage("Draft belonging to the current conversation");
@@ -1973,7 +1979,7 @@ describe("Conversation lifecycle", () => {
     const current = { id: "terminal-current", path: "/tmp/terminal-current.jsonl", name: "Terminal current conversation", project: "Terminal project", cwd: "/tmp", preview: "Current terminal", messageCount: 1, hostId: "local" };
     const target = { id: "terminal-target", path: "/tmp/terminal-target.jsonl", name: "Terminal target conversation", project: "Terminal project", cwd: "/tmp", preview: "Target terminal", messageCount: 1, hostId: "local" };
     const state = (sessionId: string) => ({ model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 0, pendingMessageCount: 0 });
-    await mockBackend({ list_sessions: [current, target], ...connectedSessionResponses(current.id), "pi_command:switch_session": {}, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
+    await mockBackend({ list_sessions: [current, target], start_pi: {}, stop_pi: {}, ...connectedSessionResponses(current.id), start_terminal: {}, resize_terminal: {}, close_terminal: {} });
     try {
       await emitPiEvent({ type: "session_switched" });
       await app.openTerminalButton.click();

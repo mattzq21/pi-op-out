@@ -11,7 +11,7 @@ const defaultBinary = path.resolve(
 const testWindow = { width: 1_100, height: 720 };
 const defaultActualCallModel = "openai-codex/gpt-5.6-luna";
 const actualCallModel = process.env.PI_E2E_ACTUAL_MODEL?.trim() || defaultActualCallModel;
-const sessionsRoot = path.join(homedir(), ".pi", "agent", "sessions");
+const sessionsRoot = path.join(homedir(), ".pi-desktop", "sessions");
 const temporaryProjectsRoot = path.join(homedir(), "pi-desktop", "tmp");
 const orchestrationConfigPath = path.join(homedir(), ".pi", "agent", "extensions", "pi-orchestration", "config.json");
 let baselineSessions = new Set<string>();
@@ -90,7 +90,10 @@ export const config: WebdriverIO.Config = {
   onComplete: () => {
     try { cleanupTestSessions(); }
     finally {
-      if (baselineOrchestrationConfig) writeFileSync(orchestrationConfigPath, baselineOrchestrationConfig);
+      if (baselineOrchestrationConfig) {
+        const current = existsSync(orchestrationConfigPath) ? readFileSync(orchestrationConfigPath) : undefined;
+        if (!current?.equals(baselineOrchestrationConfig)) writeFileSync(orchestrationConfigPath, baselineOrchestrationConfig);
+      }
       else if (existsSync(orchestrationConfigPath)) rmSync(orchestrationConfigPath);
     }
   },
