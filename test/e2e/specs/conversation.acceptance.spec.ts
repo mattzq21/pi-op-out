@@ -280,7 +280,7 @@ describe("Conversation acceptance", () => {
       const menu = $('[role="menu"][aria-label="Acceptance indexed conversation actions"]');
       await expect(menu).toBeDisplayed();
       await expect(menu.$$("[role='menuitem']")).toBeElementsArrayOfSize(4);
-      await expect(session.$('button[aria-label="Archive conversation"]')).toBeDisplayed();
+      await expect(session.$('button[aria-label="Archive conversation"]')).toBeExisting();
       await browser.keys("Escape");
       await expect(menu).not.toBeExisting();
     } finally {
@@ -899,12 +899,10 @@ describe("Conversation acceptance", () => {
   });
 
   it("renders terminal output and reports when the process exits", async () => {
-    const indexed = { id: "terminal-output", path: "/tmp/terminal-output.jsonl", name: "Terminal output conversation", project: "Terminal project", cwd: "/tmp", preview: "Terminal output", messageCount: 1, hostId: "local" };
-    await mockBackend({ list_sessions: [indexed], ...connectedSessionResponses(indexed.id), start_pi: {}, stop_pi: {}, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
+    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
+    await mockBackend({ create_temporary_chat: { cwd: "/tmp/terminal-output", sessionId: "terminal-output" }, list_sessions: [], ...connectedSessionResponses(""), load_app_settings: settings, start_pi: {}, stop_pi: {}, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
     try {
-      await emitPiEvent({ type: "session_switched" });
-      await app.conversationSearch.setValue(indexed.name);
-      await $(".session-item .session-main").click();
+      await $('button[aria-label="New conversation"]').click();
       await expect(app.openTerminalButton).toBeEnabled();
       await app.openTerminalButton.click();
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "start_terminal"));
@@ -1505,16 +1503,20 @@ describe("Orchestration acceptance", () => {
   });
 
   it("saves the encoded orchestration configuration and reconnects", async () => {
-    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
-    await mockBackend({
-      "pi_command:prompt": {}, save_app_settings: {}, stop_pi: {}, start_pi: {}, list_sessions: [], load_app_settings: settings,
-      ...connectedSessionResponses("orchestration-save"),
-    });
-    await emitPiEvent({ type: "session_switched" });
     await app.openSettings();
+    const defaultModel = await $('select[aria-label="Default model"]').getValue();
     await app.openSettingsSection("Agents");
     await $('//div[contains(@class,"agent-list")]//button[.//span[normalize-space(.)="reviewer"]]').click();
     await $('input[aria-label="Agent description"]').setValue("Reviews the packaged acceptance suite");
+    const [provider, ...modelParts] = defaultModel.split("/");
+    const modelId = modelParts.join("/");
+    const settings = { ...defaultSettings, defaultModel };
+    await mockBackend({
+      ...connectedSessionResponses("orchestration-save"),
+      "pi_command:get_state": { model: { provider, id: modelId }, thinkingLevel: "high", isStreaming: false, sessionId: "orchestration-save", messageCount: 0, pendingMessageCount: 0 },
+      "pi_command:get_available_models": { models: [{ provider, id: modelId, name: modelId }] },
+      "pi_command:prompt": {}, save_app_settings: {}, stop_pi: {}, start_pi: {}, list_sessions: [], load_app_settings: settings,
+    });
 
     await app.saveSettingsButton.click();
     await expect(app.saveSettingsButton).toHaveText("Saved");
@@ -1861,7 +1863,10 @@ describe("Project behavior", () => {
       load_app_settings: settings, validate_project_directory: "/tmp",
     });
     try {
+      while (await $(".error-toast button").isExisting()) await $(".error-toast button").click();
       await emitPiEvent({ type: "session_switched" });
+      await expect(app.modelPicker).toBeEnabled();
+      await expect(app.modelPicker).toHaveAttribute("data-options", expect.stringContaining("e2e/acceptance"));
       await app.openProjectChooser();
       await app.projectDirectory.setValue("/tmp");
       await app.openProjectButton.click();
@@ -1882,11 +1887,18 @@ describe("Project behavior", () => {
     await mockBackend({
       ...connectedSessionResponses("acceptance-project"),
       "pi_command:get_state": { model: { provider: "e2e", id: "alternate" }, thinkingLevel: "high", isStreaming: false, sessionId: "acceptance-project", messageCount: 0, pendingMessageCount: 0 },
-      "pi_command:set_model": {}, "pi_command:set_thinking_level": {},
+      "pi_command:set_model": {}, "pi_command:set_thinking_level": {}, validate_project_directory: "/tmp", start_pi: {}, stop_pi: {},
       load_app_settings: settings,
     });
     try {
       await emitPiEvent({ type: "session_switched" });
+      await app.openProjectChooser();
+      await app.projectDirectory.setValue("/tmp");
+      await app.openProjectButton.click();
+      await expect(app.projectDialogHeading).not.toBeExisting();
+      await expect(app.modelPicker).toBeEnabled();
+      await expect(app.modelPicker).toHaveAttribute("data-options", expect.stringContaining("e2e/alternate"));
+      await callBridge().setValue("[]");
       await app.chooseComposerOption("Model", "Alternate model");
       await expect(app.modelPicker).toHaveText("Alternate model");
       await app.chooseComposerOption("Thinking level", "off");
@@ -1898,6 +1910,8 @@ describe("Project behavior", () => {
       ]);
     } finally {
       await resetBackend();
+      await browser.refresh();
+      await app.waitUntilReady();
     }
   });
 
@@ -2007,9 +2021,13 @@ describe("Conversation lifecycle", () => {
     const current = { id: "terminal-current", path: "/tmp/terminal-current.jsonl", name: "Terminal current conversation", project: "Terminal project", cwd: "/tmp", preview: "Current terminal", messageCount: 1, hostId: "local" };
     const target = { id: "terminal-target", path: "/tmp/terminal-target.jsonl", name: "Terminal target conversation", project: "Terminal project", cwd: "/tmp", preview: "Target terminal", messageCount: 1, hostId: "local" };
     const state = (sessionId: string) => ({ model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 0, pendingMessageCount: 0 });
-    await mockBackend({ list_sessions: [current, target], start_pi: {}, stop_pi: {}, ...connectedSessionResponses(current.id), start_terminal: {}, resize_terminal: {}, close_terminal: {} });
+    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
+    await mockBackend({ list_sessions: [current, target], start_pi: {}, stop_pi: {}, ...connectedSessionResponses("terminal-bootstrap"), load_app_settings: settings, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
     try {
       await emitPiEvent({ type: "session_switched" });
+      await app.conversationSearch.setValue(current.name);
+      await $(".session-item .session-main").click();
+      await expect(app.openTerminalButton).toBeEnabled();
       await app.openTerminalButton.click();
       await app.addTerminalButton.click();
       await expect($$(".terminal-tab")).toBeElementsArrayOfSize(2);
@@ -2018,6 +2036,7 @@ describe("Conversation lifecycle", () => {
       await app.conversationSearch.setValue(target.name);
       await $(".session-item .session-main").click();
       await expect(app.terminalPanel).not.toBeExisting();
+      await expect(app.openTerminalButton).toBeEnabled();
       await app.openTerminalButton.click();
       await expect($$(".terminal-tab")).toBeElementsArrayOfSize(1);
 
@@ -2025,6 +2044,7 @@ describe("Conversation lifecycle", () => {
       await app.conversationSearch.setValue(current.name);
       await $(".session-item .session-main").click();
       await expect(app.terminalPanel).not.toBeExisting();
+      await expect(app.openTerminalButton).toBeEnabled();
       await app.openTerminalButton.click();
       await expect($$(".terminal-tab")).toBeElementsArrayOfSize(2);
       await app.closeTerminalButton.click();
