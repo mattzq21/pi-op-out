@@ -137,7 +137,7 @@ function projectContext(root: string, baseline: string, current: string, files: 
 Changed files since last message.
 ${paths}${omitted ? `\n- … ${omitted} more changed file${omitted === 1 ? "" : "s"}` : ""}
 
-To inspect the complete patch, run:
+If full diff is relevant, run:
 ${command}
 </project_context>`;
 }
