@@ -59,7 +59,7 @@ function changeInstructionFromMessages(messages: unknown[]) {
     ? changeMessage.content.flatMap((part) => part && typeof part === "object" && (part as { type?: unknown }).type === "text" && typeof (part as { text?: unknown }).text === "string" ? [(part as { text: string }).text] : []).join("\n")
     : typeof changeMessage.content === "string" ? changeMessage.content : "";
   const match = text.match(/^<project_context>\n([\s\S]*?)\n<\/project_context>$/);
-  return match ? { path: "Git changes since last message", content: match[1], block: match[0] } : undefined;
+  return match ? { path: "File changes", content: match[1], block: match[0] } : undefined;
 }
 
 export default async function contextWindowCap(pi: ExtensionAPI) {
