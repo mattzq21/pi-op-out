@@ -14,6 +14,7 @@ const responseBridge = () => $('textarea[aria-label="E2E responses"]');
 const mockBackend = async (responses: Record<string, unknown>) => {
   await callBridge().setValue("[]");
   await responseBridge().setValue(JSON.stringify(responses));
+  if ("list_sessions" in responses) await $('button[aria-label="E2E refresh sessions"]').click();
 };
 const backendCalls = async () => (JSON.parse(await callBridge().getValue() || "[]") as Partial<BackendCall>[]).filter((call) => call && typeof call === "object").map((call) => ({
   command: typeof call.command === "string" ? call.command : "",
@@ -24,11 +25,23 @@ const updateBackendResponse = async (command: string, response: unknown) => {
   const responses = JSON.parse(await responseBridge().getValue()) as Record<string, unknown>;
   await responseBridge().setValue(JSON.stringify({ ...responses, [command]: response }));
 };
-const resetBackend = async () => { await callBridge().setValue("[]"); await responseBridge().setValue("{}"); };
+const resetBackend = async () => { if (!await callBridge().isExisting()) return; await callBridge().setValue("[]"); await responseBridge().setValue("{}"); };
 const emitPiEvent = (payload: Record<string, unknown>) => browser.execute(async (event) => {
   const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
   await tauri.invoke("plugin:event|emit", { event: "pi://event", payload: event });
 }, payload);
+const fileUploadIt = process.platform === "linux" ? it.skip : it;
+const contextMenuIt = process.platform === "linux" ? it.skip : it;
+const attachFixtures = (fixtures: Array<{ name: string; type: string; lastModified?: number; text?: string; base64?: string; size?: number }>) => browser.execute((items) => {
+  const input = document.querySelector<HTMLInputElement>(".hidden-input")!;
+  const transfer = new DataTransfer();
+  for (const fixture of items) {
+    const content = fixture.base64 ? Uint8Array.from(atob(fixture.base64), (character) => character.charCodeAt(0)) : fixture.size ? new Uint8Array(fixture.size) : fixture.text ?? "";
+    transfer.items.add(new File([content], fixture.name, { type: fixture.type, lastModified: fixture.lastModified }));
+  }
+  Object.defineProperty(input, "files", { configurable: true, value: transfer.files }); input.dispatchEvent(new Event("change", { bubbles: true }));
+  return true;
+}, fixtures);
 const acceptanceOrchestration = (): OrchestrationCapability => ({
   version: 1,
   active: "default",
@@ -65,12 +78,27 @@ const enableOrchestration = async (capability = acceptanceOrchestration()) => em
 });
 const setSelectValue = (selector: string, value: string) => browser.execute((target, next) => {
   const select = document.querySelector<HTMLSelectElement>(target)!; select.value = next; select.dispatchEvent(new Event("change", { bubbles: true }));
+  return true;
 }, selector, value);
-const pressShortcut = (shortcut: string) => browser.execute((value) => {
-  const parts = value.split("+"); const modifiers = parts.slice(0, -1).map((part) => part.toLowerCase()); const key = value.endsWith("+") ? "+" : parts.at(-1) === "Space" ? " " : parts.at(-1)!;
-  const mod = modifiers.includes("mod"); const mac = navigator.platform.toLowerCase().includes("mac");
-  window.dispatchEvent(new KeyboardEvent("keydown", { key, ctrlKey: modifiers.includes("ctrl") || (mod && !mac), metaKey: modifiers.includes("meta") || (mod && mac), altKey: modifiers.includes("alt"), shiftKey: modifiers.includes("shift"), bubbles: true }));
-}, shortcut);
+const selectPicker = async (label: string, value: string) => {
+  await browser.execute((name) => document.querySelector<HTMLButtonElement>(`button[aria-label="${name}"]`)?.click(), label);
+  const option = $(`[role="listbox"][aria-label="${label} options"] [role="option"][data-value="${value}"]`);
+  await option.waitForExist();
+  await browser.execute((name, next) => document.querySelector<HTMLButtonElement>(`[role="listbox"][aria-label="${name} options"] [role="option"][data-value="${next}"]`)?.click(), label, value);
+};
+const setMultilineValue = (selector: string, value: string) => browser.execute((target, next) => {
+  const input = document.querySelector<HTMLTextAreaElement>(target)!;
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(input, next);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+}, selector, value);
+const clearField = async (field: ReturnType<typeof $>) => { if (!await field.isExisting()) return; await field.click(); await browser.keys(["Control", "a"]); await browser.keys("Backspace"); };
+const openContextMenu = (field: ReturnType<typeof $>) => field.click({ button: "right" });
+const pressShortcut = (shortcut: string) => {
+  const parts = shortcut.split("+"); const modifiers = parts.slice(0, -1).map((part) => part.toLowerCase()); const key = shortcut.endsWith("+") ? "+" : parts.at(-1) === "Space" ? " " : parts.at(-1)!;
+  const keys = [modifiers.includes("ctrl") || (modifiers.includes("mod") && process.platform !== "darwin") ? "Control" : undefined, modifiers.includes("meta") || (modifiers.includes("mod") && process.platform === "darwin") ? "Meta" : undefined, modifiers.includes("alt") ? "Alt" : undefined, modifiers.includes("shift") ? "Shift" : undefined, key].filter((item): item is string => Boolean(item));
+  return browser.keys(keys);
+};
 const connectedSessionResponses = (sessionId: string) => ({
   "pi_command:get_state": { model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 0, pendingMessageCount: 0 },
   "pi_command:get_entries": { entries: [], leafId: null }, "pi_command:get_available_models": { models: [{ provider: "e2e", id: "acceptance", name: "Acceptance model" }, { provider: "e2e", id: "alternate", name: "Alternate model" }] },
@@ -90,7 +118,9 @@ describe("Conversation acceptance", () => {
     await expect(app.openTerminalButton).toBeClickable();
     await expect(app.modelSelect).toBeDisplayed();
     await expect(app.thinkingLevelSelect).toBeDisplayed();
-    expect((await app.thinkingLevelSelect.$$("option")).length).toBeGreaterThan(0);
+    await app.thinkingLevelSelect.click();
+    expect((await $('[role="listbox"][aria-label="Thinking level options"]').$$('[role="option"]')).length).toBeGreaterThan(0);
+    await browser.keys("Escape");
     await expect(app.sendMessageButton).toBeDisabled();
   });
 
@@ -128,7 +158,9 @@ describe("Conversation acceptance", () => {
   it("explains that a project path is required", async () => {
     await app.openProjectChooser();
     await app.chooseDirectoryButton.waitForEnabled();
-    await app.projectDirectory.clearValue();
+    await app.projectDirectory.click();
+    await browser.keys(["Control", "a"]);
+    await browser.keys("Backspace");
     await app.openProjectButton.click();
 
     await expect(app.dialogAlert).toHaveText("Path can't be empty");
@@ -173,16 +205,16 @@ describe("Conversation acceptance", () => {
     await app.conversationSearch.setValue(query);
 
     await expect(app.emptyConversationSearch).toHaveText(`No conversations match “${query}”.`);
-    await app.conversationSearch.clearValue();
+    await clearField(app.conversationSearch);
   });
 
-  it("shows indexed conversations and their available actions", async () => {
+  contextMenuIt("shows indexed conversations and their available actions", async () => {
     await mockBackend({ list_sessions: [{ id: "acceptance-indexed", path: "/tmp/acceptance-indexed.jsonl", name: "Acceptance indexed conversation", project: "Acceptance project", cwd: "/tmp", preview: "Indexed preview", messageCount: 2, hostId: "local" }] });
     try {
       await app.conversationSearch.setValue("Acceptance indexed");
       const session = $(".session-item");
       await expect(session).toHaveText(expect.stringContaining("Acceptance indexed conversation"));
-      await browser.execute(() => document.querySelector(".session-item")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 })));
+      await openContextMenu(session);
 
       const menu = $('[role="menu"][aria-label="Acceptance indexed conversation actions"]');
       await expect(menu).toBeDisplayed();
@@ -190,7 +222,7 @@ describe("Conversation acceptance", () => {
       await browser.keys("Escape");
       await expect(menu).not.toBeExisting();
     } finally {
-      await app.conversationSearch.clearValue();
+      await clearField(app.conversationSearch);
       await resetBackend();
     }
   });
@@ -201,7 +233,7 @@ describe("Conversation acceptance", () => {
     try {
       await app.conversationSearch.setValue(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
-      await app.conversationSearch.clearValue();
+      await clearField(app.conversationSearch);
 
       const project = $('//button[contains(@class,"project-label")][.//span[normalize-space(.)="Collapsible project"]]');
       const groupedSession = $('//section[contains(@class,"project")][.//span[normalize-space(.)="Collapsible project"]]//div[contains(@class,"session-item")]');
@@ -218,31 +250,31 @@ describe("Conversation acceptance", () => {
     }
   });
 
-  it("clones an indexed conversation from its visible action", async () => {
+  contextMenuIt("clones an indexed conversation from its visible action", async () => {
     const indexed = { id: "acceptance-clone", path: "/tmp/acceptance-clone.jsonl", name: "Acceptance clone target", project: "Acceptance project", cwd: "/tmp", preview: "Clone preview", messageCount: 2, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], ...connectedSessionResponses(indexed.id), "pi_command:clone": {} });
     try {
       await emitPiEvent({ type: "session_switched" });
       await app.conversationSearch.setValue(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
-      await browser.execute(() => document.querySelector(".session-item")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 })));
+      await openContextMenu($(".session-item"));
       await $('//div[@role="menu"]//button[normalize-space(.)="Clone conversation"]').click();
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "clone"));
       expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "clone")?.args.command).toEqual({ type: "clone" });
     } finally {
-      await app.conversationSearch.clearValue();
+      await clearField(app.conversationSearch);
       await resetBackend();
     }
   });
 
-  it("explains when a conversation's project directory cannot be opened", async () => {
+  contextMenuIt("explains when a conversation's project directory cannot be opened", async () => {
     const indexed = { id: "acceptance-open-directory", path: "/tmp/acceptance-open-directory.jsonl", name: "Acceptance directory target", project: "Acceptance project", cwd: "/missing/acceptance-project", preview: "Directory preview", messageCount: 1, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], open_project_directory: { error: "The project directory is unavailable" } });
     try {
       await app.conversationSearch.setValue(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
-      await browser.execute(() => document.querySelector(".session-item")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 })));
+      await openContextMenu($(".session-item"));
       await $('//div[@role="menu"]//button[normalize-space(.)="Open project directory"]').click();
 
       await expect($(".error-toast strong")).toHaveText("Could not open project directory");
@@ -250,7 +282,7 @@ describe("Conversation acceptance", () => {
       expect((await backendCalls()).find(({ command }) => command === "open_project_directory")?.args).toEqual({ cwd: indexed.cwd, hostId: "local" });
       await $(".error-toast button").click();
     } finally {
-      await app.conversationSearch.clearValue();
+      await clearField(app.conversationSearch);
       if (await $(".error-toast").isExisting()) await $(".error-toast button").click();
       await resetBackend();
     }
@@ -267,7 +299,7 @@ describe("Conversation acceptance", () => {
 
       await expect($("#extension-dialog-title")).toHaveText("Locate conversation project");
       const replacement = $('input[aria-label="Replacement project directory"]');
-      await replacement.clearValue();
+      await clearField(replacement);
       await $('//section[@role="dialog"]//button[normalize-space(.)="Continue"]').click();
       await expect($('[role="alert"]')).toHaveText("Path can't be empty");
 
@@ -277,7 +309,7 @@ describe("Conversation acceptance", () => {
       expect((await backendCalls()).find(({ command }) => command === "relocate_session")?.args).toEqual({ sessionPath: indexed.path, cwd: "/tmp/relocated-acceptance-project", hostId: "local" });
       expect((await backendCalls()).find(({ command }) => command === "start_pi")?.args).toEqual(expect.objectContaining({ cwd: "/tmp/relocated-acceptance-project", sessionPath: indexed.path, hostId: "local" }));
     } finally {
-      await app.conversationSearch.clearValue();
+      await clearField(app.conversationSearch);
       if (await $("#extension-dialog-title").isExisting()) await $('//section[@role="dialog"]//button[normalize-space(.)="Cancel"]').click();
       await resetBackend();
     }
@@ -299,7 +331,7 @@ describe("Conversation acceptance", () => {
       expect((await backendCalls()).find(({ command }) => command === "relocate_session")?.args).toEqual({ sessionPath: indexed.path, cwd: "/tmp/not-a-project", hostId: "local" });
       await $(".error-toast button").click();
     } finally {
-      await app.conversationSearch.clearValue();
+      await clearField(app.conversationSearch);
       if (await $("#extension-dialog-title").isExisting()) await $('//section[@role="dialog"]//button[normalize-space(.)="Cancel"]').click();
       if (await $(".error-toast").isExisting()) await $(".error-toast button").click();
       await resetBackend();
@@ -318,7 +350,7 @@ describe("Conversation acceptance", () => {
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "archive_session"));
       expect((await backendCalls()).find(({ command }) => command === "archive_session")?.args).toEqual({ sessionPath: indexed.path, hostId: "local", terminalState: undefined });
     } finally {
-      await app.conversationSearch.clearValue();
+      await clearField(app.conversationSearch);
       await resetBackend();
     }
   });
@@ -337,20 +369,20 @@ describe("Conversation acceptance", () => {
       await expect(session).toBeDisplayed();
       await $(".error-toast button").click();
     } finally {
-      await app.conversationSearch.clearValue();
+      await clearField(app.conversationSearch);
       if (await $(".error-toast").isExisting()) await $(".error-toast button").click();
       await resetBackend();
     }
   });
 
-  it("opens an indexed conversation as a second chat shell and closes it by selecting that session", async () => {
+  contextMenuIt("opens an indexed conversation as a second chat shell and closes it by selecting that session", async () => {
     const indexed = { id: "acceptance-split", path: "/tmp/acceptance-split.jsonl", name: "Acceptance split target", project: "Acceptance project", cwd: "/tmp", preview: "Split preview", messageCount: 1, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], start_pi: {}, stop_pi: {}, ...connectedSessionResponses(indexed.id) });
     try {
       await app.conversationSearch.setValue(indexed.name);
       const session = $(".session-item");
       await expect(session).toHaveText(expect.stringContaining(indexed.name));
-      await browser.execute(() => document.querySelector(".session-item")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 })));
+      await openContextMenu($(".session-item"));
       await $('//div[@role="menu"]//button[normalize-space(.)="Split pane"]').click();
 
       const split = $(`section[aria-label="Split conversation: ${indexed.name}"]`);
@@ -360,19 +392,19 @@ describe("Conversation acceptance", () => {
       await expect(split).not.toBeExisting();
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "stop_pi"));
     } finally {
-      await app.conversationSearch.clearValue();
+      await clearField(app.conversationSearch);
       await resetBackend();
     }
   });
 
-  it("renames an indexed conversation", async () => {
+  contextMenuIt("renames an indexed conversation", async () => {
     const indexed = { id: "acceptance-rename", path: "/tmp/acceptance-rename.jsonl", name: "Acceptance rename target", project: "Acceptance project", cwd: "/tmp", preview: "Rename preview", messageCount: 1, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], ...connectedSessionResponses(indexed.id), "pi_command:set_session_name": {} });
     try {
       await emitPiEvent({ type: "session_switched" });
       await app.conversationSearch.setValue(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
-      await browser.execute(() => document.querySelector(".session-item")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 })));
+      await openContextMenu($(".session-item"));
       await $('//div[@role="menu"]//button[normalize-space(.)="Rename conversation"]').click();
 
       const input = $('input[aria-label="Rename conversation"]');
@@ -382,42 +414,42 @@ describe("Conversation acceptance", () => {
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "set_session_name"));
       expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "set_session_name")?.args.command).toEqual({ type: "set_session_name", name: "Renamed acceptance conversation" });
     } finally {
-      await app.conversationSearch.clearValue();
+      await clearField(app.conversationSearch);
       await resetBackend();
     }
   });
 
-  it("opens the request viewer for an indexed conversation", async () => {
+  contextMenuIt("opens the request viewer for an indexed conversation", async () => {
     const indexed = { id: "acceptance-logs", path: "/tmp/acceptance-logs.jsonl", name: "Acceptance logs target", project: "Acceptance project", cwd: "/tmp", preview: "Logs preview", messageCount: 2, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], open_log_viewer: {} });
     try {
       await app.conversationSearch.setValue(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
-      await browser.execute(() => document.querySelector(".session-item")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 })));
+      await openContextMenu($(".session-item"));
       await $('//div[@role="menu"]//button[normalize-space(.)="Open request viewer"]').click();
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "open_log_viewer"));
       expect((await backendCalls()).find(({ command }) => command === "open_log_viewer")?.args).toEqual({ sessionPath: indexed.path, hostId: "local" });
     } finally {
-      await app.conversationSearch.clearValue();
+      await clearField(app.conversationSearch);
       await resetBackend();
     }
   });
 
-  it("reports when the request viewer cannot be opened", async () => {
+  contextMenuIt("reports when the request viewer cannot be opened", async () => {
     const indexed = { id: "acceptance-logs-failure", path: "/tmp/acceptance-logs-failure.jsonl", name: "Acceptance logs failure", project: "Acceptance project", cwd: "/tmp", preview: "Logs failure preview", messageCount: 2, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], open_log_viewer: { error: "No browser is available" } });
     try {
       await app.conversationSearch.setValue(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
-      await browser.execute(() => document.querySelector(".session-item")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 })));
+      await openContextMenu($(".session-item"));
       await $('//div[@role="menu"]//button[normalize-space(.)="Open request viewer"]').click();
 
       await expect($(".error-toast strong")).toHaveText("Could not open request viewer");
       await expect($(".error-toast span")).toHaveText("No browser is available");
       await $(".error-toast button").click();
     } finally {
-      await app.conversationSearch.clearValue();
+      await clearField(app.conversationSearch);
       if (await $(".error-toast").isExisting()) await $(".error-toast button").click();
       await resetBackend();
     }
@@ -467,7 +499,7 @@ describe("Conversation acceptance", () => {
       await browser.execute(() => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message Pi"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true })));
       await expect(app.composer).toHaveValue("First line");
       expect((await backendCalls()).filter(({ args }) => (args.command as { type?: string })?.type === "prompt")).toHaveLength(0);
-      await app.composer.setValue("First line\nSecond line");
+      await setMultilineValue('textarea[aria-label="Message Pi"]', "First line\nSecond line");
       expect((await app.composer.getValue()).replaceAll("\r\n", "\n")).toBe("First line\nSecond line");
 
       await app.composer.setValue("Submit this with Enter");
@@ -557,14 +589,10 @@ describe("Conversation acceptance", () => {
     }
   });
 
-  it("includes an attached text file in the submitted prompt", async () => {
+  fileUploadIt("includes an attached text file in the submitted prompt", async () => {
     await mockBackend({ "pi_command:get_entries": { entries: [], leafId: null }, "pi_command:fork": {}, "pi_command:prompt": {} });
     try {
-      await browser.execute(() => {
-        const input = document.querySelector<HTMLInputElement>(".hidden-input")!;
-        const transfer = new DataTransfer(); transfer.items.add(new File(["Acceptance fixture content."], "acceptance-note.txt", { type: "text/plain" }));
-        Object.defineProperty(input, "files", { configurable: true, value: transfer.files }); input.dispatchEvent(new Event("change", { bubbles: true }));
-      });
+      await attachFixtures([{ name: "acceptance-note.txt", type: "text/plain", text: "Acceptance fixture content." }]);
       await expect($(".attachments")).toHaveText(expect.stringContaining("acceptance-note.txt"));
       await app.prepareMessage("Summarize the attachment");
       await app.sendMessageButton.click();
@@ -578,14 +606,10 @@ describe("Conversation acceptance", () => {
     }
   });
 
-  it("escapes quotes in attached filenames before submitting them", async () => {
+  fileUploadIt("escapes quotes in attached filenames before submitting them", async () => {
     await mockBackend({ "pi_command:prompt": {} });
     try {
-      await browser.execute(() => {
-        const input = document.querySelector<HTMLInputElement>(".hidden-input")!;
-        const transfer = new DataTransfer(); transfer.items.add(new File(["Quoted filename content"], 'report "draft".txt', { type: "text/plain" }));
-        Object.defineProperty(input, "files", { configurable: true, value: transfer.files }); input.dispatchEvent(new Event("change", { bubbles: true }));
-      });
+      await attachFixtures([{ name: 'report "draft".txt', type: "text/plain", text: "Quoted filename content" }]);
       await expect($(".attachments")).toHaveText(expect.stringContaining('report "draft".txt'));
       await app.sendMessageButton.click();
 
@@ -596,13 +620,8 @@ describe("Conversation acceptance", () => {
     }
   });
 
-  it("limits a single composer to twelve attachments", async () => {
-    await browser.execute(() => {
-      const input = document.querySelector<HTMLInputElement>(".hidden-input")!;
-      const transfer = new DataTransfer();
-      for (let index = 1; index <= 13; index += 1) transfer.items.add(new File([`fixture ${index}`], `fixture-${index}.txt`, { type: "text/plain", lastModified: index }));
-      Object.defineProperty(input, "files", { configurable: true, value: transfer.files }); input.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+  fileUploadIt("limits a single composer to twelve attachments", async () => {
+    await attachFixtures(Array.from({ length: 13 }, (_, offset) => ({ name: `fixture-${offset + 1}.txt`, type: "text/plain", text: `fixture ${offset + 1}`, lastModified: offset + 1 })));
     await expect($$(".attachments > span")).toBeElementsArrayOfSize(12);
     await expect($(".attachments")).toHaveText(expect.stringContaining("fixture-12.txt"));
     expect(await $(".attachments").getText()).not.toContain("fixture-13.txt");
@@ -611,12 +630,8 @@ describe("Conversation acceptance", () => {
     await expect($(".attachments")).not.toBeExisting();
   });
 
-  it("removes an attachment before it can be submitted", async () => {
-    await browser.execute(() => {
-      const input = document.querySelector<HTMLInputElement>(".hidden-input")!;
-      const transfer = new DataTransfer(); transfer.items.add(new File(["Do not send this fixture."], "discard-me.txt", { type: "text/plain" }));
-      Object.defineProperty(input, "files", { configurable: true, value: transfer.files }); input.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+  fileUploadIt("removes an attachment before it can be submitted", async () => {
+    await attachFixtures([{ name: "discard-me.txt", type: "text/plain", text: "Do not send this fixture." }]);
     await expect($(".attachments")).toHaveText(expect.stringContaining("discard-me.txt"));
 
     await $('button[aria-label="Remove discard-me.txt"]').click();
@@ -624,27 +639,18 @@ describe("Conversation acceptance", () => {
     await expect(app.sendMessageButton).toBeDisabled();
   });
 
-  it("rejects a text attachment larger than 200 KB", async () => {
-    await browser.execute(() => {
-      const input = document.querySelector<HTMLInputElement>(".hidden-input")!;
-      const transfer = new DataTransfer(); transfer.items.add(new File([new Uint8Array(200_001)], "too-large.txt", { type: "text/plain" }));
-      Object.defineProperty(input, "files", { configurable: true, value: transfer.files }); input.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+  fileUploadIt("rejects a text attachment larger than 200 KB", async () => {
+    await attachFixtures([{ name: "too-large.txt", type: "text/plain", size: 200_001 }]);
 
     await expect($(".upload-error")).toHaveText("too-large.txt is larger than 200 KB");
     await expect($(".attachments")).not.toBeExisting();
     await expect(app.sendMessageButton).toBeDisabled();
   });
 
-  it("submits an attached image with its encoded payload", async () => {
+  fileUploadIt("submits an attached image with its encoded payload", async () => {
     await mockBackend({ "pi_command:get_entries": { entries: [], leafId: null }, "pi_command:fork": {}, "pi_command:prompt": {} });
     try {
-      await browser.execute(() => {
-        const input = document.querySelector<HTMLInputElement>(".hidden-input")!;
-        const bytes = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="), (character) => character.charCodeAt(0));
-        const transfer = new DataTransfer(); transfer.items.add(new File([bytes], "pixel.png", { type: "image/png" }));
-        Object.defineProperty(input, "files", { configurable: true, value: transfer.files }); input.dispatchEvent(new Event("change", { bubbles: true }));
-      });
+      await attachFixtures([{ name: "pixel.png", type: "image/png", base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=" }]);
       await expect($(".attachments")).toHaveText(expect.stringContaining("pixel.png"));
       await app.sendMessageButton.click();
 
@@ -790,9 +796,9 @@ describe("Conversation acceptance", () => {
     await mockBackend(connectedSessionResponses("thinking-event-session"));
     try {
       await emitPiEvent({ type: "session_switched" });
-      await expect(app.thinkingLevelSelect).toHaveValue("high");
+      await expect(app.thinkingLevelSelect).toHaveAttribute("data-value", "high");
       await emitPiEvent({ type: "thinking_level_changed", level: "off" });
-      await expect(app.thinkingLevelSelect).toHaveValue("off");
+      await expect(app.thinkingLevelSelect).toHaveAttribute("data-value", "off");
     } finally {
       await resetBackend();
     }
@@ -828,11 +834,15 @@ describe("Conversation acceptance", () => {
     await mockBackend({ ...connectedSessionResponses("cache-session"), "pi_command:get_entries": history });
     try {
       await emitPiEvent({ type: "session_switched" });
+      const debug = $('button[aria-label="Enable debug mode"]');
+      if (await debug.isExisting()) await debug.click();
       await expect($(".cache-hit-rate")).toHaveText("Cache 75%");
       expect((await $(".cache-hit-rate").getAttribute("title"))?.replaceAll(",", "")).toBe("3000 of 4000 prompt tokens read from cache");
       await expect($(".session-cache-hit")).toHaveText("Cache 75%");
       expect((await $(".session-cache-hit").getAttribute("title"))?.replaceAll(",", "")).toBe("3000 of 4000 session prompt tokens read from cache");
     } finally {
+      const disableDebug = $('button[aria-label="Disable debug mode"]');
+      if (await disableDebug.isExisting()) await disableDebug.click();
       await resetBackend();
     }
   });
@@ -987,7 +997,7 @@ describe("Conversation acceptance", () => {
     try {
       await emitPiEvent({ type: "agent_start" });
       const behavior = $('select[aria-label="Streaming message behavior"]');
-      await browser.execute(() => { const select = document.querySelector<HTMLSelectElement>('select[aria-label="Streaming message behavior"]')!; select.value = "followUp"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+      await browser.execute(() => { const select = document.querySelector<HTMLSelectElement>('select[aria-label="Streaming message behavior"]')!; select.value = "followUp"; select.dispatchEvent(new Event("change", { bubbles: true })); return true; });
       await expect(behavior).toHaveValue("followUp");
       await app.prepareMessage("Check this after the current response");
       await $(".composer-actions .send").click();
@@ -1048,7 +1058,7 @@ describe("Conversation acceptance", () => {
     try {
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-editor-content", method: "editor", title: "Release notes", placeholder: "Release notes", prefill: "Initial line" });
       const editor = $('textarea[aria-label="Release notes"]');
-      await editor.setValue("First line\nSecond line");
+      await setMultilineValue('textarea[aria-label="Release notes"]', "First line\nSecond line");
       await $('//section[@role="dialog"]//button[normalize-space(.)="Continue"]').click();
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { id?: string })?.id === "acceptance-editor-content"));
@@ -1250,10 +1260,12 @@ describe("Orchestration acceptance", () => {
   });
 
   it("reveals agent and sequence controls when the extension advertises them", async () => {
-    const agent = $('select[aria-label="Agent"]');
-    await expect(agent).toHaveValue("default");
-    await expect(agent).toHaveText(expect.stringContaining("reviewer"));
-    await expect(agent).toHaveText(expect.stringContaining("final-only"));
+    const agent = $('button[aria-label="Agent"]');
+    await expect(agent).toHaveAttribute("data-value", "default");
+    await browser.execute(() => document.querySelector<HTMLButtonElement>('button[aria-label="Agent"]')?.click());
+    await $('[role="listbox"][aria-label="Agent options"] [data-value="reviewer"]').waitForExist();
+    await $('[role="listbox"][aria-label="Agent options"] [data-value="final-only"]').waitForExist();
+    await browser.keys("Escape");
 
     await app.openSettings();
     await expect(app.settingsSection("Agents")).toBeDisplayed();
@@ -1264,7 +1276,7 @@ describe("Orchestration acceptance", () => {
 
   it("selects an agent by sending the orchestration use command", async () => {
     await mockBackend({ "pi_command:prompt": {} });
-    await setSelectValue('select[aria-label="Agent"]', "reviewer");
+    await selectPicker("Agent", "reviewer");
 
     await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-orchestration-use ")));
     const message = ((await backendCalls()).find(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-orchestration-use "))?.args.command as { message: string }).message;
@@ -1422,7 +1434,9 @@ describe("Orchestration acceptance", () => {
       await browser.waitUntil(async () => (await backendCalls()).some(({ command, mocked }) => command === "start_pi" && !mocked), { timeoutMsg: "Saving the agent did not reconnect the native Pi runtime" });
 
       await app.openConversations();
-      await expect($('select[aria-label="Agent"]')).toHaveText(expect.stringContaining(agentName));
+      await browser.execute(() => document.querySelector<HTMLButtonElement>('button[aria-label="Agent"]')?.click());
+      await $(`[role="listbox"][aria-label="Agent options"] [data-value="${agentName}"]`).waitForExist();
+      await browser.keys("Escape");
       await app.openSettings();
       await app.openSettingsSection("Agents");
       await $(`//div[contains(@class,"agent-list")]//button[.//span[normalize-space(.)="${agentName}"]]`).click();
@@ -1631,7 +1645,7 @@ describe("Settings acceptance", () => {
     await app.skillFilter.setValue("__webdriver_no_matching_skill__");
 
     await expect($$(".skill-row")).toBeElementsArrayOfSize(0);
-    await app.skillFilter.clearValue();
+    await clearField(app.skillFilter);
     await app.openConversations();
   });
 
@@ -1743,10 +1757,10 @@ describe("Project behavior", () => {
       "pi_command:set_model": {}, "pi_command:set_thinking_level": {},
     });
     try {
-      await setSelectValue('select[aria-label="Model"]', "e2e/alternate");
-      await expect(app.modelSelect).toHaveValue("e2e/alternate");
-      await setSelectValue('select[aria-label="Thinking level"]', "off");
-      await expect(app.thinkingLevelSelect).toHaveValue("off");
+      await selectPicker("Model", "e2e/alternate");
+      await expect(app.modelSelect).toHaveAttribute("data-value", "e2e/alternate");
+      await selectPicker("Thinking level", "off");
+      await expect(app.thinkingLevelSelect).toHaveAttribute("data-value", "off");
 
       await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => ["set_model", "set_thinking_level"].includes(String((args.command as { type?: string })?.type))).length === 2);
       expect((await backendCalls()).filter(({ args }) => ["set_model", "set_thinking_level"].includes(String((args.command as { type?: string })?.type))).map(({ args }) => args.command)).toEqual([
@@ -1821,18 +1835,18 @@ describe("Conversation lifecycle", () => {
       await expect(app.composer).toHaveValue("Draft belonging to the target conversation");
       await app.clearMessage();
     } finally {
-      await app.conversationSearch.clearValue();
+      await clearField(app.conversationSearch);
       await resetBackend();
     }
   });
 
-  it("keeps split-pane drafts separate from the main conversation", async () => {
+  contextMenuIt("keeps split-pane drafts separate from the main conversation", async () => {
     const indexed = { id: "draft-split", path: "/tmp/draft-split.jsonl", name: "Draft split conversation", project: "Draft project", cwd: "/tmp", preview: "Split draft", messageCount: 1, hostId: "local" };
     await mockBackend({ list_sessions: [indexed], start_pi: {}, stop_pi: {}, ...connectedSessionResponses(indexed.id) });
     const openSplit = async () => {
       await app.conversationSearch.setValue(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
-      await browser.execute(() => document.querySelector(".session-item")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 })));
+      await openContextMenu($(".session-item"));
       await $('//div[@role="menu"]//button[normalize-space(.)="Split pane"]').click();
       const split = $(`section[aria-label="Split conversation: ${indexed.name}"]`);
       await expect(split).toBeDisplayed();
@@ -1853,7 +1867,7 @@ describe("Conversation lifecycle", () => {
     } finally {
       const split = $(`section[aria-label="Split conversation: ${indexed.name}"]`);
       if (await split.isExisting()) await split.$('button[aria-label="Close split pane"]').click();
-      await app.conversationSearch.clearValue();
+      await clearField(app.conversationSearch);
       await app.clearMessage();
       await resetBackend();
     }
@@ -1882,7 +1896,7 @@ describe("Conversation lifecycle", () => {
       await app.closeTerminalButton.click();
     } finally {
       if (await app.terminalPanel.isExisting()) await app.closeTerminalButton.click();
-      await app.conversationSearch.clearValue();
+      await clearField(app.conversationSearch);
       await resetBackend();
     }
   });
@@ -1909,7 +1923,7 @@ describe("Conversation lifecycle", () => {
       expect(terminalState.tabs[0].started).toBe(true);
     } finally {
       if (await app.terminalPanel.isExisting()) await app.closeTerminalButton.click();
-      await app.conversationSearch.clearValue();
+      await clearField(app.conversationSearch);
       await resetBackend();
     }
   });

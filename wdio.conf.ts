@@ -14,6 +14,8 @@ const actualCallModel = process.env.PI_E2E_ACTUAL_MODEL?.trim() || defaultActual
 const sessionsRoot = path.join(homedir(), ".pi", "agent", "sessions");
 const temporaryProjectsRoot = path.join(homedir(), "pi-desktop", "tmp");
 const orchestrationConfigPath = path.join(homedir(), ".pi", "agent", "extensions", "pi-orchestration", "config.json");
+// ponytail: Linux embedded sessions currently hang upstream; remove this fallback when webdriverio/desktop-mobile#591 is fixed.
+const driverProvider = process.env.PI_E2E_DRIVER_PROVIDER ?? (process.platform === "linux" ? "external" : "embedded");
 let baselineSessions = new Set<string>();
 let baselineProjects = new Set<string>();
 let baselineOrchestrationConfig: Buffer | undefined;
@@ -68,14 +70,14 @@ export const config: WebdriverIO.Config = {
   capabilities: [{ browserName: "tauri" }],
   services: [["@wdio/tauri-service", {
     appBinaryPath: process.env.PI_E2E_BINARY ?? defaultBinary,
-    driverProvider: "embedded",
+    driverProvider: driverProvider as "embedded" | "external",
     captureBackendLogs: true,
   }]],
   framework: "mocha",
   reporters: ["spec"],
   logLevel: "warn",
   waitforTimeout: 10_000,
-  connectionRetryTimeout: 90_000,
+  connectionRetryTimeout: process.platform === "linux" ? 15_000 : 90_000,
   connectionRetryCount: 2,
   mochaOpts: {
     ui: "bdd",

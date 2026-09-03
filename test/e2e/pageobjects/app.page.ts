@@ -1,11 +1,11 @@
-import { $ } from "@wdio/globals";
+import { $, browser } from "@wdio/globals";
 
 class AppPage {
   get root() { return $(".app"); }
   get composer() { return $('textarea[aria-label="Message Pi"]'); }
   get sendMessageButton() { return $('button[aria-label="Send message"]'); }
-  get modelSelect() { return $('select[aria-label="Model"]'); }
-  get thinkingLevelSelect() { return $('select[aria-label="Thinking level"]'); }
+  get modelSelect() { return $('button[aria-label="Model"]'); }
+  get thinkingLevelSelect() { return $('button[aria-label="Thinking level"]'); }
   get attachFilesButton() { return $('button[aria-label="Attach files"]'); }
   get openTerminalButton() { return $('button[aria-label="Open terminal"]'); }
   get terminalPanel() { return $('section[aria-label="Session terminal"]'); }
@@ -57,7 +57,7 @@ class AppPage {
   }
 
   async clearMessage() {
-    if (await this.composer.getValue()) await this.composer.clearValue();
+    if (await this.composer.getValue()) { await this.composer.click(); await browser.keys(["Control", "a"]); await browser.keys("Backspace"); }
   }
 
   async openSettingsSection(label: string) {
