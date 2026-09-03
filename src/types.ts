@@ -5,10 +5,10 @@ export interface SessionSummary { id: string; path: string; name: string; projec
 export interface ContextUsage { tokens: number | null; contextWindow: number; percent: number | null; }
 export interface PromptContextInfo {
   systemPrompt: string;
-  instructions?: Array<{ path: string; content: string }>;
+  instructions: Array<{ path: string; content: string }>;
   tools: Array<{ name: string; description: string; parameters?: unknown }>;
   skills: Array<{ name: string; description: string; filePath: string }>;
-  tokens: { system: number; instructions?: number; tools: number; skills: number };
+  tokens: { system: number; instructions: number; tools: number; skills: number };
 }
 export interface AgentState { model: Model | null; thinkingLevel: string; isStreaming: boolean; sessionFile?: string; sessionId: string; sessionName?: string; messageCount: number; pendingMessageCount: number; activity?: string; contextUsage?: ContextUsage; }
 export interface ExtensionUiRequest { type: "extension_ui_request"; id: string; method: "select" | "confirm" | "input" | "editor" | "notify" | "setStatus" | "setWidget" | "setTitle" | "set_editor_text"; title?: string; message?: string; error?: string; options?: string[]; placeholder?: string; prefill?: string; notifyType?: "info" | "warning" | "error"; statusKey?: string; statusText?: string; widgetKey?: string; widgetLines?: string[]; widgetPlacement?: "aboveEditor" | "belowEditor"; text?: string; }

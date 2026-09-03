@@ -4,14 +4,6 @@ import type { PromptContextInfo } from "../types";
 
 type Section = "system" | "instructions" | "tools" | "skills";
 
-function projectInstructions(context: PromptContextInfo) {
-  if (context.instructions) return { block: "", items: context.instructions };
-  const block = context.systemPrompt.match(/\n\n<project_context>[\s\S]*?<\/project_context>\n?/)?.[0] ?? "";
-  const items = [...block.matchAll(/<project_instructions path="([^"]*)">\n?([\s\S]*?)\n?<\/project_instructions>/g)]
-    .map((match) => ({ path: match[1], content: match[2] }));
-  return { block, items };
-}
-
 function shares(values: { system: number; instructions: number; tools: number; skills: number }) {
   const keys = ["system", "instructions", "tools", "skills"] as const;
   const total = keys.reduce((sum, key) => sum + values[key], 0);
@@ -26,10 +18,7 @@ function shares(values: { system: number; instructions: number; tools: number; s
 
 export function PromptContextBar({ context }: { context: PromptContextInfo }) {
   const [active, setActive] = useState<Section>();
-  const instructionContext = projectInstructions(context);
-  const estimate = (value: string) => Math.ceil(value.length / 4);
-  const instructionTokens = context.tokens.instructions ?? estimate(instructionContext.block);
-  const percent = shares({ ...context.tokens, system: Math.max(0, context.tokens.system - (context.tokens.instructions === undefined ? instructionTokens : 0)), instructions: instructionTokens });
+  const percent = shares(context.tokens);
   const wheelStyle = { "--prompt-system": `${percent.system}%`, "--prompt-instructions": `${percent.system + percent.instructions}%`, "--prompt-tools": `${percent.system + percent.instructions + percent.tools}%` } as CSSProperties;
   const toggle = (section: Section) => setActive((current) => current === section ? undefined : section);
   return <section className={`prompt-context${active ? " open" : ""}`}>
@@ -42,7 +31,7 @@ export function PromptContextBar({ context }: { context: PromptContextInfo }) {
     </div>
     {active && <div className={`prompt-context-content ${active}`}>
       {active === "system" && <pre>{context.systemPrompt || "No system prompt"}</pre>}
-      {active === "instructions" && (instructionContext.items.length ? instructionContext.items.map((instruction) => <div key={instruction.path}><strong>{instruction.path}</strong><pre>{instruction.content}</pre></div>) : <p>No project instructions</p>)}
+      {active === "instructions" && (context.instructions.length ? context.instructions.map((instruction) => <div key={instruction.path}><strong>{instruction.path}</strong><pre>{instruction.content}</pre></div>) : <p>No project instructions</p>)}
       {active === "tools" && (context.tools.length ? context.tools.map((tool) => <div key={tool.name}><strong>{tool.name}</strong>{tool.description && <p>{tool.description}</p>}<pre>{JSON.stringify(tool.parameters, null, 2)}</pre></div>) : <p>No active tools</p>)}
       {active === "skills" && (context.skills.length ? context.skills.map((skill) => <div key={skill.filePath}><strong>{skill.name}</strong>{skill.description && <p>{skill.description}</p>}<small>{skill.filePath}</small></div>) : <p>No model-invoked skills</p>)}
     </div>}
