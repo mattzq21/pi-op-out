@@ -3,7 +3,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { Plus, TerminalSquare, Trash2, X } from "lucide-react";
+import { Plus, RotateCcw, TerminalSquare, Trash2, X } from "lucide-react";
 import { IconButton } from "./IconButton";
 
 interface Props {
@@ -40,7 +40,7 @@ export function TerminalView({ cwd, terminals, activeId, output, outputEnd, snap
   useEffect(() => { tabRefs.current.get(activeId)?.scrollIntoView({ block: "nearest", inline: "nearest" }); }, [activeId, terminals.length]);
 
   const canAdd = terminals.length < 8;
-  return <section className="terminal-shell" aria-label="Session terminal"><header><div className="terminal-tabs">{terminals.map((item) => <button ref={(element) => { if (element) tabRefs.current.set(item.id, element); else tabRefs.current.delete(item.id); }} key={item.id} className={`terminal-tab ${item.id === activeId ? "active" : ""}`} aria-pressed={item.id === activeId} onClick={() => onSelect(item.id)}><TerminalSquare size={14} /><strong>{item.label}</strong></button>)}<IconButton label={canAdd ? "Add terminal" : "Terminal limit reached"} disabled={!canAdd} onClick={onAdd}><Plus size={16} /></IconButton></div><div>{exited && <span className="terminal-exited">exited</span>}<IconButton label="Delete terminal" onClick={onDelete}><Trash2 size={15} /></IconButton><IconButton label="Close terminal panel" onClick={onClose}><X size={16} /></IconButton></div></header>
+  return <section className="terminal-shell" aria-label="Session terminal"><header><div className="terminal-tabs">{terminals.map((item) => <button ref={(element) => { if (element) tabRefs.current.set(item.id, element); else tabRefs.current.delete(item.id); }} key={item.id} className={`terminal-tab ${item.id === activeId ? "active" : ""}`} aria-pressed={item.id === activeId} onClick={() => onSelect(item.id)}><TerminalSquare size={14} /><strong>{item.label}</strong></button>)}<IconButton label={canAdd ? "Add terminal" : "Terminal limit reached"} disabled={!canAdd} onClick={onAdd}><Plus size={16} /></IconButton></div><div>{exited && <><span className="terminal-exited">exited</span><IconButton label="Restart terminal" onClick={() => onStart(activeId, terminal.current?.cols ?? 80, terminal.current?.rows ?? 24)}><RotateCcw size={14} /></IconButton></>}<IconButton label="Delete terminal" onClick={onDelete}><Trash2 size={15} /></IconButton><IconButton label="Close terminal panel" onClick={onClose}><X size={16} /></IconButton></div></header>
     {cwd ? <div className="terminal-host" ref={host} onMouseDown={() => terminal.current?.focus()} /> : <div className="terminal-unavailable">Start the conversation to get a CWD</div>}
   </section>;
 }

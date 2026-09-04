@@ -9,7 +9,7 @@ import { IconButton } from "./IconButton";
 import { DiffViewer } from "./DiffViewer";
 import { PromptContextBar } from "./PromptContextBar";
 
-interface Props { message: ChatMessage; diff?: GitDiffSnapshot; expanded?: boolean; toolCount?: number; debug?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; }
+interface Props { message: ChatMessage; diff?: GitDiffSnapshot; expanded?: boolean; toolCount?: number; debug?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
 
 function nodeText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -33,7 +33,13 @@ function CodeBlock({ children, node: _node, ...props }: ComponentPropsWithoutRef
   return <div className="code-block"><pre {...props}>{children}</pre>{copyState === "error" && <span className="copy-feedback" role="status">Could not copy</span>}<IconButton label={copyState === "copied" ? "Code copied" : copyState === "error" ? "Copy failed" : "Copy code"} className="code-copy" onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton></div>;
 }
 
-const markdownComponents: Components = { pre: CodeBlock };
+const markdownComponents: Components = {
+  pre: CodeBlock,
+  // Transcript content is untrusted. Keep links visible without allowing it to
+  // navigate the application webview, and never fetch remote Markdown images.
+  a: ({ children, href }) => <span className="message-link" title={href}>{children}</span>,
+  img: ({ alt }) => <span className="message-image-placeholder" role="img" aria-label={alt || "Blocked remote image"}>[Image: {alt || "blocked"}]</span>,
+};
 
 function userMessageParts(content: string) {
   const invocation = content.match(/^<skill\s+name="([^"]+)"\s+location="[^"]+">\nReferences are relative to [^\n]+\.\n\n[\s\S]*?<\/skill>(?:\n\n([\s\S]*))?$/);
@@ -41,7 +47,7 @@ function userMessageParts(content: string) {
   return { skills: [invocation[1]], text: (invocation[2] ?? "").trim(), literalSkill: false };
 }
 
-export function Message({ message, diff, expanded = false, toolCount = 1, debug = false, onBranch, onCreateWorktree, onRetry }: Props) {
+export function Message({ message, diff, expanded = false, toolCount = 1, debug = false, onBranch, onCreateWorktree, onRetry, retrying = false }: Props) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [branching, setBranching] = useState(false);
   const branchingRef = useRef(false);
@@ -72,7 +78,7 @@ export function Message({ message, diff, expanded = false, toolCount = 1, debug 
       {debug && message.promptContext && <PromptContextBar context={message.promptContext} />}
       {thinking && <div className="reasoning-text"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{thinking}</ReactMarkdown></div>}
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{output}</ReactMarkdown>
-      {failure && <div className="message-failure" role="status"><CircleAlert size={14} /><span>{failure}</span>{onRetry && <button onClick={onRetry}>Retry</button>}</div>}
+      {failure && <div className="message-failure" role="status"><CircleAlert size={14} /><span>{failure}</span>{onRetry && <button disabled={retrying} onClick={onRetry}>{retrying ? "Retrying…" : "Retry"}</button>}</div>}
       {message.streaming && <span className="stream-caret" />}
       {diff && <DiffViewer snapshot={diff} />}
       {!message.streaming && output.trim().length > 0 && <div className="message-actions">

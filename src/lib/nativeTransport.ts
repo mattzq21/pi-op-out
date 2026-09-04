@@ -63,7 +63,7 @@ export class NativeTransport {
     this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.stderrLines = [];
     const unlisten = await listen<RpcEvent | { runtimeId: string; event: RpcEvent }>("pi://event", ({ payload }) => {
       const envelope = payload as { runtimeId?: unknown; event?: RpcEvent };
-      if (typeof envelope.runtimeId === "string") { if (envelope.runtimeId === this.runtimeId && envelope.event) { if (envelope.event.type === "disconnected") { this.running = false; this.retainedStatuses.clear(); } this.emit(envelope.event); } }
+      if (typeof envelope.runtimeId === "string") { if (envelope.runtimeId === this.runtimeId && envelope.event) { if (envelope.event.type === "disconnected") { this.running = false; this.retainedStatuses.clear(); this.retainedRequests.clear(); } this.emit(envelope.event); } }
       else this.emit(payload as RpcEvent);
     });
     const stderrUnlisten = await listen<{ runtimeId?: string; line?: string } | string>("pi://stderr", ({ payload }) => {
@@ -100,7 +100,7 @@ export class NativeTransport {
     const save = async () => {
       const previous = await this.loadSettings(); const connection = { cwd: this.cwd, sessionPath: this.sessionPath, hostId: this.hostId };
       await call<void>("save_app_settings", { settings }); if (!reconnect) return;
-      try { if (this.hostId !== "local" && !settings.hosts.some((host) => host.id === this.hostId)) this.hostId = "local"; await this.disconnect(); await this.connect(this.cwd, this.sessionPath, this.hostId); }
+      try { if (this.hostId !== "local" && !settings.hosts.some((host) => host.id === this.hostId)) { this.hostId = "local"; this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined; this.temporaryChat = false; this.temporaryChatUsed = false; } await this.disconnect(); await this.connect(this.cwd, this.sessionPath, this.hostId); }
       catch (reason) {
         await call<void>("save_app_settings", { settings: previous }); this.cwd = connection.cwd; this.sessionPath = connection.sessionPath; this.hostId = connection.hostId;
         try { await this.disconnect(); await this.connect(this.cwd, this.sessionPath, this.hostId); } catch { /* Preserve the original failure; the persisted settings are already restored. */ }

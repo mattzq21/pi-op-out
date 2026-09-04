@@ -18,6 +18,7 @@ export class SessionRuntimePool {
   private readonly sessions = new Map<string, NativeTransport>();
   private readonly runningTransports = new Set<NativeTransport>();
   private readonly unseenTransports = new Set<NativeTransport>();
+  private readonly interactiveTransports = new Set<NativeTransport>();
   private readonly diffStates = new Map<NativeTransport, DiffState>();
   private readonly listeners = new Set<() => void>();
   private runningSessionKeys: ReadonlySet<string> = new Set();
@@ -93,7 +94,7 @@ export class SessionRuntimePool {
     const transport = new NativeTransport(target); this.transports.add(transport);
     if (transport.currentSessionPath()) void this.loadSavedDiffs(transport, transport.currentSessionPath()!);
     transport.subscribe((event) => {
-      if (event.type === "extension_ui_request" && transport !== this.activeTransport) {
+      if (event.type === "extension_ui_request" && transport !== this.activeTransport && !this.interactiveTransports.has(transport)) {
         const request = event as unknown as ExtensionUiRequest;
         if (["input", "editor", "select", "confirm"].includes(request.method)) {
           void transport.command({ type: "extension_ui_response", id: request.id, cancelled: true }).catch(() => undefined);
@@ -128,6 +129,7 @@ export class SessionRuntimePool {
 
   setErrorHandler(handler?: (message: string) => void) { this.errorHandler = handler; }
   setBackgroundInputHandler(handler?: (request: ExtensionUiRequest) => void) { this.backgroundInputHandler = handler; }
+  setInteractive(transport: NativeTransport, interactive: boolean) { if (interactive) this.interactiveTransports.add(transport); else this.interactiveTransports.delete(transport); }
   isRunning(transport: NativeTransport) { return this.runningTransports.has(transport); }
   isAnyRunning() { return this.runningTransports.size > 0; }
 
@@ -146,7 +148,7 @@ export class SessionRuntimePool {
     if (transport) await this.release(transport);
   }
 
-  async release(transport: NativeTransport) { if (!this.transports.has(transport)) return; for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key); const diffState = this.diffStates.get(transport); if (diffState) this.discardBaselines(transport, diffState); this.transports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport); this.diffStates.delete(transport); this.publishSessionStates(); await transport.dispose(); }
+  async release(transport: NativeTransport) { if (!this.transports.has(transport)) return; for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key); const diffState = this.diffStates.get(transport); if (diffState) this.discardBaselines(transport, diffState); this.transports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport); this.interactiveTransports.delete(transport); this.diffStates.delete(transport); this.publishSessionStates(); await transport.dispose(); }
 
   subscribe(listener: () => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   runningSessions() { return this.runningSessionKeys; }

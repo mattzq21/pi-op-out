@@ -1,5 +1,7 @@
 import type { ChatMessage, ContentPart, PromptContextInfo } from "../types";
 
+const visibleUserContent = (content: unknown) => content;
+
 export type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number }; customType?: string; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string };
 
 export function cacheHitStats(usage?: { input: number; cacheRead: number }) {
@@ -7,14 +9,6 @@ export function cacheHitStats(usage?: { input: number; cacheRead: number }) {
   const promptTokens = usage.input + usage.cacheRead;
   if (promptTokens <= 0) return undefined;
   return { rate: Math.round(usage.cacheRead / promptTokens * 100), low: usage.cacheRead < Math.max(promptTokens * .5, 1000), cachedTokens: usage.cacheRead, promptTokens };
-}
-
-const injectedChangeContext = /^<project_context>\nChanged files since last message:\n[\s\S]*?\n<\/project_context>\n\n/;
-
-function visibleUserContent(content: unknown) {
-  if (typeof content === "string") return content.replace(injectedChangeContext, "");
-  if (!Array.isArray(content)) return content;
-  return content.map((part, index) => index === 0 && part && typeof part === "object" && (part as { type?: unknown }).type === "text" && typeof (part as { text?: unknown }).text === "string" ? { ...part, text: (part as { text: string }).text.replace(injectedChangeContext, "") } : part);
 }
 
 export function normalizeMessage(message: Record<string, unknown>, entryId?: string, completedAt?: string, fallbackId?: string): ChatMessage {
@@ -48,12 +42,16 @@ export function applyAssistantMessageEvent(message: ChatMessage, value: unknown)
 export function branchMessages(entries: PiEntry[], leafId: string | null): ChatMessage[] {
   const byId = new Map(entries.map((entry) => [entry.id, entry])); const branch: PiEntry[] = []; const visited = new Set<string>(); let cursor = leafId;
   while (cursor && !visited.has(cursor)) { visited.add(cursor); const entry = byId.get(cursor); if (!entry) break; branch.unshift(entry); cursor = entry.parentId; }
-  const messages: ChatMessage[] = []; let promptContext: PromptContextInfo | undefined;
+  const messages: ChatMessage[] = []; let promptContext: PromptContextInfo | undefined; let sequenceMarkerAuthorized = false;
   for (const entry of branch) {
     if (entry.type === "custom" && entry.customType === "pi-desktop-prompt-context") { promptContext = entry.data as PromptContextInfo; continue; }
+    if (entry.type === "custom" && entry.customType === "pi-orchestration-sequence-marker") { sequenceMarkerAuthorized = true; continue; }
     if (entry.type === "message" && entry.message) {
       const message = normalizeMessage(entry.message as unknown as Record<string, unknown>, entry.id, entry.timestamp);
-      messages.push(message.role === "assistant" && promptContext ? { ...message, promptContext } : message);
+      if (!(["user", "assistant", "tool"] as string[]).includes(message.role)) continue;
+      const visible = message.role === "user" && sequenceMarkerAuthorized ? { ...message, sequenceMarkerAuthorized: true } : message;
+      messages.push(visible.role === "assistant" && promptContext ? { ...visible, promptContext } : visible);
+      sequenceMarkerAuthorized = false;
       if (message.role === "assistant") promptContext = undefined;
     }
   }

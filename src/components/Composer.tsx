@@ -211,11 +211,13 @@ function ContainedPicker({ label, value, options, disabled, menuWidth = 200, cen
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const optionChosenRef = useRef(false);
   const selectedOption = options.find((option) => option.value === value);
   const close = () => setMenuStyle(undefined);
   useEffect(() => { if (disabled) close(); }, [disabled]);
   const toggle = () => {
     if (menuStyle) return close();
+    optionChosenRef.current = false;
     const rect = trigger.current?.getBoundingClientRect(); if (!rect) return;
     const width = Math.min(menuWidth, window.innerWidth - 16);
     const selectedIndex = options.findIndex((option) => option.value === value && !option.disabled);
@@ -238,7 +240,7 @@ function ContainedPicker({ label, value, options, disabled, menuWidth = 200, cen
   };
   return <div ref={root} className="composer-picker" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) close(); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); trigger.current?.focus(); } else if (menuStyle && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); move(event.key === "ArrowDown" ? 1 : -1); } }}>
     <button ref={trigger} type="button" className="select-control composer-picker-trigger" aria-label={label} aria-haspopup="listbox" aria-expanded={Boolean(menuStyle)} data-value={value} data-options={options.map((option) => option.value).join(" ")} title={selectedOption?.label} disabled={disabled} onClick={toggle}>{selectedOption?.label || label}</button>
-    {menuStyle && <div className={`composer-picker-menu${centered ? " centered" : ""}${compact ? " compact" : ""}`} role="listbox" aria-label={`${label} options`} style={menuStyle}>{options.map((option, index) => <button ref={(element) => { optionRefs.current[index] = element; }} key={`${option.detail ?? label}:${option.value}`} type="button" role="option" aria-selected={option.value === value} tabIndex={index === activeIndex ? 0 : -1} data-value={option.value} disabled={disabled || option.disabled} onFocus={() => setActiveIndex(index)} onClick={() => { if (disabled) return; onChange(option.value); close(); trigger.current?.focus(); }}><span>{option.label}</span>{option.detail && <small>{option.detail}</small>}</button>)}</div>}
+    {menuStyle && <div className={`composer-picker-menu${centered ? " centered" : ""}${compact ? " compact" : ""}`} role="listbox" aria-label={`${label} options`} style={menuStyle}>{options.map((option, index) => <button ref={(element) => { optionRefs.current[index] = element; }} key={`${option.detail ?? label}:${option.value}`} type="button" role="option" aria-selected={option.value === value} tabIndex={index === activeIndex ? 0 : -1} data-value={option.value} disabled={disabled || option.disabled} onFocus={() => setActiveIndex(index)} onClick={() => { if (disabled || optionChosenRef.current) return; optionChosenRef.current = true; onChange(option.value); close(); trigger.current?.focus(); }}><span>{option.label}</span>{option.detail && <small>{option.detail}</small>}</button>)}</div>}
   </div>;
 }
 
