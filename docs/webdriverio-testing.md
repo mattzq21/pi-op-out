@@ -40,7 +40,7 @@ npm run test:e2e:build
 npm run test:e2e:manual
 ```
 
-Both the manual launcher and automated suite use the same Linux placement as `npm run tauri dev`: the first available slot is `1280×692` at `(2560,56)` in the top-left of the right-hand monitor, then `1280×692` at `(2560,748)` in its bottom-left, then `1275×692` at `(1285,56)` in the upper-right of the left-hand monitor. If all three slots are occupied by Pi windows, the tertiary slot is used. The launcher selects the slot before starting the app and passes the creation bounds through `PI_E2E_WINDOW_BOUNDS`; Tauri applies them before creating the window, with no delayed move or Linux WebDriver resize. Rebuild the E2E binary after changing native placement code.
+Both the manual launcher and automated suite use the same Linux placement as `npm run tauri dev`: the first available slot is `1280×692` at `(2560,56)` in the top-left of the right-hand monitor, then `1280×692` at `(2560,748)` in its bottom-left, then `1275×692` at `(1285,56)` in the upper-right of the left-hand monitor, then `1275×692` at `(1285,748)` in its lower-right. If all four slots are occupied by Pi windows, the quaternary slot is used. The launcher selects the slot before starting the app and passes the creation bounds through `PI_E2E_WINDOW_BOUNDS`; Tauri applies them before creating the window, with no delayed move or Linux WebDriver resize. Rebuild the E2E binary after changing native placement code.
 
 The manual launcher prints a `sessionId` and `webdriverConfig`; pass those values to the MCP's `attach_session` tool with `platform: "browser"`, `provider: "external"`, and `trace: false`. Keep the launcher running during the session and stop it with Ctrl+C when finished.
 
