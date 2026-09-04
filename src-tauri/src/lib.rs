@@ -991,6 +991,13 @@ fn remote_session_sidecar_script(session_path: &str, action: &str) -> String {
 fn load_git_diffs(app: AppHandle, session_path: String, host_id: Option<String>) -> Result<GitDiffSnapshots, String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let content = if host_id == "local" {
+        let candidate = PathBuf::from(&session_path);
+        if !candidate.exists() {
+            let root = ensure_desktop_sessions_dir(&home_dir()?)?.canonicalize().map_err(|error| format!("Could not locate Pi Desktop sessions: {error}"))?;
+            let parent = candidate.parent().ok_or("Session path has no parent directory")?.canonicalize().map_err(|error| format!("Could not locate session directory: {error}"))?;
+            if !candidate.is_absolute() || !parent.starts_with(&root) || candidate.extension().and_then(|value| value.to_str()) != Some("jsonl") { return Err("Only Pi Desktop session files can be accessed".into()); }
+            return Ok(HashMap::new());
+        }
         let path = local_git_diffs_path(&session_path)?;
         if !path.exists() { return Ok(HashMap::new()); }
         if fs::metadata(&path).map_err(|error| format!("Could not inspect saved diffs: {error}"))?.len() > MAX_GIT_DIFFS_BYTES as u64 { return Err("Saved diffs exceed the 16 MiB limit".into()); }
