@@ -2,8 +2,8 @@ use serde::{de, Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
-    fs,
-    io::{BufRead, BufReader, Read, Write},
+    fs::{self, OpenOptions},
+    io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, ExitStatus, Stdio},
@@ -28,6 +28,7 @@ enum EphemeralSession {
 }
 
 struct TerminalProcess {
+    session_key: String,
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn PtyChild + Send + Sync>,
     writer: Box<dyn Write + Send>,
@@ -39,7 +40,7 @@ struct TerminalRuntime {
 }
 
 #[derive(Clone)]
-struct CachedSession { fingerprint: String, summary: SessionSummary }
+struct CachedSession { fingerprint: String, bytes: u64, explicitly_named: bool, has_user_message: bool, summary: SessionSummary }
 
 #[derive(Default)]
 struct SessionIndexRuntime {
@@ -60,6 +61,9 @@ const MAX_GIT_SNAPSHOT_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_GIT_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_GIT_PATCH_BYTES: usize = 4 * 1024 * 1024;
 const MAX_GIT_DIFFS_BYTES: usize = 16 * 1024 * 1024;
+const MAX_AGENT_OUTPUT_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_SESSION_INDEX_FILE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_SESSION_INDEX_BATCH_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Default)]
 struct PiRuntime {
@@ -275,8 +279,56 @@ fn codex_usage() -> Result<CodexUsage, String> {
 
 fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_config_dir().map_err(|error| error.to_string())?;
-    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-    Ok(dir.join("settings.json"))
+    ensure_private_dir(&dir)?;
+    let path = dir.join("settings.json");
+    set_private_file_permissions(&path)?;
+    Ok(path)
+}
+
+fn set_private_file_permissions(path: &Path) -> Result<(), String> {
+    if !path.exists() { return Ok(()); }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn ensure_private_dir(path: &Path) -> Result<(), String> {
+    fs::create_dir_all(path).map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn atomic_write_private(path: &Path, body: &[u8]) -> Result<(), String> {
+    let parent = path.parent().ok_or("Configuration file has no parent directory")?;
+    ensure_private_dir(parent)?;
+    let temporary = parent.join(format!(".{}.{}.tmp", path.file_name().and_then(|name| name.to_str()).unwrap_or("config"), Uuid::new_v4()));
+    let result = (|| {
+        let mut options = OpenOptions::new(); options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temporary).map_err(|error| error.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(fs::Permissions::from_mode(0o600)).map_err(|error| error.to_string())?;
+        }
+        file.write_all(body).and_then(|_| file.sync_all()).map_err(|error| error.to_string())?;
+        fs::rename(&temporary, path).map_err(|error| error.to_string())?;
+        if let Ok(directory) = fs::File::open(parent) { let _ = directory.sync_all(); }
+        Ok(())
+    })();
+    if result.is_err() { let _ = fs::remove_file(&temporary); }
+    result
 }
 
 fn validate_dictionaries(settings: &AppSettings) -> Result<(), String> {
@@ -332,37 +384,37 @@ fn validate_mcp_servers(settings: &AppSettings) -> Result<(), String> {
 
 fn prepare_mcp_bridge(app: &AppHandle, settings: &AppSettings) -> Result<(PathBuf, PathBuf), String> {
     let dir = app.path().app_config_dir().map_err(|error| error.to_string())?;
-    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    ensure_private_dir(&dir)?;
     let extension_path = dir.join("pi-desktop-mcp-bridge.ts");
     let config_path = dir.join("mcp-servers.json");
-    fs::write(&extension_path, include_str!("../resources/mcp-bridge.bundle.mjs")).map_err(|error| error.to_string())?;
-    fs::write(&config_path, serde_json::to_vec_pretty(&settings.mcp_servers).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+    atomic_write_private(&extension_path, include_str!("../resources/mcp-bridge.bundle.mjs").as_bytes())?;
+    atomic_write_private(&config_path, &serde_json::to_vec_pretty(&settings.mcp_servers).map_err(|error| error.to_string())?)?;
     Ok((extension_path, config_path))
 }
 
 fn prepare_session_broker(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_config_dir().map_err(|error| error.to_string())?;
-    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    ensure_private_dir(&dir)?;
     let path = dir.join("pi-desktop-session-broker.ts");
-    fs::write(&path, include_str!("../resources/session-broker.ts")).map_err(|error| error.to_string())?;
+    atomic_write_private(&path, include_str!("../resources/session-broker.ts").as_bytes())?;
     Ok(path)
 }
 
 fn prepare_trace_reader(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_config_dir().map_err(|error| error.to_string())?;
-    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    ensure_private_dir(&dir)?;
     let path = dir.join("pi-desktop-trace-reader.ts");
-    fs::write(&path, include_str!("../resources/trace-reader.ts")).map_err(|error| error.to_string())?;
+    atomic_write_private(&path, include_str!("../resources/trace-reader.ts").as_bytes())?;
     Ok(path)
 }
 
 fn prepare_context_window_cap_extension(app: &AppHandle, settings: &AppSettings) -> Result<PathBuf, String> {
     let dir = app.path().app_config_dir().map_err(|error| error.to_string())?.join("pi-context-window-cap");
-    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    ensure_private_dir(&dir)?;
     let extension_path = dir.join("index.ts");
     let config_path = dir.join("config.json");
-    fs::write(&extension_path, include_str!("../../extensions/pi-context-window-cap/index.ts")).map_err(|error| error.to_string())?;
-    fs::write(&config_path, serde_json::to_vec_pretty(&json!({ "contextWindowCap": settings.context_window_cap })).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+    atomic_write_private(&extension_path, include_str!("../../extensions/pi-context-window-cap/index.ts").as_bytes())?;
+    atomic_write_private(&config_path, &serde_json::to_vec_pretty(&json!({ "contextWindowCap": settings.context_window_cap })).map_err(|error| error.to_string())?)?;
     Ok(extension_path)
 }
 
@@ -371,9 +423,9 @@ fn prepare_project_files_watch_extension(app: &AppHandle) -> Result<PathBuf, Str
     let legacy_dir = config_dir.join("pi-git-change-context");
     if legacy_dir.exists() { fs::remove_dir_all(&legacy_dir).map_err(|error| format!("Could not remove legacy project files watch extension: {error}"))?; }
     let dir = config_dir.join("pi-project-files-watch");
-    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    ensure_private_dir(&dir)?;
     let extension_path = dir.join("index.ts");
-    fs::write(&extension_path, include_str!("../../extensions/pi-project-files-watch/index.ts")).map_err(|error| error.to_string())?;
+    atomic_write_private(&extension_path, include_str!("../../extensions/pi-project-files-watch/index.ts").as_bytes())?;
     Ok(extension_path)
 }
 
@@ -558,7 +610,7 @@ fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<(), String
         if !host_names.insert(name) { return Err(format!("Machine name '{}' is already in use", host.name.trim())); }
         validate_remote_host(host)?;
     }
-    fs::write(settings_path(&app)?, serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
+    atomic_write_private(&settings_path(&app)?, &serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?)
 }
 
 #[tauri::command]
@@ -586,7 +638,16 @@ fn run_limited(command: &mut Command, max_stdout: usize, context: &str) -> Resul
     let mut child = command.spawn().map_err(|error| format!("{context}: {error}"))?;
     let stdout = child.stdout.take().ok_or_else(|| format!("{context}: stdout was unavailable"))?;
     let stderr = child.stderr.take().ok_or_else(|| format!("{context}: stderr was unavailable"))?;
-    let stderr_reader = thread::spawn(move || { let mut bytes = Vec::new(); let _ = stderr.take(64 * 1024).read_to_end(&mut bytes); bytes });
+    let stderr_reader = thread::spawn(move || {
+        let mut reader = stderr; let mut retained = Vec::new(); let mut buffer = [0u8; 8192];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(count) => { let remaining = (64 * 1024usize).saturating_sub(retained.len()); retained.extend_from_slice(&buffer[..count.min(remaining)]); }
+            }
+        }
+        retained
+    });
     let mut bytes = Vec::new(); stdout.take((max_stdout + 1) as u64).read_to_end(&mut bytes).map_err(|error| format!("{context}: {error}"))?;
     let oversized = bytes.len() > max_stdout;
     if oversized { let _ = child.kill(); }
@@ -864,7 +925,11 @@ fn create_git_worktree(app: AppHandle, cwd: String, name: String, host_id: Optio
 }
 
 fn valid_remote_snapshot(snapshot: &GitSnapshotToken) -> bool {
-    snapshot.root.contains("/.pi-desktop/git-snapshots/pi-desktop-diff-") && snapshot.root.rsplit('/').next().is_some_and(|name| name.starts_with("pi-desktop-diff-")) && snapshot.tree.len() >= 40 && snapshot.tree.len() <= 64 && snapshot.tree.chars().all(|character| character.is_ascii_hexdigit())
+    let path = Path::new(&snapshot.root);
+    path.is_absolute()
+        && path.components().all(|component| matches!(component, std::path::Component::RootDir | std::path::Component::Normal(_)))
+        && path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.starts_with("pi-desktop-diff-"))
+        && snapshot.tree.len() >= 40 && snapshot.tree.len() <= 64 && snapshot.tree.chars().all(|character| character.is_ascii_hexdigit())
 }
 
 fn remote_git_tree(host: &RemoteHost, cwd: &str) -> Result<Option<String>, String> {
@@ -894,7 +959,9 @@ fn discard_git_tree(app: AppHandle, snapshot: String, host_id: Option<String>) -
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
     let snapshot: GitSnapshotToken = serde_json::from_str(&snapshot).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     if !valid_remote_snapshot(&snapshot) { return Err("Invalid remote Git snapshot location".into()); }
-    let output = ssh(host).arg(format!("rm -rf -- {}", shell_quote(&snapshot.root))).output().map_err(|error| format!("Could not discard Git snapshot on {}: {error}", host.name))?;
+    let root = shell_quote(&snapshot.root);
+    let script = format!("parent=$(cd \"$HOME/.pi-desktop/git-snapshots\" && pwd -P) || exit 7; snap=$(cd {root} && pwd -P) || exit 7; [ \"$(dirname -- \"$snap\")\" = \"$parent\" ] || exit 7; case \"$(basename -- \"$snap\")\" in pi-desktop-diff-*) ;; *) exit 7;; esac; rm -rf -- \"$snap\"");
+    let output = ssh(host).arg(script).output().map_err(|error| format!("Could not discard Git snapshot on {}: {error}", host.name))?;
     output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
 }
 
@@ -905,27 +972,32 @@ fn load_git_diff(app: AppHandle, cwd: String, base_tree: String, host_id: Option
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
     let base: GitSnapshotToken = serde_json::from_str(&base_tree).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     if !valid_remote_snapshot(&base) { return Err("Invalid remote Git snapshot location".into()); }
-    let Some(current_token) = remote_git_tree(host, &cwd)? else { let _ = ssh(host).arg(format!("rm -rf -- {}", shell_quote(&base.root))).status(); return Ok(None) };
+    let Some(current_token) = remote_git_tree(host, &cwd)? else { return Ok(None) };
     let current: GitSnapshotToken = serde_json::from_str(&current_token).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
-    let script = format!("cd {} || exit 2; trap 'rm -rf -- {} {}' EXIT; repo_objects=$(git rev-parse --git-path objects) || exit 3; repo_objects=$(cd \"$repo_objects\" && pwd -P) || exit 3; GIT_OBJECT_DIRECTORY={} GIT_ALTERNATE_OBJECT_DIRECTORIES={}:\"$repo_objects\" git diff --no-color --no-ext-diff --find-renames {} {} --", shell_quote(&cwd), shell_quote(&base.root), shell_quote(&current.root), shell_quote(&format!("{}/objects", current.root)), shell_quote(&format!("{}/objects", base.root)), shell_quote(&base.tree), shell_quote(&current.tree));
+    let script = format!("cd {} || exit 2; parent=$(cd \"$HOME/.pi-desktop/git-snapshots\" && pwd -P) || exit 7; base=$(cd {} && pwd -P) || exit 7; [ \"$(dirname -- \"$base\")\" = \"$parent\" ] || exit 7; case \"$(basename -- \"$base\")\" in pi-desktop-diff-*) ;; *) exit 7;; esac; trap 'rm -rf -- \"$base\" {}' EXIT; repo_objects=$(git rev-parse --git-path objects) || exit 3; repo_objects=$(cd \"$repo_objects\" && pwd -P) || exit 3; GIT_OBJECT_DIRECTORY={} GIT_ALTERNATE_OBJECT_DIRECTORIES=\"$base/objects:$repo_objects\" git diff --no-color --no-ext-diff --find-renames {} {} --", shell_quote(&cwd), shell_quote(&base.root), shell_quote(&current.root), shell_quote(&format!("{}/objects", current.root)), shell_quote(&base.tree), shell_quote(&current.tree));
     let mut command = ssh(host); command.arg(script); let output = run_limited(&mut command, MAX_GIT_PATCH_BYTES, &format!("Git patch on {} is too large", host.name))?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let patch = String::from_utf8_lossy(&output.stdout).into_owned();
     Ok((!patch.trim().is_empty()).then_some(patch))
 }
 
-fn git_diffs_path(session_path: &str) -> PathBuf { Path::new(session_path).with_extension("diffs.json") }
+fn local_git_diffs_path(session_path: &str) -> Result<PathBuf, String> { Ok(local_desktop_session_file(session_path)?.with_extension("diffs.json")) }
+
+fn remote_session_sidecar_script(session_path: &str, action: &str) -> String {
+    format!("session=$(readlink -f -- {}) || exit 7; sessions=$(cd \"$HOME/.pi-desktop/sessions\" && pwd -P) || exit 7; case \"$session\" in \"$sessions\"/*.jsonl) ;; *) exit 7;; esac; sidecar=${{session%.jsonl}}.diffs.json; {action}", shell_quote(session_path))
+}
 
 #[tauri::command(async)]
 fn load_git_diffs(app: AppHandle, session_path: String, host_id: Option<String>) -> Result<GitDiffSnapshots, String> {
-    let host_id = host_id.unwrap_or_else(|| "local".into()); let path = git_diffs_path(&session_path);
+    let host_id = host_id.unwrap_or_else(|| "local".into());
     let content = if host_id == "local" {
+        let path = local_git_diffs_path(&session_path)?;
         if !path.exists() { return Ok(HashMap::new()); }
         if fs::metadata(&path).map_err(|error| format!("Could not inspect saved diffs: {error}"))?.len() > MAX_GIT_DIFFS_BYTES as u64 { return Err("Saved diffs exceed the 16 MiB limit".into()); }
         fs::read_to_string(&path).map_err(|error| format!("Could not read saved diffs: {error}"))?
     } else {
         let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
-        let mut command = ssh(host); command.arg(format!("if [ -f {0} ]; then cat -- {0}; else printf '{{}}'; fi", shell_quote(&path.to_string_lossy())));
+        let mut command = ssh(host); command.arg(remote_session_sidecar_script(&session_path, "if [ -f \"$sidecar\" ]; then cat -- \"$sidecar\"; else printf '{}'; fi"));
         let output = run_limited(&mut command, MAX_GIT_DIFFS_BYTES, &format!("Saved diffs on {} exceed the limit", host.name))?;
         if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
         String::from_utf8(output.stdout).map_err(|_| "Saved remote diffs were not valid UTF-8".to_string())?
@@ -935,12 +1007,13 @@ fn load_git_diffs(app: AppHandle, session_path: String, host_id: Option<String>)
 
 #[tauri::command(async)]
 fn save_git_diffs(app: AppHandle, session_path: String, snapshots: GitDiffSnapshots, host_id: Option<String>) -> Result<(), String> {
-    let host_id = host_id.unwrap_or_else(|| "local".into()); let path = git_diffs_path(&session_path);
+    let host_id = host_id.unwrap_or_else(|| "local".into());
     let body = serde_json::to_string(&snapshots).map_err(|error| format!("Could not serialize diffs: {error}"))?;
     if body.len() > MAX_GIT_DIFFS_BYTES { return Err("Diff history exceeds the 16 MiB limit".into()); }
-    if host_id == "local" { return fs::write(path, body).map_err(|error| format!("Could not save diffs: {error}")); }
+    if host_id == "local" { return atomic_write_private(&local_git_diffs_path(&session_path)?, body.as_bytes()).map_err(|error| format!("Could not save diffs: {error}")); }
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
-    let output = ssh(host).arg(format!("printf %s {} > {}", shell_quote(&body), shell_quote(&path.to_string_lossy()))).output().map_err(|error| format!("Could not save diffs on {}: {error}", host.name))?;
+    let action = format!("umask 077; printf %s {} > \"$sidecar\"", shell_quote(&body));
+    let output = ssh(host).arg(remote_session_sidecar_script(&session_path, &action)).output().map_err(|error| format!("Could not save diffs on {}: {error}", host.name))?;
     output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
 }
 
@@ -1042,7 +1115,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let context_window_config = shell_quote(&serde_json::to_string_pretty(&json!({ "contextWindowCap": settings.context_window_cap })).map_err(|error| error.to_string())?);
     let mcp_bridge = shell_quote(include_str!("../resources/mcp-bridge.bundle.mjs"));
     let mcp_config = shell_quote(&serde_json::to_string_pretty(&settings.mcp_servers).map_err(|error| error.to_string())?);
-    let remote = format!("rm -rf -- \"$HOME/.pi-desktop/pi-git-change-context\" && mkdir -p \"$HOME/.pi-desktop/sessions\" \"$HOME/.pi-desktop/pi-context-window-cap\" \"$HOME/.pi-desktop/pi-project-files-watch\" \"$HOME/.pi/agent/extensions/pi-orchestration\" && printf %s {broker} > \"$HOME/.pi-desktop/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/.pi-desktop/pi-desktop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/.pi-desktop/pi-desktop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/.pi-desktop/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/.pi-desktop/pi-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/.pi-desktop/pi-context-window-cap/config.json\" && printf %s {project_files_watch} > \"$HOME/.pi-desktop/pi-project-files-watch/index.ts\" && printf %s {btw} > \"$HOME/.pi/agent/extensions/pi-desktop-btw.ts\" && printf %s {orchestration} > \"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\"");
+    let remote = format!("umask 077 && rm -rf -- \"$HOME/.pi-desktop/pi-git-change-context\" && mkdir -p -m 700 \"$HOME/.pi-desktop/sessions\" \"$HOME/.pi-desktop/pi-context-window-cap\" \"$HOME/.pi-desktop/pi-project-files-watch\" \"$HOME/.pi/agent/extensions/pi-orchestration\" && chmod 700 \"$HOME/.pi-desktop\" \"$HOME/.pi-desktop/sessions\" \"$HOME/.pi-desktop/pi-context-window-cap\" \"$HOME/.pi-desktop/pi-project-files-watch\" && printf %s {broker} > \"$HOME/.pi-desktop/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/.pi-desktop/pi-desktop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/.pi-desktop/pi-desktop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/.pi-desktop/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/.pi-desktop/pi-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/.pi-desktop/pi-context-window-cap/config.json\" && printf %s {project_files_watch} > \"$HOME/.pi-desktop/pi-project-files-watch/index.ts\" && printf %s {btw} > \"$HOME/.pi/agent/extensions/pi-desktop-btw.ts\" && printf %s {orchestration} > \"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\"");
     let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not install Pi Desktop extensions on {}: {error}", host.name))?;
     output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
 }
@@ -1209,10 +1282,10 @@ fn pi_command(runtime: State<PiRuntime>, runtime_id: String, command: Value) -> 
 }
 
 #[tauri::command]
-fn start_terminal(app: AppHandle, runtime: State<TerminalRuntime>, terminal_id: String, cwd: String, cols: u16, rows: u16, host_id: Option<String>) -> Result<(), String> {
+fn start_terminal(app: AppHandle, runtime: State<TerminalRuntime>, terminal_id: String, session_key: String, cwd: String, cols: u16, rows: u16, host_id: Option<String>) -> Result<(), String> {
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
     if processes.contains_key(&terminal_id) { return Ok(()); }
-    if processes.len() >= MAX_TERMINALS { return Err(format!("At most {MAX_TERMINALS} terminals may run at once")); }
+    if processes.values().filter(|process| process.session_key == session_key).count() >= MAX_TERMINALS { return Err(format!("At most {MAX_TERMINALS} terminals may run for one conversation")); }
     let pair = native_pty_system().openpty(PtySize { rows: rows.max(1), cols: cols.max(1), pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let mut command = if host_id == "local" {
@@ -1250,7 +1323,7 @@ fn start_terminal(app: AppHandle, runtime: State<TerminalRuntime>, terminal_id: 
         if let Some(mut process) = terminal_processes.lock().ok().and_then(|mut values| values.remove(&event_id)) { let _ = process.child.wait(); }
         let _ = event_app.emit("pi://event", json!({ "type": "terminal_exit", "terminalId": event_id }));
     });
-    processes.insert(terminal_id, TerminalProcess { master: pair.master, child, writer });
+    processes.insert(terminal_id, TerminalProcess { session_key, master: pair.master, child, writer });
     Ok(())
 }
 
@@ -1333,16 +1406,36 @@ fn text_content(message: &Value) -> String {
 
 fn unix_timestamp(time: SystemTime) -> u64 { time.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs() }
 
-fn parse_session_content(path: &Path, content: &str, modified: SystemTime, cwd_exists: bool, host_id: &str, host_name: &str) -> Option<SessionSummary> {
+fn parse_session_content(path: &Path, content: &str, modified: SystemTime, cwd_exists: bool, host_id: &str, host_name: &str) -> Option<(SessionSummary, bool, bool)> {
     let mut lines = content.lines(); let header: Value = serde_json::from_str(lines.next()?).ok()?;
     if header.get("type")?.as_str()? != "session" { return None; }
     let cwd = header.get("cwd").and_then(Value::as_str).unwrap_or("Unknown project").to_string();
     let id = header.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
     let mut name = None; let mut first_user_message = String::new(); let mut preview = String::new(); let mut message_count = 0; let mut api_cost = 0.0;
     for line in lines { let Ok(entry) = serde_json::from_str::<Value>(line) else { continue }; if entry.get("type").and_then(Value::as_str) == Some("session_info") { name = entry.get("name").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()).map(str::to_owned); } if entry.get("type").and_then(Value::as_str) == Some("message") { message_count += 1; if let Some(message) = entry.get("message") { let text = text_content(message); if !text.is_empty() { if first_user_message.is_empty() && message.get("role").and_then(Value::as_str) == Some("user") { first_user_message = text.clone(); } preview = text; } if message.get("role").and_then(Value::as_str) == Some("assistant") { api_cost += message.pointer("/usage/cost/total").and_then(Value::as_f64).filter(|cost| cost.is_finite() && *cost >= 0.0).unwrap_or(0.0); } } } }
+    let explicitly_named = name.is_some(); let has_user_message = !first_user_message.is_empty();
     let name = name.unwrap_or_else(|| if first_user_message.is_empty() { "Untitled session".into() } else { first_user_message });
     let project = Path::new(&cwd).file_name().and_then(|value| value.to_str()).unwrap_or("Workspace").to_string();
-    Some(SessionSummary { id, path: path.to_string_lossy().into_owned(), name, project, cwd, cwd_exists, modified_at: unix_timestamp(modified), preview: preview.chars().take(100).collect(), message_count, api_cost, host_id: host_id.into(), host_name: host_name.into() })
+    Some((SessionSummary { id, path: path.to_string_lossy().into_owned(), name, project, cwd, cwd_exists, modified_at: unix_timestamp(modified), preview: preview.chars().take(100).collect(), message_count, api_cost, host_id: host_id.into(), host_name: host_name.into() }, explicitly_named, has_user_message))
+}
+
+fn apply_session_entries(cached: &mut CachedSession, content: &str, modified: SystemTime) {
+    for line in content.lines() {
+        let Ok(entry) = serde_json::from_str::<Value>(line) else { continue };
+        if entry.get("type").and_then(Value::as_str) == Some("session_info") {
+            if let Some(name) = entry.get("name").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()) { cached.summary.name = name.to_owned(); cached.explicitly_named = true; }
+        }
+        if entry.get("type").and_then(Value::as_str) != Some("message") { continue; }
+        cached.summary.message_count += 1;
+        let Some(message) = entry.get("message") else { continue };
+        let text = text_content(message);
+        if !text.is_empty() {
+            if message.get("role").and_then(Value::as_str) == Some("user") && !cached.has_user_message { if !cached.explicitly_named { cached.summary.name = text.clone(); } cached.has_user_message = true; }
+            cached.summary.preview = text.chars().take(100).collect();
+        }
+        if message.get("role").and_then(Value::as_str) == Some("assistant") { cached.summary.api_cost += message.pointer("/usage/cost/total").and_then(Value::as_f64).filter(|cost| cost.is_finite() && *cost >= 0.0).unwrap_or(0.0); }
+    }
+    cached.summary.modified_at = unix_timestamp(modified);
 }
 
 fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<SessionSummary>, String> {
@@ -1350,14 +1443,21 @@ fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<S
     let mut seen = HashSet::new(); let mut sessions = Vec::new();
     for entry in WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok).filter(|entry| entry.file_type().is_file() && entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")) {
         let path = entry.path().to_path_buf(); let Ok(metadata) = entry.metadata() else { continue };
+        if metadata.len() > MAX_SESSION_INDEX_FILE_BYTES { continue; }
         let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
         let fingerprint = format!("{}:{}", modified.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos(), metadata.len());
         seen.insert(path.clone());
-        let mut summary = if let Some(cached) = cache.get(&path).filter(|cached| cached.fingerprint == fingerprint) { cached.summary.clone() } else {
+        if cache.get(&path).is_some_and(|cached| cached.fingerprint != fingerprint && cached.bytes < metadata.len()) {
+            let previous_bytes = cache.get(&path).map(|cached| cached.bytes).unwrap_or(0);
+            let appended = (|| { let mut file = fs::File::open(&path).ok()?; file.seek(SeekFrom::Start(previous_bytes)).ok()?; let mut content = String::new(); file.read_to_string(&mut content).ok()?; Some(content) })();
+            if let (Some(content), Some(cached)) = (appended, cache.get_mut(&path)) { apply_session_entries(cached, &content, modified); cached.bytes = metadata.len(); cached.fingerprint = fingerprint.clone(); }
+        }
+        if cache.get(&path).is_none_or(|cached| cached.fingerprint != fingerprint) {
             let Ok(content) = fs::read_to_string(&path) else { continue };
-            let Some(summary) = parse_session_content(&path, &content, modified, true, "local", "Local") else { continue };
-            cache.insert(path.clone(), CachedSession { fingerprint, summary: summary.clone() }); summary
-        };
+            let Some((summary, explicitly_named, has_user_message)) = parse_session_content(&path, &content, modified, true, "local", "Local") else { continue };
+            cache.insert(path.clone(), CachedSession { fingerprint: fingerprint.clone(), bytes: metadata.len(), explicitly_named, has_user_message, summary });
+        }
+        let Some(mut summary) = cache.get(&path).map(|cached| cached.summary.clone()) else { continue };
         summary.cwd_exists = Path::new(&summary.cwd).is_dir(); sessions.push(summary);
     }
     cache.retain(|path, _| seen.contains(path)); Ok(sessions)
@@ -1365,35 +1465,58 @@ fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<S
 
 fn list_remote_sessions(index: &SessionIndexRuntime, host: &RemoteHost) -> Result<Vec<SessionSummary>, String> {
     let script = r#"mkdir -p "$HOME/.pi-desktop/sessions" && find "$HOME/.pi-desktop/sessions" -type f -name '*.jsonl' -printf '%p\000%T@\000%s\000' 2>/dev/null"#;
-    let output = ssh(host).arg(script).output().map_err(|error| format!("Could not run ssh for {}: {error}", host.name))?;
+    let mut metadata_command = ssh(host); metadata_command.arg(script);
+    let output = run_limited(&mut metadata_command, MAX_SESSION_INDEX_BATCH_BYTES, &format!("Could not list sessions on {}", host.name))?;
     if !output.status.success() { return Err(format!("Could not list sessions on {}: {}", host.name, String::from_utf8_lossy(&output.stderr).trim())); }
     let fields: Vec<&[u8]> = output.stdout.split(|byte| *byte == 0).filter(|field| !field.is_empty()).collect();
-    let metadata: Vec<(String, String, u64)> = fields.chunks(3).filter_map(|frame| {
+    let metadata: Vec<(String, String, u64, u64)> = fields.chunks(3).filter_map(|frame| {
         if frame.len() != 3 { return None; }
-        let path = String::from_utf8_lossy(frame[0]).into_owned(); let modified = String::from_utf8_lossy(frame[1]).into_owned(); let size = String::from_utf8_lossy(frame[2]).into_owned();
+        let path = String::from_utf8_lossy(frame[0]).into_owned(); let modified = String::from_utf8_lossy(frame[1]).into_owned(); let size: u64 = String::from_utf8_lossy(frame[2]).parse().ok()?;
+        if size > MAX_SESSION_INDEX_FILE_BYTES { return None; }
         let seconds = modified.split('.').next().and_then(|value| value.parse().ok()).unwrap_or(0);
-        Some((path, format!("{modified}:{size}"), seconds))
+        Some((path, format!("{modified}:{size}"), seconds, size))
     }).collect();
     let previous = index.remote.lock().map_err(|_| "Remote session index lock was poisoned")?.get(&host.id).cloned().unwrap_or_default();
-    let changed: Vec<_> = metadata.iter().filter(|(path, fingerprint, _)| previous.get(path).is_none_or(|cached| cached.fingerprint != *fingerprint)).collect();
+    let changed: Vec<_> = metadata.iter().filter(|(path, fingerprint, _, _)| previous.get(path).is_none_or(|cached| cached.fingerprint != *fingerprint)).collect();
     let mut parsed = HashMap::new();
-    for batch in changed.chunks(128) {
-        let paths = batch.iter().map(|(path, _, _)| shell_quote(path)).collect::<Vec<_>>().join(" ");
-        let command = format!(r#"sh -c 'for path do printf "%s\000" "$path"; cat -- "$path"; printf "\000"; done' sh {paths}"#);
-        let output = ssh(host).arg(command).output().map_err(|error| format!("Could not update session index on {}: {error}", host.name))?;
+    let mut cursor = 0;
+    while cursor < changed.len() {
+        let mut end = cursor; let mut batch_bytes = 0u64;
+        while end < changed.len() {
+            let (path, _, _, size) = changed[end];
+            let offset = previous.get(path).filter(|cached| cached.bytes < *size).map(|cached| cached.bytes).unwrap_or(0);
+            let update_bytes = size.saturating_sub(offset);
+            if end > cursor && batch_bytes.saturating_add(update_bytes) > MAX_SESSION_INDEX_BATCH_BYTES as u64 { break; }
+            batch_bytes = batch_bytes.saturating_add(update_bytes); end += 1;
+        }
+        let batch = &changed[cursor..end];
+        let arguments = batch.iter().flat_map(|(path, _, _, size)| {
+            let offset = previous.get(path).filter(|cached| cached.bytes < *size).map(|cached| cached.bytes).unwrap_or(0);
+            [shell_quote(path), offset.to_string()]
+        }).collect::<Vec<_>>().join(" ");
+        let command = format!(r#"sh -c 'while [ "$#" -ge 2 ]; do path=$1; offset=$2; shift 2; printf "%s\000" "$path"; tail -c "+$((offset + 1))" -- "$path"; printf "\000"; done' sh {arguments}"#);
+        let mut update_command = ssh(host); update_command.arg(command);
+        let output = run_limited(&mut update_command, MAX_SESSION_INDEX_BATCH_BYTES + MAX_GIT_PATH_LIST_BYTES, &format!("Could not update session index on {}", host.name))?;
         if !output.status.success() { return Err(format!("Could not update session index on {}: {}", host.name, String::from_utf8_lossy(&output.stderr).trim())); }
         let frames: Vec<&[u8]> = output.stdout.split(|byte| *byte == 0).collect();
         for frame in frames.chunks(2) {
             if frame.len() != 2 || frame[0].is_empty() { continue; }
-            let path = String::from_utf8_lossy(frame[0]).into_owned(); let Some((_, _, seconds)) = metadata.iter().find(|(candidate, _, _)| candidate == &path) else { continue };
+            let path = String::from_utf8_lossy(frame[0]).into_owned(); let Some((_, fingerprint, seconds, size)) = metadata.iter().find(|(candidate, _, _, _)| candidate == &path) else { continue };
             let content = String::from_utf8_lossy(frame[1]); let path_buf = PathBuf::from(&path);
-            if let Some(summary) = parse_session_content(&path_buf, &content, SystemTime::UNIX_EPOCH + Duration::from_secs(*seconds), true, &host.id, &host.name) { parsed.insert(path, summary); }
+            let modified = SystemTime::UNIX_EPOCH + Duration::from_secs(*seconds);
+            let cached = previous.get(&path).filter(|cached| cached.bytes < *size);
+            if let Some(cached) = cached {
+                let mut next = cached.clone(); apply_session_entries(&mut next, &content, modified); next.bytes = *size; next.fingerprint = fingerprint.clone(); parsed.insert(path, next);
+            } else if let Some((summary, explicitly_named, has_user_message)) = parse_session_content(&path_buf, &content, modified, true, &host.id, &host.name) {
+                parsed.insert(path, CachedSession { fingerprint: fingerprint.clone(), bytes: *size, explicitly_named, has_user_message, summary });
+            }
         }
+        cursor = end;
     }
     let mut next = HashMap::new(); let mut sessions = Vec::new();
-    for (path, fingerprint, _) in metadata {
-        let mut summary = if let Some(summary) = parsed.remove(&path) { summary } else if let Some(cached) = previous.get(&path) { cached.summary.clone() } else { continue };
-        summary.host_name = host.name.clone(); sessions.push(summary.clone()); next.insert(path, CachedSession { fingerprint, summary });
+    for (path, _, _, _) in metadata {
+        let Some(mut cached) = parsed.remove(&path).or_else(|| previous.get(&path).cloned()) else { continue };
+        cached.summary.host_name = host.name.clone(); sessions.push(cached.summary.clone()); next.insert(path, cached);
     }
     index.remote.lock().map_err(|_| "Remote session index lock was poisoned")?.insert(host.id.clone(), next); Ok(sessions)
 }
@@ -1649,7 +1772,7 @@ fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &Ses
     let settings = load_app_settings(app.clone())?;
     let mut command = build_pi_command(app, broker, &settings, &session.host_id, PiLaunch::Print { cwd: &session.cwd, session_path: &session.path, message })?;
     let output_root = std::env::temp_dir().join(format!("pi-desktop-broker-{}", Uuid::new_v4()));
-    fs::create_dir(&output_root).map_err(|error| format!("Could not prepare agent message: {error}"))?;
+    ensure_private_dir(&output_root).map_err(|error| format!("Could not prepare agent message: {error}"))?;
     let stdout_path = output_root.join("stdout"); let stderr_path = output_root.join("stderr");
     let stdout = fs::File::create(&stdout_path).map_err(|error| format!("Could not capture agent output: {error}"))?;
     let stderr = fs::File::create(&stderr_path).map_err(|error| format!("Could not capture agent errors: {error}"))?;
@@ -1666,6 +1789,12 @@ fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &Ses
         }
         let status = child.lock().map_err(|_| "Agent process lock was poisoned")?.try_wait().map_err(|error| format!("Could not wait for agent: {error}"))?;
         if let Some(status) = status { break Ok(status); }
+        let output_bytes = fs::metadata(&stdout_path).map(|metadata| metadata.len()).unwrap_or(0)
+            .saturating_add(fs::metadata(&stderr_path).map(|metadata| metadata.len()).unwrap_or(0));
+        if output_bytes > MAX_AGENT_OUTPUT_BYTES {
+            if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); }
+            break Err("Agent output exceeded the 16 MiB limit".to_string());
+        }
         if Instant::now() >= deadline {
             if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); }
             break Err("Agent message timed out after 120 seconds".to_string());
@@ -1674,8 +1803,11 @@ fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &Ses
     };
     broker.jobs.lock().ok().map(|mut jobs| jobs.remove(request_id));
     broker.cancelled.lock().ok().map(|mut cancelled| cancelled.remove(request_id));
+    let status = match status { Ok(status) => status, Err(error) => { let _ = fs::remove_dir_all(&output_root); return Err(error); } };
+    let output_bytes = fs::metadata(&stdout_path).map(|metadata| metadata.len()).unwrap_or(0)
+        .saturating_add(fs::metadata(&stderr_path).map(|metadata| metadata.len()).unwrap_or(0));
+    if output_bytes > MAX_AGENT_OUTPUT_BYTES { let _ = fs::remove_dir_all(&output_root); return Err("Agent output exceeded the 16 MiB limit".into()); }
     let stdout = fs::read(&stdout_path).unwrap_or_default(); let stderr = fs::read(&stderr_path).unwrap_or_default(); let _ = fs::remove_dir_all(&output_root);
-    let status = status?;
     if !status.success() { return Err(String::from_utf8_lossy(&stderr).trim().to_string()); }
     Ok(String::from_utf8_lossy(&stdout).trim().to_string())
 }

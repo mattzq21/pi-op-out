@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type SetStateAction } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { FolderGit2 } from "lucide-react";
 import type { AgentProfile, AgentState, ChatMessage, ComposerUpload, GitDiffSnapshots, ImageAttachment, Model, PromptContextInfo, PromptDictionary, SequenceProfile, SlashCommand } from "../types";
 import { Message } from "./Message";
@@ -16,9 +16,14 @@ export function ChatView(props: Props) {
   const followLatest = useRef(true);
   const shell = useRef<HTMLElement>(null);
   const composerStack = useRef<HTMLDivElement>(null);
-  const turns = groupTurns(props.messages);
-  const sessionUsage = props.messages.reduce((total, message) => ({ input: total.input + (message.usage?.input ?? 0), cacheRead: total.cacheRead + (message.usage?.cacheRead ?? 0) }), { input: 0, cacheRead: 0 });
+  const turns = useMemo(() => groupTurns(props.messages), [props.messages]);
+  const sessionUsage = useMemo(() => props.messages.reduce((total, message) => ({ input: total.input + (message.usage?.input ?? 0), cacheRead: total.cacheRead + (message.usage?.cacheRead ?? 0) }), { input: 0, cacheRead: 0 }), [props.messages]);
   const sessionCache = cacheHitStats(sessionUsage);
+  const actions = useRef({ onSend: props.onSend, onBranch: props.onBranch, onCreateWorktree: props.onCreateWorktree });
+  actions.current = { onSend: props.onSend, onBranch: props.onBranch, onCreateWorktree: props.onCreateWorktree };
+  const onRetry = useCallback<Props["onSend"]>((...args) => actions.current.onSend(...args), []);
+  const onBranch = useCallback<Props["onBranch"]>((message) => actions.current.onBranch(message), []);
+  const onCreateWorktree = useCallback<NonNullable<Props["onCreateWorktree"]>>((message) => actions.current.onCreateWorktree?.(message), []);
   const projectName = props.projectCwd?.split(/[\\/]/).filter(Boolean).at(-1);
   const abortedTurn = !props.state.isStreaming ? findReplaceableAbortedTurn(props.messages) : undefined;
   useEffect(() => { if (followLatest.current) bottom.current?.scrollIntoView({ behavior: "auto" }); }, [props.messages, props.gitDiffs, props.state.isStreaming]);
@@ -36,7 +41,7 @@ export function ChatView(props: Props) {
   return <main ref={shell} className="chat-shell" onFocusCapture={props.onActivate} onPointerDownCapture={props.onActivate}>
     <div ref={messagesRef} className="messages" aria-live="polite" onScroll={(event) => { const element = event.currentTarget; followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80; }}><div className="conversation">
       {!props.messages.length && <div className="empty-chat"><span>π</span></div>}
-      {turns.map((turn, index) => <ConversationTurn key={turn[0]?.id || index} messages={turn} gitDiffs={props.gitDiffs} promptContext={props.promptContext} debug={props.debug ?? false} active={props.state.isStreaming && index === turns.length - 1} retryable={!props.state.isStreaming && index === turns.length - 1} onRetry={props.onSend} onBranch={props.onBranch} onCreateWorktree={props.onCreateWorktree} />)}<div ref={bottom} className="scroll-anchor" />
+      {turns.map((turn, index) => <ConversationTurn key={turn[0]?.id || index} messages={turn} gitDiffs={props.gitDiffs} promptContext={props.promptContext} debug={props.debug ?? false} active={props.state.isStreaming && index === turns.length - 1} retryable={!props.state.isStreaming && index === turns.length - 1} onRetry={onRetry} onBranch={onBranch} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} />)}<div ref={bottom} className="scroll-anchor" />
     </div></div>
     {!props.readOnly && <div ref={composerStack} className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.map((line, index) => <div key={index}>{line}</div>)}</div>} {props.statuses.length > 0 && <div className="extension-status">{props.statuses.join(" · ")}</div>}{props.state.activity && <div className="runtime-activity" role="status">{props.state.activity}</div>}{!props.messages.length && props.state.messageCount === 0 && <div className="new-chat-project"><button type="button" className={projectName ? "selected" : undefined} aria-label={projectName ? `Selected project: ${projectName}` : "Choose project"} title={props.projectCwd} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName ?? "Choose project"}</button></div>}<Composer streaming={props.state.isStreaming} queued={props.state.pendingMessageCount} commands={props.commands} agents={props.agents ?? []} sequences={props.sequences ?? []} activeAgent={props.activeAgent} dictionaries={props.dictionaries} models={props.models} model={props.state.model} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug ? sessionCache : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn ? { id: `${abortedTurn.assistant.timestamp ?? abortedTurn.assistant.id}:${abortedTurn.prompt}`, value: abortedTurn.prompt } : undefined} onSend={props.onSend} onAbort={props.onAbort} onOpenTerminal={props.onOpenTerminal} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onThinking={props.onThinking} /></div>}
   </main>;
@@ -80,7 +85,9 @@ function renderMessages(messages: ChatMessage[], expanded: boolean, compact = tr
   return compactCompletedTools(messages, compact).map(({ message, count }) => <Message key={message.id} message={message.role === "assistant" && !message.promptContext && promptContext ? { ...message, promptContext } : message} toolCount={count} expanded={expanded} debug={debug} />);
 }
 
-function ConversationTurn({ messages, gitDiffs, promptContext, debug, active, retryable, onRetry, onBranch, onCreateWorktree }: { messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; promptContext?: PromptContextInfo; debug: boolean; active: boolean; retryable: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"]; onCreateWorktree?: Props["onCreateWorktree"] }) {
+type ConversationTurnProps = { messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; promptContext?: PromptContextInfo; debug: boolean; active: boolean; retryable: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"]; onCreateWorktree?: Props["onCreateWorktree"] };
+
+function ConversationTurnView({ messages, gitDiffs, promptContext, debug, active, retryable, onRetry, onBranch, onCreateWorktree }: ConversationTurnProps) {
   const [retryError, setRetryError] = useState<string>();
   const [retrying, setRetrying] = useState(false); const retryingRef = useRef(false);
   const userIndex = messages.findIndex((message) => message.role === "user");
@@ -118,3 +125,9 @@ function ConversationTurn({ messages, gitDiffs, promptContext, debug, active, re
     {retryError && <div className="message-failure retry-error" role="alert">Retry failed: {retryError}</div>}
   </section>;
 }
+
+const ConversationTurn = memo(ConversationTurnView, (previous, next) => previous.active === next.active
+  && previous.retryable === next.retryable && previous.debug === next.debug && previous.gitDiffs === next.gitDiffs
+  && previous.promptContext === next.promptContext && previous.onRetry === next.onRetry && previous.onBranch === next.onBranch
+  && previous.onCreateWorktree === next.onCreateWorktree && previous.messages.length === next.messages.length
+  && previous.messages.every((message, index) => message === next.messages[index]));

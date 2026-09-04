@@ -1,4 +1,4 @@
-import { mkdtemp, open, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, realpath, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,9 @@ const CHANGE_CONTEXT_MESSAGE = "pi-project-files-watch";
 const MAX_LISTED_FILES = 200;
 const MAX_GIT_OUTPUT = 4 * 1024 * 1024;
 const MAX_SESSION_HEADER_BYTES = 64 * 1024;
+const MAX_CHANGED_PATHS = 4096;
+const MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024;
+const MAX_FILE_BYTES = 16 * 1024 * 1024;
 
 class GitError extends Error {
   constructor(message: string, readonly exitCode: number | null) { super(message); }
@@ -146,25 +149,46 @@ async function recoverCopiedSnapshot(ctx: ExtensionContext, root: string, sessio
   return { version: 1, repositoryRoot: root, ref, commit: data.commit, capturedAt: timestamp };
 }
 
-async function worktreeTree(root: string) {
+async function assertSnapshotInputBounded(root: string) {
+  const output = await runGit(root, ["ls-files", "-z", "-m", "-o", "--exclude-standard", "--"]);
+  const paths = output.split("\0").filter(Boolean);
+  if (paths.length > MAX_CHANGED_PATHS) throw new Error(`Git snapshot has more than ${MAX_CHANGED_PATHS} changed files`);
+  let total = 0;
+  for (const path of paths) {
+    let metadata;
+    try { metadata = await lstat(join(root, path)); } catch { continue; }
+    if (metadata.size > MAX_FILE_BYTES) throw new Error(`Git snapshot file is larger than ${MAX_FILE_BYTES / 1024 / 1024} MiB: ${path}`);
+    total += metadata.size;
+    if (total > MAX_SNAPSHOT_BYTES) throw new Error(`Git snapshot exceeds ${MAX_SNAPSHOT_BYTES / 1024 / 1024} MiB`);
+  }
+}
+
+async function worktreeTree(root: string, isolated = false) {
+  await assertSnapshotInputBounded(root);
   const temporary = await mkdtemp(join(tmpdir(), "pi-git-snapshot-"));
   const index = join(temporary, "index");
-  const env = { GIT_INDEX_FILE: index };
+  const env: Record<string, string> = { GIT_INDEX_FILE: index };
   try {
+    if (isolated) {
+      const configuredObjects = (await runGit(root, ["rev-parse", "--git-path", "objects"])).trim();
+      const repositoryObjects = await realpath(configuredObjects.startsWith("/") ? configuredObjects : join(root, configuredObjects));
+      const objects = join(temporary, "objects"); await mkdir(objects);
+      env.GIT_OBJECT_DIRECTORY = objects;
+      env.GIT_ALTERNATE_OBJECT_DIRECTORIES = repositoryObjects;
+    }
     try { await runGit(root, ["read-tree", "HEAD"], env); }
     catch { await runGit(root, ["read-tree", "--empty"], env); }
     await runGit(root, ["add", "--all", "--", "."], env);
-    return (await runGit(root, ["write-tree"], env)).trim();
-  } finally {
-    await rm(temporary, { recursive: true, force: true });
-  }
+    const tree = (await runGit(root, ["write-tree"], env)).trim();
+    return { tree, env, cleanup: () => rm(temporary, { recursive: true, force: true }) };
+  } catch (error) { await rm(temporary, { recursive: true, force: true }); throw error; }
 }
 
 async function saveSnapshot(root: string, sessionId: string) {
   const previous = await sessionSnapshots(root, sessionId);
   const legacyRef = legacySessionRef(sessionId);
   const legacyCommit = await resolveRef(root, legacyRef);
-  const tree = await worktreeTree(root);
+  const captured = await worktreeTree(root);
   const timestamp = new Date().toISOString();
   const identity = {
     GIT_AUTHOR_NAME: "Pi session snapshot",
@@ -174,7 +198,9 @@ async function saveSnapshot(root: string, sessionId: string) {
     GIT_AUTHOR_DATE: timestamp,
     GIT_COMMITTER_DATE: timestamp,
   };
-  const commit = (await runGit(root, ["commit-tree", tree], identity, `Pi session snapshot ${sessionId} ${timestamp}\n`)).trim();
+  let commit: string;
+  try { commit = (await runGit(root, ["commit-tree", captured.tree], identity, `Pi session snapshot ${sessionId} ${timestamp}\n`)).trim(); }
+  finally { await captured.cleanup(); }
   const ref = `${sessionRefPrefix(sessionId)}${snapshotName(timestamp, commit)}`;
   const deletes = [...previous, ...(legacyCommit ? [{ ref: legacyRef, commit: legacyCommit }] : [])];
   const transaction = [
@@ -191,11 +217,12 @@ async function saveSnapshot(root: string, sessionId: string) {
 
 function shellQuote(value: string) { return `'${value.replaceAll("'", `'\\''`)}'`; }
 
-function projectContext(root: string, baseline: string, current: string, files: string[]) {
+function projectContext(root: string, baseline: string, current: string, files: string[], env: Record<string, string>) {
   const shown = files.slice(0, MAX_LISTED_FILES);
   const omitted = files.length - shown.length;
   const paths = shown.map((path) => `- ${JSON.stringify(path)}`).join("\n");
-  const command = `git -C ${shellQuote(root)} diff --find-renames ${baseline} ${current} --`;
+  const environment = ["GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"].flatMap((name) => env[name] ? [`${name}=${shellQuote(env[name])}`] : []).join(" ");
+  const command = `${environment ? `${environment} ` : ""}git -C ${shellQuote(root)} diff --find-renames ${baseline} ${current} --`;
   return `<project_context>
 Changed files since last message:
 ${paths}${omitted ? `\n- … ${omitted} more changed file${omitted === 1 ? "" : "s"}` : ""}
@@ -208,6 +235,7 @@ ${command}
 export default function projectFilesWatch(pi: ExtensionAPI) {
   let snapshotQueue = Promise.resolve();
   let pendingContext: string | undefined;
+  let pendingSnapshotCleanup: (() => Promise<void>) | undefined;
   let lastError = "";
 
   const reportError = (ctx: ExtensionContext, error: unknown) => {
@@ -239,8 +267,9 @@ export default function projectFilesWatch(pi: ExtensionAPI) {
   });
 
   pi.on("message_end", (event, ctx) => {
-    if (event.message.role !== "assistant" || event.message.stopReason !== "stop") return;
     snapshotQueue = snapshotQueue.then(async () => {
+      if (pendingSnapshotCleanup) { await pendingSnapshotCleanup(); pendingSnapshotCleanup = undefined; }
+      if (event.message.role !== "assistant" || event.message.stopReason !== "stop") return;
       const root = await repositoryRoot(ctx.cwd);
       if (!root) return;
       const snapshot = await saveSnapshot(root, ctx.sessionManager.getSessionId());
@@ -252,6 +281,7 @@ export default function projectFilesWatch(pi: ExtensionAPI) {
 
   pi.on("input", async (event, ctx) => {
     pendingContext = undefined;
+    if (pendingSnapshotCleanup) { await pendingSnapshotCleanup(); pendingSnapshotCleanup = undefined; }
     if (event.source === "extension" || !event.text.trim() || event.text.startsWith("/")) {
       return { action: "continue" };
     }
@@ -263,12 +293,15 @@ export default function projectFilesWatch(pi: ExtensionAPI) {
       let snapshot = await currentSnapshot(root, sessionId);
       if (!snapshot) snapshot = await inheritSnapshot(ctx, ctx.sessionManager.getHeader()?.parentSession);
       if (!snapshot) return { action: "continue" };
-      const current = await worktreeTree(root);
-      const rawPaths = await runGit(root, ["diff", "--name-only", "-z", "--find-renames", snapshot.commit, current, "--"]);
+      const current = await worktreeTree(root, true);
+      let rawPaths: string;
+      try { rawPaths = await runGit(root, ["diff", "--name-only", "-z", "--find-renames", snapshot.commit, current.tree, "--"], current.env); }
+      catch (error) { await current.cleanup(); throw error; }
       const files = rawPaths.split("\0").filter(Boolean);
-      if (!files.length) return { action: "continue" };
+      if (!files.length) { await current.cleanup(); return { action: "continue" }; }
       lastError = "";
-      pendingContext = projectContext(root, snapshot.commit, current, files);
+      pendingSnapshotCleanup = current.cleanup;
+      pendingContext = projectContext(root, snapshot.commit, current.tree, files, current.env);
       return { action: "continue" };
     } catch (error) {
       reportError(ctx, error);

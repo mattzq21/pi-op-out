@@ -9,17 +9,17 @@ export function dictionaryMatches(value: string, dictionaries: PromptDictionary[
   const entries = new Map<string, string>();
   for (const dictionary of dictionaries) for (const entry of dictionary.entries) {
     const word = entry.word.trim(); const replacement = entry.replacement.trim();
-    if (word && replacement && !entries.has(word.toLocaleLowerCase())) entries.set(word.toLocaleLowerCase(), replacement);
+    if (word && replacement && !entries.has(word)) entries.set(word, replacement);
   }
   const words = [...entries.keys()].sort((left, right) => right.length - left.length);
   if (!words.length) return [];
-  const pattern = new RegExp(words.map(escapeRegExp).join("|"), "giu");
+  const pattern = new RegExp(words.map(escapeRegExp).join("|"), "gu");
   const matches: DictionaryMatch[] = [];
   for (const match of value.matchAll(pattern)) {
     const start = match.index ?? 0;
     const end = start + match[0].length;
     if ((start > 0 && wordCharacter.test(value[start - 1])) || (end < value.length && wordCharacter.test(value[end]))) continue;
-    const replacement = entries.get(match[0].toLocaleLowerCase());
+    const replacement = entries.get(match[0]);
     if (replacement !== undefined) {
       matches.push({ start, end, replacement });
       if (matches.length >= limit) break;
