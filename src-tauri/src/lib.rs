@@ -286,7 +286,7 @@ fn validate_dictionaries(settings: &AppSettings) -> Result<(), String> {
     for id in &settings.active_dictionary_ids { if !ids.contains(id.as_str()) { return Err("Active dictionary was not found".into()); } if !active_ids.insert(id.as_str()) { return Err("A dictionary can only be active once".into()); } }
     let mut keys = HashSet::new();
     for dictionary in settings.dictionaries.iter().filter(|dictionary| active_ids.contains(dictionary.id.as_str())) {
-        for entry in &dictionary.entries { let key = entry.word.trim().to_lowercase(); if key.is_empty() { continue; } if !keys.insert(key) { return Err(format!("Key '{}' appears more than once in active dictionaries", entry.word.trim())); } }
+        for entry in &dictionary.entries { let key = entry.word.trim(); if key.is_empty() { continue; } if !keys.insert(key) { return Err(format!("Key '{key}' appears more than once in active dictionaries")); } }
     }
     Ok(())
 }
