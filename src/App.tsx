@@ -433,7 +433,7 @@ export default function App() {
     if (!settings) return;
     const handleKeybind = (event: KeyboardEvent) => {
       if (event.repeat || document.querySelector("dialog[open]")) return;
-      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "g") {
         event.preventDefault();
         if (!canLeaveSettings()) return;
         setView("chat"); setPanelOpen(true);
