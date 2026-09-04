@@ -1,4 +1,6 @@
-import { $ } from "@wdio/globals";
+import { $, browser } from "@wdio/globals";
+
+type ConfirmationWindow = Window & { __e2eConfirmation?: { original: typeof window.confirm; messages: string[] } };
 
 class AppPage {
   get root() { return $(".app"); }
@@ -50,8 +52,45 @@ class AppPage {
   }
 
   async openConversations() {
-    if (await this.conversationsButton.isExisting()) await this.conversationsButton.click();
+    if (await this.conversationsButton.isExisting()) {
+      await this.confirmAction("Discard unsaved settings changes?", () => this.conversationsButton.click(), true);
+    }
     await this.composer.waitForDisplayed();
+  }
+
+  async confirmAction(message: string, action: () => Promise<unknown>, optional = false) {
+    await browser.execute((expected) => {
+      const target = window as ConfirmationWindow;
+      target.__e2eConfirmation = { original: window.confirm, messages: [] };
+      window.confirm = (value) => {
+        const text = String(value);
+        target.__e2eConfirmation!.messages.push(text);
+        return text === expected;
+      };
+    }, message);
+    let messages: string[] = [];
+    try {
+      await action();
+    } finally {
+      messages = await browser.execute(() => {
+        const target = window as ConfirmationWindow;
+        const confirmation = target.__e2eConfirmation!;
+        window.confirm = confirmation.original;
+        delete target.__e2eConfirmation;
+        return confirmation.messages;
+      });
+    }
+    if ((!optional && messages.length !== 1) || messages.some((value) => value !== message)) {
+      throw new Error(`Expected confirmation ${JSON.stringify(message)}, received ${JSON.stringify(messages)}`);
+    }
+  }
+
+  async refreshForReset() {
+    // Intentional test resets discard drafts; normal navigation keeps its unload protection.
+    await browser.execute(() => {
+      window.addEventListener("beforeunload", (event) => event.stopImmediatePropagation(), { capture: true, once: true });
+    });
+    await browser.refresh();
   }
 
   async prepareMessage(message: string) {

@@ -33,9 +33,14 @@ const webdriverPort = await getOsAssignedPort();
 const sessionsRoot = path.join(homedir(), ".pi-desktop", "sessions");
 const temporaryProjectsRoot = path.join(homedir(), "pi-desktop", "tmp");
 const orchestrationConfigPath = path.join(homedir(), ".pi", "agent", "extensions", "pi-orchestration", "config.json");
+const absoluteEnvPath = (name: string) => { const value = process.env[name]; return value && path.isAbsolute(value) ? value : undefined; };
+const userConfigRoot = process.platform === "darwin" ? path.join(homedir(), "Library", "Application Support")
+  : process.platform === "win32" ? absoluteEnvPath("APPDATA") ?? path.join(homedir(), "AppData", "Roaming")
+  : absoluteEnvPath("XDG_CONFIG_HOME") ?? path.join(homedir(), ".config");
+const desktopSettingsPath = path.join(userConfigRoot, "dev.pi.desktop", "settings.json");
 let baselineSessions = new Set<string>();
 let baselineProjects = new Set<string>();
-let baselineOrchestrationConfig: Buffer | undefined;
+const baselineNativeConfigs = new Map<string, Buffer | undefined>();
 
 const verifyActualCallModel = () => {
   const [provider, ...modelParts] = actualCallModel.split("/");
@@ -80,6 +85,21 @@ const cleanupTestSessions = () => {
   for (const project of markedTestProjects().filter((directory) => !baselineProjects.has(directory))) rmSync(project, { recursive: true, force: true });
 };
 
+const restoreNativeConfigs = () => {
+  const failures: unknown[] = [];
+  for (const [file, original] of baselineNativeConfigs) {
+    try {
+      if (original === undefined) {
+        if (existsSync(file)) rmSync(file);
+      } else {
+        const current = existsSync(file) ? readFileSync(file) : undefined;
+        if (!current?.equals(original)) writeFileSync(file, original, { mode: 0o600 });
+      }
+    } catch (error) { failures.push(error); }
+  }
+  if (failures.length) throw new AggregateError(failures, "Could not restore native configuration after the acceptance run");
+};
+
 export const config: WebdriverIO.Config = {
   runner: "local",
   specs: ["./test/e2e/specs/**/*.spec.ts"],
@@ -105,17 +125,13 @@ export const config: WebdriverIO.Config = {
     verifyActualCallModel();
     baselineSessions = new Set(sessionFiles());
     baselineProjects = new Set(markedTestProjects());
-    baselineOrchestrationConfig = existsSync(orchestrationConfigPath) ? readFileSync(orchestrationConfigPath) : undefined;
+    for (const file of [orchestrationConfigPath, desktopSettingsPath]) {
+      baselineNativeConfigs.set(file, existsSync(file) ? readFileSync(file) : undefined);
+    }
   },
   onComplete: () => {
     try { cleanupTestSessions(); }
-    finally {
-      if (baselineOrchestrationConfig) {
-        const current = existsSync(orchestrationConfigPath) ? readFileSync(orchestrationConfigPath) : undefined;
-        if (!current?.equals(baselineOrchestrationConfig)) writeFileSync(orchestrationConfigPath, baselineOrchestrationConfig);
-      }
-      else if (existsSync(orchestrationConfigPath)) rmSync(orchestrationConfigPath);
-    }
+    finally { restoreNativeConfigs(); }
   },
   before: async () => {
     const [mainWindow] = await browser.getWindowHandles();

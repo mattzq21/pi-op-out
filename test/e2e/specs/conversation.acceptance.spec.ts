@@ -26,7 +26,7 @@ const updateBackendResponse = async (command: string, response: unknown) => {
 const resetBackend = async () => { await callBridge().setValue("[]"); await responseBridge().setValue("{}"); };
 const resetApp = async () => {
   await resetBackend();
-  await browser.refresh();
+  await app.refreshForReset();
   await app.root.waitForDisplayed();
   if (await app.conversationsButton.isExisting()) await app.conversationsButton.click();
   await app.waitUntilReady();
@@ -39,7 +39,6 @@ const emitPiEvent = async (payload: Record<string, unknown>) => {
   }, payload);
   await browser.execute(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 };
-const acceptConfirmDialogs = () => browser.execute(() => { window.confirm = () => true; });
 let defaultSettings: AppSettings;
 before(async () => {
   defaultSettings = await browser.execute(async () => {
@@ -115,7 +114,7 @@ describe("BUGS-3 regressions", () => {
       await expect($$(".terminal-tab")).toBeElementsArrayOfSize(1);
     } finally {
       await resetBackend();
-      await browser.refresh();
+      await app.refreshForReset();
       await app.waitUntilReady();
     }
   });
@@ -191,6 +190,7 @@ const pressShortcut = (shortcut: string) => browser.execute((value) => {
   window.dispatchEvent(new KeyboardEvent("keydown", { key, ctrlKey: modifiers.includes("ctrl") || (mod && !mac), metaKey: modifiers.includes("meta") || (mod && mac), altKey: modifiers.includes("alt"), shiftKey: modifiers.includes("shift"), bubbles: true }));
 }, shortcut);
 const connectedSessionResponses = (sessionId: string) => ({
+  load_git_diffs: {}, save_git_diffs: {},
   "pi_command:get_state": { model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 0, pendingMessageCount: 0 },
   "pi_command:get_entries": { entries: [], leafId: null }, "pi_command:get_available_models": { models: [{ provider: "e2e", id: "acceptance", name: "Acceptance model" }, { provider: "e2e", id: "alternate", name: "Alternate model" }] },
   "pi_command:get_available_thinking_levels": { levels: ["off", "high"] }, "pi_command:get_commands": { commands: [] }, "pi_command:get_session_stats": {},
@@ -445,13 +445,12 @@ describe("Conversation acceptance", () => {
 
   it("archives an indexed conversation through its visible action", async () => {
     const indexed = { id: "acceptance-archive", path: "/tmp/acceptance-archive.jsonl", name: "Acceptance archive target", project: "Acceptance project", cwd: "/tmp", preview: "Archive preview", messageCount: 2, hostId: "local" };
-    await mockBackend({ list_sessions: [indexed], archive_session: {} });
+    await mockBackend({ list_sessions: [indexed], load_git_diffs: {}, stop_pi: {}, archive_session: {} });
     try {
       await app.conversationSearch.setValue("Acceptance archive target");
       const session = $(".session-item");
       await expect(session).toHaveText(expect.stringContaining(indexed.name));
-      await acceptConfirmDialogs();
-      await session.$(`button[aria-label="Archive ${indexed.name}"]`).click();
+      await app.confirmAction(`Archive “${indexed.name}”?`, () => session.$(`button[aria-label="Archive ${indexed.name}"]`).click());
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "archive_session"));
       expect((await backendCalls()).find(({ command }) => command === "archive_session")?.args).toEqual({ sessionPath: indexed.path, hostId: "local", terminalIds: [] });
@@ -463,13 +462,12 @@ describe("Conversation acceptance", () => {
 
   it("keeps a conversation available when archiving fails", async () => {
     const indexed = { id: "acceptance-archive-failure", path: "/tmp/acceptance-archive-failure.jsonl", name: "Acceptance archive failure", project: "Acceptance project", cwd: "/tmp", preview: "Archive failure preview", messageCount: 2, hostId: "local" };
-    await mockBackend({ list_sessions: [indexed], archive_session: { error: "Archive destination is unavailable" } });
+    await mockBackend({ list_sessions: [indexed], load_git_diffs: {}, stop_pi: {}, archive_session: { error: "Archive destination is unavailable" } });
     try {
       await app.conversationSearch.setValue(indexed.name);
       const session = $(".session-item");
       await expect(session).toHaveText(expect.stringContaining(indexed.name));
-      await acceptConfirmDialogs();
-      await session.$(`button[aria-label="Archive ${indexed.name}"]`).click();
+      await app.confirmAction(`Archive “${indexed.name}”?`, () => session.$(`button[aria-label="Archive ${indexed.name}"]`).click());
 
       await expect($(".error-toast strong")).toHaveText("Could not archive conversation");
       await expect($(".error-toast span")).toHaveText("Archive destination is unavailable");
@@ -484,7 +482,10 @@ describe("Conversation acceptance", () => {
 
   it("opens an indexed conversation as a second chat shell and closes it by selecting that session", async () => {
     const indexed = { id: "acceptance-split", path: "/tmp/acceptance-split.jsonl", name: "Acceptance split target", project: "Acceptance project", cwd: "/tmp", preview: "Split preview", messageCount: 1, hostId: "local" };
-    await mockBackend({ list_sessions: [indexed], start_pi: {}, stop_pi: {}, ...connectedSessionResponses(indexed.id) });
+    await mockBackend({
+      list_sessions: [indexed], start_pi: {}, stop_pi: {}, ...connectedSessionResponses(indexed.id),
+      load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" },
+    });
     try {
       await app.conversationSearch.setValue(indexed.name);
       const session = $(".session-item");
@@ -791,7 +792,7 @@ describe("Conversation acceptance", () => {
       await emitPiEvent({ type: "message_end", message: { role: "assistant", content: "Incremental answer", timestamp: 200 } });
       await emitPiEvent({ type: "agent_end" });
       await expect($(".stream-caret")).not.toBeExisting();
-      await expect($('button[aria-label="Copy response"]')).toBeDisplayed();
+      await expect($('//article[contains(@class,"assistant-message")][contains(.,"Incremental answer")]').$('button[aria-label^="Copy assistant response"]')).toBeDisplayed();
     } finally {
       await emitPiEvent({ type: "agent_end" });
       await resetBackend();
@@ -822,9 +823,11 @@ describe("Conversation acceptance", () => {
     const visibleMarker = `<!-- pi-desktop-sequence:${encodeURIComponent(JSON.stringify({ sequence: "release-flow", step: 2, agent: "reviewer", visible: true }))} -->\n`;
     const history = {
       entries: [
-        { type: "message", id: "sequence-hidden-user", parentId: null, message: { role: "user", content: `${hiddenMarker}Background implementation`, timestamp: 1 } },
+        { type: "custom", customType: "pi-orchestration-sequence-marker", id: "sequence-hidden-marker", parentId: null, data: { message: `${hiddenMarker}Background implementation` } },
+        { type: "message", id: "sequence-hidden-user", parentId: "sequence-hidden-marker", message: { role: "user", content: `${hiddenMarker}Background implementation`, timestamp: 1 } },
         { type: "message", id: "sequence-hidden-answer", parentId: "sequence-hidden-user", message: { role: "assistant", content: "Hidden builder answer", timestamp: 2 } },
-        { type: "message", id: "sequence-visible-user", parentId: "sequence-hidden-answer", message: { role: "user", content: `${visibleMarker}Review the implementation`, timestamp: 3 } },
+        { type: "custom", customType: "pi-orchestration-sequence-marker", id: "sequence-visible-marker", parentId: "sequence-hidden-answer", data: { message: `${visibleMarker}Review the implementation` } },
+        { type: "message", id: "sequence-visible-user", parentId: "sequence-visible-marker", message: { role: "user", content: `${visibleMarker}Review the implementation`, timestamp: 3 } },
         { type: "message", id: "sequence-visible-answer", parentId: "sequence-visible-user", message: { role: "assistant", content: "Visible reviewer answer", timestamp: 4 } },
       ],
       leafId: "sequence-visible-answer",
@@ -938,7 +941,7 @@ describe("Conversation acceptance", () => {
       expect((await $(".session-cache-hit").getAttribute("title"))?.replaceAll(",", "")).toBe("3000 of 4000 session prompt tokens read from cache");
     } finally {
       await resetBackend();
-      await browser.refresh();
+      await app.refreshForReset();
       await app.waitUntilReady();
     }
   });
@@ -964,7 +967,7 @@ describe("Conversation acceptance", () => {
     } finally {
       if (await app.terminalPanel.isExisting()) await app.deleteTerminalButton.click();
       await resetBackend();
-      await browser.refresh();
+      await app.refreshForReset();
       await app.waitUntilReady();
     }
   });
@@ -1014,7 +1017,7 @@ describe("Conversation acceptance", () => {
       await emitPiEvent({ type: "session_switched" });
       await expect($(".assistant-message")).toHaveText(expect.stringContaining("const answer = 42;"));
 
-      await $('button[aria-label="Copy response"]').click();
+      await $(".assistant-message").$('button[aria-label^="Copy assistant response"]').click();
       expect(await browser.execute(() => (window as unknown as { __e2eClipboard?: string }).__e2eClipboard)).toBe(response);
       await $('button[aria-label="Copy code"]').click();
       await expect($('button[aria-label="Code copied"]')).toBeDisplayed();
@@ -1063,15 +1066,22 @@ describe("Conversation acceptance", () => {
       ],
       leafId: "branch-assistant",
     };
-    await mockBackend({ ...connectedSessionResponses("branch-session"), "pi_command:get_entries": history, "pi_command:fork": {} });
+    await mockBackend({
+      ...connectedSessionResponses("branch-session"),
+      "pi_command:get_state": { ...connectedSessionResponses("branch-session")["pi_command:get_state"], sessionFile: "/tmp/branch-session.jsonl" },
+      "pi_command:get_entries": history,
+      "pi_command:clone": {},
+    });
     try {
       await emitPiEvent({ type: "session_switched" });
-      const branch = $('button[aria-label="Branch from here"]');
+      const branch = $(".assistant-message").$('button[aria-label^="Branch from assistant response"]');
       await branch.waitForClickable();
       await branch.click();
 
-      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "fork"));
-      expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "fork")?.args.command).toEqual({ type: "fork", entryId: "branch-user" });
+      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "clone"));
+      expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "clone")?.args.command).toEqual({ type: "clone" });
+      await expect($(".user-message")).toHaveText("Establish the branch point");
+      await expect($(".assistant-message")).toHaveText(expect.stringContaining("This response can be branched."));
     } finally {
       await resetBackend();
     }
@@ -1486,7 +1496,6 @@ describe("Orchestration acceptance", () => {
 
   it("creates an agent with inherited resources and editable instructions", async () => {
     await app.openSettings();
-    const inheritedEffort = await $('//label[contains(@class,"field")][span[normalize-space(.)="Thinking level"]]/select').getValue();
     await app.openSettingsSection("Agents");
     await $('//button[normalize-space(.)="Add agent"]').click();
 
@@ -1495,7 +1504,8 @@ describe("Orchestration acceptance", () => {
     await name.setValue("acceptance-agent");
     await $('input[aria-label="Agent description"]').setValue("Handles acceptance checks");
     await $('textarea[aria-label="System prompt"]').setValue("Verify observable behavior.");
-    await expect($('select[aria-label="Agent default effort"]')).toHaveValue(inheritedEffort);
+    await expect($('select[aria-label="Agent default effort"]')).toHaveValue("");
+    await expect($('select[aria-label="Agent default effort"] option:checked')).toHaveText("Use general default");
     await expect($('input[aria-label="Allow read"]')).toBeSelected();
     await expect($('input[aria-label="Allow bash"]')).toBeSelected();
 
@@ -1534,17 +1544,21 @@ describe("Orchestration acceptance", () => {
     expect(await $('select[aria-label="Sequence step 2"]').getText()).not.toContain("reviewer");
   });
 
-  it("removes sequences that depend on a deleted agent", async () => {
+  it("preserves valid sequence steps when an agent is deleted", async () => {
     const capability = acceptanceOrchestration();
     capability.config.sequences = [{ name: "review-flow", description: "Review changes", agents: ["default", "reviewer"], visibleSteps: 2 }];
     await enableOrchestration(capability);
     await app.openSettings();
     await app.openSettingsSection("Agents");
     await $('//div[contains(@class,"agent-list")]//button[.//span[normalize-space(.)="reviewer"]]').click();
-    await $('button[aria-label="Remove reviewer"]').click();
+    await app.confirmAction("Remove reviewer from 1 dependent sequence? Sequences with no remaining steps will also be removed.", () => $('button[aria-label="Remove reviewer"]').click());
 
     await app.openSettingsSection("Sequences");
-    await expect($(".sequence-editor .empty-small")).toHaveText("Add a sequence to get started.");
+    await expect($('input[aria-label="Sequence name"]')).toHaveValue("review-flow");
+    await expect($('select[aria-label="Sequence step 1"]')).toHaveValue("default");
+    await expect($('select[aria-label="Sequence step 2"]')).not.toBeExisting();
+    await expect($('input[aria-label="Visible steps"]')).toHaveValue("1");
+    expect(await $('select[aria-label="Sequence step 1"]').getText()).not.toContain("reviewer");
   });
 
   it("builds a multi-step sequence and controls how many steps are visible", async () => {
@@ -1599,7 +1613,7 @@ describe("Orchestration acceptance", () => {
     const agentName = "e2e-persisted-agent";
     writeFileSync(installedOrchestrationConfigPath, JSON.stringify(acceptanceOrchestration().config, null, 2));
     await resetBackend();
-    await browser.refresh();
+    await app.refreshForReset();
     await app.waitUntilReady();
     await resetBackend();
 
@@ -1640,15 +1654,32 @@ describe("Orchestration acceptance", () => {
   });
 
   it("restores desktop settings when orchestration configuration is rejected", async () => {
+    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
+    const capability = acceptanceOrchestration();
+    await mockBackend({
+      ...connectedSessionResponses("orchestration-rollback"),
+      load_app_settings: settings, save_app_settings: {}, start_pi: {}, stop_pi: {},
+      "pi_command:set_model": {},
+      "pi_command:prompt": { error: "Orchestration configuration was rejected" },
+    });
+    await emitPiEvent({ type: "session_switched" });
+    await enableOrchestration(capability);
     await app.openSettings();
     await app.automaticRetryToggle.click();
-    await mockBackend({ "pi_command:prompt": { error: "Orchestration configuration was rejected" } });
+    await app.openSettingsSection("Agents");
+    await $('//div[contains(@class,"agent-list")]//button[.//span[normalize-space(.)="reviewer"]]').click();
+    await $('input[aria-label="Agent description"]').setValue("Rejected configuration change");
     await app.saveSettingsButton.click();
 
     await expect($(".settings-save [role='alert']")).toHaveText("Orchestration configuration was rejected");
     const calls = await backendCalls();
-    expect(calls.filter(({ command }) => command === "save_app_settings")).toHaveLength(2);
-    expect(calls.filter(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-orchestration-config "))).toHaveLength(2);
+    const settingsWrites = calls.filter(({ command }) => command === "save_app_settings");
+    expect(settingsWrites.map(({ args }) => (args.settings as AppSettings).autoRetry)).toEqual([!settings.autoRetry, settings.autoRetry]);
+    expect(settingsWrites.every(({ mocked }) => mocked)).toBe(true);
+    const configurations = calls.filter(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-orchestration-config ")).map(({ args }) => decodeOrchestrationValue<OrchestrationConfig>((args.command as { message: string }).message.slice("/pi-orchestration-config ".length)));
+    expect(configurations).toHaveLength(2);
+    expect(configurations[0].agents.find((agent) => agent.name === "reviewer")?.description).toBe("Rejected configuration change");
+    expect(configurations[1]).toEqual(capability.config);
   });
 });
 
@@ -1663,16 +1694,17 @@ describe("Settings acceptance", () => {
 
   it("saves the current configuration and confirms success", async () => {
     const [provider, ...modelParts] = defaultSettings.defaultModel.split("/");
+    const model = { provider, id: modelParts.join("/"), name: "Configured model" };
     await mockBackend({
-      save_app_settings: {},
-      "pi_command:get_available_models": { models: [{ provider, id: modelParts.join("/"), name: "Configured model" }] },
-      "pi_command:get_available_thinking_levels": { levels: [defaultSettings.defaultThinking] },
-      "pi_command:set_auto_compaction": {},
-      "pi_command:set_auto_retry": {},
+      ...connectedSessionResponses("settings-save"),
+      load_app_settings: defaultSettings, save_app_settings: {}, start_pi: {}, stop_pi: {},
+      "pi_command:get_state": { ...connectedSessionResponses("settings-save")["pi_command:get_state"], model, thinkingLevel: defaultSettings.defaultThinking },
+      "pi_command:get_available_models": { models: [model] },
+      "pi_command:get_available_thinking_levels": { levels: [...new Set([defaultSettings.defaultThinking, "high", "off"])] },
       "pi_command:set_model": {},
-      "pi_command:set_thinking_level": {},
       "pi_command:prompt": {},
     });
+    await emitPiEvent({ type: "session_switched" });
     await enableOrchestration();
     try {
       await app.openSettings();
@@ -1683,6 +1715,9 @@ describe("Settings acceptance", () => {
       await app.automaticRetryToggle.click();
       await app.saveSettingsButton.click();
       await expect(app.saveSettingsButton).toHaveText("Saved");
+      const settingsWrites = (await backendCalls()).filter(({ command }) => command === "save_app_settings");
+      expect(settingsWrites.map(({ args }) => (args.settings as AppSettings).autoRetry)).toEqual([!defaultSettings.autoRetry, defaultSettings.autoRetry]);
+      expect(settingsWrites.every(({ mocked }) => mocked)).toBe(true);
       await app.openConversations();
     } finally {
       await resetApp();
@@ -1812,7 +1847,7 @@ describe("Settings acceptance", () => {
       ["New conversation shortcut", "Ctrl+N"],
       ["Toggle conversations shortcut", "Ctrl+B"],
       ["Toggle terminal shortcut", "Ctrl+J"],
-      ["Focus composer shortcut", "Ctrl+L"],
+      ["Focus composer shortcut", "Ctrl+E"],
       ["Open settings shortcut", "Ctrl+,"],
     ];
     for (const [label, shortcut] of defaults) {
@@ -1978,7 +2013,7 @@ describe("Project behavior", () => {
       expect((await backendCalls()).filter(({ command }) => command === "stop_pi" || command === "start_pi").map(({ command }) => command)).toEqual(["stop_pi", "start_pi"]);
     } finally {
       await resetBackend();
-      await browser.refresh();
+      await app.refreshForReset();
       await app.waitUntilReady();
     }
   });
@@ -2011,7 +2046,7 @@ describe("Project behavior", () => {
       ]);
     } finally {
       await resetBackend();
-      await browser.refresh();
+      await app.refreshForReset();
       await app.waitUntilReady();
     }
   });
@@ -2133,12 +2168,13 @@ describe("Conversation lifecycle", () => {
   it("keeps terminal tabs isolated between conversations", async () => {
     const current = { id: "terminal-current", path: "/tmp/terminal-current.jsonl", name: "Terminal current conversation", project: "Terminal project", cwd: "/tmp", preview: "Current terminal", messageCount: 1, hostId: "local" };
     const target = { id: "terminal-target", path: "/tmp/terminal-target.jsonl", name: "Terminal target conversation", project: "Terminal project", cwd: "/tmp", preview: "Target terminal", messageCount: 1, hostId: "local" };
-    const state = (sessionId: string) => ({ model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 0, pendingMessageCount: 0 });
+    const state = (sessionId: string) => ({ model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, sessionFile: `/tmp/${sessionId}.jsonl`, messageCount: 1, pendingMessageCount: 0 });
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
     await mockBackend({ list_sessions: [current, target], start_pi: {}, stop_pi: {}, ...connectedSessionResponses("terminal-bootstrap"), "pi_command:set_model": {}, load_app_settings: settings, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
     try {
       while (await $(".error-toast button").isExisting()) await $(".error-toast button").click();
       await emitPiEvent({ type: "session_switched" });
+      await updateBackendResponse("pi_command:get_state", state(current.id));
       await app.conversationSearch.setValue(current.name);
       await $(".session-item .session-main").click();
       await expect(app.openTerminalButton).toBeEnabled();
@@ -2185,8 +2221,7 @@ describe("Conversation lifecycle", () => {
       await app.conversationSearch.setValue(indexed.name);
       const session = $(".session-item");
       await session.moveTo();
-      await acceptConfirmDialogs();
-      await session.$(`button[aria-label="Archive ${indexed.name}"]`).click();
+      await app.confirmAction(`Archive “${indexed.name}”?`, () => session.$(`button[aria-label="Archive ${indexed.name}"]`).click());
 
       await expect(app.terminalPanel).not.toBeExisting();
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "archive_session"));

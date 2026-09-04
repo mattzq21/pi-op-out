@@ -550,7 +550,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKeybind);
   }, [settings, toggleDebugMode, settingsDirty, view, activePane, splitPane]);
 
-  if (!settings) return <main className="app-loading" role={error ? "alert" : "status"}>
+  if (!settings) return <main className="app app-loading dark" role={error ? "alert" : "status"}>
     <p className="eyebrow">Pi desktop</p>
     <h1>{error ? "Could not load settings" : "Loading settings…"}</h1>
     {error && <p>{error}</p>}

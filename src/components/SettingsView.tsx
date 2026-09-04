@@ -47,22 +47,35 @@ function mcpServerError(server: McpServer) {
 
 export function SettingsView({ settings, orchestration, sessions = [], models = [], thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"], onSave, onDirtyChange }: { settings: AppSettings; orchestration?: OrchestrationConfig; sessions?: SessionSummary[]; models?: Model[]; thinkingLevels?: string[]; onSave: (settings: AppSettings, orchestration?: OrchestrationConfig) => Promise<void>; onDirtyChange?: (dirty: boolean) => void }) {
   const [draft, setDraft] = useState(() => structuredClone(settings)); const [agentDrafts, setAgentDrafts] = useState(() => structuredClone(orchestration?.agents ?? [])); const [sequenceDrafts, setSequenceDrafts] = useState(() => structuredClone(orchestration?.sequences ?? [])); const [agentIndex, setAgentIndex] = useState(() => firstEditableAgent(orchestration?.agents ?? [])); const [sequenceIndex, setSequenceIndex] = useState(0); const [section, setSection] = useState<Section>("general"); const [saved, setSaved] = useState(false); const [saving, setSaving] = useState(false); const savingRef = useRef(false); const [saveError, setSaveError] = useState<string>(); const [skillFilter, setSkillFilter] = useState("");
-  const baselineRef = useRef(settingsSnapshot(settings, orchestration));
+  const baselineSettingsRef = useRef(settingsSnapshot(settings));
   const baselineOrchestrationRef = useRef(JSON.stringify(orchestration));
   const orchestrationSnapshot = JSON.stringify(orchestration);
   const incomingOrchestrationRef = useRef(orchestrationSnapshot);
-  const currentOrchestration = orchestration ? { agents: agentDrafts, sequences: sequenceDrafts } : undefined;
+  const [hasOrchestrationDraft, setHasOrchestrationDraft] = useState(orchestration !== undefined);
+  const currentOrchestration = hasOrchestrationDraft ? { agents: agentDrafts, sequences: sequenceDrafts } : undefined;
   const currentSnapshot = settingsSnapshot(draft, currentOrchestration);
-  const dirty = currentSnapshot !== baselineRef.current;
   const orchestrationDirty = JSON.stringify(currentOrchestration) !== baselineOrchestrationRef.current;
+  const dirty = settingsSnapshot(draft) !== baselineSettingsRef.current || orchestrationDirty;
   useEffect(() => { onDirtyChange?.(dirty); return () => onDirtyChange?.(false); }, [dirty, onDirtyChange]);
   useEffect(() => { if (dirty) setSaved(false); }, [dirty]);
   useEffect(() => { setSaveError(undefined); }, [currentSnapshot]);
   useEffect(() => { setDraft((current) => { let changed = false; const mcpServers = current.mcpServers.map((server) => { const external = settings.mcpServers.find((item) => item.id === server.id); if (!external || (external.status === server.status && external.error === server.error)) return server; changed = true; return { ...server, status: external.status, error: external.error }; }); return changed ? { ...current, mcpServers } : current; }); }, [settings.mcpServers]);
-  useEffect(() => { if (incomingOrchestrationRef.current === orchestrationSnapshot || dirty) return; incomingOrchestrationRef.current = orchestrationSnapshot; const next = orchestration ? structuredClone(orchestration) : undefined; setAgentDrafts(next?.agents ?? []); setSequenceDrafts(next?.sequences ?? []); setAgentIndex(firstEditableAgent(next?.agents ?? [])); setSequenceIndex(0); baselineOrchestrationRef.current = JSON.stringify(next); baselineRef.current = settingsSnapshot(settings, next); }, [dirty, orchestration, orchestrationSnapshot, settings]);
+  useEffect(() => {
+    // A newly discovered configuration is not a user edit. Load it without
+    // replacing edits to general settings or an existing orchestration draft.
+    if (incomingOrchestrationRef.current === orchestrationSnapshot || orchestrationDirty) return;
+    incomingOrchestrationRef.current = orchestrationSnapshot;
+    const next = orchestration ? structuredClone(orchestration) : undefined;
+    setHasOrchestrationDraft(next !== undefined);
+    setAgentDrafts(next?.agents ?? []);
+    setSequenceDrafts(next?.sequences ?? []);
+    setAgentIndex(firstEditableAgent(next?.agents ?? []));
+    setSequenceIndex(0);
+    baselineOrchestrationRef.current = JSON.stringify(next);
+  }, [orchestrationDirty, orchestration, orchestrationSnapshot]);
   useEffect(() => { if (!orchestration && (section === "agents" || section === "sequences")) setSection("general"); }, [orchestration, section]);
   const patch = (value: Partial<AppSettings>) => setDraft((current) => ({ ...current, ...value }));
-  const save = async () => { if (savingRef.current || !dirty) return; savingRef.current = true; setSaving(true); setSaveError(undefined); try { await onSave(draft, orchestrationDirty ? currentOrchestration : undefined); baselineRef.current = settingsSnapshot(draft, currentOrchestration); baselineOrchestrationRef.current = JSON.stringify(currentOrchestration); onDirtyChange?.(false); setSaved(true); window.setTimeout(() => setSaved(false), 1600); } catch (reason) { setSaveError(reason instanceof Error ? reason.message : String(reason)); } finally { savingRef.current = false; setSaving(false); } };
+  const save = async () => { if (savingRef.current || !dirty) return; savingRef.current = true; setSaving(true); setSaveError(undefined); try { await onSave(draft, orchestrationDirty ? currentOrchestration : undefined); baselineSettingsRef.current = settingsSnapshot(draft); if (orchestrationDirty) baselineOrchestrationRef.current = JSON.stringify(currentOrchestration); onDirtyChange?.(false); setSaved(true); window.setTimeout(() => setSaved(false), 1600); } catch (reason) { setSaveError(reason instanceof Error ? reason.message : String(reason)); } finally { savingRef.current = false; setSaving(false); } };
   const nextAgentSuffixRef = useRef(agentDrafts.length);
   const nextSequenceSuffixRef = useRef(sequenceDrafts.length + 1);
   const addMcp = () => setDraft((current) => ({ ...current, mcpServers: [...current.mcpServers, { id: uid("mcp"), name: "New server", transport: "stdio", command: "npx", args: "", url: "", headers: "", enabled: true, status: "stopped" }] }));
