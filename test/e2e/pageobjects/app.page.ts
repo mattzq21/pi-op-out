@@ -3,7 +3,7 @@ import { $, browser } from "@wdio/globals";
 type ConfirmationWindow = Window & { __e2eConfirmation?: { original: typeof window.confirm; messages: string[] } };
 
 class AppPage {
-  get root() { return $(".app"); }
+  get root() { return $(".app:not(.app-loading)"); }
   get composer() { return $('textarea[aria-label="Message Pi"]'); }
   get sendMessageButton() { return $('button[aria-label="Send message"]'); }
   get agentPicker() { return $('button[aria-label="Agent"]'); }
