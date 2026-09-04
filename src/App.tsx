@@ -429,7 +429,7 @@ export default function App() {
       if (settingsApplied) try { await transport.saveSettings(previous); await configureRuntime(previous); } catch { /* Keep the original failure; NativeTransport owns persistence and reconnect rollback. */ }
       throw reason;
     }
-    setSettings(next); if (removedActiveHost) { const conversationKey = `local:draft-${crypto.randomUUID()}`; setActiveHostId("local"); setActiveCwd(transport.currentCwd()); transportConversationKeys.current.set(transport, conversationKey); activateConversationKey(conversationKey); setTerminalOpen(false); setTerminalTarget(undefined); } void refresh().catch((reason) => addNotice({ title: "Settings saved, but the view could not refresh", message: reason instanceof Error ? reason.message : String(reason) }));
+    setSettings(next); await runtimePool.reconnectForSettingsChange(transport, next); if (removedActiveHost) { const conversationKey = `local:draft-${crypto.randomUUID()}`; setActiveHostId("local"); setActiveCwd(transport.currentCwd()); transportConversationKeys.current.set(transport, conversationKey); activateConversationKey(conversationKey); setTerminalOpen(false); setTerminalTarget(undefined); } void refresh().catch((reason) => addNotice({ title: "Settings saved, but the view could not refresh", message: reason instanceof Error ? reason.message : String(reason) }));
   };
   const setAgent = async (name: string) => { try { await transport.command({ type: "prompt", message: `/pi-orchestration-use ${encodeOrchestrationValue(name)}` }); } catch (reason) { addNotice({ title: "Could not change agent", message: reason instanceof Error ? reason.message : String(reason) }); } };
   const openProject = async (cwd: string, hostId: string) => { if (!canLeaveSettings()) return; const request = projectOpenRequest.current; const validatedCwd = await transport.validateProjectDirectory(cwd.trim(), hostId); if (!projectOpenRef.current || request !== projectOpenRequest.current) return; const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setTerminalOpen(false); updateConnected(false); setOrchestration(undefined); discardPendingUpdates(); setMessages([]); activateConversationKey(conversationKey); setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, activity: undefined, contextUsage: undefined })); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); const nextTransport = runtimePool.create({ cwd: validatedCwd, hostId }); transportConversationKeys.current.set(nextTransport, conversationKey); activateTransport(nextTransport); };
@@ -466,10 +466,20 @@ export default function App() {
         if (archivedSessionKey === terminalSessionId) setTerminalOpen(false);
         if (!isActiveSession) { await syncSessionIndex(); return; }
         if (activeTransportRef.current !== ownerTransport || activeConversationKeyRef.current !== archivedSessionKey) { await runtimePool.remove(session); await syncSessionIndex(); return; }
-        const conversationKey = `${activeHostId}:draft-${crypto.randomUUID()}`;
+        const hostId = activeHostId; const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`;
         transportConversationKeys.current.set(transport, conversationKey); activateConversationKey(conversationKey); discardPendingUpdates(); setMessages([]);
         setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, activity: undefined, contextUsage: undefined }));
-        try { await transport.command({ type: "new_session" }); await refresh(); updateConnected(true); }
+        if (ownerTransport.isTemporaryChat()) {
+          const nextTransport = runtimePool.create({ hostId }); transportConversationKeys.current.set(nextTransport, conversationKey);
+          try {
+            const cwd = await nextTransport.prepareTemporaryChat(hostId);
+            if (activeTransportRef.current !== ownerTransport || activeConversationKeyRef.current !== conversationKey) { transportConversationKeys.current.delete(nextTransport); void runtimePool.release(nextTransport); void runtimePool.release(ownerTransport).finally(() => transportConversationKeys.current.delete(ownerTransport)); }
+            else { setActiveCwd(cwd); activateTransport(nextTransport); void runtimePool.release(ownerTransport).finally(() => transportConversationKeys.current.delete(ownerTransport)); }
+          } catch (reason) {
+            transportConversationKeys.current.delete(nextTransport); void runtimePool.release(nextTransport);
+            addNotice({ title: "Conversation archived, but a new conversation could not start", message: reason instanceof Error ? reason.message : String(reason) }); void syncSessionIndex();
+          }
+        } else try { await transport.command({ type: "new_session" }); await refresh(); updateConnected(true); }
         catch (reason) { addNotice({ title: "Conversation archived, but a new conversation could not start", message: reason instanceof Error ? reason.message : String(reason) }); void syncSessionIndex(); }
       } catch (reason) { if (isActiveSession && activeTransportRef.current === ownerTransport) updateConnected(true); addNotice({ title: "Could not archive conversation", message: reason instanceof Error ? reason.message : String(reason) }); }
       finally { archivePending.current.delete(archivedSessionKey); }

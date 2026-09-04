@@ -355,7 +355,7 @@ fn canonical_shortcut(shortcut: &str) -> Result<Option<String>, String> {
 
 fn validate_keybindings(settings: &AppSettings) -> Result<(), String> {
     let mut shortcuts = HashSet::new();
-    for shortcut in settings.keybindings.values() { if let Some(canonical) = canonical_shortcut(shortcut)? { if !shortcuts.insert(canonical) { return Err(format!("Shortcut '{shortcut}' is assigned more than once")); } } }
+    for shortcut in settings.keybindings.values() { if let Some(canonical) = canonical_shortcut(shortcut)? { if matches!(canonical.as_str(), "ctrl+g" | "meta+g" | "mod+g") { return Err(format!("Shortcut '{shortcut}' is reserved for conversation search")); } if !shortcuts.insert(canonical) { return Err(format!("Shortcut '{shortcut}' is assigned more than once")); } } }
     Ok(())
 }
 
@@ -1518,6 +1518,20 @@ fn list_remote_sessions(index: &SessionIndexRuntime, host: &RemoteHost) -> Resul
         let Some(mut cached) = parsed.remove(&path).or_else(|| previous.get(&path).cloned()) else { continue };
         cached.summary.host_name = host.name.clone(); sessions.push(cached.summary.clone()); next.insert(path, cached);
     }
+    let directories = sessions.iter().map(|session| session.cwd.clone()).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>();
+    let mut existence = HashMap::new();
+    for batch in directories.chunks(128) {
+        let arguments = batch.iter().map(|path| shell_quote(path)).collect::<Vec<_>>().join(" ");
+        let command = format!(r#"sh -c 'for path do if [ -d "$path" ]; then printf "1\000"; else printf "0\000"; fi; done' sh {arguments}"#);
+        let mut directory_command = ssh(host); directory_command.arg(command);
+        let output = run_limited(&mut directory_command, batch.len().saturating_mul(2).max(1024), &format!("Could not inspect session projects on {}", host.name))?;
+        if !output.status.success() { return Err(format!("Could not inspect session projects on {}: {}", host.name, String::from_utf8_lossy(&output.stderr).trim())); }
+        let flags = output.stdout.split(|byte| *byte == 0).filter(|field| !field.is_empty()).collect::<Vec<_>>();
+        if flags.len() != batch.len() { return Err(format!("Could not inspect every session project on {}", host.name)); }
+        for (path, flag) in batch.iter().zip(flags) { existence.insert(path.clone(), flag == b"1"); }
+    }
+    for session in &mut sessions { session.cwd_exists = existence.get(&session.cwd).copied().unwrap_or(false); }
+    for cached in next.values_mut() { cached.summary.cwd_exists = existence.get(&cached.summary.cwd).copied().unwrap_or(false); }
     index.remote.lock().map_err(|_| "Remote session index lock was poisoned")?.insert(host.id.clone(), next); Ok(sessions)
 }
 

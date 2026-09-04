@@ -78,6 +78,12 @@ export class NativeTransport {
     if (version === this.connectionVersion) this.running = true;
   }
   async disconnect() { ++this.connectionVersion; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; await this.runProcessCommand(() => call("stop_pi", { runtimeId: this.runtimeId })); this.running = false; this.retainedStatuses.clear(); this.retainedRequests.clear(); }
+  async reconnectForSettings(settings: AppSettings) {
+    await this.disconnect();
+    if (this.hostId !== "local" && !settings.hosts.some((host) => host.id === this.hostId)) { this.emit({ type: "disconnected" }); return; }
+    try { await this.connect(); }
+    catch (reason) { this.emit({ type: "disconnected" }); throw reason; }
+  }
   async dispose() { const temporaryPath = this.temporaryChat && !this.temporaryChatUsed ? this.cwd : undefined; const temporaryHost = this.hostId; await this.disconnect(); if (temporaryPath) await call<void>("remove_temporary_chat", { path: temporaryPath, hostId: temporaryHost }); this.temporaryChat = false; this.temporaryChatUsed = false; }
   async command<T>(command: RpcCommand) { const compact = command.type === "prompt" && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null; if (compact) command = { type: "compact", ...(compact[1]?.trim() ? { customInstructions: compact[1].trim() } : {}) }; try { const result = await call<T>("pi_command", { runtimeId: this.runtimeId, command }); if (command.type === "get_state") { const state = result as { sessionFile?: string; sessionId?: string }; this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; } if (command.type === "prompt") this.temporaryChatUsed = true; if (command.type === "extension_ui_response" && typeof command.id === "string") this.retainedRequests.delete(command.id); return result; } catch (reason) { const message = reason instanceof Error ? reason.message : String(reason); const diagnostics = this.stderrLines.join("\n"); throw new Error(diagnostics && /disconnect|connect|start|running/i.test(message) ? `${message}\n${diagnostics}` : message); } }
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); this.retainedStatuses.forEach((event) => listener(event)); this.retainedRequests.forEach((event) => listener(event)); return () => this.listeners.delete(listener); }

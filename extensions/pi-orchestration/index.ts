@@ -133,7 +133,7 @@ export default async function orchestration(pi: ExtensionAPI) {
     return;
   }
   process.env.PI_DESKTOP_ORCHESTRATION_ACTIVE = "1";
-  let config = await loadConfig(); let active = "default"; let run: Run | undefined; let pendingHandoff: string | undefined; let authorizedHandoff: string | undefined; let activeToolError: string | undefined; let originalTask = ""; let delegations: Delegation[] = []; let runtimeDefaults: RuntimeDefaults | undefined; let runtimeSession = ""; let applyingAgentModel: string | undefined; let applyingAgentEffort: string | undefined;
+  let config = await loadConfig(); let active = "default"; let run: Run | undefined; let pendingHandoff: string | undefined; let authorizedHandoff: string | undefined; let activeToolError: string | undefined; let originalTask = ""; let delegations: Delegation[] = []; let runtimeDefaults: RuntimeDefaults | undefined; let runtimeSession = ""; let applyingAgentModel: string | undefined; let applyingAgentEffort: string | undefined; const backgroundControllers = new Set<AbortController>();
   const saveRuntimeDefaults = (value: RuntimeDefaults) => { runtimeDefaults = value; process.env[DEFAULTS_ENV] = JSON.stringify({ ...value, session: runtimeSession }); };
 
   const findAgent = (name: string) => config.agents.find((agent) => agent.name === name);
@@ -168,7 +168,7 @@ export default async function orchestration(pi: ExtensionAPI) {
     }
     return skillPaths.length ? { skillPaths } : undefined;
   });
-  pi.on("session_shutdown", () => { delete process.env.PI_DESKTOP_ORCHESTRATION_ACTIVE; });
+  pi.on("session_shutdown", () => { for (const controller of backgroundControllers) controller.abort(); backgroundControllers.clear(); delete process.env.PI_DESKTOP_ORCHESTRATION_ACTIVE; });
   pi.on("model_select", (event) => { const model = `${event.model.provider}/${event.model.id}`; if (applyingAgentModel === model) { applyingAgentModel = undefined; return; } saveRuntimeDefaults({ model, effort: runtimeDefaults?.effort || pi.getThinkingLevel() }); });
   pi.on("thinking_level_select", (event) => { if (applyingAgentEffort === event.level) { applyingAgentEffort = undefined; return; } saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); });
 
@@ -248,6 +248,7 @@ export default async function orchestration(pi: ExtensionAPI) {
     pi.appendEntry(RUN_ENTRY, null); run = undefined;
     const background = current.sequence.agents.slice(visible); if (!background.length) return;
     const session = ctx.sessionManager.getSessionFile(); if (!session) { ctx.ui.notify("Background sequence requires a persisted session", "error"); return; }
-    void (async () => { const temporary = await mkdtemp(join(tmpdir(), "pi-orchestration-")); try { const branch = join(temporary, "branch.jsonl"); await copyFile(session, branch); let output = current.final; for (const name of background) { const agent = findAgent(name); if (!agent) throw new Error(`Unknown agent: ${name}`); const toolError = agentToolError(pi, agent); if (toolError) throw new Error(toolError); output = await runChild(agent, output, ctx.cwd, undefined, branch, runtimeDefaults); } } catch (error) { ctx.ui.notify(`Background sequence failed: ${error instanceof Error ? error.message : String(error)}`, "error"); } finally { await rm(temporary, { recursive: true, force: true }); } })();
+    const controller = new AbortController(); backgroundControllers.add(controller);
+    void (async () => { const temporary = await mkdtemp(join(tmpdir(), "pi-orchestration-")); try { const branch = join(temporary, "branch.jsonl"); await copyFile(session, branch); let output = current.final; for (const name of background) { const agent = findAgent(name); if (!agent) throw new Error(`Unknown agent: ${name}`); const toolError = agentToolError(pi, agent); if (toolError) throw new Error(toolError); output = await runChild(agent, output, ctx.cwd, controller.signal, branch, runtimeDefaults); } } catch (error) { if (!controller.signal.aborted) ctx.ui.notify(`Background sequence failed: ${error instanceof Error ? error.message : String(error)}`, "error"); } finally { backgroundControllers.delete(controller); await rm(temporary, { recursive: true, force: true }); } })();
   });
 }

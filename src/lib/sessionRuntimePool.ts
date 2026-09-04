@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import type { ExtensionUiRequest, GitDiffSnapshots, SessionSummary } from "../types";
+import type { AppSettings, ExtensionUiRequest, GitDiffSnapshots, SessionSummary } from "../types";
 import { NativeTransport, type NativeConnectionTarget } from "./nativeTransport";
 import { branchMessages, type PiEntry } from "./messages";
 import { textOf } from "./content";
@@ -132,6 +132,13 @@ export class SessionRuntimePool {
   setInteractive(transport: NativeTransport, interactive: boolean) { if (interactive) this.interactiveTransports.add(transport); else this.interactiveTransports.delete(transport); }
   isRunning(transport: NativeTransport) { return this.runningTransports.has(transport); }
   isAnyRunning() { return this.runningTransports.size > 0; }
+
+  async reconnectForSettingsChange(activeTransport: NativeTransport, settings: AppSettings) {
+    const targets = [...this.transports].filter((transport) => transport !== activeTransport);
+    const results = await Promise.allSettled(targets.map((transport) => transport.reconnectForSettings(settings)));
+    const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (failures.length) this.errorHandler?.(`Settings were saved, but ${failures.length} background conversation${failures.length === 1 ? "" : "s"} could not be restarted safely. Close and reopen the app before using them.`);
+  }
 
   async copySavedDiffs(transport: NativeTransport, sourcePath: string | undefined, destinationPath: string | undefined, retainedMessageIds?: ReadonlySet<string>) {
     if (!sourcePath || !destinationPath || sourcePath === destinationPath) return;
