@@ -29,7 +29,7 @@ PI_E2E_ACTUAL_MODEL=provider/model npm run test:e2e
 
 The runner uses one application instance and captures native backend logs. Specs have a 60-second timeout; WebDriver commands use a 10-second wait timeout.
 
-The E2E build swaps the normal orange and yellow UI color roles, making test windows visually distinct from development and production windows. This applies to both the automated suite and manual MCP sessions built with `npm run test:e2e:build`.
+The E2E build uses an undecorated window and swaps the normal orange and yellow UI color roles, making test windows visually distinct from development and production windows. This applies to both the automated suite and manual MCP sessions built with `npm run test:e2e:build`.
 
 ## Agent-driven sessions
 
