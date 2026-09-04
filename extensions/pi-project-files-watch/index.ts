@@ -133,6 +133,19 @@ async function inheritParentSnapshot(root: string, sessionId: string, parentSess
   };
 }
 
+async function recoverCopiedSnapshot(ctx: ExtensionContext, root: string, sessionId: string) {
+  const copied = [...ctx.sessionManager.getBranch()].reverse().find((entry) => entry.type === "custom" && entry.customType === SNAPSHOT_ENTRY);
+  if (!copied || !copied.data || typeof copied.data !== "object") return undefined;
+  const data = copied.data as { repositoryRoot?: unknown; commit?: unknown };
+  if (data.repositoryRoot !== root || typeof data.commit !== "string" || !/^[0-9a-f]{40,64}$/i.test(data.commit)) return undefined;
+  try { await runGit(root, ["cat-file", "-e", `${data.commit}^{commit}`]); }
+  catch { return undefined; }
+  const timestamp = new Date().toISOString();
+  const ref = `${sessionRefPrefix(sessionId)}${snapshotName(timestamp, data.commit)}`;
+  await runGit(root, ["update-ref", ref, data.commit]);
+  return { version: 1, repositoryRoot: root, ref, commit: data.commit, capturedAt: timestamp };
+}
+
 async function worktreeTree(root: string) {
   const temporary = await mkdtemp(join(tmpdir(), "pi-git-snapshot-"));
   const index = join(temporary, "index");
@@ -203,12 +216,14 @@ export default function projectFilesWatch(pi: ExtensionAPI) {
   };
 
   const inheritSnapshot = async (ctx: ExtensionContext, parentSessionFile?: string) => {
-    if (!parentSessionFile) return undefined;
     const root = await repositoryRoot(ctx.cwd);
     if (!root) return undefined;
     const sessionId = ctx.sessionManager.getSessionId();
     const current = await currentSnapshot(root, sessionId);
     if (current) return current;
+    const copied = await recoverCopiedSnapshot(ctx, root, sessionId);
+    if (copied) { pi.appendEntry(SNAPSHOT_ENTRY, copied); return copied; }
+    if (!parentSessionFile) return undefined;
     const inherited = await inheritParentSnapshot(root, sessionId, parentSessionFile);
     if (inherited) pi.appendEntry(SNAPSHOT_ENTRY, inherited);
     return inherited;

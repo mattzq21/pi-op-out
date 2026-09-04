@@ -21,6 +21,7 @@ export class NativeTransport {
   private readonly runtimeId = globalThis.crypto?.randomUUID?.() ?? `runtime-${Date.now()}-${Math.random()}`;
   private listeners = new Set<(event: RpcEvent) => void>();
   private retainedStatuses = new Map<string, RpcEvent>();
+  private retainedRequests = new Map<string, RpcEvent>();
   private unlisten?: UnlistenFn;
   private stderrUnlisten?: UnlistenFn;
   private stderrLines: string[] = [];
@@ -39,6 +40,7 @@ export class NativeTransport {
   currentHostId() { return this.hostId; }
   currentCwd() { return this.cwd; }
   currentSessionPath() { return this.sessionPath; }
+  currentSessionId() { return this.sessionId; }
   isTemporaryChat() { return this.temporaryChat; }
   lastDiagnostic() { return this.stderrLines.join("\n"); }
   private runProcessCommand<T>(command: () => Promise<T>) { const result = this.processLifecycle.then(command, command); this.processLifecycle = result.then(() => undefined, () => undefined); return result; }
@@ -46,6 +48,7 @@ export class NativeTransport {
     if (event.type === "extension_ui_request" && event.method === "setStatus" && typeof event.statusKey === "string") {
       if (event.statusText) this.retainedStatuses.set(event.statusKey, event); else this.retainedStatuses.delete(event.statusKey);
     }
+    if (event.type === "extension_ui_request" && ["input", "editor", "select", "confirm"].includes(String(event.method)) && typeof event.id === "string") this.retainedRequests.set(event.id, event);
     this.listeners.forEach((listener) => listener(event));
   }
   async connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string, ephemeral = false) {
@@ -75,10 +78,10 @@ export class NativeTransport {
     await this.runProcessCommand(() => call("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, forkPath, noSession: ephemeral, hostId: this.hostId }));
     if (version === this.connectionVersion) this.running = true;
   }
-  async disconnect() { ++this.connectionVersion; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; await this.runProcessCommand(() => call("stop_pi", { runtimeId: this.runtimeId })); this.running = false; this.retainedStatuses.clear(); }
+  async disconnect() { ++this.connectionVersion; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; await this.runProcessCommand(() => call("stop_pi", { runtimeId: this.runtimeId })); this.running = false; this.retainedStatuses.clear(); this.retainedRequests.clear(); }
   async dispose() { const temporaryPath = this.temporaryChat && !this.temporaryChatUsed ? this.cwd : undefined; const temporaryHost = this.hostId; await this.disconnect(); if (temporaryPath) await call<void>("remove_temporary_chat", { path: temporaryPath, hostId: temporaryHost }); this.temporaryChat = false; this.temporaryChatUsed = false; }
-  async command<T>(command: RpcCommand) { const compact = command.type === "prompt" && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null; if (compact) command = { type: "compact", ...(compact[1]?.trim() ? { customInstructions: compact[1].trim() } : {}) }; try { const result = await call<T>("pi_command", { runtimeId: this.runtimeId, command }); if (command.type === "get_state") { const state = result as { sessionFile?: string; sessionId?: string }; this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; } if (command.type === "prompt") this.temporaryChatUsed = true; return result; } catch (reason) { const message = reason instanceof Error ? reason.message : String(reason); const diagnostics = this.stderrLines.join("\n"); throw new Error(diagnostics && /disconnect|connect|start|running/i.test(message) ? `${message}\n${diagnostics}` : message); } }
-  subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); this.retainedStatuses.forEach((event) => listener(event)); return () => this.listeners.delete(listener); }
+  async command<T>(command: RpcCommand) { const compact = command.type === "prompt" && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null; if (compact) command = { type: "compact", ...(compact[1]?.trim() ? { customInstructions: compact[1].trim() } : {}) }; try { const result = await call<T>("pi_command", { runtimeId: this.runtimeId, command }); if (command.type === "get_state") { const state = result as { sessionFile?: string; sessionId?: string }; this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; } if (command.type === "prompt") this.temporaryChatUsed = true; if (command.type === "extension_ui_response" && typeof command.id === "string") this.retainedRequests.delete(command.id); return result; } catch (reason) { const message = reason instanceof Error ? reason.message : String(reason); const diagnostics = this.stderrLines.join("\n"); throw new Error(diagnostics && /disconnect|connect|start|running/i.test(message) ? `${message}\n${diagnostics}` : message); } }
+  subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); this.retainedStatuses.forEach((event) => listener(event)); this.retainedRequests.forEach((event) => listener(event)); return () => this.listeners.delete(listener); }
   listSessions() { return call<SessionSummary[]>("list_sessions"); }
   captureGitTree(cwd: string, hostId = "local") { return call<string | null>("capture_git_tree", { cwd, hostId }); }
   discardGitTree(snapshot: string, hostId = "local") { return call<void>("discard_git_tree", { snapshot, hostId }); }
@@ -90,7 +93,7 @@ export class NativeTransport {
   relocateSession(sessionPath: string, cwd: string, hostId = "local") { return call<void>("relocate_session", { sessionPath, cwd, hostId }); }
   openProjectDirectory(cwd: string, hostId = "local") { return call<void>("open_project_directory", { cwd, hostId }); }
   createGitWorktree(cwd: string, name: string, hostId = "local") { return call<GitWorktree>("create_git_worktree", { cwd, name, hostId }); }
-  async gitBranch() { const branch = await call<unknown>("git_branch"); return typeof branch === "string" ? branch : null; }
+  async gitBranch() { if (!this.cwd) return null; const branch = await call<unknown>("git_branch", { cwd: this.cwd, hostId: this.hostId }); return typeof branch === "string" ? branch : null; }
   loadSettings() { return call<AppSettings>("load_app_settings"); }
   loadCodexUsage() { return call<CodexUsage>("codex_usage"); }
   saveSettings(settings: AppSettings, reconnect = true) {

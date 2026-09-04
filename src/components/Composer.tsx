@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type SetStateAction } from "react";
 import { ArrowUp, CircleStop, FileText, ImagePlus, Paperclip, TerminalSquare, X } from "lucide-react";
 import type { AgentProfile, ComposerUpload, ContextUsage, ImageAttachment, Model, PromptDictionary, SequenceProfile, SlashCommand } from "../types";
 import { applyDictionary, dictionaryMatches } from "../lib/dictionaries";
@@ -22,7 +22,7 @@ interface Props {
   draft?: string;
   onDraftChange?: (value: string) => void;
   uploads?: ComposerUpload[];
-  onUploadsChange?: (uploads: ComposerUpload[]) => void;
+  onUploadsChange?: (uploads: SetStateAction<ComposerUpload[]>) => void;
   restoredDraft?: { id: string; value: string };
   focusRequest?: number;
   onSend: (message: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>;
@@ -37,6 +37,9 @@ const TEXT_LIMIT = 200_000;
 const IMAGE_LIMIT = 10 * 1024 * 1024;
 const TOTAL_UPLOAD_LIMIT = 24 * 1024 * 1024;
 const UPLOAD_COUNT_LIMIT = 12;
+const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+const TEXT_MIME_TYPES = new Set(["application/json", "application/xml", "application/javascript", "application/typescript", "application/x-sh", "application/x-yaml", "application/toml"]);
+const TEXT_EXTENSIONS = /\.(?:txt|md|mdx|json|jsonl|ya?ml|toml|xml|csv|tsv|js|jsx|ts|tsx|css|scss|html?|py|rs|go|java|kt|kts|c|cc|cpp|cxx|h|hpp|sh|bash|zsh|fish|sql|graphql|gql|ini|conf|env|log)$/i;
 const COMPOSER_MAX_HEIGHT = 130;
 const DICTIONARY_HIGHLIGHT_LIMIT = 1_000;
 const displayModelName = (model: Model) => (model.name || model.id).replace(/^gpt-/i, "");
@@ -68,8 +71,7 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
   const [localUploads, setLocalUploads] = useState<ComposerUpload[]>([]);
   const uploads = controlledUploads ?? localUploads;
   const updateUploads = (update: ComposerUpload[] | ((current: ComposerUpload[]) => ComposerUpload[])) => {
-    const next = typeof update === "function" ? update(uploads) : update;
-    if (onUploadsChange) onUploadsChange(next); else setLocalUploads(next);
+    if (onUploadsChange) onUploadsChange(update); else setLocalUploads(update);
   };
   const [behavior, setBehavior] = useState<"steer" | "followUp">("steer");
   const [uploadError, setUploadError] = useState<string>();
@@ -126,17 +128,30 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
       if (uploads.length + next.length >= UPLOAD_COUNT_LIMIT) { errors.push(`Only ${UPLOAD_COUNT_LIMIT} attachments are allowed`); break; }
       if (file.size + totalBytes > TOTAL_UPLOAD_LIMIT) { errors.push(`${file.name} exceeds the 24 MB attachment limit`); continue; }
       if (file.type.startsWith("image/")) {
+        if (!SUPPORTED_IMAGE_TYPES.has(file.type.toLowerCase())) { errors.push(`${file.name} uses an unsupported image format`); continue; }
         if (file.size > IMAGE_LIMIT) { errors.push(`${file.name} is larger than 10 MB`); continue; }
         const url = await readFile(file, "dataUrl");
         next.push({ id: crypto.randomUUID(), name: file.name, kind: "image", byteSize: file.size, image: { type: "image", data: url.slice(url.indexOf(",") + 1), mimeType: file.type || "image/png", name: file.name } });
       } else {
+        if (!(file.type.startsWith("text/") || TEXT_MIME_TYPES.has(file.type.toLowerCase()) || TEXT_EXTENSIONS.test(file.name))) { errors.push(`${file.name} is not a supported text file`); continue; }
         if (file.size > TEXT_LIMIT) { errors.push(`${file.name} is larger than 200 KB`); continue; }
-        next.push({ id: crypto.randomUUID(), name: file.name, kind: "text", byteSize: file.size, text: await readFile(file, "text") });
+        const text = await readFile(file, "text");
+        if (text.includes("\0") || text.includes("�")) { errors.push(`${file.name} does not contain valid text`); continue; }
+        next.push({ id: crypto.randomUUID(), name: file.name, kind: "text", byteSize: file.size, text });
       }
       totalBytes += file.size;
     }
-    if (errors.length) setUploadError([...new Set(errors)].join(". "));
-    updateUploads((current) => [...current, ...next]);
+    updateUploads((current) => {
+      const accepted: ComposerUpload[] = [];
+      let currentBytes = current.reduce((total, upload) => total + upload.byteSize, 0);
+      for (const upload of next) {
+        if (current.length + accepted.length >= UPLOAD_COUNT_LIMIT) { errors.push(`Only ${UPLOAD_COUNT_LIMIT} attachments are allowed`); break; }
+        if (currentBytes + upload.byteSize > TOTAL_UPLOAD_LIMIT) { errors.push(`${upload.name} exceeds the 24 MB attachment limit`); continue; }
+        accepted.push(upload); currentBytes += upload.byteSize;
+      }
+      if (errors.length) setUploadError([...new Set(errors)].join(". "));
+      return [...current, ...accepted];
+    });
   };
   const submit = async () => {
     const textFiles = uploads.filter((upload) => upload.kind === "text");
@@ -169,13 +184,13 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
     {streaming && <div className="stream-banner"><span className="pulse" />Pi is working {queued > 0 && `· ${queued} queued`}<label>Send as <select aria-label="Streaming message behavior" value={behavior} onChange={(event) => setBehavior(event.target.value as typeof behavior)}><option value="steer">Steer now</option><option value="followUp">Follow up</option></select></label><button onClick={() => void abort()}>Stop</button></div>}
     <div ref={composerRef} className="composer">
       {matches.length > 0 && <div className="command-palette" role="listbox" aria-label={skillQuery === undefined ? "Pi commands" : "Pi skills"}>{matches.map((command, index) => <button role="option" aria-selected={index === selectedMatch} key={`${command.source}:${command.name}`} type="button" onMouseEnter={() => setSelectedMatch(index)} onClick={() => chooseCommand(command)}><span><strong>{skillQuery !== undefined ? `$${skillName(command)}` : `/${command.name}`}</strong><small>{command.description || `${command.source} command`}</small></span><em>{command.source}</em></button>)}</div>}
-      {uploads.length > 0 && <div className="attachments">{uploads.map((upload) => <span key={upload.id}>{upload.kind === "image" ? <ImagePlus size={12} /> : <FileText size={12} />}<b>{upload.name}</b><button aria-label={`Remove ${upload.name}`} onClick={() => updateUploads((current) => current.filter((item) => item.id !== upload.id))}><X size={11} /></button></span>)}</div>}
+      {uploads.length > 0 && <div className="attachments">{uploads.map((upload) => <span key={upload.id}>{upload.kind === "image" ? <ImagePlus size={12} /> : <FileText size={12} />}<b>{upload.name}</b><button aria-label={`Remove ${upload.name}`} onClick={() => { updateUploads((current) => current.filter((item) => item.id !== upload.id)); setUploadError(undefined); }}><X size={11} /></button></span>)}</div>}
       {uploadError && <div className="upload-error" role="alert">{uploadError}</div>}
       <div className={`composer-editor${dictionaryHighlights.length ? " has-dictionary-matches" : ""}`}>
         {dictionaryHighlights.length > 0 && <div className="composer-highlight-viewport" aria-hidden="true"><div className="composer-highlight-layer" style={{ transform: `translateY(-${editorScrollTop}px)` }}>{dictionaryHighlights.map((match, index) => <span key={`${match.start}-${match.end}`}><span>{value.slice(index ? dictionaryHighlights[index - 1].end : 0, match.start)}</span><mark title={match.replacement} onPointerDown={(event) => { event.preventDefault(); ref.current?.focus(); ref.current?.setSelectionRange(match.start, match.end); }}>{value.slice(match.start, match.end)}</mark></span>)}<span>{value.slice(dictionaryHighlights.at(-1)?.end ?? 0)}</span></div></div>}
-        <textarea ref={ref} aria-label="Message Pi" disabled={controlsDisabled} placeholder={controlsDisabled ? "Connecting to Pi…" : streaming ? (behavior === "steer" ? "Steer Pi while it works…" : "Queue a follow-up…") : "Ask Pi to build, explain, or change anything…"} value={value} rows={1} onScroll={(event) => setEditorScrollTop(event.currentTarget.scrollTop)} onChange={(event) => { setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape" && matches.length) { event.preventDefault(); setPaletteDismissed(true); } else if (matches.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length); } else if ((event.key === "Tab" || event.key === "Enter") && !event.shiftKey && matches[selectedMatch]) { event.preventDefault(); chooseCommand(matches[selectedMatch]); } else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submit(); } }} />
+        <textarea ref={ref} aria-label="Message Pi" disabled={controlsDisabled} placeholder={controlsDisabled ? "Connecting to Pi…" : streaming ? (behavior === "steer" ? "Steer Pi while it works…" : "Queue a follow-up…") : "Ask Pi to build, explain, or change anything…"} value={value} rows={1} onScroll={(event) => setEditorScrollTop(event.currentTarget.scrollTop)} onChange={(event) => { setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape" && matches.length) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true); } else if (matches.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length); } else if ((event.key === "Tab" || event.key === "Enter") && !event.shiftKey && matches[selectedMatch]) { event.preventDefault(); chooseCommand(matches[selectedMatch]); } else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submit(); } }} />
       </div>
-      <input ref={fileRef} className="hidden-input" type="file" multiple onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void addFiles(files); }} />
+      <input ref={fileRef} className="hidden-input" type="file" multiple accept="text/*,.md,.mdx,.json,.jsonl,.yaml,.yml,.toml,.xml,.csv,.tsv,.js,.jsx,.ts,.tsx,.css,.scss,.html,.py,.rs,.go,.java,.kt,.c,.cc,.cpp,.h,.hpp,.sh,.sql,.graphql,.ini,.conf,.env,.log,image/png,image/jpeg,image/gif,image/webp" onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void addFiles(files); }} />
       <div className="composer-bar"><div className="composer-tools"><IconButton label="Attach files" disabled={controlsDisabled} onClick={() => fileRef.current?.click()}><Paperclip size={17} /></IconButton>{onOpenTerminal && <IconButton label="Open terminal" disabled={controlsDisabled} onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton>}{contextUsage && <ContextWheel usage={contextUsage} />}{sessionCache && <span className={`session-cache-hit${sessionCache.low ? " low" : ""}`} title={`${sessionCache.cachedTokens.toLocaleString()} of ${sessionCache.promptTokens.toLocaleString()} session prompt tokens read from cache`}>Cache {sessionCache.rate}%</span>}</div>
         <div className="composer-actions">
         <ContainedPicker label="Agent" value={activeAgent ?? "default"} disabled={streaming || controlsDisabled} menuWidth={120} centered options={[...(agents.length ? agents : [{ name: "default" }]).map((agent) => ({ value: agent.name, label: agent.name, detail: "Agent" })), ...sequences.map((sequence) => ({ value: sequence.name, label: sequence.name, detail: "Sequence" })), { value: "final-only", label: "final-only", detail: "Multi-agent" }, { value: "own+final", label: "own+final", detail: "Multi-agent" }]} onChange={onAgent} />
@@ -221,7 +236,7 @@ function ContainedPicker({ label, value, options, disabled, menuWidth = 200, cen
     for (let count = 0; count < options.length; count += 1) { next = (next + direction + options.length) % options.length; if (!options[next].disabled) break; }
     setActiveIndex(next); optionRefs.current[next]?.focus();
   };
-  return <div ref={root} className="composer-picker" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) close(); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); close(); trigger.current?.focus(); } else if (menuStyle && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); move(event.key === "ArrowDown" ? 1 : -1); } }}>
+  return <div ref={root} className="composer-picker" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) close(); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); trigger.current?.focus(); } else if (menuStyle && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); move(event.key === "ArrowDown" ? 1 : -1); } }}>
     <button ref={trigger} type="button" className="select-control composer-picker-trigger" aria-label={label} aria-haspopup="listbox" aria-expanded={Boolean(menuStyle)} data-value={value} data-options={options.map((option) => option.value).join(" ")} title={selectedOption?.label} disabled={disabled} onClick={toggle}>{selectedOption?.label || label}</button>
     {menuStyle && <div className={`composer-picker-menu${centered ? " centered" : ""}${compact ? " compact" : ""}`} role="listbox" aria-label={`${label} options`} style={menuStyle}>{options.map((option, index) => <button ref={(element) => { optionRefs.current[index] = element; }} key={`${option.detail ?? label}:${option.value}`} type="button" role="option" aria-selected={option.value === value} tabIndex={index === activeIndex ? 0 : -1} data-value={option.value} disabled={disabled || option.disabled} onFocus={() => setActiveIndex(index)} onClick={() => { if (disabled) return; onChange(option.value); close(); trigger.current?.focus(); }}><span>{option.label}</span>{option.detail && <small>{option.detail}</small>}</button>)}</div>}
   </div>;

@@ -16,6 +16,7 @@ const keyName = (key: string) => key === " " ? "Space" : key.length === 1 ? key.
 
 export function shortcutFromEvent(event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">) {
   if (["Meta", "Control", "Alt", "Shift"].includes(event.key)) return null;
+  if (["Tab", "Escape"].includes(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) return null;
   if ([...event.key].length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) return null;
   const parts: string[] = [];
   if (event.ctrlKey) parts.push("Ctrl");

@@ -5,13 +5,15 @@ import { useChatSession } from "../lib/useChatSession";
 import { SessionRuntimePool, useTurnDiffs } from "../lib/sessionRuntimePool";
 import type { NativeTransport } from "../lib/nativeTransport";
 import { decodeOrchestrationValue, encodeOrchestrationValue, ORCHESTRATION_STATUS_KEY } from "../lib/orchestrationProtocol";
+import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
+import { branchMessages, type PiEntry } from "../lib/messages";
 import { ChatView } from "./ChatView";
 
 interface Props { runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: string) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; forkFrom?: string; initialPrompt?: string; onReady?: () => void; onFailed?: (reason: unknown) => void; onClose: () => void; }
 const initialState = (session: SessionSummary): AgentState => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, pendingMessageCount: 0 });
 
 export function SplitChatPane({ runtimePool, session, settings, draft, onDraftChange, focusRequest = 0, onActivate, onOpenTerminal, onDialogRequest, onDialogTransportClosed, forkFrom, initialPrompt, onReady, onFailed, onClose }: Props) {
-  const transport = useMemo(() => runtimePool.create({ cwd: session.cwd, sessionPath: forkFrom ? undefined : session.path, hostId: session.hostId }), [runtimePool]);
+  const transport = useMemo(() => forkFrom ? runtimePool.create({ cwd: session.cwd, hostId: session.hostId }) : runtimePool.forSession(session), [runtimePool, session.id, session.hostId, session.path, session.cwd, forkFrom]);
   const gitDiffs = useTurnDiffs(runtimePool, transport); const runtime = useChatSession(transport, initialState(session));
   const { state, setState, messages, models, commands, thinkingLevels, refresh, handleEvent } = runtime; const [error, setError] = useState<string>(); const [connected, setConnected] = useState(false);
   const [controlError, setControlError] = useState<string>();
@@ -56,6 +58,7 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
         else if (request.method === "setStatus" && request.statusKey) setStatuses((current) => { const next = { ...current }; if (request.statusText) next[request.statusKey!] = request.statusText; else delete next[request.statusKey!]; return next; });
         else if (request.method === "setWidget" && request.widgetKey) setWidgets((current) => { const next = { ...current }; if (request.widgetLines) next[request.widgetKey!] = request.widgetLines; else delete next[request.widgetKey!]; return next; });
         else if (request.method === "notify") setNotices((current) => [...current, { id: crypto.randomUUID(), title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "Pi extension", message: request.message || "Notification" }]);
+        else if (request.method === "setTitle") document.title = request.title || "Pi";
         else if (request.method === "set_editor_text") { onDraftChange(request.text || ""); setExtensionFocusRequest((value) => value + 1); }
         else if (["input", "editor", "select", "confirm"].includes(request.method)) onDialogRequest(request, transport, `Split: ${session.name}`);
       }
@@ -66,12 +69,27 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
     void connectRuntime(true);
     return () => { closing = true; reconnectRef.current = () => undefined; unsubscribe(); void onDialogTransportClosed(transport).finally(() => runtimePool.release(transport)); };
   }, [transport, session.id, forkFrom, initialPrompt, handleEvent, refresh, onDialogRequest, onDialogTransportClosed]);
-  const send = (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => {
+  const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => {
     if (!connectedRef.current) return Promise.reject(new Error("Pi is still connecting"));
-    return transport.command({ type: behavior === "steer" ? "steer" : behavior === "followUp" ? "follow_up" : "prompt", message: text, ...(images.length ? { images } : {}) }).then(() => undefined);
+    if (behavior) { await transport.command({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...(images.length ? { images } : {}) }); return; }
+    const abandoned = findReplaceableAbortedTurn(messages);
+    if (abandoned) {
+      const sourcePath = transport.currentSessionPath() ?? session.path;
+      let entryId = abandoned.user.entryId;
+      if (!entryId) { const history = await transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }); entryId = findReplaceableAbortedTurn(branchMessages(history.entries, history.leafId))?.user.entryId; }
+      if (!entryId) throw new Error("Cannot find the abandoned turn in the saved session");
+      await transport.command({ type: "fork", entryId }); const nextState = await refresh(); runtimePool.bind(session.hostId ?? "local", nextState.sessionId, transport);
+      const history = await transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" });
+      await runtimePool.copySavedDiffs(transport, sourcePath, transport.currentSessionPath(), new Set(branchMessages(history.entries, history.leafId).map((entry) => entry.id)));
+      await transport.command({ type: "prompt", message: text, ...(images.length ? { images } : {}) });
+      try { await transport.deleteSession(sourcePath, session.hostId); }
+      catch (reason) { setNotices((current) => [...current, { id: crypto.randomUUID(), title: "Replacement sent, but the old conversation could not be removed", message: reason instanceof Error ? reason.message : String(reason) }]); }
+      return true;
+    }
+    await transport.command({ type: "prompt", message: text, ...(images.length ? { images } : {}) });
   };
   const reportControlError = (reason: unknown) => setControlError(reason instanceof Error ? reason.message : String(reason));
-  const branch = async (message: ChatMessage) => { try { const index = messages.findIndex((item) => item.id === message.id); const user = messages.slice(0, index + 1).reverse().find((item) => item.role === "user" && item.entryId); if (!user?.entryId) throw new Error("Could not find the message to branch from"); await transport.command({ type: "fork", entryId: user.entryId }); await refresh(); } catch (reason) { reportControlError(reason); } };
+  const branch = async (message: ChatMessage) => { try { if (!message.entryId) throw new Error("Could not find the response to branch from"); const sourcePath = transport.currentSessionPath(); await transport.command({ type: "fork", entryId: message.entryId, position: "at" }); const nextState = await refresh(); runtimePool.bind(session.hostId ?? "local", nextState.sessionId, transport); const history = await transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }); await runtimePool.copySavedDiffs(transport, sourcePath, transport.currentSessionPath(), new Set(branchMessages(history.entries, history.leafId).map((entry) => entry.id))); } catch (reason) { reportControlError(reason); } };
   const abort = async () => { try { await transport.command({ type: "abort" }); } catch (reason) { reportControlError(reason); } };
   return <section className="split-chat" aria-label={`Split conversation: ${session.name}`}>
     <header className="split-pane-header"><span><strong title={session.name}>{session.name}</strong><small title={session.cwd}>{session.project}</small></span><button className="split-pane-close" aria-label="Close split pane" title="Close split pane" onClick={onClose}><X size={15} /></button></header>
