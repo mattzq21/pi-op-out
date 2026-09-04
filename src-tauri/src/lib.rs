@@ -1599,8 +1599,17 @@ fn delete_session(app: AppHandle, session_path: String, host_id: Option<String>)
 }
 
 #[tauri::command(async)]
-fn relocate_session(session_path: String, cwd: String, host_id: Option<String>) -> Result<(), String> {
-    if host_id.as_deref().unwrap_or("local") != "local" { return Err("Relocating remote sessions is not supported yet".into()); }
+fn relocate_session(app: AppHandle, session_path: String, cwd: String, host_id: Option<String>) -> Result<(), String> {
+    let host_id = host_id.unwrap_or_else(|| "local".into());
+    if host_id != "local" {
+        let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+        let session = shell_quote(&session_path); let replacement = shell_quote(cwd.trim());
+        let script = format!(r#"root=$(cd "$HOME/.pi-desktop/sessions" && pwd -P) || exit 1; path=$(realpath -- {session}) || exit 1; case "$path" in "$root"/*.jsonl) ;; *) printf 'Refusing to relocate a non-desktop session file' >&2; exit 1 ;; esac; replacement={replacement}; [ -d "$replacement" ] || {{ printf 'Project directory does not exist: %s' "$replacement" >&2; exit 1; }}; node -e 'const fs=require("fs"); const [path,cwd]=process.argv.slice(1); const content=fs.readFileSync(path,"utf8"); const newline=content.indexOf("\n"); const first=newline<0?content:content.slice(0,newline); const rest=newline<0?"":content.slice(newline+1); const header=JSON.parse(first); if(header.type!=="session") throw new Error("Invalid session header"); header.cwd=cwd; const temporary=path+"."+process.pid+".tmp"; try {{ fs.writeFileSync(temporary,JSON.stringify(header)+(newline<0?"":"\n"+rest),{{mode:fs.statSync(path).mode}}); fs.renameSync(temporary,path); }} catch(error) {{ try {{ fs.unlinkSync(temporary); }} catch {{}} throw error; }}' "$path" "$replacement""#);
+        let output = run_limited(ssh(host).arg(script), 64 * 1024, &format!("Could not relocate conversation on {}", host.name))?;
+        if output.status.success() { return Ok(()); }
+        let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if error.is_empty() { format!("Could not relocate conversation on {}", host.name) } else { error });
+    }
     let replacement = PathBuf::from(cwd.trim());
     if !replacement.is_dir() { return Err(format!("Project directory does not exist: {}", replacement.display())); }
     let path = local_desktop_session_file(&session_path)?;

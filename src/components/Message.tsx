@@ -9,7 +9,7 @@ import { IconButton } from "./IconButton";
 import { DiffViewer } from "./DiffViewer";
 import { PromptContextBar } from "./PromptContextBar";
 
-interface Props { message: ChatMessage; diff?: GitDiffSnapshot; expanded?: boolean; toolCount?: number; debug?: boolean; onBranch: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: () => void; onRetry?: () => void; }
+interface Props { message: ChatMessage; diff?: GitDiffSnapshot; expanded?: boolean; toolCount?: number; debug?: boolean; onBranch: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; }
 
 function nodeText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -79,7 +79,7 @@ export function Message({ message, diff, expanded = false, toolCount = 1, debug 
         <IconButton label={copyState === "copied" ? `${responseLabel} copied` : copyState === "error" ? `Copy failed for ${responseLabel.toLowerCase()}` : `Copy ${responseLabel.toLowerCase()}`} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>
         {copyState === "error" && <span className="copy-feedback" role="status">Could not copy response</span>}
         <button className="branch-button" aria-label={`Branch from ${responseLabel.toLowerCase()}`} title="Branch from here" disabled={branching} onClick={() => void branch()}><GitBranch size={14} /></button>
-        {onCreateWorktree && <button className="branch-button" aria-label="Create Git worktree" title="Create Git worktree" onClick={onCreateWorktree}><FolderGit2 size={14} /></button>}
+        {onCreateWorktree && <button className="branch-button" aria-label="Create Git worktree" title="Create Git worktree" onClick={() => onCreateWorktree(message)}><FolderGit2 size={14} /></button>}
         {debug && cache && <span className={`cache-hit-rate${cache.low ? " low" : ""}`} title={`${cache.cachedTokens.toLocaleString()} of ${cache.promptTokens.toLocaleString()} prompt tokens read from cache`}>Cache {cache.rate}%</span>}
       </div>}
     </div>
