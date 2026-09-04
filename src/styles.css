@@ -19,6 +19,7 @@ button { cursor: pointer; }
 .icon-rail .icon-button:hover, .icon-rail .icon-button.active { color: white; background: #ffffff15; }
 .rail-bottom { width: 100%; margin-top: auto; padding-top: 12px; background: #121211; display: flex; align-items: center; justify-content: center; }.codex-usage { color: #aaa69d; font: 500 11px "DM Sans"; white-space: nowrap; }
 .icon-rail.compact .codex-usage { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.icon-rail.compact .codex-usage-left { display: none; }
 .icon-rail.compact .codex-usage-separator { display: none; }
 
 .session-panel { width: 100%; flex: 1 1 auto; min-height: 0; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
