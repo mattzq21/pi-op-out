@@ -158,7 +158,7 @@ export default function App() {
     transportConversationKeys.current.set(transport, canonicalKey); activateConversationKey(canonicalKey);
   }, [activeHostId, state.sessionId, transport]);
   useEffect(() => {
-    document.title = "Pi";
+    if (document.title !== "Pi") document.title = "Pi";
     setStatuses({}); setWidgets({});
   }, [transport]);
   useEffect(() => {
@@ -250,14 +250,14 @@ export default function App() {
         else if (request.method === "setStatus" && request.statusKey === MCP_STATUS_KEY) { setExtensionOwner(transport); try { const values = request.statusText?.startsWith("json:") ? JSON.parse(request.statusText.slice(5)) as Array<{ id: string; status: "connected" | "stopped" | "error"; error?: string }> : []; setMcpStatuses(Object.fromEntries(values.map((value) => [value.id, { status: value.status, error: value.error }]))); } catch { setMcpStatuses({}); } }
         else if (request.method === "setStatus" && request.statusKey) { setExtensionOwner(transport); setStatuses((current) => { const next = { ...current }; if (request.statusText) next[request.statusKey!] = request.statusText; else delete next[request.statusKey!]; return next; }); }
         else if (request.method === "setWidget" && request.widgetKey) { setExtensionOwner(transport); setWidgets((current) => { const next = { ...current }; if (request.widgetLines) next[request.widgetKey!] = request.widgetLines; else delete next[request.widgetKey!]; return next; }); }
-        else if (request.method === "setTitle") document.title = request.title || "Pi";
+        else if (request.method === "setTitle") { const title = request.title || "Pi"; if (document.title !== title) document.title = title; }
         else if (request.method === "set_editor_text") { setComposerDrafts((current) => { const key = transportConversationKeys.current.get(transport) ?? terminalSessionIdRef.current; const next = { ...current }; if (request.text) next[key] = request.text; else delete next[key]; return next; }); setActivePane("main"); setMainComposerFocusRequest((value) => value + 1); }
         else queueExtensionDialog(request, transport, mainDialogOwnerRef.current);
       }
       if (event.type === "session_switched") void refresh();
       if (event.type === "session_info_changed") void refresh();
       if (event.type === "disconnected") {
-        setOrchestration(undefined); setMcpStatuses({}); setPromptContext(undefined); setStatuses({}); setWidgets({}); document.title = "Pi"; setDialogs((current) => current.filter((dialog) => dialog.transport !== transport)); updateConnected(false);
+        setOrchestration(undefined); setMcpStatuses({}); setPromptContext(undefined); setStatuses({}); setWidgets({}); if (document.title !== "Pi") document.title = "Pi"; setDialogs((current) => current.filter((dialog) => dialog.transport !== transport)); updateConnected(false);
         if (reconnecting) return; reconnecting = true;
         window.setTimeout(() => {
           if (cancelled) return; const diagnostic = transport.lastDiagnostic();
