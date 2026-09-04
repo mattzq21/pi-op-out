@@ -15,6 +15,7 @@ const call = <T>(command: string, args?: Record<string, unknown>) => {
 };
 
 export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; sessionId?: string; hostId?: string; }
+export interface GitWorktree { branch: string; path: string; }
 
 export class NativeTransport {
   private readonly runtimeId = globalThis.crypto?.randomUUID?.() ?? `runtime-${Date.now()}-${Math.random()}`;
@@ -88,6 +89,7 @@ export class NativeTransport {
   deleteSession(sessionPath: string, hostId = "local") { return call<void>("delete_session", { sessionPath, hostId }); }
   relocateSession(sessionPath: string, cwd: string, hostId = "local") { return call<void>("relocate_session", { sessionPath, cwd, hostId }); }
   openProjectDirectory(cwd: string, hostId = "local") { return call<void>("open_project_directory", { cwd, hostId }); }
+  createGitWorktree(cwd: string, name: string, hostId = "local") { return call<GitWorktree>("create_git_worktree", { cwd, name, hostId }); }
   async gitBranch() { const branch = await call<unknown>("git_branch"); return typeof branch === "string" ? branch : null; }
   loadSettings() { return call<AppSettings>("load_app_settings"); }
   loadCodexUsage() { return call<CodexUsage>("codex_usage"); }

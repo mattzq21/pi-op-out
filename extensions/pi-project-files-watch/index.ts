@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, open, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ const SNAPSHOT_ENTRY = "pi-project-files-watch-snapshot";
 const CHANGE_CONTEXT_MESSAGE = "pi-project-files-watch";
 const MAX_LISTED_FILES = 200;
 const MAX_GIT_OUTPUT = 4 * 1024 * 1024;
+const MAX_SESSION_HEADER_BYTES = 64 * 1024;
 
 class GitError extends Error {
   constructor(message: string, readonly exitCode: number | null) { super(message); }
@@ -83,6 +84,55 @@ async function currentSnapshot(root: string, sessionId: string) {
   return commit ? { ref, commit } : undefined;
 }
 
+async function sessionIdFromFile(sessionFile: string) {
+  let handle: Awaited<ReturnType<typeof open>>;
+  try { handle = await open(sessionFile, "r"); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  try {
+    const buffer = Buffer.alloc(MAX_SESSION_HEADER_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    const contents = buffer.subarray(0, bytesRead).toString("utf8");
+    const newline = contents.indexOf("\n");
+    if (newline < 0 && bytesRead === buffer.length) throw new Error("Parent session header is too large");
+    const header = JSON.parse(newline < 0 ? contents : contents.slice(0, newline));
+    return header?.type === "session" && typeof header.id === "string" ? header.id : undefined;
+  } finally {
+    await handle.close();
+  }
+}
+
+function snapshotName(timestamp: string, commit: string) {
+  return `${timestamp.replace(/[-:.]/g, "")}-${commit.slice(0, 12)}-${randomUUID().slice(0, 8)}`;
+}
+
+async function inheritParentSnapshot(root: string, sessionId: string, parentSessionFile: string) {
+  const parentSessionId = await sessionIdFromFile(parentSessionFile);
+  if (!parentSessionId || parentSessionId === sessionId) return undefined;
+  const parent = await currentSnapshot(root, parentSessionId);
+  if (!parent) return undefined;
+
+  const timestamp = new Date().toISOString();
+  const ref = `${sessionRefPrefix(sessionId)}${snapshotName(timestamp, parent.commit)}`;
+  await runGit(root, ["update-ref", "--stdin"], {}, [
+    "start",
+    `create ${ref} ${parent.commit}`,
+    "prepare",
+    "commit",
+    "",
+  ].join("\n"));
+  return {
+    version: 1,
+    repositoryRoot: root,
+    ref,
+    commit: parent.commit,
+    capturedAt: timestamp,
+    inheritedFromSession: parentSessionId,
+  };
+}
+
 async function worktreeTree(root: string) {
   const temporary = await mkdtemp(join(tmpdir(), "pi-git-snapshot-"));
   const index = join(temporary, "index");
@@ -112,8 +162,7 @@ async function saveSnapshot(root: string, sessionId: string) {
     GIT_COMMITTER_DATE: timestamp,
   };
   const commit = (await runGit(root, ["commit-tree", tree], identity, `Pi session snapshot ${sessionId} ${timestamp}\n`)).trim();
-  const snapshotName = `${timestamp.replace(/[-:.]/g, "")}-${commit.slice(0, 12)}-${randomUUID().slice(0, 8)}`;
-  const ref = `${sessionRefPrefix(sessionId)}${snapshotName}`;
+  const ref = `${sessionRefPrefix(sessionId)}${snapshotName(timestamp, commit)}`;
   const deletes = [...previous, ...(legacyCommit ? [{ ref: legacyRef, commit: legacyCommit }] : [])];
   const transaction = [
     "start",
@@ -153,6 +202,27 @@ export default function projectFilesWatch(pi: ExtensionAPI) {
     if (message !== lastError) { lastError = message; ctx.ui.notify(`Git session snapshot failed: ${message}`, "warning"); }
   };
 
+  const inheritSnapshot = async (ctx: ExtensionContext, parentSessionFile?: string) => {
+    if (!parentSessionFile) return undefined;
+    const root = await repositoryRoot(ctx.cwd);
+    if (!root) return undefined;
+    const sessionId = ctx.sessionManager.getSessionId();
+    const current = await currentSnapshot(root, sessionId);
+    if (current) return current;
+    const inherited = await inheritParentSnapshot(root, sessionId, parentSessionFile);
+    if (inherited) pi.appendEntry(SNAPSHOT_ENTRY, inherited);
+    return inherited;
+  };
+
+  pi.on("session_start", (event, ctx) => {
+    if (event.reason !== "fork") return;
+    snapshotQueue = snapshotQueue.then(async () => {
+      await inheritSnapshot(ctx, ctx.sessionManager.getHeader()?.parentSession ?? event.previousSessionFile);
+      lastError = "";
+    }).catch((error) => reportError(ctx, error));
+    return snapshotQueue;
+  });
+
   pi.on("message_end", (event, ctx) => {
     if (event.message.role !== "assistant" || event.message.stopReason !== "stop") return;
     snapshotQueue = snapshotQueue.then(async () => {
@@ -174,7 +244,9 @@ export default function projectFilesWatch(pi: ExtensionAPI) {
     try {
       const root = await repositoryRoot(ctx.cwd);
       if (!root) return { action: "continue" };
-      const snapshot = await currentSnapshot(root, ctx.sessionManager.getSessionId());
+      const sessionId = ctx.sessionManager.getSessionId();
+      let snapshot = await currentSnapshot(root, sessionId);
+      if (!snapshot) snapshot = await inheritSnapshot(ctx, ctx.sessionManager.getHeader()?.parentSession);
       if (!snapshot) return { action: "continue" };
       const current = await worktreeTree(root);
       const rawPaths = await runGit(root, ["diff", "--name-only", "-z", "--find-renames", snapshot.commit, current, "--"]);

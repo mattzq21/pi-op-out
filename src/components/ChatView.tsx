@@ -8,7 +8,7 @@ import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 import { cacheHitStats } from "../lib/messages";
 import { parseSequencePrompt } from "../lib/sequence";
 
-interface Props { state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; promptContext?: PromptContextInfo; debug?: boolean; agents?: AgentProfile[]; sequences?: SequenceProfile[]; activeAgent?: string; dictionaries?: PromptDictionary[]; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: string[]; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: string) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: ComposerUpload[]) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>; onAbort: () => void; onOpenTerminal?: () => void; onOpenProject: () => void; onBranch: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onThinking: (level: string) => void; }
+interface Props { state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; promptContext?: PromptContextInfo; debug?: boolean; agents?: AgentProfile[]; sequences?: SequenceProfile[]; activeAgent?: string; dictionaries?: PromptDictionary[]; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: string[]; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: string) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: ComposerUpload[]) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>; onAbort: () => void; onOpenTerminal?: () => void; onOpenProject: () => void; onBranch: (message: ChatMessage) => void; onCreateWorktree?: () => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onThinking: (level: string) => void; }
 
 export function ChatView(props: Props) {
   const bottom = useRef<HTMLDivElement>(null);
@@ -36,7 +36,7 @@ export function ChatView(props: Props) {
   return <main ref={shell} className="chat-shell" onFocusCapture={props.onActivate} onPointerDownCapture={props.onActivate}>
     <div ref={messagesRef} className="messages" aria-live="polite" onScroll={(event) => { const element = event.currentTarget; followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80; }}><div className="conversation">
       {!props.messages.length && <div className="empty-chat"><span>π</span></div>}
-      {turns.map((turn, index) => <ConversationTurn key={turn[0]?.id || index} messages={turn} gitDiffs={props.gitDiffs} promptContext={props.promptContext} debug={props.debug ?? false} active={props.state.isStreaming && index === turns.length - 1} retryable={!props.state.isStreaming && index === turns.length - 1} onRetry={props.onSend} onRetryAccepted={() => props.onDraftChange?.("")} onBranch={props.onBranch} />)}<div ref={bottom} className="scroll-anchor" />
+      {turns.map((turn, index) => <ConversationTurn key={turn[0]?.id || index} messages={turn} gitDiffs={props.gitDiffs} promptContext={props.promptContext} debug={props.debug ?? false} active={props.state.isStreaming && index === turns.length - 1} retryable={!props.state.isStreaming && index === turns.length - 1} onRetry={props.onSend} onRetryAccepted={() => props.onDraftChange?.("")} onBranch={props.onBranch} onCreateWorktree={props.onCreateWorktree} />)}<div ref={bottom} className="scroll-anchor" />
     </div></div>
     {!props.readOnly && <div ref={composerStack} className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.map((line, index) => <div key={index}>{line}</div>)}</div>} {props.statuses.length > 0 && <div className="extension-status">{props.statuses.join(" · ")}</div>}{props.state.activity && <div className="runtime-activity" role="status">{props.state.activity}</div>}{!props.messages.length && props.state.messageCount === 0 && <div className="new-chat-project"><button type="button" className={projectName ? "selected" : undefined} aria-label={projectName ? `Selected project: ${projectName}` : "Choose project"} title={props.projectCwd} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName ?? "Choose project"}</button></div>}<Composer streaming={props.state.isStreaming} queued={props.state.pendingMessageCount} commands={props.commands} agents={props.agents ?? []} sequences={props.sequences ?? []} activeAgent={props.activeAgent} dictionaries={props.dictionaries} models={props.models} model={props.state.model} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug ? sessionCache : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn ? { id: `${abortedTurn.assistant.timestamp ?? abortedTurn.assistant.id}:${abortedTurn.prompt}`, value: abortedTurn.prompt } : undefined} onSend={props.onSend} onAbort={props.onAbort} onOpenTerminal={props.onOpenTerminal} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onThinking={props.onThinking} /></div>}
   </main>;
@@ -76,16 +76,16 @@ function compactCompletedTools(messages: ChatMessage[], groupRepeated = true) {
   }, []);
 }
 
-function renderMessages(messages: ChatMessage[], expanded: boolean, onBranch: Props["onBranch"], compact = true, promptContext?: PromptContextInfo, debug = false) {
-  return compactCompletedTools(messages, compact).map(({ message, count }) => <Message key={message.id} message={message.role === "assistant" && !message.promptContext && promptContext ? { ...message, promptContext } : message} toolCount={count} expanded={expanded} debug={debug} onBranch={onBranch} />);
+function renderMessages(messages: ChatMessage[], expanded: boolean, onBranch: Props["onBranch"], onCreateWorktree?: Props["onCreateWorktree"], compact = true, promptContext?: PromptContextInfo, debug = false) {
+  return compactCompletedTools(messages, compact).map(({ message, count }) => <Message key={message.id} message={message.role === "assistant" && !message.promptContext && promptContext ? { ...message, promptContext } : message} toolCount={count} expanded={expanded} debug={debug} onBranch={onBranch} onCreateWorktree={onCreateWorktree} />);
 }
 
-function ConversationTurn({ messages, gitDiffs, promptContext, debug, active, retryable, onRetry, onRetryAccepted, onBranch }: { messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; promptContext?: PromptContextInfo; debug: boolean; active: boolean; retryable: boolean; onRetry: Props["onSend"]; onRetryAccepted: () => void; onBranch: Props["onBranch"] }) {
+function ConversationTurn({ messages, gitDiffs, promptContext, debug, active, retryable, onRetry, onRetryAccepted, onBranch, onCreateWorktree }: { messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; promptContext?: PromptContextInfo; debug: boolean; active: boolean; retryable: boolean; onRetry: Props["onSend"]; onRetryAccepted: () => void; onBranch: Props["onBranch"]; onCreateWorktree?: Props["onCreateWorktree"] }) {
   const userIndex = messages.findIndex((message) => message.role === "user");
   const parsed = userIndex >= 0 ? parseSequencePrompt(textOf(messages[userIndex].content)) : { text: "" };
   if (parsed.step && !parsed.step.visible) return null;
   const shown = parsed.step ? messages.map((message, index) => index === userIndex ? { ...message, content: parsed.text } : message) : messages;
-  if (active) return <>{parsed.step && parsed.step.step > 0 && <div className="sequence-step-label">{parsed.step.sequence} · {parsed.step.agent}</div>}{renderMessages(shown, true, onBranch, false, promptContext, debug)}</>;
+  if (active) return <>{parsed.step && parsed.step.step > 0 && <div className="sequence-step-label">{parsed.step.sequence} · {parsed.step.agent}</div>}{renderMessages(shown, true, onBranch, onCreateWorktree, false, promptContext, debug)}</>;
 
   let finalIndex = -1;
   for (let index = shown.length - 1; index >= 0; index -= 1) {
@@ -109,8 +109,8 @@ function ConversationTurn({ messages, gitDiffs, promptContext, debug, active, re
 
   return <section className="conversation-turn">
     {parsed.step && parsed.step.step > 0 && <div className="sequence-step-label">{parsed.step.sequence} · {parsed.step.agent}</div>}
-    {userMessages.map((message) => <Message key={message.id} message={message} debug={debug} onBranch={onBranch} />)}
-    {intermediate.length > 0 && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}</summary><div className="work-group-content">{renderMessages(intermediate, true, onBranch)}</div></details>}
-    {finalMessage && <Message message={finalMessage} diff={gitDiff} debug={debug} onBranch={onBranch} onRetry={retryPrompt ? () => { void Promise.resolve(onRetry(retryPrompt)).then((accepted) => { if (accepted !== false) onRetryAccepted(); }); } : undefined} />}
+    {userMessages.map((message) => <Message key={message.id} message={message} debug={debug} onBranch={onBranch} onCreateWorktree={onCreateWorktree} />)}
+    {intermediate.length > 0 && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}</summary><div className="work-group-content">{renderMessages(intermediate, true, onBranch, onCreateWorktree)}</div></details>}
+    {finalMessage && <Message message={finalMessage} diff={gitDiff} debug={debug} onBranch={onBranch} onCreateWorktree={onCreateWorktree} onRetry={retryPrompt ? () => { void Promise.resolve(onRetry(retryPrompt)).then((accepted) => { if (accepted !== false) onRetryAccepted(); }); } : undefined} />}
   </section>;
 }

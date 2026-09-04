@@ -7,6 +7,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
 const STATUS_KEY = "pi-desktop-prompt-context";
+const PROJECT_CONTEXT_MESSAGE = "pi-desktop-project-context";
 
 async function loadCap(): Promise<number> {
   let config: unknown;
@@ -39,14 +40,62 @@ function skillsFromPrompt(prompt: string) {
   return { block, skills };
 }
 
+function decodeXml(value: string) {
+  return value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"').replaceAll("&apos;", "'").replaceAll("&amp;", "&");
+}
+
+function displayPath(value: string) {
+  const home = homedir();
+  return value === home ? "~" : value.startsWith(`${home}/`) ? `~/${value.slice(home.length + 1)}` : value;
+}
+
+function projectInstructions(block: string) {
+  return [...block.matchAll(/<project_instructions path="([^"]*)">\n?([\s\S]*?)\n?<\/project_instructions>/g)]
+    .map((match) => ({ path: displayPath(decodeXml(match[1])), content: match[2] }));
+}
+
 function instructionsFromPrompt(prompt: string) {
   const block = prompt.match(/\n\n<project_context>[\s\S]*?<\/project_context>\n?/)?.[0] ?? "";
-  const decode = (value: string) => value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"').replaceAll("&apos;", "'").replaceAll("&amp;", "&");
-  const home = homedir();
-  const displayPath = (value: string) => value === home ? "~" : value.startsWith(`${home}/`) ? `~/${value.slice(home.length + 1)}` : value;
-  const instructions = [...block.matchAll(/<project_instructions path="([^"]*)">\n?([\s\S]*?)\n?<\/project_instructions>/g)]
-    .map((match) => ({ path: displayPath(decode(match[1])), content: match[2] }));
-  return { block, instructions };
+  return { block, instructions: projectInstructions(block) };
+}
+
+function textContent(content: unknown) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.flatMap((part) => part && typeof part === "object" && (part as { type?: unknown }).type === "text" && typeof (part as { text?: unknown }).text === "string" ? [(part as { text: string }).text] : []).join("\n");
+}
+
+function customMessageContent(value: unknown, customType: string) {
+  if (!value || typeof value !== "object") return undefined;
+  const entry = value as { type?: unknown; role?: unknown; customType?: unknown; message?: { role?: unknown; customType?: unknown; content?: unknown }; content?: unknown };
+  if (entry.type === "message" && entry.message?.role === "custom" && entry.message.customType === customType) return textContent(entry.message.content);
+  if (entry.type === "custom_message" && entry.customType === customType) return textContent(entry.content);
+  if (entry.role === "custom" && entry.customType === customType) return textContent(entry.content);
+  return undefined;
+}
+
+function latestCustomMessage(values: readonly unknown[], customType: string) {
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    const content = customMessageContent(values[index], customType);
+    if (content !== undefined) return content;
+  }
+  return undefined;
+}
+
+function movableProjectContext(prompt: string, cwd: string) {
+  const { block } = instructionsFromPrompt(prompt);
+  const withoutInstructions = block ? prompt.replace(block, "\n") : prompt;
+  const stablePrompt = withoutInstructions.replace(/\nCurrent working directory: [^\n]*\n?$/, "");
+  const inner = block.trim().replace(/^<project_context>\n?/, "").replace(/\n?<\/project_context>$/, "").trim();
+  const content = `<project_context>\nCurrent working directory: ${cwd}${inner ? `\n\n${inner}` : ""}\n</project_context>`;
+  return { stablePrompt, content };
+}
+
+function projectContextFromMessages(messages: readonly unknown[]) {
+  const block = latestCustomMessage(messages, PROJECT_CONTEXT_MESSAGE) ?? "";
+  if (!block) return { block, instructions: [] as Array<{ path: string; content: string }> };
+  const cwd = block.match(/^<project_context>\nCurrent working directory: ([^\n]*)/)?.[1];
+  return { block, instructions: [...(cwd ? [{ path: "Working directory", content: displayPath(cwd) }] : []), ...projectInstructions(block)] };
 }
 
 function changeInstructionFromMessages(messages: unknown[]) {
@@ -58,9 +107,7 @@ function changeInstructionFromMessages(messages: unknown[]) {
   if (latestUserIndex < 0) return undefined;
   const changeMessage = messages.slice(latestUserIndex + 1).find((message) => message && typeof message === "object" && (message as { role?: unknown; customType?: unknown }).role === "custom" && (message as { customType?: unknown }).customType === "pi-project-files-watch") as { content?: unknown } | undefined;
   if (!changeMessage) return undefined;
-  const text = Array.isArray(changeMessage.content)
-    ? changeMessage.content.flatMap((part) => part && typeof part === "object" && (part as { type?: unknown }).type === "text" && typeof (part as { text?: unknown }).text === "string" ? [(part as { text: string }).text] : []).join("\n")
-    : typeof changeMessage.content === "string" ? changeMessage.content : "";
+  const text = textContent(changeMessage.content);
   const match = text.match(/^<project_context>\n([\s\S]*?)\n<\/project_context>$/);
   return match ? { path: "File changes", content: match[1], block: match[0] } : undefined;
 }
@@ -73,6 +120,10 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
     const systemPrompt = ctx.getSystemPrompt();
     const { block: skillPrompt, skills } = skillsFromPrompt(systemPrompt);
     const { block: instructionPrompt, instructions } = instructionsFromPrompt(systemPrompt);
+    const messageProjectContext = projectContextFromMessages(messages);
+    const systemCwd = systemPrompt.match(/\nCurrent working directory: ([^\n]*)\n?$/)?.[1];
+    if (!messageProjectContext.block && systemCwd) instructions.unshift({ path: "Working directory", content: displayPath(systemCwd) });
+    else instructions.push(...messageProjectContext.instructions);
     const changeInstruction = changeInstructionFromMessages(messages);
     if (changeInstruction) instructions.push({ path: changeInstruction.path, content: changeInstruction.content });
     const activeTools = new Set(pi.getActiveTools());
@@ -83,7 +134,7 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
       instructions,
       tools,
       skills,
-      tokens: { system: estimate(systemPrompt.replace(skillPrompt, "").replace(instructionPrompt, "")), instructions: estimate(instructionPrompt) + estimate(changeInstruction?.block ?? ""), tools: estimate(tools), skills: estimate(skillPrompt) },
+      tokens: { system: estimate(systemPrompt.replace(skillPrompt, "").replace(instructionPrompt, "")), instructions: estimate(instructionPrompt) + estimate(messageProjectContext.block) + estimate(changeInstruction?.block ?? ""), tools: estimate(tools), skills: estimate(skillPrompt) },
     };
     if (persist) pi.appendEntry(STATUS_KEY, snapshot);
     const status = `json:${JSON.stringify(snapshot)}`;
@@ -100,7 +151,33 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
     capModel(event.model, cap);
   });
 
+  pi.on("before_agent_start", (event, ctx) => {
+    const projectContext = movableProjectContext(event.systemPrompt, ctx.cwd);
+    const previous = latestCustomMessage(ctx.sessionManager.buildContextEntries(), PROJECT_CONTEXT_MESSAGE);
+    return {
+      systemPrompt: projectContext.stablePrompt,
+      ...(previous === projectContext.content ? {} : { message: { customType: PROJECT_CONTEXT_MESSAGE, content: projectContext.content, display: false } }),
+    };
+  });
+
   pi.on("context", (event, ctx) => {
-    publishPromptContext(ctx, event.messages, true);
+    let messages = event.messages;
+    let contextIndex = -1;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (customMessageContent(messages[index], PROJECT_CONTEXT_MESSAGE) !== undefined) { contextIndex = index; break; }
+    }
+    if (contextIndex >= 0) {
+      let userIndex = -1;
+      for (let index = contextIndex - 1; index >= 0; index -= 1) {
+        if (messages[index] && typeof messages[index] === "object" && (messages[index] as { role?: unknown }).role === "user") { userIndex = index; break; }
+      }
+      if (userIndex >= 0 && contextIndex === userIndex + 1) {
+        messages = [...messages];
+        const [context] = messages.splice(contextIndex, 1);
+        messages.splice(userIndex, 0, context);
+      }
+    }
+    publishPromptContext(ctx, messages, true);
+    if (messages !== event.messages) return { messages };
   });
 }

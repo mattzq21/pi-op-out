@@ -574,6 +574,10 @@ fn ensure_desktop_sessions_dir(home: &Path) -> Result<PathBuf, String> {
 #[derive(Serialize, Deserialize)]
 struct GitSnapshotToken { root: String, tree: String }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitWorktree { branch: String, path: String }
+
 struct LimitedOutput { status: ExitStatus, stdout: Vec<u8>, stderr: Vec<u8> }
 
 fn run_limited(command: &mut Command, max_stdout: usize, context: &str) -> Result<LimitedOutput, String> {
@@ -687,6 +691,157 @@ fn git_branch() -> Result<Option<String>, String> {
     if !output.status.success() { return Ok(None); }
     let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
     Ok((!branch.is_empty()).then_some(branch))
+}
+
+fn worktree_suffix(name: &str) -> Result<&str, String> {
+    let name = name.trim();
+    if name.is_empty() { return Err("Name can't be empty".into()); }
+    if !name.chars().all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')) { return Err("Name may only contain letters, numbers, dots, hyphens, and underscores".into()); }
+    Ok(name)
+}
+
+fn worktree_branch_name(project: &str, name: &str) -> String {
+    let mut prefix = String::new();
+    let mut separator = false;
+    for character in project.chars() {
+        if character.is_ascii_alphanumeric() || character == '_' {
+            if separator && !prefix.is_empty() { prefix.push('-'); }
+            prefix.push(character);
+            separator = false;
+        } else { separator = true; }
+    }
+    if prefix.is_empty() { prefix.push_str("project"); }
+    format!("{prefix}-{name}")
+}
+
+fn parse_worktree_output(output: LimitedOutput, context: &str) -> Result<GitWorktree, String> {
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if error.is_empty() { context.into() } else { error });
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut lines = text.lines();
+    let branch = lines.next().unwrap_or_default().to_string();
+    let path = lines.next().unwrap_or_default().to_string();
+    if branch.is_empty() || path.is_empty() { return Err(format!("{context}: Git returned an incomplete result")); }
+    Ok(GitWorktree { branch, path })
+}
+
+fn copy_untracked_file(source_root: &Path, target_root: &Path, relative: &Path) -> Result<(), String> {
+    if !relative.components().all(|component| matches!(component, std::path::Component::Normal(_))) { return Err("Git returned an invalid untracked path".into()); }
+    let source = source_root.join(relative); let target = target_root.join(relative);
+    let metadata = fs::symlink_metadata(&source).map_err(|error| format!("Could not inspect untracked file {}: {error}", relative.display()))?;
+    if let Some(parent) = target.parent() { fs::create_dir_all(parent).map_err(|error| format!("Could not prepare untracked file {}: {error}", relative.display()))?; }
+    if metadata.file_type().is_symlink() {
+        let link = fs::read_link(&source).map_err(|error| format!("Could not read untracked symlink {}: {error}", relative.display()))?;
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(link, &target).map_err(|error| format!("Could not copy untracked symlink {}: {error}", relative.display()))?;
+        #[cfg(windows)]
+        if source.is_dir() { std::os::windows::fs::symlink_dir(link, &target) } else { std::os::windows::fs::symlink_file(link, &target) }.map_err(|error| format!("Could not copy untracked symlink {}: {error}", relative.display()))?;
+        #[cfg(not(any(unix, windows)))]
+        return Err(format!("Copying untracked symlinks is unsupported on this platform: {}", relative.display()));
+    } else if metadata.is_file() {
+        fs::copy(&source, &target).map_err(|error| format!("Could not copy untracked file {}: {error}", relative.display()))?;
+    } else { return Err(format!("Unsupported untracked filesystem entry: {}", relative.display())); }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn git_relative_path(bytes: &[u8]) -> PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
+}
+
+#[cfg(not(unix))]
+fn git_relative_path(bytes: &[u8]) -> PathBuf { PathBuf::from(String::from_utf8_lossy(bytes).into_owned()) }
+
+fn remove_created_worktree(root: &Path, target: &Path, branch: &str) {
+    let _ = Command::new("git").arg("-C").arg(root).args(["worktree", "remove", "--force"]).arg(target).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    let _ = Command::new("git").arg("-C").arg(root).args(["branch", "-D", branch]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+}
+
+fn local_branch_exists(root: &Path, branch: &str) -> Result<bool, String> {
+    let reference = format!("refs/heads/{branch}");
+    let status = Command::new("git").arg("-C").arg(root).args(["show-ref", "--verify", "--quiet", &reference]).status().map_err(|error| format!("Could not inspect Git branches: {error}"))?;
+    match status.code() { Some(0) => Ok(true), Some(1) => Ok(false), _ => Err("Could not inspect Git branches".into()) }
+}
+
+fn local_worktree_is_registered(root: &Path, target: &Path) -> Result<bool, String> {
+    let output = run_limited(Command::new("git").arg("-C").arg(root).args(["worktree", "list", "--porcelain", "-z"]), 1024 * 1024, "Could not inspect Git worktrees")?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    let prefix = "worktree "; let target = target.to_string_lossy();
+    Ok(output.stdout.split(|byte| *byte == 0).any(|field| String::from_utf8_lossy(field).strip_prefix(prefix).is_some_and(|path| path == target)))
+}
+
+#[tauri::command(async)]
+fn create_git_worktree(app: AppHandle, cwd: String, name: String, host_id: Option<String>) -> Result<GitWorktree, String> {
+    let name = worktree_suffix(&name)?;
+    let host_id = host_id.as_deref().unwrap_or("local");
+    if host_id != "local" {
+        let settings = load_app_settings(app)?; let host = remote_host(&settings, host_id)?;
+        let locate = format!("root=$(git -C {} rev-parse --show-toplevel 2>/dev/null) || exit 3; cd \"$root\" && pwd -P", shell_quote(&cwd));
+        let located = run_limited(ssh(host).arg(locate), 64 * 1024, &format!("Could not locate Git repository on {}", host.name))?;
+        if !located.status.success() {
+            if located.status.code() == Some(3) { return Err("Project is not a Git repository".into()); }
+            let error = String::from_utf8_lossy(&located.stderr).trim().to_string();
+            return Err(if error.is_empty() { format!("Could not locate Git repository on {}", host.name) } else { error });
+        }
+        let root = String::from_utf8_lossy(&located.stdout).trim().to_string();
+        let project = Path::new(&root).file_name().ok_or("Git repository directory has no name")?.to_string_lossy();
+        let branch = worktree_branch_name(&project, name);
+        let script = format!(r#"root={root}; branch={branch}; git check-ref-format --branch "$branch" >/dev/null || {{ printf 'Invalid Git branch name: %s' "$branch" >&2; exit 1; }}; git -C "$root" show-ref --verify --quiet "refs/heads/$branch" && {{ printf 'Git branch already exists: %s' "$branch" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git branches' >&2; exit 1; }}; parent=$(dirname -- "$root"); target="$parent/$branch"; if [ -e "$target" ] || [ -L "$target" ]; then printf 'Worktree directory already exists: %s' "$target" >&2; exit 1; fi; worktrees=$(git -C "$root" worktree list --porcelain) || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; printf '%s\n' "$worktrees" | grep -Fqx "worktree $target" && {{ printf 'Git worktree is already registered: %s' "$target" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; temporary=$(mktemp -d "${{TMPDIR:-/tmp}}/pi-desktop-worktree.XXXXXX") || exit 1; created=0; cleanup() {{ status=$?; rm -rf -- "$temporary"; if [ "$status" -ne 0 ] && [ "$created" -eq 1 ]; then git -C "$root" worktree remove --force "$target" >/dev/null 2>&1; git -C "$root" branch -D "$branch" >/dev/null 2>&1; fi; exit "$status"; }}; trap cleanup EXIT; git -C "$root" ls-files -z -m -o --exclude-standard -- > "$temporary/changed" || exit 1; path_bytes=$(wc -c < "$temporary/changed"); [ "$path_bytes" -le {max_paths} ] || {{ printf 'Changed file list is too large to copy safely' >&2; exit 1; }}; path_count=$(tr -cd '\000' < "$temporary/changed" | wc -c); [ "$path_count" -le {max_count} ] || {{ printf 'Too many changed files to copy safely' >&2; exit 1; }}; (cd "$root" && xargs -0 -r stat -c '%s' -- < "$temporary/changed" 2>/dev/null || true) > "$temporary/sizes"; awk '{{ if ($1 > {max_file}) exit 1; total += $1 }} END {{ if (total > {max_total}) exit 1 }}' "$temporary/sizes" || {{ printf 'Project changes are too large to copy safely' >&2; exit 1; }}; has_head=0; if git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then has_head=1; fi; : > "$temporary/changes.patch"; if [ "$has_head" -eq 1 ]; then mkfifo "$temporary/patch.pipe" || exit 1; git -C "$root" diff --binary HEAD -- > "$temporary/patch.pipe" 2> "$temporary/diff-error" & diff_pid=$!; head -c {patch_plus_one} < "$temporary/patch.pipe" > "$temporary/changes.patch"; wait "$diff_pid"; diff_status=$?; rm -f -- "$temporary/patch.pipe"; patch_bytes=$(wc -c < "$temporary/changes.patch"); [ "$patch_bytes" -le {max_patch} ] || {{ printf 'Git changes are too large to copy' >&2; exit 1; }}; [ "$diff_status" -eq 0 ] || {{ cat "$temporary/diff-error" >&2; printf 'Could not capture Git changes' >&2; exit 1; }}; fi; git -C "$root" ls-files -z --others --exclude-standard -- > "$temporary/untracked" || exit 1; if [ "$has_head" -eq 1 ]; then git -C "$root" worktree add -b "$branch" "$target" >/dev/null || exit 1; else git -C "$root" worktree add --orphan -b "$branch" "$target" >/dev/null || exit 1; fi; created=1; if [ -s "$temporary/changes.patch" ]; then git -C "$target" apply --whitespace=nowarn "$temporary/changes.patch" || exit 1; fi; if [ -s "$temporary/untracked" ]; then tar -C "$root" --null -T "$temporary/untracked" -cf "$temporary/untracked.tar" || exit 1; tar -C "$target" -xf "$temporary/untracked.tar" || exit 1; fi; printf '%s\n%s\n' "$branch" "$target""#,
+            root = shell_quote(&root), branch = shell_quote(&branch), max_paths = MAX_GIT_PATH_LIST_BYTES,
+            max_count = MAX_GIT_CHANGED_PATHS, max_file = MAX_GIT_FILE_BYTES, max_total = MAX_GIT_SNAPSHOT_BYTES,
+            patch_plus_one = MAX_GIT_PATCH_BYTES + 1, max_patch = MAX_GIT_PATCH_BYTES);
+        let output = run_limited(ssh(host).arg(script), 64 * 1024, &format!("Could not create Git worktree on {}", host.name))?;
+        return parse_worktree_output(output, "Could not create Git worktree");
+    }
+
+    let root_output = run_limited(Command::new("git").args(["-C", &cwd, "rev-parse", "--show-toplevel"]), 64 * 1024, "Could not locate Git repository")?;
+    if !root_output.status.success() { return Err("Project is not a Git repository".into()); }
+    let root = PathBuf::from(String::from_utf8_lossy(&root_output.stdout).trim()).canonicalize().map_err(|error| format!("Could not resolve Git repository: {error}"))?;
+    let project = root.file_name().ok_or("Git repository directory has no name")?.to_string_lossy();
+    let branch = worktree_branch_name(&project, name);
+    let valid = Command::new("git").args(["check-ref-format", "--branch", &branch]).stdout(Stdio::null()).stderr(Stdio::null()).status().map_err(|error| format!("Could not validate Git branch: {error}"))?;
+    if !valid.success() { return Err(format!("Invalid Git branch name: {branch}")); }
+    if local_branch_exists(&root, &branch)? { return Err(format!("Git branch already exists: {branch}")); }
+    let parent = root.parent().ok_or("Git repository has no parent directory")?;
+    let target = parent.join(&branch);
+    if fs::symlink_metadata(&target).is_ok() { return Err(format!("Worktree directory already exists: {}", target.display())); }
+    if local_worktree_is_registered(&root, &target)? { return Err(format!("Git worktree is already registered: {}", target.display())); }
+    if !local_git_input_is_bounded(root.to_string_lossy().as_ref(), &root)? { return Err("Project changes are too large to copy safely".into()); }
+    let has_head = Command::new("git").arg("-C").arg(&root).args(["rev-parse", "--verify", "HEAD"]).stdout(Stdio::null()).stderr(Stdio::null()).status().map_err(|error| format!("Could not inspect Git HEAD: {error}"))?.success();
+    let patch = if has_head {
+        let output = run_limited(Command::new("git").arg("-C").arg(&root).args(["diff", "--binary", "HEAD", "--"]), MAX_GIT_PATCH_BYTES, "Git changes are too large to copy")?;
+        if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+        output.stdout
+    } else { Vec::new() };
+    let untracked = run_limited(Command::new("git").arg("-C").arg(&root).args(["ls-files", "-z", "--others", "--exclude-standard", "--"]), MAX_GIT_PATH_LIST_BYTES, "Untracked file list is too large to copy")?;
+    if !untracked.status.success() { return Err(String::from_utf8_lossy(&untracked.stderr).trim().to_string()); }
+    let mut add_worktree = Command::new("git"); add_worktree.arg("-C").arg(&root).args(["worktree", "add"]);
+    if !has_head { add_worktree.arg("--orphan"); }
+    add_worktree.args(["-b", &branch]).arg(&target);
+    let output = run_limited(&mut add_worktree, 64 * 1024, "Could not create Git worktree")?;
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if error.is_empty() { "Could not create Git worktree".into() } else { error });
+    }
+    let copy_result = (|| {
+        if !patch.is_empty() {
+            let patch_path = std::env::temp_dir().join(format!("pi-desktop-worktree-{}.patch", Uuid::new_v4()));
+            fs::write(&patch_path, &patch).map_err(|error| format!("Could not prepare Git changes for copying: {error}"))?;
+            let applied = run_limited(Command::new("git").arg("-C").arg(&target).args(["apply", "--whitespace=nowarn"]).arg(&patch_path), 64 * 1024, "Could not copy Git changes");
+            let _ = fs::remove_file(&patch_path);
+            let applied = applied?;
+            if !applied.status.success() { return Err(String::from_utf8_lossy(&applied.stderr).trim().to_string()); }
+        }
+        for raw in untracked.stdout.split(|byte| *byte == 0).filter(|path| !path.is_empty()) {
+            copy_untracked_file(&root, &target, &git_relative_path(raw))?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = copy_result { remove_created_worktree(&root, &target, &branch); return Err(error); }
+    Ok(GitWorktree { branch, path: target.to_string_lossy().into_owned() })
 }
 
 fn valid_remote_snapshot(snapshot: &GitSnapshotToken) -> bool {
@@ -1571,5 +1726,5 @@ pub fn run() {
     builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(SessionIndexRuntime::default()).manage(broker.clone()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
-    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, git_branch, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, git_branch, create_git_worktree, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
 }

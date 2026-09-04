@@ -1,5 +1,5 @@
 import { isValidElement, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
-import { Check, CircleAlert, Copy, GitBranch, Wrench } from "lucide-react";
+import { Check, CircleAlert, Copy, FolderGit2, GitBranch, Wrench } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage, GitDiffSnapshot } from "../types";
@@ -9,7 +9,7 @@ import { IconButton } from "./IconButton";
 import { DiffViewer } from "./DiffViewer";
 import { PromptContextBar } from "./PromptContextBar";
 
-interface Props { message: ChatMessage; diff?: GitDiffSnapshot; expanded?: boolean; toolCount?: number; debug?: boolean; onBranch: (message: ChatMessage) => void | Promise<void>; onRetry?: () => void; }
+interface Props { message: ChatMessage; diff?: GitDiffSnapshot; expanded?: boolean; toolCount?: number; debug?: boolean; onBranch: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: () => void; onRetry?: () => void; }
 
 function nodeText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -41,7 +41,7 @@ function userMessageParts(content: string) {
   return { skills: [invocation[1]], text: (invocation[2] ?? "").trim(), literalSkill: false };
 }
 
-export function Message({ message, diff, expanded = false, toolCount = 1, debug = false, onBranch, onRetry }: Props) {
+export function Message({ message, diff, expanded = false, toolCount = 1, debug = false, onBranch, onCreateWorktree, onRetry }: Props) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [branching, setBranching] = useState(false);
   const branchingRef = useRef(false);
@@ -78,6 +78,7 @@ export function Message({ message, diff, expanded = false, toolCount = 1, debug 
         <IconButton label={copyState === "copied" ? "Response copied" : copyState === "error" ? "Copy failed" : "Copy response"} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>
         {copyState === "error" && <span className="copy-feedback" role="status">Could not copy response</span>}
         <button className="branch-button" aria-label="Branch from here" title="Branch from here" disabled={branching} onClick={() => void branch()}><GitBranch size={14} /></button>
+        {onCreateWorktree && <button className="branch-button" aria-label="Create Git worktree" title="Create Git worktree" onClick={onCreateWorktree}><FolderGit2 size={14} /></button>}
         {debug && cache && <span className={`cache-hit-rate${cache.low ? " low" : ""}`} title={`${cache.cachedTokens.toLocaleString()} of ${cache.promptTokens.toLocaleString()} prompt tokens read from cache`}>Cache {cache.rate}%</span>}
       </div>}
     </div>

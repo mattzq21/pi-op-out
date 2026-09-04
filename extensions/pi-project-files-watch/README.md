@@ -25,6 +25,17 @@ working tree. Ignored files and changes inside submodule worktrees are not captu
 When Pi's working directory is not inside a Git repository, the extension quietly
 does nothing and leaves user input unchanged.
 
+When a chat is forked into another worktree of the same repository, the new chat
+pins the parent chat's current baseline commit under its own snapshot ref as the fork
+starts. Copied
+unstaged and untracked files are therefore reported on the first user message when
+they differ from that baseline. From the new chat's first completed response onward,
+its snapshots advance independently; replacing its snapshot never changes the parent
+chat's snapshot. This also works when the worktrees use different filesystem paths,
+because linked Git worktrees share the repository's object database and refs.
+If the same chat is moved instead of forked, it keeps its existing snapshot ref and
+uses the new worktree path in the injected diff command.
+
 Each session owns exactly one hidden ref. Every snapshot has its own timestamped name:
 
 ```text

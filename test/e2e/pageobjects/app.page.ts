@@ -13,8 +13,8 @@ class AppPage {
   get addTerminalButton() { return $('button[aria-label="Add terminal"]'); }
   get deleteTerminalButton() { return $('button[aria-label="Delete terminal"]'); }
   get closeTerminalButton() { return $('button[aria-label="Close terminal panel"]'); }
-  get newProjectButton() { return $('button[aria-label="New project"]'); }
-  get conversationsButton() { return $('button[aria-label="Conversations"]'); }
+  get newProjectButton() { return $('button[aria-label="Choose project"], button[aria-label^="Selected project:"]'); }
+  get conversationsButton() { return $('button[aria-label="Go back"]'); }
   get conversationSearch() { return $('input[aria-label="Search conversations"]'); }
   get emptyConversationSearch() { return $(".session-panel .empty-small"); }
   get settingsButton() { return $('button[aria-label="Settings"]'); }
@@ -49,7 +49,7 @@ class AppPage {
   }
 
   async openConversations() {
-    await this.conversationsButton.click();
+    if (await this.conversationsButton.isExisting()) await this.conversationsButton.click();
     await this.composer.waitForDisplayed();
   }
 
