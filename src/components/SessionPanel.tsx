@@ -60,6 +60,7 @@ function savedSidebarOrder() {
 
 function sessionKey(session: SessionSummary) { return `${session.hostId ?? "local"}:${session.id}`; }
 function physicalProjectKey(session: SessionSummary) { return `${session.hostId ?? "local"}:${session.cwd}`; }
+function canPlaceSessionIn(session: SessionSummary, projectKey: string) { return projectKey === UNGROUPED_KEY || projectKey.startsWith(CUSTOM_GROUP_PREFIX) || projectKey === physicalProjectKey(session); }
 function sessionLayoutToken(key: string) { return `session:${key}`; }
 function groupLayoutToken(key: string) { return `group:${key}`; }
 
@@ -117,7 +118,8 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
     window.addEventListener("click", close);
     window.addEventListener("keydown", closeOnEscape);
     window.addEventListener("blur", close);
-    return () => { cancelAnimationFrame(frame); window.removeEventListener("click", close); window.removeEventListener("keydown", closeOnEscape); window.removeEventListener("blur", close); };
+    const scroll = sessionScrollRef.current; scroll?.addEventListener("scroll", close, { passive: true });
+    return () => { cancelAnimationFrame(frame); window.removeEventListener("click", close); window.removeEventListener("keydown", closeOnEscape); window.removeEventListener("blur", close); scroll?.removeEventListener("scroll", close); };
   }, [menu]);
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); } };
@@ -199,6 +201,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
     });
   };
   const moveSession = (drag: DraggedSession, destinationKey: string, destinationSessions: SessionSummary[], targetKey?: string, edge: "before" | "after" = "after") => {
+    if (!canPlaceSessionIn(drag.session, destinationKey)) return;
     if (drag.projectKey === destinationKey && drag.sessionKey === targetKey) return;
     const nextOrder = destinationSessions.map(sessionKey).filter((key) => key !== drag.sessionKey);
     const targetIndex = targetKey ? nextOrder.indexOf(targetKey) : -1;
@@ -260,7 +263,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   const moveSessionByKeyboard = (drag: DraggedSession, direction: -1 | 1, betweenGroups: boolean) => {
     const sourceSessions = groupedSessionsRef.current.get(drag.projectKey) ?? [];
     if (betweenGroups) {
-      const destinationKeys = [UNGROUPED_KEY, ...groups.map(([key]) => key)];
+      const destinationKeys = [UNGROUPED_KEY, ...groups.map(([key]) => key)].filter((key) => canPlaceSessionIn(drag.session, key));
       const sourceIndex = destinationKeys.indexOf(drag.projectKey); const destinationKey = destinationKeys[sourceIndex + direction];
       if (!destinationKey) return;
       moveSession(drag, destinationKey, groupedSessionsRef.current.get(destinationKey) ?? []); expandProject(destinationKey);
@@ -295,13 +298,14 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
         const bounds = sessionElement.getBoundingClientRect();
         const edge = y < bounds.top + bounds.height / 2 ? "before" : "after";
         const projectKey = sessionElement.dataset.projectKey!; const targetKey = sessionElement.dataset.sessionKey!;
-        if (projectKey === UNGROUPED_KEY) {
+        if (!canPlaceSessionIn(current.session, projectKey)) nextTarget = undefined;
+        else if (projectKey === UNGROUPED_KEY) {
           const token = sessionLayoutToken(targetKey); const index = sidebarEntriesRef.current.indexOf(token);
           nextTarget = { projectKey, sessionKey: targetKey, edge, layoutBefore: edge === "before" ? token : sidebarEntriesRef.current[index + 1] ?? null };
         } else nextTarget = { projectKey, sessionKey: targetKey, edge };
       } else if (!sessionElement) {
         const projectElement = hit?.closest<HTMLElement>("[data-drop-project-key]");
-        if (projectElement) nextTarget = { projectKey: projectElement.dataset.dropProjectKey!, sessionKey: "", edge: "after" };
+        if (projectElement && canPlaceSessionIn(current.session, projectElement.dataset.dropProjectKey!)) nextTarget = { projectKey: projectElement.dataset.dropProjectKey!, sessionKey: "", edge: "after" };
       }
       mouseDropTargetRef.current = nextTarget;
       setDropTarget(nextTarget);
@@ -352,8 +356,9 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
       removeMouseListenersRef.current = () => {};
     };
   };
-  const renderSession = (session: SessionSummary, projectKey: string) => { const key = sessionKey(session); const running = runningSessions.has(key); const activity = unseenSessions.has(key) ? "New activity" : undefined; const accessibleActivity = running ? "Running" : activity; const target = dropTarget?.projectKey === projectKey && dropTarget.sessionKey === key ? dropTarget.edge : undefined; const drag = { projectKey, sessionKey: key, session }; return <div key={key} data-session-key={key} data-project-key={projectKey} className={`session-item ${!normalizedQuery ? "reorderable" : ""} ${activeId === session.id && (session.hostId ?? "local") === activeHostId ? "active" : ""} ${running ? "running" : activity ? "unseen" : ""} ${draggedSession?.sessionKey === key ? "dragging" : ""} ${target ? `drop-${target}` : ""}`} onContextMenu={(event) => { event.preventDefault(); const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget.querySelector<HTMLElement>(".session-main") ?? undefined; setMenu({ session, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190), returnFocus }); }}>
-    <button className="session-main" aria-label={`${session.name}, ${formatApiCost(session.apiCost)}${accessibleActivity ? `, ${accessibleActivity}` : ""}`} aria-current={activeId === session.id && (session.hostId ?? "local") === activeHostId ? "page" : undefined} aria-description={!normalizedQuery ? "Press Alt plus Up or Down to reorder. Add Shift to move between groups." : undefined} aria-keyshortcuts={!normalizedQuery ? "Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown" : undefined} title={session.name} onMouseDown={(event) => startMouseDrag(event, drag)} onKeyDown={(event) => { if (!normalizedQuery && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); moveSessionByKeyboard(drag, event.key === "ArrowUp" ? -1 : 1, event.shiftKey); } }} onClick={(event) => { if (suppressClickRef.current === key) { suppressClickRef.current = undefined; event.preventDefault(); return; } onSelect(session); }}><span className="session-copy"><span className="session-title-row"><strong>{session.name}</strong>{activity && !running && <small className="session-activity">{activity}</small>}<span className="session-api-cost" title="Would-be API cost">{formatApiCost(session.apiCost)}</span></span></span></button>
+  const duplicateNames = new Set(sessions.filter((candidate, index) => sessions.findIndex((item) => item.name === candidate.name && physicalProjectKey(item) === physicalProjectKey(candidate)) !== index).map((session) => `${physicalProjectKey(session)}:${session.name}`));
+  const renderSession = (session: SessionSummary, projectKey: string) => { const key = sessionKey(session); const running = runningSessions.has(key); const activity = unseenSessions.has(key) ? "New activity" : undefined; const accessibleActivity = running ? "Running" : activity; const duplicateName = duplicateNames.has(`${physicalProjectKey(session)}:${session.name}`); const discriminator = session.preview.trim() || `${session.messageCount} messages`; const target = dropTarget?.projectKey === projectKey && dropTarget.sessionKey === key ? dropTarget.edge : undefined; const drag = { projectKey, sessionKey: key, session }; return <div key={key} data-session-key={key} data-project-key={projectKey} className={`session-item ${!normalizedQuery ? "reorderable" : ""} ${activeId === session.id && (session.hostId ?? "local") === activeHostId ? "active" : ""} ${running ? "running" : activity ? "unseen" : ""} ${draggedSession?.sessionKey === key ? "dragging" : ""} ${target ? `drop-${target}` : ""}`} onContextMenu={(event) => { event.preventDefault(); const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget.querySelector<HTMLElement>(".session-main") ?? undefined; setMenu({ session, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190), returnFocus }); }}>
+    <button className="session-main" aria-label={`${session.name}, ${duplicateName ? `${discriminator}, ` : ""}${formatApiCost(session.apiCost)}${accessibleActivity ? `, ${accessibleActivity}` : ""}`} aria-current={activeId === session.id && (session.hostId ?? "local") === activeHostId ? "page" : undefined} aria-description={!normalizedQuery ? "Press Alt plus Up or Down to reorder. Add Shift to move between groups." : undefined} aria-keyshortcuts={!normalizedQuery ? "Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown" : undefined} title={session.name} onMouseDown={(event) => startMouseDrag(event, drag)} onKeyDown={(event) => { if (!normalizedQuery && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); moveSessionByKeyboard(drag, event.key === "ArrowUp" ? -1 : 1, event.shiftKey); } }} onClick={(event) => { if (suppressClickRef.current === key) { suppressClickRef.current = undefined; event.preventDefault(); return; } onSelect(session); }}><span className="session-copy"><span className="session-title-row"><strong>{session.name}</strong>{activity && !running && <small className="session-activity">{activity}</small>}<span className="session-api-cost" title="Would-be API cost">{formatApiCost(session.apiCost)}</span></span>{duplicateName && <small className="session-preview">{discriminator}</small>}</span></button>
     <button className="session-archive" aria-label={`Archive ${session.name}`} title={`Archive ${session.name}`} onClick={() => onAction(session, "archive")}><Archive size={14} /></button>
   </div>; };
   const groupsByToken = new Map(groups.map((group) => [groupLayoutToken(group[0]), group] as const));

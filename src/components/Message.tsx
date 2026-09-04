@@ -50,6 +50,7 @@ export function Message({ message, diff, expanded = false, toolCount = 1, debug 
   const output = textOf(message.content);
   const thinking = thinkingOf(message.content);
   const cache = cacheHitStats(message.usage);
+  const responseLabel = `Assistant response${message.timestamp ? ` from ${new Date(message.timestamp).toLocaleString()}` : ` ${message.id.slice(0, 8)}`}`;
   const failure = message.stopReason === "aborted" ? (message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
   const copy = async () => {
     try {
@@ -66,7 +67,7 @@ export function Message({ message, diff, expanded = false, toolCount = 1, debug 
     branchingRef.current = true; setBranching(true);
     try { await onBranch(message); } finally { branchingRef.current = false; setBranching(false); }
   };
-  return <article className={`message assistant-message ${thinking ? "reasoning-message" : ""}`}>
+  return <article className={`message assistant-message ${thinking ? "reasoning-message" : ""}`} aria-label={responseLabel}>
     <div className="message-body">
       {debug && message.promptContext && <PromptContextBar context={message.promptContext} />}
       {thinking && <div className="reasoning-text"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{thinking}</ReactMarkdown></div>}
@@ -75,9 +76,9 @@ export function Message({ message, diff, expanded = false, toolCount = 1, debug 
       {message.streaming && <span className="stream-caret" />}
       {diff && <DiffViewer snapshot={diff} />}
       {!message.streaming && output.trim().length > 0 && <div className="message-actions">
-        <IconButton label={copyState === "copied" ? "Response copied" : copyState === "error" ? "Copy failed" : "Copy response"} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>
+        <IconButton label={copyState === "copied" ? `${responseLabel} copied` : copyState === "error" ? `Copy failed for ${responseLabel.toLowerCase()}` : `Copy ${responseLabel.toLowerCase()}`} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>
         {copyState === "error" && <span className="copy-feedback" role="status">Could not copy response</span>}
-        <button className="branch-button" aria-label="Branch from here" title="Branch from here" disabled={branching} onClick={() => void branch()}><GitBranch size={14} /></button>
+        <button className="branch-button" aria-label={`Branch from ${responseLabel.toLowerCase()}`} title="Branch from here" disabled={branching} onClick={() => void branch()}><GitBranch size={14} /></button>
         {onCreateWorktree && <button className="branch-button" aria-label="Create Git worktree" title="Create Git worktree" onClick={onCreateWorktree}><FolderGit2 size={14} /></button>}
         {debug && cache && <span className={`cache-hit-rate${cache.low ? " low" : ""}`} title={`${cache.cachedTokens.toLocaleString()} of ${cache.promptTokens.toLocaleString()} prompt tokens read from cache`}>Cache {cache.rate}%</span>}
       </div>}
