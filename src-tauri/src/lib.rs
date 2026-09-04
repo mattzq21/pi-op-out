@@ -209,7 +209,7 @@ fn default_keybindings() -> HashMap<String, String> {
         ("toggleConversations", "Ctrl+B"),
         ("toggleTerminal", "Ctrl+J"),
         ("toggleDebugMode", "Ctrl+D"),
-        ("focusComposer", "Ctrl+L"),
+        ("focusComposer", "Ctrl+E"),
         ("openSettings", "Ctrl+,"),
     ].into_iter().map(|(action, shortcut)| (action.into(), shortcut.into())).collect()
 }
@@ -534,6 +534,7 @@ fn merge_discovered_skills(settings: &mut AppSettings) {
 fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     let path = settings_path(&app)?;
     let mut settings = if !path.exists() { default_settings() } else { serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())? };
+    if settings.keybindings.get("focusComposer").map(String::as_str) == Some("Ctrl+L") { settings.keybindings.insert("focusComposer".into(), "Ctrl+E".into()); }
     if settings.hosts.len() > MAX_REMOTE_HOSTS { return Err(format!("Settings contain more than {MAX_REMOTE_HOSTS} remote machines")); }
     if settings.mcp_servers.len() > MAX_MCP_SERVERS { return Err(format!("Settings contain more than {MAX_MCP_SERVERS} MCP servers")); }
     merge_discovered_skills(&mut settings);
