@@ -40,7 +40,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
   const handleEvent = useCallback((event: RpcEvent) => {
     if (["agent_start", "agent_end", "agent_settled", "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end"].includes(event.type)) liveRevision.current += 1;
     if (event.type === "agent_start") setState((current) => ({ ...current, isStreaming: true }));
-    if (event.type === "agent_end" || event.type === "agent_settled") setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
+    if (event.type === "agent_settled") setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
     if (event.type === "disconnected") setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
     if (event.type === "message_start" || event.type === "message_end") {
       if (event.type === "message_end") flush();
