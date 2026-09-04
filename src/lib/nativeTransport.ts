@@ -40,7 +40,6 @@ export class NativeTransport {
   currentHostId() { return this.hostId; }
   currentCwd() { return this.cwd; }
   currentSessionPath() { return this.sessionPath; }
-  currentSessionId() { return this.sessionId; }
   isTemporaryChat() { return this.temporaryChat; }
   lastDiagnostic() { return this.stderrLines.join("\n"); }
   private runProcessCommand<T>(command: () => Promise<T>) { const result = this.processLifecycle.then(command, command); this.processLifecycle = result.then(() => undefined, () => undefined); return result; }
