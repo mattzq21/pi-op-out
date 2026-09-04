@@ -186,8 +186,9 @@ export default function App() {
     ]);
     const defaultModel = availableModels.find((model) => `${model.provider}/${model.id}` === value.defaultModel);
     if (!defaultModel) throw new Error(`Default model is unavailable: ${value.defaultModel}`);
+    if (!availableThinkingLevels.includes(value.defaultThinking)) throw new Error(`Default thinking level is unavailable: ${value.defaultThinking}`);
     await transport.command({ type: "set_model", provider: defaultModel.provider, modelId: defaultModel.id });
-    if (availableThinkingLevels.includes(value.defaultThinking)) await transport.command({ type: "set_thinking_level", level: value.defaultThinking });
+    await transport.command({ type: "set_thinking_level", level: value.defaultThinking });
   }, [transport]);
   const resolveHomeDirectory = useCallback((hostId: string) => transport.homeDirectory(hostId), [transport]);
 
