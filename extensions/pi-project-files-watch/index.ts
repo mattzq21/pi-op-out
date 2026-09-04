@@ -7,7 +7,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 const REF_ROOT = "refs/pi-session-snapshots";
 const SNAPSHOT_ENTRY = "pi-git-change-snapshot";
-const CHANGE_CONTEXT_MESSAGE = "pi-git-change-context";
+const CHANGE_CONTEXT_MESSAGE = "pi-project-files-watch";
 const MAX_LISTED_FILES = 200;
 const MAX_GIT_OUTPUT = 4 * 1024 * 1024;
 
@@ -143,7 +143,7 @@ ${command}
 </project_context>`;
 }
 
-export default function gitChangeContext(pi: ExtensionAPI) {
+export default function projectFilesWatch(pi: ExtensionAPI) {
   let snapshotQueue = Promise.resolve();
   let pendingContext: string | undefined;
   let lastError = "";

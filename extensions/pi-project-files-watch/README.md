@@ -1,4 +1,4 @@
-# Pi Git change-context extension
+# Pi project files watch extension
 
 This extension gives each Pi session a private Git snapshot after every successfully
 completed assistant message. Before the next user prompt, it compares the current
@@ -44,15 +44,15 @@ not appear in normal branch history and are not pushed by ordinary branch pushes
 Run it directly:
 
 ```bash
-pi --extension ./extensions/pi-git-change-context/index.ts
+pi --extension ./extensions/pi-project-files-watch/index.ts
 ```
 
 To install it as an automatically discovered user extension:
 
 ```bash
-mkdir -p ~/.pi/agent/extensions/pi-git-change-context
-cp extensions/pi-git-change-context/index.ts \
-  ~/.pi/agent/extensions/pi-git-change-context/index.ts
+mkdir -p ~/.pi/agent/extensions/pi-project-files-watch
+cp extensions/pi-project-files-watch/index.ts \
+  ~/.pi/agent/extensions/pi-project-files-watch/index.ts
 ```
 
 Restart Pi or run `/reload` after installing it.
