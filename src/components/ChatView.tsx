@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FolderGit2 } from "lucide-react";
 import type { AgentProfile, AgentState, ChatMessage, ComposerUpload, GitDiffSnapshots, ImageAttachment, Model, PromptContextInfo, PromptDictionary, SequenceProfile, SlashCommand } from "../types";
 import { Message } from "./Message";
@@ -81,6 +81,7 @@ function renderMessages(messages: ChatMessage[], expanded: boolean, onBranch: Pr
 }
 
 function ConversationTurn({ messages, gitDiffs, promptContext, debug, active, retryable, onRetry, onRetryAccepted, onBranch, onCreateWorktree }: { messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; promptContext?: PromptContextInfo; debug: boolean; active: boolean; retryable: boolean; onRetry: Props["onSend"]; onRetryAccepted: () => void; onBranch: Props["onBranch"]; onCreateWorktree?: Props["onCreateWorktree"] }) {
+  const [retryError, setRetryError] = useState<string>();
   const userIndex = messages.findIndex((message) => message.role === "user");
   const parsed = userIndex >= 0 ? parseSequencePrompt(textOf(messages[userIndex].content)) : { text: "" };
   if (parsed.step && !parsed.step.visible) return null;
@@ -111,6 +112,7 @@ function ConversationTurn({ messages, gitDiffs, promptContext, debug, active, re
     {parsed.step && parsed.step.step > 0 && <div className="sequence-step-label">{parsed.step.sequence} · {parsed.step.agent}</div>}
     {userMessages.map((message) => <Message key={message.id} message={message} debug={debug} onBranch={onBranch} onCreateWorktree={onCreateWorktree} />)}
     {intermediate.length > 0 && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}</summary><div className="work-group-content">{renderMessages(intermediate, true, onBranch, onCreateWorktree)}</div></details>}
-    {finalMessage && <Message message={finalMessage} diff={gitDiff} debug={debug} onBranch={onBranch} onCreateWorktree={onCreateWorktree} onRetry={retryPrompt ? () => { void Promise.resolve(onRetry(retryPrompt)).then((accepted) => { if (accepted !== false) onRetryAccepted(); }); } : undefined} />}
+    {finalMessage && <Message message={finalMessage} diff={gitDiff} debug={debug} onBranch={onBranch} onCreateWorktree={onCreateWorktree} onRetry={retryPrompt ? () => { setRetryError(undefined); void Promise.resolve(onRetry(retryPrompt)).then((accepted) => { if (accepted !== false) onRetryAccepted(); }).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))); } : undefined} />}
+    {retryError && <div className="message-failure retry-error" role="alert">Retry failed: {retryError}</div>}
   </section>;
 }
