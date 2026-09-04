@@ -333,11 +333,18 @@ export default function App() {
   const branchConversation = async (message: ChatMessage, destinationCwd?: string) => {
     const entryId = message.entryId; if (!entryId) throw new Error("Could not find the response to branch from");
     if (branchPending.current.has(entryId)) return false;
-    branchPending.current.add(entryId); const sourcePath = transport.currentSessionPath(); const previousKey = activeConversationKeyRef.current;
+    const sourcePath = transport.currentSessionPath() ?? state.sessionFile;
+    if (!sourcePath) throw new Error("The original conversation has no session file");
+    branchPending.current.add(entryId);
+    const sourceCwd = transport.currentCwd();
+    const sourceHostId = transport.currentHostId();
+    const previousKey = activeConversationKeyRef.current;
+    let forked = false;
     try {
       const messageIndex = messages.findIndex((candidate) => candidate.entryId === entryId);
       const nextUserEntryId = messageIndex >= 0 ? messages.slice(messageIndex + 1).find((candidate) => candidate.role === "user" && candidate.entryId)?.entryId : undefined;
       const fork = await transport.command<{ cancelled?: boolean }>(nextUserEntryId ? { type: "fork", entryId: nextUserEntryId } : { type: "clone" }); if (fork.cancelled) return false;
+      forked = true;
       let nextState = await refreshSession();
       const history = await transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" });
       try { await runtimePool.copySavedDiffs(transport, sourcePath, nextState.sessionFile, new Set(branchMessages(history.entries, history.leafId).map((entry) => entry.id))); }
@@ -351,7 +358,27 @@ export default function App() {
       runtimePool.bind(activeHostIdRef.current, nextState.sessionId, transport);
       if (destinationCwd) { setTerminalOpen(false); setTerminalTarget(undefined); }
       rekeyConversationUi(previousKey, `${activeHostIdRef.current}:${nextState.sessionId}`, transport, !destinationCwd);
+      if (destinationCwd) updateConnected(true);
       void syncSessionIndex(); return true;
+    } catch (reason) {
+      if (!forked || !sourcePath) throw reason;
+      try {
+        updateConnected(false);
+        await transport.disconnect();
+        await transport.connect(sourceCwd, sourcePath, sourceHostId);
+        setActiveCwd(sourceCwd);
+        const restoredSettings = await refresh(sourceHostId);
+        await configureRuntime(restoredSettings);
+        await refreshSession();
+        transportConversationKeys.current.set(transport, previousKey);
+        activateConversationKey(previousKey);
+        updateConnected(true);
+      } catch (rollbackReason) {
+        const originalMessage = reason instanceof Error ? reason.message : String(reason);
+        const rollbackMessage = rollbackReason instanceof Error ? rollbackReason.message : String(rollbackReason);
+        throw new Error(`${originalMessage}\nCould not restore the original conversation: ${rollbackMessage}`);
+      }
+      throw reason;
     } finally { branchPending.current.delete(entryId); }
   };
   const branch = async (message: ChatMessage) => { try { await branchConversation(message); } catch (reason) { addNotice({ title: "Could not branch conversation", message: reason instanceof Error ? reason.message : String(reason) }); } };
