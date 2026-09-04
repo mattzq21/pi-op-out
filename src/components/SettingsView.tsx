@@ -9,11 +9,11 @@ import { Toggle } from "./Toggle";
 type Section = "general" | "dictionaries" | "agents" | "sequences" | "machines" | "keybinds" | "tools" | "skills" | "mcp";
 const sections = [
   { id: "general" as const, label: "General", icon: Settings2 },
+  { id: "keybinds" as const, label: "Keybinds", icon: Keyboard },
   { id: "dictionaries" as const, label: "Dictionaries", icon: BookOpen },
   { id: "agents" as const, label: "Agents", icon: Bot },
   { id: "sequences" as const, label: "Sequences", icon: GitBranch },
   { id: "machines" as const, label: "Machines", icon: Server },
-  { id: "keybinds" as const, label: "Keybinds", icon: Keyboard },
   { id: "skills" as const, label: "Skills", icon: Sparkles }, { id: "tools" as const, label: "Tools", icon: Wrench }, { id: "mcp" as const, label: "MCP servers", icon: Blocks }
 ];
 const isBuiltInAgent = (agent: AgentProfile) => agent.name === "default";
