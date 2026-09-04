@@ -1923,6 +1923,14 @@ fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), Str
 pub fn run() {
     let broker = BrokerRuntime::default();
     let builder = tauri::Builder::default();
+    #[cfg(not(feature = "webdriver"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }));
     #[cfg(feature = "webdriver")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
     builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(SessionIndexRuntime::default()).manage(broker.clone()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
