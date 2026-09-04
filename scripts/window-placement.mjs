@@ -2,15 +2,6 @@ import { execFileSync } from "node:child_process";
 
 export const topWindowBounds = Object.freeze({ x: 2560, y: 56, width: 1280, height: 692 });
 export const bottomWindowBounds = Object.freeze({ x: 2560, y: 748, width: 1280, height: 692 });
-export const x11FrameHeight = 37;
-
-export function toX11CreationBounds(bounds) {
-  return { ...bounds, height: bounds.height - x11FrameHeight };
-}
-
-export function serializeWindowBounds({ x, y, width, height }) {
-  return `${x},${y},${width},${height}`;
-}
 
 export function selectWindowBounds() {
   try {

@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:net";
-import { selectWindowBounds, toX11CreationBounds } from "./window-placement.mjs";
+import { selectWindowBounds } from "./window-placement.mjs";
 
 const args = process.argv.slice(2);
+const x11FrameHeight = 37;
 
 if (args[0] === "dev") {
-  const { x, y, width, height } = toX11CreationBounds(selectWindowBounds());
+  const { x, y, width, height: outerHeight } = selectWindowBounds();
   const port = await new Promise((resolve, reject) => {
     const server = createServer();
     server.once("error", reject);
@@ -21,7 +22,7 @@ if (args[0] === "dev") {
       devUrl: `http://127.0.0.1:${port}`,
     },
     ...(process.platform === "linux" ? { app: { windows: [{
-      title: "Pi", x, y, width, height,
+      title: "Pi", x, y, width, height: outerHeight - x11FrameHeight,
       minWidth: 900, minHeight: 640, decorations: false, transparent: false,
     }] } } : {}),
   }));

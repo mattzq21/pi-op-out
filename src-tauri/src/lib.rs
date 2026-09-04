@@ -290,7 +290,10 @@ fn set_private_file_permissions(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|error| error.to_string())?;
+        let permissions = fs::metadata(path).map_err(|error| error.to_string())?.permissions();
+        if permissions.mode() & 0o777 != 0o600 {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|error| error.to_string())?;
+        }
     }
     Ok(())
 }
@@ -300,7 +303,10 @@ fn ensure_private_dir(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|error| error.to_string())?;
+        let permissions = fs::metadata(path).map_err(|error| error.to_string())?.permissions();
+        if permissions.mode() & 0o777 != 0o700 {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|error| error.to_string())?;
+        }
     }
     Ok(())
 }
@@ -308,6 +314,15 @@ fn ensure_private_dir(path: &Path) -> Result<(), String> {
 fn atomic_write_private(path: &Path, body: &[u8]) -> Result<(), String> {
     let parent = path.parent().ok_or("Configuration file has no parent directory")?;
     ensure_private_dir(parent)?;
+    if path.exists() {
+        set_private_file_permissions(path)?;
+        match fs::read(path) {
+            Ok(current) if current == body => return Ok(()),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
+    }
     let temporary = parent.join(format!(".{}.{}.tmp", path.file_name().and_then(|name| name.to_str()).unwrap_or("config"), Uuid::new_v4()));
     let result = (|| {
         let mut options = OpenOptions::new(); options.write(true).create_new(true);
@@ -1923,28 +1938,9 @@ fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), Str
 pub fn run() {
     let broker = BrokerRuntime::default();
     let builder = tauri::Builder::default();
-    #[cfg(not(feature = "webdriver"))]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-        if let Some(window) = app.get_webview_window("main") {
-            let _ = window.unminimize();
-            let _ = window.show();
-            let _ = window.set_focus();
-        }
-    }));
     #[cfg(feature = "webdriver")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
     builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(SessionIndexRuntime::default()).manage(broker.clone()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
-        #[cfg(feature = "webdriver")]
-        {
-            let config = app.config().app.windows.first().ok_or("WebDriver window configuration is missing")?;
-            let mut window = tauri::WebviewWindowBuilder::from_config(app.handle(), config)?;
-            if let Ok(value) = std::env::var("PI_E2E_WINDOW_BOUNDS") {
-                let values = value.split(',').map(str::parse::<f64>).collect::<Result<Vec<_>, _>>()?;
-                if values.len() != 4 { return Err("PI_E2E_WINDOW_BOUNDS must contain x,y,width,height".into()); }
-                window = window.position(values[0], values[1]).inner_size(values[2], values[3]).decorations(false);
-            }
-            window.build()?;
-        }
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
     }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
