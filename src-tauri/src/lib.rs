@@ -367,7 +367,10 @@ fn prepare_context_window_cap_extension(app: &AppHandle, settings: &AppSettings)
 }
 
 fn prepare_project_files_watch_extension(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_config_dir().map_err(|error| error.to_string())?.join("pi-project-files-watch");
+    let config_dir = app.path().app_config_dir().map_err(|error| error.to_string())?;
+    let legacy_dir = config_dir.join("pi-git-change-context");
+    if legacy_dir.exists() { fs::remove_dir_all(&legacy_dir).map_err(|error| format!("Could not remove legacy project files watch extension: {error}"))?; }
+    let dir = config_dir.join("pi-project-files-watch");
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     let extension_path = dir.join("index.ts");
     fs::write(&extension_path, include_str!("../../extensions/pi-project-files-watch/index.ts")).map_err(|error| error.to_string())?;
@@ -865,7 +868,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let context_window_config = shell_quote(&serde_json::to_string_pretty(&json!({ "contextWindowCap": settings.context_window_cap })).map_err(|error| error.to_string())?);
     let mcp_bridge = shell_quote(include_str!("../resources/mcp-bridge.bundle.mjs"));
     let mcp_config = shell_quote(&serde_json::to_string_pretty(&settings.mcp_servers).map_err(|error| error.to_string())?);
-    let remote = format!("mkdir -p \"$HOME/.pi-desktop/sessions\" \"$HOME/.pi-desktop/pi-context-window-cap\" \"$HOME/.pi-desktop/pi-project-files-watch\" \"$HOME/.pi/agent/extensions/pi-orchestration\" && printf %s {broker} > \"$HOME/.pi-desktop/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/.pi-desktop/pi-desktop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/.pi-desktop/pi-desktop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/.pi-desktop/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/.pi-desktop/pi-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/.pi-desktop/pi-context-window-cap/config.json\" && printf %s {project_files_watch} > \"$HOME/.pi-desktop/pi-project-files-watch/index.ts\" && printf %s {btw} > \"$HOME/.pi/agent/extensions/pi-desktop-btw.ts\" && printf %s {orchestration} > \"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\"");
+    let remote = format!("rm -rf -- \"$HOME/.pi-desktop/pi-git-change-context\" && mkdir -p \"$HOME/.pi-desktop/sessions\" \"$HOME/.pi-desktop/pi-context-window-cap\" \"$HOME/.pi-desktop/pi-project-files-watch\" \"$HOME/.pi/agent/extensions/pi-orchestration\" && printf %s {broker} > \"$HOME/.pi-desktop/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/.pi-desktop/pi-desktop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/.pi-desktop/pi-desktop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/.pi-desktop/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/.pi-desktop/pi-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/.pi-desktop/pi-context-window-cap/config.json\" && printf %s {project_files_watch} > \"$HOME/.pi-desktop/pi-project-files-watch/index.ts\" && printf %s {btw} > \"$HOME/.pi/agent/extensions/pi-desktop-btw.ts\" && printf %s {orchestration} > \"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\"");
     let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not install Pi Desktop extensions on {}: {error}", host.name))?;
     output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
 }
