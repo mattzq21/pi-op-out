@@ -9,10 +9,10 @@ import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 import { branchMessages, type PiEntry } from "../lib/messages";
 import { ChatView } from "./ChatView";
 
-interface Props { runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: string) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; forkFrom?: string; initialPrompt?: string; onReady?: () => void; onFailed?: (reason: unknown) => void; onClose: () => void; }
+interface Props { runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: string) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; forkFrom?: string; initialPrompt?: string; onReady?: () => void; onFailed?: (reason: unknown) => void; onClose: () => void; }
 const initialState = (session: SessionSummary): AgentState => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, pendingMessageCount: 0 });
 
-export function SplitChatPane({ runtimePool, session, settings, draft, onDraftChange, focusRequest = 0, onActivate, onOpenTerminal, onDialogRequest, onDialogTransportClosed, forkFrom, initialPrompt, onReady, onFailed, onClose }: Props) {
+export function SplitChatPane({ runtimePool, session, settings, draft, onDraftChange, focusRequest = 0, onActivate, onOpenTerminal, onDialogRequest, onDialogTransportClosed, onReleaseTransport, forkFrom, initialPrompt, onReady, onFailed, onClose }: Props) {
   const transport = useMemo(() => forkFrom ? runtimePool.create({ cwd: session.cwd, hostId: session.hostId }) : runtimePool.forSession(session), [runtimePool, session.id, session.hostId, session.path, session.cwd, forkFrom]);
   const gitDiffs = useTurnDiffs(runtimePool, transport); const runtime = useChatSession(transport, initialState(session));
   const { state, setState, messages, models, commands, thinkingLevels, refresh, handleEvent } = runtime; const [error, setError] = useState<string>(); const [connected, setConnected] = useState(false);
@@ -70,8 +70,8 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
       if (event.type === "disconnected") { updateConnected(false); setOrchestration(undefined); setPromptContext(undefined); setStatuses({}); setWidgets({}); document.title = "Pi"; void onDialogTransportClosed(transport); if (!closing) { setControlError("Connection lost. Reconnecting…"); window.setTimeout(() => void connectRuntime(false), 50); } }
     });
     void connectRuntime(true);
-    return () => { closing = true; runtimePool.setInteractive(transport, false); document.title = "Pi"; reconnectRef.current = () => undefined; unsubscribe(); queueMicrotask(() => { if (lifecycleRef.current === lifecycle) void onDialogTransportClosed(transport).finally(() => runtimePool.release(transport)); }); };
-  }, [transport, session.id, forkFrom, initialPrompt, handleEvent, refresh, onDialogRequest, onDialogTransportClosed]);
+    return () => { closing = true; runtimePool.setInteractive(transport, false); document.title = "Pi"; reconnectRef.current = () => undefined; unsubscribe(); queueMicrotask(() => { if (lifecycleRef.current === lifecycle) void onReleaseTransport(transport); }); };
+  }, [transport, session.id, forkFrom, initialPrompt, handleEvent, refresh, onDialogRequest, onDialogTransportClosed, onReleaseTransport]);
   useEffect(() => { if (!connected) return; void Promise.all([transport.command({ type: "set_auto_compaction", enabled: settings.autoCompaction }), transport.command({ type: "set_auto_retry", enabled: settings.autoRetry })]).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))); }, [connected, settings.autoCompaction, settings.autoRetry, transport]);
   const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => {
     if (!connectedRef.current) return Promise.reject(new Error("Pi is still connecting"));

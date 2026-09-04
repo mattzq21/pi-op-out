@@ -485,6 +485,7 @@ describe("Conversation acceptance", () => {
     await mockBackend({
       list_sessions: [indexed], start_pi: {}, stop_pi: {}, ...connectedSessionResponses(indexed.id),
       load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" },
+      "pi_command:get_state": { ...connectedSessionResponses(indexed.id)["pi_command:get_state"], sessionFile: indexed.path, messageCount: indexed.messageCount },
     });
     try {
       await app.conversationSearch.setValue(indexed.name);
@@ -496,9 +497,13 @@ describe("Conversation acceptance", () => {
       const split = $(`section[aria-label="Split conversation: ${indexed.name}"]`);
       await expect(split).toBeDisplayed();
       await expect($$(".chat-panes .chat-shell")).toBeElementsArrayOfSize(2);
+      await split.$('textarea[aria-label="Message Pi"]').waitForEnabled();
+      const splitRuntimeId = (await backendCalls()).find(({ command, args }) => command === "start_pi" && args.sessionPath === indexed.path)?.args.runtimeId;
+      expect(splitRuntimeId).toBeTruthy();
       await session.$(".session-main").click();
       await expect(split).not.toBeExisting();
-      await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "stop_pi"));
+      await app.composer.waitForEnabled();
+      expect((await backendCalls()).some(({ command, args }) => command === "stop_pi" && args.runtimeId === splitRuntimeId)).toBe(false);
     } finally {
       await app.conversationSearch.clearValue();
       await resetBackend();
