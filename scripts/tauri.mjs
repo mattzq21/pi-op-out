@@ -1,26 +1,13 @@
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:net";
+import { selectWindowBounds } from "./window-placement.mjs";
 
 const args = process.argv.slice(2);
-const topBounds = "2560,56,1280,692";
-const bottomBounds = "2560,748,1280,692";
 const x11FrameHeight = 37;
 
-function devStartBounds() {
-  try {
-    const windows = execFileSync("xwininfo", ["-root", "-tree"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    const topSlotOccupied = windows.split("\n").some((line) =>
-      line.includes('"Pi": ("pi-desktop" "Pi-desktop")') && line.includes("1280x692+2560+56")
-    );
-    return topSlotOccupied ? bottomBounds : topBounds;
-  } catch {
-    return topBounds;
-  }
-}
-
 if (args[0] === "dev") {
-  const [x, y, width, outerHeight] = devStartBounds().split(",").map(Number);
+  const { x, y, width, height: outerHeight } = selectWindowBounds();
   const port = await new Promise((resolve, reject) => {
     const server = createServer();
     server.once("error", reject);

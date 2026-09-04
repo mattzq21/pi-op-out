@@ -2,6 +2,7 @@ import path from "node:path";
 import { createServer } from "node:net";
 import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { selectWindowBounds } from "./scripts/window-placement.mjs";
 
 const defaultBinary = path.resolve(
   "src-tauri",
@@ -9,7 +10,6 @@ const defaultBinary = path.resolve(
   "release",
   process.platform === "win32" ? "pi-desktop.exe" : "pi-desktop",
 );
-const testWindow = { width: 1_100, height: 720 };
 const defaultActualCallModel = "openai-codex/gpt-5.6-luna";
 const actualCallModel = process.env.PI_E2E_ACTUAL_MODEL?.trim() || defaultActualCallModel;
 const driverProvider = "embedded";
@@ -118,6 +118,11 @@ export const config: WebdriverIO.Config = {
   before: async () => {
     const [mainWindow] = await browser.getWindowHandles();
     if (mainWindow) await browser.switchToWindow(mainWindow);
+    if (process.platform === "linux") {
+      const { x, y, width, height } = selectWindowBounds();
+      await browser.setWindowRect(x, y, width, height);
+      return;
+    }
     const screenBounds = await browser.execute(() => {
       const currentScreen = window.screen as Screen & { availLeft?: number; availTop?: number };
       return {
@@ -129,9 +134,9 @@ export const config: WebdriverIO.Config = {
     const bottom = screenBounds.top + screenBounds.height;
     await browser.setWindowRect(
       screenBounds.left,
-      Math.max(screenBounds.top, bottom - testWindow.height),
-      testWindow.width,
-      testWindow.height,
+      Math.max(screenBounds.top, bottom - 720),
+      1_100,
+      720,
     );
   },
 };
