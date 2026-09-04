@@ -2,7 +2,7 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import { createServer } from "node:net";
 import { cleanupWdioSession, startWdioSession } from "@wdio/tauri-service";
-import { selectWindowBounds, toX11CreationBounds } from "./window-placement.mjs";
+import { selectWindowBounds } from "./window-placement.mjs";
 
 const defaultBinary = path.resolve(
   "src-tauri",
@@ -40,7 +40,7 @@ const capabilities = {
     embeddedPort: webdriverPort,
     env: process.platform === "linux" ? {
       GDK_BACKEND: "x11",
-      PI_E2E_WINDOW_BOUNDS: JSON.stringify(toX11CreationBounds(windowBounds)),
+      PI_WINDOW_BOUNDS: JSON.stringify(windowBounds),
     } : undefined,
   },
 };

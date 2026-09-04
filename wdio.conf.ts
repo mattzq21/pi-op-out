@@ -2,7 +2,7 @@ import path from "node:path";
 import { createServer } from "node:net";
 import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { selectWindowBounds, toX11CreationBounds } from "./scripts/window-placement.mjs";
+import { selectWindowBounds } from "./scripts/window-placement.mjs";
 
 if (process.platform === "linux") process.env.GDK_BACKEND = "x11";
 
@@ -112,7 +112,7 @@ export const config: WebdriverIO.Config = {
     captureBackendLogs: true,
     env: process.platform === "linux" ? {
       GDK_BACKEND: "x11",
-      PI_E2E_WINDOW_BOUNDS: JSON.stringify(toX11CreationBounds(selectWindowBounds())),
+      PI_WINDOW_BOUNDS: JSON.stringify(selectWindowBounds()),
     } : undefined,
   }]],
   framework: "mocha",

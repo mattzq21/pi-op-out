@@ -1,12 +1,12 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:net";
-import { selectWindowBounds, toX11CreationBounds } from "./window-placement.mjs";
+import { selectWindowBounds } from "./window-placement.mjs";
 
 const args = process.argv.slice(2);
+const windowBounds = process.platform === "linux" && args[0] === "dev" ? selectWindowBounds() : undefined;
 
 if (args[0] === "dev") {
-  const bounds = process.platform === "linux" ? toX11CreationBounds(selectWindowBounds()) : undefined;
   const port = await new Promise((resolve, reject) => {
     const server = createServer();
     server.once("error", reject);
@@ -20,16 +20,12 @@ if (args[0] === "dev") {
       beforeDevCommand: `npm run dev -- --host 127.0.0.1 --port ${port} --strictPort`,
       devUrl: `http://127.0.0.1:${port}`,
     },
-    ...(process.platform === "linux" ? { app: { windows: [{
-      title: "Pi", ...bounds,
-      minWidth: 900, minHeight: 640, decorations: false, transparent: false,
-    }] } } : {}),
   }));
 }
 
 const tauri = fileURLToPath(new URL("../node_modules/.bin/tauri", import.meta.url));
-const env = process.platform === "linux" && args[0] === "dev"
-  ? { ...process.env, GDK_BACKEND: "x11" }
+const env = windowBounds
+  ? { ...process.env, GDK_BACKEND: "x11", PI_WINDOW_BOUNDS: JSON.stringify(windowBounds) }
   : process.env;
 const child = spawn(tauri, args, { stdio: "inherit", env });
 child.once("error", (error) => { console.error(error.message); process.exitCode = 1; });
