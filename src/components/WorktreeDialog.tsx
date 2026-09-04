@@ -13,20 +13,22 @@ export function WorktreeDialog({ projectPath, onCreate, onCancel }: Props) {
   const [name, setName] = useState("");
   const [error, setError] = useState<string>();
   const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
 
   useEffect(() => { const dialog = dialogRef.current; dialog?.showModal(); return () => { if (dialog?.open) dialog.close(); requestAnimationFrame(() => returnFocusRef.current?.focus()); }; }, []);
 
   const create = async () => {
+    if (creatingRef.current) return;
     const suffix = name.trim();
     if (!suffix) { setError("Name can't be empty"); return; }
-    setCreating(true); setError(undefined);
+    creatingRef.current = true; setCreating(true); setError(undefined);
     try { await onCreate(suffix); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); setCreating(false); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); creatingRef.current = false; setCreating(false); }
   };
 
-  return <dialog ref={dialogRef} className="extension-dialog" aria-labelledby="worktree-dialog-title" onCancel={(event) => { event.preventDefault(); if (!creating) onCancel(); }} onMouseDown={(event) => { const bounds = event.currentTarget.getBoundingClientRect(); if (!creating && (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)) onCancel(); }}>
+  return <dialog ref={dialogRef} className="extension-dialog" aria-labelledby="worktree-dialog-title" onCancel={(event) => { event.preventDefault(); if (!creatingRef.current) onCancel(); }} onMouseDown={(event) => { const bounds = event.currentTarget.getBoundingClientRect(); if (!creatingRef.current && (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)) onCancel(); }}>
     <p className="eyebrow">Git</p><h2 id="worktree-dialog-title">Create worktree</h2><p>Create a branch and worktree beside the current project.</p>
-    <input autoFocus aria-label="Worktree name" value={name} placeholder="Worktree name" disabled={creating} onChange={(event) => { setName(event.target.value); setError(undefined); }} onKeyDown={(event) => { if (event.key === "Enter") void create(); }} />
+    <input autoFocus aria-label="Worktree name" value={name} placeholder="Worktree name" disabled={creating} onChange={(event) => { setName(event.target.value); setError(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) void create(); }} />
     {name.trim() && <p className="worktree-preview" title={projectPath}>Name: <code>{name.trim()}</code>. The repository root determines the branch and directory prefix.</p>}
     {error && <p className="dialog-error" role="alert">{error}</p>}
     <div className="dialog-actions"><button disabled={creating} onClick={onCancel}>Cancel</button><button className="primary-button" disabled={creating} onClick={() => void create()}>{creating ? "Creating…" : "Create worktree"}</button></div>

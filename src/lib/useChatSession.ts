@@ -25,6 +25,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
       transport.command<AgentState>({ type: "get_state" }), transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }), transport.command<{ models: Model[] }>({ type: "get_available_models" }), transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }), transport.command<{ commands: SlashCommand[] }>({ type: "get_commands" }), transport.command<{ contextUsage?: AgentState["contextUsage"] }>({ type: "get_session_stats" })
     ] as const);
     if (stateResult.status === "rejected") throw stateResult.reason;
+    if (historyResult.status === "rejected") throw historyResult.reason;
     const nextState = stateResult.value;
     if (liveRevision.current === revision) {
       discardPendingUpdates();
@@ -40,7 +41,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
   const handleEvent = useCallback((event: RpcEvent) => {
     if (["agent_start", "agent_end", "agent_settled", "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end"].includes(event.type)) liveRevision.current += 1;
     if (event.type === "agent_start") setState((current) => ({ ...current, isStreaming: true }));
-    if (event.type === "agent_settled") setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
+    if (event.type === "agent_end" || event.type === "agent_settled") setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
     if (event.type === "disconnected") setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
     if (event.type === "message_start" || event.type === "message_end") {
       if (event.type === "message_end") flush();

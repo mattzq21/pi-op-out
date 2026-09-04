@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import type { GitDiffSnapshots, SessionSummary } from "../types";
+import type { ExtensionUiRequest, GitDiffSnapshots, SessionSummary } from "../types";
 import { NativeTransport, type NativeConnectionTarget } from "./nativeTransport";
 import { branchMessages, type PiEntry } from "./messages";
 import { textOf } from "./content";
@@ -24,6 +24,7 @@ export class SessionRuntimePool {
   private unseenSessionKeys: ReadonlySet<string> = new Set();
   private activeTransport?: NativeTransport;
   private errorHandler?: (message: string) => void;
+  private backgroundInputHandler?: (request: ExtensionUiRequest) => void;
 
   private notify() { for (const listener of this.listeners) listener(); }
 
@@ -92,6 +93,13 @@ export class SessionRuntimePool {
     const transport = new NativeTransport(target); this.transports.add(transport);
     if (transport.currentSessionPath()) void this.loadSavedDiffs(transport, transport.currentSessionPath()!);
     transport.subscribe((event) => {
+      if (event.type === "extension_ui_request" && transport !== this.activeTransport) {
+        const request = event as unknown as ExtensionUiRequest;
+        if (["input", "editor", "select", "confirm"].includes(request.method)) {
+          void transport.command({ type: "extension_ui_response", id: request.id, cancelled: true }).catch(() => undefined);
+          this.backgroundInputHandler?.(request);
+        }
+      }
       if (event.type === "agent_start") this.captureTurnStart(transport);
       if (event.type === "agent_end" || event.type === "agent_settled") this.captureTurnEnd(transport);
       if (event.type === "agent_start" || event.type === "message_start") { this.runningTransports.add(transport); this.unseenTransports.delete(transport); }
@@ -119,7 +127,9 @@ export class SessionRuntimePool {
   activate(transport?: NativeTransport) { this.activeTransport = transport; if (transport) this.unseenTransports.delete(transport); this.publishSessionStates(); }
 
   setErrorHandler(handler?: (message: string) => void) { this.errorHandler = handler; }
+  setBackgroundInputHandler(handler?: (request: ExtensionUiRequest) => void) { this.backgroundInputHandler = handler; }
   isRunning(transport: NativeTransport) { return this.runningTransports.has(transport); }
+  isAnyRunning() { return this.runningTransports.size > 0; }
 
   async copySavedDiffs(transport: NativeTransport, sourcePath: string | undefined, destinationPath: string | undefined, retainedMessageIds?: ReadonlySet<string>) {
     if (!sourcePath || !destinationPath || sourcePath === destinationPath) return;
