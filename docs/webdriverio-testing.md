@@ -40,7 +40,9 @@ npm run test:e2e:build
 npm run test:e2e:manual
 ```
 
-The manual launcher uses the same Linux placement as `npm run tauri dev`: top-right on the right-hand monitor, or bottom-left on that monitor when another Pi window occupies the top slot. It prints a `sessionId` and `webdriverConfig`; pass those values to the MCP's `attach_session` tool with `platform: "browser"`, `provider: "external"`, and `trace: false`. Keep the launcher running during the session and stop it with Ctrl+C when finished.
+Both the manual launcher and automated suite use the same Linux placement as `npm run tauri dev`: `1280×692` at `(2560,56)` in the top-left of the right-hand monitor, or `(2560,748)` in the bottom-left when another Pi window occupies the top slot. The launcher selects the slot before starting the app and passes the creation bounds through `PI_E2E_WINDOW_BOUNDS`; Tauri applies them before creating the window, with no delayed move or Linux WebDriver resize. Rebuild the E2E binary after changing native placement code.
+
+The manual launcher prints a `sessionId` and `webdriverConfig`; pass those values to the MCP's `attach_session` tool with `platform: "browser"`, `provider: "external"`, and `trace: false`. Keep the launcher running during the session and stop it with Ctrl+C when finished.
 
 Do not enable trace recording in any WebdriverIO MCP session. Omit the `trace` argument or set `trace: false` when starting or attaching. Trace recording creates screenshot-heavy archives in `.trace/` that are not needed for normal agent operation.
 

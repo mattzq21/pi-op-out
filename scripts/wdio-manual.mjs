@@ -2,7 +2,7 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import { createServer } from "node:net";
 import { cleanupWdioSession, startWdioSession } from "@wdio/tauri-service";
-import { selectWindowBounds } from "./window-placement.mjs";
+import { selectWindowBounds, toX11CreationBounds } from "./window-placement.mjs";
 
 const defaultBinary = path.resolve(
   "src-tauri",
@@ -30,6 +30,7 @@ const webdriverPort = await new Promise((resolve, reject) => {
   });
 });
 
+const windowBounds = selectWindowBounds();
 const capabilities = {
   browserName: "tauri",
   "tauri:options": { application: appBinaryPath },
@@ -37,18 +38,23 @@ const capabilities = {
     appBinaryPath,
     driverProvider: "embedded",
     embeddedPort: webdriverPort,
-    env: process.platform === "linux" ? { GDK_BACKEND: "x11" } : undefined,
+    env: process.platform === "linux" ? {
+      GDK_BACKEND: "x11",
+      PI_E2E_WINDOW_BOUNDS: JSON.stringify(toX11CreationBounds(windowBounds)),
+    } : undefined,
   },
 };
 
 const browser = await startWdioSession(capabilities);
-const { x, y, width, height } = selectWindowBounds();
-await browser.setWindowRect(x, y, width, height);
+if (process.platform !== "linux") {
+  const { x, y, width, height } = windowBounds;
+  await browser.setWindowRect(x, y, width, height);
+}
 
 console.log(JSON.stringify({
   sessionId: browser.sessionId,
   webdriverConfig: { hostname: "127.0.0.1", port: webdriverPort, path: "/" },
-  window: { x, y, width, height },
+  window: windowBounds,
 }, null, 2));
 console.log("Keep this process running while the WebdriverIO MCP is attached. Press Ctrl+C to close the app.");
 

@@ -1936,6 +1936,25 @@ fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), Str
 }
 
 pub fn run() {
+    let context = tauri::generate_context!();
+    #[cfg(all(target_os = "linux", feature = "webdriver"))]
+    let context = {
+        let mut context = context;
+        if let Ok(value) = std::env::var("PI_E2E_WINDOW_BOUNDS") {
+            #[derive(Deserialize)]
+            struct WindowBounds { x: i32, y: i32, width: u32, height: u32 }
+            let bounds: WindowBounds = serde_json::from_str(&value).expect("Invalid PI_E2E_WINDOW_BOUNDS");
+            let window = context.config_mut().app.windows.first_mut().expect("Missing main window configuration");
+            // Configure the normal auto-created window before GTK maps it. Moving an
+            // existing window through WebDriver changes its coordinates under XWayland.
+            window.x = Some(f64::from(bounds.x));
+            window.y = Some(f64::from(bounds.y));
+            window.width = f64::from(bounds.width);
+            window.height = f64::from(bounds.height);
+            window.decorations = false;
+        }
+        context
+    };
     let broker = BrokerRuntime::default();
     let builder = tauri::Builder::default();
     #[cfg(feature = "webdriver")]
@@ -1943,5 +1962,5 @@ pub fn run() {
     builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(SessionIndexRuntime::default()).manage(broker.clone()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
-    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");
+    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, load_app_settings, save_app_settings, codex_usage]).run(context).expect("error while running Pi desktop");
 }

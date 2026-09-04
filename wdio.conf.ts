@@ -2,7 +2,7 @@ import path from "node:path";
 import { createServer } from "node:net";
 import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { selectWindowBounds } from "./scripts/window-placement.mjs";
+import { selectWindowBounds, toX11CreationBounds } from "./scripts/window-placement.mjs";
 
 if (process.platform === "linux") process.env.GDK_BACKEND = "x11";
 
@@ -110,6 +110,10 @@ export const config: WebdriverIO.Config = {
     driverProvider,
     embeddedPort: webdriverPort,
     captureBackendLogs: true,
+    env: process.platform === "linux" ? {
+      GDK_BACKEND: "x11",
+      PI_E2E_WINDOW_BOUNDS: JSON.stringify(toX11CreationBounds(selectWindowBounds())),
+    } : undefined,
   }]],
   framework: "mocha",
   reporters: ["spec"],
@@ -136,11 +140,7 @@ export const config: WebdriverIO.Config = {
   before: async () => {
     const [mainWindow] = await browser.getWindowHandles();
     if (mainWindow) await browser.switchToWindow(mainWindow);
-    if (process.platform === "linux") {
-      const { x, y, width, height } = selectWindowBounds();
-      await browser.setWindowRect(x, y, width, height);
-      return;
-    }
+    if (process.platform === "linux") return;
     const screenBounds = await browser.execute(() => {
       const currentScreen = window.screen as Screen & { availLeft?: number; availTop?: number };
       return {
