@@ -1926,6 +1926,17 @@ pub fn run() {
     #[cfg(feature = "webdriver")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
     builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(SessionIndexRuntime::default()).manage(broker.clone()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
+        #[cfg(feature = "webdriver")]
+        {
+            let config = app.config().app.windows.first().ok_or("WebDriver window configuration is missing")?;
+            let mut window = tauri::WebviewWindowBuilder::from_config(app.handle(), config)?;
+            if let Ok(value) = std::env::var("PI_E2E_WINDOW_BOUNDS") {
+                let values = value.split(',').map(str::parse::<f64>).collect::<Result<Vec<_>, _>>()?;
+                if values.len() != 4 { return Err("PI_E2E_WINDOW_BOUNDS must contain x,y,width,height".into()); }
+                window = window.position(values[0], values[1]).inner_size(values[2], values[3]).decorations(false);
+            }
+            window.build()?;
+        }
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
     }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, load_app_settings, save_app_settings, codex_usage]).run(tauri::generate_context!()).expect("error while running Pi desktop");

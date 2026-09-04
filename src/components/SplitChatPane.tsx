@@ -61,15 +61,16 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
         else if (request.method === "setStatus" && request.statusKey) setStatuses((current) => { const next = { ...current }; if (request.statusText) next[request.statusKey!] = request.statusText; else delete next[request.statusKey!]; return next; });
         else if (request.method === "setWidget" && request.widgetKey) setWidgets((current) => { const next = { ...current }; if (request.widgetLines) next[request.widgetKey!] = request.widgetLines; else delete next[request.widgetKey!]; return next; });
         else if (request.method === "notify") setNotices((current) => [...current, { id: crypto.randomUUID(), title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "Pi extension", message: request.message || "Notification" }]);
+        else if (request.method === "setTitle") document.title = request.title || "Pi";
         else if (request.method === "set_editor_text") { onDraftChange(request.text || ""); setExtensionFocusRequest((value) => value + 1); }
         else if (["input", "editor", "select", "confirm"].includes(request.method)) onDialogRequest(request, transport, `Split: ${session.name}`);
       }
       if (event.type === "extension_error") setNotices((current) => [...current, { id: crypto.randomUUID(), title: "Extension error", message: String(event.error ?? "An extension failed") }]);
       if (event.type === "message_end") window.setTimeout(() => void refresh(), 30);
-      if (event.type === "disconnected") { updateConnected(false); setOrchestration(undefined); setPromptContext(undefined); setStatuses({}); setWidgets({}); void onDialogTransportClosed(transport); if (!closing) { setControlError("Connection lost. Reconnecting…"); window.setTimeout(() => void connectRuntime(false), 50); } }
+      if (event.type === "disconnected") { updateConnected(false); setOrchestration(undefined); setPromptContext(undefined); setStatuses({}); setWidgets({}); document.title = "Pi"; void onDialogTransportClosed(transport); if (!closing) { setControlError("Connection lost. Reconnecting…"); window.setTimeout(() => void connectRuntime(false), 50); } }
     });
     void connectRuntime(true);
-    return () => { closing = true; runtimePool.setInteractive(transport, false); reconnectRef.current = () => undefined; unsubscribe(); queueMicrotask(() => { if (lifecycleRef.current === lifecycle) void onDialogTransportClosed(transport).finally(() => runtimePool.release(transport)); }); };
+    return () => { closing = true; runtimePool.setInteractive(transport, false); document.title = "Pi"; reconnectRef.current = () => undefined; unsubscribe(); queueMicrotask(() => { if (lifecycleRef.current === lifecycle) void onDialogTransportClosed(transport).finally(() => runtimePool.release(transport)); }); };
   }, [transport, session.id, forkFrom, initialPrompt, handleEvent, refresh, onDialogRequest, onDialogTransportClosed]);
   useEffect(() => { if (!connected) return; void Promise.all([transport.command({ type: "set_auto_compaction", enabled: settings.autoCompaction }), transport.command({ type: "set_auto_retry", enabled: settings.autoRetry })]).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))); }, [connected, settings.autoCompaction, settings.autoRetry, transport]);
   const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => {
