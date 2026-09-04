@@ -27,13 +27,19 @@ const resetBackend = async () => { await callBridge().setValue("[]"); await resp
 const resetApp = async () => {
   await resetBackend();
   await browser.refresh();
+  await app.root.waitForDisplayed();
+  if (await app.conversationsButton.isExisting()) await app.conversationsButton.click();
   await app.waitUntilReady();
   await app.composer.waitForEnabled();
 };
-const emitPiEvent = (payload: Record<string, unknown>) => browser.execute(async (event) => {
-  const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
-  await tauri.invoke("plugin:event|emit", { event: "pi://event", payload: event });
-}, payload);
+const emitPiEvent = async (payload: Record<string, unknown>) => {
+  await browser.execute(async (event) => {
+    const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
+    await tauri.invoke("plugin:event|emit", { event: "pi://event", payload: event });
+  }, payload);
+  await browser.execute(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+};
+const acceptConfirmDialogs = () => browser.execute(() => { window.confirm = () => true; });
 let defaultSettings: AppSettings;
 before(async () => {
   defaultSettings = await browser.execute(async () => {
@@ -47,8 +53,8 @@ const acceptanceOrchestration = (): OrchestrationCapability => ({
   currentAgent: "default",
   config: {
     agents: [
-      { name: "default", description: "Default acceptance agent", model: "e2e/acceptance", effort: "high", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: ["read"], skills: [], mcpServers: [] },
-      { name: "reviewer", description: "Reviews acceptance changes", model: "e2e/alternate", effort: "off", systemPrompt: "Review carefully.", developerPrompt: "", agentsMd: "", tools: ["read"], skills: [], mcpServers: [] },
+      { name: "default", description: "Default acceptance agent", model: "", effort: "high", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: ["read"], skills: [], mcpServers: [] },
+      { name: "reviewer", description: "Reviews acceptance changes", model: "", effort: "off", systemPrompt: "Review carefully.", developerPrompt: "", agentsMd: "", tools: ["read"], skills: [], mcpServers: [] },
     ],
     sequences: [],
   },
@@ -89,7 +95,7 @@ describe("BUGS-3 regressions", () => {
   });
 
   it("isolates drafts and terminals between fresh conversations", async () => {
-    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
+    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
     await mockBackend({ create_temporary_chat: { cwd: "/tmp/bugs3-fresh", sessionId: "bugs3-fresh" }, start_pi: {}, stop_pi: {}, list_sessions: [], load_app_settings: settings, ...connectedSessionResponses(""), "pi_command:set_model": {}, start_terminal: {}, resize_terminal: {} });
     try {
       await $('button[aria-label="New conversation"]').click();
@@ -188,13 +194,13 @@ const connectedSessionResponses = (sessionId: string) => ({
   "pi_command:get_state": { model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 0, pendingMessageCount: 0 },
   "pi_command:get_entries": { entries: [], leafId: null }, "pi_command:get_available_models": { models: [{ provider: "e2e", id: "acceptance", name: "Acceptance model" }, { provider: "e2e", id: "alternate", name: "Alternate model" }] },
   "pi_command:get_available_thinking_levels": { levels: ["off", "high"] }, "pi_command:get_commands": { commands: [] }, "pi_command:get_session_stats": {},
-  "pi_command:set_auto_compaction": {}, "pi_command:set_auto_retry": {},
+  "pi_command:set_auto_compaction": {}, "pi_command:set_auto_retry": {}, "pi_command:set_thinking_level": {},
 });
 const startTemporaryConversation = async (responses: Record<string, unknown>) => {
   await mockBackend({
     create_temporary_chat: { cwd: "/tmp/acceptance-terminal", sessionId: "acceptance-terminal" },
     start_pi: {}, stop_pi: {}, list_sessions: [],
-    load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance" },
+    load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" },
     ...connectedSessionResponses("acceptance-terminal"),
     "pi_command:set_model": {},
     ...responses,
@@ -251,7 +257,7 @@ describe("Conversation acceptance", () => {
 
     await expect(app.projectDialogHeading).toHaveText("Open project");
     await expect(app.projectDirectory).toBeDisplayed();
-    await app.cancelProjectButton.click();
+    await app.cancelProjectChooser();
 
     await expect(app.projectDialogHeading).not.toBeExisting();
     await expect(app.composer).toHaveValue(draft);
@@ -264,7 +270,7 @@ describe("Conversation acceptance", () => {
     await app.openProjectButton.click();
 
     await expect(app.dialogAlert).toHaveText("Path can't be empty");
-    await app.cancelProjectButton.click();
+    await app.cancelProjectChooser();
   });
 
   it("opens settings from the keyboard", async () => {
@@ -319,7 +325,7 @@ describe("Conversation acceptance", () => {
       const menu = $('[role="menu"][aria-label="Acceptance indexed conversation actions"]');
       await expect(menu).toBeDisplayed();
       await expect(menu.$$("[role='menuitem']")).toBeElementsArrayOfSize(4);
-      await expect(session.$('button[aria-label="Archive conversation"]')).toBeExisting();
+      await expect(session.$('button[aria-label^="Archive "]')).toBeExisting();
       await browser.keys("Escape");
       await expect(menu).not.toBeExisting();
     } finally {
@@ -398,7 +404,7 @@ describe("Conversation acceptance", () => {
       await expect(session).toHaveText(expect.stringContaining(indexed.name));
       await session.$(".session-main").click();
 
-      await expect($("#extension-dialog-title")).toHaveText("Locate conversation project");
+      await expect(app.extensionDialogHeading).toHaveText("Locate conversation project");
       const replacement = $('input[aria-label="Replacement project directory"]');
       await replacement.clearValue();
       await $('//dialog//button[normalize-space(.)="Continue"]').click();
@@ -411,7 +417,7 @@ describe("Conversation acceptance", () => {
       expect((await backendCalls()).find(({ command }) => command === "start_pi")?.args).toEqual(expect.objectContaining({ cwd: "/tmp/relocated-acceptance-project", sessionPath: indexed.path, hostId: "local" }));
     } finally {
       await app.conversationSearch.clearValue();
-      if (await $("#extension-dialog-title").isExisting()) await $('//dialog//button[normalize-space(.)="Cancel"]').click();
+      if (await app.extensionDialogHeading.isExisting()) await $('//dialog//button[normalize-space(.)="Cancel"]').click();
       await resetApp();
     }
   });
@@ -427,13 +433,11 @@ describe("Conversation acceptance", () => {
       await $('input[aria-label="Replacement project directory"]').setValue("/tmp/not-a-project");
       await $('//dialog//button[normalize-space(.)="Continue"]').click();
 
-      await expect($(".error-toast strong")).toHaveText("Pi could not connect");
-      await expect($(".error-toast span")).toHaveText("Replacement directory is not a project");
+      await expect($(".dialog-error")).toHaveText("Replacement directory is not a project");
       expect((await backendCalls()).find(({ command }) => command === "relocate_session")?.args).toEqual({ sessionPath: indexed.path, cwd: "/tmp/not-a-project", hostId: "local" });
-      await $(".error-toast button").click();
     } finally {
       await app.conversationSearch.clearValue();
-      if (await $("#extension-dialog-title").isExisting()) await $('//dialog//button[normalize-space(.)="Cancel"]').click();
+      if (await app.extensionDialogHeading.isExisting()) await $('//dialog//button[normalize-space(.)="Cancel"]').click();
       if (await $(".error-toast").isExisting()) await $(".error-toast button").click();
       await resetBackend();
     }
@@ -446,7 +450,8 @@ describe("Conversation acceptance", () => {
       await app.conversationSearch.setValue("Acceptance archive target");
       const session = $(".session-item");
       await expect(session).toHaveText(expect.stringContaining(indexed.name));
-      await session.$('button[aria-label="Archive conversation"]').click();
+      await acceptConfirmDialogs();
+      await session.$(`button[aria-label="Archive ${indexed.name}"]`).click();
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "archive_session"));
       expect((await backendCalls()).find(({ command }) => command === "archive_session")?.args).toEqual({ sessionPath: indexed.path, hostId: "local", terminalIds: [] });
@@ -463,7 +468,8 @@ describe("Conversation acceptance", () => {
       await app.conversationSearch.setValue(indexed.name);
       const session = $(".session-item");
       await expect(session).toHaveText(expect.stringContaining(indexed.name));
-      await session.$('button[aria-label="Archive conversation"]').click();
+      await acceptConfirmDialogs();
+      await session.$(`button[aria-label="Archive ${indexed.name}"]`).click();
 
       await expect($(".error-toast strong")).toHaveText("Could not archive conversation");
       await expect($(".error-toast span")).toHaveText("Archive destination is unavailable");
@@ -915,7 +921,7 @@ describe("Conversation acceptance", () => {
   });
 
   it("shows cache reuse for both a response and the whole session", async () => {
-    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", debugMode: true };
+    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high", debugMode: true };
     const history = {
       entries: [
         { type: "message", id: "cache-user", parentId: null, message: { role: "user", content: "Reuse the cached context", timestamp: 1 } },
@@ -938,7 +944,7 @@ describe("Conversation acceptance", () => {
   });
 
   it("renders terminal output and reports when the process exits", async () => {
-    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
+    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
     await mockBackend({ create_temporary_chat: { cwd: "/tmp/terminal-output", sessionId: "terminal-output" }, list_sessions: [], ...connectedSessionResponses(""), "pi_command:set_model": {}, load_app_settings: settings, start_pi: {}, stop_pi: {}, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
     try {
       while (await $(".error-toast button").isExisting()) await $(".error-toast button").click();
@@ -1124,7 +1130,7 @@ describe("Conversation acceptance", () => {
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "extension_ui_response"));
       expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "extension_ui_response")?.args.command).toEqual({ type: "extension_ui_response", id: "acceptance-input", value: "beta" });
-      await expect($("#extension-dialog-title")).not.toBeExisting();
+      await expect(app.extensionDialogHeading).not.toBeExisting();
     } finally {
       await resetBackend();
     }
@@ -1137,7 +1143,7 @@ describe("Conversation acceptance", () => {
       const input = $('input[aria-label="Release tag"]');
       await input.setValue("beta");
       await browser.keys("Enter");
-      await expect($("#extension-dialog-title")).not.toBeExisting();
+      await expect(app.extensionDialogHeading).not.toBeExisting();
 
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-no-confirm", method: "confirm", title: "Publish release?" });
       await $('//dialog//button[normalize-space(.)="No"]').click();
@@ -1171,11 +1177,14 @@ describe("Conversation acceptance", () => {
     try {
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-select", method: "select", title: "Choose a target", options: ["Alpha", "Beta"] });
       await $('//dialog//button[normalize-space(.)="Beta"]').click();
-      await expect($("#extension-dialog-title")).not.toBeExisting();
+      await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => (args.command as { type?: string })?.type === "extension_ui_response").length === 1);
+      await expect(app.extensionDialogHeading).not.toBeExisting();
 
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-confirm", method: "confirm", title: "Deploy now?", message: "This will deploy the acceptance build." });
-      await expect($("#extension-dialog-title")).toHaveText("Deploy now?");
+      await expect(app.extensionDialogHeading).toHaveText("Deploy now?");
       await $('//dialog//button[normalize-space(.)="Confirm"]').click();
+      await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => (args.command as { type?: string })?.type === "extension_ui_response").length === 2);
+      await expect(app.extensionDialogHeading).not.toBeExisting();
 
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-editor", method: "editor", title: "Edit release notes", prefill: "Initial notes" });
       await expect($('textarea[aria-label="Edit release notes"]')).toHaveValue("Initial notes");
@@ -1252,19 +1261,19 @@ describe("Conversation acceptance", () => {
   });
 
   it("queues extension dialogs behind the project picker", async () => {
-    await mockBackend({ home_directory: "/tmp", "pi_command:extension_ui_response": {} });
+    await startTemporaryConversation({ home_directory: "/tmp", "pi_command:extension_ui_response": {} });
     try {
       await app.openProjectChooser();
       await emitPiEvent({ type: "extension_ui_request", id: "queued-confirm", method: "confirm", title: "Confirm extension action" });
       await expect($$("dialog[open]")).toBeElementsArrayOfSize(1);
       await expect(app.projectDialogHeading).toBeDisplayed();
-      await app.cancelProjectButton.click();
-      await expect($("#extension-dialog-title")).toHaveText("Confirm extension action");
+      await app.cancelProjectChooser();
+      await expect(app.extensionDialogHeading).toHaveText("Confirm extension action");
       await $('//dialog//button[normalize-space(.)="Cancel"]').click();
     } finally {
-      if (await app.projectDialogHeading.isExisting()) await app.cancelProjectButton.click();
-      if (await $("#extension-dialog-title").isExisting()) await $('//dialog//button[normalize-space(.)="Cancel"]').click();
-      await resetBackend();
+      if (await app.projectDialogHeading.isExisting()) await app.cancelProjectChooser();
+      if (await app.extensionDialogHeading.isExisting()) await $('//dialog//button[normalize-space(.)="Cancel"]').click();
+      await resetApp();
     }
   });
 
@@ -1278,7 +1287,7 @@ describe("Conversation acceptance", () => {
       await expect($(".dialog-error")).toHaveText("Extension response channel closed");
       await expect(input).toHaveValue("release-candidate");
     } finally {
-      if (await $("#extension-dialog-title").isExisting()) {
+      if (await app.extensionDialogHeading.isExisting()) {
         await updateBackendResponse("pi_command:extension_ui_response", {});
         await $('//dialog//button[normalize-space(.)="Continue"]').click();
       }
@@ -1313,7 +1322,7 @@ describe("Conversation acceptance", () => {
       await expect(app.projectDialogHeading).toBeDisplayed();
     } finally {
       if (!(await $(".session-panel").isExisting())) await pressShortcut(panelShortcut);
-      await app.cancelProjectButton.click();
+      await app.cancelProjectChooser();
     }
   });
 
@@ -1560,7 +1569,7 @@ describe("Orchestration acceptance", () => {
   });
 
   it("saves the encoded orchestration configuration and reconnects", async () => {
-    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
+    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
     await mockBackend({
       ...connectedSessionResponses("orchestration-save"),
       "pi_command:set_model": {}, "pi_command:prompt": {}, save_app_settings: {}, stop_pi: {}, start_pi: {}, list_sessions: [], load_app_settings: settings,
@@ -1632,6 +1641,7 @@ describe("Orchestration acceptance", () => {
 
   it("restores desktop settings when orchestration configuration is rejected", async () => {
     await app.openSettings();
+    await app.automaticRetryToggle.click();
     await mockBackend({ "pi_command:prompt": { error: "Orchestration configuration was rejected" } });
     await app.saveSettingsButton.click();
 
@@ -1647,12 +1657,36 @@ describe("Settings acceptance", () => {
     await resetApp();
   });
 
-  it("saves the current configuration and confirms success", async () => {
-    await app.openSettings();
-    await app.saveSettingsButton.click();
-
-    await expect(app.saveSettingsButton).toHaveText("Saved");
+  beforeEach(async () => {
     await app.openConversations();
+  });
+
+  it("saves the current configuration and confirms success", async () => {
+    const [provider, ...modelParts] = defaultSettings.defaultModel.split("/");
+    await mockBackend({
+      save_app_settings: {},
+      "pi_command:get_available_models": { models: [{ provider, id: modelParts.join("/"), name: "Configured model" }] },
+      "pi_command:get_available_thinking_levels": { levels: [defaultSettings.defaultThinking] },
+      "pi_command:set_auto_compaction": {},
+      "pi_command:set_auto_retry": {},
+      "pi_command:set_model": {},
+      "pi_command:set_thinking_level": {},
+      "pi_command:prompt": {},
+    });
+    await enableOrchestration();
+    try {
+      await app.openSettings();
+      await app.automaticRetryToggle.click();
+      await app.saveSettingsButton.click();
+
+      await expect(app.saveSettingsButton).toHaveText("Saved");
+      await app.automaticRetryToggle.click();
+      await app.saveSettingsButton.click();
+      await expect(app.saveSettingsButton).toHaveText("Saved");
+      await app.openConversations();
+    } finally {
+      await resetApp();
+    }
   });
 
   it("lets the user discover the main configuration areas and return to the conversation", async () => {
@@ -1872,14 +1906,14 @@ describe("Project behavior", () => {
       await expect(app.projectDirectory).toHaveValue("/remote/home");
       await app.chooseDirectoryButton.click();
 
-      const directories = $('[aria-label="Remote directories"]');
+      const directories = $('[aria-label="Directories"]');
       await expect(directories).toBeDisplayed();
       await updateBackendResponse("list_directories", { path: "/remote/home/project-a", parent: "/remote/home", directories: [] });
       await directories.$('button=project-a').click();
       await expect(app.projectDirectory).toHaveValue("/remote/home/project-a");
-      await app.cancelProjectButton.click();
+      await app.cancelProjectChooser();
     } finally {
-      if (await app.projectDialogHeading.isExisting()) await app.cancelProjectButton.click();
+      if (await app.projectDialogHeading.isExisting()) await app.cancelProjectChooser();
       await resetBackend();
     }
   });
@@ -1895,9 +1929,9 @@ describe("Project behavior", () => {
 
       await expect(app.dialogAlert).toHaveText("Remote home directory is unavailable");
       await expect(app.projectDialogHeading).toHaveText("Open project");
-      await app.cancelProjectButton.click();
+      await app.cancelProjectChooser();
     } finally {
-      if (await app.projectDialogHeading.isExisting()) await app.cancelProjectButton.click();
+      if (await app.projectDialogHeading.isExisting()) await app.cancelProjectChooser();
       await resetBackend();
     }
   });
@@ -1917,15 +1951,15 @@ describe("Project behavior", () => {
 
       await expect(app.dialogAlert).toHaveText("Remote directory listing was denied");
       await expect(app.projectDialogHeading).toHaveText("Open project");
-      await app.cancelProjectButton.click();
+      await app.cancelProjectChooser();
     } finally {
-      if (await app.projectDialogHeading.isExisting()) await app.cancelProjectButton.click();
+      if (await app.projectDialogHeading.isExisting()) await app.cancelProjectChooser();
       await resetBackend();
     }
   });
 
   it("switches to a project after the backend connects successfully", async () => {
-    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
+    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
     await mockBackend({
       stop_pi: {}, start_pi: {},
       ...connectedSessionResponses("acceptance-project"),
@@ -1950,7 +1984,7 @@ describe("Project behavior", () => {
   });
 
   it("changes the model and thinking level for the active project", async () => {
-    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
+    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
     await mockBackend({
       ...connectedSessionResponses("acceptance-project"),
       "pi_command:get_state": { model: { provider: "e2e", id: "alternate" }, thinkingLevel: "high", isStreaming: false, sessionId: "acceptance-project", messageCount: 0, pendingMessageCount: 0 },
@@ -2028,7 +2062,7 @@ describe("Conversation lifecycle", () => {
     const current = { id: "draft-current", path: "/tmp/draft-current.jsonl", name: "Draft current conversation", project: "Draft project", cwd: "/tmp", preview: "Current draft", messageCount: 1, hostId: "local" };
     const target = { id: "draft-target", path: "/tmp/draft-target.jsonl", name: "Draft target conversation", project: "Draft project", cwd: "/tmp", preview: "Target draft", messageCount: 1, hostId: "local" };
     const state = (sessionId: string) => ({ model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 0, pendingMessageCount: 0 });
-    await mockBackend({ list_sessions: [current, target], start_pi: {}, stop_pi: {}, load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance" }, ...connectedSessionResponses(""), "pi_command:set_model": {} });
+    await mockBackend({ list_sessions: [current, target], start_pi: {}, stop_pi: {}, load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" }, ...connectedSessionResponses(""), "pi_command:set_model": {} });
     try {
       await emitPiEvent({ type: "session_switched" });
       await updateBackendResponse("pi_command:get_state", state(current.id));
@@ -2064,7 +2098,7 @@ describe("Conversation lifecycle", () => {
 
   it("keeps split-pane drafts separate from the main conversation", async () => {
     const indexed = { id: "draft-split", path: "/tmp/draft-split.jsonl", name: "Draft split conversation", project: "Draft project", cwd: "/tmp", preview: "Split draft", messageCount: 1, hostId: "local" };
-    await mockBackend({ list_sessions: [indexed], start_pi: {}, stop_pi: {}, load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance" }, ...connectedSessionResponses(""), "pi_command:set_model": {} });
+    await mockBackend({ list_sessions: [indexed], start_pi: {}, stop_pi: {}, load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" }, ...connectedSessionResponses(""), "pi_command:set_model": {} });
     const openSplit = async () => {
       await app.conversationSearch.setValue(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
@@ -2100,7 +2134,7 @@ describe("Conversation lifecycle", () => {
     const current = { id: "terminal-current", path: "/tmp/terminal-current.jsonl", name: "Terminal current conversation", project: "Terminal project", cwd: "/tmp", preview: "Current terminal", messageCount: 1, hostId: "local" };
     const target = { id: "terminal-target", path: "/tmp/terminal-target.jsonl", name: "Terminal target conversation", project: "Terminal project", cwd: "/tmp", preview: "Target terminal", messageCount: 1, hostId: "local" };
     const state = (sessionId: string) => ({ model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 0, pendingMessageCount: 0 });
-    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance" };
+    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
     await mockBackend({ list_sessions: [current, target], start_pi: {}, stop_pi: {}, ...connectedSessionResponses("terminal-bootstrap"), "pi_command:set_model": {}, load_app_settings: settings, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
     try {
       while (await $(".error-toast button").isExisting()) await $(".error-toast button").click();
@@ -2138,7 +2172,7 @@ describe("Conversation lifecycle", () => {
   it("starts a replacement session and closes the archived conversation's terminal", async () => {
     const indexed = { id: "archive-active", path: "/tmp/archive-active.jsonl", name: "Active archive conversation", project: "Archive project", cwd: "/tmp", preview: "Active archive", messageCount: 2, hostId: "local" };
     const replacementState = { model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId: "archive-replacement", messageCount: 0, pendingMessageCount: 0 };
-    await mockBackend({ list_sessions: [indexed], start_pi: {}, stop_pi: {}, load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance" }, ...connectedSessionResponses(""), "pi_command:set_model": {}, "pi_command:new_session": {}, archive_session: {}, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
+    await mockBackend({ list_sessions: [indexed], start_pi: {}, stop_pi: {}, load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" }, ...connectedSessionResponses(""), "pi_command:set_model": {}, "pi_command:new_session": {}, archive_session: {}, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
     try {
       await emitPiEvent({ type: "session_switched" });
       await updateBackendResponse("pi_command:get_state", { ...replacementState, sessionId: indexed.id });
@@ -2151,7 +2185,8 @@ describe("Conversation lifecycle", () => {
       await app.conversationSearch.setValue(indexed.name);
       const session = $(".session-item");
       await session.moveTo();
-      await session.$('button[aria-label="Archive conversation"]').click();
+      await acceptConfirmDialogs();
+      await session.$(`button[aria-label="Archive ${indexed.name}"]`).click();
 
       await expect(app.terminalPanel).not.toBeExisting();
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "archive_session"));

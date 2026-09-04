@@ -22,6 +22,7 @@ class AppPage {
   get settingsSectionHeading() { return $(".settings-content h2"); }
   get saveSettingsButton() { return $(".settings-save button"); }
   get projectDialogHeading() { return $("#project-dialog-title"); }
+  get extensionDialogHeading() { return $('dialog.extension-dialog:not([aria-labelledby="project-dialog-title"]) h2'); }
   get projectDirectory() { return $('input[aria-label="Project directory"]'); }
   get cancelProjectButton() { return $('//dialog//button[normalize-space(.)="Cancel"]'); }
   get openProjectButton() { return $('//dialog//button[normalize-space(.)="Open project"]'); }
@@ -69,6 +70,12 @@ class AppPage {
   async openProjectChooser() {
     await this.newProjectButton.click();
     await this.projectDialogHeading.waitForDisplayed();
+  }
+
+  async cancelProjectChooser() {
+    await this.cancelProjectButton.waitForEnabled();
+    await this.cancelProjectButton.click();
+    await this.projectDialogHeading.waitForExist({ reverse: true });
   }
 
   async chooseComposerOption(label: "Agent" | "Model" | "Thinking level", option: string) {
