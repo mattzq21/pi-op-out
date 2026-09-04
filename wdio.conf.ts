@@ -4,6 +4,8 @@ import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync, writeFileSync
 import { homedir } from "node:os";
 import { selectWindowBounds } from "./scripts/window-placement.mjs";
 
+if (process.platform === "linux") process.env.GDK_BACKEND = "x11";
+
 const defaultBinary = path.resolve(
   "src-tauri",
   "target",
