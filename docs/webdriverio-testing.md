@@ -31,7 +31,16 @@ The runner uses one application instance and captures native backend logs. Specs
 
 ## Agent-driven sessions
 
-When using the WebdriverIO MCP, do not enable trace recording. Omit the `trace` argument or set `trace: false` when starting or attaching to a session. Trace recording creates screenshot-heavy archives in `.trace/` that are not needed for normal agent operation.
+For a manual session driven through the WebdriverIO MCP, build the WebDriver-enabled application if needed, then start its session host:
+
+```bash
+npm run test:e2e:build
+npm run test:e2e:manual
+```
+
+The manual launcher uses the same Linux placement as `npm run tauri dev`: top-right on the right-hand monitor, or bottom-left on that monitor when another Pi window occupies the top slot. It prints a `sessionId` and `webdriverConfig`; pass those values to the MCP's `attach_session` tool with `platform: "browser"`, `provider: "external"`, and `trace: false`. Keep the launcher running during the session and stop it with Ctrl+C when finished.
+
+Do not enable trace recording in any WebdriverIO MCP session. Omit the `trace` argument or set `trace: false` when starting or attaching. Trace recording creates screenshot-heavy archives in `.trace/` that are not needed for normal agent operation.
 
 ## Add a scenario
 

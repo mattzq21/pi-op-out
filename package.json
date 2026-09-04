@@ -11,6 +11,7 @@
     "test:e2e": "npm run test:e2e:build && npm run test:e2e:run",
     "test:e2e:build": "tsc -b && vite build --mode e2e && TAURI_CONFIG='{\"build\":{\"devUrl\":null}}' cargo build --manifest-path src-tauri/Cargo.toml --release --features webdriver",
     "test:e2e:run": "wdio run wdio.conf.ts",
+    "test:e2e:manual": "node scripts/wdio-manual.mjs",
     "tauri": "node scripts/tauri.mjs"
   },
   "dependencies": {
