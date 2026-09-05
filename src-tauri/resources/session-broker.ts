@@ -1,4 +1,8 @@
 import { Type } from "@earendil-works/pi-ai";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { dirname, join, resolve, sep } from "node:path";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ContextEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const url = process.env.PI_DESKTOP_BROKER_URL;
@@ -135,8 +139,55 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
   return controller;
 }
 
+export function registerFastModeStatus(pi: ExtensionAPI) {
+  const packageName = "pi-openai-fast-mode";
+  const statusKey = "pi-desktop-fast-mode";
+  type FastConfig = { enabled: boolean; targets: Array<{ provider: string; model: string }> };
+  let config: FastConfig | undefined;
+  let loaded = false;
+  let available = false;
+  let queue = Promise.resolve();
+  const publish = (ctx: ExtensionContext, model = ctx.model) => {
+    const supported = config?.targets.some((target) => target.provider === model?.provider && target.model === model?.id && ["openai", "openai-codex"].includes(target.provider));
+    const text = !available ? undefined : !config ? "Fast mode status unavailable" : !config.enabled ? "Fast mode off" : supported ? "Fast mode on" : "Fast mode on · unavailable for this model";
+    ctx.ui.setStatus(statusKey, text);
+  };
+  const refresh = async (ctx: ExtensionContext, reload: boolean) => {
+    if (ctx.mode !== "rpc") return;
+    if (!loaded || reload) {
+      const command = pi.getCommands().find((command) => command.source === "extension" && /^fast(?::\d+)?$/.test(command.name) && (command.sourceInfo.source === `npm:${packageName}` || command.sourceInfo.path.split(/[\\/]/).includes(packageName)));
+      available = Boolean(command); config = undefined;
+      if (command) {
+        const projectDir = resolve(ctx.cwd, ".pi");
+        const extensionDir = resolve(dirname(command.sourceInfo.path));
+        const projectConfig = join(projectDir, packageName, "config.json");
+        const projectLocal = extensionDir === projectDir || extensionDir.startsWith(`${projectDir}${sep}`);
+        const path = existsSync(projectConfig) || projectLocal ? projectConfig : join(getAgentDir(), "extensions", packageName, "config.json");
+        try {
+          const value = JSON.parse(await readFile(path, "utf8")) as Partial<FastConfig>;
+          if (typeof value.enabled === "boolean" && Array.isArray(value.targets) && value.targets.every((target) => target && typeof target.provider === "string" && typeof target.model === "string")) config = value as FastConfig;
+        } catch { /* A missing or unreadable setting must not appear as disabled. */ }
+      }
+      loaded = true;
+    }
+    publish(ctx);
+  };
+  // The package only draws its indicator in TUI mode. Desktop asks after
+  // startup and after /fast finishes writing its scoped configuration.
+  // Keep that snapshot for model changes: another session may share the file
+  // while each extension instance retains its own in-memory toggle.
+  pi.registerCommand("pi-desktop-fast-status", { description: "Read Fast Mode status for Pi Desktop", handler: (args, ctx) => {
+    const next = queue.then(() => refresh(ctx, args.trim() === "refresh"));
+    queue = next.catch(() => undefined);
+    return next;
+  } });
+  pi.on("session_start", () => { loaded = false; config = undefined; available = false; });
+  pi.on("model_select", (event, ctx) => { if (ctx.mode === "rpc" && loaded) publish(ctx, event.model); });
+}
+
 export default function sessionBroker(pi: ExtensionAPI) {
   registerPauseControl(pi);
+  registerFastModeStatus(pi);
   pi.registerTool({
     name: "list_agents", label: "List agents", description: "List Pi agents addressable through Pi Desktop", promptSnippet: "List agents by hostId and sessionId",
     parameters: Type.Object({}),
