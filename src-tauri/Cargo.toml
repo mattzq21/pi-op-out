@@ -1,12 +1,12 @@
 [package]
-name = "pi-desktop"
+name = "piop"
 version = "0.1.0"
-description = "A native desktop interface for the Pi coding agent"
-authors = ["Pi Desktop contributors"]
+description = "piop: a native interface for the Pi coding agent"
+authors = ["piop contributors"]
 edition = "2021"
 
 [lib]
-name = "pi_desktop_lib"
+name = "piop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]

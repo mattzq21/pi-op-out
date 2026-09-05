@@ -10,6 +10,6 @@ await build({
   format: "esm",
   target: "node22",
   minify: true,
-  banner: { js: `/*! @ogulcancelik/pi-codex-compaction 0.1.5, with Pi Desktop context integration.\n${license}*/` },
+  banner: { js: `/*! @ogulcancelik/pi-codex-compaction 0.1.5, with piop context integration.\n${license}*/` },
   external: ["@earendil-works/pi-ai", "@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"],
 });

@@ -9,5 +9,5 @@ logs/
 .trace/
 extensions/pi-orchestration/config.json
 .DS_Store
-pi-ui.png
-pi-settings.png
+piop.png
+piop-settings.png

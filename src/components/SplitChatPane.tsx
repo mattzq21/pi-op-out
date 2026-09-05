@@ -58,21 +58,21 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
         if (request.method === "setStatus" && request.statusKey === ORCHESTRATION_STATUS_KEY) try { setOrchestration(request.statusText?.startsWith("json:") ? decodeOrchestrationValue<OrchestrationCapability>(request.statusText.slice(5)) : undefined); } catch { setOrchestration(undefined); }
         else if (request.method === "setStatus" && request.statusKey && request.statusKey !== "pi-desktop-prompt-context") setStatuses((current) => { const next = { ...current }; if (request.statusText) next[request.statusKey!] = request.statusText; else delete next[request.statusKey!]; return next; });
         else if (request.method === "setWidget" && request.widgetKey) setWidgets((current) => { const next = { ...current }; if (request.widgetLines) next[request.widgetKey!] = request.widgetLines; else delete next[request.widgetKey!]; return next; });
-        else if (request.method === "notify") setNotices((current) => [...current, { id: crypto.randomUUID(), title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "Pi extension", message: request.message || "Notification" }]);
-        else if (request.method === "setTitle") document.title = request.title || "Pi";
+        else if (request.method === "notify") setNotices((current) => [...current, { id: crypto.randomUUID(), title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "piop extension", message: request.message || "Notification" }]);
+        else if (request.method === "setTitle") document.title = request.title || "piop";
         else if (request.method === "set_editor_text") { onDraftChange(request.text || ""); setExtensionFocusRequest((value) => value + 1); }
         else if (["input", "editor", "select", "confirm"].includes(request.method)) onDialogRequest(request, transport, `Split: ${session.name}`);
       }
       if (event.type === "extension_error") setNotices((current) => [...current, { id: crypto.randomUUID(), title: "Extension error", message: String(event.error ?? "An extension failed") }]);
       if (event.type === "message_end") window.setTimeout(() => void refresh(), 30);
-      if (event.type === "disconnected") { updateConnected(false); setOrchestration(undefined); setStatuses({}); setWidgets({}); document.title = "Pi"; void onDialogTransportClosed(transport); if (!closing) { setControlError("Connection lost. Reconnecting…"); window.setTimeout(() => void connectRuntime(false), 50); } }
+      if (event.type === "disconnected") { updateConnected(false); setOrchestration(undefined); setStatuses({}); setWidgets({}); document.title = "piop"; void onDialogTransportClosed(transport); if (!closing) { setControlError("Connection lost. Reconnecting…"); window.setTimeout(() => void connectRuntime(false), 50); } }
     });
     void connectRuntime(true);
-    return () => { closing = true; runtimePool.setInteractive(transport, false); document.title = "Pi"; reconnectRef.current = () => undefined; unsubscribe(); queueMicrotask(() => { if (lifecycleRef.current === lifecycle) void onReleaseTransport(transport); }); };
+    return () => { closing = true; runtimePool.setInteractive(transport, false); document.title = "piop"; reconnectRef.current = () => undefined; unsubscribe(); queueMicrotask(() => { if (lifecycleRef.current === lifecycle) void onReleaseTransport(transport); }); };
   }, [transport, session.id, forkFrom, initialPrompt, handleEvent, refresh, onDialogRequest, onDialogTransportClosed, onReleaseTransport]);
   useEffect(() => { if (!connected) return; void Promise.all([transport.command({ type: "set_auto_compaction", enabled: settings.autoCompaction }), transport.command({ type: "set_auto_retry", enabled: settings.autoRetry })]).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))); }, [connected, settings.autoCompaction, settings.autoRetry, transport]);
   const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => {
-    if (!connectedRef.current) return Promise.reject(new Error("Pi is still connecting"));
+    if (!connectedRef.current) return Promise.reject(new Error("piop is still connecting"));
     if (behavior) { await transport.command({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...(images.length ? { images } : {}) }); return; }
     const abandoned = !state.isPaused && !state.isPausing ? findReplaceableAbortedTurn(messages) : undefined;
     if (abandoned) {

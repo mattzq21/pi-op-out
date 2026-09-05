@@ -8,7 +8,7 @@ const defaultBinary = path.resolve(
   "src-tauri",
   "target",
   "release",
-  process.platform === "win32" ? "pi-desktop.exe" : "pi-desktop",
+  process.platform === "win32" ? "piop.exe" : "piop",
 );
 const appBinaryPath = path.resolve(process.env.PI_E2E_BINARY ?? defaultBinary);
 

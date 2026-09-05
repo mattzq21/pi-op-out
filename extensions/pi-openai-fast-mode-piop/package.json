@@ -1,7 +1,7 @@
 {
   "name": "pi-openai-fast-mode-piop",
   "version": "0.3.0-piop.1",
-  "description": "Local PiOp fork of pi-openai-fast-mode with Astra support and Desktop status",
+  "description": "Local piop fork of pi-openai-fast-mode with Astra support and Desktop status",
   "license": "MIT",
   "type": "module",
   "keywords": [

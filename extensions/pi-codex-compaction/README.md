@@ -1,4 +1,4 @@
-# Pi Desktop Codex compaction
+# piop Codex compaction
 
 Bundles [@ogulcancelik/pi-codex-compaction](https://github.com/ogulcancelik/pi-extensions/tree/451e49da38e117f11f4b8e622c2bc432444f8a3a/packages/pi-codex-compaction) **0.1.5**, pinned at commit `451e49da38e117f11f4b8e622c2bc432444f8a3a`, under its MIT license. Source is vendored so desktop builds and SSH startup do not need npm registry access or a second copy of the Pi SDK.
 

@@ -10,7 +10,7 @@ const defaultBinary = path.resolve(
   "src-tauri",
   "target",
   "release",
-  process.platform === "win32" ? "pi-desktop.exe" : "pi-desktop",
+  process.platform === "win32" ? "piop.exe" : "piop",
 );
 const defaultActualCallModel = "openai-codex/gpt-5.6-luna";
 const actualCallModel = process.env.PI_E2E_ACTUAL_MODEL?.trim() || defaultActualCallModel;

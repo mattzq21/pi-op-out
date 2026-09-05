@@ -223,7 +223,7 @@ fn home_dir() -> Result<PathBuf, String> {
 }
 
 fn pi_executable() -> PathBuf {
-    if let Some(path) = std::env::var_os("PI_DESKTOP_PI_PATH") { return PathBuf::from(path); }
+    if let Some(path) = std::env::var_os("PIOP_PI_PATH").or_else(|| std::env::var_os("PI_DESKTOP_PI_PATH")) { return PathBuf::from(path); }
     if let Ok(home) = home_dir() {
         for candidate in [home.join(".local/bin/pi"), home.join(".npm-global/bin/pi"), home.join(".bun/bin/pi")] { if candidate.is_file() { return candidate; } }
     }
@@ -267,7 +267,7 @@ fn codex_usage() -> Result<CodexUsage, String> {
         let (sender, receiver) = mpsc::channel();
         thread::spawn(move || for line in BufReader::new(stdout).lines().map_while(Result::ok) { if sender.send(line).is_err() { break; } });
         let deadline = Instant::now() + Duration::from_secs(8);
-        writeln!(stdin, "{}", json!({"method":"initialize","id":1,"params":{"clientInfo":{"name":"pi-desktop","title":"Pi Desktop","version":env!("CARGO_PKG_VERSION")},"capabilities":null}})).map_err(|error| error.to_string())?;
+        writeln!(stdin, "{}", json!({"method":"initialize","id":1,"params":{"clientInfo":{"name":"piop","title":"piop","version":env!("CARGO_PKG_VERSION")},"capabilities":null}})).map_err(|error| error.to_string())?;
         codex_response(&receiver, 1, deadline)?;
         writeln!(stdin, "{}", json!({"method":"initialized"})).map_err(|error| error.to_string())?;
         writeln!(stdin, "{}", json!({"method":"account/rateLimits/read","id":2})).map_err(|error| error.to_string())?;
@@ -643,7 +643,7 @@ fn desktop_sessions_dir(home: &Path) -> PathBuf { home.join(".pi-desktop/session
 
 fn ensure_desktop_sessions_dir(home: &Path) -> Result<PathBuf, String> {
     let root = desktop_sessions_dir(home);
-    fs::create_dir_all(&root).map_err(|error| format!("Could not create Pi Desktop session directory: {error}"))?;
+    fs::create_dir_all(&root).map_err(|error| format!("Could not create piop session directory: {error}"))?;
     Ok(root)
 }
 
@@ -1016,9 +1016,9 @@ fn load_git_diffs(app: AppHandle, session_path: String, host_id: Option<String>)
     let content = if host_id == "local" {
         let candidate = PathBuf::from(&session_path);
         if !candidate.exists() {
-            let root = ensure_desktop_sessions_dir(&home_dir()?)?.canonicalize().map_err(|error| format!("Could not locate Pi Desktop sessions: {error}"))?;
+            let root = ensure_desktop_sessions_dir(&home_dir()?)?.canonicalize().map_err(|error| format!("Could not locate piop sessions: {error}"))?;
             let parent = candidate.parent().ok_or("Session path has no parent directory")?.canonicalize().map_err(|error| format!("Could not locate session directory: {error}"))?;
-            if !candidate.is_absolute() || !parent.starts_with(&root) || candidate.extension().and_then(|value| value.to_str()) != Some("jsonl") { return Err("Only Pi Desktop session files can be accessed".into()); }
+            if !candidate.is_absolute() || !parent.starts_with(&root) || candidate.extension().and_then(|value| value.to_str()) != Some("jsonl") { return Err("Only piop session files can be accessed".into()); }
             return Ok(HashMap::new());
         }
         let path = local_git_diffs_path(&session_path)?;
@@ -1148,13 +1148,13 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let mcp_config = shell_quote(&serde_json::to_string_pretty(&settings.mcp_servers).map_err(|error| error.to_string())?);
     let remote = format!("umask 077 && rm -rf -- \"$HOME/.pi-desktop/pi-git-change-context\" && mkdir -p -m 700 \"$HOME/.pi-desktop/sessions\" \"$HOME/.pi-desktop/pi-context-window-cap\" \"$HOME/.pi-desktop/pi-project-files-watch\" \"$HOME/.pi/agent/extensions/pi-orchestration\" && chmod 700 \"$HOME/.pi-desktop\" \"$HOME/.pi-desktop/sessions\" \"$HOME/.pi-desktop/pi-context-window-cap\" \"$HOME/.pi-desktop/pi-project-files-watch\" \"$HOME/.pi/agent/extensions/pi-orchestration\" && printf %s {broker} > \"$HOME/.pi-desktop/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/.pi-desktop/pi-desktop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/.pi-desktop/pi-desktop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/.pi-desktop/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/.pi-desktop/pi-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/.pi-desktop/pi-context-window-cap/config.json\" && printf %s {project_files_watch} > \"$HOME/.pi-desktop/pi-project-files-watch/index.ts\" && printf %s {codex_compaction} > \"$HOME/.pi-desktop/pi-desktop-codex-compaction.ts\" && printf %s {btw} > \"$HOME/.pi/agent/extensions/pi-desktop-btw.ts\" && printf %s {orchestration} > \"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\" && chmod 600 -- \"$HOME/.pi-desktop/pi-desktop-codex-compaction.ts\" \"$HOME/.pi-desktop/session-broker.ts\" \"$HOME/.pi-desktop/pi-desktop-trace-reader.ts\" \"$HOME/.pi-desktop/pi-desktop-mcp-bridge.ts\" \"$HOME/.pi-desktop/mcp-servers.json\" \"$HOME/.pi-desktop/pi-context-window-cap/index.ts\" \"$HOME/.pi-desktop/pi-context-window-cap/config.json\" \"$HOME/.pi-desktop/pi-project-files-watch/index.ts\" \"$HOME/.pi/agent/extensions/pi-desktop-btw.ts\" \"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\"");
     // Bundled extensions can exceed the OS limit for a single command argument.
-    let mut child = ssh(host).arg("sh -s").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| format!("Could not install Pi Desktop extensions on {}: {error}", host.name))?;
+    let mut child = ssh(host).arg("sh -s").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| format!("Could not install piop extensions on {}: {error}", host.name))?;
     let mut stdin = child.stdin.take().ok_or("Remote extension staging stdin was unavailable")?;
     let writer = thread::spawn(move || stdin.write_all(remote.as_bytes()));
-    let output = child.wait_with_output().map_err(|error| format!("Could not install Pi Desktop extensions on {}: {error}", host.name))?;
+    let output = child.wait_with_output().map_err(|error| format!("Could not install piop extensions on {}: {error}", host.name))?;
     let written = writer.join().map_err(|_| "Remote extension staging writer failed")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-    written.map_err(|error| format!("Could not send Pi Desktop extensions to {}: {error}", host.name))
+    written.map_err(|error| format!("Could not send piop extensions to {}: {error}", host.name))
 }
 
 enum PiLaunch<'a> {
@@ -1755,9 +1755,9 @@ fn collect_sessions(app: &AppHandle, index: &SessionIndexRuntime) -> Result<Vec<
 fn list_sessions(app: AppHandle, index: State<SessionIndexRuntime>) -> Result<Vec<SessionSummary>, String> { collect_sessions(&app, &index) }
 
 fn local_desktop_session_file(session_path: &str) -> Result<PathBuf, String> {
-    let root = desktop_sessions_dir(&home_dir()?).canonicalize().map_err(|error| format!("Could not locate Pi Desktop sessions: {error}"))?;
+    let root = desktop_sessions_dir(&home_dir()?).canonicalize().map_err(|error| format!("Could not locate piop sessions: {error}"))?;
     let source = PathBuf::from(session_path).canonicalize().map_err(|error| format!("Could not locate session file: {error}"))?;
-    if !source.starts_with(&root) || source.extension().and_then(|value| value.to_str()) != Some("jsonl") || !source.is_file() { return Err("Only Pi Desktop session files can be accessed".into()); }
+    if !source.starts_with(&root) || source.extension().and_then(|value| value.to_str()) != Some("jsonl") || !source.is_file() { return Err("Only piop session files can be accessed".into()); }
     Ok(source)
 }
 
@@ -1872,7 +1872,7 @@ fn resolve_agent<'a>(sessions: &'a [SessionSummary], host_id: &str, session_id: 
     let session = sessions.iter().find(|session| session.host_id == host_id && session.id == session_id).ok_or_else(|| format!("Agent {host_id}/{session_id} was not found"))?;
     // ponytail: A resident per-session worker can replace this guard if measured startup latency warrants that extra lifecycle.
     if active.iter().any(|agent| agent_is_active(session, agent)) {
-        return Err("Cannot message the session currently open in Pi Desktop".into());
+        return Err("Cannot message the session currently open in piop".into());
     }
     Ok(session)
 }
@@ -2048,5 +2048,5 @@ pub fn run() {
         }
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
-    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).run(context).expect("error while running Pi desktop");
+    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).run(context).expect("error while running piop");
 }

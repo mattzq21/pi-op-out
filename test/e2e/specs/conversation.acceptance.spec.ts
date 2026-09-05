@@ -238,7 +238,7 @@ describe("Conversation acceptance", () => {
   });
 
   it("enables sending a prepared message without losing the draft during navigation", async () => {
-    const draft = "Explain how this project starts a Pi session";
+    const draft = "Explain how this project starts a piop session";
     await app.prepareMessage(draft);
 
     await expect(app.sendMessageButton).toBeClickable();
@@ -299,7 +299,7 @@ describe("Conversation acceptance", () => {
       await pressShortcut(terminalShortcut);
       await expect(app.terminalPanel).not.toBeExisting();
       await pressShortcut(composerShortcut);
-      expect(await browser.execute(() => document.activeElement?.getAttribute("aria-label"))).toBe("Message Pi");
+      expect(await browser.execute(() => document.activeElement?.getAttribute("aria-label"))).toBe("Message piop");
     } finally {
       if (await app.terminalPanel.isExisting()) await pressShortcut(terminalShortcut);
       await resetBackend();
@@ -497,7 +497,7 @@ describe("Conversation acceptance", () => {
       const split = $(`section[aria-label="Split conversation: ${indexed.name}"]`);
       await expect(split).toBeDisplayed();
       await expect($$(".chat-panes .chat-shell")).toBeElementsArrayOfSize(2);
-      await split.$('textarea[aria-label="Message Pi"]').waitForEnabled();
+      await split.$('textarea[aria-label="Message piop"]').waitForEnabled();
       const splitRuntimeId = (await backendCalls()).find(({ command, args }) => command === "start_pi" && args.sessionPath === indexed.path)?.args.runtimeId;
       expect(splitRuntimeId).toBeTruthy();
       await session.$(".session-main").click();
@@ -553,7 +553,7 @@ describe("Conversation acceptance", () => {
     }
   });
 
-  it("sends the composed prompt to Pi and clears the accepted draft", async () => {
+  it("sends the composed prompt to piop and clears the accepted draft", async () => {
     await mockBackend({ "pi_command:get_entries": { entries: [], leafId: null }, "pi_command:fork": {}, "pi_command:prompt": {} });
     try {
       await app.prepareMessage("Explain the failing build");
@@ -573,7 +573,7 @@ describe("Conversation acceptance", () => {
     await mockBackend({ "pi_command:prompt": {} });
     try {
       await app.prepareMessage("First line");
-      await browser.execute(() => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message Pi"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true })));
+      await browser.execute(() => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message piop"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true })));
       await expect(app.composer).toHaveValue("First line");
       expect((await backendCalls()).filter(({ args }) => (args.command as { type?: string })?.type === "prompt")).toHaveLength(0);
       await app.composer.setValue("First line\nSecond line");
@@ -589,12 +589,12 @@ describe("Conversation acceptance", () => {
     }
   });
 
-  it("discovers and selects a slash command supplied by Pi", async () => {
+  it("discovers and selects a slash command supplied by piop", async () => {
     await mockBackend({ ...connectedSessionResponses("command-session"), "pi_command:get_commands": { commands: [{ name: "review", description: "Review the current changes", source: "extension", sourceInfo: { source: "acceptance" } }] } });
     try {
       await emitPiEvent({ type: "session_switched" });
       await app.prepareMessage("/rev");
-      const palette = $('[role="listbox"][aria-label="Pi commands"]');
+      const palette = $('[role="listbox"][aria-label="piop commands"]');
       await expect(palette).toBeDisplayed();
       await expect(palette).toHaveText(expect.stringContaining("/review"));
       await palette.$('[role="option"]').click();
@@ -617,7 +617,7 @@ describe("Conversation acceptance", () => {
     try {
       await emitPiEvent({ type: "session_switched" });
       await app.prepareMessage("/");
-      const palette = $('[role="listbox"][aria-label="Pi commands"]');
+      const palette = $('[role="listbox"][aria-label="piop commands"]');
       await expect(palette).toHaveText(expect.stringContaining("/review"));
       const text = await palette.getText();
       expect(text).not.toContain("internal-inline");
@@ -768,8 +768,8 @@ describe("Conversation acceptance", () => {
 
   it("renders live assistant activity delivered through Tauri events", async () => {
     await emitPiEvent({ type: "agent_start" });
-    await expect($(".stream-banner")).toHaveText(expect.stringContaining("Pi is working"));
-    await expect($('button[aria-label="Stop Pi"]')).toBeDisplayed();
+    await expect($(".stream-banner")).toHaveText(expect.stringContaining("piop is working"));
+    await expect($('button[aria-label="Stop piop"]')).toBeDisplayed();
 
     await emitPiEvent({ type: "message_start", message: { id: "acceptance-stream", role: "assistant", content: "Streaming acceptance response" } });
     await expect($(".assistant-message")).toHaveText(expect.stringContaining("Streaming acceptance response"));
@@ -897,7 +897,7 @@ describe("Conversation acceptance", () => {
     }
   });
 
-  it("updates the thinking selector when Pi changes effort", async () => {
+  it("updates the thinking selector when piop changes effort", async () => {
     await mockBackend(connectedSessionResponses("thinking-event-session"));
     try {
       await emitPiEvent({ type: "session_switched" });
@@ -1122,7 +1122,7 @@ describe("Conversation acceptance", () => {
       await $(".composer-actions .send").click();
 
       await expect($(".stream-banner")).toHaveText(expect.stringContaining("1 queued"));
-      await $('button[aria-label="Stop Pi"]').click();
+      await $('button[aria-label="Stop piop"]').click();
       await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => ["follow_up", "abort"].includes(String((args.command as { type?: string })?.type))).length === 2);
       expect((await backendCalls()).filter(({ args }) => ["follow_up", "abort"].includes(String((args.command as { type?: string })?.type))).map(({ args }) => args.command)).toEqual([
         { type: "follow_up", message: "Check this after the current response" }, { type: "abort" },
@@ -1134,7 +1134,7 @@ describe("Conversation acceptance", () => {
     }
   });
 
-  it("returns extension input through the Pi event bridge", async () => {
+  it("returns extension input through the piop event bridge", async () => {
     await mockBackend({ "pi_command:extension_ui_response": {} });
     try {
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-input", method: "input", title: "Choose a release name", placeholder: "Release name", prefill: "alpha" });
@@ -1251,7 +1251,7 @@ describe("Conversation acceptance", () => {
       await browser.waitUntil(async () => await browser.getTitle() === "Acceptance review in progress");
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-editor-text", method: "set_editor_text", text: "Review the generated acceptance changes" });
       await expect(app.composer).toHaveValue("Review the generated acceptance changes");
-      expect(await browser.execute(() => document.activeElement?.getAttribute("aria-label"))).toBe("Message Pi");
+      expect(await browser.execute(() => document.activeElement?.getAttribute("aria-label"))).toBe("Message piop");
     } finally {
       await emitPiEvent({ type: "extension_ui_request", id: "acceptance-title-reset", method: "setTitle", title: originalTitle });
       await app.clearMessage();
@@ -1642,7 +1642,7 @@ describe("Orchestration acceptance", () => {
         description: "Saved by the native acceptance test",
         systemPrompt: "Verify the saved agent configuration.",
       });
-      await browser.waitUntil(async () => (await backendCalls()).some(({ command, mocked }) => command === "start_pi" && !mocked), { timeoutMsg: "Saving the agent did not reconnect the native Pi runtime" });
+      await browser.waitUntil(async () => (await backendCalls()).some(({ command, mocked }) => command === "start_pi" && !mocked), { timeoutMsg: "Saving the agent did not reconnect the native piop runtime" });
 
       await app.openConversations();
       await app.agentPicker.click();
@@ -2084,7 +2084,7 @@ describe("Project behavior", () => {
       await app.openProjectButton.click();
 
       await expect(app.projectDialogHeading).not.toBeExisting();
-      await expect($(".error-toast strong")).toHaveText("Pi could not connect");
+      await expect($(".error-toast strong")).toHaveText("piop could not connect");
       await expect($(".error-toast span")).toHaveText("Project runtime unavailable");
       expect((await backendCalls()).filter(({ command }) => command === "stop_pi" || command === "start_pi").map(({ command }) => command)).toEqual(["stop_pi", "start_pi"]);
     } finally {
@@ -2152,12 +2152,12 @@ describe("Conversation lifecycle", () => {
       await emitPiEvent({ type: "session_switched" });
       await app.prepareMessage("Main conversation draft");
       let split = await openSplit();
-      await split.$('textarea[aria-label="Message Pi"]').setValue("Independent split-pane draft");
+      await split.$('textarea[aria-label="Message piop"]').setValue("Independent split-pane draft");
       await split.$('button[aria-label="Close split pane"]').click();
       await expect(app.composer).toHaveValue("Main conversation draft");
 
       split = await openSplit();
-      await expect(split.$('textarea[aria-label="Message Pi"]')).toHaveValue("Independent split-pane draft");
+      await expect(split.$('textarea[aria-label="Message piop"]')).toHaveValue("Independent split-pane draft");
       await split.$('button[aria-label="Close split pane"]').click();
       await expect(app.composer).toHaveValue("Main conversation draft");
       await app.clearMessage();

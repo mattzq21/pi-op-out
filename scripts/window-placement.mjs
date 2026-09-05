@@ -9,7 +9,7 @@ const windowSlots = [topWindowBounds, bottomWindowBounds, tertiaryWindowBounds, 
 export function selectWindowBounds() {
   try {
     const windows = execFileSync("xwininfo", ["-root", "-tree"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    const piWindows = windows.split("\n").filter((line) => line.includes('"Pi": ("pi-desktop" "Pi-desktop")'));
+    const piWindows = windows.split("\n").filter((line) => /"piop": \("piop" "piop"\)/i.test(line));
     return windowSlots.find(({ x, y, width, height }) =>
       !piWindows.some((line) => line.includes(`${width}x${height}+${x}+${y}`))
     ) ?? quaternaryWindowBounds;

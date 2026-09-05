@@ -1,4 +1,4 @@
-# Pi Desktop
+# piop
 
 A Tauri-only native interface for the Pi coding agent. It is not a standalone browser application. The desktop app controls persistent local or SSH-hosted `pi --mode rpc` processes.
 
@@ -23,7 +23,7 @@ Install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) and
 npm run tauri dev
 ```
 
-The native launcher also checks `~/.local/bin/pi`, `~/.npm-global/bin/pi`, and `~/.bun/bin/pi`. Set `PI_DESKTOP_PI_PATH` to use another executable.
+The native launcher also checks `~/.local/bin/pi`, `~/.npm-global/bin/pi`, and `~/.bun/bin/pi`. Set `PIOP_PI_PATH` to use another executable.
 
 Authenticate Pi before starting the desktop app with Pi's normal `/login` flow or provider environment variables. Credentials remain in Pi's own auth store and are never copied into this app's settings.
 
@@ -33,7 +33,7 @@ Saving native settings restarts the managed Pi process while preserving the acti
 
 Ctrl+left-click a rendered HTTP or HTTPS Markdown link to open it in your default browser. Ordinary clicks keep you in the conversation. Right-click a link for a menu containing only **Copy link**.
 
-While Pi is responding, Enter queues a follow-up, and Ctrl+Enter sends a steering message. The send button becomes Pause while running and Resume while paused, with Stop beside it. Shift+Enter inserts a new line. When Pi is idle or paused, Enter and Ctrl+Enter send normally.
+While piop is responding, Enter queues a follow-up, and Ctrl+Enter sends a steering message. The send button becomes Pause while running and Resume while paused, with Stop beside it. Shift+Enter inserts a new line. When piop is idle or paused, Enter and Ctrl+Enter send normally.
 
 Pause interrupts the current response and saves completed model turns and tool results in the conversation context. Resume continues from that context with the selected agent's instructions, including after reopening a saved conversation. You can also send a new message while paused. An interrupted partial assistant response remains visible in the transcript but is excluded from the resumed model context.
 
@@ -60,3 +60,7 @@ npm run test:e2e
 After the binary has already been built, use `npm run test:e2e:run` for faster iterations. Set `PI_E2E_BINARY` to test another binary. Add acceptance scenarios under `test/e2e/specs` and reusable interactions under `test/e2e/pageobjects`.
 
 For runner configuration, native-command mocking, synthetic Pi events, and cleanup behavior, see [WebdriverIO acceptance testing](docs/webdriverio-testing.md).
+
+## Compatibility
+
+The app and executable are named `piop`. Existing storage identifiers (`dev.pi.desktop`, `.pi-desktop`, and browser-storage keys) and extension protocol IDs remain stable so saved settings, conversations, and installed extensions continue to work. These are compatibility identifiers, not product names. `PIOP_PI_PATH` selects the upstream Pi executable; the previous `PI_DESKTOP_PI_PATH` override remains supported. The upstream Pi CLI and third-party Pi extension package names are unchanged.

@@ -17,7 +17,7 @@ npm run test:e2e:build
 npm run test:e2e:run
 ```
 
-The default executable is `src-tauri/target/release/pi-desktop` (`pi-desktop.exe` on Windows). Set `PI_E2E_BINARY` to run the specs against another executable.
+The default executable is `src-tauri/target/release/piop` (`piop.exe` on Windows). Set `PI_E2E_BINARY` to run the specs against another executable.
 
 Each run asks the operating system to allocate an available ephemeral loopback port, then passes that port to the embedded WebDriver server. An abandoned process on a previous run's port therefore does not block the next run.
 
@@ -44,7 +44,7 @@ Both the manual launcher and automated suite use the same Linux placement as `np
 
 The launcher selects the slot before starting the app and passes its exact `{ x, y, width, height }` bounds through `PI_WINDOW_BOUNDS`. Shared Linux startup code creates the window hidden with those bounds and decorations disabled, then shows it during Tauri setup. This applies the final geometry before the first visible map, with no delayed move, Linux WebDriver resize, or height offset. Rebuild the E2E binary after changing native placement code.
 
-`npm run tauri dev` and E2E builds leave keyboard focus in other apps at startup; clicking Pi focuses it normally. Packaged builds use normal startup focus.
+`npm run tauri dev` and E2E builds leave keyboard focus in other apps at startup; clicking piop focuses it normally. Packaged builds use normal startup focus.
 
 The manual launcher prints a `sessionId` and `webdriverConfig`; pass those values to the MCP's `attach_session` tool with `platform: "browser"`, `provider: "external"`, and `trace: false`. Keep the launcher running during the session and stop it with Ctrl+C when finished.
 
@@ -57,7 +57,7 @@ Acceptance specs live in `test/e2e/specs`. Reusable selectors and user interacti
 Prefer selectors based on stable accessible names, for example:
 
 ```ts
-const composer = $('textarea[aria-label="Message Pi"]');
+const composer = $('textarea[aria-label="Message piop"]');
 const send = $('button[aria-label="Send message"]');
 ```
 

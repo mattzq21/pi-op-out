@@ -4,7 +4,7 @@ type ConfirmationWindow = Window & { __e2eConfirmation?: { original: typeof wind
 
 class AppPage {
   get root() { return $(".app:not(.app-loading)"); }
-  get composer() { return $('textarea[aria-label="Message Pi"]'); }
+  get composer() { return $('textarea[aria-label="Message piop"]'); }
   get sendMessageButton() { return $('button[aria-label="Send message"]'); }
   get agentPicker() { return $('button[aria-label="Agent"]'); }
   get modelPicker() { return $('button[aria-label="Model"]'); }

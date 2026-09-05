@@ -24,7 +24,7 @@ async function cancelRequest(requestId: string) {
 }
 
 async function request(path: string, body?: unknown, signal?: AbortSignal, timeoutMs = 10_000) {
-  if (!url || !token) throw new Error("Pi Desktop session broker is unavailable");
+  if (!url || !token) throw new Error("piop session broker is unavailable");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(new Error("Session broker request timed out")), timeoutMs);
   const abort = () => controller.abort(signal?.reason); signal?.addEventListener("abort", abort, { once: true });
@@ -116,7 +116,7 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
   const unsubscribe = pi.events.on("pi-desktop:pause-controller", (value) => { (value as { controller?: PauseController }).controller = controller; });
   pi.on("session_shutdown", () => { generation += 1; unsubscribe(); pauseOperation = undefined; });
   pi.registerCommand("pi-desktop-control", {
-    description: "Control Pi Desktop pause and resume",
+    description: "Control piop pause and resume",
     async handler(args, ctx) {
       controlContext = ctx;
       let id: string | undefined;
@@ -176,7 +176,7 @@ export function registerFastModeStatus(pi: ExtensionAPI) {
   // startup and after /fast finishes writing its scoped configuration.
   // Keep that snapshot for model changes: another session may share the file
   // while each extension instance retains its own in-memory toggle.
-  pi.registerCommand("pi-desktop-fast-status", { description: "Read Fast Mode status for Pi Desktop", handler: (args, ctx) => {
+  pi.registerCommand("pi-desktop-fast-status", { description: "Read Fast Mode status for piop", handler: (args, ctx) => {
     const next = queue.then(() => refresh(ctx, args.trim() === "refresh"));
     queue = next.catch(() => undefined);
     return next;
@@ -189,7 +189,7 @@ export default function sessionBroker(pi: ExtensionAPI) {
   registerPauseControl(pi);
   registerFastModeStatus(pi);
   pi.registerTool({
-    name: "list_agents", label: "List agents", description: "List Pi agents addressable through Pi Desktop", promptSnippet: "List agents by hostId and sessionId",
+    name: "list_agents", label: "List agents", description: "List Pi agents addressable through piop", promptSnippet: "List agents by hostId and sessionId",
     parameters: Type.Object({}),
     async execute(_id, _params, signal) { const data = await request("/agents", undefined, signal); return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }], details: data }; },
   });

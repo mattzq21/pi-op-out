@@ -32,7 +32,7 @@ cp extensions/pi-context-window-cap/{index.ts,config.json} \
 Once installed globally, start Pi normally. Edit the installed `config.json` to
 change the limit.
 
-Pi Desktop stages its own copy of this extension and generates its `config.json`
+piop stages its own copy of this extension and generates its `config.json`
 from **Settings → General → Context window cap** for local and remote sessions.
 
 The extension also saves one prompt-context snapshot when the initial user

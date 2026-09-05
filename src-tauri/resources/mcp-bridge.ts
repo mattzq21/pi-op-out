@@ -52,7 +52,7 @@ function parseHeaders(value: ServerConfig["headers"]): Record<string, string> {
 }
 
 async function createClient(config: ServerConfig): Promise<Client> {
-  const client = new Client({ name: "pi-desktop", version: "0.1.0" });
+  const client = new Client({ name: "piop", version: "0.1.0" });
   client.onerror = (error) => process.stderr.write(`[mcp:${config.name}] ${error.message}\n`);
   const transport = config.transport === "http"
     ? (() => {
@@ -118,7 +118,7 @@ export default async function mcpBridge(pi: ExtensionAPI) {
     } catch (error) { const message = error instanceof Error ? error.message : String(error); statuses.set(server.id, { id: server.id, status: "error", error: message }); process.stderr.write(`[mcp:${server.name}] ${message}\n`); }
   }));
   pi.on("session_start", (_event, ctx) => ctx.ui.setStatus(MCP_STATUS_KEY, `json:${JSON.stringify([...statuses.values()])}`));
-  pi.registerCommand("mcp-status", { description: "Show MCP servers and tools loaded by Pi Desktop", handler: async () => {
+  pi.registerCommand("mcp-status", { description: "Show MCP servers and tools loaded by piop", handler: async () => {
     pi.sendMessage({ customType: MCP_STATUS_KEY, content: loaded.length ? loaded.map((entry) => `${entry.server}: ${entry.tools.join(", ") || "no tools"}`).join("\n") : "No MCP servers loaded", display: true }, { triggerTurn: false });
   } });
   pi.on("context", (event) => ({ messages: event.messages.filter((message) => message.role !== "custom" || message.customType !== MCP_STATUS_KEY) }));

@@ -163,7 +163,7 @@ export default function App() {
     transportConversationKeys.current.set(transport, canonicalKey); activateConversationKey(canonicalKey);
   }, [activeHostId, state.sessionId, transport]);
   useEffect(() => {
-    document.title = "Pi";
+    document.title = "piop";
     setStatuses({}); setWidgets({});
   }, [transport]);
   useEffect(() => {
@@ -228,7 +228,7 @@ export default function App() {
       if (event.type === "extension_error") { const message = String(event.error ?? "An extension failed"); if (!message.startsWith(staleExtensionContext)) addNotice({ title: "Extension error", message }); }
       if (event.type === "extension_ui_request") { const request = event as unknown as ExtensionUiRequest;
         if (transport !== activeTransportRef.current) { if (["input", "editor", "select", "confirm"].includes(request.method)) void transport.command({ type: "extension_ui_response", id: request.id, cancelled: true }).catch(() => undefined); return; }
-        if (request.method === "notify") addNotice({ title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "Pi extension", message: request.message || "Notification" });
+        if (request.method === "notify") addNotice({ title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "piop extension", message: request.message || "Notification" });
         else if (request.method === "input" && request.title === BTW_REQUEST_TITLE) {
           try {
             const payload = JSON.parse(request.placeholder || "{}") as { task?: unknown; sessionFile?: unknown; cwd?: unknown };
@@ -254,14 +254,14 @@ export default function App() {
         else if (request.method === "setStatus" && request.statusKey === MCP_STATUS_KEY) { setExtensionOwner(transport); try { const values = request.statusText?.startsWith("json:") ? JSON.parse(request.statusText.slice(5)) as Array<{ id: string; status: "connected" | "stopped" | "error"; error?: string }> : []; setMcpStatuses(Object.fromEntries(values.map((value) => [value.id, { status: value.status, error: value.error }]))); } catch { setMcpStatuses({}); } }
         else if (request.method === "setStatus" && request.statusKey && request.statusKey !== PROMPT_CONTEXT_STATUS_KEY) { setExtensionOwner(transport); setStatuses((current) => { const next = { ...current }; if (request.statusText) next[request.statusKey!] = request.statusText; else delete next[request.statusKey!]; return next; }); }
         else if (request.method === "setWidget" && request.widgetKey) { setExtensionOwner(transport); setWidgets((current) => { const next = { ...current }; if (request.widgetLines) next[request.widgetKey!] = request.widgetLines; else delete next[request.widgetKey!]; return next; }); }
-        else if (request.method === "setTitle") document.title = request.title || "Pi";
+        else if (request.method === "setTitle") document.title = request.title || "piop";
         else if (request.method === "set_editor_text") { setComposerDrafts((current) => { const key = transportConversationKeys.current.get(transport) ?? terminalSessionIdRef.current; const next = { ...current }; if (request.text) next[key] = request.text; else delete next[key]; return next; }); setActivePane("main"); setMainComposerFocusRequest((value) => value + 1); }
         else if (["input", "editor", "select", "confirm"].includes(request.method)) queueExtensionDialog(request, transport, mainDialogOwnerRef.current);
       }
       if (event.type === "session_switched") void refresh();
       if (event.type === "session_info_changed") void refresh();
       if (event.type === "disconnected") {
-        setOrchestration(undefined); setMcpStatuses({}); setStatuses({}); setWidgets({}); document.title = "Pi"; setDialogs((current) => current.filter((dialog) => dialog.transport !== transport)); updateConnected(false);
+        setOrchestration(undefined); setMcpStatuses({}); setStatuses({}); setWidgets({}); document.title = "piop"; setDialogs((current) => current.filter((dialog) => dialog.transport !== transport)); updateConnected(false);
         if (reconnecting) return; reconnecting = true;
         window.setTimeout(() => {
           if (cancelled) return; const diagnostic = transport.lastDiagnostic();
@@ -284,7 +284,7 @@ export default function App() {
   }, [connected, settings, syncSessionIndex]);
 
   const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => {
-    if (!connectionReadyRef.current) throw new Error("Pi is still connecting");
+    if (!connectionReadyRef.current) throw new Error("piop is still connecting");
     const ownerTransport = transport; const ownerKey = activeConversationKeyRef.current;
     if (behavior) { await ownerTransport.command({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...(images.length ? { images } : {}) }); if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) setState((current) => ({ ...current, pendingMessageCount: current.pendingMessageCount + 1 })); return; }
     const abandoned = !state.isPaused && !state.isPausing ? findReplaceableAbortedTurn(messages) : undefined;
@@ -419,7 +419,7 @@ export default function App() {
   const enqueueControl = (ownerTransport: NativeTransport, action: () => Promise<void>) => { const previous = controlQueues.current.get(ownerTransport) ?? Promise.resolve(); const next = previous.then(action, action); controlQueues.current.set(ownerTransport, next.catch(() => undefined)); return next; };
   const setModel = async (model: Model) => { const ownerTransport = transport; const ownerKey = activeConversationKeyRef.current; try { await enqueueControl(ownerTransport, async () => { await ownerTransport.command({ type: "set_model", provider: model.provider, modelId: model.id }); if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) setState((current) => ({ ...current, model })); }); } catch (reason) { addNotice({ title: "Could not change model", message: reason instanceof Error ? reason.message : String(reason) }); } };
   const setThinking = async (level: string) => { const ownerTransport = transport; const ownerKey = activeConversationKeyRef.current; try { await enqueueControl(ownerTransport, async () => { await ownerTransport.command({ type: "set_thinking_level", level }); if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) setState((current) => ({ ...current, thinkingLevel: level })); }); } catch (reason) { addNotice({ title: "Could not change thinking level", message: reason instanceof Error ? reason.message : String(reason) }); } };
-  const abortInteraction = async () => { const ownerTransport = transport; if (abortPending.current.has(ownerTransport)) return; abortPending.current.add(ownerTransport); try { await ownerTransport.command({ type: "abort" }); } catch (reason) { addNotice({ title: "Could not stop Pi", message: reason instanceof Error ? reason.message : String(reason) }); } finally { abortPending.current.delete(ownerTransport); } };
+  const abortInteraction = async () => { const ownerTransport = transport; if (abortPending.current.has(ownerTransport)) return; abortPending.current.add(ownerTransport); try { await ownerTransport.command({ type: "abort" }); } catch (reason) { addNotice({ title: "Could not stop piop", message: reason instanceof Error ? reason.message : String(reason) }); } finally { abortPending.current.delete(ownerTransport); } };
   const pauseInteraction = async () => {
     const ownerTransport = transport; const ownerKey = activeConversationKeyRef.current;
     if (abortPending.current.has(ownerTransport) || pauseResumePending.current.has(ownerTransport)) return;
@@ -429,7 +429,7 @@ export default function App() {
       await ownerTransport.command({ type: "pause" });
       if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) await refreshSession();
     } catch (reason) {
-      addNotice({ title: "Could not pause Pi", message: reason instanceof Error ? reason.message : String(reason) });
+      addNotice({ title: "Could not pause piop", message: reason instanceof Error ? reason.message : String(reason) });
     } finally {
       pauseResumePending.current.delete(ownerTransport);
       if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) setState((current) => ({ ...current, isPausing: false }));
@@ -440,7 +440,7 @@ export default function App() {
     if (abortPending.current.has(ownerTransport) || pauseResumePending.current.has(ownerTransport)) return;
     pauseResumePending.current.add(ownerTransport);
     try { await ownerTransport.command({ type: "resume" }); }
-    catch (reason) { addNotice({ title: "Could not resume Pi", message: reason instanceof Error ? reason.message : String(reason) }); }
+    catch (reason) { addNotice({ title: "Could not resume piop", message: reason instanceof Error ? reason.message : String(reason) }); }
     finally { pauseResumePending.current.delete(ownerTransport); }
   };
   const saveSettings = async (value: AppSettings, nextConfig?: OrchestrationConfig) => {
@@ -578,7 +578,7 @@ export default function App() {
   }, [settings, toggleDebugMode, settingsDirty, view, activePane, splitPane]);
 
   if (!settings) return <main className="app app-loading dark" role={error ? "alert" : "status"}>
-    <p className="eyebrow">Pi desktop</p>
+    <p className="eyebrow">piop</p>
     <h1>{error ? "Could not load settings" : "Loading settings…"}</h1>
     {error && <p>{error}</p>}
   </main>;
@@ -599,7 +599,7 @@ export default function App() {
     </div>
     {view === "settings" && <SettingsView settings={settingsWithMcpStatuses} orchestration={extensionStateIsCurrent ? orchestration?.config : undefined} sessions={sessions} models={models} thinkingLevels={thinkingLevels} onSave={saveSettings} onDirtyChange={setSettingsDirty} />}
     {(error || notices.length > 0) && <div className="toast-stack">
-      {error && <div className="error-toast" role="alert"><strong>Pi could not connect</strong><span>{error}</span><button onClick={reconnectMain} disabled={reconnectPending.current.has(transport)}>Retry</button><button aria-label="Dismiss connection error" onClick={() => setError(undefined)}>×</button></div>}
+      {error && <div className="error-toast" role="alert"><strong>piop could not connect</strong><span>{error}</span><button onClick={reconnectMain} disabled={reconnectPending.current.has(transport)}>Retry</button><button aria-label="Dismiss connection error" onClick={() => setError(undefined)}>×</button></div>}
       {notices.map((notice) => <div className="error-toast" role="alert" key={notice.id}><strong>{notice.title}</strong><span>{notice.message}</span><button aria-label={`Dismiss ${notice.title}`} onClick={() => setNotices((current) => current.filter((item) => item.id !== notice.id))}>×</button></div>)}
     </div>}
     {activeDialog && !projectOpen && !renameSession && !relocatingSession && !worktreeTarget && <ExtensionDialog key={activeDialog.queueId} request={activeDialog.request} owner={activeDialog.owner} onRespond={async (response) => { await activeDialog.transport.command({ type: "extension_ui_response", id: activeDialog.request.id, ...response }); setDialogs((current) => current.filter((item) => item !== activeDialog)); }} />}
