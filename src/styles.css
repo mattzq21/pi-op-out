@@ -90,6 +90,9 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .message-failure { display: flex; align-items: center; gap: 7px; color: #c64f38; font-size: 12px; }.message-failure button { margin-left: 5px; border: 1px solid currentColor; border-radius: 6px; background: transparent; color: inherit; padding: 4px 9px; font: inherit; cursor: pointer; }.message-failure button:hover { background: #c64f3812; }
 .message-paused { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
 .reasoning-text, .reasoning-text strong { font-size: 13px; font-weight: 400; }
+.reasoning-message:has(+ .reasoning-message) { margin-bottom: 6px; }
+:is(.reasoning-text, .work-group-content .message-body) > :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote) { margin-top: 0; margin-bottom: 4px; }
+:is(.reasoning-text, .work-group-content .message-body) > :last-child { margin-bottom: 0; }
 .branch-button { border: 0; background: transparent; color: var(--muted); height: 25px; padding: 0 6px; border-radius: 5px; display: flex; gap: 5px; align-items: center; font-size: 11px; }.branch-button:hover { background: #eeeae4; color: var(--ink); }
 .stream-caret { display: inline-block; width: 5px; height: 14px; margin-left: 3px; background: var(--accent); animation: blink 1s steps(2) infinite; vertical-align: -2px; }
 @keyframes blink { 50% { opacity: 0; } }
