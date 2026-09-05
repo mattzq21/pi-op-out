@@ -1,7 +1,7 @@
 import type { ChatMessage, ContentPart, PromptContextInfo } from "../types";
 
 const visibleUserContent = (content: unknown) => content;
-const MCP_STATUS_MESSAGE = "pi-desktop-mcp-status";
+const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "pi-desktop-catch-up"]);
 
 export type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number }; customType?: string; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string };
 
@@ -35,8 +35,8 @@ export function normalizeMessage(message: Record<string, unknown>, entryId?: str
   const stamp = Number.isFinite(numericStamp) ? numericStamp : Date.parse(String(message.timestamp)) || Date.now();
   const completionStamp = completedAt ? Date.parse(completedAt) : NaN;
   const isBtw = message.role === "custom" && message.customType === "pi-desktop-btw";
-  const isMcpStatus = message.role === "custom" && message.customType === MCP_STATUS_MESSAGE;
-  return { ...(message as unknown as ChatMessage), ...(message.role === "user" ? { content: visibleUserContent(message.content) as ChatMessage["content"] } : {}), id: entryId || fallbackId || (typeof message.id === "string" ? message.id : undefined) || `live-${message.role}-${stamp}`, entryId, role: (message.role === "toolResult" ? "tool" : isBtw ? "assistant" : isMcpStatus ? "system" : message.role) as ChatMessage["role"], toolStatus: message.role === "toolResult" ? (message.isError ? "error" : "done") : undefined, timestamp: stamp, ...(Number.isFinite(completionStamp) ? { completedAt: completionStamp } : {}) };
+  const isSystemMessage = message.role === "custom" && SYSTEM_MESSAGES.has(String(message.customType));
+  return { ...(message as unknown as ChatMessage), ...(message.role === "user" ? { content: visibleUserContent(message.content) as ChatMessage["content"] } : {}), id: entryId || fallbackId || (typeof message.id === "string" ? message.id : undefined) || `live-${message.role}-${stamp}`, entryId, role: (message.role === "toolResult" ? "tool" : isBtw ? "assistant" : isSystemMessage ? "system" : message.role) as ChatMessage["role"], toolStatus: message.role === "toolResult" ? (message.isError ? "error" : "done") : undefined, timestamp: stamp, ...(Number.isFinite(completionStamp) ? { completedAt: completionStamp } : {}) };
 }
 
 export function applyAssistantMessageEvent(message: ChatMessage, value: unknown): ChatMessage {
@@ -72,7 +72,7 @@ export function branchMessages(entries: PiEntry[], leafId: string | null): ChatM
       continue;
     }
     if (entry.type === "custom" && entry.customType === "pi-orchestration-sequence-marker") { sequenceMarkerAuthorized = true; continue; }
-    if (entry.type === "custom_message" && entry.customType === MCP_STATUS_MESSAGE && entry.display !== false) {
+    if (entry.type === "custom_message" && SYSTEM_MESSAGES.has(entry.customType ?? "") && entry.display !== false) {
       messages.push(normalizeMessage({ role: "custom", customType: entry.customType, content: entry.content ?? "", timestamp: entry.timestamp }, entry.id, entry.timestamp));
       continue;
     }

@@ -64,6 +64,16 @@ After the binary has already been built, use `npm run test:e2e:run` for faster i
 
 For runner configuration, native-command mocking, synthetic Pi events, and cleanup behavior, see [WebdriverIO acceptance testing](docs/webdriverio-testing.md).
 
+`/catch-up` resets a secondary Git worktree to the main worktree's current commit,
+keeping the secondary worktree's branch. It discards tracked local changes; it does
+not copy uncommitted changes from the main worktree or fetch from a remote. In the
+main worktree it does nothing. Stop or pause a running agent before invoking it.
+Catch-up is blocked with an error if another Pi UI agent is working in the same
+worktree on that host. This is checked both before and after confirmation.
+A confirmation dialog shows the worktree and target commit before resetting.
+Cancelling leaves the worktree and conversation unchanged. The result appears as
+a centered system message in the conversation.
+
 ## Compatibility
 
 The app and executable are named `piop`. Existing storage identifiers (`dev.pi.desktop`, `.pi-desktop`, and browser-storage keys) and extension protocol IDs remain stable so saved settings, conversations, and installed extensions continue to work. These are compatibility identifiers, not product names. `PIOP_PI_PATH` selects the upstream Pi executable; the previous `PI_DESKTOP_PI_PATH` override remains supported. The upstream Pi CLI and third-party Pi extension package names are unchanged.

@@ -73,7 +73,7 @@ struct PiRuntime {
 }
 
 #[derive(Clone)]
-struct AgentAddress { host_id: String, session_id: Option<String>, session_path: Option<String> }
+struct AgentAddress { host_id: String, session_id: Option<String>, session_path: Option<String>, worktree: Option<String>, presence_id: Option<String>, working: bool }
 
 #[derive(Clone)]
 struct BrokerRuntime {
@@ -1247,7 +1247,7 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
     let stdout = child.stdout.take().ok_or("Pi stdout was unavailable")?;
     let stderr = child.stderr.take().ok_or("Pi stderr was unavailable")?;
     runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { child, stdin: stdin.clone(), ephemeral_session });
-    runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id.clone(), AgentAddress { host_id: host_id.clone(), session_id: session_id.clone(), session_path: session_path.clone() });
+    runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id.clone(), AgentAddress { host_id: host_id.clone(), session_id: session_id.clone(), session_path: session_path.clone(), worktree: None, presence_id: None, working: false });
     let pending = runtime.pending.clone(); let processes = runtime.processes.clone(); let active_agents = runtime.active_agents.clone(); let event_app = app.clone(); let event_runtime_id = runtime_id.clone();
     thread::spawn(move || {
         for line in BufReader::new(stdout).split(b'\n') {
@@ -1256,6 +1256,22 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
                 && matches!(value.get("statusKey").and_then(Value::as_str), Some("pi-desktop-control-response" | "pi-desktop-pause-state")) {
                 let Some(payload) = value.get("statusText").and_then(Value::as_str).and_then(|text| text.strip_prefix("json:")).and_then(|text| serde_json::from_str::<Value>(text).ok()) else { continue };
                 value = payload;
+            }
+            if let Ok(mut agents) = active_agents.lock() {
+                if let Some(agent) = agents.get_mut(&event_runtime_id) {
+                    match value.get("type").and_then(Value::as_str) {
+                        Some("agent_start") => agent.working = true,
+                        Some("agent_end" | "agent_settled") => agent.working = false,
+                        Some("extension_ui_request") if value.get("statusKey").and_then(Value::as_str) == Some("pi-desktop-worktree-presence") => {
+                            if let Some(presence) = value.get("statusText").and_then(Value::as_str).and_then(|text| serde_json::from_str::<Value>(text).ok()) {
+                                agent.worktree = presence.get("worktree").and_then(Value::as_str).map(str::to_owned);
+                                agent.presence_id = presence.get("id").and_then(Value::as_str).map(str::to_owned);
+                            }
+                            continue;
+                        },
+                        _ => {},
+                    }
+                }
             }
             if value.get("type") == Some(&Value::String("response".into())) {
                 if let Some(id) = value.get("id").and_then(Value::as_str) {
@@ -1963,6 +1979,17 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
             let active: Vec<_> = app.state::<PiRuntime>().active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values().cloned().collect();
             collect_sessions(&app, &session_index).map(|sessions| json!(sessions.into_iter().map(|session| json!({"hostId":session.host_id,"sessionId":session.id,"name":session.name,"project":session.project,"cwd":session.cwd,"active":active.iter().any(|agent| agent_is_active(&session, agent))})).collect::<Vec<_>>()))
         },
+        ("POST", "/worktree-agents") => (|| {
+            let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid worktree request")?;
+            let id = value.get("id").and_then(Value::as_str).ok_or("Agent identity is required")?;
+            let runtime = app.state::<PiRuntime>();
+            let agents = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?;
+            let caller = agents.values().find(|agent| agent.presence_id.as_deref() == Some(id)).ok_or("Could not identify this agent; try again")?;
+            let root = caller.worktree.as_deref().ok_or("Could not identify this worktree")?;
+            let others: Vec<_> = agents.values().filter(|agent| agent.presence_id.as_deref() != Some(id) && agent.host_id == caller.host_id && agent.working && agent.worktree.as_deref() == Some(root))
+                .map(|agent| json!({"sessionId":agent.session_id})).collect();
+            Ok(json!(others))
+        })(),
         ("POST", "/message") => (|| {
             let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid message request".to_string())?;
             let request_id = value.get("requestId").and_then(Value::as_str).filter(|value| Uuid::parse_str(value).is_ok()).ok_or("requestId is required")?;
