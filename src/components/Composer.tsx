@@ -110,6 +110,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
   const [editorScrollTop, setEditorScrollTop] = useState(0);
   const ref = useRef<HTMLTextAreaElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
+  const selectedCommandRef = useRef<HTMLButtonElement>(null);
   const [draggingFiles, setDraggingFiles] = useState(false);
   const dragDepth = useRef(0);
   const restoredDraftId = useRef<string | undefined>(undefined);
@@ -122,6 +123,9 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
       ? commands.filter((command) => skillName(command)?.toLowerCase().includes(skillQuery)).slice(0, 7)
       : [], [commandQuery, skillQuery, commands, paletteDismissed]);
   useEffect(() => setSelectedMatch(0), [commandQuery, skillQuery, matches.length]);
+  useLayoutEffect(() => {
+    selectedCommandRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [selectedMatch, matches]);
   useEffect(() => setPaletteDismissed(false), [value]);
   useEffect(() => {
     const dismissOutside = (event: PointerEvent) => { if (!composerRef.current?.contains(event.target as Node)) setPaletteDismissed(true); };
@@ -308,7 +312,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
         ref.current?.focus();
       }}>
       {draggingFiles && !inputDisabled && <div className="composer-drop-hint" role="status">Drop files to attach</div>}
-      {matches.length > 0 && <div className="command-palette" role="listbox" aria-label={skillQuery === undefined ? "piop commands" : "piop skills"}>{matches.map((command, index) => <button role="option" aria-selected={index === selectedMatch} key={`${command.source}:${command.name}`} type="button" onMouseEnter={() => setSelectedMatch(index)} onClick={() => chooseCommand(command)}><span><strong>{skillQuery !== undefined ? `$${skillName(command)}` : `/${command.name}`}</strong><small>{command.description || `${command.source} command`}</small></span><em>{command.source}</em></button>)}</div>}
+      {matches.length > 0 && <div className="command-palette" role="listbox" aria-label={skillQuery === undefined ? "piop commands" : "piop skills"}>{matches.map((command, index) => <button ref={index === selectedMatch ? selectedCommandRef : undefined} role="option" aria-selected={index === selectedMatch} key={`${command.source}:${command.name}`} type="button" onMouseEnter={() => setSelectedMatch(index)} onClick={() => chooseCommand(command)}><span><strong>{skillQuery !== undefined ? `$${skillName(command)}` : `/${command.name}`}</strong><small>{command.description || `${command.source} command`}</small></span><em>{command.source}</em></button>)}</div>}
       {uploads.length > 0 && <div className="attachments">{uploads.map((upload) => <span key={upload.id}>{upload.kind === "image" ? <ImagePlus size={12} /> : <FileText size={12} />}<b>{upload.name}</b><button aria-label={`Remove ${upload.name}`} onClick={() => { updateUploads((current) => current.filter((item) => item.id !== upload.id)); setUploadError(undefined); }}><X size={11} /></button></span>)}</div>}
       {uploadError && <div className="upload-error" role="alert">{uploadError}</div>}
       {controlError && <div className="upload-error" role="alert">{controlError}</div>}
