@@ -60,3 +60,9 @@ npm run test:e2e
 After the binary has already been built, use `npm run test:e2e:run` for faster iterations. Set `PI_E2E_BINARY` to test another binary. Add acceptance scenarios under `test/e2e/specs` and reusable interactions under `test/e2e/pageobjects`.
 
 For runner configuration, native-command mocking, synthetic Pi events, and cleanup behavior, see [WebdriverIO acceptance testing](docs/webdriverio-testing.md).
+
+`/catch-up` resets a secondary Git worktree to the main worktree's current commit,
+keeping the secondary worktree's branch. It discards tracked local changes; it does
+not copy uncommitted changes from the main worktree or fetch from a remote. In the
+main worktree it does nothing. Stop or pause a running agent before invoking it.
+The result appears as a centered system message in the conversation.

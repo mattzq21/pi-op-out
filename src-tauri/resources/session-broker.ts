@@ -1,6 +1,8 @@
 import { Type } from "@earendil-works/pi-ai";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { dirname, join, resolve, sep } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ContextEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -185,7 +187,44 @@ export function registerFastModeStatus(pi: ExtensionAPI) {
   pi.on("model_select", (event, ctx) => { if (ctx.mode === "rpc" && loaded) publish(ctx, event.model); });
 }
 
+const runFile = promisify(execFile);
+const CATCH_UP_MESSAGE = "pi-desktop-catch-up";
+
+export function registerCatchUp(pi: ExtensionAPI) {
+  let running = false;
+  pi.registerCommand("catch-up", {
+    description: "Reset this secondary worktree to the main worktree's commit (discards tracked changes)",
+    async handler(args, ctx) {
+      const report = (content: string) => pi.sendMessage({ customType: CATCH_UP_MESSAGE, content, display: true }, { triggerTurn: false });
+      if (args.trim()) { report("Usage: /catch-up"); return; }
+      if (running) { report("Catch-up is already running."); return; }
+      if (!ctx.isIdle()) { report("Stop or pause the agent before running /catch-up."); return; }
+      running = true;
+      try {
+        const git = async (cwd: string, ...args: string[]) => {
+          const { stdout } = await runFile("git", ["-C", cwd, ...args], { maxBuffer: 1024 * 1024 });
+          return stdout;
+        };
+        const root = (await git(ctx.cwd, "rev-parse", "--show-toplevel")).trimEnd();
+        // Git lists the main worktree first. NUL delimiters preserve quoted paths.
+        const first = (await git(root, "worktree", "list", "--porcelain", "-z")).split("\0\0")[0].split("\0");
+        const main = first.find((field) => field.startsWith("worktree "))?.slice(9);
+        if (!main || first.includes("bare")) throw new Error("No main working tree is available for this repository.");
+        if (await realpath(root) === await realpath(main)) { report("Already in the main worktree. Nothing changed."); return; }
+        const commit = (await git(main, "rev-parse", "--verify", "HEAD^{commit}")).trim();
+        if (!ctx.isIdle()) throw new Error("Stop or pause the agent before running /catch-up.");
+        await git(root, "reset", "--hard", commit);
+        report(`Caught up to the main worktree at ${commit.slice(0, 12)}.`);
+      } catch (error) {
+        report(`Catch-up failed: ${error instanceof Error ? error.message : String(error)}`);
+      } finally { running = false; }
+    },
+  });
+  pi.on("context", (event) => ({ messages: event.messages.filter((message) => message.role !== "custom" || message.customType !== CATCH_UP_MESSAGE) }));
+}
+
 export default function sessionBroker(pi: ExtensionAPI) {
+  registerCatchUp(pi);
   registerPauseControl(pi);
   registerFastModeStatus(pi);
   pi.registerTool({
