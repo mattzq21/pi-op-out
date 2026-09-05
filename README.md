@@ -31,7 +31,7 @@ Authenticate Pi before starting the desktop app with Pi's normal `/login` flow o
 
 Saving native settings restarts the managed Pi process while preserving the active project and session. Enabled tools, skills, default model/thinking level, and MCP configuration are applied at startup.
 
-Ctrl+left-click a rendered HTTP or HTTPS Markdown link to open it in your default browser. Ordinary clicks keep you in the conversation.
+Ctrl+left-click a rendered HTTP or HTTPS Markdown link to open it in your default browser. Ordinary clicks keep you in the conversation. Right-click a link for a menu containing only **Copy link**.
 
 While Pi is responding, Enter queues a follow-up, and Ctrl+Enter sends a steering message. The send button becomes Pause while running and Resume while paused, with Stop beside it. Shift+Enter inserts a new line. When Pi is idle or paused, Enter and Ctrl+Enter send normally.
 

@@ -1,4 +1,5 @@
-import { isValidElement, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
+import { isValidElement, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Check, CircleAlert, Copy, FolderGit2, GitBranch, Pause, Wrench } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -36,18 +37,65 @@ function CodeBlock({ children, node: _node, ...props }: ComponentPropsWithoutRef
 
 function MarkdownLink({ children, href }: ComponentPropsWithoutRef<"a">) {
   const [error, setError] = useState<string>();
+  const [menu, setMenu] = useState<{ x: number; y: number; returnFocus?: HTMLElement }>();
+  const linkRef = useRef<HTMLAnchorElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!menu || !menuRef.current) return;
+    const element = menuRef.current;
+    const bounds = element.getBoundingClientRect();
+    element.style.left = `${Math.max(8, Math.min(menu.x, window.innerWidth - bounds.width - 8))}px`;
+    element.style.top = `${Math.max(8, Math.min(menu.y, window.innerHeight - bounds.height - 8))}px`;
+    element.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+    const close = () => setMenu(undefined);
+    const outside = (event: Event) => { if (!element.contains(event.target as Node)) close(); };
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" || event.key === "Tab") {
+        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); }
+        menu.returnFocus?.focus({ preventScroll: true }); close();
+      } else if (["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) event.preventDefault();
+    };
+    window.addEventListener("pointerdown", outside, true);
+    window.addEventListener("contextmenu", outside, true);
+    window.addEventListener("keydown", keydown, true);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    window.addEventListener("blur", close);
+    return () => {
+      window.removeEventListener("pointerdown", outside, true);
+      window.removeEventListener("contextmenu", outside, true);
+      window.removeEventListener("keydown", keydown, true);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("blur", close);
+    };
+  }, [menu]);
   let url: string | undefined;
   try {
     const parsed = new URL(href ?? "");
     if (parsed.protocol === "https:" || parsed.protocol === "http:") url = parsed.href;
   } catch { /* Relative and non-web destinations remain readable text. */ }
   if (!url) return <span className="message-link" title={href}>{children}</span>;
-  return <><a className="message-link" href={url} title={`Ctrl+click to open in browser\n${url}`} onAuxClick={(event) => event.preventDefault()} onClick={(event) => {
+  const copyLink = async () => {
+    setError(undefined);
+    try {
+      if (!navigator.clipboard) throw new Error("Clipboard access is unavailable");
+      await navigator.clipboard.writeText(url);
+    } catch { setError("Could not copy link"); }
+    menu?.returnFocus?.focus({ preventScroll: true }); setMenu(undefined);
+  };
+  return <><a ref={linkRef} className="message-link" href={url} title={`Ctrl+click to open in browser\n${url}`} onContextMenu={(event) => {
+    event.preventDefault();
+    const bounds = event.currentTarget.getBoundingClientRect();
+    setMenu({ x: event.clientX || bounds.left, y: event.clientY || bounds.bottom, returnFocus: document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget });
+  }} onAuxClick={(event) => event.preventDefault()} onClick={(event) => {
     event.preventDefault();
     if (!event.ctrlKey || event.button !== 0) return;
     setError(undefined);
-    void openExternalUrl(url).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
-  }}>{children}</a>{error && <span className="message-link-error" role="alert"> Could not open link: {error}</span>}</>;
+    void openExternalUrl(url).catch((reason) => setError(`Could not open link: ${reason instanceof Error ? reason.message : String(reason)}`));
+  }}>{children}</a>{menu && createPortal(<div ref={menuRef} className="conversation-menu link-context-menu" role="menu" aria-label="Link actions" style={{ left: menu.x, top: menu.y }} onContextMenu={(event) => event.preventDefault()}>
+    <button type="button" role="menuitem" onClick={() => void copyLink()}><Copy size={14} />Copy link</button>
+  </div>, linkRef.current?.closest(".app") ?? document.body)}{error && <span className="message-link-error" role="alert"> {error}</span>}</>;
 }
 
 const markdownComponents: Components = {
