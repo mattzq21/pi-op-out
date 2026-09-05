@@ -1,11 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type SetStateAction } from "react";
-import { ArrowUp, CircleStop, FileText, ImagePlus, Paperclip, TerminalSquare, X } from "lucide-react";
+import { ArrowUp, CircleStop, FileText, ImagePlus, Paperclip, Pause, Play, TerminalSquare, X } from "lucide-react";
 import type { AgentProfile, ComposerUpload, ContextUsage, ImageAttachment, Model, PromptDictionary, SequenceProfile, SlashCommand } from "../types";
 import { applyDictionary, dictionaryMatches } from "../lib/dictionaries";
 import { IconButton } from "./IconButton";
 
 interface Props {
   streaming: boolean;
+  paused?: boolean;
+  pausing?: boolean;
   queued: number;
   commands: SlashCommand[];
   agents: AgentProfile[];
@@ -26,7 +28,9 @@ interface Props {
   restoredDraft?: { id: string; value: string };
   focusRequest?: number;
   onSend: (message: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>;
-  onAbort: () => void;
+  onAbort: () => void | Promise<void>;
+  onPause: () => void | Promise<void>;
+  onResume: () => void | Promise<void>;
   onOpenTerminal?: () => void;
   onAgent: (name: string) => void;
   onModel: (model: Model) => void;
@@ -64,7 +68,7 @@ const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((
 });
 const escapeAttribute = (value: string) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]!);
 
-export function Composer({ streaming, queued, commands, agents, sequences, activeAgent, dictionaries = [], models, model, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onOpenTerminal, onAgent, onModel, onThinking }: Props) {
+export function Composer({ streaming, paused = false, pausing = false, queued, commands, agents, sequences, activeAgent, dictionaries = [], models, model, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onThinking }: Props) {
   const [localValue, setLocalValue] = useState("");
   const value = draft ?? localValue;
   const setValue = (next: string) => { if (onDraftChange) onDraftChange(next); else setLocalValue(next); };
@@ -77,7 +81,11 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
   const [uploadError, setUploadError] = useState<string>();
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
-  const abortingRef = useRef(false);
+  const [controlAction, setControlAction] = useState<"pause" | "resume" | "abort">();
+  const [controlError, setControlError] = useState<string>();
+  const controlActionRef = useRef(false);
+  const controlPending = Boolean(controlAction) || pausing;
+  const inputDisabled = controlsDisabled || controlPending;
   const [selectedMatch, setSelectedMatch] = useState(0);
   const [paletteDismissed, setPaletteDismissed] = useState(false);
   const [editorScrollTop, setEditorScrollTop] = useState(0);
@@ -154,6 +162,7 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
     });
   };
   const submit = async () => {
+    if (controlsDisabled || pausing || controlActionRef.current) return;
     const textFiles = uploads.filter((upload) => upload.kind === "text");
     const message = [expandSkillReference(applyDictionary(value.trim(), dictionaries), commands), ...textFiles.map((file) => `<file name="${escapeAttribute(file.name)}">\n${file.text}\n</file>`)].filter(Boolean).join("\n\n");
     const images = uploads.flatMap((upload) => upload.image ? [upload.image] : []);
@@ -168,10 +177,12 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
       setUploadError(reason instanceof Error ? reason.message : String(reason));
     } finally { sendingRef.current = false; setSending(false); }
   };
-  const abort = async () => {
-    if (abortingRef.current) return;
-    abortingRef.current = true;
-    try { await onAbort(); } finally { abortingRef.current = false; }
+  const control = async (action: "pause" | "resume" | "abort") => {
+    if (controlsDisabled || pausing || controlActionRef.current) return;
+    controlActionRef.current = true; setControlAction(action); setControlError(undefined);
+    try { await (action === "pause" ? onPause() : action === "resume" ? onResume() : onAbort()); }
+    catch (reason) { setControlError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { controlActionRef.current = false; setControlAction(undefined); }
   };
   const chooseCommand = (command: SlashCommand) => {
     const name = skillName(command);
@@ -181,23 +192,28 @@ export function Composer({ streaming, queued, commands, agents, sequences, activ
   };
 
   return <div className="composer-wrap">
-    {streaming && <div className="stream-banner"><span className="pulse" />Pi is working {queued > 0 && `· ${queued} queued`}<label>Send as <select aria-label="Streaming message behavior" value={behavior} onChange={(event) => setBehavior(event.target.value as typeof behavior)}><option value="steer">Steer now</option><option value="followUp">Follow up</option></select></label><button onClick={() => void abort()}>Stop</button></div>}
+    {(streaming || paused || pausing) && <div className={`stream-banner${paused ? " paused" : ""}`}>
+      <span className="stream-status" role="status">{paused ? <Pause size={11} /> : <span className="pulse" />}{controlAction === "resume" ? "Resuming…" : pausing || controlAction === "pause" ? "Pausing…" : paused ? "Paused · Completed turns saved" : "Pi is working"}{queued > 0 && ` · ${queued} queued`}</span>
+      {streaming && !paused && <label>Send as <select aria-label="Streaming message behavior" disabled={inputDisabled} value={behavior} onChange={(event) => setBehavior(event.target.value as typeof behavior)}><option value="steer">Steer now</option><option value="followUp">Follow up</option></select></label>}
+      <div className="stream-controls"><button disabled={inputDisabled} onClick={() => void control(paused ? "resume" : "pause")}>{paused ? "Resume" : "Pause"}</button><button disabled={inputDisabled} onClick={() => void control("abort")}>Stop</button></div>
+    </div>}
     <div ref={composerRef} className="composer">
       {matches.length > 0 && <div className="command-palette" role="listbox" aria-label={skillQuery === undefined ? "Pi commands" : "Pi skills"}>{matches.map((command, index) => <button role="option" aria-selected={index === selectedMatch} key={`${command.source}:${command.name}`} type="button" onMouseEnter={() => setSelectedMatch(index)} onClick={() => chooseCommand(command)}><span><strong>{skillQuery !== undefined ? `$${skillName(command)}` : `/${command.name}`}</strong><small>{command.description || `${command.source} command`}</small></span><em>{command.source}</em></button>)}</div>}
       {uploads.length > 0 && <div className="attachments">{uploads.map((upload) => <span key={upload.id}>{upload.kind === "image" ? <ImagePlus size={12} /> : <FileText size={12} />}<b>{upload.name}</b><button aria-label={`Remove ${upload.name}`} onClick={() => { updateUploads((current) => current.filter((item) => item.id !== upload.id)); setUploadError(undefined); }}><X size={11} /></button></span>)}</div>}
       {uploadError && <div className="upload-error" role="alert">{uploadError}</div>}
+      {controlError && <div className="upload-error" role="alert">{controlError}</div>}
       <div className={`composer-editor${dictionaryHighlights.length ? " has-dictionary-matches" : ""}`}>
         {dictionaryHighlights.length > 0 && <div className="composer-highlight-viewport" aria-hidden="true"><div className="composer-highlight-layer" style={{ transform: `translateY(-${editorScrollTop}px)` }}>{dictionaryHighlights.map((match, index) => <span key={`${match.start}-${match.end}`}><span>{value.slice(index ? dictionaryHighlights[index - 1].end : 0, match.start)}</span><mark title={match.replacement} onPointerDown={(event) => { event.preventDefault(); ref.current?.focus(); ref.current?.setSelectionRange(match.start, match.end); }}>{value.slice(match.start, match.end)}</mark></span>)}<span>{value.slice(dictionaryHighlights.at(-1)?.end ?? 0)}</span></div></div>}
-        <textarea ref={ref} aria-label="Message Pi" disabled={controlsDisabled} placeholder={controlsDisabled ? "Connecting to Pi…" : streaming ? (behavior === "steer" ? "Steer Pi while it works…" : "Queue a follow-up…") : "Ask Pi to build, explain, or change anything…"} value={value} rows={1} onScroll={(event) => setEditorScrollTop(event.currentTarget.scrollTop)} onChange={(event) => { setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape" && matches.length) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true); } else if (matches.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length); } else if ((event.key === "Tab" || event.key === "Enter") && !event.shiftKey && matches[selectedMatch]) { event.preventDefault(); chooseCommand(matches[selectedMatch]); } else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submit(); } }} />
+        <textarea ref={ref} aria-label="Message Pi" disabled={controlsDisabled} placeholder={controlsDisabled ? "Connecting to Pi…" : paused ? "Send a message to continue Pi…" : streaming ? (behavior === "steer" ? "Steer Pi while it works…" : "Queue a follow-up…") : "Ask Pi to build, explain, or change anything…"} value={value} rows={1} onScroll={(event) => setEditorScrollTop(event.currentTarget.scrollTop)} onChange={(event) => { setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape" && matches.length) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true); } else if (matches.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length); } else if ((event.key === "Tab" || event.key === "Enter") && !event.shiftKey && matches[selectedMatch]) { event.preventDefault(); chooseCommand(matches[selectedMatch]); } else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submit(); } }} />
       </div>
       <input ref={fileRef} className="hidden-input" type="file" multiple accept="text/*,.md,.mdx,.json,.jsonl,.yaml,.yml,.toml,.xml,.csv,.tsv,.js,.jsx,.ts,.tsx,.css,.scss,.html,.py,.rs,.go,.java,.kt,.c,.cc,.cpp,.h,.hpp,.sh,.sql,.graphql,.ini,.conf,.env,.log,image/png,image/jpeg,image/gif,image/webp" onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; void addFiles(files); }} />
       <div className="composer-bar"><div className="composer-tools"><IconButton label="Attach files" disabled={controlsDisabled} onClick={() => fileRef.current?.click()}><Paperclip size={17} /></IconButton>{onOpenTerminal && <IconButton label="Open terminal" disabled={controlsDisabled} onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton>}{contextUsage && <ContextWheel usage={contextUsage} />}{sessionCache && <span className={`session-cache-hit${sessionCache.low ? " low" : ""}`} title={`${sessionCache.cachedTokens.toLocaleString()} of ${sessionCache.promptTokens.toLocaleString()} session prompt tokens read from cache`}>Cache {sessionCache.rate}%</span>}</div>
         <div className="composer-actions">
-        <ContainedPicker label="Agent" value={activeAgent ?? "default"} disabled={streaming || controlsDisabled} menuWidth={120} centered options={[...(agents.length ? agents : [{ name: "default" }]).map((agent) => ({ value: agent.name, label: agent.name, detail: "Agent" })), ...sequences.map((sequence) => ({ value: sequence.name, label: sequence.name, detail: "Sequence" })), { value: "final-only", label: "final-only", detail: "Multi-agent" }, { value: "own+final", label: "own+final", detail: "Multi-agent" }]} onChange={onAgent} />
-        <ContainedPicker label="Model" value={model ? `${model.provider}/${model.id}` : ""} disabled={streaming || controlsDisabled} options={models.map((item) => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item), detail: item.provider }))} onChange={(value) => { const next = models.find((item) => `${item.provider}/${item.id}` === value); if (next) onModel(next); }} />
-        <ContainedPicker label="Thinking level" value={thinkingLevel} disabled={streaming || controlsDisabled} menuWidth={120} centered compact options={thinkingLevels.map((level) => ({ value: level, label: level }))} onChange={onThinking} />
+        <ContainedPicker label="Agent" value={activeAgent ?? "default"} disabled={streaming || inputDisabled} menuWidth={120} centered options={[...(agents.length ? agents : [{ name: "default" }]).map((agent) => ({ value: agent.name, label: agent.name, detail: "Agent" })), ...sequences.map((sequence) => ({ value: sequence.name, label: sequence.name, detail: "Sequence" })), { value: "final-only", label: "final-only", detail: "Multi-agent" }, { value: "own+final", label: "own+final", detail: "Multi-agent" }]} onChange={onAgent} />
+        <ContainedPicker label="Model" value={model ? `${model.provider}/${model.id}` : ""} disabled={streaming || inputDisabled} options={models.map((item) => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item), detail: item.provider }))} onChange={(value) => { const next = models.find((item) => `${item.provider}/${item.id}` === value); if (next) onModel(next); }} />
+        <ContainedPicker label="Thinking level" value={thinkingLevel} disabled={streaming || inputDisabled} menuWidth={120} centered compact options={thinkingLevels.map((level) => ({ value: level, label: level }))} onChange={onThinking} />
         <span className="composer-divider" />
-        {streaming && <IconButton label="Stop Pi" className="stop-compact" onClick={() => void abort()}><CircleStop size={17} /></IconButton>}<IconButton label={streaming ? (behavior === "steer" ? "Send steering message" : "Queue follow-up") : "Send message"} className="send" disabled={controlsDisabled || sending || (!value.trim() && uploads.length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton></div>
+        {(streaming || paused || pausing) && <><IconButton label={paused ? "Resume Pi" : "Pause Pi"} disabled={inputDisabled} onClick={() => void control(paused ? "resume" : "pause")}>{paused ? <Play size={17} /> : <Pause size={17} />}</IconButton><IconButton label="Stop Pi" className="stop-compact" disabled={inputDisabled} onClick={() => void control("abort")}><CircleStop size={17} /></IconButton></>}<IconButton label={streaming ? (behavior === "steer" ? "Send steering message" : "Queue follow-up") : "Send message"} className="send" disabled={inputDisabled || sending || (!value.trim() && uploads.length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton></div>
       </div>
     </div>
   </div>;

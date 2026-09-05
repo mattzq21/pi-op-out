@@ -8,7 +8,7 @@ import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 import { cacheHitStats } from "../lib/messages";
 import { parseSequencePrompt } from "../lib/sequence";
 
-interface Props { state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; promptContext?: PromptContextInfo; debug?: boolean; agents?: AgentProfile[]; sequences?: SequenceProfile[]; activeAgent?: string; dictionaries?: PromptDictionary[]; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: string[]; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: string) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: SetStateAction<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>; onAbort: () => void; onOpenTerminal?: () => void; onOpenProject: () => void; onBranch: (message: ChatMessage) => void; onCreateWorktree?: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onThinking: (level: string) => void; }
+interface Props { state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; promptContext?: PromptContextInfo; debug?: boolean; agents?: AgentProfile[]; sequences?: SequenceProfile[]; activeAgent?: string; dictionaries?: PromptDictionary[]; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: string[]; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: string) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: SetStateAction<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>; onAbort: () => void | Promise<void>; onPause: () => void | Promise<void>; onResume: () => void | Promise<void>; onOpenTerminal?: () => void; onOpenProject: () => void; onBranch: (message: ChatMessage) => void; onCreateWorktree?: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onThinking: (level: string) => void; }
 
 export function ChatView(props: Props) {
   const bottom = useRef<HTMLDivElement>(null);
@@ -25,7 +25,8 @@ export function ChatView(props: Props) {
   const onBranch = useCallback<Props["onBranch"]>((message) => actions.current.onBranch(message), []);
   const onCreateWorktree = useCallback<NonNullable<Props["onCreateWorktree"]>>((message) => actions.current.onCreateWorktree?.(message), []);
   const projectName = props.projectCwd?.split(/[\\/]/).filter(Boolean).at(-1);
-  const abortedTurn = !props.state.isStreaming ? findReplaceableAbortedTurn(props.messages) : undefined;
+  const retryable = !props.state.isStreaming && !props.state.isPaused && !props.state.isPausing;
+  const abortedTurn = retryable ? findReplaceableAbortedTurn(props.messages) : undefined;
   useEffect(() => { if (followLatest.current) bottom.current?.scrollIntoView({ behavior: "auto" }); }, [props.messages, props.gitDiffs, props.state.isStreaming]);
   useEffect(() => {
     const composer = composerStack.current;
@@ -41,9 +42,9 @@ export function ChatView(props: Props) {
   return <main ref={shell} className="chat-shell" onFocusCapture={props.onActivate} onPointerDownCapture={props.onActivate}>
     <div ref={messagesRef} className="messages" aria-live="polite" onScroll={(event) => { const element = event.currentTarget; followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80; }}><div className="conversation">
       {!props.messages.length && <div className="empty-chat"><span>π</span></div>}
-      {turns.map((turn, index) => <ConversationTurn key={turn[0]?.id || index} messages={turn} gitDiffs={props.gitDiffs} promptContext={props.promptContext} debug={props.debug ?? false} active={props.state.isStreaming && index === turns.length - 1} retryable={!props.state.isStreaming && index === turns.length - 1} onRetry={onRetry} onBranch={onBranch} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} />)}<div ref={bottom} className="scroll-anchor" />
+      {turns.map((turn, index) => <ConversationTurn key={turn[0]?.id || index} messages={turn} gitDiffs={props.gitDiffs} promptContext={props.promptContext} debug={props.debug ?? false} active={props.state.isStreaming && index === turns.length - 1} retryable={retryable && index === turns.length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index === turns.length - 1} onRetry={onRetry} onBranch={onBranch} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} />)}<div ref={bottom} className="scroll-anchor" />
     </div></div>
-    {!props.readOnly && <div ref={composerStack} className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.map((line, index) => <div key={index}>{line}</div>)}</div>} {props.statuses.length > 0 && <div className="extension-status">{props.statuses.join(" · ")}</div>}{props.state.activity && <div className="runtime-activity" role="status">{props.state.activity}</div>}{!props.messages.length && props.state.messageCount === 0 && <div className="new-chat-project"><button type="button" className={projectName ? "selected" : undefined} aria-label={projectName ? `Selected project: ${projectName}` : "Choose project"} title={props.projectCwd} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName ?? "Choose project"}</button></div>}<Composer streaming={props.state.isStreaming} queued={props.state.pendingMessageCount} commands={props.commands} agents={props.agents ?? []} sequences={props.sequences ?? []} activeAgent={props.activeAgent} dictionaries={props.dictionaries} models={props.models} model={props.state.model} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug ? sessionCache : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn ? { id: `${abortedTurn.assistant.timestamp ?? abortedTurn.assistant.id}:${abortedTurn.prompt}`, value: abortedTurn.prompt } : undefined} onSend={props.onSend} onAbort={props.onAbort} onOpenTerminal={props.onOpenTerminal} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onThinking={props.onThinking} /></div>}
+    {!props.readOnly && <div ref={composerStack} className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.map((line, index) => <div key={index}>{line}</div>)}</div>} {props.statuses.length > 0 && <div className="extension-status">{props.statuses.join(" · ")}</div>}{props.state.activity && <div className="runtime-activity" role="status">{props.state.activity}</div>}{!props.messages.length && props.state.messageCount === 0 && <div className="new-chat-project"><button type="button" className={projectName ? "selected" : undefined} aria-label={projectName ? `Selected project: ${projectName}` : "Choose project"} title={props.projectCwd} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName ?? "Choose project"}</button></div>}<Composer streaming={props.state.isStreaming} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} commands={props.commands} agents={props.agents ?? []} sequences={props.sequences ?? []} activeAgent={props.activeAgent} dictionaries={props.dictionaries} models={props.models} model={props.state.model} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug ? sessionCache : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn ? { id: `${abortedTurn.assistant.timestamp ?? abortedTurn.assistant.id}:${abortedTurn.prompt}`, value: abortedTurn.prompt } : undefined} onSend={props.onSend} onAbort={props.onAbort} onPause={props.onPause} onResume={props.onResume} onOpenTerminal={props.onOpenTerminal} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onThinking={props.onThinking} /></div>}
   </main>;
 }
 
@@ -81,20 +82,20 @@ function compactCompletedTools(messages: ChatMessage[], groupRepeated = true) {
   }, []);
 }
 
-function renderMessages(messages: ChatMessage[], expanded: boolean, compact = true, promptContext?: PromptContextInfo, debug = false) {
-  return compactCompletedTools(messages, compact).map(({ message, count }) => <Message key={message.id} message={message.role === "assistant" && !message.promptContext && promptContext ? { ...message, promptContext } : message} toolCount={count} expanded={expanded} debug={debug} />);
+function renderMessages(messages: ChatMessage[], expanded: boolean, compact = true, promptContext?: PromptContextInfo, debug = false, paused = false) {
+  return compactCompletedTools(messages, compact).map(({ message, count }) => <Message key={message.id} message={message.role === "assistant" && !message.promptContext && promptContext ? { ...message, promptContext } : message} toolCount={count} expanded={expanded} debug={debug} paused={paused} />);
 }
 
-type ConversationTurnProps = { messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; promptContext?: PromptContextInfo; debug: boolean; active: boolean; retryable: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"]; onCreateWorktree?: Props["onCreateWorktree"] };
+type ConversationTurnProps = { messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; promptContext?: PromptContextInfo; debug: boolean; active: boolean; retryable: boolean; paused: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"]; onCreateWorktree?: Props["onCreateWorktree"] };
 
-function ConversationTurnView({ messages, gitDiffs, promptContext, debug, active, retryable, onRetry, onBranch, onCreateWorktree }: ConversationTurnProps) {
+function ConversationTurnView({ messages, gitDiffs, promptContext, debug, active, retryable, paused, onRetry, onBranch, onCreateWorktree }: ConversationTurnProps) {
   const [retryError, setRetryError] = useState<string>();
   const [retrying, setRetrying] = useState(false); const retryingRef = useRef(false);
   const userIndex = messages.findIndex((message) => message.role === "user");
   const parsed = userIndex >= 0 && (!messages[userIndex].entryId || messages[userIndex].sequenceMarkerAuthorized) ? parseSequencePrompt(textOf(messages[userIndex].content)) : { text: userIndex >= 0 ? textOf(messages[userIndex].content) : "" };
   if (parsed.step && !parsed.step.visible) return null;
   const shown = parsed.step ? messages.map((message, index) => index === userIndex ? { ...message, content: parsed.text } : message) : messages;
-  if (active) return <>{parsed.step && parsed.step.step > 0 && <div className="sequence-step-label">{parsed.step.sequence} · {parsed.step.agent}</div>}{renderMessages(shown, true, false, promptContext, debug)}</>;
+  if (active) return <>{parsed.step && parsed.step.step > 0 && <div className="sequence-step-label">{parsed.step.sequence} · {parsed.step.agent}</div>}{renderMessages(shown, true, false, promptContext, debug, paused)}</>;
 
   let finalIndex = -1;
   for (let index = shown.length - 1; index >= 0; index -= 1) {
@@ -115,19 +116,19 @@ function ConversationTurnView({ messages, gitDiffs, promptContext, debug, active
   const worktreeResponse = finalMessage && !["toolUse", "aborted", "error"].includes(finalMessage.stopReason ?? "") ? onCreateWorktree : undefined;
   const gitDiff = finalMessage ? gitDiffs?.[finalMessage.id] : undefined;
   const workedFor = formatWorkedFor(userIndex >= 0 ? shown[userIndex].timestamp : shown[0]?.timestamp, finalMessage?.completedAt ?? finalMessage?.timestamp);
-  const retryPrompt = retryable && finalMessage?.stopReason === "aborted" ? [...userMessages].reverse().map((message) => textOf(message.content).trim()).find(Boolean) : undefined;
+  const retryPrompt = retryable ? findReplaceableAbortedTurn(shown)?.prompt : undefined;
 
   return <section className="conversation-turn">
     {parsed.step && parsed.step.step > 0 && <div className="sequence-step-label">{parsed.step.sequence} · {parsed.step.agent}</div>}
     {userMessages.map((message) => <Message key={message.id} message={message} debug={debug} />)}
-    {intermediate.length > 0 && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}</summary><div className="work-group-content">{renderMessages(intermediate, true)}</div></details>}
-    {finalMessage && <Message message={finalMessage} diff={gitDiff} debug={debug} onBranch={onBranch} onCreateWorktree={worktreeResponse} retrying={retrying} onRetry={retryPrompt ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(onRetry(retryPrompt)).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
+    {intermediate.length > 0 && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}</summary><div className="work-group-content">{renderMessages(intermediate, true, true, undefined, false, paused)}</div></details>}
+    {finalMessage && <Message message={finalMessage} diff={gitDiff} debug={debug} paused={paused} onBranch={onBranch} onCreateWorktree={worktreeResponse} retrying={retrying} onRetry={retryPrompt ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(onRetry(retryPrompt)).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
     {retryError && <div className="message-failure retry-error" role="alert">Retry failed: {retryError}</div>}
   </section>;
 }
 
 const ConversationTurn = memo(ConversationTurnView, (previous, next) => previous.active === next.active
-  && previous.retryable === next.retryable && previous.debug === next.debug && previous.gitDiffs === next.gitDiffs
+  && previous.retryable === next.retryable && previous.paused === next.paused && previous.debug === next.debug && previous.gitDiffs === next.gitDiffs
   && previous.promptContext === next.promptContext && previous.onRetry === next.onRetry && previous.onBranch === next.onBranch
   && previous.onCreateWorktree === next.onCreateWorktree && previous.messages.length === next.messages.length
   && previous.messages.every((message, index) => message === next.messages[index]));

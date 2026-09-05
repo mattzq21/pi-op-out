@@ -4,6 +4,24 @@ const visibleUserContent = (content: unknown) => content;
 
 export type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number }; customType?: string; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string };
 
+export function resumeMarker(entry: PiEntry) {
+  const message = (entry.data as { message?: unknown } | undefined)?.message;
+  return entry.type === "custom" && entry.customType === "pi-desktop-resume" && typeof message === "string" ? message : undefined;
+}
+
+export function isResumeMessage(message: { role?: unknown; content?: unknown }, markers: ReadonlySet<string>) {
+  if (message.role !== "user") return false;
+  const content = message.content;
+  const text = typeof content === "string" ? content : Array.isArray(content) ? content.filter((part) => part.type === "text").map((part) => part.text).join("\n") : "";
+  return markers.has(text);
+}
+
+export function checkpointLatestUser(messages: ChatMessage[]) {
+  const index = messages.map((message) => message.role).lastIndexOf("user");
+  if (index < 0 || messages[index].contextCheckpoint) return messages;
+  return messages.map((message, candidate) => candidate === index ? { ...message, contextCheckpoint: true } : message);
+}
+
 export function cacheHitStats(usage?: { input: number; cacheRead: number }) {
   if (!usage) return undefined;
   const promptTokens = usage.input + usage.cacheRead;
@@ -42,11 +60,14 @@ export function applyAssistantMessageEvent(message: ChatMessage, value: unknown)
 export function branchMessages(entries: PiEntry[], leafId: string | null): ChatMessage[] {
   const byId = new Map(entries.map((entry) => [entry.id, entry])); const branch: PiEntry[] = []; const visited = new Set<string>(); let cursor = leafId;
   while (cursor && !visited.has(cursor)) { visited.add(cursor); const entry = byId.get(cursor); if (!entry) break; branch.unshift(entry); cursor = entry.parentId; }
-  const messages: ChatMessage[] = []; let promptContext: PromptContextInfo | undefined; let sequenceMarkerAuthorized = false;
+  let messages: ChatMessage[] = []; const resumeMarkers = new Set<string>(); let promptContext: PromptContextInfo | undefined; let sequenceMarkerAuthorized = false;
   for (const entry of branch) {
+    const marker = resumeMarker(entry); if (marker) { resumeMarkers.add(marker); messages = checkpointLatestUser(messages); continue; }
+    if (entry.type === "custom" && entry.customType === "pi-desktop-pause-state" && (entry.data as { isPaused?: boolean } | undefined)?.isPaused) messages = checkpointLatestUser(messages);
     if (entry.type === "custom" && entry.customType === "pi-desktop-prompt-context") { promptContext = entry.data as PromptContextInfo; continue; }
     if (entry.type === "custom" && entry.customType === "pi-orchestration-sequence-marker") { sequenceMarkerAuthorized = true; continue; }
     if (entry.type === "message" && entry.message) {
+      if (isResumeMessage(entry.message, resumeMarkers)) continue;
       const message = normalizeMessage(entry.message as unknown as Record<string, unknown>, entry.id, entry.timestamp);
       if (!(["user", "assistant", "tool"] as string[]).includes(message.role)) continue;
       const visible = message.role === "user" && sequenceMarkerAuthorized ? { ...message, sequenceMarkerAuthorized: true } : message;

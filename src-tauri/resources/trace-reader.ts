@@ -4,7 +4,7 @@ import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-type Entry = { type?: string; id?: string; parentId?: string | null; message?: Message };
+type Entry = { type?: string; id?: string; parentId?: string | null; message?: Message; customType?: string; data?: { message?: string } };
 type Message = { role?: string; content?: unknown; stopReason?: string };
 type TraceFile = { path: string; modified: number };
 type CleanMessage = { role: "user" | "assistant"; text: string };
@@ -68,10 +68,12 @@ export function cleanTrace(content: string): CleanMessage[] {
     visited.add(cursor); const entry = indexed.get(cursor); if (!entry) break;
     branch.unshift(entry); cursor = typeof entry.parentId === "string" ? entry.parentId : undefined;
   }
+  const resumeMessages = new Set<string>();
   return branch.flatMap((entry): CleanMessage[] => {
+    if (entry.type === "custom" && entry.customType === "pi-desktop-resume" && typeof entry.data?.message === "string") resumeMessages.add(entry.data.message);
     if (entry.type !== "message" || !entry.message) return [];
     const text = textContent(entry.message.content); if (!text) return [];
-    if (entry.message.role === "user" && !syntheticUserMessage(text)) return [{ role: "user", text }];
+    if (entry.message.role === "user" && !syntheticUserMessage(text) && !resumeMessages.has(text)) return [{ role: "user", text }];
     if (entry.message.role === "assistant" && entry.message.stopReason !== "toolUse") return [{ role: "assistant", text }];
     return [];
   });

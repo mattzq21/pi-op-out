@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentState, ChatMessage, Model, RpcEvent, SlashCommand } from "../types";
 import type { NativeTransport } from "./nativeTransport";
-import { applyAssistantMessageEvent, branchMessages, normalizeMessage, type PiEntry } from "./messages";
+import { applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
 import { contextUsageAfterCompaction } from "./contextUsage";
 
 type MessageUpdate = (messages: ChatMessage[]) => ChatMessage[];
@@ -11,13 +11,14 @@ const rpcContent = (value: unknown): ChatMessage["content"] => (value as { conte
 export function useChatSession(transport: Pick<NativeTransport, "command" | "subscribe">, initialState: AgentState = emptyState) {
   const [state, setState] = useState(initialState); const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [models, setModels] = useState<Model[]>([]); const [commands, setCommands] = useState<SlashCommand[]>([]); const [thinkingLevels, setThinkingLevels] = useState<string[]>(["off"]);
+  const resumeMarkers = useRef(new Set<string>());
   const liveRevision = useRef(0); const activeAssistantId = useRef<string | undefined>(undefined); const activeMessageIds = useRef(new Map<string, string>()); const liveMessageSequence = useRef(0); const pendingUpdates = useRef<MessageUpdate[]>([]); const frame = useRef<number | undefined>(undefined);
   const nextLiveMessageId = (role: unknown) => `live-${String(role)}-${Date.now()}-${++liveMessageSequence.current}`;
   const flush = useCallback(() => { if (frame.current !== undefined) cancelAnimationFrame(frame.current); frame.current = undefined; const updates = pendingUpdates.current.splice(0); if (updates.length) setMessages((current) => updates.reduce((next, update) => update(next), current)); }, []);
   const queue = useCallback((update: MessageUpdate) => { pendingUpdates.current.push(update); if (frame.current === undefined) frame.current = requestAnimationFrame(flush); }, [flush]);
   const discardPendingUpdates = useCallback(() => { if (frame.current !== undefined) cancelAnimationFrame(frame.current); frame.current = undefined; pendingUpdates.current.length = 0; }, []);
   useEffect(() => discardPendingUpdates, [discardPendingUpdates]);
-  useEffect(() => { liveRevision.current += 1; activeAssistantId.current = undefined; activeMessageIds.current.clear(); discardPendingUpdates(); }, [discardPendingUpdates, transport]);
+  useEffect(() => { liveRevision.current += 1; activeAssistantId.current = undefined; activeMessageIds.current.clear(); resumeMarkers.current.clear(); discardPendingUpdates(); }, [discardPendingUpdates, transport]);
 
   const refresh = useCallback(async () => {
     const revision = liveRevision.current;
@@ -30,22 +31,26 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
     if (liveRevision.current === revision) {
       discardPendingUpdates();
       setState({ ...nextState, ...(statsResult.status === "fulfilled" ? { contextUsage: statsResult.value.contextUsage } : {}) });
-      if (historyResult.status === "fulfilled") setMessages(branchMessages(historyResult.value.entries, historyResult.value.leafId));
+      if (historyResult.status === "fulfilled") { for (const entry of historyResult.value.entries) { const marker = resumeMarker(entry); if (marker) resumeMarkers.current.add(marker); } setMessages(branchMessages(historyResult.value.entries, historyResult.value.leafId)); }
       if (modelResult.status === "fulfilled") setModels(modelResult.value.models);
       if (thinkingResult.status === "fulfilled") setThinkingLevels(thinkingResult.value.levels);
-      if (commandResult.status === "fulfilled") { const visibleCommands = commandResult.value.commands.filter((command) => command.sourceInfo?.source !== "inline" && command.name !== "pi-orchestration-next"); setCommands(visibleCommands.some((command) => command.name === "compact") ? visibleCommands : [{ name: "compact", description: "Compact conversation context", source: "builtin" }, ...visibleCommands]); }
+      if (commandResult.status === "fulfilled") { const visibleCommands = commandResult.value.commands.filter((command) => command.sourceInfo?.source !== "inline" && !["pi-orchestration-next", "pi-desktop-control"].includes(command.name)); setCommands(visibleCommands.some((command) => command.name === "compact") ? visibleCommands : [{ name: "compact", description: "Compact conversation context", source: "builtin" }, ...visibleCommands]); }
     }
     return nextState;
   }, [discardPendingUpdates, transport]);
 
   const handleEvent = useCallback((event: RpcEvent) => {
-    if (["agent_start", "agent_end", "agent_settled", "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end"].includes(event.type)) liveRevision.current += 1;
-    if (event.type === "agent_start") setState((current) => ({ ...current, isStreaming: true }));
+    if (event.type === "entry_appended" && event.entry) { const marker = resumeMarker(event.entry as PiEntry); if (marker) { resumeMarkers.current.add(marker); setMessages(checkpointLatestUser); } }
+    if (["agent_start", "agent_end", "agent_settled", "pause_state", "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end"].includes(event.type)) liveRevision.current += 1;
+    if (event.type === "agent_start") setState((current) => ({ ...current, isStreaming: true, isPaused: false }));
+    if (event.type === "pause_state") setState((current) => ({ ...current, isPaused: event.isPaused === true, isPausing: event.isPausing === true, ...(event.isPaused === true && event.isPausing !== true ? { isStreaming: false, activity: undefined } : {}) }));
+    if (event.type === "pause_state" && event.isPaused === true && event.isPausing !== true) { flush(); setMessages(checkpointLatestUser); }
     if (event.type === "agent_end" || event.type === "agent_settled") setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
-    if (event.type === "disconnected") setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
+    if (event.type === "disconnected") setState((current) => ({ ...current, isStreaming: false, isPausing: false, activity: undefined }));
     if (event.type === "message_start" || event.type === "message_end") {
       if (event.type === "message_end") flush();
       const rawMessage = event.message as Record<string, unknown>; const roleKey = String(rawMessage.role ?? "message");
+      if (isResumeMessage(rawMessage, resumeMarkers.current)) return;
       if (rawMessage.role === "custom" && rawMessage.display === false) return;
       const liveId = event.type === "message_start" ? nextLiveMessageId(roleKey) : activeMessageIds.current.get(roleKey) ?? nextLiveMessageId(roleKey);
       if (event.type === "message_start") activeMessageIds.current.set(roleKey, liveId); else activeMessageIds.current.delete(roleKey);

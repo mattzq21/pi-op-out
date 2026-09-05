@@ -17,6 +17,8 @@ type RuntimeDefaults = { model: string; effort: string };
 const STATUS_KEY = "pi-desktop-orchestration";
 const STATE_ENTRY = "pi-orchestration-state";
 const RUN_ENTRY = "pi-orchestration-run";
+const DELEGATIONS_ENTRY = "pi-orchestration-delegations";
+const PAUSE_ENTRY = "pi-desktop-pause-state";
 const SEQUENCE_MARKER_ENTRY = "pi-orchestration-sequence-marker";
 const DEFAULTS_ENV = "PI_ORCHESTRATION_RUNTIME_DEFAULTS";
 const HANDOFF = /^<!-- pi-desktop-sequence:/;
@@ -68,6 +70,11 @@ function finalText(messages: any[]) {
 }
 function safeName(value: string) { return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool"; }
 function multiAgentMode(value: string): "final-only" | "own+final" | undefined { return value === "orchestrator" ? "final-only" : value === "final-only" || value === "own+final" ? value : undefined; }
+function isPaused(ctx: ExtensionContext) {
+  const entry = ctx.sessionManager.getBranch().findLast((item) => item.type === "custom" && item.customType === PAUSE_ENTRY);
+  const state = entry?.type === "custom" ? entry.data as { isPaused?: boolean; isPausing?: boolean } | undefined : undefined;
+  return state?.isPaused === true || state?.isPausing === true;
+}
 function desktopList(name: string) { try { const value = JSON.parse(process.env[name] || "null"); return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined; } catch { return undefined; } }
 function normalizedPath(value: string) { return resolve(value.startsWith("~/") ? join(homedir(), value.slice(2)) : value); }
 function agentSkills(agent: Agent) { const global = desktopList("PI_DESKTOP_SKILL_PATHS"); if (!global) return agent.skills; const allowed = new Set(global.map(normalizedPath)); return agent.skills.filter((skill) => allowed.has(normalizedPath(skill))); }
@@ -135,6 +142,7 @@ export default async function orchestration(pi: ExtensionAPI) {
   process.env.PI_DESKTOP_ORCHESTRATION_ACTIVE = "1";
   let config = await loadConfig(); let active = "default"; let run: Run | undefined; let pendingHandoff: string | undefined; let authorizedHandoff: string | undefined; let activeToolError: string | undefined; let originalTask = ""; let delegations: Delegation[] = []; let runtimeDefaults: RuntimeDefaults | undefined; let runtimeSession = ""; let applyingAgentModel: string | undefined; let applyingAgentEffort: string | undefined; const backgroundControllers = new Set<AbortController>();
   const saveRuntimeDefaults = (value: RuntimeDefaults) => { runtimeDefaults = value; process.env[DEFAULTS_ENV] = JSON.stringify({ ...value, session: runtimeSession }); };
+  const saveDelegations = () => pi.appendEntry(DELEGATIONS_ENTRY, { originalTask, delegations: [...delegations] });
 
   const findAgent = (name: string) => config.agents.find((agent) => agent.name === name);
   const findSequence = (name: string) => config.sequences.find((sequence) => sequence.name === name);
@@ -183,7 +191,7 @@ export default async function orchestration(pi: ExtensionAPI) {
         const agent = findAgent(name); if (!agent) throw new Error(`Unknown agent or sequence: ${params.target}`); const toolError = agentToolError(pi, agent); if (toolError) throw new Error(toolError); onUpdate?.({ content: [{ type: "text", text: `${name} running…` }] });
         const mode = multiAgentMode(active); const prior = delegations.map((item) => `${mode === "own+final" && item.agent === name ? `[Your request]\n${item.task}\n` : ""}[Final from ${item.agent}]\n${item.final}`).join("\n\n");
         const task = mode ? `[Original user request]\n${originalTask}${prior ? `\n\n${prior}` : ""}\n\n[Your current request]\n${output}` : output;
-        const requested = output; output = await runChild(agent, task, ctx.cwd, signal, undefined, runtimeDefaults); if (mode) delegations.push({ agent: name, task: requested, final: output });
+        const requested = output; output = await runChild(agent, task, ctx.cwd, signal, undefined, runtimeDefaults); if (mode) { delegations.push({ agent: name, task: requested, final: output }); saveDelegations(); }
       }
       return { content: [{ type: "text", text: output }], details: { target: params.target, agents: names } };
     }
@@ -209,11 +217,17 @@ export default async function orchestration(pi: ExtensionAPI) {
   }});
   pi.on("session_start", async (_event, ctx) => {
     runtimeSession = ctx.sessionManager.getSessionFile() || "";
+    originalTask = ""; delegations = [];
     try { const stored = JSON.parse(process.env[DEFAULTS_ENV] || "null"); if (stored?.session === runtimeSession && typeof stored.model === "string" && typeof stored.effort === "string") runtimeDefaults = { model: stored.model, effort: stored.effort }; } catch { /* Capture clean runtime defaults below. */ }
     let savedRun: { sequence?: string; index?: number; handoff?: string } | undefined;
     for (const entry of ctx.sessionManager.getBranch()) if (entry.type === "custom") {
       if (entry.customType === STATE_ENTRY && typeof (entry.data as any)?.active === "string") active = (entry.data as any).active;
       if (entry.customType === RUN_ENTRY) savedRun = entry.data as typeof savedRun;
+      if (entry.customType === DELEGATIONS_ENTRY) {
+        const saved = entry.data as { originalTask?: unknown; delegations?: unknown } | undefined;
+        originalTask = typeof saved?.originalTask === "string" ? saved.originalTask : "";
+        delegations = Array.isArray(saved?.delegations) ? saved.delegations.filter((item): item is Delegation => Boolean(item) && typeof item.agent === "string" && typeof item.task === "string" && typeof item.final === "string") : [];
+      }
     }
     if (!runtimeDefaults) saveRuntimeDefaults({ model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "", effort: pi.getThinkingLevel() });
     if (active === "orchestrator") active = "final-only";
@@ -231,7 +245,7 @@ export default async function orchestration(pi: ExtensionAPI) {
     const text = event.text;
     const sequence = findSequence(active);
     if (sequence) { run = { sequence, index: 0, final: "", failed: false }; pi.appendEntry(RUN_ENTRY, { sequence: sequence.name, index: 0 }); const agent = findAgent(sequence.agents[0]); activeToolError = agent ? await activate(agent, ctx) : undefined; if (activeToolError) { pi.appendEntry(RUN_ENTRY, null); run = undefined; ctx.ui.notify(activeToolError, "error"); return { action: "handled" }; } const marked = marker(text, sequence, 0); pi.appendEntry(SEQUENCE_MARKER_ENTRY, { message: marked }); return { action: "transform", text: marked, images: event.images }; }
-    if (multiAgentMode(active)) { originalTask = text; delegations = []; pi.setActiveTools(["call_agent"]); return text === event.text ? { action: "continue" } : { action: "transform", text, images: event.images }; }
+    if (multiAgentMode(active)) { originalTask = text; delegations = []; saveDelegations(); pi.setActiveTools(["call_agent"]); return text === event.text ? { action: "continue" } : { action: "transform", text, images: event.images }; }
     const agent = findAgent(active); activeToolError = agent ? await activate(agent, ctx) : undefined; if (activeToolError) { ctx.ui.notify(activeToolError, "error"); return { action: "handled" }; } return text === event.text ? { action: "continue" } : { action: "transform", text, images: event.images };
   });
   pi.on("before_agent_start", async (event, ctx) => {
@@ -240,8 +254,9 @@ export default async function orchestration(pi: ExtensionAPI) {
     const additions = [agent.systemPrompt, agent.developerPrompt, agent.agentsMd ? `# Agent AGENTS.md\n\n${agent.agentsMd}` : ""].filter((text) => text.trim()).join("\n\n");
     return additions ? { systemPrompt: `${event.systemPrompt}\n\n${additions}` } : undefined;
   });
-  pi.on("agent_end", (event) => { if (run) { const result = finalText(event.messages as any[]); run.final = result.text; run.failed = result.failed; } });
+  pi.on("agent_end", (event, ctx) => { if (run && !isPaused(ctx)) { const result = finalText(event.messages as any[]); run.final = result.text; run.failed = result.failed; } });
   pi.on("agent_settled", async (_event, ctx) => {
+    if (isPaused(ctx)) return;
     const current = run; if (!current || current.failed || !current.final) { if (current) pi.appendEntry(RUN_ENTRY, null); run = undefined; return; }
     const nextIndex = current.index + 1; const visible = Math.min(Math.max(1, current.sequence.visibleSteps), current.sequence.agents.length);
     if (nextIndex < visible) { const handoff = { sequence: current.sequence.name, index: nextIndex, handoff: current.final }; run = undefined; pi.sendUserMessage(`/pi-orchestration-next ${encode(handoff)}`, { expandPromptTemplates: true }); return; }

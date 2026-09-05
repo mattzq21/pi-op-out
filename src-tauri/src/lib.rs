@@ -40,7 +40,7 @@ struct TerminalRuntime {
 }
 
 #[derive(Clone)]
-struct CachedSession { fingerprint: String, bytes: u64, explicitly_named: bool, has_user_message: bool, summary: SessionSummary }
+struct CachedSession { fingerprint: String, bytes: u64, explicitly_named: bool, has_user_message: bool, resume_messages: HashSet<String>, summary: SessionSummary }
 
 #[derive(Default)]
 struct SessionIndexRuntime {
@@ -1235,9 +1235,22 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
     let pending = runtime.pending.clone(); let processes = runtime.processes.clone(); let active_agents = runtime.active_agents.clone(); let event_app = app.clone(); let event_runtime_id = runtime_id.clone();
     thread::spawn(move || {
         for line in BufReader::new(stdout).split(b'\n') {
-            let Ok(bytes) = line else { break }; let Ok(value) = serde_json::from_slice::<Value>(&bytes) else { continue };
+            let Ok(bytes) = line else { break }; let Ok(mut value) = serde_json::from_slice::<Value>(&bytes) else { continue };
+            if value.get("type").and_then(Value::as_str) == Some("extension_ui_request") && value.get("method").and_then(Value::as_str) == Some("setStatus")
+                && matches!(value.get("statusKey").and_then(Value::as_str), Some("pi-desktop-control-response" | "pi-desktop-pause-state")) {
+                let Some(payload) = value.get("statusText").and_then(Value::as_str).and_then(|text| text.strip_prefix("json:")).and_then(|text| serde_json::from_str::<Value>(text).ok()) else { continue };
+                value = payload;
+            }
             if value.get("type") == Some(&Value::String("response".into())) {
                 if let Some(id) = value.get("id").and_then(Value::as_str) {
+                    if let Some(control_id) = id.strip_suffix(":desktop-control") {
+                        if value.get("success").and_then(Value::as_bool) == Some(false) {
+                            if let Some(sender) = pending.lock().ok().and_then(|mut map| map.remove(&(event_runtime_id.clone(), control_id.to_string()))) {
+                                let _ = sender.send(Err(value.get("error").and_then(Value::as_str).unwrap_or("Pi control failed").to_string()));
+                            }
+                        }
+                        continue;
+                    }
                     if let Some(sender) = pending.lock().ok().and_then(|mut map| map.remove(&(event_runtime_id.clone(), id.to_string()))) {
                         let result = if value.get("success").and_then(Value::as_bool).unwrap_or(false) { Ok(value.get("data").cloned().unwrap_or(Value::Null)) } else { Err(value.get("error").and_then(Value::as_str).unwrap_or("Pi command failed").to_string()) };
                         let _ = sender.send(result); continue;
@@ -1267,9 +1280,15 @@ fn stop_pi(runtime: State<PiRuntime>, runtime_id: String) -> Result<(), String> 
 }
 
 fn execute_pi_command(runtime: &PiRuntime, runtime_id: &str, mut command: Value) -> Result<Value, String> {
+    let resume = command.get("type").and_then(Value::as_str) == Some("resume");
     let fire_and_forget = command.get("type").and_then(Value::as_str) == Some("extension_ui_response");
     let id = command.get("id").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| Uuid::new_v4().to_string());
     command.as_object_mut().ok_or("RPC command must be an object")?.insert("id".into(), Value::String(id.clone()));
+    let desktop_action = match command.get("type").and_then(Value::as_str) { Some("pause") => Some("pause"), Some("resume") => Some("resume"), Some("abort") => Some("stop"), Some("get_pause_state") => Some("state"), _ => None };
+    if let Some(action) = desktop_action {
+        let control = serde_json::to_string(&json!({"id":id,"action":action})).map_err(|error| error.to_string())?;
+        command = json!({"id":format!("{id}:desktop-control"),"type":"prompt","message":format!("/pi-desktop-control {control}")});
+    }
     let (sender, receiver) = mpsc::channel();
     runtime.pending.lock().map_err(|_| "Pending command lock was poisoned")?.insert((runtime_id.to_string(), id.clone()), sender);
     let write_result = (|| {
@@ -1281,7 +1300,13 @@ fn execute_pi_command(runtime: &PiRuntime, runtime_id: &str, mut command: Value)
     })();
     if let Err(error) = write_result { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.to_string(), id.clone()))); return Err(error); }
     if fire_and_forget { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.to_string(), id.clone()))); return Ok(Value::Null); }
-    receiver.recv_timeout(Duration::from_secs(30)).map_err(|_| { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.to_string(), id))); "Pi command timed out".to_string() })?
+    let result = receiver.recv_timeout(Duration::from_secs(30)).map_err(|_| { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.to_string(), id))); "Pi command timed out".to_string() })??;
+    if resume {
+        if let Some(message) = result.get("resumeMessage").and_then(Value::as_str) {
+            execute_pi_command(runtime, runtime_id, json!({"type":"prompt","message":message}))?;
+        }
+    }
+    Ok(result)
 }
 
 fn update_active_agent(runtime: &PiRuntime, runtime_id: &str, state: &Value) -> Result<(), String> {
@@ -1295,8 +1320,13 @@ fn update_active_agent(runtime: &PiRuntime, runtime_id: &str, state: &Value) -> 
 #[tauri::command(async)]
 fn pi_command(runtime: State<PiRuntime>, runtime_id: String, command: Value) -> Result<Value, String> {
     let command_type = command.get("type").and_then(Value::as_str).unwrap_or_default().to_string();
-    let result = execute_pi_command(&runtime, &runtime_id, command)?;
-    if command_type == "get_state" { update_active_agent(&runtime, &runtime_id, &result)?; }
+    let mut result = execute_pi_command(&runtime, &runtime_id, command)?;
+    if command_type == "get_state" {
+        update_active_agent(&runtime, &runtime_id, &result)?;
+        let pause = execute_pi_command(&runtime, &runtime_id, json!({"type":"get_pause_state"}))?;
+        if let (Some(state), Some(fields)) = (result.as_object_mut(), pause.as_object()) { state.extend(fields.clone()); }
+        if result.get("isPaused").and_then(Value::as_bool) == Some(true) && result.get("isPausing").and_then(Value::as_bool) != Some(true) { result["isStreaming"] = Value::Bool(false); }
+    }
     else if matches!(command_type.as_str(), "fork" | "clone" | "new_session") {
         if let Ok(state) = execute_pi_command(&runtime, &runtime_id, json!({"type":"get_state"})) { update_active_agent(&runtime, &runtime_id, &state)?; }
     }
@@ -1428,22 +1458,31 @@ fn text_content(message: &Value) -> String {
 
 fn unix_timestamp(time: SystemTime) -> u64 { time.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs() }
 
-fn parse_session_content(path: &Path, content: &str, modified: SystemTime, cwd_exists: bool, host_id: &str, host_name: &str) -> Option<(SessionSummary, bool, bool)> {
+fn parse_session_content(path: &Path, content: &str, modified: SystemTime, cwd_exists: bool, host_id: &str, host_name: &str) -> Option<(SessionSummary, bool, bool, HashSet<String>)> {
     let mut lines = content.lines(); let header: Value = serde_json::from_str(lines.next()?).ok()?;
     if header.get("type")?.as_str()? != "session" { return None; }
     let cwd = header.get("cwd").and_then(Value::as_str).unwrap_or("Unknown project").to_string();
     let id = header.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+    let mut resume_messages = HashSet::new();
     let mut name = None; let mut first_user_message = String::new(); let mut preview = String::new(); let mut message_count = 0; let mut api_cost = 0.0;
-    for line in lines { let Ok(entry) = serde_json::from_str::<Value>(line) else { continue }; if entry.get("type").and_then(Value::as_str) == Some("session_info") { name = entry.get("name").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()).map(str::to_owned); } if entry.get("type").and_then(Value::as_str) == Some("message") { message_count += 1; if let Some(message) = entry.get("message") { let text = text_content(message); if !text.is_empty() { if first_user_message.is_empty() && message.get("role").and_then(Value::as_str) == Some("user") { first_user_message = text.clone(); } preview = text; } if message.get("role").and_then(Value::as_str) == Some("assistant") { api_cost += message.pointer("/usage/cost/total").and_then(Value::as_f64).filter(|cost| cost.is_finite() && *cost >= 0.0).unwrap_or(0.0); } } } }
+    for line in lines { let Ok(entry) = serde_json::from_str::<Value>(line) else { continue }; if hidden_resume_entry(&entry, &mut resume_messages) { continue; } if entry.get("type").and_then(Value::as_str) == Some("session_info") { name = entry.get("name").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()).map(str::to_owned); } if entry.get("type").and_then(Value::as_str) == Some("message") { message_count += 1; if let Some(message) = entry.get("message") { let text = text_content(message); if !text.is_empty() { if first_user_message.is_empty() && message.get("role").and_then(Value::as_str) == Some("user") { first_user_message = text.clone(); } preview = text; } if message.get("role").and_then(Value::as_str) == Some("assistant") { api_cost += message.pointer("/usage/cost/total").and_then(Value::as_f64).filter(|cost| cost.is_finite() && *cost >= 0.0).unwrap_or(0.0); } } } }
     let explicitly_named = name.is_some(); let has_user_message = !first_user_message.is_empty();
     let name = name.unwrap_or_else(|| if first_user_message.is_empty() { "Untitled session".into() } else { first_user_message });
     let project = Path::new(&cwd).file_name().and_then(|value| value.to_str()).unwrap_or("Workspace").to_string();
-    Some((SessionSummary { id, path: path.to_string_lossy().into_owned(), name, project, cwd, cwd_exists, modified_at: unix_timestamp(modified), preview: preview.chars().take(100).collect(), message_count, api_cost, host_id: host_id.into(), host_name: host_name.into() }, explicitly_named, has_user_message))
+    Some((SessionSummary { id, path: path.to_string_lossy().into_owned(), name, project, cwd, cwd_exists, modified_at: unix_timestamp(modified), preview: preview.chars().take(100).collect(), message_count, api_cost, host_id: host_id.into(), host_name: host_name.into() }, explicitly_named, has_user_message, resume_messages))
+}
+
+fn hidden_resume_entry(entry: &Value, markers: &mut HashSet<String>) -> bool {
+    if entry.get("type").and_then(Value::as_str) == Some("custom") && entry.get("customType").and_then(Value::as_str) == Some("pi-desktop-resume") {
+        if let Some(message) = entry.pointer("/data/message").and_then(Value::as_str) { markers.insert(message.to_owned()); }
+    }
+    entry.get("message").is_some_and(|message| message.get("role").and_then(Value::as_str) == Some("user") && markers.contains(&text_content(message)))
 }
 
 fn apply_session_entries(cached: &mut CachedSession, content: &str, modified: SystemTime) {
     for line in content.lines() {
         let Ok(entry) = serde_json::from_str::<Value>(line) else { continue };
+        if hidden_resume_entry(&entry, &mut cached.resume_messages) { continue; }
         if entry.get("type").and_then(Value::as_str) == Some("session_info") {
             if let Some(name) = entry.get("name").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()) { cached.summary.name = name.to_owned(); cached.explicitly_named = true; }
         }
@@ -1476,8 +1515,8 @@ fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<S
         }
         if cache.get(&path).is_none_or(|cached| cached.fingerprint != fingerprint) {
             let Ok(content) = fs::read_to_string(&path) else { continue };
-            let Some((summary, explicitly_named, has_user_message)) = parse_session_content(&path, &content, modified, true, "local", "Local") else { continue };
-            cache.insert(path.clone(), CachedSession { fingerprint: fingerprint.clone(), bytes: metadata.len(), explicitly_named, has_user_message, summary });
+            let Some((summary, explicitly_named, has_user_message, resume_messages)) = parse_session_content(&path, &content, modified, true, "local", "Local") else { continue };
+            cache.insert(path.clone(), CachedSession { fingerprint: fingerprint.clone(), bytes: metadata.len(), explicitly_named, has_user_message, resume_messages, summary });
         }
         let Some(mut summary) = cache.get(&path).map(|cached| cached.summary.clone()) else { continue };
         summary.cwd_exists = Path::new(&summary.cwd).is_dir(); sessions.push(summary);
@@ -1529,8 +1568,8 @@ fn list_remote_sessions(index: &SessionIndexRuntime, host: &RemoteHost) -> Resul
             let cached = previous.get(&path).filter(|cached| cached.bytes < *size);
             if let Some(cached) = cached {
                 let mut next = cached.clone(); apply_session_entries(&mut next, &content, modified); next.bytes = *size; next.fingerprint = fingerprint.clone(); parsed.insert(path, next);
-            } else if let Some((summary, explicitly_named, has_user_message)) = parse_session_content(&path_buf, &content, modified, true, &host.id, &host.name) {
-                parsed.insert(path, CachedSession { fingerprint: fingerprint.clone(), bytes: *size, explicitly_named, has_user_message, summary });
+            } else if let Some((summary, explicitly_named, has_user_message, resume_messages)) = parse_session_content(&path_buf, &content, modified, true, &host.id, &host.name) {
+                parsed.insert(path, CachedSession { fingerprint: fingerprint.clone(), bytes: *size, explicitly_named, has_user_message, resume_messages, summary });
             }
         }
         cursor = end;

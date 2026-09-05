@@ -1,5 +1,5 @@
 import { isValidElement, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
-import { Check, CircleAlert, Copy, FolderGit2, GitBranch, Wrench } from "lucide-react";
+import { Check, CircleAlert, Copy, FolderGit2, GitBranch, Pause, Wrench } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage, GitDiffSnapshot } from "../types";
@@ -9,7 +9,7 @@ import { IconButton } from "./IconButton";
 import { DiffViewer } from "./DiffViewer";
 import { PromptContextBar } from "./PromptContextBar";
 
-interface Props { message: ChatMessage; diff?: GitDiffSnapshot; expanded?: boolean; toolCount?: number; debug?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
+interface Props { message: ChatMessage; diff?: GitDiffSnapshot; expanded?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
 
 function nodeText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -47,7 +47,7 @@ function userMessageParts(content: string) {
   return { skills: [invocation[1]], text: (invocation[2] ?? "").trim(), literalSkill: false };
 }
 
-export function Message({ message, diff, expanded = false, toolCount = 1, debug = false, onBranch, onCreateWorktree, onRetry, retrying = false }: Props) {
+export function Message({ message, diff, expanded = false, toolCount = 1, debug = false, paused = false, onBranch, onCreateWorktree, onRetry, retrying = false }: Props) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [branching, setBranching] = useState(false);
   const branchingRef = useRef(false);
@@ -57,7 +57,8 @@ export function Message({ message, diff, expanded = false, toolCount = 1, debug 
   const thinking = thinkingOf(message.content);
   const cache = cacheHitStats(message.usage);
   const responseLabel = `Assistant response${message.timestamp ? ` from ${new Date(message.timestamp).toLocaleString()}` : ` ${message.id.slice(0, 8)}`}`;
-  const failure = message.stopReason === "aborted" ? (message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
+  const pausedResponse = message.stopReason === "aborted" && (paused || message.errorMessage === "Response paused");
+  const failure = message.stopReason === "aborted" ? (pausedResponse ? undefined : message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
   const copy = async () => {
     try {
       if (!navigator.clipboard) throw new Error("Clipboard access is unavailable");
@@ -79,6 +80,7 @@ export function Message({ message, diff, expanded = false, toolCount = 1, debug 
       {thinking && <div className="reasoning-text"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{thinking}</ReactMarkdown></div>}
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{output}</ReactMarkdown>
       {failure && <div className="message-failure" role="status"><CircleAlert size={14} /><span>{failure}</span>{onRetry && <button disabled={retrying} onClick={onRetry}>{retrying ? "Retrying…" : "Retry"}</button>}</div>}
+      {pausedResponse && <div className="message-paused" role="status"><Pause size={14} /><span>Response paused</span></div>}
       {message.streaming && <span className="stream-caret" />}
       {diff && <DiffViewer snapshot={diff} />}
       {!message.streaming && output.trim().length > 0 && <div className="message-actions">
