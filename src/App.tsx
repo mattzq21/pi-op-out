@@ -256,7 +256,7 @@ export default function App() {
         else if (request.method === "setWidget" && request.widgetKey) { setExtensionOwner(transport); setWidgets((current) => { const next = { ...current }; if (request.widgetLines) next[request.widgetKey!] = request.widgetLines; else delete next[request.widgetKey!]; return next; }); }
         else if (request.method === "setTitle") document.title = request.title || "Pi";
         else if (request.method === "set_editor_text") { setComposerDrafts((current) => { const key = transportConversationKeys.current.get(transport) ?? terminalSessionIdRef.current; const next = { ...current }; if (request.text) next[key] = request.text; else delete next[key]; return next; }); setActivePane("main"); setMainComposerFocusRequest((value) => value + 1); }
-        else queueExtensionDialog(request, transport, mainDialogOwnerRef.current);
+        else if (["input", "editor", "select", "confirm"].includes(request.method)) queueExtensionDialog(request, transport, mainDialogOwnerRef.current);
       }
       if (event.type === "session_switched") void refresh();
       if (event.type === "session_info_changed") void refresh();
