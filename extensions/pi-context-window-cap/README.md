@@ -34,3 +34,9 @@ change the limit.
 
 Pi Desktop stages its own copy of this extension and generates its `config.json`
 from **Settings → General → Context window cap** for local and remote sessions.
+
+The extension also saves one prompt-context snapshot when the initial user
+message first reaches the model. Later tool steps and pause/resume reuse that
+snapshot, including after reopening the conversation. Debug mode displays one
+bar above the response, using the initial snapshot throughout. A new user
+message starts a new snapshot.

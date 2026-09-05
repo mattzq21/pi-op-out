@@ -60,20 +60,23 @@ export function applyAssistantMessageEvent(message: ChatMessage, value: unknown)
 export function branchMessages(entries: PiEntry[], leafId: string | null): ChatMessage[] {
   const byId = new Map(entries.map((entry) => [entry.id, entry])); const branch: PiEntry[] = []; const visited = new Set<string>(); let cursor = leafId;
   while (cursor && !visited.has(cursor)) { visited.add(cursor); const entry = byId.get(cursor); if (!entry) break; branch.unshift(entry); cursor = entry.parentId; }
-  let messages: ChatMessage[] = []; const resumeMarkers = new Set<string>(); let promptContext: PromptContextInfo | undefined; let sequenceMarkerAuthorized = false;
+  let messages: ChatMessage[] = []; const resumeMarkers = new Set<string>(); let sequenceMarkerAuthorized = false;
   for (const entry of branch) {
     const marker = resumeMarker(entry); if (marker) { resumeMarkers.add(marker); messages = checkpointLatestUser(messages); continue; }
     if (entry.type === "custom" && entry.customType === "pi-desktop-pause-state" && (entry.data as { isPaused?: boolean } | undefined)?.isPaused) messages = checkpointLatestUser(messages);
-    if (entry.type === "custom" && entry.customType === "pi-desktop-prompt-context") { promptContext = entry.data as PromptContextInfo; continue; }
+    if (entry.type === "custom" && entry.customType === "pi-desktop-prompt-context") {
+      const userIndex = messages.map((message) => message.role).lastIndexOf("user");
+      if (userIndex >= 0 && !messages[userIndex].promptContext) messages[userIndex] = { ...messages[userIndex], promptContext: entry.data as PromptContextInfo };
+      continue;
+    }
     if (entry.type === "custom" && entry.customType === "pi-orchestration-sequence-marker") { sequenceMarkerAuthorized = true; continue; }
     if (entry.type === "message" && entry.message) {
       if (isResumeMessage(entry.message, resumeMarkers)) continue;
       const message = normalizeMessage(entry.message as unknown as Record<string, unknown>, entry.id, entry.timestamp);
       if (!(["user", "assistant", "tool"] as string[]).includes(message.role)) continue;
       const visible = message.role === "user" && sequenceMarkerAuthorized ? { ...message, sequenceMarkerAuthorized: true } : message;
-      messages.push(visible.role === "assistant" && promptContext ? { ...visible, promptContext } : visible);
+      messages.push(visible);
       sequenceMarkerAuthorized = false;
-      if (message.role === "assistant") promptContext = undefined;
     }
   }
   const calledTargets = new Map<string, string>();

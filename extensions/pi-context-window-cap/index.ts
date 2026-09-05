@@ -114,9 +114,18 @@ function changeInstructionFromMessages(messages: unknown[]) {
 
 export default async function contextWindowCap(pi: ExtensionAPI) {
   const cap = await loadCap();
-  let lastStatus = "";
-
-  const publishPromptContext = (ctx: ExtensionContext, messages: unknown[] = [], persist = false) => {
+  const publishPromptContext = (ctx: ExtensionContext, messages: unknown[]) => {
+    const branch = ctx.sessionManager.getBranch();
+    const resumeMessages = new Set(branch.flatMap((entry) => {
+      const message = entry.type === "custom" && entry.customType === "pi-desktop-resume" ? (entry.data as { message?: unknown })?.message : undefined;
+      return typeof message === "string" ? [message] : [];
+    }));
+    const userIndex = branch.findLastIndex((entry) => entry.type === "message" && entry.message.role === "user" && !resumeMessages.has(textContent(entry.message.content)));
+    const user = branch[userIndex];
+    if (!user || user.type !== "message") return;
+    // The initial snapshot belongs to the user prompt, including across resume
+    // and reload. Later model calls reuse it without rebuilding or saving it.
+    if (branch.slice(userIndex + 1).some((entry) => entry.type === "custom" && entry.customType === STATUS_KEY)) return;
     const systemPrompt = ctx.getSystemPrompt();
     const { block: skillPrompt, skills } = skillsFromPrompt(systemPrompt);
     const { block: instructionPrompt, instructions } = instructionsFromPrompt(systemPrompt);
@@ -130,21 +139,20 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
     const tools = pi.getAllTools().filter((tool) => activeTools.has(tool.name)).map(({ name, description, parameters }) => ({ name, description, parameters }));
     const estimate = (value: unknown) => Math.ceil((typeof value === "string" ? value : JSON.stringify(value)).length / 4);
     const snapshot = {
+      userTimestamp: user.message.timestamp,
       systemPrompt,
       instructions,
       tools,
       skills,
       tokens: { system: estimate(systemPrompt.replace(skillPrompt, "").replace(instructionPrompt, "")), instructions: estimate(instructionPrompt) + estimate(messageProjectContext.block) + estimate(changeInstruction?.block ?? ""), tools: estimate(tools), skills: estimate(skillPrompt) },
     };
-    if (persist) pi.appendEntry(STATUS_KEY, snapshot);
-    const status = `json:${JSON.stringify(snapshot)}`;
-    if (status !== lastStatus) { lastStatus = status; ctx.ui.setStatus(STATUS_KEY, status); }
+    pi.appendEntry(STATUS_KEY, snapshot);
+    ctx.ui.setStatus(STATUS_KEY, `json:${JSON.stringify(snapshot)}`);
   };
 
   pi.on("session_start", (_event, ctx) => {
     capModel(ctx.model, cap);
-    lastStatus = "";
-    setTimeout(() => { try { publishPromptContext(ctx); } catch { /* Session was replaced before the deferred snapshot. */ } }, 0);
+    ctx.ui.setStatus(STATUS_KEY, undefined);
   });
 
   pi.on("model_select", (event) => {
@@ -177,7 +185,7 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
         messages.splice(userIndex, 0, context);
       }
     }
-    publishPromptContext(ctx, messages, true);
+    publishPromptContext(ctx, messages);
     if (messages !== event.messages) return { messages };
   });
 }

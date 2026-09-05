@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import type { CSSProperties } from "react";
 import type { PromptContextInfo } from "../types";
 
@@ -16,7 +16,7 @@ function shares(values: { system: number; instructions: number; tools: number; s
   return { system: result[0], instructions: result[1], tools: result[2], skills: result[3] };
 }
 
-export function PromptContextBar({ context }: { context: PromptContextInfo }) {
+export const PromptContextBar = memo(function PromptContextBar({ context }: { context: PromptContextInfo }) {
   const [active, setActive] = useState<Section>();
   const percent = shares(context.tokens);
   const wheelStyle = { "--prompt-system": `${percent.system}%`, "--prompt-instructions": `${percent.system + percent.instructions}%`, "--prompt-tools": `${percent.system + percent.instructions + percent.tools}%` } as CSSProperties;
@@ -36,4 +36,4 @@ export function PromptContextBar({ context }: { context: PromptContextInfo }) {
       {active === "skills" && (context.skills.length ? context.skills.map((skill) => <div key={skill.filePath}><strong>{skill.name}</strong>{skill.description && <p>{skill.description}</p>}<small>{skill.filePath}</small></div>) : <p>No model-invoked skills</p>)}
     </div>}
   </section>;
-}
+});

@@ -5,6 +5,7 @@ export interface SessionSummary { id: string; path: string; name: string; projec
 export interface ChatMessage { sequenceMarkerAuthorized?: boolean; contextCheckpoint?: boolean; }
 export interface ContextUsage { tokens: number | null; contextWindow: number; percent: number | null; }
 export interface PromptContextInfo {
+  userTimestamp?: number;
   systemPrompt: string;
   instructions: Array<{ path: string; content: string }>;
   tools: Array<{ name: string; description: string; parameters?: unknown }>;

@@ -9,7 +9,6 @@ import { cacheHitStats } from "../lib/messages";
 import { openExternalUrl } from "../lib/nativeTransport";
 import { IconButton } from "./IconButton";
 import { DiffViewer } from "./DiffViewer";
-import { PromptContextBar } from "./PromptContextBar";
 
 interface Props { message: ChatMessage; diff?: GitDiffSnapshot; expanded?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
 
@@ -141,7 +140,6 @@ export function Message({ message, diff, expanded = false, toolCount = 1, debug 
   };
   return <article className={`message assistant-message ${thinking ? "reasoning-message" : ""}`} aria-label={responseLabel}>
     <div className="message-body">
-      {debug && message.promptContext && <PromptContextBar context={message.promptContext} />}
       {thinking && <div className="reasoning-text"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{thinking}</ReactMarkdown></div>}
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{output}</ReactMarkdown>
       {failure && <div className="message-failure" role="status"><CircleAlert size={14} /><span>{failure}</span>{onRetry && <button disabled={retrying} onClick={onRetry}>{retrying ? "Retrying…" : "Retry"}</button>}</div>}

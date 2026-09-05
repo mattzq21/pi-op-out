@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentState, ChatMessage, Model, RpcEvent, SlashCommand } from "../types";
+import type { AgentState, ChatMessage, Model, PromptContextInfo, RpcEvent, SlashCommand } from "../types";
 import type { NativeTransport } from "./nativeTransport";
 import { applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
 import { contextUsageAfterCompaction } from "./contextUsage";
@@ -40,6 +40,15 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
   }, [discardPendingUpdates, transport]);
 
   const handleEvent = useCallback((event: RpcEvent) => {
+    if (event.type === "extension_ui_request" && event.method === "setStatus" && event.statusKey === "pi-desktop-prompt-context" && typeof event.statusText === "string" && event.statusText.startsWith("json:")) {
+      try {
+        const context = JSON.parse(event.statusText.slice(5)) as PromptContextInfo;
+        if (typeof context.userTimestamp === "number") {
+          liveRevision.current += 1;
+          setMessages((current) => current.map((message) => message.role === "user" && message.timestamp === context.userTimestamp && !message.promptContext ? { ...message, promptContext: context } : message));
+        }
+      } catch { /* Ignore malformed extension status data. */ }
+    }
     if (event.type === "entry_appended" && event.entry) { const marker = resumeMarker(event.entry as PiEntry); if (marker) { resumeMarkers.current.add(marker); setMessages(checkpointLatestUser); } }
     if (["agent_start", "agent_end", "agent_settled", "pause_state", "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end"].includes(event.type)) liveRevision.current += 1;
     if (event.type === "agent_start") setState((current) => ({ ...current, isStreaming: true, isPaused: false }));
@@ -58,7 +67,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
       if (message.customType === "pi-desktop-btw") return;
       if (message.role === "assistant" && event.type === "message_start") { message = { ...message, streaming: true }; activeAssistantId.current = message.id; }
       if (message.role === "assistant" && event.type === "message_end") { message = { ...message, ...(activeAssistantId.current ? { id: activeAssistantId.current } : {}), completedAt: Date.now(), streaming: false }; activeAssistantId.current = undefined; }
-      setMessages((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? message : item) : [...current, message]);
+      setMessages((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? { ...message, promptContext: item.promptContext } : item) : [...current, message]);
     }
     if (event.type === "message_update") {
       if (event.assistantMessageEvent) queue((current) => { let index = -1; for (let candidate = current.length - 1; candidate >= 0; candidate -= 1) { const message = current[candidate]; if (message.role === "assistant" && (message.id === activeAssistantId.current || message.streaming)) { index = candidate; break; } } if (index < 0) return current; const next = [...current]; next[index] = applyAssistantMessageEvent(next[index], event.assistantMessageEvent); return next; });
