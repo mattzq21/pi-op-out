@@ -106,6 +106,8 @@ function agentArgs(agent: Agent, session?: string, defaults?: RuntimeDefaults) {
   args.push("--extension", extensionPath);
   const mcpConfig = process.env.PI_DESKTOP_MCP_CONFIG;
   if (mcpConfig) args.push("--extension", join(dirname(mcpConfig), "pi-desktop-mcp-bridge.ts"));
+  const codexCompactionExtension = process.env.PI_DESKTOP_CODEX_COMPACTION_EXTENSION;
+  if (codexCompactionExtension) args.push("--extension", codexCompactionExtension);
   return args;
 }
 

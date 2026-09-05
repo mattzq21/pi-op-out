@@ -5,11 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "npm run build:mcp-bridge && tsc -b && vite build",
+    "build": "npm run build:extensions && tsc -b && vite build",
+    "build:extensions": "npm run build:mcp-bridge && npm run build:codex-compaction",
+    "build:codex-compaction": "node scripts/build-codex-compaction.mjs",
     "build:mcp-bridge": "node scripts/build-mcp-bridge.mjs",
-    "pretauri": "npm install --no-audit --no-fund && npm run build:mcp-bridge",
+    "pretauri": "npm install --no-audit --no-fund && npm run build:extensions",
     "test:e2e": "npm run test:e2e:build && npm run test:e2e:run",
-    "test:e2e:build": "tsc -b && vite build --mode e2e && TAURI_CONFIG='{\"build\":{\"devUrl\":null},\"app\":{\"windows\":[{\"title\":\"Pi\",\"width\":1440,\"height\":900,\"minWidth\":900,\"minHeight\":640,\"decorations\":false,\"transparent\":false}]}}' cargo build --manifest-path src-tauri/Cargo.toml --release --features webdriver",
+    "test:e2e:build": "npm run build:extensions && tsc -b && vite build --mode e2e && TAURI_CONFIG='{\"build\":{\"devUrl\":null},\"app\":{\"windows\":[{\"title\":\"Pi\",\"width\":1440,\"height\":900,\"minWidth\":900,\"minHeight\":640,\"decorations\":false,\"transparent\":false}]}}' cargo build --manifest-path src-tauri/Cargo.toml --release --features webdriver",
     "test:e2e:run": "wdio run wdio.conf.ts",
     "test:e2e:manual": "node scripts/wdio-manual.mjs",
     "tauri": "node scripts/tauri.mjs"

@@ -1,10 +1,18 @@
 import { Type } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ContextEvent, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const url = process.env.PI_DESKTOP_BROKER_URL;
 const token = process.env.PI_DESKTOP_BROKER_TOKEN;
 
 const MESSAGE_TIMEOUT_MS = 120_000;
+
+export function desktopPauseContext(messages: ContextEvent["messages"], resumeMessages: ReadonlySet<string>): ContextEvent["messages"] {
+  return messages.filter((message) => !(message.role === "assistant" && message.stopReason === "aborted" && message.errorMessage === "Response paused")).map((message) => {
+    if (message.role !== "user") return message;
+    const text = typeof message.content === "string" ? message.content : message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+    return resumeMessages.has(text) ? { ...message, content: [{ type: "text" as const, text: "Continue the previous task using the completed turns and tool results already in context. The last run was paused by the user. Check the current state of any interrupted work before continuing, and finish the remaining task without repeating completed work." }] } : message;
+  });
+}
 
 async function cancelRequest(requestId: string) {
   if (!url || !token) return;
@@ -58,11 +66,7 @@ export default function sessionBroker(pi: ExtensionAPI) {
   pi.on("message_end", (event, ctx) => {
     if (isPausing && event.message.role === "assistant" && (event.message.stopReason === "aborted" || (event.message.stopReason === "error" && ctx.signal?.aborted))) return { message: { ...event.message, stopReason: "aborted", errorMessage: "Response paused" } };
   });
-  pi.on("context", (event) => ({ messages: event.messages.filter((message) => !(message.role === "assistant" && message.stopReason === "aborted" && message.errorMessage === "Response paused")).map((message) => {
-    if (message.role !== "user") return message;
-    const text = typeof message.content === "string" ? message.content : message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
-    return resumeMessages.has(text) ? { ...message, content: [{ type: "text" as const, text: "Continue the previous task using the completed turns and tool results already in context. The last run was paused by the user. Check the current state of any interrupted work before continuing, and finish the remaining task without repeating completed work." }] } : message;
-  }) }));
+  pi.on("context", (event) => ({ messages: desktopPauseContext(event.messages, resumeMessages) }));
   pi.registerCommand("pi-desktop-control", {
     description: "Control Pi Desktop pause and resume",
     async handler(args, ctx) {

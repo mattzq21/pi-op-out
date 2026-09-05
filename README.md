@@ -10,6 +10,7 @@ A Tauri-only native interface for the Pi coding agent. It is not a standalone br
 - Pi extension UI support for prompts, confirms, selects, editors, notifications, status lines, widgets, titles, and editor text
 - Settings for retry/compaction behavior, context-window cap, default model, tools, discovered skills, agents, sequences, remote machines, and MCP servers
 - Live context-window usage gauge in the composer
+- Bundled [pi-codex-compaction](extensions/pi-codex-compaction/README.md) for native OpenAI Codex compaction in local, SSH, and delegated sessions
 - An MCP SDK-backed stdio/HTTP bridge that discovers server tools and registers them as namespaced Pi tools
 - A `read_trace` Pi tool that finds local or remote session JSONL and returns only user prompts and completed assistant messages
 - A shared session runtime for primary and split chats, with animation-frame batching for streaming message and tool updates
@@ -31,6 +32,8 @@ Authenticate Pi before starting the desktop app with Pi's normal `/login` flow o
 Saving native settings restarts the managed Pi process while preserving the active project and session. Enabled tools, skills, default model/thinking level, and MCP configuration are applied at startup.
 
 Pause interrupts the current response and saves completed model turns and tool results in the conversation context. Resume continues from that context with the selected agent's instructions, including after reopening a saved conversation. You can also send a new message while paused. An interrupted partial assistant response remains visible in the transcript but is excluded from the resumed model context.
+
+Codex sessions use the bundled [pi-codex-compaction](https://github.com/ogulcancelik/pi-extensions/tree/main/packages/pi-codex-compaction) extension with the existing auto-compaction setting, context cap, and `/compact` command. Use Pi 0.84.4 or newer on local and remote hosts. Native checkpoints require the Codex model that created them; other providers retain Pi’s standard compaction.
 
 MCP servers can use stdio commands or HTTP endpoints. Stdio arguments support shell-style quoting, but the command is launched directly without a shell. MCP tools appear in Pi as `mcp_<server>_<tool>`.
 

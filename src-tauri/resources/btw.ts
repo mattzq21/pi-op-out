@@ -26,8 +26,11 @@ async function runFork(sessionFile: string, cwd: string, task: string): Promise<
   const executable = process.env.PI_DESKTOP_PI_EXECUTABLE;
   const command = executable || process.execPath;
   const args = executable
-    ? ["--print", "--approve", "--fork", sessionFile, task]
-    : [process.argv[1], "--print", "--approve", "--fork", sessionFile, task];
+    ? ["--print", "--approve", "--fork", sessionFile]
+    : [process.argv[1], "--print", "--approve", "--fork", sessionFile];
+  const codexCompactionExtension = process.env.PI_DESKTOP_CODEX_COMPACTION_EXTENSION;
+  if (codexCompactionExtension) args.push("--extension", codexCompactionExtension);
+  args.push(task);
   try {
     const { stdout } = await execFile(command, args, {
       cwd,
