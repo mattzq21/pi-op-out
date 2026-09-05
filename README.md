@@ -65,6 +65,8 @@ For runner configuration, native-command mocking, synthetic Pi events, and clean
 keeping the secondary worktree's branch. It discards tracked local changes; it does
 not copy uncommitted changes from the main worktree or fetch from a remote. In the
 main worktree it does nothing. Stop or pause a running agent before invoking it.
+Catch-up is blocked with an error if another Pi UI agent is working in the same
+worktree on that host. This is checked both before and after confirmation.
 A confirmation dialog shows the worktree and target commit before resetting.
 Cancelling leaves the worktree and conversation unchanged. The result appears as
 a centered system message in the conversation.
