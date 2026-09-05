@@ -291,3 +291,6 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .session-item.drop-before { background-image: linear-gradient(var(--accent), var(--accent)); background-position: top; background-repeat: no-repeat; background-size: 100% 2px; }
 .session-item.drop-after { background-image: linear-gradient(var(--accent), var(--accent)); background-position: bottom; background-repeat: no-repeat; background-size: 100% 2px; }
 .split-control-error { position: absolute; z-index: 6; left: 12px; right: 12px; top: 54px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid #d7786570; border-radius: 7px; background: #3a2420ee; color: #f0d5d0; font-size: 12px; box-shadow: 0 6px 20px #0005; }.split-control-error span { flex: 1; white-space: pre-wrap; overflow-wrap: anywhere; }.split-control-error button { border: 0; background: transparent; color: inherit; font-size: 12px; }.split-control-error button:last-child { font-size: 17px; }.split-notices { position: absolute; z-index: 7; right: 12px; bottom: 12px; display: grid; gap: 8px; }.split-notices .error-toast { width: min(360px, calc(50vw - 32px)); }
+
+.app .composer.dragging-files { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-14); }
+.composer-drop-hint { padding: 3px 0 6px; color: var(--accent); font-size: 12px; pointer-events: none; }
