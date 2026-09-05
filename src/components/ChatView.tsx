@@ -142,7 +142,7 @@ function ConversationTurnView({ messages, gitDiffs, debug, active, retryable, pa
     {userMessages.map((message) => <Message key={message.id} message={message} debug={debug} />)}
     {debug && promptContext && <PromptContextBar context={promptContext} />}
     {active || paused ? renderMessages(shown.filter((message) => message.role !== "user"), true, false, debug, paused) : <>
-    {intermediate.length > 0 && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}<ChevronRight size={12} className="work-group-chevron" aria-hidden="true" /></summary><div className="work-group-content">{renderMessages(intermediate, true, true, false, paused, false)}</div></details>}
+    {intermediate.length > 0 && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}<ChevronRight size={12} className="work-group-chevron" aria-hidden="true" /></summary><div className="work-group-content">{renderMessages(intermediate, true, true, debug, paused, false)}</div></details>}
     {finalMessage && <Message message={finalMessage} diff={gitDiff} debug={debug} paused={paused} onBranch={onBranch} onCreateWorktree={worktreeResponse} retrying={retrying} onRetry={retryPrompt ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(onRetry(retryPrompt)).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
     {retryError && <div className="message-failure retry-error" role="alert">Retry failed: {retryError}</div>}
     </>}
