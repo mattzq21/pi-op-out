@@ -118,6 +118,9 @@ export default async function mcpBridge(pi: ExtensionAPI) {
     } catch (error) { const message = error instanceof Error ? error.message : String(error); statuses.set(server.id, { id: server.id, status: "error", error: message }); process.stderr.write(`[mcp:${server.name}] ${message}\n`); }
   }));
   pi.on("session_start", (_event, ctx) => ctx.ui.setStatus(MCP_STATUS_KEY, `json:${JSON.stringify([...statuses.values()])}`));
-  pi.registerCommand("mcp-status", { description: "Show MCP servers and tools loaded by Pi Desktop", handler: async (_args, ctx) => ctx.ui.notify(loaded.length ? loaded.map((entry) => `${entry.server}: ${entry.tools.join(", ") || "no tools"}`).join("\n") : "No MCP servers loaded", loaded.length ? "info" : "warning") });
+  pi.registerCommand("mcp-status", { description: "Show MCP servers and tools loaded by Pi Desktop", handler: async () => {
+    pi.sendMessage({ customType: MCP_STATUS_KEY, content: loaded.length ? loaded.map((entry) => `${entry.server}: ${entry.tools.join(", ") || "no tools"}`).join("\n") : "No MCP servers loaded", display: true }, { triggerTurn: false });
+  } });
+  pi.on("context", (event) => ({ messages: event.messages.filter((message) => message.role !== "custom" || message.customType !== MCP_STATUS_KEY) }));
   pi.on("session_shutdown", () => { for (const client of clients) void client.close(); });
 }

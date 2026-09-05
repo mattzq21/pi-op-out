@@ -124,7 +124,7 @@ function ConversationTurnView({ messages, gitDiffs, debug, active, retryable, pa
   }
   const finalThinking = finalIndex >= 0 ? thinkingOf(shown[finalIndex].content) : "";
   const intermediate = shown.flatMap((message, index) => {
-    if (message.role === "user") return [];
+    if (message.role === "user" || message.role === "system") return [];
     if (index !== finalIndex) return [message];
     if (!finalThinking) return [];
     const { promptContext: _promptContext, ...reasoningMessage } = message;
@@ -145,6 +145,7 @@ function ConversationTurnView({ messages, gitDiffs, debug, active, retryable, pa
     {intermediate.length > 0 && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}</summary><div className="work-group-content">{renderMessages(intermediate, true, true, false, paused)}</div></details>}
     {finalMessage && <Message message={finalMessage} diff={gitDiff} debug={debug} paused={paused} onBranch={onBranch} onCreateWorktree={worktreeResponse} retrying={retrying} onRetry={retryPrompt ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(onRetry(retryPrompt)).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
     {retryError && <div className="message-failure retry-error" role="alert">Retry failed: {retryError}</div>}
+    {renderMessages(shown.filter((message) => message.role === "system"), false)}
     </>}
   </section>;
 }

@@ -115,6 +115,7 @@ export function Message({ message, diff, expanded = false, toolCount = 1, debug 
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [branching, setBranching] = useState(false);
   const branchingRef = useRef(false);
+  if (message.role === "system") return <div className="command-result" role="status">{textOf(message.content)}</div>;
   if (message.role === "tool") { const output = textOf(message.content); const status = message.toolStatus ?? "done"; return <details className={`tool-event ${status}`} open={status === "running" || (expanded && status !== "done")}><summary><Wrench size={14} /><span><strong>{message.toolName || "tool"}{toolCount > 1 ? ` x${toolCount}` : ""}</strong><small>{status === "running" ? "Running…" : status === "error" ? "Failed" : "Completed"}</small></span><span className="tool-chevron">›</span></summary>{output && <pre>{output}</pre>}</details>; }
   if (message.role === "user") { const { skills, text, literalSkill } = userMessageParts(textOf(message.content)); return <article className="message user-message"><div className="message-body">{skills.map((skill) => <span className="skill-reference" key={skill}>${skill}</span>)}{text && (literalSkill ? <span className="literal-skill-content">{text}</span> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>)}</div></article>; }
   const output = textOf(message.content);
