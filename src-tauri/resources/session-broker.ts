@@ -212,6 +212,8 @@ export function registerCatchUp(pi: ExtensionAPI) {
         if (!main || first.includes("bare")) throw new Error("No main working tree is available for this repository.");
         if (await realpath(root) === await realpath(main)) { report("Already in the main worktree. Nothing changed."); return; }
         const commit = (await git(main, "rev-parse", "--verify", "HEAD^{commit}")).trim();
+        const confirmed = await ctx.ui.confirm("Catch up this worktree?", `Reset ${root} to the main worktree (${main}) at commit ${commit.slice(0, 12)}? This discards tracked local changes and moves the current branch to that commit. Uncommitted changes in the main worktree will not be copied.`);
+        if (!confirmed) return;
         if (!ctx.isIdle()) throw new Error("Stop or pause the agent before running /catch-up.");
         await git(root, "reset", "--hard", commit);
         report(`Caught up to the main worktree at ${commit.slice(0, 12)}.`);

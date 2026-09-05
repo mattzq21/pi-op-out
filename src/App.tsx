@@ -286,6 +286,7 @@ export default function App() {
   const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => {
     if (!connectionReadyRef.current) throw new Error("Pi is still connecting");
     const ownerTransport = transport; const ownerKey = activeConversationKeyRef.current;
+    if (/^\/catch-up(?:\s|$)/.test(text)) { await transport.command({ type: "prompt", message: text }); return true; }
     if (behavior) { await ownerTransport.command({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...(images.length ? { images } : {}) }); if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) setState((current) => ({ ...current, pendingMessageCount: current.pendingMessageCount + 1 })); return; }
     const abandoned = !state.isPaused && !state.isPausing ? findReplaceableAbortedTurn(messages) : undefined;
     if (abandoned) {

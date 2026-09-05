@@ -65,4 +65,6 @@ For runner configuration, native-command mocking, synthetic Pi events, and clean
 keeping the secondary worktree's branch. It discards tracked local changes; it does
 not copy uncommitted changes from the main worktree or fetch from a remote. In the
 main worktree it does nothing. Stop or pause a running agent before invoking it.
-The result appears as a centered system message in the conversation.
+A confirmation dialog shows the worktree and target commit before resetting.
+Cancelling leaves the worktree and conversation unchanged. The result appears as
+a centered system message in the conversation.
