@@ -149,7 +149,7 @@ export function registerFastModeStatus(pi: ExtensionAPI) {
   let queue = Promise.resolve();
   const publish = (ctx: ExtensionContext, model = ctx.model) => {
     const supported = config?.targets.some((target) => target.provider === model?.provider && target.model === model?.id && ["openai", "openai-codex"].includes(target.provider));
-    const text = !available ? undefined : !config ? "Fast mode status unavailable" : !config.enabled ? "Fast mode off" : supported ? "Fast mode on" : "Fast mode on · unavailable for this model";
+    const text = available && config && supported ? (config.enabled ? "Fast mode on" : "Fast mode off") : undefined;
     ctx.ui.setStatus(statusKey, text);
   };
   const refresh = async (ctx: ExtensionContext, reload: boolean) => {
