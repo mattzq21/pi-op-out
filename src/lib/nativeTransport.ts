@@ -17,6 +17,8 @@ const call = <T>(command: string, args?: Record<string, unknown>) => {
 export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; sessionId?: string; hostId?: string; }
 export interface GitWorktree { branch: string; path: string; }
 
+export const openExternalUrl = (url: string) => call<void>("open_external_url", { url });
+
 export class NativeTransport {
   private readonly runtimeId = globalThis.crypto?.randomUUID?.() ?? `runtime-${Date.now()}-${Math.random()}`;
   private listeners = new Set<(event: RpcEvent) => void>();

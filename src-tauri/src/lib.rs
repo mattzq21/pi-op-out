@@ -1445,10 +1445,18 @@ fn stop_terminals(runtime: &TerminalRuntime, terminal_ids: &[String]) -> Result<
     Ok(())
 }
 
-fn open_system_path(path: &Path) -> Result<(), String> {
+fn open_system_resource(target: &std::ffi::OsStr) -> Result<(), String> {
     let program = if cfg!(target_os = "macos") { "open" } else if cfg!(target_os = "windows") { "explorer" } else { "xdg-open" };
-    Command::new(program).arg(path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|error| format!("Could not open {}: {error}", path.display()))?;
+    let mut child = Command::new(program).arg(target).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|error| format!("Could not open {}: {error}", target.to_string_lossy()))?;
+    thread::spawn(move || { let _ = child.wait(); });
     Ok(())
+}
+
+#[tauri::command(async)]
+fn open_external_url(url: String) -> Result<(), String> {
+    let parsed = tauri::Url::parse(&url).map_err(|_| "Enter a valid HTTP or HTTPS URL")?;
+    if !matches!(parsed.scheme(), "http" | "https") || !parsed.has_host() { return Err("Only HTTP and HTTPS links can be opened in the browser".into()); }
+    open_system_resource(std::ffi::OsStr::new(parsed.as_str()))
 }
 
 #[tauri::command(async)]
@@ -1460,7 +1468,7 @@ fn open_project_directory(app: AppHandle, cwd: String, host_id: Option<String>) 
     }
     let path = PathBuf::from(cwd);
     if !path.is_dir() { return Err(format!("Project directory does not exist: {}", path.display())); }
-    open_system_path(&path)
+    open_system_resource(path.as_os_str())
 }
 
 fn text_content(message: &Value) -> String {
@@ -2023,5 +2031,5 @@ pub fn run() {
         }
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
-    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, load_app_settings, save_app_settings, codex_usage]).run(context).expect("error while running Pi desktop");
+    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, load_app_settings, save_app_settings, codex_usage]).run(context).expect("error while running Pi desktop");
 }

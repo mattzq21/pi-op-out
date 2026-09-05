@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import type { ChatMessage, GitDiffSnapshot } from "../types";
 import { textOf, thinkingOf } from "../lib/content";
 import { cacheHitStats } from "../lib/messages";
+import { openExternalUrl } from "../lib/nativeTransport";
 import { IconButton } from "./IconButton";
 import { DiffViewer } from "./DiffViewer";
 import { PromptContextBar } from "./PromptContextBar";
@@ -33,11 +34,27 @@ function CodeBlock({ children, node: _node, ...props }: ComponentPropsWithoutRef
   return <div className="code-block"><pre {...props}>{children}</pre>{copyState === "error" && <span className="copy-feedback" role="status">Could not copy</span>}<IconButton label={copyState === "copied" ? "Code copied" : copyState === "error" ? "Copy failed" : "Copy code"} className="code-copy" onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton></div>;
 }
 
+function MarkdownLink({ children, href }: ComponentPropsWithoutRef<"a">) {
+  const [error, setError] = useState<string>();
+  let url: string | undefined;
+  try {
+    const parsed = new URL(href ?? "");
+    if (parsed.protocol === "https:" || parsed.protocol === "http:") url = parsed.href;
+  } catch { /* Relative and non-web destinations remain readable text. */ }
+  if (!url) return <span className="message-link" title={href}>{children}</span>;
+  return <><a className="message-link" href={url} title={`Ctrl+click to open in browser\n${url}`} onAuxClick={(event) => event.preventDefault()} onClick={(event) => {
+    event.preventDefault();
+    if (!event.ctrlKey || event.button !== 0) return;
+    setError(undefined);
+    void openExternalUrl(url).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
+  }}>{children}</a>{error && <span className="message-link-error" role="alert"> Could not open link: {error}</span>}</>;
+}
+
 const markdownComponents: Components = {
   pre: CodeBlock,
-  // Transcript content is untrusted. Keep links visible without allowing it to
-  // navigate the application webview, and never fetch remote Markdown images.
-  a: ({ children, href }) => <span className="message-link" title={href}>{children}</span>,
+  // Open web links only through an explicit gesture and the native browser
+  // launcher. Remote Markdown images never load in the application webview.
+  a: MarkdownLink,
   img: ({ alt }) => <span className="message-image-placeholder" role="img" aria-label={alt || "Blocked remote image"}>[Image: {alt || "blocked"}]</span>,
 };
 
