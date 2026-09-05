@@ -32,7 +32,17 @@ async function request(path: string, body?: unknown, signal?: AbortSignal, timeo
   } finally { clearTimeout(timeout); signal?.removeEventListener("abort", abort); }
 }
 
-export default function sessionBroker(pi: ExtensionAPI) {
+export interface PauseController {
+  state(): { isPaused: boolean; isPausing: boolean };
+  pause(ctx: ExtensionContext): Promise<void>;
+  resume(ctx: ExtensionContext): string | undefined;
+  stop(ctx: ExtensionContext): Promise<void>;
+}
+
+export function registerPauseControl(pi: ExtensionAPI): PauseController {
+  const probe: { controller?: PauseController } = {};
+  pi.events.emit("pi-desktop:pause-controller", probe);
+  if (probe.controller) return probe.controller;
   const pauseEntry = "pi-desktop-pause-state";
   const resumeEntry = "pi-desktop-resume";
   let isPaused = false;
@@ -41,12 +51,13 @@ export default function sessionBroker(pi: ExtensionAPI) {
   let pauseOperation: Promise<void> | undefined;
   let controlContext: ExtensionContext | undefined;
   const resumeMessages = new Set<string>();
+  let generation = 0;
   const publishPause = () => {
     controlContext?.ui.setStatus(pauseEntry, `json:${JSON.stringify({ type: "pause_state", isPaused, isPausing })}`);
   };
   const persistPause = (paused: boolean) => { isPaused = paused; pi.appendEntry(pauseEntry, { isPaused: paused }); };
   const restorePause = (ctx: ExtensionContext) => {
-    controlContext = ctx;
+    generation += 1; controlContext = ctx;
     isPaused = false; isPausing = false; pauseStopped = false; resumeMessages.clear();
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type !== "custom") continue;
@@ -67,6 +78,39 @@ export default function sessionBroker(pi: ExtensionAPI) {
     if (isPausing && event.message.role === "assistant" && (event.message.stopReason === "aborted" || (event.message.stopReason === "error" && ctx.signal?.aborted))) return { message: { ...event.message, stopReason: "aborted", errorMessage: "Response paused" } };
   });
   pi.on("context", (event) => ({ messages: desktopPauseContext(event.messages, resumeMessages) }));
+  const waitForIdle = async (ctx: ExtensionContext, version: number) => {
+    while (version === generation && !ctx.isIdle()) await new Promise((resolve) => setTimeout(resolve, 20));
+  };
+  const controller: PauseController = {
+    state: () => ({ isPaused, isPausing }),
+    pause(ctx) {
+      controlContext = ctx;
+      if (!pauseOperation && !isPaused && !ctx.isIdle()) {
+        const version = generation;
+        pauseStopped = false; isPausing = true; persistPause(true); isPaused = false; publishPause();
+        pauseOperation = (async () => {
+          try { ctx.abort(); await waitForIdle(ctx, version); }
+          finally { if (version === generation) { isPaused = !pauseStopped; isPausing = false; pauseOperation = undefined; publishPause(); } }
+        })();
+      }
+      return pauseOperation ?? Promise.resolve();
+    },
+    resume(ctx) {
+      controlContext = ctx;
+      if (isPausing || !ctx.isIdle()) throw new Error("Wait for Pi to finish pausing before resuming");
+      if (!isPaused) return undefined;
+      const message = `/pi-desktop-resume-turn ${crypto.randomUUID()}`;
+      resumeMessages.add(message); pi.appendEntry(resumeEntry, { message });
+      return message;
+    },
+    async stop(ctx) {
+      controlContext = ctx; pauseStopped = true;
+      if (isPaused || isPausing) persistPause(false);
+      publishPause(); ctx.abort(); await pauseOperation; await waitForIdle(ctx, generation);
+    },
+  };
+  const unsubscribe = pi.events.on("pi-desktop:pause-controller", (value) => { (value as { controller?: PauseController }).controller = controller; });
+  pi.on("session_shutdown", () => { generation += 1; unsubscribe(); pauseOperation = undefined; });
   pi.registerCommand("pi-desktop-control", {
     description: "Control Pi Desktop pause and resume",
     async handler(args, ctx) {
@@ -77,29 +121,10 @@ export default function sessionBroker(pi: ExtensionAPI) {
       try {
         const control = JSON.parse(args) as { id?: string; action?: string }; id = control.id; action = control.action ?? "";
         if (!id || ctx.mode !== "rpc") throw new Error("Desktop control requires an RPC request");
-        if (action === "pause") {
-          if (!pauseOperation && !ctx.isIdle()) {
-            pauseStopped = false; isPausing = true; persistPause(true); isPaused = false; publishPause();
-            pauseOperation = (async () => { try { ctx.abort(); await ctx.waitForIdle(); } finally { isPaused = !pauseStopped; isPausing = false; pauseOperation = undefined; publishPause(); } })();
-          }
-          await pauseOperation;
-        } else if (action === "resume") {
-          if (isPausing || !ctx.isIdle()) throw new Error("Wait for Pi to finish pausing before resuming");
-          if (isPaused) {
-            const message = `/pi-desktop-resume-turn ${crypto.randomUUID()}`;
-            resumeMessages.add(message); pi.appendEntry(resumeEntry, { message });
-            // The native bridge submits this through normal RPC prompt preflight.
-            // Keep Resume available until a successful prompt starts the agent.
-            resumeMessage = message;
-          }
-        } else if (action === "stop") {
-          pauseStopped = true;
-          if (isPaused || isPausing) persistPause(false);
-          publishPause(); ctx.abort();
-          // Keep aborting queued runs until the pending pause has fully settled.
-          await pauseOperation;
-          await ctx.waitForIdle();
-        } else if (action !== "state") throw new Error(`Unknown desktop control: ${action}`);
+        if (action === "pause") await controller.pause(ctx);
+        else if (action === "resume") resumeMessage = controller.resume(ctx);
+        else if (action === "stop") await controller.stop(ctx);
+        else if (action !== "state") throw new Error(`Unknown desktop control: ${action}`);
         ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id, command: action, success: true, data: { isPaused, isPausing, ...(resumeMessage ? { resumeMessage } : {}) } })}`);
       } catch (error) {
         if (id) ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id, command: action, success: false, error: error instanceof Error ? error.message : String(error) })}`);
@@ -107,6 +132,11 @@ export default function sessionBroker(pi: ExtensionAPI) {
       }
     },
   });
+  return controller;
+}
+
+export default function sessionBroker(pi: ExtensionAPI) {
+  registerPauseControl(pi);
   pi.registerTool({
     name: "list_agents", label: "List agents", description: "List Pi agents addressable through Pi Desktop", promptSnippet: "List agents by hostId and sessionId",
     parameters: Type.Object({}),
