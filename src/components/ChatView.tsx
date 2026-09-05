@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { FolderGit2 } from "lucide-react";
 import type { AgentProfile, AgentState, ChatMessage, ComposerUpload, GitDiffSnapshots, ImageAttachment, Model, PromptContextInfo, PromptDictionary, SequenceProfile, SlashCommand } from "../types";
 import { Message } from "./Message";
@@ -11,9 +11,10 @@ import { parseSequencePrompt } from "../lib/sequence";
 interface Props { state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; promptContext?: PromptContextInfo; debug?: boolean; agents?: AgentProfile[]; sequences?: SequenceProfile[]; activeAgent?: string; dictionaries?: PromptDictionary[]; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: string[]; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: string) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: SetStateAction<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>; onAbort: () => void | Promise<void>; onPause: () => void | Promise<void>; onResume: () => void | Promise<void>; onOpenTerminal?: () => void; onOpenProject: () => void; onBranch: (message: ChatMessage) => void; onCreateWorktree?: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onThinking: (level: string) => void; }
 
 export function ChatView(props: Props) {
-  const bottom = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const followLatest = useRef(true);
+  const lastScrollTop = useRef(0);
+  const touchY = useRef<number | undefined>(undefined);
   const shell = useRef<HTMLElement>(null);
   const composerStack = useRef<HTMLDivElement>(null);
   const turns = useMemo(() => groupTurns(props.messages), [props.messages]);
@@ -27,22 +28,40 @@ export function ChatView(props: Props) {
   const projectName = props.projectCwd?.split(/[\\/]/).filter(Boolean).at(-1);
   const retryable = !props.state.isStreaming && !props.state.isPaused && !props.state.isPausing;
   const abortedTurn = retryable ? findReplaceableAbortedTurn(props.messages) : undefined;
-  useEffect(() => { if (followLatest.current) bottom.current?.scrollIntoView({ behavior: "auto" }); }, [props.messages, props.gitDiffs, props.state.isStreaming]);
+  const scrollToLatest = useCallback(() => {
+    const element = messagesRef.current;
+    if (!element || !followLatest.current) return;
+    element.scrollTop = element.scrollHeight;
+    lastScrollTop.current = element.scrollTop;
+  }, []);
+  useLayoutEffect(scrollToLatest, [scrollToLatest, props.messages, props.gitDiffs, props.state.isStreaming]);
   useEffect(() => {
     const composer = composerStack.current;
     const chatShell = shell.current;
     if (!composer || !chatShell) return;
-    const updateHeight = () => chatShell.style.setProperty("--composer-height", `${composer.getBoundingClientRect().height}px`);
+    const updateHeight = () => { chatShell.style.setProperty("--composer-height", `${composer.getBoundingClientRect().height}px`); scrollToLatest(); };
     updateHeight();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(updateHeight);
     observer.observe(composer);
     return () => observer.disconnect();
-  }, [props.readOnly]);
+  }, [props.readOnly, scrollToLatest]);
   return <main ref={shell} className="chat-shell" onFocusCapture={props.onActivate} onPointerDownCapture={props.onActivate}>
-    <div ref={messagesRef} className="messages" aria-live="polite" onScroll={(event) => { const element = event.currentTarget; followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80; }}><div className="conversation">
+    <div ref={messagesRef} className="messages" aria-live="polite"
+      onWheel={(event) => { if (event.deltaY < 0 && event.currentTarget.scrollTop > 0) followLatest.current = false; }}
+      onTouchStart={(event) => { touchY.current = event.touches[0]?.clientY; }}
+      onTouchMove={(event) => { const y = event.touches[0]?.clientY; if (y !== undefined && touchY.current !== undefined && y > touchY.current && event.currentTarget.scrollTop > 0) followLatest.current = false; touchY.current = y; }}
+      onKeyDownCapture={(event) => { if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) followLatest.current = false; }}
+      onScroll={(event) => {
+        const element = event.currentTarget;
+        // Our own scroll writes update lastScrollTop before their scroll event.
+        // Only downward movement all the way to the bottom resumes following.
+        if (element.scrollTop < lastScrollTop.current) followLatest.current = false;
+        else if (element.scrollTop > lastScrollTop.current) followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight <= 2;
+        lastScrollTop.current = element.scrollTop;
+      }}><div className="conversation">
       {!props.messages.length && <div className="empty-chat"><span>π</span></div>}
-      {turns.map((turn, index) => <ConversationTurn key={turn[0]?.id || index} messages={turn} gitDiffs={props.gitDiffs} promptContext={props.promptContext} debug={props.debug ?? false} active={props.state.isStreaming && index === turns.length - 1} retryable={retryable && index === turns.length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index === turns.length - 1} onRetry={onRetry} onBranch={onBranch} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} />)}<div ref={bottom} className="scroll-anchor" />
+      {turns.map((turn, index) => <ConversationTurn key={turn[0]?.id || index} messages={turn} gitDiffs={props.gitDiffs} promptContext={props.promptContext} debug={props.debug ?? false} active={props.state.isStreaming && index === turns.length - 1} retryable={retryable && index === turns.length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index === turns.length - 1} onRetry={onRetry} onBranch={onBranch} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} />)}<div className="scroll-anchor" />
     </div></div>
     {!props.readOnly && <div ref={composerStack} className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.map((line, index) => <div key={index}>{line}</div>)}</div>} {props.statuses.length > 0 && <div className="extension-status">{props.statuses.join(" · ")}</div>}{props.state.activity && <div className="runtime-activity" role="status">{props.state.activity}</div>}{!props.messages.length && props.state.messageCount === 0 && <div className="new-chat-project"><button type="button" className={projectName ? "selected" : undefined} aria-label={projectName ? `Selected project: ${projectName}` : "Choose project"} title={props.projectCwd} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName ?? "Choose project"}</button></div>}<Composer streaming={props.state.isStreaming} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} commands={props.commands} agents={props.agents ?? []} sequences={props.sequences ?? []} activeAgent={props.activeAgent} dictionaries={props.dictionaries} models={props.models} model={props.state.model} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug ? sessionCache : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn ? { id: `${abortedTurn.assistant.timestamp ?? abortedTurn.assistant.id}:${abortedTurn.prompt}`, value: abortedTurn.prompt } : undefined} onSend={props.onSend} onAbort={props.onAbort} onPause={props.onPause} onResume={props.onResume} onOpenTerminal={props.onOpenTerminal} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onThinking={props.onThinking} /></div>}
   </main>;
