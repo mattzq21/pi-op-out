@@ -1,4 +1,4 @@
-# piop
+# Piop
 
 A Tauri-only native interface for the Pi coding agent. It is not a standalone browser application. The desktop app controls persistent local or SSH-hosted `pi --mode rpc` processes.
 
