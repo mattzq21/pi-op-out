@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type SetStateAction } from "react";
-import { ArrowUp, CircleStop, FileText, ImagePlus, Paperclip, Pause, Play, TerminalSquare, X } from "lucide-react";
+import { ArrowUp, CircleStop, FileText, ImagePlus, Paperclip, Pause, Play, TerminalSquare, X, Zap } from "lucide-react";
 import type { AgentProfile, ComposerUpload, ContextUsage, ImageAttachment, Model, PromptDictionary, SequenceProfile, SlashCommand } from "../types";
 import { applyDictionary, dictionaryMatches } from "../lib/dictionaries";
 import { IconButton } from "./IconButton";
@@ -16,6 +16,7 @@ interface Props {
   dictionaries?: PromptDictionary[];
   models: Model[];
   model: Model | null;
+  fastModeStatus?: string;
   thinkingLevel: string;
   thinkingLevels: string[];
   sessionCache?: { rate: number; low: boolean; cachedTokens: number; promptTokens: number };
@@ -68,9 +69,10 @@ const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((
 });
 const escapeAttribute = (value: string) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]!);
 
-export function Composer({ streaming, paused = false, pausing = false, queued, commands, agents, sequences, activeAgent, dictionaries = [], models, model, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onThinking }: Props) {
+export function Composer({ streaming, paused = false, pausing = false, queued, commands, agents, sequences, activeAgent, dictionaries = [], models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onThinking }: Props) {
   const [localValue, setLocalValue] = useState("");
   const value = draft ?? localValue;
+  const fastModeEnabled = fastModeStatus?.startsWith("Fast mode on") ?? false;
   const setValue = (next: string) => { if (onDraftChange) onDraftChange(next); else setLocalValue(next); };
   const [localUploads, setLocalUploads] = useState<ComposerUpload[]>([]);
   const uploads = controlledUploads ?? localUploads;
@@ -218,6 +220,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
       <div className="composer-bar"><div className="composer-tools"><IconButton label="Attach files" disabled={controlsDisabled} onClick={() => fileRef.current?.click()}><Paperclip size={17} /></IconButton>{onOpenTerminal && <IconButton label="Open terminal" disabled={controlsDisabled} onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton>}{contextUsage && <ContextWheel usage={contextUsage} />}{sessionCache && <span className={`session-cache-hit${sessionCache.low ? " low" : ""}`} title={`${sessionCache.cachedTokens.toLocaleString()} of ${sessionCache.promptTokens.toLocaleString()} session prompt tokens read from cache`}>Cache {sessionCache.rate}%</span>}</div>
         <div className="composer-actions">
         <ContainedPicker label="Agent" value={activeAgent ?? "default"} disabled={streaming || inputDisabled} menuWidth={120} centered options={[...(agents.length ? agents : [{ name: "default" }]).map((agent) => ({ value: agent.name, label: agent.name, detail: "Agent" })), ...sequences.map((sequence) => ({ value: sequence.name, label: sequence.name, detail: "Sequence" })), { value: "final-only", label: "final-only", detail: "Multi-agent" }, { value: "own+final", label: "own+final", detail: "Multi-agent" }]} onChange={onAgent} />
+        {fastModeStatus && <span className={`fast-mode-indicator${fastModeStatus === "Fast mode on" ? " active" : ""}`} role="img" aria-label={fastModeStatus} title={fastModeStatus}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled ? "currentColor" : "none"} aria-hidden="true" /></span>}
         <ContainedPicker label="Model" value={model ? `${model.provider}/${model.id}` : ""} disabled={streaming || inputDisabled} options={models.map((item) => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item), detail: item.provider }))} onChange={(value) => { const next = models.find((item) => `${item.provider}/${item.id}` === value); if (next) onModel(next); }} />
         <ContainedPicker label="Thinking level" value={thinkingLevel} disabled={streaming || inputDisabled} menuWidth={120} centered compact options={thinkingLevels.map((level) => ({ value: level, label: level }))} onChange={onThinking} />
         <span className="composer-divider" />
