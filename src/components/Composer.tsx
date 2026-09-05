@@ -1,3 +1,6 @@
+import { isTauri } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { readDroppedFile } from "../lib/nativeTransport";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type SetStateAction } from "react";
 import { ArrowUp, CircleStop, FileText, ImagePlus, Pause, Play, TerminalSquare, X, Zap } from "lucide-react";
 import type { AgentProfile, ComposerUpload, ContextUsage, ImageAttachment, Model, PromptDictionary, SequenceProfile, SlashCommand } from "../types";
@@ -127,7 +130,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
 
   useEffect(() => {
     const preventFileNavigation = (event: DragEvent) => {
-      if (event.dataTransfer?.types.includes("Files")) event.preventDefault();
+      if (event.dataTransfer?.types.includes("Files") || (isTauri() && event.dataTransfer?.types.includes("text/uri-list"))) event.preventDefault();
     };
     const clearDrag = () => { dragDepth.current = 0; setDraggingFiles(false); };
     window.addEventListener("dragover", preventFileNavigation);
@@ -196,6 +199,41 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
       return [...current, ...accepted];
     });
   };
+  const nativeDropRef = useRef({ inputDisabled, addFiles });
+  useLayoutEffect(() => { nativeDropRef.current = { inputDisabled, addFiles }; });
+  useEffect(() => {
+    if (!isTauri()) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void getCurrentWebview().onDragDropEvent(({ payload }) => {
+      if (disposed) return;
+      if (payload.type === "leave") { setDraggingFiles(false); return; }
+      const bounds = composerRef.current?.getBoundingClientRect();
+      const x = payload.position.x / window.devicePixelRatio;
+      const y = payload.position.y / window.devicePixelRatio;
+      const inside = Boolean(bounds && x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom);
+      const enabled = inside && !nativeDropRef.current.inputDisabled;
+      setDraggingFiles(payload.type !== "drop" && enabled);
+      if (payload.type !== "drop" || !enabled) return;
+      const paths = payload.paths.slice(0, UPLOAD_COUNT_LIMIT);
+      void (async () => {
+        const errors: string[] = [];
+        for (const path of paths) {
+          if (disposed) return;
+          try {
+            const file = await readDroppedFile(path);
+            if (disposed) return;
+            await nativeDropRef.current.addFiles([file]);
+          } catch (reason) { errors.push(reason instanceof Error ? reason.message : String(reason)); }
+        }
+        if (!disposed && errors.length) setUploadError(errors.join(". "));
+      })();
+      ref.current?.focus();
+    }).then((cleanup) => { if (disposed) cleanup(); else unlisten = cleanup; })
+      .catch((reason) => { if (!disposed) setUploadError(`Could not enable file drops: ${String(reason)}`); });
+    return () => { disposed = true; unlisten?.(); };
+  }, []);
+
   const submit = async (behavior: "steer" | "followUp" = "followUp") => {
     if (controlsDisabled || pausing || controlActionRef.current || stoppingRef.current) return;
     const textFiles = uploads.filter((upload) => upload.kind === "text");
@@ -240,11 +278,11 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
     </div>}
     <div ref={composerRef} className={`composer${draggingFiles && !inputDisabled ? " dragging-files" : ""}`}
       onDragEnter={(event) => {
-        if (!event.dataTransfer.types.includes("Files")) return;
+        if (!event.dataTransfer.types.includes("Files") && !(isTauri() && event.dataTransfer.types.includes("text/uri-list"))) return;
         event.preventDefault(); dragDepth.current += 1; setDraggingFiles(true);
       }}
       onDragOver={(event) => {
-        if (!event.dataTransfer.types.includes("Files")) return;
+        if (!event.dataTransfer.types.includes("Files") && !(isTauri() && event.dataTransfer.types.includes("text/uri-list"))) return;
         event.preventDefault(); event.dataTransfer.dropEffect = inputDisabled ? "none" : "copy";
       }}
       onDragLeave={() => {
@@ -252,10 +290,20 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
         if (!dragDepth.current) setDraggingFiles(false);
       }}
       onDrop={(event) => {
-        if (!event.dataTransfer.types.includes("Files")) return;
+        if (!event.dataTransfer.types.includes("Files") && !(isTauri() && event.dataTransfer.types.includes("text/uri-list"))) return;
         event.preventDefault(); dragDepth.current = 0; setDraggingFiles(false);
         if (inputDisabled) return;
-        void addFiles(Array.from(event.dataTransfer.files)).catch((reason) => setUploadError(reason instanceof Error ? reason.message : String(reason)));
+        const files = Array.from(event.dataTransfer.files);
+        const paths = event.dataTransfer.getData("text/uri-list").split(/\r?\n/).flatMap((line) => {
+          try {
+            const url = new URL(line);
+            return url.protocol === "file:" && (!url.hostname || url.hostname === "localhost") ? [decodeURIComponent(url.pathname)] : [];
+          } catch { return []; }
+        });
+        void (async () => {
+          if (files.length) await addFiles(files);
+          else for (const path of paths.slice(0, UPLOAD_COUNT_LIMIT)) await nativeDropRef.current.addFiles([await readDroppedFile(path)]);
+        })().catch((reason) => setUploadError(reason instanceof Error ? reason.message : String(reason)));
         ref.current?.focus();
       }}>
       {draggingFiles && !inputDisabled && <div className="composer-drop-hint" role="status">Drop files to attach</div>}

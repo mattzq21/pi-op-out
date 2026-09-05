@@ -1453,6 +1453,21 @@ fn open_system_resource(target: &std::ffi::OsStr) -> Result<(), String> {
 }
 
 #[tauri::command(async)]
+fn read_dropped_file(path: String) -> Result<Value, String> {
+    let path = Path::new(&path);
+    let file = fs::File::open(path).map_err(|error| error.to_string())?;
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    if !metadata.is_file() { return Err("Drop files, not folders".to_string()); }
+    let limit = 10 * 1024 * 1024;
+    if metadata.len() > limit { return Err("Attachment is larger than 10 MB".to_string()); }
+    let mut data = Vec::new();
+    file.take(limit + 1).read_to_end(&mut data).map_err(|error| error.to_string())?;
+    if data.len() as u64 > limit { return Err("Attachment is larger than 10 MB".to_string()); }
+    let name = path.file_name().ok_or("Attachment has no filename")?.to_string_lossy();
+    Ok(json!({ "name": name, "data": data }))
+}
+
+#[tauri::command(async)]
 fn open_external_url(url: String) -> Result<(), String> {
     let parsed = tauri::Url::parse(&url).map_err(|_| "Enter a valid HTTP or HTTPS URL")?;
     if !matches!(parsed.scheme(), "http" | "https") || !parsed.has_host() { return Err("Only HTTP and HTTPS links can be opened in the browser".into()); }
@@ -2033,5 +2048,5 @@ pub fn run() {
         }
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
-    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, load_app_settings, save_app_settings, codex_usage]).run(context).expect("error while running Pi desktop");
+    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).run(context).expect("error while running Pi desktop");
 }

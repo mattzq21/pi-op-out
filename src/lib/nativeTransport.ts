@@ -174,3 +174,10 @@ export class NativeTransport {
   resizeTerminal(terminalId: string, cols: number, rows: number) { return call<void>("resize_terminal", { terminalId, cols, rows }); }
   closeTerminal(terminalId: string) { return call<void>("close_terminal", { terminalId }); }
 }
+
+export async function readDroppedFile(path: string): Promise<File> {
+  const result = await call<{ name: string; data: number[] }>("read_dropped_file", { path });
+  const extension = result.name.split(".").pop()?.toLowerCase() ?? "";
+  const imageTypes: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp" };
+  return new File([new Uint8Array(result.data)], result.name, { type: imageTypes[extension] ?? "" });
+}
