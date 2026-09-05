@@ -83,13 +83,13 @@ function MarkdownLink({ children, href }: ComponentPropsWithoutRef<"a">) {
     } catch { setError("Could not copy link"); }
     menu?.returnFocus?.focus({ preventScroll: true }); setMenu(undefined);
   };
-  return <><a ref={linkRef} className="message-link" href={url} title={`Ctrl+click to open in browser\n${url}`} onContextMenu={(event) => {
+  return <><a ref={linkRef} className="message-link" href={url} title={`Click to open in browser\n${url}`} onContextMenu={(event) => {
     event.preventDefault();
     const bounds = event.currentTarget.getBoundingClientRect();
     setMenu({ x: event.clientX || bounds.left, y: event.clientY || bounds.bottom, returnFocus: document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget });
   }} onAuxClick={(event) => event.preventDefault()} onClick={(event) => {
     event.preventDefault();
-    if (!event.ctrlKey || event.button !== 0) return;
+    if (event.button !== 0) return;
     setError(undefined);
     void openExternalUrl(url).catch((reason) => setError(`Could not open link: ${reason instanceof Error ? reason.message : String(reason)}`));
   }}>{children}</a>{menu && createPortal(<div ref={menuRef} className="conversation-menu link-context-menu" role="menu" aria-label="Link actions" style={{ left: menu.x, top: menu.y }} onContextMenu={(event) => event.preventDefault()}>
