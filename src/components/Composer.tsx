@@ -221,7 +221,11 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
         <ContainedPicker label="Model" value={model ? `${model.provider}/${model.id}` : ""} disabled={streaming || inputDisabled} options={models.map((item) => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item), detail: item.provider }))} onChange={(value) => { const next = models.find((item) => `${item.provider}/${item.id}` === value); if (next) onModel(next); }} />
         <ContainedPicker label="Thinking level" value={thinkingLevel} disabled={streaming || inputDisabled} menuWidth={120} centered compact options={thinkingLevels.map((level) => ({ value: level, label: level }))} onChange={onThinking} />
         <span className="composer-divider" />
-        {(streaming || paused || pausing) && <><IconButton label={paused ? "Resume Pi" : "Pause Pi"} disabled={inputDisabled} onClick={() => void control(paused ? "resume" : "pause")}>{paused ? <Play size={17} /> : <Pause size={17} />}</IconButton><IconButton label="Stop Pi" className="stop-compact" disabled={stopDisabled} onClick={() => void control("abort")}><CircleStop size={17} /></IconButton></>}<IconButton label={streaming ? "Queue follow-up" : "Send message"} title={streaming ? "Queue follow-up (Enter) · Steer (Ctrl+Enter)" : "Send message (Enter)"} className="send" disabled={inputDisabled || sending || (!value.trim() && uploads.length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton></div>
+        {(streaming || paused || pausing) && <IconButton label="Stop Pi" className="stop-compact" disabled={stopDisabled} onClick={() => void control("abort")}><CircleStop size={17} /></IconButton>}
+        {(streaming || paused || pausing)
+          ? <IconButton label={paused ? "Resume Pi" : "Pause Pi"} className="send" disabled={inputDisabled} onClick={() => void control(paused ? "resume" : "pause")}>{paused ? <Play size={17} /> : <Pause size={17} />}</IconButton>
+          : <IconButton label="Send message" title="Send message (Enter)" className="send" disabled={inputDisabled || sending || (!value.trim() && uploads.length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>}
+        </div>
       </div>
     </div>
   </div>;
