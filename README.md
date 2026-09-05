@@ -30,7 +30,7 @@ Authenticate Pi before starting the desktop app with Pi's normal `/login` flow o
 
 `npm run dev` only provides the frontend development server consumed by `tauri dev`; opening that server directly in a browser is unsupported.
 
-Install `pi-define-agents` locally to enable named agents; install `pi-orchestration` alongside it for sequences and delegation. Follow the extension READMEs above, then reload Pi. Existing combined orchestration configuration is split automatically with a backup. piop provisions both extensions on SSH hosts.
+Agent profiles are included: piop automatically installs and loads `pi-define-agents` locally and on SSH hosts. Orchestration is optional everywhere; install `pi-orchestration` on each machine where you want sequences and delegation, following its README, then reload Pi. Existing combined orchestration configuration is split automatically with a backup. Previously installed orchestration extensions remain installed.
 
 Saving native settings restarts the managed Pi process while preserving the active project and session. Enabled tools, skills, default model/thinking level, and MCP configuration are applied at startup.
 

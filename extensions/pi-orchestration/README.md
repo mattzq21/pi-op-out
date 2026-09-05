@@ -2,7 +2,7 @@
 
 Owns ordered sequences, foreground/background handoff, and orchestrator-gated delegation for Pi CLI and piop. Requires the separately loaded `pi-define-agents` extension for agent definitions and application.
 
-Install both extensions from this repository:
+Orchestration is optional in piop and is never installed automatically, including on SSH hosts. piop supplies `pi-define-agents`; install `pi-orchestration` on each machine where you want orchestration. For standalone Pi CLI use, install both extensions from this repository:
 
 ```bash
 mkdir -p ~/.pi/agent/extensions/pi-define-agents ~/.pi/agent/extensions/pi-orchestration
@@ -10,7 +10,7 @@ cp extensions/pi-define-agents/index.ts ~/.pi/agent/extensions/pi-define-agents/
 cp extensions/pi-orchestration/index.ts ~/.pi/agent/extensions/pi-orchestration/index.ts
 ```
 
-Reload Pi. If `pi-define-agents` is missing, orchestration reports the missing dependency and stays disabled; Pi remains usable. Either extension discovery order works. piop provisions both extensions on remote hosts.
+Reload Pi. If `pi-define-agents` is missing, orchestration reports the missing dependency and stays disabled; Pi remains usable. Either extension discovery order works. Previously installed orchestration extensions remain installed and can still be discovered by Pi.
 
 Agent definitions live in `pi-define-agents/config.json`. This extension's `config.json` contains only sequences, which reference defined agents by name. See `config.example.json`. On upgrade, `pi-define-agents` moves agents out of the old combined file and preserves `config.json.pre-define-agents.bak`; see its README for migration details. Invalid JSON is reported without overwriting the file. Legacy desktop-owned YAML/settings migration is not supported.
 
