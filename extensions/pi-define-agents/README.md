@@ -21,7 +21,7 @@ When the sibling `pi-orchestration/config.json` still contains agents, the exten
 2. Creates its own `config.json` from those agents, unless its configuration already exists.
 3. Leaves only sequences in orchestration's configuration.
 
-Writes use temporary files and rename. Reloading after an interrupted migration completes the split. An existing definitions file remains authoritative. Invalid JSON is reported without replacing the affected file. Once definitions exist, an invalid orchestration configuration does not prevent standalone agent use.
+Writes use temporary files; initial creation publishes a complete file without replacing another process’s configuration, and subsequent edits use rename. Reloading after an interrupted migration completes the split. An existing definitions file remains authoritative. Invalid JSON is reported without replacing the affected file. Once definitions exist, an invalid orchestration configuration does not prevent standalone agent use.
 
 ## Extension interface
 

@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { copyFile, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, link, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,10 +28,16 @@ const extensionPath = fileURLToPath(import.meta.url);
 type Config = { agents: Agent[] };
 const fallbackConfig: Config = { agents: [{ name: "default", description: "General-purpose agent", model: "", effort: "high", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
 
-async function writeConfig(value: Config) {
-  const temporary = `${configPath}.${process.pid}.${Date.now()}.tmp`;
-  try { await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 }); await rename(temporary, configPath); }
-  catch (error) { await rm(temporary, { force: true }).catch(() => undefined); throw error; }
+async function writeConfig(value: Config, createOnly = false) {
+  const temporary = `${configPath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    if (createOnly) {
+      // Publish a complete file without replacing a concurrent migration's result.
+      try { await link(temporary, configPath); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+    } else await rename(temporary, configPath);
+  } finally { await rm(temporary, { force: true }); }
 }
 
 function normalize(value: Partial<Config>): Config {
@@ -65,7 +72,11 @@ async function loadConfig(): Promise<Config> {
     try { await copyFile(legacyPath, `${legacyPath}.pre-define-agents.bak`, constants.COPYFILE_EXCL); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
   }
-  if (!config) { config = normalize({ agents: legacy?.agents }); await writeConfig(config); }
+  if (!config) {
+    await writeConfig(normalize({ agents: legacy?.agents }), true);
+    // Another process may have published first, including after our ENOENT read.
+    config = normalize(JSON.parse(await readFile(configPath, "utf8")));
+  }
   if (Array.isArray(legacy?.agents)) {
     const temporary = `${legacyPath}.${process.pid}.tmp`;
     try { await writeFile(temporary, `${JSON.stringify({ sequences: legacy.sequences ?? [] }, null, 2)}\n`, { mode: 0o600 }); await rename(temporary, legacyPath); }

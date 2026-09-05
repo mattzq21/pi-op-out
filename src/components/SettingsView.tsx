@@ -45,8 +45,15 @@ function mcpServerError(server: McpServer) {
   return undefined;
 }
 
-export function SettingsView({ settings, orchestration, orchestrationAvailable = false, sessions = [], models = [], thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"], onSave, onDirtyChange }: { settings: AppSettings; orchestration?: OrchestrationConfig; orchestrationAvailable?: boolean; sessions?: SessionSummary[]; models?: Model[]; thinkingLevels?: string[]; onSave: (settings: AppSettings, orchestration?: OrchestrationConfig) => Promise<void>; onDirtyChange?: (dirty: boolean) => void }) {
-  const [draft, setDraft] = useState(() => structuredClone(settings)); const [agentDrafts, setAgentDrafts] = useState(() => structuredClone(orchestration?.agents ?? [])); const [sequenceDrafts, setSequenceDrafts] = useState(() => structuredClone(orchestration?.sequences ?? [])); const [agentIndex, setAgentIndex] = useState(() => firstEditableAgent(orchestration?.agents ?? [])); const [sequenceIndex, setSequenceIndex] = useState(0); const [section, setSection] = useState<Section>("general"); const [saved, setSaved] = useState(false); const [saving, setSaving] = useState(false); const savingRef = useRef(false); const [saveError, setSaveError] = useState<string>(); const [skillFilter, setSkillFilter] = useState("");
+export function SettingsView({ settings, orchestration: incomingConfiguration, orchestrationAvailable: incomingAvailability = false, sessions = [], models = [], thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"], onSave, onDirtyChange }: { settings: AppSettings; orchestration?: OrchestrationConfig; orchestrationAvailable?: boolean; sessions?: SessionSummary[]; models?: Model[]; thinkingLevels?: string[]; onSave: (settings: AppSettings, orchestration?: OrchestrationConfig) => Promise<void>; onDirtyChange?: (dirty: boolean) => void }) {
+  const [saving, setSaving] = useState(false);
+  // Saving reloads extensions. Keep the last discovered capabilities until the
+  // save finishes, then reconcile actual removals against the fresh discovery.
+  const capabilitiesBeforeSave = useRef({ configuration: incomingConfiguration, available: incomingAvailability });
+  if (!saving) capabilitiesBeforeSave.current = { configuration: incomingConfiguration, available: incomingAvailability };
+  const orchestration = saving ? capabilitiesBeforeSave.current.configuration : incomingConfiguration;
+  const orchestrationAvailable = saving ? capabilitiesBeforeSave.current.available : incomingAvailability;
+  const [draft, setDraft] = useState(() => structuredClone(settings)); const [agentDrafts, setAgentDrafts] = useState(() => structuredClone(orchestration?.agents ?? [])); const [sequenceDrafts, setSequenceDrafts] = useState(() => structuredClone(orchestration?.sequences ?? [])); const [agentIndex, setAgentIndex] = useState(() => firstEditableAgent(orchestration?.agents ?? [])); const [sequenceIndex, setSequenceIndex] = useState(0); const [section, setSection] = useState<Section>("general"); const [saved, setSaved] = useState(false); const savingRef = useRef(false); const [saveError, setSaveError] = useState<string>(); const [skillFilter, setSkillFilter] = useState("");
   const baselineSettingsRef = useRef(settingsSnapshot(settings));
   const baselineOrchestrationRef = useRef(JSON.stringify(orchestration));
   const orchestrationSnapshot = JSON.stringify(orchestration);
