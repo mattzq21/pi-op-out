@@ -44,6 +44,8 @@ Both the manual launcher and automated suite use the same Linux placement as `np
 
 The launcher selects the slot before starting the app and passes its exact `{ x, y, width, height }` bounds through `PI_WINDOW_BOUNDS`. Shared Linux startup code creates the window hidden with those bounds and decorations disabled, then shows it during Tauri setup. This applies the final geometry before the first visible map, with no delayed move, Linux WebDriver resize, or height offset. Rebuild the E2E binary after changing native placement code.
 
+Startup leaves keyboard focus in other apps; clicking Pi focuses it normally.
+
 The manual launcher prints a `sessionId` and `webdriverConfig`; pass those values to the MCP's `attach_session` tool with `platform: "browser"`, `provider: "external"`, and `trace: false`. Keep the launcher running during the session and stop it with Ctrl+C when finished.
 
 Do not enable trace recording in any WebdriverIO MCP session. Omit the `trace` argument or set `trace: false` when starting or attaching. Trace recording creates screenshot-heavy archives in `.trace/` that are not needed for normal agent operation.

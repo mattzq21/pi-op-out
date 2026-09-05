@@ -2002,22 +2002,21 @@ pub fn run() {
     #[cfg(target_os = "linux")]
     let (context, start_window_label) = {
         let mut context = context;
-        let start_window_label = if let Ok(value) = std::env::var("PI_WINDOW_BOUNDS") {
+        let window = context.config_mut().app.windows.first_mut().expect("Missing main window configuration");
+        let start_window_label = window.visible.then(|| window.label.clone());
+        // Configure GTK's focus-on-map policy before the first show. Keeping the window
+        // hidden also lets Tao apply decorations before GNOME chooses its geometry.
+        window.visible = false;
+        if let Ok(value) = std::env::var("PI_WINDOW_BOUNDS") {
             #[derive(Deserialize)]
             struct WindowBounds { x: i32, y: i32, width: u32, height: u32 }
             let bounds: WindowBounds = serde_json::from_str(&value).expect("Invalid PI_WINDOW_BOUNDS");
-            let window = context.config_mut().app.windows.first_mut().expect("Missing main window configuration");
             window.x = Some(f64::from(bounds.x));
             window.y = Some(f64::from(bounds.y));
             window.width = f64::from(bounds.width);
             window.height = f64::from(bounds.height);
             window.decorations = false;
-            // Tao shows visible windows before applying decorations. Keep ours hidden
-            // until setup so GNOME places an undecorated window on the intended monitor,
-            // using the exact requested size without a temporary title-bar height.
-            window.visible = false;
-            Some(window.label.clone())
-        } else { None };
+        }
         (context, start_window_label)
     };
     let broker = BrokerRuntime::default();
@@ -2027,7 +2026,10 @@ pub fn run() {
     builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(SessionIndexRuntime::default()).manage(broker.clone()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(target_os = "linux")]
         if let Some(label) = start_window_label.as_deref() {
-            app.get_webview_window(label).ok_or("Missing main window")?.show()?;
+            use gtk::prelude::GtkWindowExt;
+            let window = app.get_webview_window(label).ok_or("Missing main window")?;
+            window.gtk_window()?.set_focus_on_map(false);
+            window.show()?;
         }
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
