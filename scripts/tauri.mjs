@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:net";
 import { selectWindowBounds } from "./window-placement.mjs";
@@ -7,6 +8,7 @@ const args = process.argv.slice(2);
 const windowBounds = process.platform === "linux" && args[0] === "dev" ? selectWindowBounds() : undefined;
 
 if (args[0] === "dev") {
+  const config = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
   const port = await new Promise((resolve, reject) => {
     const server = createServer();
     server.once("error", reject);
@@ -20,6 +22,7 @@ if (args[0] === "dev") {
       beforeDevCommand: `npm run dev -- --host 127.0.0.1 --port ${port} --strictPort`,
       devUrl: `http://127.0.0.1:${port}`,
     },
+    app: { windows: config.app.windows.map((window) => ({ ...window, focus: false })) },
   }));
 }
 

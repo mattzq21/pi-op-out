@@ -2000,10 +2000,10 @@ fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), Str
 pub fn run() {
     let context = tauri::generate_context!();
     #[cfg(target_os = "linux")]
-    let (context, start_window_label) = {
+    let (context, start_window) = {
         let mut context = context;
         let window = context.config_mut().app.windows.first_mut().expect("Missing main window configuration");
-        let start_window_label = window.visible.then(|| window.label.clone());
+        let start_window = window.visible.then(|| (window.label.clone(), window.focus));
         // Configure GTK's focus-on-map policy before the first show. Keeping the window
         // hidden also lets Tao apply decorations before GNOME chooses its geometry.
         window.visible = false;
@@ -2017,7 +2017,7 @@ pub fn run() {
             window.height = f64::from(bounds.height);
             window.decorations = false;
         }
-        (context, start_window_label)
+        (context, start_window)
     };
     let broker = BrokerRuntime::default();
     let builder = tauri::Builder::default();
@@ -2025,10 +2025,10 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
     builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(SessionIndexRuntime::default()).manage(broker.clone()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(target_os = "linux")]
-        if let Some(label) = start_window_label.as_deref() {
+        if let Some((label, focus)) = start_window.as_ref() {
             use gtk::prelude::GtkWindowExt;
             let window = app.get_webview_window(label).ok_or("Missing main window")?;
-            window.gtk_window()?.set_focus_on_map(false);
+            window.gtk_window()?.set_focus_on_map(*focus);
             window.show()?;
         }
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
