@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
-import type { AgentState, AppSettings, ChatMessage, ComposerUpload, ExtensionUiRequest, ImageAttachment, OrchestrationCapability, RpcEvent, SessionSummary } from "../types";
+import type { AgentState, AppSettings, ChatMessage, ComposerUpload, ExtensionUiRequest, ImageAttachment, DefinedAgentsCapability, OrchestrationCapability, RpcEvent, SessionSummary } from "../types";
 import { useChatSession } from "../lib/useChatSession";
 import { SessionRuntimePool, useTurnDiffs } from "../lib/sessionRuntimePool";
 import type { NativeTransport } from "../lib/nativeTransport";
-import { decodeOrchestrationValue, encodeOrchestrationValue, ORCHESTRATION_STATUS_KEY } from "../lib/orchestrationProtocol";
+import { decodeOrchestrationValue, encodeOrchestrationValue, DEFINED_AGENTS_STATUS_KEY, ORCHESTRATION_STATUS_KEY } from "../lib/orchestrationProtocol";
 import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 import { branchMessages, type PiEntry } from "../lib/messages";
 import { ChatView } from "./ChatView";
@@ -20,6 +20,7 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
   const connectedRef = useRef(connected); connectedRef.current = connected;
   const updateConnected = (value: boolean) => { connectedRef.current = value; setConnected(value); };
   const [orchestration, setOrchestration] = useState<OrchestrationCapability>();
+  const [definedAgents, setDefinedAgents] = useState<DefinedAgentsCapability>();
   const [uploads, setUploads] = useState<ComposerUpload[]>([]);
   const [statuses, setStatuses] = useState<Record<string, string>>({});
   const [widgets, setWidgets] = useState<Record<string, string[]>>({});
@@ -55,7 +56,8 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
     const unsubscribe = transport.subscribe((event: RpcEvent) => {
       handleEvent(event);
       if (event.type === "extension_ui_request") { const request = event as unknown as ExtensionUiRequest;
-        if (request.method === "setStatus" && request.statusKey === ORCHESTRATION_STATUS_KEY) try { setOrchestration(request.statusText?.startsWith("json:") ? decodeOrchestrationValue<OrchestrationCapability>(request.statusText.slice(5)) : undefined); } catch { setOrchestration(undefined); }
+        if (request.method === "setStatus" && request.statusKey === DEFINED_AGENTS_STATUS_KEY) try { setDefinedAgents(request.statusText?.startsWith("json:") ? decodeOrchestrationValue<DefinedAgentsCapability>(request.statusText.slice(5)) : undefined); } catch { setDefinedAgents(undefined); }
+        else if (request.method === "setStatus" && request.statusKey === ORCHESTRATION_STATUS_KEY) try { setOrchestration(request.statusText?.startsWith("json:") ? decodeOrchestrationValue<OrchestrationCapability>(request.statusText.slice(5)) : undefined); } catch { setOrchestration(undefined); }
         else if (request.method === "setStatus" && request.statusKey && request.statusKey !== "pi-desktop-prompt-context") setStatuses((current) => { const next = { ...current }; if (request.statusText) next[request.statusKey!] = request.statusText; else delete next[request.statusKey!]; return next; });
         else if (request.method === "setWidget" && request.widgetKey) setWidgets((current) => { const next = { ...current }; if (request.widgetLines) next[request.widgetKey!] = request.widgetLines; else delete next[request.widgetKey!]; return next; });
         else if (request.method === "notify") setNotices((current) => [...current, { id: crypto.randomUUID(), title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "piop extension", message: request.message || "Notification" }]);
@@ -65,7 +67,7 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
       }
       if (event.type === "extension_error") setNotices((current) => [...current, { id: crypto.randomUUID(), title: "Extension error", message: String(event.error ?? "An extension failed") }]);
       if (event.type === "message_end") window.setTimeout(() => void refresh(), 30);
-      if (event.type === "disconnected") { updateConnected(false); setOrchestration(undefined); setStatuses({}); setWidgets({}); document.title = "piop"; void onDialogTransportClosed(transport); if (!closing) { setControlError("Connection lost. Reconnecting…"); window.setTimeout(() => void connectRuntime(false), 50); } }
+      if (event.type === "disconnected") { updateConnected(false); setOrchestration(undefined); setDefinedAgents(undefined); setStatuses({}); setWidgets({}); document.title = "piop"; void onDialogTransportClosed(transport); if (!closing) { setControlError("Connection lost. Reconnecting…"); window.setTimeout(() => void connectRuntime(false), 50); } }
     });
     void connectRuntime(true);
     return () => { closing = true; runtimePool.setInteractive(transport, false); document.title = "piop"; reconnectRef.current = () => undefined; unsubscribe(); queueMicrotask(() => { if (lifecycleRef.current === lifecycle) void onReleaseTransport(transport); }); };
@@ -102,7 +104,7 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
   const resume = async () => { await transport.command({ type: "resume" }); };
   return <section className="split-chat" aria-label={`Split conversation: ${session.name}`}>
     <header className="split-pane-header"><span><strong title={session.name}>{session.name}</strong><small title={session.cwd}>{session.project}</small></span><button className="split-pane-close" aria-label="Close split pane" title="Close split pane" onClick={onClose}><X size={15} /></button></header>
-    {error ? <div className="split-pane-status error">{error}</div> : <ChatView state={state} messages={messages} gitDiffs={gitDiffs} debug={settings.debugMode} agents={orchestration?.config.agents ?? []} sequences={orchestration?.config.sequences ?? []} activeAgent={orchestration?.active} dictionaries={settings.dictionaries.filter((item) => settings.activeDictionaryIds.includes(item.id))} models={models} commands={commands} thinkingLevels={thinkingLevels} widgets={Object.values(widgets).flat()} statuses={statuses} projectCwd={session.cwd} controlsDisabled={!connected} draft={draft} onDraftChange={onDraftChange} focusRequest={focusRequest + extensionFocusRequest} onActivate={onActivate} uploads={uploads} onUploadsChange={setUploads} onSend={send} onAbort={abort} onPause={pause} onResume={resume} onOpenTerminal={onOpenTerminal} onOpenProject={() => undefined} onBranch={branch} onAgent={(name) => void transport.command({ type: "prompt", message: `/pi-orchestration-use ${encodeOrchestrationValue(name)}` }).catch(reportControlError)} onModel={(model) => void enqueueControl(async () => { await transport.command({ type: "set_model", provider: model.provider, modelId: model.id }); await refresh(); }).catch(reportControlError)} onToggleFastMode={() => enqueueControl(() => transport.toggleFastMode())} onThinking={(level) => void enqueueControl(async () => { await transport.command({ type: "set_thinking_level", level }); setState((current) => ({ ...current, thinkingLevel: level })); }).catch(reportControlError)} />}
+    {error ? <div className="split-pane-status error">{error}</div> : <ChatView state={state} messages={messages} gitDiffs={gitDiffs} debug={settings.debugMode} agents={definedAgents?.config.agents ?? []} orchestrationAvailable={Boolean(orchestration)} sequences={orchestration?.config.sequences ?? []} activeAgent={(orchestration?.active ?? definedAgents?.active)} dictionaries={settings.dictionaries.filter((item) => settings.activeDictionaryIds.includes(item.id))} models={models} commands={commands} thinkingLevels={thinkingLevels} widgets={Object.values(widgets).flat()} statuses={statuses} projectCwd={session.cwd} controlsDisabled={!connected} draft={draft} onDraftChange={onDraftChange} focusRequest={focusRequest + extensionFocusRequest} onActivate={onActivate} uploads={uploads} onUploadsChange={setUploads} onSend={send} onAbort={abort} onPause={pause} onResume={resume} onOpenTerminal={onOpenTerminal} onOpenProject={() => undefined} onBranch={branch} onAgent={(name) => void transport.command({ type: "prompt", message: `/${definedAgents?.config.agents.some((agent) => agent.name === name) ? "pi-define-agents" : "pi-orchestration"}-use ${encodeOrchestrationValue(name)}` }).catch(reportControlError)} onModel={(model) => void enqueueControl(async () => { await transport.command({ type: "set_model", provider: model.provider, modelId: model.id }); await refresh(); }).catch(reportControlError)} onToggleFastMode={() => enqueueControl(() => transport.toggleFastMode())} onThinking={(level) => void enqueueControl(async () => { await transport.command({ type: "set_thinking_level", level }); setState((current) => ({ ...current, thinkingLevel: level })); }).catch(reportControlError)} />}
     {controlError && <div className="split-control-error" role="alert"><span>{controlError}</span>{!connected && <button onClick={() => { setControlError("Reconnecting…"); reconnectRef.current(); }}>Retry</button>}<button aria-label="Dismiss split pane error" onClick={() => setControlError(undefined)}>×</button></div>}
     {notices.length > 0 && <div className="split-notices">{notices.map((notice) => <div className="error-toast" role="alert" key={notice.id}><strong>{notice.title}</strong><span>{notice.message}</span><button aria-label={`Dismiss ${notice.title}`} onClick={() => setNotices((current) => current.filter((item) => item.id !== notice.id))}>×</button></div>)}</div>}
   </section>;

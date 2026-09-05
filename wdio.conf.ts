@@ -32,6 +32,7 @@ const getOsAssignedPort = () => new Promise<number>((resolve, reject) => {
 const webdriverPort = await getOsAssignedPort();
 const sessionsRoot = path.join(homedir(), ".pi-desktop", "sessions");
 const temporaryProjectsRoot = path.join(homedir(), "pi-desktop", "tmp");
+const definedAgentsConfigPath = path.join(homedir(), ".pi", "agent", "extensions", "pi-define-agents", "config.json");
 const orchestrationConfigPath = path.join(homedir(), ".pi", "agent", "extensions", "pi-orchestration", "config.json");
 const absoluteEnvPath = (name: string) => { const value = process.env[name]; return value && path.isAbsolute(value) ? value : undefined; };
 const userConfigRoot = process.platform === "darwin" ? path.join(homedir(), "Library", "Application Support")
@@ -129,7 +130,7 @@ export const config: WebdriverIO.Config = {
     verifyActualCallModel();
     baselineSessions = new Set(sessionFiles());
     baselineProjects = new Set(markedTestProjects());
-    for (const file of [orchestrationConfigPath, desktopSettingsPath]) {
+    for (const file of [definedAgentsConfigPath, orchestrationConfigPath, `${orchestrationConfigPath}.pre-define-agents.bak`, desktopSettingsPath]) {
       baselineNativeConfigs.set(file, existsSync(file) ? readFileSync(file) : undefined);
     }
   },

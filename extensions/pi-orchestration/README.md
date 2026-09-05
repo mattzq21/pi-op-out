@@ -1,16 +1,21 @@
 # Pi orchestration extension
 
-Owns named agents, ordered sequences, foreground/background handoff, and orchestrator-gated delegation for Pi CLI and piop.
+Owns ordered sequences, foreground/background handoff, and orchestrator-gated delegation for Pi CLI and piop. Requires the separately loaded `pi-define-agents` extension for agent definitions and application.
 
-Install it globally:
+Install both extensions from this repository:
 
 ```bash
-mkdir -p ~/.pi/agent/extensions/pi-orchestration
-cp index.ts ~/.pi/agent/extensions/pi-orchestration/index.ts
+mkdir -p ~/.pi/agent/extensions/pi-define-agents ~/.pi/agent/extensions/pi-orchestration
+cp extensions/pi-define-agents/index.ts ~/.pi/agent/extensions/pi-define-agents/index.ts
+cp extensions/pi-orchestration/index.ts ~/.pi/agent/extensions/pi-orchestration/index.ts
 ```
 
-The extension creates `config.json` beside itself on first load. A missing configuration is initialized with the default agent configuration; unreadable or invalid JSON is reported without overwriting the file. Valid JSON is normalized on load. Legacy desktop-owned YAML/settings migration is not supported. `config.example.json` documents the current JSON format for manual configuration.
+Reload Pi. If `pi-define-agents` is missing, orchestration reports the missing dependency and stays disabled; Pi remains usable. Either extension discovery order works. piop provisions both extensions on remote hosts.
 
-piop discovers the extension through its RPC capability status. Agent, sequence, and multi-agent controls remain hidden when the extension is not loaded. The same extension and configuration work in Pi CLI; use `/pi-orchestration-use reviewer`, `/pi-orchestration-use review-sequence`, `/pi-orchestration-use final-only`, or `/pi-orchestration-use own+final` to select a target there. Final-only children receive the original request plus chronological final messages; own+final children additionally receive their own prior requests.
+Agent definitions live in `pi-define-agents/config.json`. This extension's `config.json` contains only sequences, which reference defined agents by name. See `config.example.json`. On upgrade, `pi-define-agents` moves agents out of the old combined file and preserves `config.json.pre-define-agents.bak`; see its README for migration details. Invalid JSON is reported without overwriting the file. Legacy desktop-owned YAML/settings migration is not supported.
 
-Agent tool declarations are strict. Every name in an agent's `tools` array must be available in Pi and allowed by piop's global tool settings or the CLI's tool flags. A direct run is stopped with an error before inference when any declaration is denied or unavailable; orchestrated child runs exit with failure.
+Use `/pi-define-agents-use reviewer` for an individual agent. Use `/pi-orchestration-use review-sequence`, `/pi-orchestration-use final-only`, or `/pi-orchestration-use own+final` for orchestration. The older `/pi-orchestration-use reviewer` remains accepted when both extensions are loaded. Existing session selections and sequence handoffs remain readable.
+
+Final-only children receive the original request plus chronological final messages; own+final children additionally receive their own prior requests. Child processes load `pi-define-agents` to enforce the same agent tool restrictions. Orchestration owns spawning, cancellation, and foreground/background sequence state.
+
+piop discovers sequences and multi-agent modes through the orchestration status, independently of agent discovery. `/pi-orchestration-config <base64url-json>` saves `{ "sequences": [...] }`; definitions are saved through `/pi-define-agents-config`. Unknown agent references are rejected on save. If an agent is later removed independently, its sequence is preserved and cannot run the missing step.

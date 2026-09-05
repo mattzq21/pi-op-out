@@ -18,7 +18,8 @@ export interface Model { provider: string; id: string; name?: string; reasoning?
 export interface AgentProfile { name: string; description: string; model: string; effort: string; systemPrompt: string; developerPrompt: string; agentsMd: string; tools: string[]; skills: string[]; mcpServers: string[]; }
 export interface SequenceProfile { name: string; description: string; agents: string[]; visibleSteps: number; }
 export interface OrchestrationConfig { agents: AgentProfile[]; sequences: SequenceProfile[]; }
-export interface OrchestrationCapability { version: number; active: string; currentAgent?: string; config: OrchestrationConfig; }
+export interface DefinedAgentsCapability { version: number; active: string; config: { agents: AgentProfile[] }; }
+export interface OrchestrationCapability { version: number; active: string; currentAgent?: string; config: { sequences: SequenceProfile[] }; }
 export interface RpcCommand { id?: string; type: string; [key: string]: unknown; }
 export interface RpcEvent { type: string; [key: string]: unknown; }
 export interface ToolConfig { name: string; description: string; enabled: boolean; builtin?: boolean; }

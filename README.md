@@ -9,6 +9,7 @@ A Tauri-only native interface for the Pi coding agent. It is not a standalone br
 - Runtime model and thinking-level controls, slash-command discovery, text/image attachments, and direct project shell execution
 - Pi extension UI support for prompts, confirms, selects, editors, notifications, status lines, widgets, titles, and editor text
 - Settings for retry/compaction behavior, context-window cap, default model, tools, discovered skills, agents, sequences, remote machines, and MCP servers
+- Independent [pi-define-agents](extensions/pi-define-agents/README.md) profiles and optional [pi-orchestration](extensions/pi-orchestration/README.md) sequences and delegation
 - Live context-window usage gauge in the composer
 - Bundled [pi-codex-compaction](extensions/pi-codex-compaction/README.md) for native OpenAI Codex compaction in local, SSH, and delegated sessions
 - An MCP SDK-backed stdio/HTTP bridge that discovers server tools and registers them as namespaced Pi tools
@@ -28,6 +29,8 @@ The native launcher also checks `~/.local/bin/pi`, `~/.npm-global/bin/pi`, and `
 Authenticate Pi before starting the desktop app with Pi's normal `/login` flow or provider environment variables. Credentials remain in Pi's own auth store and are never copied into this app's settings.
 
 `npm run dev` only provides the frontend development server consumed by `tauri dev`; opening that server directly in a browser is unsupported.
+
+Install `pi-define-agents` locally to enable named agents; install `pi-orchestration` alongside it for sequences and delegation. Follow the extension READMEs above, then reload Pi. Existing combined orchestration configuration is split automatically with a backup. piop provisions both extensions on SSH hosts.
 
 Saving native settings restarts the managed Pi process while preserving the active project and session. Enabled tools, skills, default model/thinking level, and MCP configuration are applied at startup.
 

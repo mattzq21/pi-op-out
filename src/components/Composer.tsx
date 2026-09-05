@@ -16,6 +16,7 @@ interface Props {
   agents: AgentProfile[];
   sequences: SequenceProfile[];
   activeAgent?: string;
+  orchestrationAvailable?: boolean;
   dictionaries?: PromptDictionary[];
   models: Model[];
   model: Model | null;
@@ -73,7 +74,7 @@ const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((
 });
 const escapeAttribute = (value: string) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]!);
 
-export function Composer({ streaming, paused = false, pausing = false, queued, commands, agents, sequences, activeAgent, dictionaries = [], models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
+export function Composer({ streaming, paused = false, pausing = false, queued, commands, agents, sequences, activeAgent, orchestrationAvailable = false, dictionaries = [], models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
   const [localValue, setLocalValue] = useState("");
   const value = draft ?? localValue;
   const fastModeEnabled = fastModeStatus === "Fast mode on";
@@ -317,7 +318,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
       </div>
       <div className="composer-bar"><div className="composer-tools">{onOpenTerminal && <IconButton label="Open terminal" disabled={controlsDisabled} onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton>}{contextUsage && <ContextWheel usage={contextUsage} />}{sessionCache && <span className={`session-cache-hit${sessionCache.low ? " low" : ""}`} title={`${sessionCache.cachedTokens.toLocaleString()} of ${sessionCache.promptTokens.toLocaleString()} session prompt tokens read from cache`}>Cache {sessionCache.rate}%</span>}</div>
         <div className="composer-actions">
-        <ContainedPicker label="Agent" value={activeAgent ?? "default"} disabled={streaming || inputDisabled} menuWidth={120} centered options={[...(agents.length ? agents : [{ name: "default" }]).map((agent) => ({ value: agent.name, label: agent.name, detail: "Agent" })), ...sequences.map((sequence) => ({ value: sequence.name, label: sequence.name, detail: "Sequence" })), { value: "final-only", label: "final-only", detail: "Multi-agent" }, { value: "own+final", label: "own+final", detail: "Multi-agent" }]} onChange={onAgent} />
+        <ContainedPicker label="Agent" value={activeAgent ?? "default"} disabled={streaming || inputDisabled} menuWidth={120} centered options={[...(agents.length ? agents : [{ name: "default" }]).map((agent) => ({ value: agent.name, label: agent.name, detail: "Agent" })), ...sequences.map((sequence) => ({ value: sequence.name, label: sequence.name, detail: "Sequence" })), ...(orchestrationAvailable ? [{ value: "final-only", label: "final-only", detail: "Multi-agent" }, { value: "own+final", label: "own+final", detail: "Multi-agent" }] : [])]} onChange={onAgent} />
         {fastModeSupported && <button type="button" className={`fast-mode-indicator${fastModeEnabled ? " active" : ""}`} aria-label="Fast mode" aria-description={fastModeStatus} aria-pressed={fastModeEnabled} aria-busy={togglingFastMode} title={`${fastModeStatus} · Click to toggle`} disabled={inputDisabled || togglingFastMode} onClick={() => void toggleFastMode()}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled ? "currentColor" : "none"} aria-hidden="true" /></button>}
         <ContainedPicker label="Model" value={model ? `${model.provider}/${model.id}` : ""} disabled={streaming || inputDisabled} options={models.map((item) => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item), detail: item.provider }))} onChange={(value) => { const next = models.find((item) => `${item.provider}/${item.id}` === value); if (next) onModel(next); }} />
         <ContainedPicker label="Thinking level" value={thinkingLevel} disabled={streaming || inputDisabled} menuWidth={120} centered compact options={thinkingLevels.map((level) => ({ value: level, label: level.charAt(0).toUpperCase() + level.slice(1) }))} onChange={onThinking} />

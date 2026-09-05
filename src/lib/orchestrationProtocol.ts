@@ -1,3 +1,4 @@
+export const DEFINED_AGENTS_STATUS_KEY = "pi-define-agents";
 export const ORCHESTRATION_STATUS_KEY = "pi-desktop-orchestration";
 
 export function encodeOrchestrationValue(value: unknown) {

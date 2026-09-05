@@ -55,7 +55,7 @@ function syntheticUserMessage(text: string) {
   const value = text.trim();
   return /^<skill(?:\s|>)[\s\S]*<\/skill>$/.test(value)
     || /^<!--\s*pi-desktop-sequence:/.test(value)
-    || /^\/pi-orchestration-(?:config|next|use)\b/.test(value);
+    || /^\/(?:pi-orchestration|pi-define-agents)-(?:config|next|use)\b/.test(value);
 }
 
 export function cleanTrace(content: string): CleanMessage[] {
