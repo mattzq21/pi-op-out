@@ -99,6 +99,12 @@ export class NativeTransport {
       this.emit({ type: "extension_ui_request", method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: "Fast mode status unavailable" });
     }
   }
+  async toggleFastMode() {
+    const command = this.fastCommands.values().next().value;
+    if (!command) throw new Error("Fast mode is unavailable in this conversation");
+    await call("pi_command", { runtimeId: this.runtimeId, command: { type: "prompt", message: `/${command} toggle` } });
+    await this.refreshFastStatus(true);
+  }
   async command<T>(command: RpcCommand) {
     const compact = command.type === "prompt" && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null;
     if (compact) command = { type: "compact", ...(compact[1]?.trim() ? { customInstructions: compact[1].trim() } : {}) };

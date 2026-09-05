@@ -35,6 +35,7 @@ interface Props {
   onOpenTerminal?: () => void;
   onAgent: (name: string) => void;
   onModel: (model: Model) => void;
+  onToggleFastMode: () => void | Promise<void>;
   onThinking: (level: string) => void;
 }
 
@@ -69,10 +70,12 @@ const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((
 });
 const escapeAttribute = (value: string) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]!);
 
-export function Composer({ streaming, paused = false, pausing = false, queued, commands, agents, sequences, activeAgent, dictionaries = [], models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onThinking }: Props) {
+export function Composer({ streaming, paused = false, pausing = false, queued, commands, agents, sequences, activeAgent, dictionaries = [], models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
   const [localValue, setLocalValue] = useState("");
   const value = draft ?? localValue;
   const fastModeEnabled = fastModeStatus?.startsWith("Fast mode on") ?? false;
+  const [togglingFastMode, setTogglingFastMode] = useState(false);
+  const togglingFastModeRef = useRef(false);
   const setValue = (next: string) => { if (onDraftChange) onDraftChange(next); else setLocalValue(next); };
   const [localUploads, setLocalUploads] = useState<ComposerUpload[]>([]);
   const uploads = controlledUploads ?? localUploads;
@@ -86,6 +89,13 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
   const [stopping, setStopping] = useState(false);
   const stoppingRef = useRef(false);
   const [controlError, setControlError] = useState<string>();
+  const toggleFastMode = async () => {
+    if (togglingFastModeRef.current || controlsDisabled) return;
+    togglingFastModeRef.current = true; setTogglingFastMode(true); setControlError(undefined);
+    try { await onToggleFastMode(); }
+    catch (reason) { setControlError(`Could not toggle Fast mode: ${reason instanceof Error ? reason.message : String(reason)}`); }
+    finally { togglingFastModeRef.current = false; setTogglingFastMode(false); }
+  };
   const controlActionRef = useRef(false);
   const controlPending = Boolean(controlAction) || pausing || stopping;
   const inputDisabled = controlsDisabled || controlPending;
@@ -220,7 +230,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
       <div className="composer-bar"><div className="composer-tools"><IconButton label="Attach files" disabled={controlsDisabled} onClick={() => fileRef.current?.click()}><Paperclip size={17} /></IconButton>{onOpenTerminal && <IconButton label="Open terminal" disabled={controlsDisabled} onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton>}{contextUsage && <ContextWheel usage={contextUsage} />}{sessionCache && <span className={`session-cache-hit${sessionCache.low ? " low" : ""}`} title={`${sessionCache.cachedTokens.toLocaleString()} of ${sessionCache.promptTokens.toLocaleString()} session prompt tokens read from cache`}>Cache {sessionCache.rate}%</span>}</div>
         <div className="composer-actions">
         <ContainedPicker label="Agent" value={activeAgent ?? "default"} disabled={streaming || inputDisabled} menuWidth={120} centered options={[...(agents.length ? agents : [{ name: "default" }]).map((agent) => ({ value: agent.name, label: agent.name, detail: "Agent" })), ...sequences.map((sequence) => ({ value: sequence.name, label: sequence.name, detail: "Sequence" })), { value: "final-only", label: "final-only", detail: "Multi-agent" }, { value: "own+final", label: "own+final", detail: "Multi-agent" }]} onChange={onAgent} />
-        {fastModeStatus && <span className={`fast-mode-indicator${fastModeStatus === "Fast mode on" ? " active" : ""}`} role="img" aria-label={fastModeStatus} title={fastModeStatus}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled ? "currentColor" : "none"} aria-hidden="true" /></span>}
+        {fastModeStatus && <button type="button" className={`fast-mode-indicator${fastModeStatus === "Fast mode on" ? " active" : ""}`} aria-label="Fast mode" aria-description={fastModeStatus} aria-pressed={fastModeStatus === "Fast mode status unavailable" ? undefined : fastModeEnabled} aria-busy={togglingFastMode} title={`${fastModeStatus} · Click to toggle`} disabled={inputDisabled || togglingFastMode} onClick={() => void toggleFastMode()}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled ? "currentColor" : "none"} aria-hidden="true" /></button>}
         <ContainedPicker label="Model" value={model ? `${model.provider}/${model.id}` : ""} disabled={streaming || inputDisabled} options={models.map((item) => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item), detail: item.provider }))} onChange={(value) => { const next = models.find((item) => `${item.provider}/${item.id}` === value); if (next) onModel(next); }} />
         <ContainedPicker label="Thinking level" value={thinkingLevel} disabled={streaming || inputDisabled} menuWidth={120} centered compact options={thinkingLevels.map((level) => ({ value: level, label: level }))} onChange={onThinking} />
         <span className="composer-divider" />
