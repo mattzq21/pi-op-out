@@ -81,11 +81,14 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
   const [uploadError, setUploadError] = useState<string>();
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
-  const [controlAction, setControlAction] = useState<"pause" | "resume" | "abort">();
+  const [controlAction, setControlAction] = useState<"pause" | "resume">();
+  const [stopping, setStopping] = useState(false);
+  const stoppingRef = useRef(false);
   const [controlError, setControlError] = useState<string>();
   const controlActionRef = useRef(false);
-  const controlPending = Boolean(controlAction) || pausing;
+  const controlPending = Boolean(controlAction) || pausing || stopping;
   const inputDisabled = controlsDisabled || controlPending;
+  const stopDisabled = controlsDisabled || stopping || controlAction === "resume";
   const [selectedMatch, setSelectedMatch] = useState(0);
   const [paletteDismissed, setPaletteDismissed] = useState(false);
   const [editorScrollTop, setEditorScrollTop] = useState(0);
@@ -162,7 +165,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
     });
   };
   const submit = async () => {
-    if (controlsDisabled || pausing || controlActionRef.current) return;
+    if (controlsDisabled || pausing || controlActionRef.current || stoppingRef.current) return;
     const textFiles = uploads.filter((upload) => upload.kind === "text");
     const message = [expandSkillReference(applyDictionary(value.trim(), dictionaries), commands), ...textFiles.map((file) => `<file name="${escapeAttribute(file.name)}">\n${file.text}\n</file>`)].filter(Boolean).join("\n\n");
     const images = uploads.flatMap((upload) => upload.image ? [upload.image] : []);
@@ -178,9 +181,17 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
     } finally { sendingRef.current = false; setSending(false); }
   };
   const control = async (action: "pause" | "resume" | "abort") => {
-    if (controlsDisabled || pausing || controlActionRef.current) return;
+    if (action === "abort") {
+      if (controlsDisabled || stoppingRef.current || controlAction === "resume") return;
+      stoppingRef.current = true; setStopping(true); setControlError(undefined);
+      try { await onAbort(); }
+      catch (reason) { setControlError(reason instanceof Error ? reason.message : String(reason)); }
+      finally { stoppingRef.current = false; setStopping(false); }
+      return;
+    }
+    if (controlsDisabled || pausing || controlActionRef.current || stoppingRef.current) return;
     controlActionRef.current = true; setControlAction(action); setControlError(undefined);
-    try { await (action === "pause" ? onPause() : action === "resume" ? onResume() : onAbort()); }
+    try { await (action === "pause" ? onPause() : onResume()); }
     catch (reason) { setControlError(reason instanceof Error ? reason.message : String(reason)); }
     finally { controlActionRef.current = false; setControlAction(undefined); }
   };
@@ -193,9 +204,9 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
 
   return <div className="composer-wrap">
     {(streaming || paused || pausing) && <div className={`stream-banner${paused ? " paused" : ""}`}>
-      <span className="stream-status" role="status">{paused ? <Pause size={11} /> : <span className="pulse" />}{controlAction === "resume" ? "Resuming…" : pausing || controlAction === "pause" ? "Pausing…" : paused ? "Paused · Completed turns saved" : "Pi is working"}{queued > 0 && ` · ${queued} queued`}</span>
+      <span className="stream-status" role="status">{paused ? <Pause size={11} /> : <span className="pulse" />}{stopping ? "Stopping…" : controlAction === "resume" ? "Resuming…" : pausing || controlAction === "pause" ? "Pausing…" : paused ? "Paused · Completed turns saved" : "Pi is working"}{queued > 0 && ` · ${queued} queued`}</span>
       {streaming && !paused && <label>Send as <select aria-label="Streaming message behavior" disabled={inputDisabled} value={behavior} onChange={(event) => setBehavior(event.target.value as typeof behavior)}><option value="steer">Steer now</option><option value="followUp">Follow up</option></select></label>}
-      <div className="stream-controls"><button disabled={inputDisabled} onClick={() => void control(paused ? "resume" : "pause")}>{paused ? "Resume" : "Pause"}</button><button disabled={inputDisabled} onClick={() => void control("abort")}>Stop</button></div>
+      <div className="stream-controls"><button disabled={inputDisabled} onClick={() => void control(paused ? "resume" : "pause")}>{paused ? "Resume" : "Pause"}</button><button disabled={stopDisabled} onClick={() => void control("abort")}>Stop</button></div>
     </div>}
     <div ref={composerRef} className="composer">
       {matches.length > 0 && <div className="command-palette" role="listbox" aria-label={skillQuery === undefined ? "Pi commands" : "Pi skills"}>{matches.map((command, index) => <button role="option" aria-selected={index === selectedMatch} key={`${command.source}:${command.name}`} type="button" onMouseEnter={() => setSelectedMatch(index)} onClick={() => chooseCommand(command)}><span><strong>{skillQuery !== undefined ? `$${skillName(command)}` : `/${command.name}`}</strong><small>{command.description || `${command.source} command`}</small></span><em>{command.source}</em></button>)}</div>}
@@ -213,7 +224,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
         <ContainedPicker label="Model" value={model ? `${model.provider}/${model.id}` : ""} disabled={streaming || inputDisabled} options={models.map((item) => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item), detail: item.provider }))} onChange={(value) => { const next = models.find((item) => `${item.provider}/${item.id}` === value); if (next) onModel(next); }} />
         <ContainedPicker label="Thinking level" value={thinkingLevel} disabled={streaming || inputDisabled} menuWidth={120} centered compact options={thinkingLevels.map((level) => ({ value: level, label: level }))} onChange={onThinking} />
         <span className="composer-divider" />
-        {(streaming || paused || pausing) && <><IconButton label={paused ? "Resume Pi" : "Pause Pi"} disabled={inputDisabled} onClick={() => void control(paused ? "resume" : "pause")}>{paused ? <Play size={17} /> : <Pause size={17} />}</IconButton><IconButton label="Stop Pi" className="stop-compact" disabled={inputDisabled} onClick={() => void control("abort")}><CircleStop size={17} /></IconButton></>}<IconButton label={streaming ? (behavior === "steer" ? "Send steering message" : "Queue follow-up") : "Send message"} className="send" disabled={inputDisabled || sending || (!value.trim() && uploads.length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton></div>
+        {(streaming || paused || pausing) && <><IconButton label={paused ? "Resume Pi" : "Pause Pi"} disabled={inputDisabled} onClick={() => void control(paused ? "resume" : "pause")}>{paused ? <Play size={17} /> : <Pause size={17} />}</IconButton><IconButton label="Stop Pi" className="stop-compact" disabled={stopDisabled} onClick={() => void control("abort")}><CircleStop size={17} /></IconButton></>}<IconButton label={streaming ? (behavior === "steer" ? "Send steering message" : "Queue follow-up") : "Send message"} className="send" disabled={inputDisabled || sending || (!value.trim() && uploads.length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton></div>
       </div>
     </div>
   </div>;

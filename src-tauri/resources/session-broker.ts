@@ -29,6 +29,7 @@ export default function sessionBroker(pi: ExtensionAPI) {
   const resumeEntry = "pi-desktop-resume";
   let isPaused = false;
   let isPausing = false;
+  let pauseStopped = false;
   let pauseOperation: Promise<void> | undefined;
   let controlContext: ExtensionContext | undefined;
   const resumeMessages = new Set<string>();
@@ -38,7 +39,7 @@ export default function sessionBroker(pi: ExtensionAPI) {
   const persistPause = (paused: boolean) => { isPaused = paused; pi.appendEntry(pauseEntry, { isPaused: paused }); };
   const restorePause = (ctx: ExtensionContext) => {
     controlContext = ctx;
-    isPaused = false; isPausing = false; resumeMessages.clear();
+    isPaused = false; isPausing = false; pauseStopped = false; resumeMessages.clear();
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type !== "custom") continue;
       if (entry.customType === pauseEntry) isPaused = (entry.data as { isPaused?: boolean } | undefined)?.isPaused === true;
@@ -74,8 +75,8 @@ export default function sessionBroker(pi: ExtensionAPI) {
         if (!id || ctx.mode !== "rpc") throw new Error("Desktop control requires an RPC request");
         if (action === "pause") {
           if (!pauseOperation && !ctx.isIdle()) {
-            isPausing = true; persistPause(true); isPaused = false; publishPause();
-            pauseOperation = (async () => { try { ctx.abort(); await ctx.waitForIdle(); } finally { isPaused = true; isPausing = false; pauseOperation = undefined; publishPause(); } })();
+            pauseStopped = false; isPausing = true; persistPause(true); isPaused = false; publishPause();
+            pauseOperation = (async () => { try { ctx.abort(); await ctx.waitForIdle(); } finally { isPaused = !pauseStopped; isPausing = false; pauseOperation = undefined; publishPause(); } })();
           }
           await pauseOperation;
         } else if (action === "resume") {
@@ -88,9 +89,12 @@ export default function sessionBroker(pi: ExtensionAPI) {
             resumeMessage = message;
           }
         } else if (action === "stop") {
+          pauseStopped = true;
+          if (isPaused || isPausing) persistPause(false);
+          publishPause(); ctx.abort();
+          // Keep aborting queued runs until the pending pause has fully settled.
           await pauseOperation;
-          if (isPaused) persistPause(false);
-          isPausing = false; publishPause(); ctx.abort(); await ctx.waitForIdle();
+          await ctx.waitForIdle();
         } else if (action !== "state") throw new Error(`Unknown desktop control: ${action}`);
         ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id, command: action, success: true, data: { isPaused, isPausing, ...(resumeMessage ? { resumeMessage } : {}) } })}`);
       } catch (error) {

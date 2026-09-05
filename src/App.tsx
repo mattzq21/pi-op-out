@@ -112,6 +112,7 @@ export default function App() {
   const [uploadsByTransport, setUploadsByTransport] = useState<Map<NativeTransport, ComposerUpload[]>>(() => new Map());
   const newSessionPending = useRef(false);
   const abortPending = useRef(new Set<NativeTransport>());
+  const pauseResumePending = useRef(new Set<NativeTransport>());
   const branchPending = useRef(new Set<string>());
   const archivePending = useRef(new Set<string>());
   const sessionActionPending = useRef(new Set<string>());
@@ -424,8 +425,8 @@ export default function App() {
   const abortInteraction = async () => { const ownerTransport = transport; if (abortPending.current.has(ownerTransport)) return; abortPending.current.add(ownerTransport); try { await ownerTransport.command({ type: "abort" }); } catch (reason) { addNotice({ title: "Could not stop Pi", message: reason instanceof Error ? reason.message : String(reason) }); } finally { abortPending.current.delete(ownerTransport); } };
   const pauseInteraction = async () => {
     const ownerTransport = transport; const ownerKey = activeConversationKeyRef.current;
-    if (abortPending.current.has(ownerTransport)) return;
-    abortPending.current.add(ownerTransport);
+    if (abortPending.current.has(ownerTransport) || pauseResumePending.current.has(ownerTransport)) return;
+    pauseResumePending.current.add(ownerTransport);
     setState((current) => ({ ...current, isPausing: true }));
     try {
       await ownerTransport.command({ type: "pause" });
@@ -433,17 +434,17 @@ export default function App() {
     } catch (reason) {
       addNotice({ title: "Could not pause Pi", message: reason instanceof Error ? reason.message : String(reason) });
     } finally {
-      abortPending.current.delete(ownerTransport);
+      pauseResumePending.current.delete(ownerTransport);
       if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) setState((current) => ({ ...current, isPausing: false }));
     }
   };
   const resumeInteraction = async () => {
     const ownerTransport = transport;
-    if (abortPending.current.has(ownerTransport)) return;
-    abortPending.current.add(ownerTransport);
+    if (abortPending.current.has(ownerTransport) || pauseResumePending.current.has(ownerTransport)) return;
+    pauseResumePending.current.add(ownerTransport);
     try { await ownerTransport.command({ type: "resume" }); }
     catch (reason) { addNotice({ title: "Could not resume Pi", message: reason instanceof Error ? reason.message : String(reason) }); }
-    finally { abortPending.current.delete(ownerTransport); }
+    finally { pauseResumePending.current.delete(ownerTransport); }
   };
   const saveSettings = async (value: AppSettings, nextConfig?: OrchestrationConfig) => {
     if (!settings) throw new Error("Settings are still loading");
