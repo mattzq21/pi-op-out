@@ -115,6 +115,7 @@ export function Message({ message, diff, expanded = false, showActions = true, t
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [branching, setBranching] = useState(false);
   const branchingRef = useRef(false);
+  if (message.role === "system") return <div className="command-result" role="status">{textOf(message.content)}</div>;
   if (message.role === "tool") {
     const output = textOf(message.content);
     const status = message.toolStatus ?? "done";

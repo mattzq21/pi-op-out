@@ -38,6 +38,8 @@ export class NativeTransport {
   private running = false;
   private temporaryChat = false;
   private temporaryChatUsed = false;
+  private fastStatusCommand?: string;
+  private fastCommands = new Set<string>();
   constructor(target: NativeConnectionTarget = {}) { this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId ?? "local"; }
   currentHostId() { return this.hostId; }
   currentCwd() { return this.cwd; }
@@ -62,6 +64,7 @@ export class NativeTransport {
   private async establishConnection(forkPath?: string, ephemeral = false) {
     if (this.cwd === undefined && this.sessionPath === undefined) { const chat = await call<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId: this.hostId, e2e: import.meta.env.MODE === "e2e" }); this.cwd = chat.cwd; this.sessionId = chat.sessionId; this.temporaryChat = true; }
     const version = ++this.connectionVersion;
+    this.fastStatusCommand = undefined; this.fastCommands.clear();
     this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.stderrLines = [];
     const unlisten = await listen<RpcEvent | { runtimeId: string; event: RpcEvent }>("pi://event", ({ payload }) => {
       const envelope = payload as { runtimeId?: unknown; event?: RpcEvent };
@@ -87,7 +90,49 @@ export class NativeTransport {
     catch (reason) { this.emit({ type: "disconnected" }); throw reason; }
   }
   async dispose() { const temporaryPath = this.temporaryChat && !this.temporaryChatUsed ? this.cwd : undefined; const temporaryHost = this.hostId; await this.disconnect(); if (temporaryPath) await call<void>("remove_temporary_chat", { path: temporaryPath, hostId: temporaryHost }); this.temporaryChat = false; this.temporaryChatUsed = false; }
-  async command<T>(command: RpcCommand) { const compact = command.type === "prompt" && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null; if (compact) command = { type: "compact", ...(compact[1]?.trim() ? { customInstructions: compact[1].trim() } : {}) }; try { const result = await call<T>("pi_command", { runtimeId: this.runtimeId, command }); if (command.type === "get_state") { const state = result as { sessionFile?: string; sessionId?: string }; this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; } if (command.type === "prompt") this.temporaryChatUsed = true; if (command.type === "extension_ui_response" && typeof command.id === "string") this.retainedRequests.delete(command.id); return result; } catch (reason) { const message = reason instanceof Error ? reason.message : String(reason); const diagnostics = this.stderrLines.join("\n"); throw new Error(diagnostics && /disconnect|connect|start|running/i.test(message) ? `${message}\n${diagnostics}` : message); } }
+  private async refreshFastStatus(reload: boolean) {
+    if (!this.fastStatusCommand) return;
+    try {
+      // Internal queries must not count as prompts that keep a temporary chat.
+      await call("pi_command", { runtimeId: this.runtimeId, command: { type: "prompt", message: `/${this.fastStatusCommand}${reload ? " refresh" : ""}` } });
+    } catch {
+      this.emit({ type: "extension_ui_request", method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: "Fast mode status unavailable" });
+    }
+  }
+  async toggleFastMode() {
+    const command = this.fastCommands.values().next().value;
+    if (!command) throw new Error("Fast mode is unavailable in this conversation");
+    await call("pi_command", { runtimeId: this.runtimeId, command: { type: "prompt", message: `/${command} toggle` } });
+    await this.refreshFastStatus(true);
+  }
+  async command<T>(command: RpcCommand) {
+    const compact = command.type === "prompt" && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null;
+    if (compact) command = { type: "compact", ...(compact[1]?.trim() ? { customInstructions: compact[1].trim() } : {}) };
+    try {
+      const result = await call<T>("pi_command", { runtimeId: this.runtimeId, command });
+      if (command.type === "get_state") { const state = result as { sessionFile?: string; sessionId?: string }; this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; }
+      if (command.type === "get_commands") {
+        const { commands } = result as { commands: Array<{ name: string; source: string; sourceInfo?: { source?: string; path?: string } }> };
+        const fromPackage = (item: typeof commands[number], name: string) => item.sourceInfo?.source === `npm:${name}` || item.sourceInfo?.path?.split(/[\\/]/).includes(name);
+        const fastCommands = commands.filter((item) => item.source === "extension" && /^fast(?::\d+)?$/.test(item.name) && ["pi-openai-fast-mode-piop", "pi-openai-fast-mode"].some((name) => fromPackage(item, name)));
+        this.fastCommands = new Set(fastCommands.map((item) => item.name));
+        // The local fork publishes its live state directly. Only the original
+        // TUI-only package needs the compatibility query after each command.
+        this.fastStatusCommand = fastCommands.some((item) => fromPackage(item, "pi-openai-fast-mode-piop")) ? undefined : commands.find((item) => item.source === "extension" && item.name === "pi-desktop-fast-status")?.name;
+        await this.refreshFastStatus(false);
+      }
+      if (command.type === "prompt") {
+        this.temporaryChatUsed = true;
+        const invocation = typeof command.message === "string" ? command.message.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/) : undefined;
+        if (invocation && this.fastCommands.has(invocation[1]) && ["", "on", "off", "toggle"].includes((invocation[2] ?? "").trim().toLowerCase())) await this.refreshFastStatus(true);
+      }
+      if (command.type === "extension_ui_response" && typeof command.id === "string") this.retainedRequests.delete(command.id);
+      return result;
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason); const diagnostics = this.stderrLines.join("\n");
+      throw new Error(diagnostics && /disconnect|connect|start|running/i.test(message) ? `${message}\n${diagnostics}` : message);
+    }
+  }
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); this.retainedStatuses.forEach((event) => listener(event)); this.retainedRequests.forEach((event) => listener(event)); return () => this.listeners.delete(listener); }
   listSessions() { return call<SessionSummary[]>("list_sessions"); }
   captureGitTree(cwd: string, hostId = "local") { return call<string | null>("capture_git_tree", { cwd, hostId }); }
