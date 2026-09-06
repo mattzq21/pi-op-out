@@ -12,6 +12,7 @@ A Tauri-only native interface for the Pi coding agent. It is not a standalone br
 - Named [pi-define-agents](extensions/pi-define-agents/README.md) profiles with per-agent models, instructions, and resource permissions
 - Live context-window usage gauge in the composer
 - Bundled [pi-codex-compaction](extensions/pi-codex-compaction/README.md) for native OpenAI Codex compaction in local, SSH, and delegated sessions
+- Bundled [pi-codex-web-search](extensions/pi-codex-web-search/README.md), a small `web_search` tool using Pi’s Codex login in local, SSH, and side conversations
 - An MCP SDK-backed stdio/HTTP bridge that discovers server tools and registers them as namespaced Pi tools
 - A `read_trace` Pi tool that finds local or remote session JSONL and returns only user prompts and completed assistant messages
 - A shared session runtime for primary and split chats, with animation-frame batching for streaming message and tool updates

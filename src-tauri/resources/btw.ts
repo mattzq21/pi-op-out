@@ -30,6 +30,8 @@ async function runFork(sessionFile: string, cwd: string, task: string): Promise<
     : [process.argv[1], "--print", "--approve", "--fork", sessionFile];
   const codexCompactionExtension = process.env.PI_DESKTOP_CODEX_COMPACTION_EXTENSION;
   if (codexCompactionExtension) args.push("--extension", codexCompactionExtension);
+  const codexWebSearchExtension = process.env.PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION;
+  if (codexWebSearchExtension) args.push("--extension", codexWebSearchExtension);
   args.push(task);
   try {
     const { stdout } = await execFile(command, args, {
