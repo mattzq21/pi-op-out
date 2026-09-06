@@ -4,3 +4,12 @@ name = "piop"
 
 [setup]
 script = ""
+
+[setup.linux]
+script = '''
+set -eu
+
+if ! git symbolic-ref -q HEAD >/dev/null; then
+  branch_id=$(cat /proc/sys/kernel/random/uuid)
+  git switch -c "codex/tmp-$branch_id"
+fi'''
