@@ -654,6 +654,19 @@ fn merge_discovered_skills(settings: &mut AppSettings) {
 fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     let path = settings_path(&app)?;
     let mut settings = if !path.exists() { default_settings() } else { serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())? };
+    for (legacy, replacements) in [
+        ("exec_command", &["read", "bash", "grep", "find", "ls"][..]),
+        ("apply_patch", &["edit", "write"][..]),
+    ] {
+        let enabled = settings.tools.iter().find(|tool| tool.get("name").and_then(Value::as_str) == Some(legacy))
+            .and_then(|tool| tool.get("enabled")).and_then(Value::as_bool).unwrap_or(true);
+        settings.tools.retain(|tool| tool.get("name").and_then(Value::as_str) != Some(legacy));
+        for name in replacements {
+            if !settings.tools.iter().any(|tool| tool.get("name").and_then(Value::as_str) == Some(*name)) {
+                settings.tools.push(json!({"name":name,"description":"Pi built-in tool","enabled":enabled,"builtin":true}));
+            }
+        }
+    }
     if !settings.tools.iter().any(|tool| tool.get("name").and_then(Value::as_str) == Some("web_search")) {
         settings.tools.push(codex_web_search_tool());
     }

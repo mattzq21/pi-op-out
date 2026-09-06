@@ -57,11 +57,20 @@ async function readConfig(): Promise<Config> {
 }
 async function loadConfig(): Promise<Config> {
   const config = await readConfig();
+  let changed = false;
+  for (const agent of config.agents) {
+    if (!agent.tools.some((tool) => tool === "exec_command" || tool === "apply_patch")) continue;
+    agent.tools = [...new Set(agent.tools.flatMap((tool) => tool === "exec_command"
+      ? ["read", "bash", "grep", "find", "ls"]
+      : tool === "apply_patch" ? ["edit", "write"] : [tool]))];
+    changed = true;
+  }
   if (!config.webSearchDefaultApplied && desktopList("PI_DESKTOP_ALLOWED_TOOLS")?.includes("web_search")) {
     for (const agent of config.agents) if (!agent.tools.includes("web_search")) agent.tools.push("web_search");
     config.webSearchDefaultApplied = true;
-    await writeConfig(config);
+    changed = true;
   }
+  if (changed) await writeConfig(config);
   return config;
 }
 function encode(value: unknown) { return Buffer.from(JSON.stringify(value), "utf8").toString("base64url"); }
