@@ -20,6 +20,23 @@ struct PiProcess {
     child: Child,
     stdin: Arc<Mutex<ChildStdin>>,
     ephemeral_session: Option<EphemeralSession>,
+    blank_cleanup: BlankSessionCleanup,
+}
+
+struct BlankSessionCleanup { path: Option<String>, id: Option<String>, host: Option<RemoteHost>, submitted: bool }
+
+fn cleanup_blank_session(target: BlankSessionCleanup) {
+    if target.submitted { return; }
+    let script = include_str!("../resources/cleanup-blank-session.cjs");
+    let arguments = json!({"path":target.path,"id":target.id}).to_string();
+    let result = if let Some(host) = target.host {
+        ssh(&host).arg(format!("node -e {} {}", shell_quote(script), shell_quote(&arguments))).output()
+    } else { Command::new("node").arg("-e").arg(script).arg(arguments).output() };
+    match result {
+        Ok(output) if output.status.success() => {},
+        Ok(output) => eprintln!("Could not clean up blank session: {}", String::from_utf8_lossy(&output.stderr)),
+        Err(error) => eprintln!("Could not clean up blank session: {error}"),
+    }
 }
 
 enum EphemeralSession {
@@ -1219,6 +1236,8 @@ fn build_pi_command(app: &AppHandle, broker: &BrokerRuntime, settings: &AppSetti
 
 #[tauri::command(async)]
 fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, no_session: Option<bool>, host_id: Option<String>) -> Result<(), String> {
+    // Identify a fresh session before launch, even if its first state reply never arrives.
+    let session_id = session_id.or_else(|| (session_path.is_none() && fork_path.is_none()).then(|| Uuid::new_v4().to_string()));
     let stale = {
         let mut processes = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?;
         match processes.get_mut(&runtime_id).map(|process| process.child.try_wait()) {
@@ -1251,7 +1270,8 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
     let stdin = Arc::new(Mutex::new(child.stdin.take().ok_or("Pi stdin was unavailable")?));
     let stdout = child.stdout.take().ok_or("Pi stdout was unavailable")?;
     let stderr = child.stderr.take().ok_or("Pi stderr was unavailable")?;
-    runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { child, stdin: stdin.clone(), ephemeral_session });
+    let blank_cleanup = BlankSessionCleanup { path: session_path.clone(), id: session_id.clone(), host: if host_id == "local" { None } else { Some(remote_host(&settings, &host_id)?.clone()) }, submitted: ephemeral };
+    runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { child, stdin: stdin.clone(), ephemeral_session, blank_cleanup });
     runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id.clone(), AgentAddress { host_id: host_id.clone(), session_id: session_id.clone(), session_path: session_path.clone(), worktree: None, presence_id: None, working: false });
     let pending = runtime.pending.clone(); let processes = runtime.processes.clone(); let active_agents = runtime.active_agents.clone(); let event_app = app.clone(); let event_runtime_id = runtime_id.clone();
     thread::spawn(move || {
@@ -1297,7 +1317,7 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
             let _ = event_app.emit("pi://event", json!({"runtimeId":event_runtime_id,"event":value}));
         }
         let exited = processes.lock().ok().and_then(|mut values| values.remove(&event_runtime_id));
-        if let Some(mut process) = exited { let _ = process.child.wait(); if let Some(session) = process.ephemeral_session { remove_ephemeral_session(session); } }
+        if let Some(mut process) = exited { let _ = process.child.wait(); if let Some(session) = process.ephemeral_session { remove_ephemeral_session(session); } cleanup_blank_session(process.blank_cleanup); }
         if let Ok(mut agents) = active_agents.lock() { agents.remove(&event_runtime_id); }
         fail_pending(&pending, &event_runtime_id, "Pi disconnected before responding");
         let _ = event_app.emit("pi://event", json!({"runtimeId":event_runtime_id,"event":{"type":"disconnected"}}));
@@ -1308,9 +1328,9 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
 }
 
 #[tauri::command(async)]
-fn stop_pi(runtime: State<PiRuntime>, runtime_id: String) -> Result<(), String> {
+fn stop_pi(runtime: State<PiRuntime>, runtime_id: String, discard_blank: Option<bool>) -> Result<(), String> {
     let process = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.remove(&runtime_id);
-    if let Some(mut process) = process { let _ = process.child.kill(); let _ = process.child.wait(); if let Some(session) = process.ephemeral_session { remove_ephemeral_session(session); } }
+    if let Some(mut process) = process { let _ = process.child.kill(); let _ = process.child.wait(); if let Some(session) = process.ephemeral_session { remove_ephemeral_session(session); } if discard_blank.unwrap_or(false) { cleanup_blank_session(process.blank_cleanup); } }
     runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.remove(&runtime_id);
     fail_pending(&runtime.pending, &runtime_id, "Pi disconnected before responding");
     Ok(())
@@ -1347,6 +1367,10 @@ fn execute_pi_command(runtime: &PiRuntime, runtime_id: &str, mut command: Value)
 }
 
 fn update_active_agent(runtime: &PiRuntime, runtime_id: &str, state: &Value) -> Result<(), String> {
+    if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(runtime_id) {
+        if let Some(path) = state.get("sessionFile").and_then(Value::as_str) { process.blank_cleanup.path = Some(path.to_owned()); }
+        if let Some(id) = state.get("sessionId").and_then(Value::as_str) { process.blank_cleanup.id = Some(id.to_owned()); }
+    }
     let mut agents = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?;
     let Some(agent) = agents.get_mut(runtime_id) else { return Ok(()); };
     agent.session_id = state.get("sessionId").and_then(Value::as_str).map(str::to_owned);
@@ -1357,6 +1381,10 @@ fn update_active_agent(runtime: &PiRuntime, runtime_id: &str, state: &Value) -> 
 #[tauri::command(async)]
 fn pi_command(runtime: State<PiRuntime>, runtime_id: String, command: Value) -> Result<Value, String> {
     let command_type = command.get("type").and_then(Value::as_str).unwrap_or_default().to_string();
+    let internal_status = command.get("message").and_then(Value::as_str).is_some_and(|message| message == "/pi-desktop-fast-status" || message == "/pi-desktop-fast-status refresh");
+    if matches!(command_type.as_str(), "prompt" | "steer" | "follow_up") && !internal_status {
+        if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(&runtime_id) { process.blank_cleanup.submitted = true; }
+    }
     let mut result = execute_pi_command(&runtime, &runtime_id, command)?;
     if command_type == "get_state" {
         update_active_agent(&runtime, &runtime_id, &result)?;
@@ -2081,5 +2109,17 @@ pub fn run() {
         }
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
-    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).run(context).expect("error while running piop");
+    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).build(context).expect("error while building piop").run(|app, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            // The webview cannot await cleanup during pagehide. Own shutdown here.
+            let runtime = app.state::<PiRuntime>();
+            let processes = runtime.processes.lock().map(|mut processes| processes.drain().map(|(_, process)| process).collect::<Vec<_>>()).unwrap_or_default();
+            for mut process in processes {
+                let _ = process.child.kill();
+                let _ = process.child.wait();
+                if let Some(session) = process.ephemeral_session { remove_ephemeral_session(session); }
+                cleanup_blank_session(process.blank_cleanup);
+            }
+        }
+    });
 }

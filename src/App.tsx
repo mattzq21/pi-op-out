@@ -336,8 +336,7 @@ export default function App() {
   const activateTransport = (nextTransport: NativeTransport) => {
     const previousTransport = transport;
     const previousKey = transportConversationKeys.current.get(previousTransport);
-    const hasUnsavedWork = Boolean((previousKey && composerDrafts[previousKey]?.trim()) || (uploadsByTransport.get(previousTransport)?.length));
-    const discardPrevious = previousTransport !== nextTransport && !state.isStreaming && state.messageCount === 0 && messages.length === 0 && !hasUnsavedWork;
+    const discardPrevious = previousTransport !== nextTransport && !state.isStreaming && state.messageCount === 0 && messages.length === 0;
     activeTransportRef.current = nextTransport; runtimePool.activate(nextTransport); setTransport(nextTransport);
     if (discardPrevious) {
       setUploadsByTransport((current) => { const next = new Map(current); next.delete(previousTransport); return next; });
