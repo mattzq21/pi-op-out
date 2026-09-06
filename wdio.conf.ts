@@ -30,7 +30,7 @@ const getOsAssignedPort = () => new Promise<number>((resolve, reject) => {
   });
 });
 const webdriverPort = await getOsAssignedPort();
-const sessionsRoot = path.join(homedir(), ".pi-desktop", "sessions");
+const sessionsRoot = path.join(homedir(), ".piop", "sessions");
 const temporaryProjectsRoot = path.join(homedir(), "pi-desktop", "tmp");
 const definedAgentsConfigPath = path.join(homedir(), ".pi", "agent", "extensions", "pi-define-agents", "config.json");
 const orchestrationConfigPath = path.join(homedir(), ".pi", "agent", "extensions", "pi-orchestration", "config.json");

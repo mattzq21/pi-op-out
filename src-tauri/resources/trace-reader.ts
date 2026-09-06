@@ -9,7 +9,7 @@ type Message = { role?: string; content?: unknown; stopReason?: string };
 type TraceFile = { path: string; modified: number };
 type CleanMessage = { role: "user" | "assistant"; text: string };
 
-const traceRoots = () => [join(homedir(), ".pi-desktop", "sessions"), join(homedir(), ".pi-desktop", "archived")];
+const traceRoots = () => [join(homedir(), ".piop", "sessions"), join(homedir(), ".piop", "archived")];
 
 async function traceFiles(root: string): Promise<TraceFile[]> {
   const files: TraceFile[] = [];
