@@ -2,7 +2,7 @@
 
 A single-file Pi extension exposing `web_search({ query, domains? })`. It returns a web-grounded answer and source URLs using the host's existing Pi Codex login. No extra npm dependencies, search API keys, browser, or MCP server are needed.
 
-Piop embeds the source and automatically loads it in local and SSH sessions, including side conversations. Rebuild/restart Piop to pick it up. `web_search` appears enabled in Settings → Tools; select it under Settings → Agents for each agent that should use it, including the default agent. Existing agent allowlists are preserved. Each SSH host needs its own Pi Codex login.
+Piop embeds the source and automatically loads it in local and SSH sessions, including side conversations. Rebuild/restart Piop to pick it up. `web_search` is enabled by default in Settings → Tools and for agents, including existing profiles on their first launch with this update. You can disable it under Settings → Agents or Settings → Tools; later launches preserve that choice. Each SSH host needs its own Pi Codex login.
 
 For standalone Pi, from this repository:
 

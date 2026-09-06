@@ -13,8 +13,13 @@ const STATUS_KEY = "pi-define-agents";
 const STATE_ENTRY = "pi-define-agents-state";
 const DEFAULTS_ENV = "PI_DEFINE_AGENTS_RUNTIME_DEFAULTS";
 const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
-type Config = { agents: Agent[] };
+type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean };
 const fallbackConfig: Config = { agents: [{ name: "default", description: "General-purpose agent", model: "", effort: "high", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
+function defaultAgent(): Agent {
+  const agent = structuredClone(fallbackConfig.agents[0]);
+  if (desktopList("PI_DESKTOP_ALLOWED_TOOLS")?.includes("web_search")) agent.tools.push("web_search");
+  return agent;
+}
 
 async function writeConfig(value: Config, createOnly = false) {
   const temporary = `${configPath}.${process.pid}.${randomUUID()}.tmp`;
@@ -32,14 +37,14 @@ function normalize(value: Partial<Config>): Config {
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => agent && typeof agent.name === "string" && agent.name.length > 0).map((agent) => ({
     name: agent.name, description: typeof agent.description === "string" ? agent.description : "", model: typeof agent.model === "string" ? agent.model : "", effort: typeof agent.effort === "string" ? agent.effort : fallbackConfig.agents[0].effort,
     systemPrompt: typeof agent.systemPrompt === "string" ? agent.systemPrompt : "", developerPrompt: typeof agent.developerPrompt === "string" ? agent.developerPrompt : "", agentsMd: typeof agent.agentsMd === "string" ? agent.agentsMd : "",
-    tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => typeof item === "string") : [...fallbackConfig.agents[0].tools], skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => typeof item === "string") : [], mcpServers: Array.isArray(agent.mcpServers) ? agent.mcpServers.filter((item): item is string => typeof item === "string" && item !== "filesystem") : [],
+    tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => typeof item === "string") : defaultAgent().tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => typeof item === "string") : [], mcpServers: Array.isArray(agent.mcpServers) ? agent.mcpServers.filter((item): item is string => typeof item === "string" && item !== "filesystem") : [],
   })) : [];
   const unique = supplied.filter((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) === index);
-  const agents = unique.some((agent) => agent.name === "default") ? unique : [structuredClone(fallbackConfig.agents[0]), ...unique];
-  return { agents };
+  const agents = unique.some((agent) => agent.name === "default") ? unique : [defaultAgent(), ...unique];
+  return { agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true };
 }
 
-async function loadConfig(): Promise<Config> {
+async function readConfig(): Promise<Config> {
   try { return normalize(JSON.parse(await readFile(configPath, "utf8"))); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   // Preserve profiles from older installations without changing their legacy data.
@@ -49,6 +54,15 @@ async function loadConfig(): Promise<Config> {
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   await writeConfig(normalize({ agents: legacy.agents }), true);
   return normalize(JSON.parse(await readFile(configPath, "utf8")));
+}
+async function loadConfig(): Promise<Config> {
+  const config = await readConfig();
+  if (!config.webSearchDefaultApplied && desktopList("PI_DESKTOP_ALLOWED_TOOLS")?.includes("web_search")) {
+    for (const agent of config.agents) if (!agent.tools.includes("web_search")) agent.tools.push("web_search");
+    config.webSearchDefaultApplied = true;
+    await writeConfig(config);
+  }
+  return config;
 }
 function encode(value: unknown) { return Buffer.from(JSON.stringify(value), "utf8").toString("base64url"); }
 function decode<T>(value: string): T { return JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as T; }
@@ -137,7 +151,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   }});
   pi.registerCommand("pi-define-agents-config", { description: "Update agent definitions", handler: async (args, ctx) => {
     const previous = config;
-    const next = normalize(decode<Config>(args.trim())); await writeConfig(next); config = next;
+    const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied }); await writeConfig(next); config = next;
     try { if (!findAgent(active)) active = "default"; pi.appendEntry(STATE_ENTRY, { active }); await ctx.reload(); }
     catch (error) { await writeConfig(previous); config = previous; throw error; }
   }});
