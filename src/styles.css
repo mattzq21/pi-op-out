@@ -294,3 +294,14 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 
 .app .composer.dragging-files { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-14); }
 .composer-drop-hint { padding: 3px 0 6px; color: var(--accent); font-size: 12px; pointer-events: none; }
+
+.find-bar { position: fixed; top: 48px; right: 20px; z-index: 100; display: flex; align-items: center; gap: 6px; max-width: calc(100vw - 40px); padding: 7px 9px; border: 1px solid var(--line); border-radius: 9px; background: var(--dark-subtle); color: var(--muted); box-shadow: 0 8px 28px #0006; }
+.find-bar input { width: 190px; min-width: 60px; flex: 1; border: 0; padding: 5px; background: transparent; color: var(--ink); font: inherit; font-size: 12px; outline: none; }
+.find-bar:focus-within { border-color: var(--accent); }
+.find-count { min-width: 58px; text-align: center; white-space: nowrap; font-size: 11px; font-variant-numeric: tabular-nums; }
+.find-bar button { display: grid; place-items: center; padding: 5px; border: 0; border-radius: 5px; background: transparent; color: var(--ink); cursor: pointer; }
+.find-bar button:hover { background: #ffffff12; }
+.find-bar button:disabled { opacity: .3; cursor: default; }
+.find-highlights { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
+.find-highlights span { position: absolute; background: #e5b83c44; border-radius: 2px; }
+.find-highlights span.active { background: #ee963966; outline: 1px solid #efaa56; }
