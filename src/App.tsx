@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
 import { ArrowLeft, Bug, FolderPlus, GitBranch, MessageSquare, Settings } from "lucide-react";
+import { FindInPage } from "./components/FindInPage";
 import { ChatView } from "./components/ChatView";
 import { IconButton } from "./components/IconButton";
 import { SessionPanel, type SessionAction } from "./components/SessionPanel";
@@ -603,6 +604,9 @@ export default function App() {
       {terminalOpen && <TerminalView key={`${terminalSessionId}:${activeTerminal.id}`} cwd={terminalCwd} terminals={sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={activeTerminal.id} output={activeTerminal.output} outputEnd={activeTerminal.outputEnd} snapshot={activeTerminal.snapshot} snapshotEnd={activeTerminal.snapshotEnd} started={activeTerminal.started} exited={activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { void transport.writeTerminal(activeTerminal.id, data).catch((reason) => queueTerminalOutput(activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { void transport.resizeTerminal(activeTerminal.id, cols, rows).catch(() => undefined); }} onSnapshot={(value, outputEnd) => saveTerminalSnapshot(terminalSessionId, activeTerminal.id, value, outputEnd)} onDelete={deleteTerminal} onClose={() => { terminalPanelRevision.current += 1; setTerminalOpen(false); }} />}
     </div>
     {view === "settings" && <SettingsView settings={settingsWithMcpStatuses} agentConfig={extensionStateIsCurrent ? agentSettings : undefined} sessions={sessions} models={models} thinkingLevels={thinkingLevels} onSave={saveSettings} onDirtyChange={setSettingsDirty} />}
+    <FindInPage selector=".chat-panes > .chat-shell" scopeKey={activeConversationKey} onActivate={() => setActivePane("main")} active={activePane === "main" || !splitPane} enabled={view === "chat"} />
+    {splitPane && <FindInPage key={splitSessionId} selector=".split-chat .chat-shell" scopeKey={splitSessionId} onActivate={() => setActivePane("split")} active={activePane === "split"} enabled={view === "chat"} />}
+    {view === "settings" && <FindInPage selector=".settings-shell" scopeKey="settings" />}
     {(error || notices.length > 0) && <div className="toast-stack">
       {error && <div className="error-toast" role="alert"><strong>piop could not connect</strong><span>{error}</span><button onClick={reconnectMain} disabled={reconnectPending.current.has(transport)}>Retry</button><button aria-label="Dismiss connection error" onClick={() => setError(undefined)}>×</button></div>}
       {notices.map((notice) => <div className="error-toast" role="alert" key={notice.id}><strong>{notice.title}</strong><span>{notice.message}</span><button aria-label={`Dismiss ${notice.title}`} onClick={() => setNotices((current) => current.filter((item) => item.id !== notice.id))}>×</button></div>)}
