@@ -40,7 +40,7 @@ npm run test:e2e:build
 npm run test:e2e:manual
 ```
 
-Both the manual launcher and automated suite use the same Linux placement as `npm run tauri dev`: the first available slot is `1280×692` at `(2560,56)` in the top-left of the right-hand monitor, then `1280×692` at `(2560,748)` in its bottom-left, then `1275×692` at `(1285,56)` in the upper-right of the left-hand monitor, then `1275×692` at `(1285,748)` in its lower-right. If all four slots are occupied by Pi windows, the quaternary slot is used.
+Both the manual launcher and automated suite use the same Linux placement as `npm run tauri dev`: the first available slot is `1280×692` at `(2560,56)` in the top-left of the right-hand monitor, then `1280×692` at `(2560,748)` in its bottom-left, then `1275×692` at `(1285,56)` in the upper-right of the left-hand monitor, then `1275×692` at `(1285,748)` in its lower-right. Piop and Codop windows share this slot order, so each app skips slots occupied by either sibling. If all four slots are occupied, the quaternary slot is used.
 
 The launcher selects the slot before starting the app and passes its exact `{ x, y, width, height }` bounds through `PI_WINDOW_BOUNDS`. Shared Linux startup code creates the window hidden with those bounds and decorations disabled, then shows it during Tauri setup. This applies the final geometry before the first visible map, with no delayed move, Linux WebDriver resize, or height offset. Rebuild the E2E binary after changing native placement code.
 

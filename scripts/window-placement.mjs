@@ -9,9 +9,11 @@ const windowSlots = [topWindowBounds, bottomWindowBounds, tertiaryWindowBounds, 
 export function selectWindowBounds() {
   try {
     const windows = execFileSync("xwininfo", ["-root", "-tree"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    const piWindows = windows.split("\n").filter((line) => /"piop": \("piop" "piop"\)/i.test(line));
+    // Both sibling apps share these slots. Match titles so custom-named test
+    // binaries still count even when their WM_CLASS differs.
+    const siblingWindows = windows.split("\n").filter((line) => /"(?:piop|codop)": \(/i.test(line));
     return windowSlots.find(({ x, y, width, height }) =>
-      !piWindows.some((line) => line.includes(`${width}x${height}+${x}+${y}`))
+      !siblingWindows.some((line) => line.includes(`${width}x${height}+${x}+${y}`))
     ) ?? quaternaryWindowBounds;
   } catch {
     return topWindowBounds;
