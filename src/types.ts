@@ -16,10 +16,8 @@ export interface AgentState { model: Model | null; thinkingLevel: string; isStre
 export interface ExtensionUiRequest { type: "extension_ui_request"; id: string; method: "select" | "confirm" | "input" | "editor" | "notify" | "setStatus" | "setWidget" | "setTitle" | "set_editor_text"; title?: string; message?: string; error?: string; options?: string[]; placeholder?: string; prefill?: string; notifyType?: "info" | "warning" | "error"; statusKey?: string; statusText?: string; widgetKey?: string; widgetLines?: string[]; widgetPlacement?: "aboveEditor" | "belowEditor"; text?: string; }
 export interface Model { provider: string; id: string; name?: string; reasoning?: boolean; contextWindow?: number; }
 export interface AgentProfile { name: string; description: string; model: string; effort: string; systemPrompt: string; developerPrompt: string; agentsMd: string; tools: string[]; skills: string[]; mcpServers: string[]; }
-export interface SequenceProfile { name: string; description: string; agents: string[]; visibleSteps: number; }
-export interface OrchestrationConfig { agents: AgentProfile[]; sequences: SequenceProfile[]; }
+export interface AgentConfig { agents: AgentProfile[]; }
 export interface DefinedAgentsCapability { version: number; active: string; config: { agents: AgentProfile[] }; }
-export interface OrchestrationCapability { version: number; active: string; currentAgent?: string; config: { sequences: SequenceProfile[] }; }
 export interface RpcCommand { id?: string; type: string; [key: string]: unknown; }
 export interface RpcEvent { type: string; [key: string]: unknown; }
 export interface ToolConfig { name: string; description: string; enabled: boolean; builtin?: boolean; }

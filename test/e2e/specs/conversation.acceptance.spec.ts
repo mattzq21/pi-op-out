@@ -2,12 +2,12 @@ import { $, $$, browser, expect } from "@wdio/globals";
 import { readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { decodeOrchestrationValue, encodeOrchestrationValue } from "../../../src/lib/orchestrationProtocol.js";
-import type { AppSettings, OrchestrationCapability, OrchestrationConfig } from "../../../src/types.js";
+import { decodeAgentValue, encodeAgentValue } from "../../../src/lib/agentProtocol.js";
+import type { AppSettings, DefinedAgentsCapability, AgentConfig } from "../../../src/types.js";
 import { app } from "../pageobjects/app.page.js";
 
 type BackendCall = { command: string; args: Record<string, unknown>; mocked: boolean };
-const installedOrchestrationConfigPath = join(homedir(), ".pi", "agent", "extensions", "pi-orchestration", "config.json");
+const installedAgentConfigPath = join(homedir(), ".pi", "agent", "extensions", "pi-define-agents", "config.json");
 const callBridge = () => $('textarea[aria-label="E2E calls"]');
 const responseBridge = () => $('textarea[aria-label="E2E responses"]');
 const mockBackend = async (responses: Record<string, unknown>) => {
@@ -46,16 +46,14 @@ before(async () => {
     return tauri.invoke<AppSettings>("load_app_settings");
   });
 });
-const acceptanceOrchestration = (): OrchestrationCapability => ({
+const acceptanceAgents = (): DefinedAgentsCapability => ({
   version: 1,
   active: "default",
-  currentAgent: "default",
   config: {
     agents: [
       { name: "default", description: "Default acceptance agent", model: "", effort: "high", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: ["read"], skills: [], mcpServers: [] },
       { name: "reviewer", description: "Reviews acceptance changes", model: "", effort: "off", systemPrompt: "Review carefully.", developerPrompt: "", agentsMd: "", tools: ["read"], skills: [], mcpServers: [] },
     ],
-    sequences: [],
   },
 });
 
@@ -139,7 +137,7 @@ describe("BUGS-3 regressions", () => {
   });
 
   it("reports a failed agent selection", async () => {
-    await enableOrchestration();
+    await enableAgents();
     await mockBackend({ "pi_command:prompt": { error: "Agent switch failed" } });
     await $('button[aria-label="Agent"]').click();
     await $('//div[@role="listbox" and @aria-label="Agent options"]//button[.//span[normalize-space(.)="reviewer"]]').click();
@@ -161,25 +159,23 @@ describe("BUGS-3 regressions", () => {
     await expect($(".error-toast span")).toHaveText("Settings persistence failed");
   });
 });
-const installedOrchestration = (): OrchestrationCapability => {
-  const config = JSON.parse(readFileSync(installedOrchestrationConfigPath, "utf8")) as Partial<OrchestrationConfig>;
+const installedAgents = (): DefinedAgentsCapability => {
+  const config = JSON.parse(readFileSync(installedAgentConfigPath, "utf8")) as Partial<AgentConfig>;
   const agents = config.agents ?? [];
   return {
     version: 1,
     active: agents.some((agent) => agent.name === "default") ? "default" : agents[0]?.name ?? "default",
-    currentAgent: agents.some((agent) => agent.name === "default") ? "default" : agents[0]?.name,
     config: {
       agents,
-      sequences: config.sequences ?? [],
     },
   };
 };
-const enableOrchestration = async (capability = acceptanceOrchestration()) => emitPiEvent({
+const enableAgents = async (capability = acceptanceAgents()) => emitPiEvent({
   type: "extension_ui_request",
   id: "acceptance-orchestration",
   method: "setStatus",
-  statusKey: "pi-desktop-orchestration",
-  statusText: `json:${encodeOrchestrationValue(capability)}`,
+  statusKey: "pi-define-agents",
+  statusText: `json:${encodeAgentValue(capability)}`,
 });
 const setSelectValue = (selector: string, value: string) => browser.execute((target, next) => {
   const select = document.querySelector<HTMLSelectElement>(target)!; select.value = next; select.dispatchEvent(new Event("change", { bubbles: true }));
@@ -1462,14 +1458,14 @@ describe("Settings behavior", () => {
   });
 });
 
-describe("Orchestration acceptance", () => {
+describe("Agent profiles acceptance", () => {
   before(async () => {
     await resetApp();
   });
 
   beforeEach(async () => {
     await app.openConversations();
-    await enableOrchestration();
+    await enableAgents();
   });
 
   afterEach(async () => {
@@ -1477,26 +1473,24 @@ describe("Orchestration acceptance", () => {
     await resetBackend();
   });
 
-  it("reveals agent and sequence controls when the extension advertises them", async () => {
+  it("reveals agent controls when the extension advertises them", async () => {
     await expect(app.agentPicker).toHaveText("default");
     await app.agentPicker.click();
     const agents = $('[role="listbox"][aria-label="Agent options"]');
     await expect(agents).toHaveText(expect.stringContaining("reviewer"));
-    await expect(agents).toHaveText(expect.stringContaining("final-only"));
     await browser.keys("Escape");
 
     await app.openSettings();
     await expect(app.settingsSection("Agents")).toBeDisplayed();
-    await expect(app.settingsSection("Sequences")).toBeDisplayed();
   });
 
-  it("selects an agent by sending the orchestration use command", async () => {
+  it("selects an agent by sending the agent use command", async () => {
     await mockBackend({ "pi_command:prompt": {} });
     await app.chooseComposerOption("Agent", "reviewer");
 
-    await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-orchestration-use ")));
-    const message = ((await backendCalls()).find(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-orchestration-use "))?.args.command as { message: string }).message;
-    expect(decodeOrchestrationValue<string>(message.slice("/pi-orchestration-use ".length))).toBe("reviewer");
+    await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-define-agents-use ")));
+    const message = ((await backendCalls()).find(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-define-agents-use "))?.args.command as { message: string }).message;
+    expect(decodeAgentValue<string>(message.slice("/pi-define-agents-use ".length))).toBe("reviewer");
   });
 
   it("creates an agent with inherited resources and editable instructions", async () => {
@@ -1534,67 +1528,14 @@ describe("Orchestration acceptance", () => {
     await $('button[aria-label="Remove release-reviewer"]').click();
   });
 
-  it("updates sequence steps when an agent is renamed", async () => {
-    const capability = acceptanceOrchestration();
-    capability.config.sequences = [{ name: "review-flow", description: "Review changes", agents: ["default", "reviewer"], visibleSteps: 2 }];
-    await enableOrchestration(capability);
-    await app.openSettings();
-    await app.openSettingsSection("Agents");
-    await $('//div[contains(@class,"agent-list")]//button[.//span[normalize-space(.)="reviewer"]]').click();
-    await $('input[aria-label="Agent name"]').setValue("auditor");
-
-    await app.openSettingsSection("Sequences");
-    await expect($('select[aria-label="Sequence step 2"]')).toHaveValue("auditor");
-    await expect($('select[aria-label="Sequence step 2"]')).toHaveText(expect.stringContaining("auditor"));
-    expect(await $('select[aria-label="Sequence step 2"]').getText()).not.toContain("reviewer");
-  });
-
-  it("preserves valid sequence steps when an agent is deleted", async () => {
-    const capability = acceptanceOrchestration();
-    capability.config.sequences = [{ name: "review-flow", description: "Review changes", agents: ["default", "reviewer"], visibleSteps: 2 }];
-    await enableOrchestration(capability);
-    await app.openSettings();
-    await app.openSettingsSection("Agents");
-    await $('//div[contains(@class,"agent-list")]//button[.//span[normalize-space(.)="reviewer"]]').click();
-    await app.confirmAction("Remove reviewer from 1 dependent sequence? Sequences with no remaining steps will also be removed.", () => $('button[aria-label="Remove reviewer"]').click());
-
-    await app.openSettingsSection("Sequences");
-    await expect($('input[aria-label="Sequence name"]')).toHaveValue("review-flow");
-    await expect($('select[aria-label="Sequence step 1"]')).toHaveValue("default");
-    await expect($('select[aria-label="Sequence step 2"]')).not.toBeExisting();
-    await expect($('input[aria-label="Visible steps"]')).toHaveValue("1");
-    expect(await $('select[aria-label="Sequence step 1"]').getText()).not.toContain("reviewer");
-  });
-
-  it("builds a multi-step sequence and controls how many steps are visible", async () => {
-    await app.openSettings();
-    await app.openSettingsSection("Sequences");
-    await $('//button[normalize-space(.)="Add sequence"]').click();
-
-    const name = $('input[aria-label="Sequence name"]');
-    await expect(name).toHaveValue("sequence-1");
-    await name.setValue("acceptance-pipeline");
-    await $('input[aria-label="Sequence description"]').setValue("Implement, then review");
-    await $('//button[normalize-space(.)="Add step"]').click();
-    await setSelectValue('select[aria-label="Sequence step 2"]', "reviewer");
-    await $('input[aria-label="Visible steps"]').setValue("2");
-
-    await expect($('select[aria-label="Sequence step 1"]')).toHaveValue("default");
-    await expect($('select[aria-label="Sequence step 2"]')).toHaveValue("reviewer");
-    await expect($(".sequence-note")).toHaveText(expect.stringContaining("The first 2 step(s)"));
-    await expect($(".sequence-note")).toHaveText(expect.stringContaining("0 remaining step(s)"));
-    await $('button[aria-label="Remove acceptance-pipeline"]').click();
-    await expect($(".sequence-editor .empty-small")).toHaveText("Add a sequence to get started.");
-  });
-
-  it("saves the encoded orchestration configuration and reconnects", async () => {
+  it("saves the encoded agent configuration and reconnects", async () => {
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
     await mockBackend({
       ...connectedSessionResponses("orchestration-save"),
       "pi_command:set_model": {}, "pi_command:prompt": {}, save_app_settings: {}, stop_pi: {}, start_pi: {}, list_sessions: [], load_app_settings: settings,
     });
     await emitPiEvent({ type: "session_switched" });
-    await enableOrchestration();
+    await enableAgents();
     await expect(app.modelPicker).toHaveAttribute("data-options", expect.stringContaining("e2e/acceptance"));
     await app.openSettings();
     await setSelectValue('select[aria-label="Default model"]', "e2e/acceptance");
@@ -1605,8 +1546,8 @@ describe("Orchestration acceptance", () => {
 
     await app.saveSettingsButton.click();
     await expect(app.saveSettingsButton).toHaveText("Saved");
-    const prompt = (await backendCalls()).find(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-orchestration-config "))?.args.command as { message: string };
-    const saved = decodeOrchestrationValue<OrchestrationConfig>(prompt.message.slice("/pi-orchestration-config ".length));
+    const prompt = (await backendCalls()).find(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-define-agents-config "))?.args.command as { message: string };
+    const saved = decodeAgentValue<AgentConfig>(prompt.message.slice("/pi-define-agents-config ".length));
     expect(saved.agents.find((agent) => agent.name === "reviewer")?.description).toBe("Reviews the packaged acceptance suite");
     expect((await backendCalls()).filter(({ command }) => command === "save_app_settings")).toHaveLength(1);
     expect((await backendCalls()).some(({ command }) => command === "stop_pi")).toBe(true);
@@ -1614,9 +1555,9 @@ describe("Orchestration acceptance", () => {
   });
 
   it("persists a GUI-created agent through a real native save and reconnect", async () => {
-    const originalConfig = readFileSync(installedOrchestrationConfigPath);
+    const originalConfig = readFileSync(installedAgentConfigPath);
     const agentName = "e2e-persisted-agent";
-    writeFileSync(installedOrchestrationConfigPath, JSON.stringify(acceptanceOrchestration().config, null, 2));
+    writeFileSync(installedAgentConfigPath, JSON.stringify(acceptanceAgents().config, null, 2));
     await resetBackend();
     await app.refreshForReset();
     await app.waitUntilReady();
@@ -1634,10 +1575,10 @@ describe("Orchestration acceptance", () => {
       await app.saveSettingsButton.click();
 
       await browser.waitUntil(() => {
-        const saved = JSON.parse(readFileSync(installedOrchestrationConfigPath, "utf8")) as OrchestrationConfig;
+        const saved = JSON.parse(readFileSync(installedAgentConfigPath, "utf8")) as AgentConfig;
         return saved.agents.some((agent) => agent.name === agentName);
-      }, { timeout: 30_000, timeoutMsg: "The GUI-created agent was not written to the installed orchestration config" });
-      const saved = JSON.parse(readFileSync(installedOrchestrationConfigPath, "utf8")) as OrchestrationConfig;
+      }, { timeout: 30_000, timeoutMsg: "The GUI-created agent was not written to the installed agent config" });
+      const saved = JSON.parse(readFileSync(installedAgentConfigPath, "utf8")) as AgentConfig;
       expect(saved.agents.find((agent) => agent.name === agentName)).toMatchObject({
         description: "Saved by the native acceptance test",
         systemPrompt: "Verify the saved agent configuration.",
@@ -1653,14 +1594,14 @@ describe("Orchestration acceptance", () => {
       await $(`//div[contains(@class,"agent-list")]//button[.//span[normalize-space(.)="${agentName}"]]`).click();
       await expect($('input[aria-label="Agent description"]')).toHaveValue("Saved by the native acceptance test");
     } finally {
-      writeFileSync(installedOrchestrationConfigPath, originalConfig);
+      writeFileSync(installedAgentConfigPath, originalConfig);
       await resetApp();
     }
   });
 
-  it("restores desktop settings when orchestration configuration is rejected", async () => {
+  it("restores desktop settings when agent configuration is rejected", async () => {
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
-    const capability = acceptanceOrchestration();
+    const capability = acceptanceAgents();
     await mockBackend({
       ...connectedSessionResponses("orchestration-rollback"),
       load_app_settings: settings, save_app_settings: {}, start_pi: {}, stop_pi: {},
@@ -1668,7 +1609,7 @@ describe("Orchestration acceptance", () => {
       "pi_command:prompt": { error: "Orchestration configuration was rejected" },
     });
     await emitPiEvent({ type: "session_switched" });
-    await enableOrchestration(capability);
+    await enableAgents(capability);
     await app.openSettings();
     await app.automaticRetryToggle.click();
     await app.openSettingsSection("Agents");
@@ -1681,7 +1622,7 @@ describe("Orchestration acceptance", () => {
     const settingsWrites = calls.filter(({ command }) => command === "save_app_settings");
     expect(settingsWrites.map(({ args }) => (args.settings as AppSettings).autoRetry)).toEqual([!settings.autoRetry, settings.autoRetry]);
     expect(settingsWrites.every(({ mocked }) => mocked)).toBe(true);
-    const configurations = calls.filter(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-orchestration-config ")).map(({ args }) => decodeOrchestrationValue<OrchestrationConfig>((args.command as { message: string }).message.slice("/pi-orchestration-config ".length)));
+    const configurations = calls.filter(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-define-agents-config ")).map(({ args }) => decodeAgentValue<AgentConfig>((args.command as { message: string }).message.slice("/pi-define-agents-config ".length)));
     expect(configurations).toHaveLength(2);
     expect(configurations[0].agents.find((agent) => agent.name === "reviewer")?.description).toBe("Rejected configuration change");
     expect(configurations[1]).toEqual(capability.config);
@@ -1710,7 +1651,7 @@ describe("Settings acceptance", () => {
       "pi_command:prompt": {},
     });
     await emitPiEvent({ type: "session_switched" });
-    await enableOrchestration();
+    await enableAgents();
     try {
       await app.openSettings();
       await app.automaticRetryToggle.click();

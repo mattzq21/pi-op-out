@@ -8,8 +8,8 @@ A Tauri-only native interface for the Pi coding agent. It is not a standalone br
 - Project-grouped conversation history, search, switching, rename, clone, branch creation, archiving, and split panes
 - Runtime model and thinking-level controls, slash-command discovery, text/image attachments, and direct project shell execution
 - Pi extension UI support for prompts, confirms, selects, editors, notifications, status lines, widgets, titles, and editor text
-- Settings for retry/compaction behavior, context-window cap, default model, tools, discovered skills, agents, sequences, remote machines, and MCP servers
-- Independent [pi-define-agents](extensions/pi-define-agents/README.md) profiles and optional [pi-orchestration](extensions/pi-orchestration/README.md) sequences and delegation
+- Settings for retry/compaction behavior, context-window cap, default model, tools, discovered skills, agents, remote machines, and MCP servers
+- Named [pi-define-agents](extensions/pi-define-agents/README.md) profiles with per-agent models, instructions, and resource permissions
 - Live context-window usage gauge in the composer
 - Bundled [pi-codex-compaction](extensions/pi-codex-compaction/README.md) for native OpenAI Codex compaction in local, SSH, and delegated sessions
 - An MCP SDK-backed stdio/HTTP bridge that discovers server tools and registers them as namespaced Pi tools
@@ -30,7 +30,9 @@ Authenticate Pi before starting the desktop app with Pi's normal `/login` flow o
 
 `npm run dev` only provides the frontend development server consumed by `tauri dev`; opening that server directly in a browser is unsupported.
 
-Agent profiles are included: piop automatically installs and loads `pi-define-agents` locally and on SSH hosts. Orchestration is optional everywhere; install `pi-orchestration` on each machine where you want sequences and delegation, following its README, then reload Pi. Existing combined orchestration configuration is split automatically with a backup. Previously installed orchestration extensions remain installed.
+Agent profiles are included: piop automatically installs and loads `pi-define-agents` locally and on SSH hosts. Select one agent for each conversation and configure it in Settings → Agents.
+
+Sequences and orchestration have been removed. On the next local or SSH session launch, piop moves an older `~/.pi/agent/extensions/pi-orchestration/index.ts` installation into `~/.piop/disabled-extensions/` so Pi no longer discovers it. This also disables that installation for standalone Pi on the same machine. The entry point is recoverable from the backup; saved configurations and conversation history are retained.
 
 Saving native settings restarts the managed Pi process while preserving the active project and session. Enabled tools, skills, default model/thinking level, and MCP configuration are applied at startup.
 

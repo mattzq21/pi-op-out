@@ -1,3 +1,4 @@
+// Read-only compatibility for conversations saved before sequences were removed.
 export type SequenceStep = { sequence: string; step: number; agent: string; visible: boolean };
 
 const marker = /^<!-- pi-desktop-sequence:(.*?) -->\n?/;

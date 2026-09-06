@@ -470,6 +470,15 @@ fn prepare_project_files_watch_extension(app: &AppHandle) -> Result<PathBuf, Str
 }
 
 fn prepare_defined_agents_extension() -> Result<PathBuf, String> {
+    // Older app installations left an auto-discovered orchestration entry point.
+    // Preserve it outside Pi's discovery directory, along with all existing config.
+    let legacy = home_dir()?.join(".pi/agent/extensions/pi-orchestration/index.ts");
+    if legacy.exists() {
+        let backup = home_dir()?.join(".piop/disabled-extensions");
+        ensure_private_dir(&backup)?;
+        fs::rename(&legacy, backup.join(format!("pi-orchestration-{}.ts", Uuid::new_v4())))
+            .map_err(|error| format!("Could not disable legacy orchestration: {error}"))?;
+    }
     let path = home_dir()?.join(".pi/agent/extensions/pi-define-agents/index.ts");
     atomic_write_private(&path, include_str!("../../extensions/pi-define-agents/index.ts").as_bytes())?;
     Ok(path)
@@ -1159,6 +1168,9 @@ fn remote_broker_command(host: &RemoteHost, local_port: u16, remote_port: u16) -
 }
 
 fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<(), String> {
+    let disable = format!("if [ -f \"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\" ]; then mkdir -p -m 700 \"$HOME/.piop/disabled-extensions\" && mv -- \"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\" \"$HOME/.piop/disabled-extensions/pi-orchestration-{}.ts\"; fi", Uuid::new_v4());
+    let output = ssh(host).arg(disable).output().map_err(|error| format!("Could not disable legacy orchestration on {}: {error}", host.name))?;
+    if !output.status.success() { return Err(format!("Could not disable legacy orchestration on {}: {}", host.name, String::from_utf8_lossy(&output.stderr))); }
     let broker = shell_quote(include_str!("../resources/session-broker.ts"));
     let trace_reader = shell_quote(include_str!("../resources/trace-reader.ts"));
     let btw = shell_quote(include_str!("../resources/btw.ts"));
