@@ -13,3 +13,23 @@ if ! git symbolic-ref -q HEAD >/dev/null; then
   worktree_id=$(basename "$(dirname "$PWD")")
   git switch -c "codex/tmp-$worktree_id"
 fi'''
+
+[cleanup]
+script = ""
+
+[cleanup.linux]
+script = '''
+set -eu
+
+branch=$(git symbolic-ref --quiet --short HEAD || true)
+
+case "$branch" in
+  codex/tmp-*)
+    git switch --detach
+    git branch -D "$branch"
+
+    if [ -n "$(git ls-remote --heads origin "refs/heads/$branch")" ]; then
+      git push origin --delete "$branch"
+    fi
+    ;;
+esac'''
