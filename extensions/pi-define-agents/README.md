@@ -15,10 +15,32 @@ The extension creates `config.json` beside itself on first load. `config.example
 
 ## Configuration
 
-All agents use the shared system prompt copied from the supplied `SYSTEM.md`. An empty System prompt field inherits it; a nonempty field replaces it for that agent. This applies to new and existing profiles. Pi's append prompt, discovered project instructions, and skills remain included. Developer prompt and agent AGENTS.md follow, then the final line `Current working directory {project dir}` uses the session's actual directory. Customize each agent under Settings → Agents.
+Agents inherit the built-in default system prompt when `systemPrompt` is omitted from `config.json`. An explicit string replaces it, including `"systemPrompt": ""` for an empty base prompt. In Settings → Agents, “Use default system prompt” omits the field when saved; turning it off allows an empty prompt. Typing in the prompt field switches to a custom prompt. Pi's append prompt, discovered project instructions, and skills remain included. Agent AGENTS.md follows, then the final line `Current working directory {project dir}` uses the session's actual directory. Customize each agent under Settings → Agents. Existing profiles with a separate instruction field are migrated into their system prompt on load, preserving the inherited default when applicable.
 
 In piop, `web_search` is included in the default agent when globally enabled. Existing profiles receive it once on upgrade; subsequent per-agent opt-outs are preserved. New agents created in Settings inherit all globally enabled tools.
 
 Legacy agent tool selections migrate on load: `exec_command` becomes `read`, `bash`, `grep`, `find`, and `ls`; `apply_patch` becomes `edit` and `write`. Unselected tools stay unselected.
+
+## VM tester
+
+`tester.example.json` contains a tester profile that accepts a production executable path and checks to perform. Merge its agent into the existing configuration's `agents` array. It inherits the session model and selects the `cua-vm` MCP server.
+
+On Matt's local host, register this server in Piop's Settings → MCP (the agent selection uses the server **id**):
+
+```json
+{
+  "id": "cua-vm",
+  "name": "cua-vm",
+  "transport": "stdio",
+  "command": "/home/matt/Projects/cua-vm-broker/cua-vm-broker",
+  "args": "mcp --instance-env PIOP_CUA_INSTANCE_ID",
+  "startupTimeoutSec": 300,
+  "enabled": true
+}
+```
+
+The broker starts or reuses an isolated VM when the tester connects. Piop supplies a stable identity for each conversation, agent name, and MCP server ID. Different conversations get separate VMs, while reconnects reuse their own VM. Selecting another agent releases the previous connection. Configure the broker on the machine where Pi runs; local paths in uploads refer to that machine.
+
+Pass the tester the absolute path to a production binary and the requested checks. The caller builds with `./node_modules/.bin/tauri build --no-bundle -- --locked`; raw Cargo builds can leave the app pointing at the development URL. The tester uses `broker_exec` to inspect the guest launcher and `broker_upload` to transfer the build through its existing MCP lease, then tests through CUA. See [the integration contract](../../docs/cua-vm-broker.md).
 
 `/pi-define-agents-config <base64url-json>` updates `{ "agents": [...] }` and reloads resources. piop uses this command to save definitions. Writes use temporary files and atomic publication. Older installations can import their existing agent profiles from the legacy configuration without modifying that file.
