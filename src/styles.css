@@ -92,10 +92,10 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .message-paused { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
 .reasoning-text, .reasoning-text strong { font-size: 13px; font-weight: 400; }
 .reasoning-text { color: #302e2a; }
-.reasoning-text, .work-group-content .message-body { line-height: 1.4; }
+.reasoning-text, :is(.work-group-content, .active-work-content) .message-body { line-height: 1.4; }
 .reasoning-message:has(+ :where(.reasoning-message)) { margin-bottom: 3px; }
-:is(.reasoning-text, .work-group-content .message-body) > :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote) { margin-top: 0; margin-bottom: 3px; }
-:is(.reasoning-text, .work-group-content .message-body) > :last-child { margin-bottom: 0; }
+:is(.reasoning-text, .work-group-content .message-body, .active-work-content .message-body) > :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote) { margin-top: 0; margin-bottom: 3px; }
+:is(.reasoning-text, .work-group-content .message-body, .active-work-content .message-body) > :last-child { margin-bottom: 0; }
 .branch-button { border: 0; background: transparent; color: var(--muted); height: 25px; padding: 0 6px; border-radius: 5px; display: flex; gap: 5px; align-items: center; font-size: 11px; }.branch-button:hover { background: #eeeae4; color: var(--ink); }
 .stream-caret { display: inline-block; width: 5px; height: 14px; margin-left: 3px; background: var(--accent); animation: blink 1s steps(2) infinite; vertical-align: -2px; }
 @keyframes blink { 50% { opacity: 0; } }
@@ -119,7 +119,8 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .work-group-chevron { flex: 0 0 auto; }
 .work-group[open] > summary .work-group-chevron { transform: rotate(90deg); }
 .work-group-content { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 9px; background: color-mix(in srgb, var(--paper) 50%, #f3f1ec); }
-.work-group-content > .message, .work-group-content > .tool-event { margin: 0; }
+.active-work-content { display: flex; flex-direction: column; gap: 3px; margin-bottom: 35px; }
+:is(.work-group-content, .active-work-content) > :is(.message, .tool-event) { margin: 0; }
 .work-group-content .message-body { display: flex; flex-direction: column; gap: 3px; }
 .work-group-content .message .message-body > * { margin-top: 0; margin-bottom: 0; }
 .empty-chat { text-align: center; color: var(--muted); padding: 15vh 20px; }.empty-chat span { font: 400 86px "P052", "Palatino Linotype", Palatino, serif; color: var(--accent); }
