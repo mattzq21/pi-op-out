@@ -339,3 +339,9 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .pending-message.dragging { opacity: .45; }
 .pending-message.drop-before { box-shadow: inset 0 2px var(--accent); }
 .pending-message.drop-after { box-shadow: inset 0 -2px var(--accent); }
+
+.project-picker { display: inline-flex; max-width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--dark-subtle); overflow: hidden; }
+.new-chat-project .project-picker button { border: 0; border-radius: 0; background: transparent; }
+.new-chat-project .project-picker button:hover { background: var(--dark-control); }
+.new-chat-project .project-picker .clear-project { flex-shrink: 0; padding: 0 7px; border-left: 1px solid var(--line); }
+.new-chat-project .project-picker button:focus-visible { outline-offset: -2px; }
