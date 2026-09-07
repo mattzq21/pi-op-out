@@ -7,7 +7,7 @@ import type { AppSettings, DefinedAgentsCapability, AgentConfig } from "../../..
 import { app } from "../pageobjects/app.page.js";
 
 type BackendCall = { command: string; args: Record<string, unknown>; mocked: boolean };
-const installedAgentConfigPath = join(homedir(), ".pi", "agent", "extensions", "pi-define-agents", "config.json");
+const installedAgentConfigPath = join(homedir(), ".piop", "pi-define-agents", "config.json");
 const callBridge = () => $('textarea[aria-label="E2E calls"]');
 const responseBridge = () => $('textarea[aria-label="E2E responses"]');
 const mockBackend = async (responses: Record<string, unknown>) => {
@@ -218,7 +218,6 @@ describe("Conversation acceptance", () => {
 
   it("gives the user the essential controls for starting work", async () => {
     await expect(app.composer).toBeDisplayed();
-    await expect(app.attachFilesButton).toBeClickable();
     await expect(app.openTerminalButton).toBeClickable();
     await expect(app.modelPicker).toBeDisplayed();
     await expect(app.thinkingLevelPicker).toBeDisplayed();
@@ -618,7 +617,7 @@ describe("Conversation acceptance", () => {
       const text = await palette.getText();
       expect(text).not.toContain("internal-inline");
       expect(text).not.toContain("pi-orchestration-next");
-      await expect(palette.$$('[role="option"]')).toBeElementsArrayOfSize(2);
+      expect(await palette.$$("[role=option] strong").map((option) => option.getText())).toEqual(["/branch-off", "/worktree", "/compact", "/review"]);
       await expect(palette).toHaveText(expect.stringContaining("/compact"));
     } finally {
       await app.clearMessage();
@@ -666,9 +665,9 @@ describe("Conversation acceptance", () => {
     await mockBackend({ "pi_command:get_entries": { entries: [], leafId: null }, "pi_command:fork": {}, "pi_command:prompt": {} });
     try {
       await browser.execute(() => {
-        const input = document.querySelector<HTMLInputElement>(".hidden-input")!;
+        const composer = document.querySelector(".composer")!;
         const transfer = new DataTransfer(); transfer.items.add(new File(["Acceptance fixture content."], "acceptance-note.txt", { type: "text/plain" }));
-        Object.defineProperty(input, "files", { configurable: true, value: transfer.files }); input.dispatchEvent(new Event("change", { bubbles: true }));
+        composer.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
       });
       await expect($(".attachments")).toHaveText(expect.stringContaining("acceptance-note.txt"));
       await app.prepareMessage("Summarize the attachment");
@@ -687,9 +686,9 @@ describe("Conversation acceptance", () => {
     await mockBackend({ "pi_command:prompt": {} });
     try {
       await browser.execute(() => {
-        const input = document.querySelector<HTMLInputElement>(".hidden-input")!;
+        const composer = document.querySelector(".composer")!;
         const transfer = new DataTransfer(); transfer.items.add(new File(["Quoted filename content"], 'report "draft".txt', { type: "text/plain" }));
-        Object.defineProperty(input, "files", { configurable: true, value: transfer.files }); input.dispatchEvent(new Event("change", { bubbles: true }));
+        composer.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
       });
       await expect($(".attachments")).toHaveText(expect.stringContaining('report "draft".txt'));
       await app.sendMessageButton.click();
@@ -703,10 +702,10 @@ describe("Conversation acceptance", () => {
 
   it("limits a single composer to twelve attachments", async () => {
     await browser.execute(() => {
-      const input = document.querySelector<HTMLInputElement>(".hidden-input")!;
+      const composer = document.querySelector(".composer")!;
       const transfer = new DataTransfer();
       for (let index = 1; index <= 13; index += 1) transfer.items.add(new File([`fixture ${index}`], `fixture-${index}.txt`, { type: "text/plain", lastModified: index }));
-      Object.defineProperty(input, "files", { configurable: true, value: transfer.files }); input.dispatchEvent(new Event("change", { bubbles: true }));
+      composer.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
     });
     await expect($$(".attachments > span")).toBeElementsArrayOfSize(12);
     await expect($(".attachments")).toHaveText(expect.stringContaining("fixture-12.txt"));
@@ -718,9 +717,9 @@ describe("Conversation acceptance", () => {
 
   it("removes an attachment before it can be submitted", async () => {
     await browser.execute(() => {
-      const input = document.querySelector<HTMLInputElement>(".hidden-input")!;
+      const composer = document.querySelector(".composer")!;
       const transfer = new DataTransfer(); transfer.items.add(new File(["Do not send this fixture."], "discard-me.txt", { type: "text/plain" }));
-      Object.defineProperty(input, "files", { configurable: true, value: transfer.files }); input.dispatchEvent(new Event("change", { bubbles: true }));
+      composer.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
     });
     await expect($(".attachments")).toHaveText(expect.stringContaining("discard-me.txt"));
 
@@ -731,9 +730,9 @@ describe("Conversation acceptance", () => {
 
   it("rejects a text attachment larger than 200 KB", async () => {
     await browser.execute(() => {
-      const input = document.querySelector<HTMLInputElement>(".hidden-input")!;
+      const composer = document.querySelector(".composer")!;
       const transfer = new DataTransfer(); transfer.items.add(new File([new Uint8Array(200_001)], "too-large.txt", { type: "text/plain" }));
-      Object.defineProperty(input, "files", { configurable: true, value: transfer.files }); input.dispatchEvent(new Event("change", { bubbles: true }));
+      composer.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
     });
 
     await expect($(".upload-error")).toHaveText("too-large.txt is larger than 200 KB");
@@ -745,10 +744,10 @@ describe("Conversation acceptance", () => {
     await mockBackend({ "pi_command:get_entries": { entries: [], leafId: null }, "pi_command:fork": {}, "pi_command:prompt": {} });
     try {
       await browser.execute(() => {
-        const input = document.querySelector<HTMLInputElement>(".hidden-input")!;
+        const composer = document.querySelector(".composer")!;
         const bytes = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="), (character) => character.charCodeAt(0));
         const transfer = new DataTransfer(); transfer.items.add(new File([bytes], "pixel.png", { type: "image/png" }));
-        Object.defineProperty(input, "files", { configurable: true, value: transfer.files }); input.dispatchEvent(new Event("change", { bubbles: true }));
+        composer.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
       });
       await expect($(".attachments")).toHaveText(expect.stringContaining("pixel.png"));
       await app.sendMessageButton.click();
@@ -897,9 +896,9 @@ describe("Conversation acceptance", () => {
     await mockBackend(connectedSessionResponses("thinking-event-session"));
     try {
       await emitPiEvent({ type: "session_switched" });
-      await expect(app.thinkingLevelPicker).toHaveText("high");
+      await expect(app.thinkingLevelPicker).toHaveText("High");
       await emitPiEvent({ type: "thinking_level_changed", level: "off" });
-      await expect(app.thinkingLevelPicker).toHaveText("off");
+      await expect(app.thinkingLevelPicker).toHaveText("Off");
     } finally {
       await resetBackend();
     }
@@ -937,9 +936,8 @@ describe("Conversation acceptance", () => {
     try {
       await emitPiEvent({ type: "session_switched" });
       await expect($(".cache-hit-rate")).toHaveText("Cache 75%");
-      expect((await $(".cache-hit-rate").getAttribute("title"))?.replaceAll(",", "")).toBe("3000 of 4000 prompt tokens read from cache");
+      expect((await $(".cache-hit-rate").getAttribute("title"))?.replaceAll(",", "")).toBe("3000 of 4000 prompt tokens read from cache across all calls in this response");
       await expect($(".session-cache-hit")).toHaveText("Cache 75%");
-      expect((await $(".session-cache-hit").getAttribute("title"))?.replaceAll(",", "")).toBe("3000 of 4000 session prompt tokens read from cache");
     } finally {
       await resetBackend();
       await app.refreshForReset();
@@ -1089,17 +1087,18 @@ describe("Conversation acceptance", () => {
   });
 
   it("steers a live response immediately", async () => {
-    await mockBackend({ "pi_command:steer": {} });
+    await mockBackend({ "pi_command:prompt": {} });
     try {
       await emitPiEvent({ type: "agent_start" });
-      await expect($('select[aria-label="Streaming message behavior"]')).toHaveValue("steer");
+      await app.chooseComposerOption("Streaming message behavior", "Steer");
       await app.prepareMessage("Focus on the acceptance criteria");
-      await $('button[aria-label="Send steering message"]').click();
+      await browser.keys("Enter");
 
       await expect(app.composer).toHaveValue("");
+      await emitPiEvent({ type: "queue_update", steering: ["Focus on the acceptance criteria"], followUp: [] });
       await expect($(".stream-banner")).toHaveText(expect.stringContaining("1 queued"));
-      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "steer"));
-      expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "steer")?.args.command).toEqual({ type: "steer", message: "Focus on the acceptance criteria" });
+      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "prompt"));
+      expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "prompt")?.args.command).toEqual({ type: "prompt", message: "Focus on the acceptance criteria", streamingBehavior: "steer" });
     } finally {
       await emitPiEvent({ type: "queue_update", steering: [], followUp: [] });
       await emitPiEvent({ type: "agent_end" });
@@ -1108,20 +1107,20 @@ describe("Conversation acceptance", () => {
   });
 
   it("queues a follow-up and can stop a streaming response", async () => {
-    await mockBackend({ "pi_command:follow_up": {}, "pi_command:abort": {} });
+    await mockBackend({ "pi_command:prompt": {}, "pi_command:abort": {} });
     try {
       await emitPiEvent({ type: "agent_start" });
-      const behavior = $('select[aria-label="Streaming message behavior"]');
-      await browser.execute(() => { const select = document.querySelector<HTMLSelectElement>('select[aria-label="Streaming message behavior"]')!; select.value = "followUp"; select.dispatchEvent(new Event("change", { bubbles: true })); });
-      await expect(behavior).toHaveValue("followUp");
+      await app.chooseComposerOption("Streaming message behavior", "Queue");
       await app.prepareMessage("Check this after the current response");
-      await $(".composer-actions .send").click();
+      await browser.keys("Enter");
 
+      await expect(app.composer).toHaveValue("");
+      await emitPiEvent({ type: "queue_update", steering: [], followUp: ["Check this after the current response"] });
       await expect($(".stream-banner")).toHaveText(expect.stringContaining("1 queued"));
       await $('button[aria-label="Stop piop"]').click();
-      await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => ["follow_up", "abort"].includes(String((args.command as { type?: string })?.type))).length === 2);
-      expect((await backendCalls()).filter(({ args }) => ["follow_up", "abort"].includes(String((args.command as { type?: string })?.type))).map(({ args }) => args.command)).toEqual([
-        { type: "follow_up", message: "Check this after the current response" }, { type: "abort" },
+      await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => ["prompt", "abort"].includes(String((args.command as { type?: string })?.type))).length === 2);
+      expect((await backendCalls()).filter(({ args }) => ["prompt", "abort"].includes(String((args.command as { type?: string })?.type))).map(({ args }) => args.command)).toEqual([
+        { type: "prompt", message: "Check this after the current response", streamingBehavior: "followUp" }, { type: "abort" },
       ]);
     } finally {
       await emitPiEvent({ type: "queue_update", steering: [], followUp: [] });
@@ -1310,7 +1309,7 @@ describe("Conversation acceptance", () => {
     await mockBackend({ ...connectedSessionResponses("tab-command-session"), "pi_command:prompt": {} });
     try {
       await emitPiEvent({ type: "session_switched" });
-      await app.prepareMessage("/");
+      await app.prepareMessage("/comp");
       await expect($('[role="option"][aria-selected="true"]')).toHaveText(expect.stringContaining("/compact"));
       await browser.keys("Tab");
       expect((await app.composer.getValue()).trim()).toBe("/compact");
@@ -1557,15 +1556,16 @@ describe("Agent profiles acceptance", () => {
   it("persists a GUI-created agent through a real native save and reconnect", async () => {
     const originalConfig = readFileSync(installedAgentConfigPath);
     const agentName = "e2e-persisted-agent";
-    writeFileSync(installedAgentConfigPath, JSON.stringify(acceptanceAgents().config, null, 2));
-    await resetBackend();
-    await app.refreshForReset();
-    await app.waitUntilReady();
-    await resetBackend();
-
     try {
+      writeFileSync(installedAgentConfigPath, JSON.stringify(acceptanceAgents().config, null, 2));
+      await resetBackend();
+      await app.refreshForReset();
+      await app.waitUntilReady();
+      await resetBackend();
       await app.openSettings();
       await app.settingsSection("Agents").waitForDisplayed();
+      await app.openSettingsSection("Keybinds");
+      await app.restoreKeybindsButton.click();
       await app.openSettingsSection("Agents");
       await $('//button[normalize-space(.)="Add agent"]').click();
       await $('input[aria-label="Agent name"]').setValue(agentName);
@@ -1574,7 +1574,9 @@ describe("Agent profiles acceptance", () => {
       await expect(app.saveSettingsButton).toBeClickable();
       await app.saveSettingsButton.click();
 
-      await browser.waitUntil(() => {
+      await browser.waitUntil(async () => {
+        const error = $('.settings-save [role="alert"]');
+        if (await error.isExisting()) throw new Error(await error.getText());
         const saved = JSON.parse(readFileSync(installedAgentConfigPath, "utf8")) as AgentConfig;
         return saved.agents.some((agent) => agent.name === agentName);
       }, { timeout: 30_000, timeoutMsg: "The GUI-created agent was not written to the installed agent config" });
@@ -1983,8 +1985,8 @@ describe("Project behavior", () => {
       await callBridge().setValue("[]");
       await app.chooseComposerOption("Model", "Alternate model");
       await expect(app.modelPicker).toHaveText("Alternate model");
-      await app.chooseComposerOption("Thinking level", "off");
-      await expect(app.thinkingLevelPicker).toHaveText("off");
+      await app.chooseComposerOption("Thinking level", "Off");
+      await expect(app.thinkingLevelPicker).toHaveText("Off");
 
       await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => ["set_model", "set_thinking_level"].includes(String((args.command as { type?: string })?.type))).length === 2);
       expect((await backendCalls()).filter(({ args }) => ["set_model", "set_thinking_level"].includes(String((args.command as { type?: string })?.type))).map(({ args }) => args.command)).toEqual([
@@ -2040,8 +2042,8 @@ describe("Conversation lifecycle", () => {
   });
 
   it("keeps a separate composer draft for each conversation", async () => {
-    const current = { id: "draft-current", path: "/tmp/draft-current.jsonl", name: "Draft current conversation", project: "Draft project", cwd: "/tmp", preview: "Current draft", messageCount: 1, hostId: "local" };
-    const target = { id: "draft-target", path: "/tmp/draft-target.jsonl", name: "Draft target conversation", project: "Draft project", cwd: "/tmp", preview: "Target draft", messageCount: 1, hostId: "local" };
+    const current = { id: "ae9071ac-0954-4e01-bf92-bd969ed50c47", path: "/tmp/draft-current.jsonl", name: "Draft current conversation", project: "Draft project", cwd: "/tmp", preview: "Current draft", messageCount: 0, hostId: "local" };
+    const target = { id: "1d26ae02-2dfe-48df-a5d3-b8c77fd764b4", path: "/tmp/draft-target.jsonl", name: "Draft target conversation", project: "Draft project", cwd: "/tmp", preview: "Target draft", messageCount: 0, hostId: "local" };
     const state = (sessionId: string) => ({ model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 0, pendingMessageCount: 0 });
     await mockBackend({ list_sessions: [current, target], start_pi: {}, stop_pi: {}, load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" }, ...connectedSessionResponses(""), "pi_command:set_model": {} });
     try {

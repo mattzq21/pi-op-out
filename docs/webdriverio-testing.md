@@ -104,7 +104,7 @@ Use normal WebDriver interactions for user behavior. Use `browser.execute` for b
 
 Use `app.refreshForReset()` for intentional setup and cleanup reloads. It suppresses the next `beforeunload` prompt so a failed assertion with unsaved settings cannot block the embedded WebDriver server. Normal navigation keeps the application's unload protection. Use `app.confirmAction(message, action)` for actions that require a confirmation; it checks the expected message and restores the original dialog handler afterward.
 
-Before the run, the configuration records existing session files, marked temporary test projects, the agent definitions and orchestration configurations (including the migration backup), and the desktop settings file. Desktop settings are resolved under `dev.pi.desktop/settings.json` in the platform's configuration directory: `$XDG_CONFIG_HOME` (or `~/.config`) on Linux, `~/Library/Application Support` on macOS, and `%APPDATA%` on Windows. On completion it:
+Before the run, the configuration records existing session files, marked temporary test projects, the private agent configuration (`~/.piop/pi-define-agents/config.json`), and the desktop settings file. Desktop settings are resolved under `dev.pi.desktop/settings.json` in the platform's configuration directory: `$XDG_CONFIG_HOME` (or `~/.config`) on Linux, `~/Library/Application Support` on macOS, and `%APPDATA%` on Windows. On completion it:
 
 - removes new test session files only when their headers identify a marked temporary test project;
 - removes new temporary project directories containing `.pi-e2e-test`; and

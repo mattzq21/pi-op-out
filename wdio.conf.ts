@@ -32,7 +32,7 @@ const getOsAssignedPort = () => new Promise<number>((resolve, reject) => {
 const webdriverPort = await getOsAssignedPort();
 const sessionsRoot = path.join(homedir(), ".piop", "sessions");
 const temporaryProjectsRoot = path.join(homedir(), "pi-desktop", "tmp");
-const definedAgentsConfigPath = path.join(homedir(), ".pi", "agent", "extensions", "pi-define-agents", "config.json");
+const definedAgentsConfigPath = path.join(homedir(), ".piop", "pi-define-agents", "config.json");
 const absoluteEnvPath = (name: string) => { const value = process.env[name]; return value && path.isAbsolute(value) ? value : undefined; };
 const userConfigRoot = process.platform === "darwin" ? path.join(homedir(), "Library", "Application Support")
   : process.platform === "win32" ? absoluteEnvPath("APPDATA") ?? path.join(homedir(), "AppData", "Roaming")
