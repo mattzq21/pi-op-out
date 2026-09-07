@@ -3,11 +3,12 @@ import type { GitWorktree } from "../lib/nativeTransport";
 
 interface Props {
   projectPath: string;
+  beforePrompt?: boolean;
   onCreate: (name: string) => Promise<GitWorktree>;
   onCancel: () => void;
 }
 
-export function WorktreeDialog({ projectPath, onCreate, onCancel }: Props) {
+export function WorktreeDialog({ projectPath, beforePrompt = false, onCreate, onCancel }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const returnFocusRef = useRef(document.activeElement instanceof HTMLElement ? document.activeElement : undefined);
   const [name, setName] = useState("");
@@ -27,7 +28,7 @@ export function WorktreeDialog({ projectPath, onCreate, onCancel }: Props) {
   };
 
   return <dialog ref={dialogRef} className="extension-dialog" aria-labelledby="worktree-dialog-title" onCancel={(event) => { event.preventDefault(); if (!creatingRef.current) onCancel(); }} onMouseDown={(event) => { const bounds = event.currentTarget.getBoundingClientRect(); if (!creatingRef.current && (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)) onCancel(); }}>
-    <p className="eyebrow">Git</p><h2 id="worktree-dialog-title">Create worktree</h2><p>Create a branch and worktree beside the current project.</p>
+    <p className="eyebrow">Git</p><h2 id="worktree-dialog-title">{beforePrompt ? "Branch before this prompt" : "Create worktree"}</h2><p>{beforePrompt ? "Create a worktree with the files and conversation from before this prompt. The latest 10 prompt checkpoints are retained." : "Create a branch and worktree beside the current project."}</p>
     <input autoFocus aria-label="Worktree name" value={name} placeholder="Worktree name" disabled={creating} onChange={(event) => { setName(event.target.value); setError(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) void create(); }} />
     {name.trim() && <p className="worktree-preview" title={projectPath}>Name: <code>{name.trim()}</code>. The repository root determines the branch and directory prefix.</p>}
     {error && <p className="dialog-error" role="alert">{error}</p>}

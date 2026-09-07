@@ -79,6 +79,12 @@ A confirmation dialog shows the worktree and target commit before resetting.
 Cancelling leaves the worktree and conversation unchanged. The result appears as
 a centered system message in the conversation.
 
+Before-prompt branching retains the latest **10** project checkpoints per conversation.
+Use **Branch before this prompt** beside a user message to open a new worktree with
+that prompt's starting files and conversation history. The original task can keep
+running. New checkpoints automatically expire the oldest; existing uncommitted work
+at capture time is preserved. See [checkpoint storage and limits](extensions/pi-project-files-watch/README.md#before-prompt-checkpoints).
+
 ## Compatibility
 
 The app and executable are named `piop`. Sessions, archived conversations, and Git snapshots use `~/.piop` on local and remote machines. When upgrading from a version that used `~/.pi-desktop`, copy its contents into `~/.piop` while the app is closed; resolve any existing destination files before copying. The app does not merge or delete the old directory automatically. The settings identifier (`dev.pi.desktop`), browser-storage keys, and extension protocol IDs remain stable. `PIOP_PI_PATH` selects the upstream Pi executable; the previous `PI_DESKTOP_PI_PATH` override remains supported. The upstream Pi CLI and third-party Pi extension package names are unchanged.

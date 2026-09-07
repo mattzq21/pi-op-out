@@ -1414,6 +1414,10 @@ fn execute_pi_command(runtime: &PiRuntime, runtime_id: &str, mut command: Value)
         let control = serde_json::to_string(&json!({"id":id,"action":action})).map_err(|error| error.to_string())?;
         command = json!({"id":format!("{id}:desktop-control"),"type":"prompt","message":format!("/pi-desktop-control {control}")});
     }
+    if command.get("type").and_then(Value::as_str) == Some("branch_checkpoint") {
+        let request = serde_json::to_string(&command).map_err(|error| error.to_string())?;
+        command = json!({"id":format!("{id}:desktop-control"),"type":"prompt","message":format!("/pi-desktop-branch-checkpoint {request}")});
+    }
     let (sender, receiver) = mpsc::channel();
     runtime.pending.lock().map_err(|_| "Pending command lock was poisoned")?.insert((runtime_id.to_string(), id.clone()), sender);
     let write_result = (|| {
