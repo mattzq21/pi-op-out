@@ -202,6 +202,8 @@ type GitDiffSnapshots = HashMap<String, String>;
 #[serde(rename_all = "camelCase")]
 struct AppSettings {
     default_model: String,
+    #[serde(default)]
+    hidden_models: Vec<String>,
     default_thinking: String,
     #[serde(default = "default_context_window_cap", deserialize_with = "deserialize_context_window_cap")]
     context_window_cap: u64,
@@ -518,7 +520,7 @@ fn prepare_btw_extension() -> Result<PathBuf, String> {
 
 fn default_settings() -> AppSettings {
     AppSettings {
-        default_model: DEFAULT_MODEL.into(), default_thinking: "medium".into(), context_window_cap: default_context_window_cap(), auto_compaction: true, auto_retry: true, debug_mode: false, keybindings: default_keybindings(),
+        default_model: DEFAULT_MODEL.into(), hidden_models: vec![], default_thinking: "medium".into(), context_window_cap: default_context_window_cap(), auto_compaction: true, auto_retry: true, debug_mode: false, keybindings: default_keybindings(),
         tools: ["read", "bash", "edit", "write", "grep", "find", "ls"].iter().map(|name| json!({"name": name, "description": "Pi built-in tool", "enabled": true, "builtin": true})).chain([
             json!({"name":"list_agents","description":"List agents by machine and session","enabled":true,"builtin":false}),
             json!({"name":"send_message","description":"Send a message to another agent","enabled":true,"builtin":false}),

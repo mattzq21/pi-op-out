@@ -6,9 +6,10 @@ import { defaultKeybindings, keybindDefinitions, shortcutFromEvent, type Keybind
 import { IconButton } from "./IconButton";
 import { Toggle } from "./Toggle";
 
-type Section = "general" | "dictionaries" | "agents" | "machines" | "keybinds" | "tools" | "skills" | "mcp";
+type Section = "general" | "models" | "dictionaries" | "agents" | "machines" | "keybinds" | "tools" | "skills" | "mcp";
 const sections = [
   { id: "general" as const, label: "General", icon: Settings2 },
+  { id: "models" as const, label: "Models", icon: Cpu },
   { id: "keybinds" as const, label: "Keybinds", icon: Keyboard },
   { id: "machines" as const, label: "Machines", icon: Server },
   { id: "dictionaries" as const, label: "Dictionaries", icon: BookOpen },
@@ -51,6 +52,7 @@ export function SettingsView({ settings, agentConfig: incomingConfiguration, ses
   if (!saving) capabilitiesBeforeSave.current = { configuration: incomingConfiguration };
   const agentConfig = saving ? capabilitiesBeforeSave.current.configuration : incomingConfiguration;
   const [draft, setDraft] = useState(() => structuredClone(settings)); const [agentDrafts, setAgentDrafts] = useState(() => structuredClone(agentConfig?.agents ?? [])); const [agentIndex, setAgentIndex] = useState(() => firstEditableAgent(agentConfig?.agents ?? [])); const [section, setSection] = useState<Section>("general"); const [saved, setSaved] = useState(false); const savingRef = useRef(false); const [saveError, setSaveError] = useState<string>(); const [skillFilter, setSkillFilter] = useState("");
+  const [modelFilter, setModelFilter] = useState("");
   const baselineSettingsRef = useRef(settingsSnapshot(settings));
   const baselineAgentConfigRef = useRef(JSON.stringify(agentConfig));
   const agentConfigSnapshot = JSON.stringify(agentConfig);
@@ -99,6 +101,10 @@ export function SettingsView({ settings, agentConfig: incomingConfiguration, ses
   const addAgent = () => { let suffix = nextAgentSuffixRef.current; while (agentDrafts.some((item) => item.name.toLowerCase() === `agent-${suffix}`)) suffix += 1; nextAgentSuffixRef.current = suffix + 1; const next: AgentProfile = { name: `agent-${suffix}`, description: "", model: "", effort: "", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: draft.tools.filter((item) => item.enabled).map((item) => item.name), skills: draft.skills.filter((item) => item.enabled).map((item) => item.path), mcpServers: draft.mcpServers.filter((item) => item.enabled).map((item) => item.id) }; setAgentDrafts((current) => [...current, next]); setAgentIndex(agentDrafts.length); };
   const removeAgent = () => { if (!agent || isBuiltInAgent(agent)) return; const next = agentDrafts.filter((_, index) => index !== agentIndex); setAgentDrafts(next); setAgentIndex(firstEditableAgent(next)); };
   const availableModelIds = new Set(models.map((model) => `${model.provider}/${model.id}`));
+  const hiddenModels = new Set(draft.hiddenModels);
+  const modelChoices = [...models.map((model) => ({ id: `${model.provider}/${model.id}`, name: model.name || model.id }))];
+  for (const id of hiddenModels) if (!availableModelIds.has(id)) modelChoices.push({ id, name: id });
+  const filteredModelChoices = modelChoices.filter((model) => `${model.name} ${model.id}`.toLocaleLowerCase().includes(modelFilter.trim().toLocaleLowerCase()));
   const modelDiscoveryUnavailable = models.length === 0;
   const thinkingDiscoveryUnavailable = thinkingLevels.length === 0;
   const availableMcpIds = new Set(draft.mcpServers.map((server) => server.id));
@@ -140,6 +146,10 @@ export function SettingsView({ settings, agentConfig: incomingConfiguration, ses
           <SettingRow icon={<ShieldCheck />} title="Automatic retry" description="Retry transient provider and network errors."><Toggle label="Automatic retry" checked={draft.autoRetry} onChange={(autoRetry) => patch({ autoRetry })} /></SettingRow>
           <label className="field"><span>Default model</span><select aria-label="Default model" value={draft.defaultModel} onChange={(event) => patch({ defaultModel: event.target.value })}>{!modelAvailable && <option value={draft.defaultModel} disabled>Unavailable: {draft.defaultModel}</option>}{models.map((model) => <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>{model.name || model.id}</option>)}</select></label>
           <label className="field"><span>Thinking level</span><select value={draft.defaultThinking} onChange={(e) => patch({ defaultThinking: e.target.value })}>{!thinkingAvailable && <option value={draft.defaultThinking} disabled>Unavailable: {draft.defaultThinking}</option>}{thinkingLevels.map((level) => <option key={level} value={level}>{level.charAt(0).toUpperCase() + level.slice(1)}</option>)}</select></label>
+        </SettingsSection>}
+        {section === "models" && <SettingsSection title="Models" description="Choose which models appear in chat pickers. Existing conversations and default models are unchanged." headerAction={<div className="section-actions"><label className="section-filter"><Search size={14} /><input aria-label="Filter models" placeholder="Filter by name or provider" value={modelFilter} onChange={(event) => setModelFilter(event.target.value)} /></label><button className="section-toggle-all" disabled={hiddenModels.size === 0} onClick={() => patch({ hiddenModels: [] })}>Show all</button></div>}>
+          <div className="config-list">{filteredModelChoices.map((model) => <div className="config-row model-row" key={model.id}><span className="config-icon"><Cpu size={16} /></span><span><strong>{model.name}</strong><small>{model.id}{!availableModelIds.has(model.id) ? " · Currently unavailable" : ""}</small></span><Toggle label={`Show ${model.id}`} checked={!hiddenModels.has(model.id)} onChange={(visible) => setDraft((current) => ({ ...current, hiddenModels: visible ? current.hiddenModels.filter((id) => id !== model.id) : [...current.hiddenModels, model.id] }))} /></div>)}</div>
+          {!filteredModelChoices.length && <div className="empty-small">{modelChoices.length ? "No models match your search." : "No models discovered. Connect to a session to manage model visibility."}</div>}
         </SettingsSection>}
         {section === "dictionaries" && <SettingsSection title="Dictionaries" description="Highlight configured words while typing and replace them only when a prompt is submitted." headerAction={<button className="secondary-button" onClick={addDictionary}><CirclePlus size={15} />Add dictionary</button>}>
           <div className="dictionary-list">{draft.dictionaries.map((dictionary) => <div className="mcp-card dictionary-card" key={dictionary.id}>
