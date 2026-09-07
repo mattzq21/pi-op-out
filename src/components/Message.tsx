@@ -115,21 +115,6 @@ export function Message({ message, diff, expanded = false, showActions = true, t
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [branching, setBranching] = useState(false);
   const branchingRef = useRef(false);
-  if (message.role === "system") return <div className="command-result" role="status">{textOf(message.content)}</div>;
-  if (message.role === "tool") {
-    const output = textOf(message.content);
-    const status = message.toolStatus ?? "done";
-    const label = <><Wrench size={14} /><span><strong>{message.toolName || "tool"}{toolCount > 1 ? ` x${toolCount}` : ""}</strong><small>{status === "running" ? "Running…" : status === "error" ? "Failed" : "Completed"}</small></span></>;
-    if (!debug) return <div className={`tool-event ${status}`}><div className="tool-summary">{label}</div></div>;
-    return <details className={`tool-event ${status}`} open={status === "running" || (expanded && status !== "done")}><summary className="tool-summary">{label}<ChevronRight size={12} className="tool-chevron" aria-hidden="true" /></summary>{output && <pre>{output}</pre>}</details>;
-  }
-  if (message.role === "user") { const { skills, text, literalSkill } = userMessageParts(textOf(message.content)); return <article className="message user-message"><div className="message-body">{skills.map((skill) => <span className="skill-reference" key={skill}>${skill}</span>)}{text && (literalSkill ? <span className="literal-skill-content">{text}</span> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>)}</div>{onCreateWorktree && <div className="message-actions"><button className="branch-button" aria-label="Branch before this prompt" title="Branch before this prompt (latest 10 checkpoints)" onClick={() => onCreateWorktree(message)}><FolderGit2 size={14} /></button></div>}</article>; }
-  const output = textOf(message.content);
-  const thinking = thinkingOf(message.content);
-  const cache = cacheHitStats(message.usage);
-  const responseLabel = `Assistant response${message.timestamp ? ` from ${new Date(message.timestamp).toLocaleString()}` : ` ${message.id.slice(0, 8)}`}`;
-  const pausedResponse = message.stopReason === "aborted" && (paused || message.errorMessage === "Response paused");
-  const failure = message.stopReason === "aborted" ? (pausedResponse ? undefined : message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
   const copy = async () => {
     try {
       if (!navigator.clipboard) throw new Error("Clipboard access is unavailable");
@@ -140,6 +125,31 @@ export function Message({ message, diff, expanded = false, showActions = true, t
     }
     window.setTimeout(() => setCopyState("idle"), 1800);
   };
+  if (message.role === "system") return <div className="command-result" role="status">{textOf(message.content)}</div>;
+  if (message.role === "tool") {
+    const output = textOf(message.content);
+    const status = message.toolStatus ?? "done";
+    const label = <><Wrench size={14} /><span><strong>{message.toolName || "tool"}{toolCount > 1 ? ` x${toolCount}` : ""}</strong><small>{status === "running" ? "Running…" : status === "error" ? "Failed" : "Completed"}</small></span></>;
+    if (!debug) return <div className={`tool-event ${status}`}><div className="tool-summary">{label}</div></div>;
+    return <details className={`tool-event ${status}`} open={status === "running" || (expanded && status !== "done")}><summary className="tool-summary">{label}<ChevronRight size={12} className="tool-chevron" aria-hidden="true" /></summary>{output && <pre>{output}</pre>}</details>;
+  }
+  if (message.role === "user") {
+    const { skills, text, literalSkill } = userMessageParts(textOf(message.content));
+    return <article className="message user-message">
+      <div className="message-body">{skills.map((skill) => <span className="skill-reference" key={skill}>${skill}</span>)}{text && (literalSkill ? <span className="literal-skill-content">{text}</span> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>)}</div>
+      <div className="message-actions">
+        <IconButton label={copyState === "copied" ? "Message copied" : copyState === "error" ? "Copy failed" : "Copy message"} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>
+        {copyState === "error" && <span className="copy-feedback" role="status">Could not copy message</span>}
+        {onCreateWorktree && <button className="branch-button" aria-label="Branch before this prompt" title="Branch before this prompt (latest 10 checkpoints)" onClick={() => onCreateWorktree(message)}><FolderGit2 size={14} /></button>}
+      </div>
+    </article>;
+  }
+  const output = textOf(message.content);
+  const thinking = thinkingOf(message.content);
+  const cache = cacheHitStats(message.usage);
+  const responseLabel = `Assistant response${message.timestamp ? ` from ${new Date(message.timestamp).toLocaleString()}` : ` ${message.id.slice(0, 8)}`}`;
+  const pausedResponse = message.stopReason === "aborted" && (paused || message.errorMessage === "Response paused");
+  const failure = message.stopReason === "aborted" ? (pausedResponse ? undefined : message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
   const branch = async () => {
     if (!onBranch || branchingRef.current) return;
     branchingRef.current = true; setBranching(true);
