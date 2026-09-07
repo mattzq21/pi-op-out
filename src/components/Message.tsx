@@ -10,7 +10,7 @@ import { openExternalUrl } from "../lib/nativeTransport";
 import { IconButton } from "./IconButton";
 import { DiffViewer } from "./DiffViewer";
 
-interface Props { message: ChatMessage; diff?: GitDiffSnapshot; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
+interface Props { message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; diff?: GitDiffSnapshot; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
 
 function nodeText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -111,7 +111,7 @@ function userMessageParts(content: string) {
   return { skills: [invocation[1]], text: (invocation[2] ?? "").trim(), literalSkill: false };
 }
 
-export function Message({ message, diff, expanded = false, showActions = true, toolCount = 1, debug = false, paused = false, onBranch, onCreateWorktree, onRetry, retrying = false }: Props) {
+export function Message({ message, turnCacheUsage, diff, expanded = false, showActions = true, toolCount = 1, debug = false, paused = false, onBranch, onCreateWorktree, onRetry, retrying = false }: Props) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [branching, setBranching] = useState(false);
   const branchingRef = useRef(false);
@@ -147,7 +147,7 @@ export function Message({ message, diff, expanded = false, showActions = true, t
   }
   const output = textOf(message.content);
   const thinking = thinkingOf(message.content);
-  const cache = cacheHitStats(message.usage);
+  const cache = cacheHitStats(turnCacheUsage ?? message.usage);
   const responseLabel = `Assistant response${message.timestamp ? ` from ${new Date(message.timestamp).toLocaleString()}` : ` ${message.id.slice(0, 8)}`}`;
   const pausedResponse = message.stopReason === "aborted" && (paused || message.errorMessage === "Response paused");
   const failure = message.stopReason === "aborted" ? (pausedResponse ? undefined : message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
@@ -169,7 +169,7 @@ export function Message({ message, diff, expanded = false, showActions = true, t
         {copyState === "error" && <span className="copy-feedback" role="status">Could not copy response</span>}
         {onBranch && <button className="branch-button" aria-label={`Branch from ${responseLabel.toLowerCase()}`} title="Branch from here" disabled={branching} onClick={() => void branch()}><GitBranch size={14} /></button>}
         {onCreateWorktree && <button className="branch-button" aria-label="Create Git worktree" title="Create Git worktree" onClick={() => onCreateWorktree(message)}><FolderGit2 size={14} /></button>}
-        {debug && cache && <span className={`cache-hit-rate${cache.low ? " low" : ""}`} title={`${cache.cachedTokens.toLocaleString()} of ${cache.promptTokens.toLocaleString()} prompt tokens read from cache`}>Cache {cache.rate}%</span>}
+        {debug && cache && <span className={`cache-hit-rate${cache.low ? " low" : ""}`} title={`${cache.cachedTokens.toLocaleString()} of ${cache.promptTokens.toLocaleString()} prompt tokens read from cache${turnCacheUsage ? " across all calls in this response" : ""}`}>Cache {cache.rate}%</span>}
       </div>}
     </div>
   </article>;
