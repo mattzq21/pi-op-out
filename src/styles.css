@@ -312,7 +312,6 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 
 .pending-messages { display: grid; max-height: 190px; overflow-y: auto; margin: 0 13px -12px; padding: 0 7px 17px; border: 1px solid var(--line); border-radius: 16px 16px 0 0; background: #efede7; }
 .pending-message { display: flex; align-items: center; gap: 9px; min-width: 0; min-height: 33px; padding: 3px 3px; font-size: 13px; }
-.pending-message-icon { flex-shrink: 0; color: var(--muted); opacity: .7; }
 .pending-message-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pending-message.expanded { align-items: flex-start; }
 .pending-message.expanded .pending-message-text { white-space: pre-wrap; overflow-wrap: anywhere; padding-top: 4px; }

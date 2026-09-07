@@ -2,7 +2,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readDroppedFile } from "../lib/nativeTransport";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type SetStateAction } from "react";
-import { ChevronUp, ChevronDown, CornerDownRight, ListEnd, MoveVertical, Trash2, ArrowUp, CircleStop, FileText, ImagePlus, Pause, Play, TerminalSquare, X, Zap } from "lucide-react";
+import { ChevronUp, ChevronDown, CornerDownRight, MoveVertical, Trash2, ArrowUp, CircleStop, FileText, ImagePlus, Pause, Play, TerminalSquare, X, Zap } from "lucide-react";
 import type { AgentProfile, ComposerUpload, ContextUsage, ImageAttachment, Model, PromptDictionary, SlashCommand } from "../types";
 import { applyDictionary, dictionaryMatches } from "../lib/dictionaries";
 import { usePendingMessageDrag } from "../lib/usePendingMessageDrag";
@@ -297,7 +297,9 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
       const peers = pendingMessages.filter((item) => !item.retry && item.behavior === message.behavior);
       const position = peers.findIndex((item) => item.id === message.id);
       return <div data-pending-id={message.id} className={`pending-message${expandedPending === message.id ? " expanded" : ""}${pendingDrop?.id === message.id ? " dragging" : ""}${pendingDrop?.targetId === message.id ? ` drop-${pendingDrop.edge}` : ""}`} key={message.id}>
-        <ListEnd size={13} className="pending-message-icon" aria-hidden="true" />
+        <button type="button" className="pending-icon-button pending-drag-handle" disabled={disabled || message.retry || !onChangePending || peers.length < 2} aria-label={`Drag to reorder queued message: ${message.message}`} title="Drag to reorder · Arrow keys to move" onKeyDown={(event) => {
+          if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); change(event.key === "ArrowUp" ? "moveUp" : "moveDown"); }
+        }} onPointerDown={(event) => beginPendingDrag(event, message.id)}><MoveVertical size={16} /></button>
         <span className="pending-message-text" title={message.message} onDoubleClick={() => setExpandedPending((current) => current === message.id ? undefined : message.id)}>{message.retry && <small>Not sent · </small>}{message.message}</span>
         {onChangePending && <div className="pending-message-actions">
           <div className="pending-order-actions">
@@ -307,9 +309,6 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
           <button type="button" disabled={disabled} title={message.behavior === "steer" ? "Queue after the current response" : "Steer at the next turn"} onClick={() => change(message.retry ? message.behavior : message.behavior === "steer" ? "followUp" : "steer")}><CornerDownRight size={13} />{message.retry ? "Retry" : message.behavior === "steer" ? "Queue" : "Steer"}</button>
           <button type="button" className="pending-icon-button" disabled={disabled} aria-label={`Remove queued message: ${message.message}`} title="Remove message" onClick={() => change("remove")}><Trash2 size={13} /></button>
         </div>}
-        <button type="button" className="pending-icon-button pending-drag-handle" disabled={disabled || message.retry || !onChangePending || peers.length < 2} aria-label={`Drag to reorder queued message: ${message.message}`} title="Drag to reorder · Arrow keys to move" onKeyDown={(event) => {
-          if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); change(event.key === "ArrowUp" ? "moveUp" : "moveDown"); }
-        }} onPointerDown={(event) => beginPendingDrag(event, message.id)}><MoveVertical size={16} /></button>
       </div>;
     })}</div>}
     <div ref={composerRef} className={`composer${draggingFiles && !inputDisabled ? " dragging-files" : ""}`}
