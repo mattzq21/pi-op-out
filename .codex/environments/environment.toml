@@ -15,11 +15,11 @@ if ! git symbolic-ref -q HEAD >/dev/null; then
 fi
 
 repo_root=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
-cache_source="$repo_root/src-tauri/target"
+cache_source="$repo_root/src-tauri/target/debug/build"
 
-if [ -d "$cache_source" ] && [ ! -e src-tauri/target ]; then
-  mkdir -p src-tauri
-  cp -a --reflink=auto "$cache_source" src-tauri/target
+if [ -d "$cache_source" ] && [ ! -e src-tauri/target/debug/build ]; then
+  mkdir -p src-tauri/target/debug
+  cp -a --reflink=auto "$cache_source" src-tauri/target/debug/build
 fi'''
 
 [cleanup]
