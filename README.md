@@ -29,6 +29,8 @@ The native launcher also checks `~/.local/bin/pi`, `~/.npm-global/bin/pi`, and `
 
 Authenticate Pi before starting the desktop app with Pi's normal `/login` flow or provider environment variables. Credentials remain in Pi's own auth store and are never copied into this app's settings.
 
+Piop stores its traces separately in `~/.piop/sessions` on each host, with archived traces in `~/.piop/archived`. This includes `/btw` forks. Session discovery, opening, and switching use only Piop storage; Pi CLI sessions in `~/.pi/agent/sessions` are not imported or opened. The `read_trace` tool reads only Piop's active and archived traces, including when given an explicit path.
+
 `npm run dev` only provides the frontend development server consumed by `tauri dev`; opening that server directly in a browser is unsupported.
 
 Agent profiles are included: piop automatically installs and loads `pi-define-agents` locally and on SSH hosts. Select one agent for each conversation and configure it in Settings → Agents.

@@ -1315,6 +1315,8 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
     if let Some(mut process) = stale { let _ = process.child.wait(); if let Some(session) = process.ephemeral_session { remove_ephemeral_session(session); } }
     let settings = load_app_settings(app.clone())?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
+    let session_path = session_path.as_deref().map(|path| desktop_session_file(&settings, &host_id, path)).transpose()?;
+    let fork_path = fork_path.as_deref().map(|path| desktop_session_file(&settings, &host_id, path)).transpose()?;
     let ephemeral = no_session.unwrap_or(false);
     let (ephemeral_path, ephemeral_session) = if ephemeral {
         match fork_path.as_deref() {
@@ -1445,8 +1447,14 @@ fn update_active_agent(runtime: &PiRuntime, runtime_id: &str, state: &Value) -> 
 }
 
 #[tauri::command(async)]
-fn pi_command(runtime: State<PiRuntime>, runtime_id: String, command: Value) -> Result<Value, String> {
+fn pi_command(app: AppHandle, runtime: State<PiRuntime>, runtime_id: String, mut command: Value) -> Result<Value, String> {
     let command_type = command.get("type").and_then(Value::as_str).unwrap_or_default().to_string();
+    if command_type == "switch_session" {
+        let path = command.get("sessionPath").and_then(Value::as_str).ok_or("Session path is required")?;
+        let host_id = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?
+            .get(&runtime_id).map(|agent| agent.host_id.clone()).ok_or("Unknown Pi runtime")?;
+        command["sessionPath"] = Value::String(desktop_session_file(&load_app_settings(app)?, &host_id, path)?);
+    }
     let internal_status = command.get("message").and_then(Value::as_str).is_some_and(|message| message == "/pi-desktop-fast-status" || message == "/pi-desktop-fast-status refresh");
     if matches!(command_type.as_str(), "prompt" | "steer" | "follow_up") && !internal_status {
         if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(&runtime_id) { process.blank_cleanup.submitted = true; }
@@ -1905,6 +1913,15 @@ fn local_desktop_session_file(session_path: &str) -> Result<PathBuf, String> {
     let source = PathBuf::from(session_path).canonicalize().map_err(|error| format!("Could not locate session file: {error}"))?;
     if !source.starts_with(&root) || source.extension().and_then(|value| value.to_str()) != Some("jsonl") || !source.is_file() { return Err("Only piop session files can be accessed".into()); }
     Ok(source)
+}
+
+fn desktop_session_file(settings: &AppSettings, host_id: &str, path: &str) -> Result<String, String> {
+    if host_id == "local" { return Ok(local_desktop_session_file(path)?.to_string_lossy().into_owned()); }
+    let host = remote_host(settings, host_id)?;
+    let script = format!(r#"root=$(cd "$HOME/.piop/sessions" && pwd -P) && session=$(realpath -- {}) && [ -f "$session" ] && case "$session" in "$root"/*.jsonl) printf '%s' "$session" ;; *) exit 1 ;; esac"#, shell_quote(path));
+    let output = run_limited(ssh(host).arg(script), MAX_GIT_PATH_LIST_BYTES, "Could not locate Piop session")?;
+    if !output.status.success() { return Err("Only Piop session files in ~/.piop/sessions can be opened".into()); }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 #[tauri::command(async)]
