@@ -82,3 +82,10 @@ a centered system message in the conversation.
 ## Compatibility
 
 The app and executable are named `piop`. Sessions, archived conversations, and Git snapshots use `~/.piop` on local and remote machines. When upgrading from a version that used `~/.pi-desktop`, copy its contents into `~/.piop` while the app is closed; resolve any existing destination files before copying. The app does not merge or delete the old directory automatically. The settings identifier (`dev.pi.desktop`), browser-storage keys, and extension protocol IDs remain stable. `PIOP_PI_PATH` selects the upstream Pi executable; the previous `PI_DESKTOP_PI_PATH` override remains supported. The upstream Pi CLI and third-party Pi extension package names are unchanged.
+
+`/branch-off [number]` branches the conversation in the current directory.
+`/worktree [number] [name]` creates a Git worktree and branches the conversation
+into it. The number counts backwards through completed responses: `0` (the
+default) is the latest, `1` is the previous response. For example,
+`/worktree 2 experiment` or `/worktree experiment`. Omitting the worktree name
+opens the name dialog. Stop or pause the agent before using either command.
