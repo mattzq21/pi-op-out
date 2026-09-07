@@ -141,7 +141,7 @@ function ConversationTurnView({ messages, gitDiffs, debug, active, retryable, pa
 
   return <section className="conversation-turn">
     {parsed.step && parsed.step.step > 0 && <div className="sequence-step-label">{parsed.step.sequence} · {parsed.step.agent}</div>}
-    {userMessages.map((message) => <Message key={message.id} message={message} debug={debug} />)}
+    {userMessages.map((message) => <Message key={message.id} message={message} debug={debug} onCreateWorktree={onCreateWorktree} />)}
     {debug && promptContext && <PromptContextBar context={promptContext} />}
     {active || paused ? renderMessages(shown.filter((message) => message.role !== "user"), true, false, debug, paused) : <>
     {intermediate.length > 0 && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}<ChevronRight size={12} className="work-group-chevron" aria-hidden="true" /></summary><div className="work-group-content">{renderMessages(intermediate, true, true, debug, paused, false)}</div></details>}

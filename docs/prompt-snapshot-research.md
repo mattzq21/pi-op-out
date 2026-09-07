@@ -1,6 +1,8 @@
 # Filesystem checkpoints for branching before a prompt
 
-Research date: 2026-09-07. Scope: product recommendation and implementation direction; no runtime changes.
+Research date: 2026-09-07. Original research follows below.
+
+Accepted policy: retain the latest **10** checkpoints per conversation, automatically expiring the oldest on successful capture. The implementation uses this bounded policy instead of the full-history recommendation below. Ten limits retained restore points, not immediate physical disk usage; Git garbage collection reclaims expired objects later.
 
 ## Recommendation
 

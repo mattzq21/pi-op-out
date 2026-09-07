@@ -36,7 +36,7 @@ because linked Git worktrees share the repository's object database and refs.
 If the same chat is moved instead of forked, it keeps its existing snapshot ref and
 uses the new worktree path in the injected diff command.
 
-Each session owns exactly one hidden ref. Every snapshot has its own timestamped name:
+Each session owns exactly one change-reporting baseline ref, separate from its prompt checkpoints. Every snapshot has its own timestamped name:
 
 ```text
 refs/pi-session-snapshots/chats/<session-id>/<timestamp>-<commit-prefix>-<nonce>
@@ -67,3 +67,32 @@ cp extensions/pi-project-files-watch/index.ts \
 ```
 
 Restart Pi or run `/reload` after installing it.
+
+## Before-prompt checkpoints
+
+The extension also retains the latest **10** filesystem checkpoints per conversation.
+It awaits capture when a user message starts, including consumed steering and queued
+follow-up messages, before the agent can execute tools for that message. Synthetic
+pause/resume messages do not consume checkpoint slots. Capture failures are reported
+and marked unavailable; a failed capture never reuses an earlier prompt's files.
+
+Use **Branch before this prompt** beside a user message to create a separate worktree
+and conversation at that point. The original conversation can keep running. The
+selected prompt is put back in the new conversation's composer for editing. Existing
+assistant-response worktree actions continue to copy current files.
+
+Checkpoint refs live under
+`refs/pi-session-snapshots/chats/<session-id>/prompts/`. A new checkpoint removes the
+oldest retained ref when the count exceeds 10. Unchanged content shares Git objects;
+expired objects are reclaimed by normal Git maintenance, so 10 checkpoints is a
+history limit, not a hard byte limit or an immediate disk-space reclamation promise.
+Snapshots persist across restart and archive. Forks independently pin available
+inherited checkpoints; permanent conversation deletion removes that conversation's refs.
+
+A checkpoint preserves tracked files, deletions, and non-ignored untracked files,
+including uncommitted work already present before the prompt. Historical branching
+starts at the captured Git HEAD and restores captured differences as uncommitted
+files without changing the original staging area. Unsaved editor buffers, ignored
+files, and submodule working directories are not captured. Existing file and snapshot
+size limits apply. Older or failed checkpoints show an unavailable error instead of
+silently copying current files. Git capture is not atomic against external writers.

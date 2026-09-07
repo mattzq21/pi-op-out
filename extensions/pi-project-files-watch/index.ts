@@ -1,11 +1,13 @@
 import { lstat, mkdir, mkdtemp, open, realpath, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const REF_ROOT = "refs/pi-session-snapshots";
+const PROMPT_ENTRY = "pi-project-prompt-checkpoint";
+const PROMPT_LIMIT = 10;
 const SNAPSHOT_ENTRY = "pi-project-files-watch-snapshot";
 const CHANGE_CONTEXT_MESSAGE = "pi-project-files-watch";
 const MAX_LISTED_FILES = 200;
@@ -75,7 +77,7 @@ async function sessionSnapshots(root: string, sessionId: string) {
   const output = await runGit(root, ["for-each-ref", "--sort=-refname", "--format=%(refname)%09%(objectname)", sessionRefPrefix(sessionId)]);
   return output.split("\n").flatMap((line) => {
     const [ref, commit] = line.split("\t");
-    return ref && commit ? [{ ref, commit }] : [];
+    return ref && commit && !ref.includes("/prompts/") ? [{ ref, commit }] : [];
   });
 }
 
@@ -138,7 +140,7 @@ async function inheritParentSnapshot(root: string, sessionId: string, parentSess
 
 async function recoverCopiedSnapshot(ctx: ExtensionContext, root: string, sessionId: string) {
   const copied = [...ctx.sessionManager.getBranch()].reverse().find((entry) => entry.type === "custom" && entry.customType === SNAPSHOT_ENTRY);
-  if (!copied || !copied.data || typeof copied.data !== "object") return undefined;
+  if (!copied || copied.type !== "custom" || !copied.data || typeof copied.data !== "object") return undefined;
   const data = copied.data as { repositoryRoot?: unknown; commit?: unknown };
   if (data.repositoryRoot !== root || typeof data.commit !== "string" || !/^[0-9a-f]{40,64}$/i.test(data.commit)) return undefined;
   try { await runGit(root, ["cat-file", "-e", `${data.commit}^{commit}`]); }
@@ -150,8 +152,10 @@ async function recoverCopiedSnapshot(ctx: ExtensionContext, root: string, sessio
 }
 
 async function assertSnapshotInputBounded(root: string) {
-  const output = await runGit(root, ["ls-files", "-z", "-m", "-o", "--exclude-standard", "--"]);
-  const paths = output.split("\0").filter(Boolean);
+  const base = await resolveRef(root, "HEAD");
+  const tracked = await runGit(root, base ? ["diff", "--name-only", "--no-renames", "-z", base, "--"] : ["ls-files", "--cached", "-z", "--"]);
+  const untracked = await runGit(root, ["ls-files", "--others", "--exclude-standard", "-z", "--"]);
+  const paths = [...new Set(`${tracked}${untracked}`.split("\0").filter(Boolean))];
   if (paths.length > MAX_CHANGED_PATHS) throw new Error(`Git snapshot has more than ${MAX_CHANGED_PATHS} changed files`);
   let total = 0;
   for (const path of paths) {
@@ -215,6 +219,131 @@ async function saveSnapshot(root: string, sessionId: string) {
   return { version: 1, repositoryRoot: root, ref, commit, capturedAt: timestamp };
 }
 
+interface PromptCheckpoint {
+  key: string;
+  owner: string;
+  commit: string;
+  base: string | null;
+  capturedAt: string;
+}
+
+function promptRef(sessionId: string, key: string) {
+  return `${sessionRefPrefix(sessionId)}prompts/${key}`;
+}
+
+function checkpointData(data: unknown): PromptCheckpoint | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const value = data as PromptCheckpoint;
+  return typeof value.key === "string" && /^[a-zA-Z0-9-]+$/.test(value.key)
+    && typeof value.owner === "string" && typeof value.commit === "string" && /^[a-f0-9]{40,64}$/.test(value.commit)
+    && (value.base === null || (typeof value.base === "string" && /^[a-f0-9]{40,64}$/.test(value.base)))
+    ? value : undefined;
+}
+
+async function promptRefs(root: string, sessionId: string) {
+  const output = await runGit(root, ["for-each-ref", "--sort=-refname", "--format=%(refname)%09%(objectname)", `${sessionRefPrefix(sessionId)}prompts/`]);
+  return output.trim().split("\n").filter(Boolean).map((line) => {
+    const [ref, commit] = line.split("\t"); return { ref, commit };
+  });
+}
+
+async function capturePrompt(root: string, ctx: ExtensionContext): Promise<PromptCheckpoint> {
+  const sessionId = ctx.sessionManager.getSessionId();
+  // Expire by prompt order, even if the host's wall clock moves backwards.
+  const order = new Map(ctx.sessionManager.getEntries().flatMap((entry, index) => {
+    const data = entry.type === "custom" && entry.customType === PROMPT_ENTRY ? checkpointData(entry.data) : undefined;
+    return data ? [[promptRef(sessionId, data.key), index] as const] : [];
+  }));
+  const previous = (await promptRefs(root, sessionId)).sort((a, b) => (order.get(b.ref) ?? -1) - (order.get(a.ref) ?? -1));
+  const base = await resolveRef(root, "HEAD") ?? null;
+  const captured = await worktreeTree(root);
+  const capturedAt = new Date().toISOString();
+  let commit: string;
+  try {
+    commit = (await runGit(root, ["commit-tree", captured.tree, ...(base ? ["-p", base] : [])], {
+      GIT_AUTHOR_NAME: "Pi prompt checkpoint", GIT_AUTHOR_EMAIL: "pi-checkpoint@localhost",
+      GIT_COMMITTER_NAME: "Pi prompt checkpoint", GIT_COMMITTER_EMAIL: "pi-checkpoint@localhost",
+    }, `Pi before prompt ${sessionId} ${capturedAt}\n`)).trim();
+  } finally { await captured.cleanup(); }
+  const key = `${capturedAt.replace(/[-:.]/g, "")}-${randomUUID()}`;
+  await runGit(root, ["update-ref", "--stdin"], {}, [
+    "start", `create ${promptRef(sessionId, key)} ${commit}`,
+    ...previous.slice(PROMPT_LIMIT - 1).map(({ ref, commit }) => `delete ${ref} ${commit}`),
+    "prepare", "commit", "",
+  ].join("\n"));
+  return { key, owner: sessionId, commit, base, capturedAt };
+}
+
+// A child owns its own refs, so deleting or advancing its parent cannot expire them.
+async function pinPromptHistory(root: string, sessionId: string, entries: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>, sourceOwner?: string) {
+  const checkpoints = entries.flatMap((entry) => entry.type === "custom" && entry.customType === PROMPT_ENTRY
+    ? [checkpointData(entry.data)].filter((value): value is PromptCheckpoint => Boolean(value)) : []).slice(-PROMPT_LIMIT);
+  for (const checkpoint of checkpoints) {
+    const target = promptRef(sessionId, checkpoint.key);
+    if (await resolveRef(root, target)) continue;
+    const source = promptRef(sourceOwner ?? checkpoint.owner, checkpoint.key);
+    if (await resolveRef(root, source) !== checkpoint.commit) continue;
+    await runGit(root, ["update-ref", "--stdin"], {}, ["start", `verify ${source} ${checkpoint.commit}`, `create ${target} ${checkpoint.commit}`, "prepare", "commit", ""].join("\n"));
+  }
+}
+
+async function branchBeforePrompt(ctx: ExtensionContext, entryId: string, name: string) {
+  const root = await repositoryRoot(ctx.cwd);
+  if (!root) throw new Error("Project is not a Git repository");
+  const history = ctx.sessionManager.getBranch(entryId);
+  const user = history.at(-1);
+  if (!user || user.id !== entryId || user.type !== "message" || user.message.role !== "user") throw new Error("Prompt not found in this conversation");
+  // Stop at the previous user; a failed/missing capture must never borrow its checkpoint.
+  let checkpoint: PromptCheckpoint | undefined;
+  for (let i = history.length - 2; i >= 0; i--) {
+    const entry = history[i];
+    if (entry.type === "message" && entry.message.role === "user") break;
+    if (entry.type === "custom" && entry.customType === PROMPT_ENTRY) { checkpoint = checkpointData(entry.data); break; }
+  }
+  const owner = ctx.sessionManager.getSessionId();
+  if (!checkpoint || await resolveRef(root, promptRef(owner, checkpoint.key)) !== checkpoint.commit) {
+    throw new Error("Project snapshot unavailable. Only the latest 10 prompt checkpoints are retained; older prompts cannot restore historical files.");
+  }
+  name = name.trim();
+  if (!name || !/^[a-zA-Z0-9._-]+$/.test(name)) throw new Error("Name may only contain letters, numbers, dots, hyphens, and underscores");
+  const project = basename(root).replace(/[^a-zA-Z0-9_]+/g, "-").replace(/^-|-$/g, "") || "project";
+  const branch = `${project}-${name}`;
+  await runGit(root, ["check-ref-format", "--branch", branch]);
+  const target = join(dirname(root), branch);
+  const id = randomUUID();
+  const timestamp = new Date().toISOString();
+  const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${id}.jsonl`);
+  let created = false;
+  let sessionWritten = false;
+  try {
+    await runGit(root, ["worktree", "add", ...(checkpoint.base ? [] : ["--orphan"]), "-b", branch, target, ...(checkpoint.base ? [checkpoint.base] : [])]);
+    created = true;
+    // Restore into the new worktree, then reset its index so captured changes stay uncommitted.
+    await runGit(target, ["read-tree", "--reset", "-u", checkpoint.commit]);
+    await runGit(target, ["read-tree", ...(checkpoint.base ? [checkpoint.base] : ["--empty"])]);
+    const retained = history.slice(0, -1);
+    await pinPromptHistory(root, id, retained, owner);
+    const baselineRef = `${sessionRefPrefix(id)}${snapshotName(timestamp, checkpoint.commit)}`;
+    await runGit(root, ["update-ref", baselineRef, checkpoint.commit]);
+    const baseline = { type: "custom", id: randomUUID(), parentId: retained.at(-1)?.id ?? null, timestamp, customType: SNAPSHOT_ENTRY,
+      data: { version: 1, repositoryRoot: target, ref: baselineRef, commit: checkpoint.commit, capturedAt: timestamp } };
+    const header = { ...ctx.sessionManager.getHeader(), type: "session", id, timestamp, cwd: target, parentSession: ctx.sessionManager.getSessionFile() };
+    const session = await open(sessionPath, "wx", 0o600);
+    sessionWritten = true;
+    try { await session.writeFile([header, ...retained, baseline].map((entry) => JSON.stringify(entry)).join("\n") + "\n"); }
+    finally { await session.close(); }
+    return { branch, path: target, sessionPath, sessionId: id };
+  } catch (error) {
+    if (sessionWritten) await rm(sessionPath, { force: true });
+    for (const { ref, commit } of [...await promptRefs(root, id), ...await sessionSnapshots(root, id)]) await runGit(root, ["update-ref", "-d", ref, commit]);
+    if (created) {
+      await runGit(root, ["worktree", "remove", "--force", target]);
+      if (checkpoint.base) await runGit(root, ["branch", "-D", branch]);
+    }
+    throw error;
+  }
+}
+
 function shellQuote(value: string) { return `'${value.replaceAll("'", `'\\''`)}'`; }
 
 function projectContext(root: string, baseline: string, current: string, files: string[], env: Record<string, string>) {
@@ -261,9 +390,51 @@ export default function projectFilesWatch(pi: ExtensionAPI) {
     if (event.reason !== "fork") return;
     snapshotQueue = snapshotQueue.then(async () => {
       await inheritSnapshot(ctx, ctx.sessionManager.getHeader()?.parentSession ?? event.previousSessionFile);
+      const root = await repositoryRoot(ctx.cwd);
+      const parentFile = ctx.sessionManager.getHeader()?.parentSession ?? event.previousSessionFile;
+      if (root) await pinPromptHistory(root, ctx.sessionManager.getSessionId(), ctx.sessionManager.getBranch(), parentFile ? await sessionIdFromFile(parentFile) : undefined);
       lastError = "";
     }).catch((error) => reportError(ctx, error));
     return snapshotQueue;
+  });
+
+  // Pi awaits message_start handlers before proceeding. This also covers consumed
+  // follow-ups and steering messages; queue submission itself is not a checkpoint.
+  pi.on("message_start", (event, ctx) => {
+    if (event.message.role !== "user") return;
+    const text = typeof event.message.content === "string" ? event.message.content
+      : event.message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+    const resume = ctx.sessionManager.getBranch().some((entry) => entry.type === "custom" && entry.customType === "pi-desktop-resume" && (entry.data as { message?: string })?.message === text);
+    if (resume) return;
+    snapshotQueue = snapshotQueue.then(async () => {
+      try {
+        const root = await repositoryRoot(ctx.cwd);
+        if (!root) { pi.appendEntry(PROMPT_ENTRY, { unavailable: true }); return; }
+        pi.appendEntry(PROMPT_ENTRY, await capturePrompt(root, ctx));
+      } catch (error) {
+        pi.appendEntry(PROMPT_ENTRY, { unavailable: true });
+        reportError(ctx, error);
+      }
+    });
+    return snapshotQueue;
+  });
+
+  pi.registerCommand("pi-desktop-branch-checkpoint", {
+    description: "Create a worktree and conversation before a retained prompt",
+    async handler(args, ctx) {
+      let id: string | undefined;
+      try {
+        const request = JSON.parse(args); id = request.id;
+        if (ctx.mode !== "rpc" || typeof id !== "string" || typeof request.entryId !== "string" || typeof request.name !== "string") throw new Error("Invalid checkpoint branch request");
+        const operation = snapshotQueue.then(() => branchBeforePrompt(ctx, request.entryId, request.name));
+        snapshotQueue = operation.then(() => undefined, () => undefined);
+        const data = await operation;
+        ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id, command: "branch_checkpoint", success: true, data })}`);
+      } catch (error) {
+        if (id) ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id, command: "branch_checkpoint", success: false, error: error instanceof Error ? error.message : String(error) })}`);
+        else reportError(ctx, error);
+      }
+    },
   });
 
   pi.on("message_end", (event, ctx) => {
