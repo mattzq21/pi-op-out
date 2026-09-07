@@ -189,14 +189,18 @@ export class NativeTransport {
     try { return await this.executeCommand<T>({ type: "prompt", message: item.message, streamingBehavior: item.behavior, ...(item.images?.length ? { images: item.images } : {}) }); }
     finally { this.sendingPending.delete(item.id); }
   }
-  changePendingMessage(id: string, behavior: "steer" | "followUp" | "remove"): Promise<void> {
+  changePendingMessage(id: string, behavior: "steer" | "followUp" | "remove" | "moveUp" | "moveDown"): Promise<void> {
     return this.serializeQueue(async () => {
       const target = this.pendingMessages.find((item) => item.id === id);
       if (!target) return; // Already consumed by the runtime.
+      const moving = behavior === "moveUp" || behavior === "moveDown";
+      const peers = this.pendingMessages.filter((item) => !item.retry && item.behavior === target.behavior);
+      const neighbor = moving ? peers[peers.findIndex((item) => item.id === id) + (behavior === "moveUp" ? -1 : 1)] : undefined;
+      if (moving && (target.retry || !neighbor)) return;
       const send = (item: PendingMessage) => this.deliverPending(item);
       if (target.retry) {
         if (behavior === "remove") { this.pendingMessages = this.pendingMessages.filter((item) => item.id !== id); this.publishQueue(); return; }
-        target.retry = false; target.behavior = behavior;
+        target.retry = false; target.behavior = behavior === "steer" ? "steer" : "followUp";
         try { await send(target); } catch (reason) { target.retry = true; this.publishQueue(); throw reason; }
         return;
       }
@@ -210,8 +214,15 @@ export class NativeTransport {
         const cleared = await this.executeCommand<{ steering: string[]; followUp: string[] }>({ type: "clear_queue" });
         const remaining = (["steer", "followUp"] as const).flatMap((mode) => (cleared[mode === "steer" ? "steering" : "followUp"] ?? []).map((text) => {
           const original = originals.find((item) => !item.retry && item.behavior === mode && item.message === text);
-          return original ? { ...original, behavior: original.id === id && behavior !== "remove" ? behavior : mode } : { id: crypto.randomUUID(), message: text, behavior: mode, retry: true };
+          return original ? { ...original, behavior: original.id === id && (behavior === "steer" || behavior === "followUp") ? behavior : mode } : { id: crypto.randomUUID(), message: text, behavior: mode, retry: true };
         }));
+        if (neighbor) {
+          // Use the neighbor captured before clearing: consumption may have removed
+          // either row in the meantime. Never move a different message instead.
+          const from = remaining.findIndex((item) => item.id === id);
+          const to = remaining.findIndex((item) => item.id === neighbor.id);
+          if (from >= 0 && to >= 0) [remaining[from], remaining[to]] = [remaining[to], remaining[from]];
+        }
         if (behavior === "remove") { const index = remaining.findIndex((item) => item.id === id); if (index >= 0) remaining.splice(index, 1); }
         this.pendingMessages = [...originals.filter((item) => item.retry), ...remaining];
         if (remaining.some((item) => item.retry)) {

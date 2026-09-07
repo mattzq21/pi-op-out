@@ -328,3 +328,5 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 
 .user-message.steering-message .message-body { max-width: min(72%, 520px); padding: 7px 10px; background: #dfdcd4; border-color: #cdc8be; font-size: 12px; font-weight: 400; }
 .app.dark .user-message.steering-message .message-body { background: #191815; border-color: #302e29; color: #c4beb3; }
+
+.pending-order-actions { display: flex; align-items: center; gap: 0; }
