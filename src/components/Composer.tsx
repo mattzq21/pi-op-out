@@ -2,7 +2,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readDroppedFile } from "../lib/nativeTransport";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type SetStateAction } from "react";
-import { ArrowUp, CircleStop, FileText, ImagePlus, Pause, Play, TerminalSquare, X, Zap } from "lucide-react";
+import { CornerDownRight, ListEnd, MoreHorizontal, Trash2, ArrowUp, CircleStop, FileText, ImagePlus, Pause, Play, TerminalSquare, X, Zap } from "lucide-react";
 import type { AgentProfile, ComposerUpload, ContextUsage, ImageAttachment, Model, PromptDictionary, SlashCommand } from "../types";
 import { applyDictionary, dictionaryMatches } from "../lib/dictionaries";
 import { IconButton } from "./IconButton";
@@ -31,7 +31,7 @@ interface Props {
   restoredDraft?: { id: string; value: string };
   focusRequest?: number;
   pendingMessages?: import("../types").PendingMessage[];
-  onChangePending?: (id: string, behavior: "steer" | "followUp") => Promise<void>;
+  onChangePending?: (id: string, behavior: "steer" | "followUp" | "remove") => Promise<void>;
   onSend: (message: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>;
   onAbort: () => void | Promise<void>;
   onPause: () => void | Promise<void>;
@@ -239,6 +239,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
     return () => { disposed = true; unlisten?.(); };
   }, []);
 
+  const [expandedPending, setExpandedPending] = useState<string>();
   const [changingPending, setChangingPending] = useState(false);
   const [sendBehavior, setSendBehavior] = useState<"steer" | "followUp">("followUp");
   const submit = async (behavior: "steer" | "followUp" = sendBehavior) => {
@@ -283,7 +284,19 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
     {(streaming || paused || pausing) && <div className={`stream-banner${paused ? " paused" : ""}`}>
       <span className="stream-status" role="status">{paused ? <Pause size={11} /> : <span className="pulse" />}{stopping ? "Stopping…" : controlAction === "resume" ? "Resuming…" : pausing || controlAction === "pause" ? "Pausing…" : paused ? "Paused · Completed turns saved" : "piop is working"}{queued > 0 && ` · ${queued} queued`}</span>
     </div>}
-    {pendingMessages.length > 0 && <div className="pending-messages" aria-label="Pending messages">{pendingMessages.map((message) => <div className={`pending-message${message.behavior === "steer" ? " steering-message" : ""}`} key={message.id}><span title={message.message}><small>{message.retry ? "Not sent" : message.behavior === "steer" ? "Steering · waiting for current turn" : "Queued"}</small>{message.message}</span>{onChangePending && <button type="button" disabled={controlsDisabled || changingPending || pausing} onClick={() => { setChangingPending(true); setControlError(undefined); void onChangePending(message.id, message.retry ? message.behavior : message.behavior === "steer" ? "followUp" : "steer").catch((reason) => setControlError(String(reason instanceof Error ? reason.message : reason))).finally(() => setChangingPending(false)); }}>{message.retry ? "Retry" : message.behavior === "steer" ? "Queue instead" : "Steer now"}</button>}</div>)}</div>}
+    {pendingMessages.length > 0 && <div className="pending-messages" aria-label="Pending messages">{pendingMessages.map((message) => {
+      const change = (behavior: "steer" | "followUp" | "remove") => { setChangingPending(true); setControlError(undefined); void onChangePending?.(message.id, behavior).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))).finally(() => setChangingPending(false)); };
+      const disabled = controlsDisabled || changingPending || pausing;
+      return <div className={`pending-message${expandedPending === message.id ? " expanded" : ""}`} key={message.id}>
+        <ListEnd size={13} className="pending-message-icon" aria-hidden="true" />
+        <span className="pending-message-text" title={message.message}>{message.retry && <small>Not sent · </small>}{message.message}</span>
+        {onChangePending && <div className="pending-message-actions">
+          <button type="button" disabled={disabled} title={message.behavior === "steer" ? "Queue after the current response" : "Steer at the next turn"} onClick={() => change(message.retry ? message.behavior : message.behavior === "steer" ? "followUp" : "steer")}><CornerDownRight size={13} />{message.retry ? "Retry" : message.behavior === "steer" ? "Queue" : "Steer"}</button>
+          <button type="button" className="pending-icon-button" disabled={disabled} aria-label={`Remove queued message: ${message.message}`} title="Remove message" onClick={() => change("remove")}><Trash2 size={13} /></button>
+        </div>}
+        <button type="button" className="pending-icon-button" aria-label={expandedPending === message.id ? "Collapse queued message" : "Show full queued message"} title={expandedPending === message.id ? "Collapse message" : "Show full message"} aria-expanded={expandedPending === message.id} onClick={() => setExpandedPending((current) => current === message.id ? undefined : message.id)}><MoreHorizontal size={14} /></button>
+      </div>;
+    })}</div>}
     <div ref={composerRef} className={`composer${draggingFiles && !inputDisabled ? " dragging-files" : ""}`}
       onDragEnter={(event) => {
         if (!event.dataTransfer.types.includes("Files") && !(isTauri() && event.dataTransfer.types.includes("text/uri-list"))) return;

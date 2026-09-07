@@ -189,12 +189,13 @@ export class NativeTransport {
     try { return await this.executeCommand<T>({ type: "prompt", message: item.message, streamingBehavior: item.behavior, ...(item.images?.length ? { images: item.images } : {}) }); }
     finally { this.sendingPending.delete(item.id); }
   }
-  changePendingMessage(id: string, behavior: "steer" | "followUp"): Promise<void> {
+  changePendingMessage(id: string, behavior: "steer" | "followUp" | "remove"): Promise<void> {
     return this.serializeQueue(async () => {
       const target = this.pendingMessages.find((item) => item.id === id);
       if (!target) return; // Already consumed by the runtime.
       const send = (item: PendingMessage) => this.deliverPending(item);
       if (target.retry) {
+        if (behavior === "remove") { this.pendingMessages = this.pendingMessages.filter((item) => item.id !== id); this.publishQueue(); return; }
         target.retry = false; target.behavior = behavior;
         try { await send(target); } catch (reason) { target.retry = true; this.publishQueue(); throw reason; }
         return;
@@ -209,8 +210,9 @@ export class NativeTransport {
         const cleared = await this.executeCommand<{ steering: string[]; followUp: string[] }>({ type: "clear_queue" });
         const remaining = (["steer", "followUp"] as const).flatMap((mode) => (cleared[mode === "steer" ? "steering" : "followUp"] ?? []).map((text) => {
           const original = originals.find((item) => !item.retry && item.behavior === mode && item.message === text);
-          return original ? { ...original, behavior: original.id === id ? behavior : mode } : { id: crypto.randomUUID(), message: text, behavior: mode, retry: true };
+          return original ? { ...original, behavior: original.id === id && behavior !== "remove" ? behavior : mode } : { id: crypto.randomUUID(), message: text, behavior: mode, retry: true };
         }));
+        if (behavior === "remove") { const index = remaining.findIndex((item) => item.id === id); if (index >= 0) remaining.splice(index, 1); }
         this.pendingMessages = [...originals.filter((item) => item.retry), ...remaining];
         if (remaining.some((item) => item.retry)) {
           remaining.forEach((item) => { item.retry = true; });
