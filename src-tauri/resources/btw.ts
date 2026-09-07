@@ -32,6 +32,8 @@ async function runFork(sessionFile: string, cwd: string, task: string): Promise<
   if (codexCompactionExtension) args.push("--extension", codexCompactionExtension);
   const codexWebSearchExtension = process.env.PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION;
   if (codexWebSearchExtension) args.push("--extension", codexWebSearchExtension);
+  const definedAgentsExtension = process.env.PI_DESKTOP_DEFINED_AGENTS_EXTENSION;
+  if (definedAgentsExtension) args.push("--extension", definedAgentsExtension);
   args.push(task);
   try {
     const { stdout } = await execFile(command, args, {

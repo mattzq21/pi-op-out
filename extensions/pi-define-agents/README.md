@@ -2,7 +2,7 @@
 
 Defines named agents and lets you select and use them independently in Pi CLI and piop. Owns each agent's model, effort, prompts, AGENTS.md text, tools, skills, and MCP selection.
 
-piop automatically installs and loads this extension locally and on SSH hosts, preserving its configuration. For standalone Pi CLI use, install from this repository:
+piop installs and explicitly loads its private copy from `~/.piop/pi-define-agents` locally and on SSH hosts. Existing agent configuration is copied from the former global installation, and its global entry point is removed so standalone Pi does not load it. For standalone Pi CLI use, install from this repository:
 
 ```bash
 mkdir -p ~/.pi/agent/extensions/pi-define-agents
