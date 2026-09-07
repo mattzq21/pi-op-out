@@ -220,6 +220,7 @@ export class NativeTransport {
     this.publishQueue();
   }
   command<T>(command: RpcCommand): Promise<T> {
+    if (command.type === "abort") return this.stop<T>(command);
     if (command.type === "pause") return this.serializeQueue(async () => {
       await this.holdQueue();
       try { return await this.executeCommand<T>(command); }
@@ -243,6 +244,22 @@ export class NativeTransport {
       catch (reason) { this.pendingMessages = this.pendingMessages.filter((item) => item !== pending); throw reason; }
       finally { this.sendingPending.delete(pending.id); this.publishQueue(); }
     });
+  }
+  private async stop<T>(command: RpcCommand): Promise<T> {
+    try { return await this.executeCommand<T>(command); }
+    catch (reason) {
+      if (!(reason instanceof Error) || reason.message !== "Pi command timed out") throw reason;
+      // Cancellation can wait forever for an unresponsive tool or extension.
+      // End this runtime before reconnecting to the saved conversation.
+      await this.disconnect();
+      this.pendingMessages = this.pendingMessages.map((item) => ({ ...item, retry: true }));
+      this.heldMessages = undefined;
+      this.queueSnapshot = { type: "queue_update", steering: [], followUp: [] };
+      this.awaitingSteering = [];
+      this.publishQueue();
+      this.emit({ type: "disconnected" });
+      return undefined as T;
+    }
   }
   private async deliverPending<T>(item: PendingMessage): Promise<T> {
     // Let the runtime choose atomically: steer/queue during a run, start a new
