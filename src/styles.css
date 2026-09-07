@@ -53,6 +53,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .session-archive:hover { background: #ffffff12; color: var(--accent); opacity: 1; }
 .session-copy { flex: 1; min-width: 0; display: grid; gap: 4px; }
 .session-title-row { min-width: 0; display: flex; align-items: baseline; gap: 7px; }
+.session-project-icon { display: inline-flex; flex: 0 0 auto; align-self: center; color: var(--muted); }
 .session-copy strong { min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; font-weight: 600; }
 .session-preview { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 10px; }
 .session-api-cost { flex: 0 0 auto; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; visibility: hidden; opacity: 0; }

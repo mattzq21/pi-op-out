@@ -124,6 +124,10 @@ fn fail_pending(pending: &Arc<Mutex<HashMap<(String, String), mpsc::Sender<Resul
     for sender in senders { let _ = sender.send(Err(error.into())); }
 }
 
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum ProjectKind { NoRepo, Main, Worktree }
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SessionSummary {
@@ -133,6 +137,8 @@ struct SessionSummary {
     project: String,
     cwd: String,
     cwd_exists: bool,
+    project_kind: Option<ProjectKind>,
+    project_root: Option<String>,
     #[serde(skip)]
     modified_at: u64,
     preview: String,
@@ -916,6 +922,14 @@ fn copy_untracked_file(source_root: &Path, target_root: &Path, relative: &Path) 
         return Err(format!("Copying untracked symlinks is unsupported on this platform: {}", relative.display()));
     } else if metadata.is_file() {
         fs::copy(&source, &target).map_err(|error| format!("Could not copy untracked file {}: {error}", relative.display()))?;
+    } else if metadata.is_dir() {
+        fs::create_dir_all(&target).map_err(|error| format!("Could not prepare untracked directory {}: {error}", relative.display()))?;
+        for entry in fs::read_dir(&source).map_err(|error| format!("Could not read untracked directory {}: {error}", relative.display()))? {
+            let entry = entry.map_err(|error| format!("Could not read untracked directory {}: {error}", relative.display()))?;
+            // Nested repositories are copied as files, never with Git metadata pointing at the source.
+            if entry.file_name() == ".git" { continue; }
+            copy_untracked_file(source_root, target_root, &relative.join(entry.file_name()))?;
+        }
     } else { return Err(format!("Unsupported untracked filesystem entry: {}", relative.display())); }
     Ok(())
 }
@@ -963,9 +977,8 @@ fn create_git_worktree(app: AppHandle, cwd: String, name: String, host_id: Optio
         let root = String::from_utf8_lossy(&located.stdout).trim().to_string();
         let project = Path::new(&root).file_name().ok_or("Git repository directory has no name")?.to_string_lossy();
         let branch = worktree_branch_name(&project, name);
-        let script = format!(r#"root={root}; branch={branch}; git check-ref-format --branch "$branch" >/dev/null || {{ printf 'Invalid Git branch name: %s' "$branch" >&2; exit 1; }}; git -C "$root" show-ref --verify --quiet "refs/heads/$branch" && {{ printf 'Git branch already exists: %s' "$branch" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git branches' >&2; exit 1; }}; parent=$(dirname -- "$root"); target="$parent/$branch"; if [ -e "$target" ] || [ -L "$target" ]; then printf 'Worktree directory already exists: %s' "$target" >&2; exit 1; fi; worktrees=$(git -C "$root" worktree list --porcelain) || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; printf '%s\n' "$worktrees" | grep -Fqx "worktree $target" && {{ printf 'Git worktree is already registered: %s' "$target" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; temporary=$(mktemp -d "${{TMPDIR:-/tmp}}/pi-desktop-worktree.XXXXXX") || exit 1; created=0; cleanup() {{ status=$?; rm -rf -- "$temporary"; if [ "$status" -ne 0 ] && [ "$created" -eq 1 ]; then git -C "$root" worktree remove --force "$target" >/dev/null 2>&1; git -C "$root" branch -D "$branch" >/dev/null 2>&1; fi; exit "$status"; }}; trap cleanup EXIT; git -C "$root" ls-files -z -m -o --exclude-standard -- > "$temporary/changed" || exit 1; path_bytes=$(wc -c < "$temporary/changed"); [ "$path_bytes" -le {max_paths} ] || {{ printf 'Changed file list is too large to copy safely' >&2; exit 1; }}; path_count=$(tr -cd '\000' < "$temporary/changed" | wc -c); [ "$path_count" -le {max_count} ] || {{ printf 'Too many changed files to copy safely' >&2; exit 1; }}; (cd "$root" && xargs -0 -r stat -c '%s' -- < "$temporary/changed" 2>/dev/null || true) > "$temporary/sizes"; awk '{{ if ($1 > {max_file}) exit 1; total += $1 }} END {{ if (total > {max_total}) exit 1 }}' "$temporary/sizes" || {{ printf 'Project changes are too large to copy safely' >&2; exit 1; }}; has_head=0; if git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then has_head=1; fi; : > "$temporary/changes.patch"; if [ "$has_head" -eq 1 ]; then mkfifo "$temporary/patch.pipe" || exit 1; git -C "$root" diff --binary HEAD -- > "$temporary/patch.pipe" 2> "$temporary/diff-error" & diff_pid=$!; head -c {patch_plus_one} < "$temporary/patch.pipe" > "$temporary/changes.patch"; wait "$diff_pid"; diff_status=$?; rm -f -- "$temporary/patch.pipe"; patch_bytes=$(wc -c < "$temporary/changes.patch"); [ "$patch_bytes" -le {max_patch} ] || {{ printf 'Git changes are too large to copy' >&2; exit 1; }}; [ "$diff_status" -eq 0 ] || {{ cat "$temporary/diff-error" >&2; printf 'Could not capture Git changes' >&2; exit 1; }}; fi; git -C "$root" ls-files -z --others --exclude-standard -- > "$temporary/untracked" || exit 1; if [ "$has_head" -eq 1 ]; then git -C "$root" worktree add -b "$branch" "$target" >/dev/null || exit 1; else git -C "$root" worktree add --orphan -b "$branch" "$target" >/dev/null || exit 1; fi; created=1; if [ -s "$temporary/changes.patch" ]; then git -C "$target" apply --whitespace=nowarn "$temporary/changes.patch" || exit 1; fi; if [ -s "$temporary/untracked" ]; then tar -C "$root" --null -T "$temporary/untracked" -cf "$temporary/untracked.tar" || exit 1; tar -C "$target" -xf "$temporary/untracked.tar" || exit 1; fi; printf '%s\n%s\n' "$branch" "$target""#,
-            root = shell_quote(&root), branch = shell_quote(&branch), max_paths = MAX_GIT_PATH_LIST_BYTES,
-            max_count = MAX_GIT_CHANGED_PATHS, max_file = MAX_GIT_FILE_BYTES, max_total = MAX_GIT_SNAPSHOT_BYTES,
+        let script = format!(r#"root={root}; branch={branch}; git check-ref-format --branch "$branch" >/dev/null || {{ printf 'Invalid Git branch name: %s' "$branch" >&2; exit 1; }}; git -C "$root" show-ref --verify --quiet "refs/heads/$branch" && {{ printf 'Git branch already exists: %s' "$branch" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git branches' >&2; exit 1; }}; parent=$(dirname -- "$root"); target="$parent/$branch"; if [ -e "$target" ] || [ -L "$target" ]; then printf 'Worktree directory already exists: %s' "$target" >&2; exit 1; fi; worktrees=$(git -C "$root" worktree list --porcelain) || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; printf '%s\n' "$worktrees" | grep -Fqx "worktree $target" && {{ printf 'Git worktree is already registered: %s' "$target" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; temporary=$(mktemp -d "${{TMPDIR:-/tmp}}/pi-desktop-worktree.XXXXXX") || exit 1; created=0; cleanup() {{ status=$?; rm -rf -- "$temporary"; if [ "$status" -ne 0 ] && [ "$created" -eq 1 ]; then git -C "$root" worktree remove --force "$target" >/dev/null 2>&1; git -C "$root" branch -D "$branch" >/dev/null 2>&1; fi; exit "$status"; }}; trap cleanup EXIT; has_head=0; if git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then has_head=1; fi; : > "$temporary/changes.patch"; if [ "$has_head" -eq 1 ]; then mkfifo "$temporary/patch.pipe" || exit 1; git -C "$root" diff --binary HEAD -- > "$temporary/patch.pipe" 2> "$temporary/diff-error" & diff_pid=$!; head -c {patch_plus_one} < "$temporary/patch.pipe" > "$temporary/changes.patch"; wait "$diff_pid"; diff_status=$?; rm -f -- "$temporary/patch.pipe"; patch_bytes=$(wc -c < "$temporary/changes.patch"); [ "$patch_bytes" -le {max_patch} ] || {{ printf 'Git changes are too large to copy' >&2; exit 1; }}; [ "$diff_status" -eq 0 ] || {{ cat "$temporary/diff-error" >&2; printf 'Could not capture Git changes' >&2; exit 1; }}; fi; git -C "$root" ls-files -z --others --exclude-standard -- > "$temporary/untracked" || exit 1; if [ "$has_head" -eq 1 ]; then git -C "$root" worktree add -b "$branch" "$target" >/dev/null || exit 1; else git -C "$root" worktree add --orphan -b "$branch" "$target" >/dev/null || exit 1; fi; created=1; if [ -s "$temporary/changes.patch" ]; then git -C "$target" apply --whitespace=nowarn "$temporary/changes.patch" || exit 1; fi; if [ -s "$temporary/untracked" ]; then tar -C "$root" --exclude=.git --null -T "$temporary/untracked" -cf "$temporary/untracked.tar" || exit 1; tar -C "$target" -xf "$temporary/untracked.tar" || exit 1; fi; printf '%s\n%s\n' "$branch" "$target""#,
+            root = shell_quote(&root), branch = shell_quote(&branch),
             patch_plus_one = MAX_GIT_PATCH_BYTES + 1, max_patch = MAX_GIT_PATCH_BYTES);
         let output = run_limited(ssh(host).arg(script), 64 * 1024, &format!("Could not create Git worktree on {}", host.name))?;
         return parse_worktree_output(output, "Could not create Git worktree");
@@ -983,7 +996,6 @@ fn create_git_worktree(app: AppHandle, cwd: String, name: String, host_id: Optio
     let target = parent.join(&branch);
     if fs::symlink_metadata(&target).is_ok() { return Err(format!("Worktree directory already exists: {}", target.display())); }
     if local_worktree_is_registered(&root, &target)? { return Err(format!("Git worktree is already registered: {}", target.display())); }
-    if !local_git_input_is_bounded(root.to_string_lossy().as_ref(), &root)? { return Err("Project changes are too large to copy safely".into()); }
     let has_head = Command::new("git").arg("-C").arg(&root).args(["rev-parse", "--verify", "HEAD"]).stdout(Stdio::null()).stderr(Stdio::null()).status().map_err(|error| format!("Could not inspect Git HEAD: {error}"))?.success();
     let patch = if has_head {
         let output = run_limited(Command::new("git").arg("-C").arg(&root).args(["diff", "--binary", "HEAD", "--"]), MAX_GIT_PATCH_BYTES, "Git changes are too large to copy")?;
@@ -1611,7 +1623,7 @@ fn parse_session_content(path: &Path, content: &str, modified: SystemTime, cwd_e
     let explicitly_named = name.is_some(); let has_user_message = !first_user_message.is_empty();
     let name = name.unwrap_or_else(|| if first_user_message.is_empty() { "Untitled session".into() } else { first_user_message });
     let project = Path::new(&cwd).file_name().and_then(|value| value.to_str()).unwrap_or("Workspace").to_string();
-    Some((SessionSummary { id, path: path.to_string_lossy().into_owned(), name, project, cwd, cwd_exists, modified_at: unix_timestamp(modified), preview: preview.chars().take(100).collect(), message_count, api_cost, host_id: host_id.into(), host_name: host_name.into() }, explicitly_named, has_user_message, resume_messages))
+    Some((SessionSummary { id, path: path.to_string_lossy().into_owned(), name, project, cwd, cwd_exists, project_kind: None, project_root: None, modified_at: unix_timestamp(modified), preview: preview.chars().take(100).collect(), message_count, api_cost, host_id: host_id.into(), host_name: host_name.into() }, explicitly_named, has_user_message, resume_messages))
 }
 
 fn hidden_resume_entry(entry: &Value, markers: &mut HashSet<String>) -> bool {
@@ -1641,6 +1653,46 @@ fn apply_session_entries(cached: &mut CachedSession, content: &str, modified: Sy
     cached.summary.modified_at = unix_timestamp(modified);
 }
 
+// Inspect each distinct directory once per refresh, batching remote checks into one SSH call per batch.
+fn inspect_session_projects(sessions: &mut [SessionSummary], host: Option<&RemoteHost>) -> Result<(), String> {
+    let directories = sessions.iter().map(|session| session.cwd.clone()).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>();
+    let script = r#"for path do
+        if [ ! -d "$path" ]; then printf 'missing\000\000'; continue; fi
+        git_dir=$(git -C "$path" rev-parse --absolute-git-dir 2>/dev/null) || { printf 'no-repo\000\000'; continue; }
+        common_dir=$(git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || { printf 'unknown\000\000'; continue; }
+        if [ "$git_dir" = "$common_dir" ]; then printf 'main\000'; else printf 'worktree\000'; fi
+        project_root=$(git -C "$path" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
+        printf '%s\000' "$project_root"
+    done"#;
+    let mut projects = HashMap::new();
+    for batch in directories.chunks(128) {
+        let mut command = if let Some(host) = host {
+            let arguments = batch.iter().map(|path| shell_quote(path)).collect::<Vec<_>>().join(" ");
+            let mut command = ssh(host);
+            command.arg(format!("sh -c {} sh {arguments}", shell_quote(script)));
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", script, "sh"]).args(batch);
+            command
+        };
+        let output = run_limited(&mut command, MAX_GIT_PATH_LIST_BYTES, "Could not inspect session projects")?;
+        if !output.status.success() { return Err(format!("Could not inspect session projects: {}", String::from_utf8_lossy(&output.stderr).trim())); }
+        let fields = output.stdout.strip_suffix(&[0]).ok_or("Incomplete session project details")?.split(|byte| *byte == 0).collect::<Vec<_>>();
+        if fields.len() != batch.len() * 2 { return Err("Could not inspect every session project".into()); }
+        for (path, details) in batch.iter().zip(fields.chunks_exact(2)) {
+            let flag = details[0];
+            let project_root = (!details[1].is_empty()).then(|| String::from_utf8_lossy(details[1]).into_owned());
+            let kind = match flag { b"no-repo" => Some(ProjectKind::NoRepo), b"main" => Some(ProjectKind::Main), b"worktree" => Some(ProjectKind::Worktree), _ => None };
+            projects.insert(path.as_str(), (flag != b"missing", kind, project_root));
+        }
+    }
+    for session in sessions {
+        if let Some((exists, kind, project_root)) = projects.get(session.cwd.as_str()) { session.cwd_exists = *exists; session.project_kind = *kind; session.project_root = project_root.clone(); }
+    }
+    Ok(())
+}
+
 fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<SessionSummary>, String> {
     let mut cache = index.local.lock().map_err(|_| "Local session index lock was poisoned")?;
     let mut seen = HashSet::new(); let mut sessions = Vec::new();
@@ -1660,10 +1712,13 @@ fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<S
             let Some((summary, explicitly_named, has_user_message, resume_messages)) = parse_session_content(&path, &content, modified, true, "local", "Local") else { continue };
             cache.insert(path.clone(), CachedSession { fingerprint: fingerprint.clone(), bytes: metadata.len(), explicitly_named, has_user_message, resume_messages, summary });
         }
-        let Some(mut summary) = cache.get(&path).map(|cached| cached.summary.clone()) else { continue };
-        summary.cwd_exists = Path::new(&summary.cwd).is_dir(); sessions.push(summary);
+        let Some(summary) = cache.get(&path).map(|cached| cached.summary.clone()) else { continue };
+        sessions.push(summary);
     }
-    cache.retain(|path, _| seen.contains(path)); Ok(sessions)
+    cache.retain(|path, _| seen.contains(path));
+    drop(cache);
+    inspect_session_projects(&mut sessions, None)?;
+    Ok(sessions)
 }
 
 fn list_remote_sessions(index: &SessionIndexRuntime, host: &RemoteHost) -> Result<Vec<SessionSummary>, String> {
@@ -1721,20 +1776,7 @@ fn list_remote_sessions(index: &SessionIndexRuntime, host: &RemoteHost) -> Resul
         let Some(mut cached) = parsed.remove(&path).or_else(|| previous.get(&path).cloned()) else { continue };
         cached.summary.host_name = host.name.clone(); sessions.push(cached.summary.clone()); next.insert(path, cached);
     }
-    let directories = sessions.iter().map(|session| session.cwd.clone()).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>();
-    let mut existence = HashMap::new();
-    for batch in directories.chunks(128) {
-        let arguments = batch.iter().map(|path| shell_quote(path)).collect::<Vec<_>>().join(" ");
-        let command = format!(r#"sh -c 'for path do if [ -d "$path" ]; then printf "1\000"; else printf "0\000"; fi; done' sh {arguments}"#);
-        let mut directory_command = ssh(host); directory_command.arg(command);
-        let output = run_limited(&mut directory_command, batch.len().saturating_mul(2).max(1024), &format!("Could not inspect session projects on {}", host.name))?;
-        if !output.status.success() { return Err(format!("Could not inspect session projects on {}: {}", host.name, String::from_utf8_lossy(&output.stderr).trim())); }
-        let flags = output.stdout.split(|byte| *byte == 0).filter(|field| !field.is_empty()).collect::<Vec<_>>();
-        if flags.len() != batch.len() { return Err(format!("Could not inspect every session project on {}", host.name)); }
-        for (path, flag) in batch.iter().zip(flags) { existence.insert(path.clone(), flag == b"1"); }
-    }
-    for session in &mut sessions { session.cwd_exists = existence.get(&session.cwd).copied().unwrap_or(false); }
-    for cached in next.values_mut() { cached.summary.cwd_exists = existence.get(&cached.summary.cwd).copied().unwrap_or(false); }
+    inspect_session_projects(&mut sessions, Some(host))?;
     index.remote.lock().map_err(|_| "Remote session index lock was poisoned")?.insert(host.id.clone(), next); Ok(sessions)
 }
 

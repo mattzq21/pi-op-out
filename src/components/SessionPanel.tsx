@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Archive, ChevronDown, Columns2, CopyPlus, FolderOpen, Pencil, Search, Trash2 } from "lucide-react";
+import { Archive, ChevronDown, Columns2, CopyPlus, Folder, FolderOpen, FolderGit2, GitBranch, Pencil, Search, Trash2 } from "lucide-react";
 import type { SessionSummary } from "../types";
 
 export type SessionAction = "split" | "rename" | "clone" | "open-directory" | "archive";
@@ -20,6 +20,17 @@ const CUSTOM_GROUPS_KEY = "pi-desktop-custom-session-groups";
 const CUSTOM_GROUP_PREFIX = "__pi-desktop-custom-group__:";
 const UNGROUPED_KEY = "__pi-desktop-ungrouped__";
 const sidebarCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
+function projectKindLabel(session: SessionSummary) {
+  const kind = session.projectKind;
+  return kind === "main" ? "Main checkout" : kind === "worktree" ? "Git worktree" : kind === "no-repo" ? "No Git repository" : session.cwdExists === false ? "Directory unavailable" : "Project directory";
+}
+
+function SessionProjectIcon({ session }: { session: SessionSummary }) {
+  const kind = session.projectKind;
+  const Icon = kind === "main" ? FolderGit2 : kind === "worktree" ? GitBranch : Folder;
+  return <span className="session-project-icon" title={projectKindLabel(session)}><Icon size={14} aria-hidden="true" /></span>;
+}
 
 function stableSessionOrder(left: SessionSummary, right: SessionSummary) {
   return sidebarCollator.compare(left.name, right.name) || sidebarCollator.compare(left.id, right.id);
@@ -59,7 +70,8 @@ function savedSidebarOrder() {
 }
 
 function sessionKey(session: SessionSummary) { return `${session.hostId ?? "local"}:${session.id}`; }
-function physicalProjectKey(session: SessionSummary) { return `${session.hostId ?? "local"}:${session.cwd}`; }
+function physicalProjectKey(session: SessionSummary) { return `${session.hostId ?? "local"}:${session.projectRoot ?? session.cwd}`; }
+function projectName(session: SessionSummary) { return session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project; }
 function canPlaceSessionIn(session: SessionSummary, projectKey: string) { return projectKey === UNGROUPED_KEY || projectKey.startsWith(CUSTOM_GROUP_PREFIX) || projectKey === physicalProjectKey(session); }
 function sessionLayoutToken(key: string) { return `session:${key}`; }
 function groupLayoutToken(key: string) { return `group:${key}`; }
@@ -139,7 +151,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   useEffect(() => { if (menu && !sessions.some((session) => sessionKey(session) === sessionKey(menu.session))) closeMenu(); }, [menu, sessions]);
   const groupNameTaken = (name: string, excludedId?: string) => {
     const normalized = name.trim();
-    return sessions.some((session) => { const label = !session.hostId || session.hostId === "local" ? session.project : `${session.hostName ?? session.hostId} / ${session.project}`; return sidebarCollator.compare(label.trim(), normalized) === 0; })
+    return sessions.some((session) => { const label = !session.hostId || session.hostId === "local" ? projectName(session) : `${session.hostName ?? session.hostId} / ${projectName(session)}`; return sidebarCollator.compare(label.trim(), normalized) === 0; })
       || customGroups.some((group) => group.id !== excludedId && sidebarCollator.compare(group.name.trim(), normalized) === 0);
   };
   const finishGroup = (cancel = false) => {
@@ -220,13 +232,13 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   const filtered = sessions.filter((session) => {
     if (!normalizedQuery) return true;
     const groupName = customGroupsByKey.get(visualProjectKey(session))?.name ?? "";
-    return `${session.name} ${session.project} ${session.preview} ${session.hostName ?? session.hostId ?? "Local"} ${groupName}`.toLowerCase().includes(normalizedQuery);
+    return `${session.name} ${session.project} ${projectName(session)} ${session.preview} ${session.hostName ?? session.hostId ?? "Local"} ${groupName}`.toLowerCase().includes(normalizedQuery);
   });
   const groupedSessions = filtered.reduce<Record<string, SessionSummary[]>>((result, session) => {
     (result[visualProjectKey(session)] ??= []).push(session); return result;
   }, {});
   const ungroupedSessions = orderedSessions(UNGROUPED_KEY, groupedSessions[UNGROUPED_KEY] ?? [], sessionOrders);
-  const physicalGroups = [...projectDetails.entries()].map(([key, details]) => [key, details.project, details.hostId ?? "local", details.hostName, orderedSessions(key, groupedSessions[key] ?? [], sessionOrders)] as const)
+  const physicalGroups = [...projectDetails.entries()].map(([key, details]) => [key, projectName(details), details.hostId ?? "local", details.hostName, orderedSessions(key, groupedSessions[key] ?? [], sessionOrders)] as const)
     .filter(([, , , , projectSessions]) => projectSessions.length > 0 || Boolean(draggedSession))
     .sort(([, leftProject, leftHost, leftHostName], [, rightProject, rightHost, rightHostName]) => sidebarCollator.compare(leftHostName ?? leftHost, rightHostName ?? rightHost) || sidebarCollator.compare(leftProject, rightProject));
   const customVisualGroups = customGroups.map((group) => { const key = `${CUSTOM_GROUP_PREFIX}${group.id}`; return [key, group.name, "", undefined, orderedSessions(key, groupedSessions[key] ?? [], sessionOrders)] as const; })
@@ -338,7 +350,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   const nameCounts = sessions.reduce((counts, session) => { const key = `${visualProjectKey(session)}:${session.name}`; counts.set(key, (counts.get(key) ?? 0) + 1); return counts; }, new Map<string, number>());
   const duplicateNames = new Set([...nameCounts].filter(([, count]) => count > 1).map(([key]) => key));
   const renderSession = (session: SessionSummary, projectKey: string) => { const key = sessionKey(session); const running = runningSessions.has(key); const activity = unseenSessions.has(key) ? "New activity" : undefined; const accessibleActivity = running ? "Running" : activity; const duplicateName = duplicateNames.has(`${projectKey}:${session.name}`); const location = session.hostId && session.hostId !== "local" ? `${session.hostName ?? session.hostId} / ${session.project}` : session.project; const discriminator = `${location}${session.preview.trim() ? ` · ${session.preview.trim()}` : ""}`; const target = dropTarget?.projectKey === projectKey && dropTarget.sessionKey === key ? dropTarget.edge : undefined; const drag = { projectKey, sessionKey: key, session }; return <div key={key} data-session-key={key} data-project-key={projectKey} className={`session-item ${!normalizedQuery ? "reorderable" : ""} ${activeId === session.id && (session.hostId ?? "local") === activeHostId ? "active" : ""} ${running ? "running" : activity ? "unseen" : ""} ${draggedSession?.sessionKey === key ? "dragging" : ""} ${target ? `drop-${target}` : ""}`} onContextMenu={(event) => { event.preventDefault(); const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget.querySelector<HTMLElement>(".session-main") ?? undefined; setMenu({ session, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190), returnFocus }); }}>
-    <button className="session-main" aria-label={`${session.name}, ${duplicateName ? `${discriminator}, ` : ""}${formatApiCost(session.apiCost)}${accessibleActivity ? `, ${accessibleActivity}` : ""}`} aria-current={activeId === session.id && (session.hostId ?? "local") === activeHostId ? "page" : undefined} aria-description={!normalizedQuery ? "Press Alt plus Up or Down to reorder. Add Shift to move between groups." : undefined} aria-keyshortcuts={!normalizedQuery ? "Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown" : undefined} title={session.name} onMouseDown={(event) => startMouseDrag(event, drag)} onKeyDown={(event) => { if (!normalizedQuery && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); moveSessionByKeyboard(drag, event.key === "ArrowUp" ? -1 : 1, event.shiftKey); } }} onClick={(event) => { if (suppressClickRef.current === key) { suppressClickRef.current = undefined; event.preventDefault(); return; } onSelect(session); }}><span className="session-copy"><span className="session-title-row"><strong>{session.name}</strong>{activity && !running && <small className="session-activity">{activity}</small>}<span className="session-api-cost" title="Would-be API cost">{formatApiCost(session.apiCost)}</span></span>{duplicateName && <small className="session-preview">{discriminator}</small>}</span></button>
+    <button className="session-main" aria-label={`${session.name}, ${projectKindLabel(session)}, ${duplicateName ? `${discriminator}, ` : ""}${formatApiCost(session.apiCost)}${accessibleActivity ? `, ${accessibleActivity}` : ""}`} aria-current={activeId === session.id && (session.hostId ?? "local") === activeHostId ? "page" : undefined} aria-description={!normalizedQuery ? "Press Alt plus Up or Down to reorder. Add Shift to move between groups." : undefined} aria-keyshortcuts={!normalizedQuery ? "Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown" : undefined} title={session.name} onMouseDown={(event) => startMouseDrag(event, drag)} onKeyDown={(event) => { if (!normalizedQuery && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); moveSessionByKeyboard(drag, event.key === "ArrowUp" ? -1 : 1, event.shiftKey); } }} onClick={(event) => { if (suppressClickRef.current === key) { suppressClickRef.current = undefined; event.preventDefault(); return; } onSelect(session); }}><span className="session-copy"><span className="session-title-row"><SessionProjectIcon session={session} /><strong>{session.name}</strong>{activity && !running && <small className="session-activity">{activity}</small>}<span className="session-api-cost" title="Would-be API cost">{formatApiCost(session.apiCost)}</span></span>{duplicateName && <small className="session-preview">{discriminator}</small>}</span></button>
     <button className="session-archive" aria-label={`Archive ${session.name}`} title={`Archive ${session.name}`} onClick={() => onAction(session, "archive")}><Archive size={14} /></button>
   </div>; };
   const groupsByToken = new Map(groups.map((group) => [groupLayoutToken(group[0]), group] as const));
