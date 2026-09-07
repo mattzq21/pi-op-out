@@ -2,9 +2,10 @@ import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readDroppedFile } from "../lib/nativeTransport";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type SetStateAction } from "react";
-import { ChevronUp, ChevronDown, CornerDownRight, ListEnd, GripVertical, Trash2, ArrowUp, CircleStop, FileText, ImagePlus, Pause, Play, TerminalSquare, X, Zap } from "lucide-react";
+import { ChevronUp, ChevronDown, CornerDownRight, ListEnd, MoveVertical, Trash2, ArrowUp, CircleStop, FileText, ImagePlus, Pause, Play, TerminalSquare, X, Zap } from "lucide-react";
 import type { AgentProfile, ComposerUpload, ContextUsage, ImageAttachment, Model, PromptDictionary, SlashCommand } from "../types";
 import { applyDictionary, dictionaryMatches } from "../lib/dictionaries";
+import { usePendingMessageDrag } from "../lib/usePendingMessageDrag";
 import { IconButton } from "./IconButton";
 
 interface Props {
@@ -240,9 +241,13 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
   }, []);
 
   const [expandedPending, setExpandedPending] = useState<string>();
-  const pendingDrag = useRef<{ id: string; x: number; y: number; moved: boolean; targetId?: string; edge?: "before" | "after" } | undefined>(undefined);
-  const [pendingDrop, setPendingDrop] = useState<{ id: string; targetId?: string; edge?: "before" | "after" }>();
   const [changingPending, setChangingPending] = useState(false);
+  const changePending = (id: string, action: import("../types").PendingMessageAction) => {
+    if (!onChangePending) return;
+    setChangingPending(true); setControlError(undefined);
+    void onChangePending(id, action).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))).finally(() => setChangingPending(false));
+  };
+  const { drop: pendingDrop, begin: beginPendingDrag } = usePendingMessageDrag(pendingMessages, controlsDisabled || changingPending || pausing || !onChangePending, changePending);
   const [sendBehavior, setSendBehavior] = useState<"steer" | "followUp">("followUp");
   const submit = async (behavior: "steer" | "followUp" = sendBehavior) => {
     if (controlsDisabled || pausing || controlActionRef.current || stoppingRef.current) return;
@@ -287,7 +292,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
       <span className="stream-status" role="status">{paused ? <Pause size={11} /> : <span className="pulse" />}{stopping ? "Stopping…" : controlAction === "resume" ? "Resuming…" : pausing || controlAction === "pause" ? "Pausing…" : paused ? "Paused · Completed turns saved" : "piop is working"}{queued > 0 && ` · ${queued} queued`}</span>
     </div>}
     {pendingMessages.length > 0 && <div className="pending-messages" aria-label="Pending messages">{pendingMessages.map((message) => {
-      const change = (behavior: import("../types").PendingMessageAction) => { setChangingPending(true); setControlError(undefined); void onChangePending?.(message.id, behavior).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))).finally(() => setChangingPending(false)); };
+      const change = (action: import("../types").PendingMessageAction) => changePending(message.id, action);
       const disabled = controlsDisabled || changingPending || pausing;
       const peers = pendingMessages.filter((item) => !item.retry && item.behavior === message.behavior);
       const position = peers.findIndex((item) => item.id === message.id);
@@ -304,27 +309,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
         </div>}
         <button type="button" className="pending-icon-button pending-drag-handle" disabled={disabled || message.retry || !onChangePending || peers.length < 2} aria-label={`Drag to reorder queued message: ${message.message}`} title="Drag to reorder · Arrow keys to move" onKeyDown={(event) => {
           if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); change(event.key === "ArrowUp" ? "moveUp" : "moveDown"); }
-        }} onPointerDown={(event) => {
-          if (event.button !== 0 || disabled) return;
-          event.preventDefault(); event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId);
-          pendingDrag.current = { id: message.id, x: event.clientX, y: event.clientY, moved: false };
-        }} onPointerMove={(event) => {
-          const drag = pendingDrag.current; if (!drag || drag.id !== message.id) return;
-          if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 4) return;
-          drag.moved = true;
-          const queue = event.currentTarget.closest(".pending-messages");
-          const bounds = queue?.getBoundingClientRect();
-          if (queue && bounds) { if (event.clientY < bounds.top + 24) queue.scrollTop -= 12; else if (event.clientY > bounds.bottom - 24) queue.scrollTop += 12; }
-          const row = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-pending-id]");
-          const target = row && queue?.contains(row) ? peers.find((item) => item.id === row.dataset.pendingId && item.id !== drag.id) : undefined;
-          drag.targetId = target?.id;
-          drag.edge = target && row ? event.clientY < row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2 ? "before" : "after" : undefined;
-          setPendingDrop({ id: drag.id, targetId: drag.targetId, edge: drag.edge });
-        }} onPointerUp={(event) => {
-          const drag = pendingDrag.current; pendingDrag.current = undefined; setPendingDrop(undefined);
-          if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-          if (!disabled && drag?.moved && drag.targetId && drag.edge) change({ type: "move", targetId: drag.targetId, edge: drag.edge });
-        }} onPointerCancel={() => { pendingDrag.current = undefined; setPendingDrop(undefined); }} onLostPointerCapture={() => { pendingDrag.current = undefined; setPendingDrop(undefined); }}><GripVertical size={14} /></button>
+        }} onPointerDown={(event) => beginPendingDrag(event, message.id)}><MoveVertical size={16} /></button>
       </div>;
     })}</div>}
     <div ref={composerRef} className={`composer${draggingFiles && !inputDisabled ? " dragging-files" : ""}`}
