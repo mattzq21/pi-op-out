@@ -146,10 +146,17 @@ export default async function defineAgents(pi: ExtensionAPI) {
   let applyingAgentModel: string | undefined;
   let applyingAgentEffort: string | undefined;
   let activeToolError: string | undefined;
+  let reloading = false;
   process.env.PI_DEFINE_AGENTS_ACTIVE = "1";
   const findAgent = (name: string) => config.agents.find((agent) => agent.name === name);
   const currentAgent = () => findAgent(active);
   const publish = (ctx: ExtensionContext) => ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: currentAgent()?.name ?? active, config })}`);
+  const reload = async (ctx: ExtensionContext) => {
+    // Reloading resources does not invalidate the definitions already loaded.
+    publish(ctx);
+    reloading = true;
+    try { await ctx.reload(); } finally { reloading = false; }
+  };
   const saveRuntimeDefaults = (value: RuntimeDefaults) => { runtimeDefaults = value; process.env[DEFAULTS_ENV] = JSON.stringify({ ...value, session: runtimeSession }); };
   const restore = (ctx: ExtensionContext) => {
     const session = ctx.sessionManager.getSessionFile() || "";
@@ -198,10 +205,12 @@ export default async function defineAgents(pi: ExtensionAPI) {
       const name = (entry.data as { active?: string })?.active;
       if (name && findAgent(name)) active = name;
     }
+    // Configuration is ready even when activating its MCP servers takes longer.
+    publish(ctx);
     await useAgent(active, ctx);
     publish(ctx);
   });
-  pi.on("session_shutdown", (_event, ctx) => { delete process.env.PI_DEFINE_AGENTS_ACTIVE; ctx.ui.setStatus(STATUS_KEY, undefined); });
+  pi.on("session_shutdown", (_event, ctx) => { delete process.env.PI_DEFINE_AGENTS_ACTIVE; if (!reloading) ctx.ui.setStatus(STATUS_KEY, undefined); });
   pi.on("resources_discover", () => { const agent = currentAgent(); const skillPaths = agent ? agentSkills(agent) : []; return skillPaths.length ? { skillPaths } : undefined; });
   pi.on("input", async (event, ctx) => {
     if (event.text.startsWith("/")) return { action: "continue" };
@@ -220,12 +229,12 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const argument = args.trim(); let name = argument; try { const decoded = decode<unknown>(argument); if (typeof decoded === "string") name = decoded; } catch { /* Plain CLI name. */ }
     if (!findAgent(name)) throw new Error(`Unknown defined agent: ${name}`);
     active = name;
-    pi.appendEntry(STATE_ENTRY, { active }); await ctx.reload();
+    pi.appendEntry(STATE_ENTRY, { active }); await reload(ctx);
   }});
   pi.registerCommand("pi-define-agents-config", { description: "Update agent definitions", handler: async (args, ctx) => {
     const previous = config;
     const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied }); await writeConfig(next); config = next;
-    try { if (!findAgent(active)) active = "default"; pi.appendEntry(STATE_ENTRY, { active }); await ctx.reload(); }
+    try { if (!findAgent(active)) active = "default"; pi.appendEntry(STATE_ENTRY, { active }); await reload(ctx); }
     catch (error) { await writeConfig(previous); config = previous; throw error; }
   }});
 }
