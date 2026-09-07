@@ -91,7 +91,7 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
     state: () => ({ isPaused, isPausing }),
     pause(ctx) {
       controlContext = ctx;
-      if (!pauseOperation && !isPaused && !ctx.isIdle()) {
+      if (!pauseOperation && !isPaused) {
         const version = generation;
         pauseStopped = false; isPausing = true; persistPause(true); isPaused = false; publishPause();
         pauseOperation = (async () => {
