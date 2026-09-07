@@ -311,8 +311,12 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .model-row small { overflow-wrap: anywhere; }
 
 .pending-messages { display: grid; gap: 6px; max-height: 180px; overflow-y: auto; margin: 0 8px 8px; }
-.pending-message { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; font-size: 12px; }
-.pending-message > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pending-message small { color: var(--muted); margin-right: 8px; }
+.pending-message { justify-self: end; width: fit-content; max-width: min(82%, 600px); display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px 4px 12px 12px; background: #efede7; font-size: 12px; }
+.pending-message > span { flex: 1 1 180px; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.pending-message small { display: block; color: var(--muted); margin-bottom: 4px; font-size: 10px; }
 .pending-message button { flex-shrink: 0; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--ink); cursor: pointer; }
 .pending-message button:disabled { opacity: .5; cursor: default; }
+
+.user-message.steering-message .message-body, .pending-message.steering-message { max-width: min(72%, 520px); padding: 7px 10px; background: #dfdcd4; border-color: #cdc8be; font-size: 12px; font-weight: 400; }
+.app.dark .pending-message { background: #24231f; border-color: #393732; }
+.app.dark .user-message.steering-message .message-body, .app.dark .pending-message.steering-message { background: #191815; border-color: #302e29; color: #c4beb3; }

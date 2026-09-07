@@ -24,7 +24,10 @@ export class NativeTransport {
   private pendingMessages: PendingMessage[] = [];
   private queueSnapshot: RpcEvent = { type: "queue_update", steering: [], followUp: [] };
   private changingQueue = false;
+  private clearingQueue = false;
   private sendingPending = new Set<string>();
+  private awaitingSteering: string[] = [];
+  private steeringTimestamps = new Set<number>();
   private queueCommands: Promise<unknown> = Promise.resolve();
   private listeners = new Set<(event: RpcEvent) => void>();
   private retainedStatuses = new Map<string, RpcEvent>();
@@ -78,10 +81,31 @@ export class NativeTransport {
   }
   private emit(event: RpcEvent) {
     if (event.type === "queue_update") {
+      if (!this.clearingQueue) {
+        const remaining = [...((event.steering as string[]) ?? [])];
+        for (const text of (this.queueSnapshot.steering as string[]) ?? []) {
+          const index = remaining.indexOf(text);
+          if (index >= 0) remaining.splice(index, 1); else this.awaitingSteering.push(text);
+        }
+      }
       this.queueSnapshot = event;
       if (!this.changingQueue) this.publishQueue();
       return;
     }
+    if ((event.type === "message_start" || event.type === "message_end") && event.message) {
+      const message = event.message as Record<string, unknown>;
+      if (message.role === "user" && typeof message.timestamp === "number") {
+        const text = typeof message.content === "string" ? message.content : Array.isArray(message.content) ? message.content.filter((part) => part.type === "text").map((part) => part.text).join("") : "";
+        if (event.type === "message_start") {
+          const index = this.awaitingSteering.indexOf(text);
+          const sending = this.pendingMessages.some((item) => this.sendingPending.has(item.id) && item.behavior === "steer" && item.message === text);
+          if (index >= 0 || sending) this.steeringTimestamps.add(message.timestamp);
+          if (index >= 0) this.awaitingSteering.splice(index, 1);
+        }
+        if (this.steeringTimestamps.has(message.timestamp)) event = { ...event, message: { ...message, deliveryBehavior: "steer" } };
+      }
+    }
+    if (event.type === "agent_settled") this.awaitingSteering = [];
     if (event.type === "extension_ui_request" && event.method === "setStatus" && typeof event.statusKey === "string") {
       if (event.statusText) this.retainedStatuses.set(event.statusKey, event); else this.retainedStatuses.delete(event.statusKey);
     }
@@ -146,23 +170,30 @@ export class NativeTransport {
   }
   command<T>(command: RpcCommand): Promise<T> {
     if (command.type !== "steer" && command.type !== "follow_up") {
-      if (["prompt", "pause", "resume", "abort", "clear_queue", "new_session", "switch_session", "fork", "clone"].includes(command.type)) return this.serializeQueue(() => this.executeCommand<T>(command));
+      if (["clear_queue", "new_session", "switch_session", "fork", "clone"].includes(command.type)) return this.serializeQueue(() => this.executeCommand<T>(command));
       return this.executeCommand<T>(command);
     }
     return this.serializeQueue(async () => {
       const pending: PendingMessage = { id: crypto.randomUUID(), message: String(command.message), behavior: command.type === "steer" ? "steer" : "followUp", images: command.images as PendingMessage["images"] };
       this.pendingMessages.push(pending);
       this.sendingPending.add(pending.id);
-      try { return await this.executeCommand<T>(command); }
+      try { return await this.deliverPending<T>(pending); }
       catch (reason) { this.pendingMessages = this.pendingMessages.filter((item) => item !== pending); throw reason; }
       finally { this.sendingPending.delete(pending.id); this.publishQueue(); }
     });
+  }
+  private async deliverPending<T>(item: PendingMessage): Promise<T> {
+    // Let the runtime choose atomically: steer/queue during a run, start a new
+    // prompt if the run ended before the command arrived. Bare steer never wakes an idle agent.
+    this.sendingPending.add(item.id);
+    try { return await this.executeCommand<T>({ type: "prompt", message: item.message, streamingBehavior: item.behavior, ...(item.images?.length ? { images: item.images } : {}) }); }
+    finally { this.sendingPending.delete(item.id); }
   }
   changePendingMessage(id: string, behavior: "steer" | "followUp"): Promise<void> {
     return this.serializeQueue(async () => {
       const target = this.pendingMessages.find((item) => item.id === id);
       if (!target) return; // Already consumed by the runtime.
-      const send = (item: PendingMessage) => this.executeCommand({ type: item.behavior === "steer" ? "steer" : "follow_up", message: item.message, ...(item.images?.length ? { images: item.images } : {}) });
+      const send = (item: PendingMessage) => this.deliverPending(item);
       if (target.retry) {
         target.retry = false; target.behavior = behavior;
         try { await send(target); } catch (reason) { target.retry = true; this.publishQueue(); throw reason; }
@@ -199,9 +230,16 @@ export class NativeTransport {
   private async executeCommand<T>(command: RpcCommand) {
     const compact = command.type === "prompt" && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null;
     if (compact) command = { type: "compact", ...(compact[1]?.trim() ? { customInstructions: compact[1].trim() } : {}) };
+    if (command.type === "clear_queue") this.clearingQueue = true;
     try {
       const result = await call<T>("pi_command", { runtimeId: this.runtimeId, command });
       if (command.type === "get_state") { const state = result as { sessionFile?: string; sessionId?: string }; this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; }
+      if (command.type === "get_entries") {
+        const history = result as { entries: Array<{ message?: { role?: string; timestamp?: number; deliveryBehavior?: string } }> };
+        for (const entry of history.entries) if (entry.message?.role === "user" && this.steeringTimestamps.has(entry.message.timestamp!)) entry.message.deliveryBehavior = "steer";
+      }
+      if (["new_session", "switch_session"].includes(command.type)) { this.awaitingSteering = []; this.steeringTimestamps.clear(); }
+      if (command.type === "clear_queue") this.awaitingSteering = [];
       if (command.type === "get_commands") {
         const { commands } = result as { commands: Array<{ name: string; source: string; sourceInfo?: { source?: string; path?: string } }> };
         const fromPackage = (item: typeof commands[number], name: string) => item.sourceInfo?.source === `npm:${name}` || item.sourceInfo?.path?.split(/[\\/]/).includes(name);
@@ -222,7 +260,7 @@ export class NativeTransport {
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason); const diagnostics = this.stderrLines.join("\n");
       throw new Error(diagnostics && /disconnect|connect|start|running/i.test(message) ? `${message}\n${diagnostics}` : message);
-    }
+    } finally { if (command.type === "clear_queue") this.clearingQueue = false; }
   }
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); listener({ ...this.queueSnapshot, pendingMessages: this.pendingMessages }); this.retainedStatuses.forEach((event) => listener(event)); this.retainedRequests.forEach((event) => listener(event)); return () => this.listeners.delete(listener); }
   listSessions() { return call<SessionSummary[]>("list_sessions"); }
