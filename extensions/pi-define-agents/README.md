@@ -21,4 +21,25 @@ In piop, `web_search` is included in the default agent when globally enabled. Ex
 
 Legacy agent tool selections migrate on load: `exec_command` becomes `read`, `bash`, `grep`, `find`, and `ls`; `apply_patch` becomes `edit` and `write`. Unselected tools stay unselected.
 
+## VM tester
+
+`tester.example.json` contains a tester profile that accepts a production executable path and checks to perform. Merge its agent into the existing configuration's `agents` array. It inherits the session model and selects the `cua-vm` MCP server.
+
+On Matt's local host, register this server in Piop's Settings → MCP (the agent selection uses the server **id**):
+
+```json
+{
+  "id": "cua-vm",
+  "name": "cua-vm",
+  "transport": "stdio",
+  "command": "/home/matt/VMs/pi-ui-xubuntu/cua-mcp.sh",
+  "args": "",
+  "enabled": true
+}
+```
+
+This command matches the `mcp_servers.cua-vm` registration in local Codex configuration. Start the VM with `/home/matt/VMs/pi-ui-xubuntu/start-vm.sh` before opening a tester session, then select `tester`. The definition and wrapper require the local host.
+
+Pass the tester the absolute path to a production binary and the requested checks. The caller builds with `./node_modules/.bin/tauri build --no-bundle -- --locked`; raw Cargo builds can leave the app pointing at the development URL. The tester streams the binary over the existing SSH wrapper, verifies matching checksums, and launches it through guest CUA. This follows the September 5 deployment traces; the guest launcher determines the executable name because earlier builds used both `pi-desktop` and `codop`.
+
 `/pi-define-agents-config <base64url-json>` updates `{ "agents": [...] }` and reloads resources. piop uses this command to save definitions. Writes use temporary files and atomic publication. Older installations can import their existing agent profiles from the legacy configuration without modifying that file.
