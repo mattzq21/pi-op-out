@@ -9,7 +9,6 @@ class AppPage {
   get agentPicker() { return $('button[aria-label="Agent"]'); }
   get modelPicker() { return $('button[aria-label="Model"]'); }
   get thinkingLevelPicker() { return $('button[aria-label="Thinking level"]'); }
-  get attachFilesButton() { return $('button[aria-label="Attach files"]'); }
   get openTerminalButton() { return $('button[aria-label="Open terminal"]'); }
   get terminalPanel() { return $('section[aria-label="Session terminal"]'); }
   get addTerminalButton() { return $('button[aria-label="Add terminal"]'); }
@@ -117,7 +116,7 @@ class AppPage {
     await this.projectDialogHeading.waitForExist({ reverse: true });
   }
 
-  async chooseComposerOption(label: "Agent" | "Model" | "Thinking level", option: string) {
+  async chooseComposerOption(label: "Agent" | "Model" | "Thinking level" | "Streaming message behavior", option: string) {
     await $(`button[aria-label="${label}"]`).click();
     const choice = $(`//div[@role="listbox" and @aria-label="${label} options"]//button[.//span[normalize-space(.)="${option}"]]`);
     await choice.waitForClickable();
