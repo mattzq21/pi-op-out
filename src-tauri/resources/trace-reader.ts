@@ -1,6 +1,6 @@
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, extname, isAbsolute, join, resolve } from "node:path";
+import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -10,6 +10,18 @@ type TraceFile = { path: string; modified: number };
 type CleanMessage = { role: "user" | "assistant"; text: string };
 
 const traceRoots = () => [join(homedir(), ".piop", "sessions"), join(homedir(), ".piop", "archived")];
+
+async function piopTracePath(path: string): Promise<string> {
+  const canonical = await realpath(path);
+  for (const root of traceRoots()) {
+    let canonicalRoot: string;
+    try { canonicalRoot = await realpath(root); } catch { continue; }
+    const child = relative(canonicalRoot, canonical);
+    if (child && child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child)
+      && extname(canonical).toLowerCase() === ".jsonl" && (await stat(canonical)).isFile()) return canonical;
+  }
+  throw new Error("Only Piop traces in ~/.piop/sessions or ~/.piop/archived can be read");
+}
 
 async function traceFiles(root: string): Promise<TraceFile[]> {
   const files: TraceFile[] = [];
@@ -33,9 +45,9 @@ async function findTrace(query: string, cwd: string): Promise<{ selected?: strin
   if (!requested) throw new Error("Trace query cannot be empty");
   const expanded = requested === "~" ? homedir() : requested.startsWith("~/") ? join(homedir(), requested.slice(2)) : requested;
   const direct = isAbsolute(expanded) ? expanded : resolve(cwd, expanded);
-  try {
-    if (extname(direct).toLowerCase() === ".jsonl" && (await stat(direct)).isFile()) return { selected: direct, matches: [] };
-  } catch { /* Fall through to session discovery. */ }
+  if (isAbsolute(expanded) || requested.includes("/") || requested.includes("\\")) {
+    return { selected: await piopTracePath(direct), matches: [] };
+  }
 
   const files = (await Promise.all(traceRoots().map(traceFiles))).flat().sort((left, right) => right.modified - left.modified);
   if (requested.toLowerCase() === "latest") return { selected: files[0]?.path, matches: files.slice(0, 1) };
@@ -87,17 +99,17 @@ export default function traceReader(pi: ExtensionAPI) {
   pi.registerTool({
     name: "read_trace",
     label: "Read trace",
-    description: "Find a Pi .jsonl trace and return only original user prompts and completed assistant messages. Excludes tools, tool results, reasoning, skills, system/provider instructions, AGENTS.md, and intermediate assistant tool-call messages. Use an absolute/relative path, session id, filename fragment, or latest.",
-    promptSnippet: "Read a clean Pi trace by path, session id, filename fragment, or latest",
+    description: "Find a Piop .jsonl trace in ~/.piop/sessions or ~/.piop/archived and return only original user prompts and completed assistant messages. Excludes tools, tool results, reasoning, skills, system/provider instructions, AGENTS.md, and intermediate assistant tool-call messages. Use a Piop trace path, session id, filename fragment, or latest. Traces outside Piop storage are not supported.",
+    promptSnippet: "Read a clean Piop trace by path, session id, filename fragment, or latest",
     parameters: Type.Object({ query: Type.String({ description: "Trace path, session id, filename fragment, or the word latest" }) }),
     async execute(_id, params, _signal, _onUpdate, ctx: ExtensionContext) {
       const found = await findTrace(params.query, ctx.cwd);
       if (!found.selected) {
-        if (!found.matches.length) throw new Error(`No Pi .jsonl trace matched ${JSON.stringify(params.query)}`);
+        if (!found.matches.length) throw new Error(`No Piop .jsonl trace matched ${JSON.stringify(params.query)}`);
         const choices = found.matches.slice(0, 20).map(({ path }) => path);
         return { content: [{ type: "text", text: `More than one trace matched. Call read_trace again with one exact path:\n${choices.join("\n")}` }], details: { matches: choices } };
       }
-      const messages = cleanTrace(await readFile(found.selected, "utf8"));
+      const messages = cleanTrace(await readFile(await piopTracePath(found.selected), "utf8"));
       if (!messages.length) throw new Error("The trace contains no user prompts or completed assistant messages on its active branch");
       return { content: [{ type: "text", text: transcript(messages) }], details: { path: found.selected, messages } };
     },

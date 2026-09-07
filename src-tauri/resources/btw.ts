@@ -1,5 +1,7 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 const DESKTOP_TITLE = "__pi_desktop_btw__";
 const CUSTOM_TYPE = "pi-desktop-btw";
@@ -28,6 +30,7 @@ async function runFork(sessionFile: string, cwd: string, task: string): Promise<
   const args = executable
     ? ["--print", "--approve", "--fork", sessionFile]
     : [process.argv[1], "--print", "--approve", "--fork", sessionFile];
+  args.push("--session-dir", join(homedir(), ".piop", "sessions"));
   const codexCompactionExtension = process.env.PI_DESKTOP_CODEX_COMPACTION_EXTENSION;
   if (codexCompactionExtension) args.push("--extension", codexCompactionExtension);
   const codexWebSearchExtension = process.env.PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION;
