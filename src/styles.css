@@ -306,3 +306,6 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .find-highlights { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
 .find-highlights span { position: absolute; background: #e5b83c44; border-radius: 2px; }
 .find-highlights span.active { background: #ee963966; outline: 1px solid #efaa56; }
+
+.config-row.model-row { grid-template-columns: 34px minmax(0, 1fr) auto; }
+.model-row small { overflow-wrap: anywhere; }
