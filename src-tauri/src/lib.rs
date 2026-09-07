@@ -1407,6 +1407,7 @@ fn stop_pi(runtime: State<PiRuntime>, runtime_id: String, discard_blank: Option<
 }
 
 fn execute_pi_command(runtime: &PiRuntime, runtime_id: &str, mut command: Value) -> Result<Value, String> {
+    let timeout = if command.get("type").and_then(Value::as_str) == Some("abort") { Duration::from_secs(5) } else { Duration::from_secs(30) };
     let resume = command.get("type").and_then(Value::as_str) == Some("resume");
     let fire_and_forget = command.get("type").and_then(Value::as_str) == Some("extension_ui_response");
     let id = command.get("id").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -1431,7 +1432,7 @@ fn execute_pi_command(runtime: &PiRuntime, runtime_id: &str, mut command: Value)
     })();
     if let Err(error) = write_result { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.to_string(), id.clone()))); return Err(error); }
     if fire_and_forget { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.to_string(), id.clone()))); return Ok(Value::Null); }
-    let result = receiver.recv_timeout(Duration::from_secs(30)).map_err(|_| { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.to_string(), id))); "Pi command timed out".to_string() })??;
+    let result = receiver.recv_timeout(timeout).map_err(|_| { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.to_string(), id))); "Pi command timed out".to_string() })??;
     if resume {
         if let Some(message) = result.get("resumeMessage").and_then(Value::as_str) {
             execute_pi_command(runtime, runtime_id, json!({"type":"prompt","message":message}))?;

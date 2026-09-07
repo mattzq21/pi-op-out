@@ -117,7 +117,7 @@ function ConversationTurnView({ messages, gitDiffs, debug, active, retryable, pa
   const parsed = userIndex >= 0 && (!messages[userIndex].entryId || messages[userIndex].sequenceMarkerAuthorized) ? parseSequencePrompt(textOf(messages[userIndex].content)) : { text: userIndex >= 0 ? textOf(messages[userIndex].content) : "" };
   if (parsed.step && !parsed.step.visible) return null;
   const shown = parsed.step ? messages.map((message, index) => index === userIndex ? { ...message, content: parsed.text } : message) : messages;
-  const promptContext = userIndex >= 0 ? shown[userIndex].promptContext : undefined;
+  const promptContext = userIndex >= 0 && shown[userIndex].deliveryBehavior !== "steer" ? shown[userIndex].promptContext : undefined;
 
   let finalIndex = -1;
   for (let index = shown.length - 1; index >= 0; index -= 1) {
