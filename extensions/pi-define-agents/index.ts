@@ -168,8 +168,17 @@ export default async function defineAgents(pi: ExtensionAPI) {
       try { applyingAgentModel = modelName; const selected = await pi.setModel(model); if (!selected && applyingAgentModel === modelName) applyingAgentModel = undefined; } catch (error) { if (applyingAgentModel === modelName) applyingAgentModel = undefined; pi.setActiveTools([]); return `Agent "${agent.name}" could not select ${modelName}: ${error instanceof Error ? error.message : String(error)}`; }
     }
     const effort = agent.effort.trim() || runtimeDefaults?.effort; if (effort && effort !== pi.getThinkingLevel()) { applyingAgentEffort = effort; pi.setThinkingLevel(effort as any); }
+    pi.setActiveTools([]);
     const tools = new Set(agent.tools);
-    for (const info of pi.getAllTools()) if (agent.mcpServers.some((server) => info.name.startsWith(`mcp_${safeName(server)}_`))) tools.add(info.name);
+    if (process.env.PI_DESKTOP_MCP_CONFIG) {
+      const selection: { serverIds: string[]; agentName: string; sessionId: string; ready?: Promise<string[]> } = { serverIds: agent.mcpServers, agentName: agent.name, sessionId: ctx.sessionManager.getSessionId() };
+      pi.events.emit("piop:mcp:select", selection);
+      if (!selection.ready) return `Agent "${agent.name}" cannot run because the MCP bridge is unavailable`;
+      try { for (const tool of await selection.ready) tools.add(tool); }
+      catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" could not connect its MCP servers: ${error instanceof Error ? error.message : String(error)}`; }
+    } else {
+      for (const info of pi.getAllTools()) if (agent.mcpServers.some((server) => info.name.startsWith(`mcp_${safeName(server)}_`))) tools.add(info.name);
+    }
     pi.setActiveTools([...tools]); return undefined;
   };
   const useAgent = async (name: string, ctx: ExtensionContext) => {

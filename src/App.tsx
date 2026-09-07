@@ -100,7 +100,7 @@ export default function App() {
   }, [closeTransportDialogs, runtimePool]);
   const [statuses, setStatuses] = useState<Record<string, string>>({}); const [widgets, setWidgets] = useState<Record<string, string[]>>({});
   const [extensionOwner, setExtensionOwner] = useState(transport);
-  const [mcpStatuses, setMcpStatuses] = useState<Record<string, { status: "connected" | "stopped" | "error"; error?: string }>>({});
+  const [mcpStatuses, setMcpStatuses] = useState<Record<string, { status: "starting" | "connected" | "stopped" | "error"; error?: string }>>({});
   const [renameSession, setRenameSession] = useState<RenameTarget>();
   const [projectOpen, setProjectOpen] = useState(false);
   const [worktreeTarget, setWorktreeTarget] = useState<WorktreeTarget>();
@@ -254,7 +254,7 @@ export default function App() {
           setDefinedAgents(capability);
           if (capability) void refreshSession().catch(() => undefined);
         } catch { setDefinedAgents(undefined); } }
-        else if (request.method === "setStatus" && request.statusKey === MCP_STATUS_KEY) { setExtensionOwner(transport); try { const values = request.statusText?.startsWith("json:") ? JSON.parse(request.statusText.slice(5)) as Array<{ id: string; status: "connected" | "stopped" | "error"; error?: string }> : []; setMcpStatuses(Object.fromEntries(values.map((value) => [value.id, { status: value.status, error: value.error }]))); } catch { setMcpStatuses({}); } }
+        else if (request.method === "setStatus" && request.statusKey === MCP_STATUS_KEY) { setExtensionOwner(transport); try { const values = request.statusText?.startsWith("json:") ? JSON.parse(request.statusText.slice(5)) as Array<{ id: string; status: "starting" | "connected" | "stopped" | "error"; error?: string }> : []; setMcpStatuses(Object.fromEntries(values.map((value) => [value.id, { status: value.status, error: value.error }]))); } catch { setMcpStatuses({}); } }
         else if (request.method === "setStatus" && request.statusKey && request.statusKey !== PROMPT_CONTEXT_STATUS_KEY) { setExtensionOwner(transport); setStatuses((current) => { const next = { ...current }; if (request.statusText) next[request.statusKey!] = request.statusText; else delete next[request.statusKey!]; return next; }); }
         else if (request.method === "setWidget" && request.widgetKey) { setExtensionOwner(transport); setWidgets((current) => { const next = { ...current }; if (request.widgetLines) next[request.widgetKey!] = request.widgetLines; else delete next[request.widgetKey!]; return next; }); }
         else if (request.method === "setTitle") document.title = request.title || "piop";

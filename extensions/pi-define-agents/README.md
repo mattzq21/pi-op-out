@@ -32,14 +32,15 @@ On Matt's local host, register this server in Piop's Settings → MCP (the agent
   "id": "cua-vm",
   "name": "cua-vm",
   "transport": "stdio",
-  "command": "/home/matt/VMs/pi-ui-xubuntu/cua-mcp.sh",
-  "args": "",
+  "command": "/home/matt/Projects/cua-vm-broker/cua-vm-broker",
+  "args": "mcp --instance-env PIOP_CUA_INSTANCE_ID",
+  "startupTimeoutSec": 300,
   "enabled": true
 }
 ```
 
-This command matches the `mcp_servers.cua-vm` registration in local Codex configuration. Start the VM with `/home/matt/VMs/pi-ui-xubuntu/start-vm.sh` before opening a tester session, then select `tester`. The definition and wrapper require the local host.
+The broker starts or reuses an isolated VM when the tester connects. Piop supplies a stable identity for each conversation, agent name, and MCP server ID. Different conversations get separate VMs, while reconnects reuse their own VM. Selecting another agent releases the previous connection. Configure the broker on the machine where Pi runs; local paths in uploads refer to that machine.
 
-Pass the tester the absolute path to a production binary and the requested checks. The caller builds with `./node_modules/.bin/tauri build --no-bundle -- --locked`; raw Cargo builds can leave the app pointing at the development URL. The tester streams the binary over the existing SSH wrapper, verifies matching checksums, and launches it through guest CUA. This follows the September 5 deployment traces; the guest launcher determines the executable name because earlier builds used both `pi-desktop` and `codop`.
+Pass the tester the absolute path to a production binary and the requested checks. The caller builds with `./node_modules/.bin/tauri build --no-bundle -- --locked`; raw Cargo builds can leave the app pointing at the development URL. The tester uses `broker_exec` to inspect the guest launcher and `broker_upload` to transfer the build through its existing MCP lease, then tests through CUA. See [the integration contract](../../docs/cua-vm-broker.md).
 
 `/pi-define-agents-config <base64url-json>` updates `{ "agents": [...] }` and reloads resources. piop uses this command to save definitions. Writes use temporary files and atomic publication. Older installations can import their existing agent profiles from the legacy configuration without modifying that file.

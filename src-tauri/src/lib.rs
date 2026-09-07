@@ -21,6 +21,7 @@ struct PiProcess {
     stdin: Arc<Mutex<ChildStdin>>,
     ephemeral_session: Option<EphemeralSession>,
     blank_cleanup: BlankSessionCleanup,
+    command_timeout: Duration,
 }
 
 struct BlankSessionCleanup { path: Option<String>, id: Option<String>, host: Option<RemoteHost>, submitted: bool }
@@ -406,6 +407,11 @@ fn validate_mcp_servers(settings: &AppSettings) -> Result<(), String> {
         let id = server.get("id").and_then(Value::as_str).unwrap_or(""); let name = server.get("name").and_then(Value::as_str).unwrap_or("").trim();
         if id.trim().is_empty() || !ids.insert(id) { return Err("Every MCP server needs a unique id".into()); }
         if name.is_empty() { return Err("Every MCP server needs a name".into()); }
+        if let Some(timeout) = server.get("startupTimeoutSec") {
+            if !timeout.as_u64().map(|seconds| (1..=600).contains(&seconds)).unwrap_or(false) {
+                return Err(format!("{name}: startup timeout must be a whole number between 1 and 600 seconds"));
+            }
+        }
         match server.get("transport").and_then(Value::as_str).unwrap_or("stdio") {
             "stdio" => if server.get("command").and_then(Value::as_str).unwrap_or("").trim().is_empty() { return Err(format!("{name}: command can't be empty")); },
             "http" => {
@@ -1341,7 +1347,12 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
     let stdout = child.stdout.take().ok_or("Pi stdout was unavailable")?;
     let stderr = child.stderr.take().ok_or("Pi stderr was unavailable")?;
     let blank_cleanup = BlankSessionCleanup { path: session_path.clone(), id: session_id.clone(), host: if host_id == "local" { None } else { Some(remote_host(&settings, &host_id)?.clone()) }, submitted: ephemeral };
-    runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { child, stdin: stdin.clone(), ephemeral_session, blank_cleanup });
+    // Commands queued behind extension startup must allow the selected MCP to boot.
+    let command_timeout = Duration::from_secs(settings.mcp_servers.iter()
+        .filter(|server| server.get("enabled").and_then(Value::as_bool) == Some(true))
+        .map(|server| server.get("startupTimeoutSec").and_then(Value::as_u64).unwrap_or(10).clamp(1, 600))
+        .max().unwrap_or(0) + 30);
+    runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { child, stdin: stdin.clone(), ephemeral_session, blank_cleanup, command_timeout });
     runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id.clone(), AgentAddress { host_id: host_id.clone(), session_id: session_id.clone(), session_path: session_path.clone(), worktree: None, presence_id: None, working: false });
     let pending = runtime.pending.clone(); let processes = runtime.processes.clone(); let active_agents = runtime.active_agents.clone(); let event_app = app.clone(); let event_runtime_id = runtime_id.clone();
     thread::spawn(move || {
@@ -1422,16 +1433,18 @@ fn execute_pi_command(runtime: &PiRuntime, runtime_id: &str, mut command: Value)
     }
     let (sender, receiver) = mpsc::channel();
     runtime.pending.lock().map_err(|_| "Pending command lock was poisoned")?.insert((runtime_id.to_string(), id.clone()), sender);
+    let mut command_timeout = Duration::from_secs(30);
     let write_result = (|| {
         let process_guard = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?;
         let process = process_guard.get(runtime_id).ok_or("Pi is not running")?;
+        command_timeout = process.command_timeout;
         let mut stdin = process.stdin.lock().map_err(|_| "Pi stdin lock was poisoned")?;
         serde_json::to_writer(&mut *stdin, &command).map_err(|error| error.to_string())?;
         stdin.write_all(b"\n").and_then(|_| stdin.flush()).map_err(|error| error.to_string())
     })();
     if let Err(error) = write_result { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.to_string(), id.clone()))); return Err(error); }
     if fire_and_forget { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.to_string(), id.clone()))); return Ok(Value::Null); }
-    let result = receiver.recv_timeout(Duration::from_secs(30)).map_err(|_| { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.to_string(), id))); "Pi command timed out".to_string() })??;
+    let result = receiver.recv_timeout(command_timeout).map_err(|_| { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.to_string(), id))); "Pi command timed out".to_string() })??;
     if resume {
         if let Some(message) = result.get("resumeMessage").and_then(Value::as_str) {
             execute_pi_command(runtime, runtime_id, json!({"type":"prompt","message":message}))?;
