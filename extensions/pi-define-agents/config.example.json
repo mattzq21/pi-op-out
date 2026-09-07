@@ -5,7 +5,6 @@
       "description": "General-purpose agent",
       "model": "",
       "effort": "high",
-      "systemPrompt": "",
       "agentsMd": "",
       "tools": [
         "read",

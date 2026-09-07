@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { formatSkillsForPrompt, type BuildSystemPromptOptions } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-export type Agent = { name: string; description: string; model: string; effort: string; systemPrompt: string; agentsMd: string; tools: string[]; skills: string[]; mcpServers: string[] };
+export type Agent = { name: string; description: string; model: string; effort: string; systemPrompt?: string; agentsMd: string; tools: string[]; skills: string[]; mcpServers: string[] };
 type RuntimeDefaults = { model: string; effort: string };
 
 
@@ -38,7 +38,7 @@ Guidelines:
 - Show file paths clearly when working with files`;
 
 type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean };
-const fallbackConfig: Config = { agents: [{ name: "default", description: "General-purpose agent", model: "", effort: "high", systemPrompt: "", agentsMd: "", tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
+const fallbackConfig: Config = { agents: [{ name: "default", description: "General-purpose agent", model: "", effort: "high", agentsMd: "", tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
 function defaultAgent(): Agent {
   const agent = structuredClone(fallbackConfig.agents[0]);
   if (desktopList("PI_DESKTOP_ALLOWED_TOOLS")?.includes("web_search")) agent.tools.push("web_search");
@@ -58,10 +58,15 @@ async function writeConfig(value: Config, createOnly = false) {
 }
 
 // Collapse the retired field at the storage boundary; runtime profiles have one prompt.
-function systemPromptFromStoredAgent(agent: Agent & { developerPrompt?: unknown }): string {
-  const prompt = typeof agent.systemPrompt === "string" ? agent.systemPrompt : "";
+function systemPromptFromStoredAgent(agent: Agent & { developerPrompt?: unknown }): string | undefined {
+  const prompt = typeof agent.systemPrompt === "string" ? agent.systemPrompt : undefined;
   const legacy = typeof agent.developerPrompt === "string" ? agent.developerPrompt : "";
-  return legacy.trim() ? `${prompt.trim() ? prompt : DEFAULT_SYSTEM_PROMPT}\n\n${legacy}` : prompt;
+  if ("developerPrompt" in agent) {
+    // Profiles from before the single-prompt format used blank to inherit.
+    const inherited = prompt?.trim() ? prompt : undefined;
+    return legacy.trim() ? `${inherited ?? DEFAULT_SYSTEM_PROMPT}\n\n${legacy}` : inherited;
+  }
+  return prompt;
 }
 
 function normalize(value: Partial<Config>): Config {
@@ -197,7 +202,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   });
   pi.on("before_agent_start", (event, ctx) => {
     const agent = currentAgent(); if (!agent) return;
-    const base = buildAgentSystemPrompt(agent.systemPrompt.trim() ? agent.systemPrompt : DEFAULT_SYSTEM_PROMPT, event.systemPromptOptions, event.systemPrompt);
+    const base = buildAgentSystemPrompt(agent.systemPrompt ?? DEFAULT_SYSTEM_PROMPT, event.systemPromptOptions, event.systemPrompt);
     const additions = agent.agentsMd.trim() ? `# Agent AGENTS.md\n\n${agent.agentsMd}` : "";
     const systemPrompt = additions ? `${base}\n\n${additions}` : base;
     return { systemPrompt: `${systemPrompt}\n\nCurrent working directory ${ctx.cwd.replace(/\\/g, "/")}` };

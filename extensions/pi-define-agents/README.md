@@ -15,7 +15,7 @@ The extension creates `config.json` beside itself on first load. `config.example
 
 ## Configuration
 
-All agents use the shared system prompt copied from the supplied `SYSTEM.md`. An empty System prompt field inherits it; a nonempty field replaces it for that agent. This applies to new and existing profiles. Pi's append prompt, discovered project instructions, and skills remain included. Agent AGENTS.md follows, then the final line `Current working directory {project dir}` uses the session's actual directory. Customize each agent under Settings → Agents. Existing profiles with a separate instruction field are migrated into their system prompt on load, preserving the inherited default when applicable.
+Agents inherit the built-in default system prompt when `systemPrompt` is omitted from `config.json`. An explicit string replaces it, including `"systemPrompt": ""` for an empty base prompt. In Settings → Agents, “Use default system prompt” omits the field when saved; turning it off allows an empty prompt. Typing in the prompt field switches to a custom prompt. Pi's append prompt, discovered project instructions, and skills remain included. Agent AGENTS.md follows, then the final line `Current working directory {project dir}` uses the session's actual directory. Customize each agent under Settings → Agents. Existing profiles with a separate instruction field are migrated into their system prompt on load, preserving the inherited default when applicable.
 
 In piop, `web_search` is included in the default agent when globally enabled. Existing profiles receive it once on upgrade; subsequent per-agent opt-outs are preserved. New agents created in Settings inherit all globally enabled tools.
 
