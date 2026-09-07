@@ -15,7 +15,7 @@ export interface PromptContextInfo {
 export interface AgentState { model: Model | null; thinkingLevel: string; isStreaming: boolean; isPaused?: boolean; isPausing?: boolean; sessionFile?: string; sessionId: string; sessionName?: string; messageCount: number; pendingMessageCount: number; activity?: string; contextUsage?: ContextUsage; }
 export interface ExtensionUiRequest { type: "extension_ui_request"; id: string; method: "select" | "confirm" | "input" | "editor" | "notify" | "setStatus" | "setWidget" | "setTitle" | "set_editor_text"; title?: string; message?: string; error?: string; options?: string[]; placeholder?: string; prefill?: string; notifyType?: "info" | "warning" | "error"; statusKey?: string; statusText?: string; widgetKey?: string; widgetLines?: string[]; widgetPlacement?: "aboveEditor" | "belowEditor"; text?: string; }
 export interface Model { provider: string; id: string; name?: string; reasoning?: boolean; contextWindow?: number; }
-export interface AgentProfile { name: string; description: string; model: string; effort: string; systemPrompt: string; developerPrompt: string; agentsMd: string; tools: string[]; skills: string[]; mcpServers: string[]; }
+export interface AgentProfile { name: string; description: string; model: string; effort: string; systemPrompt: string; agentsMd: string; tools: string[]; skills: string[]; mcpServers: string[]; }
 export interface AgentConfig { agents: AgentProfile[]; }
 export interface DefinedAgentsCapability { version: number; active: string; config: { agents: AgentProfile[] }; }
 export interface RpcCommand { id?: string; type: string; [key: string]: unknown; }

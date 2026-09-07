@@ -51,8 +51,8 @@ const acceptanceAgents = (): DefinedAgentsCapability => ({
   active: "default",
   config: {
     agents: [
-      { name: "default", description: "Default acceptance agent", model: "", effort: "high", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: ["read"], skills: [], mcpServers: [] },
-      { name: "reviewer", description: "Reviews acceptance changes", model: "", effort: "off", systemPrompt: "Review carefully.", developerPrompt: "", agentsMd: "", tools: ["read"], skills: [], mcpServers: [] },
+      { name: "default", description: "Default acceptance agent", model: "", effort: "high", systemPrompt: "", agentsMd: "", tools: ["read"], skills: [], mcpServers: [] },
+      { name: "reviewer", description: "Reviews acceptance changes", model: "", effort: "off", systemPrompt: "Review carefully.", agentsMd: "", tools: ["read"], skills: [], mcpServers: [] },
     ],
   },
 });

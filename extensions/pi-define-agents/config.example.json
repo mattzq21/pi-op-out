@@ -6,7 +6,6 @@
       "model": "",
       "effort": "high",
       "systemPrompt": "",
-      "developerPrompt": "",
       "agentsMd": "",
       "tools": [
         "read",
