@@ -118,8 +118,6 @@ function defaultSystemPrompt(prompt: string, options: BuildSystemPromptOptions, 
   if (projectContext) sections.push(projectContext);
   const readTool = (["read", "bash"] as const).find((tool) => (options.selectedTools ?? ["read", "bash", "edit", "write"]).includes(tool));
   if (readTool && options.skills?.length) sections.push(formatSkillsForPrompt(options.skills, readTool));
-  const workingDirectory = currentPrompt.match(/\n(Current working directory: [^\n]*)\n?$/)?.[1];
-  if (workingDirectory) sections.push(workingDirectory);
   return sections.join("\n\n");
 }
 
@@ -185,11 +183,12 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (error) { ctx.ui.notify(error, "error"); return { action: "handled" }; }
     return { action: "continue" };
   });
-  pi.on("before_agent_start", (event) => {
+  pi.on("before_agent_start", (event, ctx) => {
     const agent = currentAgent(); if (!agent) return;
     const base = agent.name === "default" ? defaultSystemPrompt(agent.systemPrompt, event.systemPromptOptions, event.systemPrompt) : event.systemPrompt;
     const additions = [agent.name === "default" ? "" : agent.systemPrompt, agent.developerPrompt, agent.agentsMd ? `# Agent AGENTS.md\n\n${agent.agentsMd}` : ""].filter((text) => text.trim()).join("\n\n");
-    return { systemPrompt: additions ? `${base}\n\n${additions}` : base };
+    const systemPrompt = additions ? `${base}\n\n${additions}` : base;
+    return { systemPrompt: agent.name === "default" ? `${systemPrompt}\n\nCurrent working directory ${ctx.cwd.replace(/\\/g, "/")}` : systemPrompt };
   });
   pi.registerCommand("pi-define-agents-use", { description: "Select a defined agent", handler: async (args, ctx) => {
     const argument = args.trim(); let name = argument; try { const decoded = decode<unknown>(argument); if (typeof decoded === "string") name = decoded; } catch { /* Plain CLI name. */ }
