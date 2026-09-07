@@ -19,7 +19,7 @@ cache_source="$repo_root/src-tauri/target"
 
 if [ -d "$cache_source" ] && [ ! -e src-tauri/target ]; then
   mkdir -p src-tauri
-  cp -a --reflink=auto "$cache_source" src-tauri/target/debug/build
+  cp -a --reflink=auto "$cache_source" src-tauri/target
 fi'''
 
 [cleanup]
