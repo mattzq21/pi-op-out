@@ -38,7 +38,7 @@ Guidelines:
 - Show file paths clearly when working with files`;
 
 type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean };
-const fallbackConfig: Config = { agents: [{ name: "default", description: "General-purpose agent", model: "", effort: "high", systemPrompt: DEFAULT_SYSTEM_PROMPT, developerPrompt: "", agentsMd: "", tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
+const fallbackConfig: Config = { agents: [{ name: "default", description: "General-purpose agent", model: "", effort: "high", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
 function defaultAgent(): Agent {
   const agent = structuredClone(fallbackConfig.agents[0]);
   if (desktopList("PI_DESKTOP_ALLOWED_TOOLS")?.includes("web_search")) agent.tools.push("web_search");
@@ -60,7 +60,7 @@ async function writeConfig(value: Config, createOnly = false) {
 function normalize(value: Partial<Config>): Config {
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => agent && typeof agent.name === "string" && agent.name.length > 0).map((agent) => ({
     name: agent.name, description: typeof agent.description === "string" ? agent.description : "", model: typeof agent.model === "string" ? agent.model : "", effort: typeof agent.effort === "string" ? agent.effort : fallbackConfig.agents[0].effort,
-    systemPrompt: typeof agent.systemPrompt === "string" && agent.systemPrompt.trim() ? agent.systemPrompt : agent.name === "default" ? DEFAULT_SYSTEM_PROMPT : "", developerPrompt: typeof agent.developerPrompt === "string" ? agent.developerPrompt : "", agentsMd: typeof agent.agentsMd === "string" ? agent.agentsMd : "",
+    systemPrompt: typeof agent.systemPrompt === "string" ? agent.systemPrompt : "", developerPrompt: typeof agent.developerPrompt === "string" ? agent.developerPrompt : "", agentsMd: typeof agent.agentsMd === "string" ? agent.agentsMd : "",
     tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => typeof item === "string") : defaultAgent().tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => typeof item === "string") : [], mcpServers: Array.isArray(agent.mcpServers) ? agent.mcpServers.filter((item): item is string => typeof item === "string" && item !== "filesystem") : [],
   })) : [];
   const unique = supplied.filter((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) === index);
@@ -109,8 +109,8 @@ function agentToolError(pi: ExtensionAPI, agent: Agent) {
   return denied.length ? `Agent "${agent.name}" cannot run because Pi does not allow its configured tool${denied.length === 1 ? "" : "s"}: ${denied.join(", ")}` : undefined;
 }
 
-// Keep Pi's discovered context and skills when replacing the default agent's base instructions.
-function defaultSystemPrompt(prompt: string, options: BuildSystemPromptOptions, currentPrompt: string): string {
+// Keep Pi's discovered context and skills when replacing an agent's base instructions.
+function buildAgentSystemPrompt(prompt: string, options: BuildSystemPromptOptions, currentPrompt: string): string {
   const sections = [prompt];
   if (options.appendSystemPrompt) sections.push(options.appendSystemPrompt);
   // The context-window extension may already have moved these into a context message.
@@ -185,10 +185,10 @@ export default async function defineAgents(pi: ExtensionAPI) {
   });
   pi.on("before_agent_start", (event, ctx) => {
     const agent = currentAgent(); if (!agent) return;
-    const base = agent.name === "default" ? defaultSystemPrompt(agent.systemPrompt, event.systemPromptOptions, event.systemPrompt) : event.systemPrompt;
-    const additions = [agent.name === "default" ? "" : agent.systemPrompt, agent.developerPrompt, agent.agentsMd ? `# Agent AGENTS.md\n\n${agent.agentsMd}` : ""].filter((text) => text.trim()).join("\n\n");
+    const base = buildAgentSystemPrompt(agent.systemPrompt.trim() ? agent.systemPrompt : DEFAULT_SYSTEM_PROMPT, event.systemPromptOptions, event.systemPrompt);
+    const additions = [agent.developerPrompt, agent.agentsMd ? `# Agent AGENTS.md\n\n${agent.agentsMd}` : ""].filter((text) => text.trim()).join("\n\n");
     const systemPrompt = additions ? `${base}\n\n${additions}` : base;
-    return { systemPrompt: agent.name === "default" ? `${systemPrompt}\n\nCurrent working directory ${ctx.cwd.replace(/\\/g, "/")}` : systemPrompt };
+    return { systemPrompt: `${systemPrompt}\n\nCurrent working directory ${ctx.cwd.replace(/\\/g, "/")}` };
   });
   pi.registerCommand("pi-define-agents-use", { description: "Select a defined agent", handler: async (args, ctx) => {
     const argument = args.trim(); let name = argument; try { const decoded = decode<unknown>(argument); if (typeof decoded === "string") name = decoded; } catch { /* Plain CLI name. */ }
