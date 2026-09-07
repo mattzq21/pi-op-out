@@ -1,6 +1,6 @@
 export type Role = "user" | "assistant" | "tool" | "system";
 export type ContentPart = { type: "text"; text: string } | { type: "thinking"; thinking: string } | { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown>; partialArgs?: string };
-export interface ChatMessage { id: string; entryId?: string; role: Role; content: string | ContentPart[]; customType?: string; timestamp?: number; completedAt?: number; model?: string; streaming?: boolean; stopReason?: "stop" | "length" | "toolUse" | "error" | "aborted"; errorMessage?: string; toolName?: string; toolStatus?: "running" | "done" | "error"; promptContext?: PromptContextInfo; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning?: number; totalTokens: number }; }
+export interface ChatMessage { deliveryBehavior?: "steer" | "followUp"; id: string; entryId?: string; role: Role; content: string | ContentPart[]; customType?: string; timestamp?: number; completedAt?: number; model?: string; streaming?: boolean; stopReason?: "stop" | "length" | "toolUse" | "error" | "aborted"; errorMessage?: string; toolName?: string; toolStatus?: "running" | "done" | "error"; promptContext?: PromptContextInfo; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning?: number; totalTokens: number }; }
 export interface SessionSummary { id: string; path: string; name: string; project: string; cwd: string; cwdExists?: boolean; projectRoot?: string | null; projectKind?: "no-repo" | "main" | "worktree" | null; preview: string; messageCount: number; apiCost: number; hostId?: string; hostName?: string; }
 export interface ChatMessage { sequenceMarkerAuthorized?: boolean; contextCheckpoint?: boolean; }
 export interface ContextUsage { tokens: number | null; contextWindow: number; percent: number | null; }
@@ -12,7 +12,8 @@ export interface PromptContextInfo {
   skills: Array<{ name: string; description: string; filePath: string }>;
   tokens: { system: number; instructions: number; tools: number; skills: number };
 }
-export interface AgentState { model: Model | null; thinkingLevel: string; isStreaming: boolean; isPaused?: boolean; isPausing?: boolean; sessionFile?: string; sessionId: string; sessionName?: string; messageCount: number; pendingMessageCount: number; activity?: string; contextUsage?: ContextUsage; }
+export interface PendingMessage { id: string; message: string; behavior: "steer" | "followUp"; images?: ImageAttachment[]; retry?: boolean; }
+export interface AgentState { pendingMessages?: PendingMessage[]; model: Model | null; thinkingLevel: string; isStreaming: boolean; isPaused?: boolean; isPausing?: boolean; sessionFile?: string; sessionId: string; sessionName?: string; messageCount: number; pendingMessageCount: number; activity?: string; contextUsage?: ContextUsage; }
 export interface ExtensionUiRequest { type: "extension_ui_request"; id: string; method: "select" | "confirm" | "input" | "editor" | "notify" | "setStatus" | "setWidget" | "setTitle" | "set_editor_text"; title?: string; message?: string; error?: string; options?: string[]; placeholder?: string; prefill?: string; notifyType?: "info" | "warning" | "error"; statusKey?: string; statusText?: string; widgetKey?: string; widgetLines?: string[]; widgetPlacement?: "aboveEditor" | "belowEditor"; text?: string; }
 export interface Model { provider: string; id: string; name?: string; reasoning?: boolean; contextWindow?: number; }
 export interface AgentProfile { name: string; description: string; model: string; effort: string; systemPrompt: string; developerPrompt: string; agentsMd: string; tools: string[]; skills: string[]; mcpServers: string[]; }
@@ -34,3 +35,5 @@ export interface AppSettings { defaultModel: string; hiddenModels: string[]; def
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
 export type GitDiffSnapshot = string;
 export type GitDiffSnapshots = Record<string, GitDiffSnapshot>;
+
+export type PendingMessageAction = "steer" | "followUp" | "remove" | "moveUp" | "moveDown" | { type: "move"; targetId: string; edge: "before" | "after" };

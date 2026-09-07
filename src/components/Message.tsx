@@ -115,6 +115,7 @@ export function Message({ message, diff, expanded = false, showActions = true, t
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [branching, setBranching] = useState(false);
   const branchingRef = useRef(false);
+
   const copy = async () => {
     try {
       if (!navigator.clipboard) throw new Error("Clipboard access is unavailable");
@@ -135,7 +136,7 @@ export function Message({ message, diff, expanded = false, showActions = true, t
   }
   if (message.role === "user") {
     const { skills, text, literalSkill } = userMessageParts(textOf(message.content));
-    return <article className="message user-message">
+    return <article className={`message user-message${message.deliveryBehavior === "steer" ? " steering-message" : ""}`}>
       <div className="message-body">{skills.map((skill) => <span className="skill-reference" key={skill}>${skill}</span>)}{text && (literalSkill ? <span className="literal-skill-content">{text}</span> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>)}</div>
       <div className="message-actions">
         <IconButton label={copyState === "copied" ? "Message copied" : copyState === "error" ? "Copy failed" : "Copy message"} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>

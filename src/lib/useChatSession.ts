@@ -30,7 +30,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
     const nextState = stateResult.value;
     if (liveRevision.current === revision) {
       discardPendingUpdates();
-      setState({ ...nextState, ...(statsResult.status === "fulfilled" ? { contextUsage: statsResult.value.contextUsage } : {}) });
+      setState((current) => ({ ...nextState, pendingMessages: current.pendingMessages, ...(statsResult.status === "fulfilled" ? { contextUsage: statsResult.value.contextUsage } : {}) }));
       if (historyResult.status === "fulfilled") { for (const entry of historyResult.value.entries) { const marker = resumeMarker(entry); if (marker) resumeMarkers.current.add(marker); } setMessages(branchMessages(historyResult.value.entries, historyResult.value.leafId)); }
       if (modelResult.status === "fulfilled") setModels(modelResult.value.models);
       if (thinkingResult.status === "fulfilled") setThinkingLevels(thinkingResult.value.levels);
@@ -50,7 +50,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
       } catch { /* Ignore malformed extension status data. */ }
     }
     if (event.type === "entry_appended" && event.entry) { const marker = resumeMarker(event.entry as PiEntry); if (marker) { resumeMarkers.current.add(marker); setMessages(checkpointLatestUser); } }
-    if (["agent_start", "agent_end", "agent_settled", "pause_state", "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end"].includes(event.type)) liveRevision.current += 1;
+    if (["agent_start", "agent_end", "agent_settled", "pause_state", "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end", "queue_update"].includes(event.type)) liveRevision.current += 1;
     if (event.type === "agent_start") setState((current) => ({ ...current, isStreaming: true, isPaused: false }));
     if (event.type === "pause_state") setState((current) => ({ ...current, isPaused: event.isPaused === true, isPausing: event.isPausing === true, ...(event.isPaused === true && event.isPausing !== true ? { isStreaming: false, activity: undefined } : {}) }));
     if (event.type === "pause_state" && event.isPaused === true && event.isPausing !== true) { flush(); setMessages(checkpointLatestUser); }
@@ -76,7 +76,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
     if (event.type === "tool_execution_start") { const target = event.toolName === "call_agent" && event.args && typeof event.args === "object" ? String((event.args as { target?: unknown }).target ?? "") : ""; const message: ChatMessage = { id: String(event.toolCallId), role: "tool", toolName: target ? `${target} called` : String(event.toolName), toolStatus: "running", content: JSON.stringify(event.args ?? {}, null, 2), timestamp: Date.now() }; setMessages((current) => [...current.filter((item) => item.id !== message.id), message]); }
     if (event.type === "tool_execution_update") queue((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.partialResult), toolStatus: "running" } : item));
     if (event.type === "tool_execution_end") { flush(); setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.result), toolStatus: event.isError ? "error" : "done" } : item)); }
-    if (event.type === "queue_update") setState((current) => ({ ...current, pendingMessageCount: [...((event.steering as unknown[]) ?? []), ...((event.followUp as unknown[]) ?? [])].length }));
+    if (event.type === "queue_update") setState((current) => ({ ...current, pendingMessages: event.pendingMessages as AgentState["pendingMessages"], pendingMessageCount: [...((event.steering as unknown[]) ?? []), ...((event.followUp as unknown[]) ?? [])].length }));
     if (event.type === "compaction_start") setState((current) => ({ ...current, activity: "Compacting context…" }));
     if (event.type === "compaction_end") setState((current) => ({ ...current, activity: undefined, contextUsage: contextUsageAfterCompaction(current.contextUsage, event) }));
     if (event.type === "auto_retry_start") setState((current) => ({ ...current, activity: `Retrying · attempt ${event.attempt}` }));

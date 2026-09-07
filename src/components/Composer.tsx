@@ -2,9 +2,10 @@ import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readDroppedFile } from "../lib/nativeTransport";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type SetStateAction } from "react";
-import { ArrowUp, CircleStop, FileText, ImagePlus, Pause, Play, TerminalSquare, X, Zap } from "lucide-react";
+import { ChevronUp, ChevronDown, CornerDownRight, MoveVertical, Trash2, ArrowUp, CircleStop, FileText, ImagePlus, Pause, Play, TerminalSquare, X, Zap } from "lucide-react";
 import type { AgentProfile, ComposerUpload, ContextUsage, ImageAttachment, Model, PromptDictionary, SlashCommand } from "../types";
 import { applyDictionary, dictionaryMatches } from "../lib/dictionaries";
+import { usePendingMessageDrag } from "../lib/usePendingMessageDrag";
 import { IconButton } from "./IconButton";
 
 interface Props {
@@ -30,6 +31,8 @@ interface Props {
   onUploadsChange?: (uploads: SetStateAction<ComposerUpload[]>) => void;
   restoredDraft?: { id: string; value: string };
   focusRequest?: number;
+  pendingMessages?: import("../types").PendingMessage[];
+  onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>;
   onSend: (message: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>;
   onAbort: () => void | Promise<void>;
   onPause: () => void | Promise<void>;
@@ -72,7 +75,7 @@ const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((
 });
 const escapeAttribute = (value: string) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]!);
 
-export function Composer({ streaming, paused = false, pausing = false, queued, commands, agents, activeAgent, dictionaries = [], models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
+export function Composer({ streaming, paused = false, pausing = false, queued, pendingMessages = [], onChangePending, commands, agents, activeAgent, dictionaries = [], models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
   const [localValue, setLocalValue] = useState("");
   const value = draft ?? localValue;
   const fastModeEnabled = fastModeStatus === "Fast mode on";
@@ -237,7 +240,16 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
     return () => { disposed = true; unlisten?.(); };
   }, []);
 
-  const submit = async (behavior: "steer" | "followUp" = "followUp") => {
+  const [expandedPending, setExpandedPending] = useState<string>();
+  const [changingPending, setChangingPending] = useState(false);
+  const changePending = (id: string, action: import("../types").PendingMessageAction) => {
+    if (!onChangePending) return;
+    setChangingPending(true); setControlError(undefined);
+    void onChangePending(id, action).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))).finally(() => setChangingPending(false));
+  };
+  const { drop: pendingDrop, begin: beginPendingDrag } = usePendingMessageDrag(pendingMessages, controlsDisabled || changingPending || pausing || !onChangePending, changePending);
+  const [sendBehavior, setSendBehavior] = useState<"steer" | "followUp">("followUp");
+  const submit = async (behavior: "steer" | "followUp" = sendBehavior) => {
     if (controlsDisabled || pausing || controlActionRef.current || stoppingRef.current) return;
     const textFiles = uploads.filter((upload) => upload.kind === "text");
     const message = [expandSkillReference(applyDictionary(value.trim(), dictionaries), commands), ...textFiles.map((file) => `<file name="${escapeAttribute(file.name)}">\n${file.text}\n</file>`)].filter(Boolean).join("\n\n");
@@ -279,6 +291,26 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
     {(streaming || paused || pausing) && <div className={`stream-banner${paused ? " paused" : ""}`}>
       <span className="stream-status" role="status">{paused ? <Pause size={11} /> : <span className="pulse" />}{stopping ? "Stopping…" : controlAction === "resume" ? "Resuming…" : pausing || controlAction === "pause" ? "Pausing…" : paused ? "Paused · Completed turns saved" : "piop is working"}{queued > 0 && ` · ${queued} queued`}</span>
     </div>}
+    {pendingMessages.length > 0 && <div className="pending-messages" aria-label="Pending messages">{pendingMessages.map((message) => {
+      const change = (action: import("../types").PendingMessageAction) => changePending(message.id, action);
+      const disabled = controlsDisabled || changingPending || pausing;
+      const peers = pendingMessages.filter((item) => !item.retry && item.behavior === message.behavior);
+      const position = peers.findIndex((item) => item.id === message.id);
+      return <div data-pending-id={message.id} className={`pending-message${expandedPending === message.id ? " expanded" : ""}${pendingDrop?.id === message.id ? " dragging" : ""}${pendingDrop?.targetId === message.id ? ` drop-${pendingDrop.edge}` : ""}`} key={message.id}>
+        <button type="button" className="pending-icon-button pending-drag-handle" disabled={disabled || message.retry || !onChangePending || peers.length < 2} aria-label={`Drag to reorder queued message: ${message.message}`} title="Drag to reorder · Arrow keys to move" onKeyDown={(event) => {
+          if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); change(event.key === "ArrowUp" ? "moveUp" : "moveDown"); }
+        }} onPointerDown={(event) => beginPendingDrag(event, message.id)}><MoveVertical size={16} /></button>
+        <span className="pending-message-text" title={message.message} onDoubleClick={() => setExpandedPending((current) => current === message.id ? undefined : message.id)}>{message.retry && <small>Not sent · </small>}{message.message}</span>
+        {onChangePending && <div className="pending-message-actions">
+          <div className="pending-order-actions">
+            <button type="button" className="pending-icon-button" disabled={disabled || position <= 0} aria-label={`Move queued message up: ${message.message}`} title="Move earlier in this delivery queue" onClick={() => change("moveUp")}><ChevronUp size={13} /></button>
+            <button type="button" className="pending-icon-button" disabled={disabled || position < 0 || position >= peers.length - 1} aria-label={`Move queued message down: ${message.message}`} title="Move later in this delivery queue" onClick={() => change("moveDown")}><ChevronDown size={13} /></button>
+          </div>
+          <button type="button" disabled={disabled} title={message.behavior === "steer" ? "Queue after the current response" : "Steer at the next turn"} onClick={() => change(message.retry ? message.behavior : message.behavior === "steer" ? "followUp" : "steer")}><CornerDownRight size={13} />{message.retry ? "Retry" : message.behavior === "steer" ? "Queue" : "Steer"}</button>
+          <button type="button" className="pending-icon-button" disabled={disabled} aria-label={`Remove queued message: ${message.message}`} title="Remove message" onClick={() => change("remove")}><Trash2 size={13} /></button>
+        </div>}
+      </div>;
+    })}</div>}
     <div ref={composerRef} className={`composer${draggingFiles && !inputDisabled ? " dragging-files" : ""}`}
       onDragEnter={(event) => {
         if (!event.dataTransfer.types.includes("Files") && !(isTauri() && event.dataTransfer.types.includes("text/uri-list"))) return;
@@ -316,7 +348,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
       {controlError && <div className="upload-error" role="alert">{controlError}</div>}
       <div className={`composer-editor${dictionaryHighlights.length ? " has-dictionary-matches" : ""}`}>
         {dictionaryHighlights.length > 0 && <div className="composer-highlight-viewport" aria-hidden="true"><div className="composer-highlight-layer" style={{ transform: `translateY(-${editorScrollTop}px)` }}>{dictionaryHighlights.map((match, index) => <span key={`${match.start}-${match.end}`}><span>{value.slice(index ? dictionaryHighlights[index - 1].end : 0, match.start)}</span><mark onPointerDown={(event) => { event.preventDefault(); ref.current?.focus(); ref.current?.setSelectionRange(match.start, match.end); }}>{value.slice(match.start, match.end)}</mark></span>)}<span>{value.slice(dictionaryHighlights.at(-1)?.end ?? 0)}</span></div></div>}
-        <textarea ref={ref} aria-label="Message piop" disabled={controlsDisabled} placeholder={controlsDisabled ? "Connecting to piop…" : paused ? "Send a message to continue piop…" : streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value} rows={1} onScroll={(event) => setEditorScrollTop(event.currentTarget.scrollTop)} onChange={(event) => { setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape" && matches.length) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true); } else if (matches.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length); } else if ((event.key === "Tab" || event.key === "Enter") && !event.shiftKey && !event.ctrlKey && matches[selectedMatch]) { event.preventDefault(); chooseCommand(matches[selectedMatch]); } else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.stopPropagation(); void submit(event.ctrlKey ? "steer" : "followUp"); } }} />
+        <textarea ref={ref} aria-label="Message piop" disabled={controlsDisabled} placeholder={controlsDisabled ? "Connecting to piop…" : paused ? "Send a message to continue piop…" : streaming ? (sendBehavior === "steer" ? "Steer the current response…" : "Queue a follow-up…") : "Ask piop to build, explain, or change anything…"} value={value} rows={1} onScroll={(event) => setEditorScrollTop(event.currentTarget.scrollTop)} onChange={(event) => { setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape" && matches.length) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true); } else if (matches.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length); } else if ((event.key === "Tab" || event.key === "Enter") && !event.shiftKey && !event.ctrlKey && matches[selectedMatch]) { event.preventDefault(); chooseCommand(matches[selectedMatch]); } else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.stopPropagation(); void submit(event.ctrlKey ? "steer" : sendBehavior); } }} />
       </div>
       <div className="composer-bar"><div className="composer-tools">{onOpenTerminal && <IconButton title="" label="Open terminal" disabled={controlsDisabled} onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton>}{contextUsage && <ContextWheel usage={contextUsage} />}{sessionCache && <span className={`session-cache-hit${sessionCache.low ? " low" : ""}`}>Cache {sessionCache.rate}%</span>}</div>
         <div className="composer-actions">
@@ -324,6 +356,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, c
         {fastModeSupported && <button type="button" className={`fast-mode-indicator${fastModeEnabled ? " active" : ""}`} aria-label="Fast mode" aria-description={fastModeStatus} aria-pressed={fastModeEnabled} aria-busy={togglingFastMode} disabled={inputDisabled || togglingFastMode} onClick={() => void toggleFastMode()}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled ? "currentColor" : "none"} aria-hidden="true" /></button>}
         <ContainedPicker label="Model" selectedLabel={model ? displayModelName(model) : undefined} value={model ? `${model.provider}/${model.id}` : ""} disabled={streaming || inputDisabled} options={models.map((item) => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item), detail: item.provider }))} onChange={(value) => { const next = models.find((item) => `${item.provider}/${item.id}` === value); if (next) onModel(next); }} />
         <ContainedPicker label="Thinking level" value={thinkingLevel} disabled={streaming || inputDisabled} menuWidth={120} centered compact options={thinkingLevels.map((level) => ({ value: level, label: level.charAt(0).toUpperCase() + level.slice(1) }))} onChange={onThinking} />
+        {streaming && <ContainedPicker label="Streaming message behavior" value={sendBehavior} options={[{ value: "followUp", label: "Queue" }, { value: "steer", label: "Steer" }]} disabled={inputDisabled} onChange={(value) => setSendBehavior(value as "steer" | "followUp")} />}
         <span className="composer-divider" />
         {(streaming || paused || pausing) && <IconButton title="" label="Stop piop" className="stop-compact" disabled={stopDisabled} onClick={() => void control("abort")}><CircleStop size={17} /></IconButton>}
         {(streaming || paused || pausing)
