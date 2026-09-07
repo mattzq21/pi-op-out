@@ -309,3 +309,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 
 .config-row.model-row { grid-template-columns: 34px minmax(0, 1fr) auto; }
 .model-row small { overflow-wrap: anywhere; }
+
+.mcp-status-detail { position: relative; cursor: help; }
+.mcp-error-tooltip { display: none; position: absolute; z-index: 50; right: 0; top: 100%; width: min(520px, 70vw); max-height: 280px; overflow: auto; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel, #25241f); color: var(--ink); box-shadow: 0 8px 24px #0005; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 monospace; user-select: text; }
+.mcp-status-detail:hover .mcp-error-tooltip, .mcp-status-detail:focus-within .mcp-error-tooltip { display: block; }

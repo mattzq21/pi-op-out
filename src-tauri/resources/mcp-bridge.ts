@@ -53,8 +53,8 @@ function parseHeaders(value: ServerConfig["headers"]): Record<string, string> {
   return headers;
 }
 
-async function connectClient(client: Client, config: ServerConfig, instanceId: string, signal: AbortSignal): Promise<void> {
-  client.onerror = (error) => process.stderr.write(`[mcp:${config.name}] ${error.message}\n`);
+async function connectClient(client: Client, config: ServerConfig, instanceId: string, signal: AbortSignal, diagnostic: (text: string) => void): Promise<void> {
+  client.onerror = (error) => { diagnostic(`${error.message}\n`); process.stderr.write(`[mcp:${config.name}] ${error.message}\n`); };
   const transport = config.transport === "http"
     ? (() => {
         if (!config.url?.trim()) throw new Error("URL is required for HTTP transport");
@@ -68,10 +68,16 @@ async function connectClient(client: Client, config: ServerConfig, instanceId: s
           command: config.command,
           args: splitArgs(config.args),
           env: { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PIOP_CUA_INSTANCE_ID: instanceId },
-          stderr: "inherit",
+          stderr: "pipe",
           maxBufferSize: MAX_MCP_MESSAGE_BYTES,
         });
       })();
+  if (transport instanceof StdioClientTransport) {
+    transport.stderr?.on("data", (chunk: Buffer) => {
+      diagnostic(chunk.toString("utf8"));
+      process.stderr.write(chunk);
+    });
+  }
   try { await client.connect(transport, { timeout: startupTimeoutMs(config), signal }); }
   catch (error) { await client.close().catch(() => undefined); throw error; }
 }
@@ -136,8 +142,11 @@ export default async function mcpBridge(pi: ExtensionAPI) {
       const connection: Connection = { client, instanceId, tools: [], connected: false };
       connections.set(id, connection);
       statuses.set(id, { id, status: "starting", error: undefined }); publish();
+      let recentOutput = "";
+      const diagnostic = (text: string) => { recentOutput = (recentOutput + text).slice(-8192); };
+      const errorDetails = (message: string) => recentOutput.trim() ? `${message}\n\nRecent MCP output (last 8 KB):\n${recentOutput.trim()}` : message;
       try {
-        await connectClient(client, server, instanceId, shutdown.signal);
+        await connectClient(client, server, instanceId, shutdown.signal, diagnostic);
         const discovered = [];
         let cursor: string | undefined;
         do {
@@ -164,13 +173,13 @@ export default async function mcpBridge(pi: ExtensionAPI) {
         client.onclose = () => {
           if (connections.get(id) !== connection || shutdown.signal.aborted) return;
           connection.connected = false;
-          statuses.set(id, { id, status: "error", error: "MCP server disconnected; send another prompt to reconnect" }); publish();
+          statuses.set(id, { id, status: "error", error: errorDetails("MCP server disconnected; send another prompt to reconnect") }); publish();
         };
         statuses.set(id, { id, status: "connected", error: undefined });
       } catch (error) {
         await close(id);
         const message = error instanceof Error ? error.message : String(error);
-        statuses.set(id, { id, status: "error", error: message }); errors.push(`${server.name}: ${message}`);
+        statuses.set(id, { id, status: "error", error: errorDetails(message) }); errors.push(`${server.name}: ${message}`);
         process.stderr.write(`[mcp:${server.name}] ${message}\n`);
       }
     }));
