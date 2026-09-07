@@ -3,6 +3,7 @@ import { link, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { formatSkillsForPrompt, type BuildSystemPromptOptions } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export type Agent = { name: string; description: string; model: string; effort: string; systemPrompt: string; developerPrompt: string; agentsMd: string; tools: string[]; skills: string[]; mcpServers: string[] };
@@ -13,8 +14,31 @@ const STATUS_KEY = "pi-define-agents";
 const STATE_ENTRY = "pi-define-agents-state";
 const DEFAULTS_ENV = "PI_DEFINE_AGENTS_RUNTIME_DEFAULTS";
 const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
+const DEFAULT_SYSTEM_PROMPT = `You are an expert coding assistant operating inside a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
+
+Available tools:
+
+- read: Read file contents
+- bash: Execute bash commands (ls, grep, find, etc.)
+- edit: Make precise file edits with exact text replacement, including multiple disjoint edits in one call
+- write: Create or overwrite files
+
+In addition to the tools above, you may have access to other custom tools depending on the project.
+
+Guidelines:
+
+- Use bash for file operations like ls, rg, find
+- Use read to examine files instead of cat or sed.
+- Use edit for precise changes (edits[].oldText must match exactly)
+- When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls
+- Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.
+- Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.
+- Use write only for new files or complete rewrites.
+- Be concise in your responses
+- Show file paths clearly when working with files`;
+
 type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean };
-const fallbackConfig: Config = { agents: [{ name: "default", description: "General-purpose agent", model: "", effort: "high", systemPrompt: "", developerPrompt: "", agentsMd: "", tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
+const fallbackConfig: Config = { agents: [{ name: "default", description: "General-purpose agent", model: "", effort: "high", systemPrompt: DEFAULT_SYSTEM_PROMPT, developerPrompt: "", agentsMd: "", tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
 function defaultAgent(): Agent {
   const agent = structuredClone(fallbackConfig.agents[0]);
   if (desktopList("PI_DESKTOP_ALLOWED_TOOLS")?.includes("web_search")) agent.tools.push("web_search");
@@ -36,7 +60,7 @@ async function writeConfig(value: Config, createOnly = false) {
 function normalize(value: Partial<Config>): Config {
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => agent && typeof agent.name === "string" && agent.name.length > 0).map((agent) => ({
     name: agent.name, description: typeof agent.description === "string" ? agent.description : "", model: typeof agent.model === "string" ? agent.model : "", effort: typeof agent.effort === "string" ? agent.effort : fallbackConfig.agents[0].effort,
-    systemPrompt: typeof agent.systemPrompt === "string" ? agent.systemPrompt : "", developerPrompt: typeof agent.developerPrompt === "string" ? agent.developerPrompt : "", agentsMd: typeof agent.agentsMd === "string" ? agent.agentsMd : "",
+    systemPrompt: typeof agent.systemPrompt === "string" && agent.systemPrompt.trim() ? agent.systemPrompt : agent.name === "default" ? DEFAULT_SYSTEM_PROMPT : "", developerPrompt: typeof agent.developerPrompt === "string" ? agent.developerPrompt : "", agentsMd: typeof agent.agentsMd === "string" ? agent.agentsMd : "",
     tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => typeof item === "string") : defaultAgent().tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => typeof item === "string") : [], mcpServers: Array.isArray(agent.mcpServers) ? agent.mcpServers.filter((item): item is string => typeof item === "string" && item !== "filesystem") : [],
   })) : [];
   const unique = supplied.filter((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) === index);
@@ -83,6 +107,20 @@ function agentToolError(pi: ExtensionAPI, agent: Agent) {
   const globallyAllowed = desktopList("PI_DESKTOP_ALLOWED_TOOLS"); const available = new Set(pi.getAllTools().map((tool) => tool.name));
   const denied = [...new Set(agent.tools.filter((tool) => (globallyAllowed && !globallyAllowed.includes(tool)) || !available.has(tool)))];
   return denied.length ? `Agent "${agent.name}" cannot run because Pi does not allow its configured tool${denied.length === 1 ? "" : "s"}: ${denied.join(", ")}` : undefined;
+}
+
+// Keep Pi's discovered context and skills when replacing the default agent's base instructions.
+function defaultSystemPrompt(prompt: string, options: BuildSystemPromptOptions, currentPrompt: string): string {
+  const sections = [prompt];
+  if (options.appendSystemPrompt) sections.push(options.appendSystemPrompt);
+  // The context-window extension may already have moved these into a context message.
+  const projectContext = currentPrompt.match(/\n\n(<project_context>[\s\S]*?<\/project_context>)/)?.[1];
+  if (projectContext) sections.push(projectContext);
+  const readTool = (["read", "bash"] as const).find((tool) => (options.selectedTools ?? ["read", "bash", "edit", "write"]).includes(tool));
+  if (readTool && options.skills?.length) sections.push(formatSkillsForPrompt(options.skills, readTool));
+  const workingDirectory = currentPrompt.match(/\n(Current working directory: [^\n]*)\n?$/)?.[1];
+  if (workingDirectory) sections.push(workingDirectory);
+  return sections.join("\n\n");
 }
 
 export default async function defineAgents(pi: ExtensionAPI) {
@@ -149,8 +187,9 @@ export default async function defineAgents(pi: ExtensionAPI) {
   });
   pi.on("before_agent_start", (event) => {
     const agent = currentAgent(); if (!agent) return;
-    const additions = [agent.systemPrompt, agent.developerPrompt, agent.agentsMd ? `# Agent AGENTS.md\n\n${agent.agentsMd}` : ""].filter((text) => text.trim()).join("\n\n");
-    return additions ? { systemPrompt: `${event.systemPrompt}\n\n${additions}` } : undefined;
+    const base = agent.name === "default" ? defaultSystemPrompt(agent.systemPrompt, event.systemPromptOptions, event.systemPrompt) : event.systemPrompt;
+    const additions = [agent.name === "default" ? "" : agent.systemPrompt, agent.developerPrompt, agent.agentsMd ? `# Agent AGENTS.md\n\n${agent.agentsMd}` : ""].filter((text) => text.trim()).join("\n\n");
+    return { systemPrompt: additions ? `${base}\n\n${additions}` : base };
   });
   pi.registerCommand("pi-define-agents-use", { description: "Select a defined agent", handler: async (args, ctx) => {
     const argument = args.trim(); let name = argument; try { const decoded = decode<unknown>(argument); if (typeof decoded === "string") name = decoded; } catch { /* Plain CLI name. */ }

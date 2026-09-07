@@ -15,6 +15,8 @@ The extension creates `config.json` beside itself on first load. `config.example
 
 ## Configuration
 
+The default agent uses the bundled system prompt copied from the supplied `SYSTEM.md`. Its System prompt field replaces Pi's base instructions; an empty field restores the bundled default, including for existing profiles. Pi's append prompt, discovered project instructions, skills, and working directory remain included. Developer prompt and agent AGENTS.md are appended afterward. Other agents keep Pi's base prompt and append their configured instructions. Edit the default agent's System prompt in Settings → Agents to customize it.
+
 In piop, `web_search` is included in the default agent when globally enabled. Existing profiles receive it once on upgrade; subsequent per-agent opt-outs are preserved. New agents created in Settings inherit all globally enabled tools.
 
 Legacy agent tool selections migrate on load: `exec_command` becomes `read`, `bash`, `grep`, `find`, and `ls`; `apply_patch` becomes `edit` and `write`. Unselected tools stay unselected.
