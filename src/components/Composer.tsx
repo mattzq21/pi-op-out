@@ -2,7 +2,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readDroppedFile } from "../lib/nativeTransport";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type SetStateAction } from "react";
-import { ChevronUp, ChevronDown, CornerDownRight, ListEnd, MoreHorizontal, Trash2, ArrowUp, CircleStop, FileText, ImagePlus, Pause, Play, TerminalSquare, X, Zap } from "lucide-react";
+import { ChevronUp, ChevronDown, CornerDownRight, ListEnd, GripVertical, Trash2, ArrowUp, CircleStop, FileText, ImagePlus, Pause, Play, TerminalSquare, X, Zap } from "lucide-react";
 import type { AgentProfile, ComposerUpload, ContextUsage, ImageAttachment, Model, PromptDictionary, SlashCommand } from "../types";
 import { applyDictionary, dictionaryMatches } from "../lib/dictionaries";
 import { IconButton } from "./IconButton";
@@ -31,7 +31,7 @@ interface Props {
   restoredDraft?: { id: string; value: string };
   focusRequest?: number;
   pendingMessages?: import("../types").PendingMessage[];
-  onChangePending?: (id: string, behavior: "steer" | "followUp" | "remove" | "moveUp" | "moveDown") => Promise<void>;
+  onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>;
   onSend: (message: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>;
   onAbort: () => void | Promise<void>;
   onPause: () => void | Promise<void>;
@@ -240,6 +240,8 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
   }, []);
 
   const [expandedPending, setExpandedPending] = useState<string>();
+  const pendingDrag = useRef<{ id: string; x: number; y: number; moved: boolean; targetId?: string; edge?: "before" | "after" } | undefined>(undefined);
+  const [pendingDrop, setPendingDrop] = useState<{ id: string; targetId?: string; edge?: "before" | "after" }>();
   const [changingPending, setChangingPending] = useState(false);
   const [sendBehavior, setSendBehavior] = useState<"steer" | "followUp">("followUp");
   const submit = async (behavior: "steer" | "followUp" = sendBehavior) => {
@@ -285,13 +287,13 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
       <span className="stream-status" role="status">{paused ? <Pause size={11} /> : <span className="pulse" />}{stopping ? "Stopping…" : controlAction === "resume" ? "Resuming…" : pausing || controlAction === "pause" ? "Pausing…" : paused ? "Paused · Completed turns saved" : "piop is working"}{queued > 0 && ` · ${queued} queued`}</span>
     </div>}
     {pendingMessages.length > 0 && <div className="pending-messages" aria-label="Pending messages">{pendingMessages.map((message) => {
-      const change = (behavior: "steer" | "followUp" | "remove" | "moveUp" | "moveDown") => { setChangingPending(true); setControlError(undefined); void onChangePending?.(message.id, behavior).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))).finally(() => setChangingPending(false)); };
+      const change = (behavior: import("../types").PendingMessageAction) => { setChangingPending(true); setControlError(undefined); void onChangePending?.(message.id, behavior).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))).finally(() => setChangingPending(false)); };
       const disabled = controlsDisabled || changingPending || pausing;
       const peers = pendingMessages.filter((item) => !item.retry && item.behavior === message.behavior);
       const position = peers.findIndex((item) => item.id === message.id);
-      return <div className={`pending-message${expandedPending === message.id ? " expanded" : ""}`} key={message.id}>
+      return <div data-pending-id={message.id} className={`pending-message${expandedPending === message.id ? " expanded" : ""}${pendingDrop?.id === message.id ? " dragging" : ""}${pendingDrop?.targetId === message.id ? ` drop-${pendingDrop.edge}` : ""}`} key={message.id}>
         <ListEnd size={13} className="pending-message-icon" aria-hidden="true" />
-        <span className="pending-message-text" title={message.message}>{message.retry && <small>Not sent · </small>}{message.message}</span>
+        <span className="pending-message-text" title={message.message} onDoubleClick={() => setExpandedPending((current) => current === message.id ? undefined : message.id)}>{message.retry && <small>Not sent · </small>}{message.message}</span>
         {onChangePending && <div className="pending-message-actions">
           <div className="pending-order-actions">
             <button type="button" className="pending-icon-button" disabled={disabled || position <= 0} aria-label={`Move queued message up: ${message.message}`} title="Move earlier in this delivery queue" onClick={() => change("moveUp")}><ChevronUp size={13} /></button>
@@ -300,7 +302,29 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
           <button type="button" disabled={disabled} title={message.behavior === "steer" ? "Queue after the current response" : "Steer at the next turn"} onClick={() => change(message.retry ? message.behavior : message.behavior === "steer" ? "followUp" : "steer")}><CornerDownRight size={13} />{message.retry ? "Retry" : message.behavior === "steer" ? "Queue" : "Steer"}</button>
           <button type="button" className="pending-icon-button" disabled={disabled} aria-label={`Remove queued message: ${message.message}`} title="Remove message" onClick={() => change("remove")}><Trash2 size={13} /></button>
         </div>}
-        <button type="button" className="pending-icon-button" aria-label={expandedPending === message.id ? "Collapse queued message" : "Show full queued message"} title={expandedPending === message.id ? "Collapse message" : "Show full message"} aria-expanded={expandedPending === message.id} onClick={() => setExpandedPending((current) => current === message.id ? undefined : message.id)}><MoreHorizontal size={14} /></button>
+        <button type="button" className="pending-icon-button pending-drag-handle" disabled={disabled || message.retry || !onChangePending || peers.length < 2} aria-label={`Drag to reorder queued message: ${message.message}`} title="Drag to reorder · Arrow keys to move" onKeyDown={(event) => {
+          if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); change(event.key === "ArrowUp" ? "moveUp" : "moveDown"); }
+        }} onPointerDown={(event) => {
+          if (event.button !== 0 || disabled) return;
+          event.preventDefault(); event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId);
+          pendingDrag.current = { id: message.id, x: event.clientX, y: event.clientY, moved: false };
+        }} onPointerMove={(event) => {
+          const drag = pendingDrag.current; if (!drag || drag.id !== message.id) return;
+          if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 4) return;
+          drag.moved = true;
+          const queue = event.currentTarget.closest(".pending-messages");
+          const bounds = queue?.getBoundingClientRect();
+          if (queue && bounds) { if (event.clientY < bounds.top + 24) queue.scrollTop -= 12; else if (event.clientY > bounds.bottom - 24) queue.scrollTop += 12; }
+          const row = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>("[data-pending-id]");
+          const target = row && queue?.contains(row) ? peers.find((item) => item.id === row.dataset.pendingId && item.id !== drag.id) : undefined;
+          drag.targetId = target?.id;
+          drag.edge = target && row ? event.clientY < row.getBoundingClientRect().top + row.getBoundingClientRect().height / 2 ? "before" : "after" : undefined;
+          setPendingDrop({ id: drag.id, targetId: drag.targetId, edge: drag.edge });
+        }} onPointerUp={(event) => {
+          const drag = pendingDrag.current; pendingDrag.current = undefined; setPendingDrop(undefined);
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+          if (!disabled && drag?.moved && drag.targetId && drag.edge) change({ type: "move", targetId: drag.targetId, edge: drag.edge });
+        }} onPointerCancel={() => { pendingDrag.current = undefined; setPendingDrop(undefined); }} onLostPointerCapture={() => { pendingDrag.current = undefined; setPendingDrop(undefined); }}><GripVertical size={14} /></button>
       </div>;
     })}</div>}
     <div ref={composerRef} className={`composer${draggingFiles && !inputDisabled ? " dragging-files" : ""}`}

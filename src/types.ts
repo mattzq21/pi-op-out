@@ -35,3 +35,5 @@ export interface AppSettings { defaultModel: string; hiddenModels: string[]; def
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
 export type GitDiffSnapshot = string;
 export type GitDiffSnapshots = Record<string, GitDiffSnapshot>;
+
+export type PendingMessageAction = "steer" | "followUp" | "remove" | "moveUp" | "moveDown" | { type: "move"; targetId: string; edge: "before" | "after" };

@@ -189,13 +189,14 @@ export class NativeTransport {
     try { return await this.executeCommand<T>({ type: "prompt", message: item.message, streamingBehavior: item.behavior, ...(item.images?.length ? { images: item.images } : {}) }); }
     finally { this.sendingPending.delete(item.id); }
   }
-  changePendingMessage(id: string, behavior: "steer" | "followUp" | "remove" | "moveUp" | "moveDown"): Promise<void> {
+  changePendingMessage(id: string, action: import("../types").PendingMessageAction): Promise<void> {
     return this.serializeQueue(async () => {
       const target = this.pendingMessages.find((item) => item.id === id);
       if (!target) return; // Already consumed by the runtime.
-      const moving = behavior === "moveUp" || behavior === "moveDown";
+      const behavior = typeof action === "string" ? action : "reorder";
+      const moving = behavior === "moveUp" || behavior === "moveDown" || behavior === "reorder";
       const peers = this.pendingMessages.filter((item) => !item.retry && item.behavior === target.behavior);
-      const neighbor = moving ? peers[peers.findIndex((item) => item.id === id) + (behavior === "moveUp" ? -1 : 1)] : undefined;
+      const neighbor = typeof action === "object" ? peers.find((item) => item.id === action.targetId && item.id !== id) : moving ? peers[peers.findIndex((item) => item.id === id) + (behavior === "moveUp" ? -1 : 1)] : undefined;
       if (moving && (target.retry || !neighbor)) return;
       const send = (item: PendingMessage) => this.deliverPending(item);
       if (target.retry) {
@@ -221,7 +222,13 @@ export class NativeTransport {
           // either row in the meantime. Never move a different message instead.
           const from = remaining.findIndex((item) => item.id === id);
           const to = remaining.findIndex((item) => item.id === neighbor.id);
-          if (from >= 0 && to >= 0) [remaining[from], remaining[to]] = [remaining[to], remaining[from]];
+          if (from >= 0 && to >= 0) {
+            if (typeof action === "object") {
+              const [item] = remaining.splice(from, 1);
+              const destination = remaining.findIndex((entry) => entry.id === neighbor.id);
+              remaining.splice(destination + (action.edge === "after" ? 1 : 0), 0, item);
+            } else [remaining[from], remaining[to]] = [remaining[to], remaining[from]];
+          }
         }
         if (behavior === "remove") { const index = remaining.findIndex((item) => item.id === id); if (index >= 0) remaining.splice(index, 1); }
         this.pendingMessages = [...originals.filter((item) => item.retry), ...remaining];
