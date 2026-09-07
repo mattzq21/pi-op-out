@@ -2,7 +2,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, RpcCommand, RpcEvent, SessionSummary } from "../types";
+import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, PendingMessage, RpcCommand, RpcEvent, SessionSummary } from "../types";
 
 const call = <T>(command: string, args?: Record<string, unknown>) => {
   if (import.meta.env.MODE !== "e2e") return invoke<T>(command, args);
@@ -21,6 +21,11 @@ export const openExternalUrl = (url: string) => call<void>("open_external_url", 
 
 export class NativeTransport {
   private readonly runtimeId = globalThis.crypto?.randomUUID?.() ?? `runtime-${Date.now()}-${Math.random()}`;
+  private pendingMessages: PendingMessage[] = [];
+  private queueSnapshot: RpcEvent = { type: "queue_update", steering: [], followUp: [] };
+  private changingQueue = false;
+  private sendingPending = new Set<string>();
+  private queueCommands: Promise<unknown> = Promise.resolve();
   private listeners = new Set<(event: RpcEvent) => void>();
   private retainedStatuses = new Map<string, RpcEvent>();
   private retainedRequests = new Map<string, RpcEvent>();
@@ -47,7 +52,36 @@ export class NativeTransport {
   isTemporaryChat() { return this.temporaryChat; }
   lastDiagnostic() { return this.stderrLines.join("\n"); }
   private runProcessCommand<T>(command: () => Promise<T>) { const result = this.processLifecycle.then(command, command); this.processLifecycle = result.then(() => undefined, () => undefined); return result; }
+  private publishQueue() {
+    const available = [...this.pendingMessages];
+    const pending: PendingMessage[] = [];
+    // Consumption is FIFO within each mode. When identical texts remain, keep
+    // the newest matching payloads so a consumed image cannot attach to a later row.
+    for (const behavior of ["steer", "followUp"] as const) {
+      const texts = (this.queueSnapshot[behavior === "steer" ? "steering" : "followUp"] as string[] | undefined) ?? [];
+      for (const text of new Set(texts)) {
+        const matches = available.filter((item) => !item.retry && !this.sendingPending.has(item.id) && item.behavior === behavior && item.message === text);
+        const count = texts.filter((item) => item === text).length;
+        for (const stale of matches.slice(0, Math.max(0, matches.length - count))) available.splice(available.indexOf(stale), 1);
+      }
+    }
+    for (const behavior of ["steer", "followUp"] as const) {
+      for (const message of (this.queueSnapshot[behavior === "steer" ? "steering" : "followUp"] as string[] | undefined) ?? []) {
+        const index = available.findIndex((item) => !item.retry && item.behavior === behavior && item.message === message);
+        if (index >= 0) pending.push(available.splice(index, 1)[0]);
+      }
+    }
+    const visible = [...pending, ...available.filter((item) => item.retry)];
+    this.pendingMessages = [...visible, ...available.filter((item) => !item.retry && this.sendingPending.has(item.id))];
+    const event = { ...this.queueSnapshot, pendingMessages: visible };
+    this.listeners.forEach((listener) => listener(event));
+  }
   private emit(event: RpcEvent) {
+    if (event.type === "queue_update") {
+      this.queueSnapshot = event;
+      if (!this.changingQueue) this.publishQueue();
+      return;
+    }
     if (event.type === "extension_ui_request" && event.method === "setStatus" && typeof event.statusKey === "string") {
       if (event.statusText) this.retainedStatuses.set(event.statusKey, event); else this.retainedStatuses.delete(event.statusKey);
     }
@@ -105,7 +139,64 @@ export class NativeTransport {
     await call("pi_command", { runtimeId: this.runtimeId, command: { type: "prompt", message: `/${command} toggle` } });
     await this.refreshFastStatus(true);
   }
-  async command<T>(command: RpcCommand) {
+  private serializeQueue<T>(action: () => Promise<T>): Promise<T> {
+    const next = this.queueCommands.then(action, action);
+    this.queueCommands = next.catch(() => undefined);
+    return next;
+  }
+  command<T>(command: RpcCommand): Promise<T> {
+    if (command.type !== "steer" && command.type !== "follow_up") {
+      if (["prompt", "pause", "resume", "abort", "clear_queue", "new_session", "switch_session", "fork", "clone"].includes(command.type)) return this.serializeQueue(() => this.executeCommand<T>(command));
+      return this.executeCommand<T>(command);
+    }
+    return this.serializeQueue(async () => {
+      const pending: PendingMessage = { id: crypto.randomUUID(), message: String(command.message), behavior: command.type === "steer" ? "steer" : "followUp", images: command.images as PendingMessage["images"] };
+      this.pendingMessages.push(pending);
+      this.sendingPending.add(pending.id);
+      try { return await this.executeCommand<T>(command); }
+      catch (reason) { this.pendingMessages = this.pendingMessages.filter((item) => item !== pending); throw reason; }
+      finally { this.sendingPending.delete(pending.id); this.publishQueue(); }
+    });
+  }
+  changePendingMessage(id: string, behavior: "steer" | "followUp"): Promise<void> {
+    return this.serializeQueue(async () => {
+      const target = this.pendingMessages.find((item) => item.id === id);
+      if (!target) return; // Already consumed by the runtime.
+      const send = (item: PendingMessage) => this.executeCommand({ type: item.behavior === "steer" ? "steer" : "follow_up", message: item.message, ...(item.images?.length ? { images: item.images } : {}) });
+      if (target.retry) {
+        target.retry = false; target.behavior = behavior;
+        try { await send(target); } catch (reason) { target.retry = true; this.publishQueue(); throw reason; }
+        return;
+      }
+      // clear_queue returns text only. Only rewrite queues whose complete payloads
+      // we own; duplicate text cannot be matched safely to distinct attachments.
+      const snapshot = [...((this.queueSnapshot.steering as string[]) ?? []), ...((this.queueSnapshot.followUp as string[]) ?? [])];
+      if (new Set(snapshot).size !== snapshot.length || snapshot.some((message) => !this.pendingMessages.some((item) => !item.retry && item.message === message))) throw new Error("This queue contains messages that cannot be safely switched. Use Ctrl+Enter to steer a new message.");
+      const originals = [...this.pendingMessages];
+      this.changingQueue = true;
+      try {
+        const cleared = await this.executeCommand<{ steering: string[]; followUp: string[] }>({ type: "clear_queue" });
+        const remaining = (["steer", "followUp"] as const).flatMap((mode) => (cleared[mode === "steer" ? "steering" : "followUp"] ?? []).map((text) => {
+          const original = originals.find((item) => !item.retry && item.behavior === mode && item.message === text);
+          return original ? { ...original, behavior: original.id === id ? behavior : mode } : { id: crypto.randomUUID(), message: text, behavior: mode, retry: true };
+        }));
+        this.pendingMessages = [...originals.filter((item) => item.retry), ...remaining];
+        if (remaining.some((item) => item.retry)) {
+          remaining.forEach((item) => { item.retry = true; });
+          throw new Error("Another source changed the queue while switching. Pending text has been kept for retry; reattach any images from messages sent outside this window.");
+        }
+        for (let index = 0; index < remaining.length; index += 1) {
+          try { await send(remaining[index]); }
+          catch (reason) {
+            // Keep full payloads, including images, available for an explicit retry.
+            remaining.slice(index).forEach((item) => { item.retry = true; });
+            throw reason;
+          }
+        }
+      } finally { this.changingQueue = false; this.publishQueue(); }
+    });
+  }
+  private async executeCommand<T>(command: RpcCommand) {
     const compact = command.type === "prompt" && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null;
     if (compact) command = { type: "compact", ...(compact[1]?.trim() ? { customInstructions: compact[1].trim() } : {}) };
     try {
@@ -133,7 +224,7 @@ export class NativeTransport {
       throw new Error(diagnostics && /disconnect|connect|start|running/i.test(message) ? `${message}\n${diagnostics}` : message);
     }
   }
-  subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); this.retainedStatuses.forEach((event) => listener(event)); this.retainedRequests.forEach((event) => listener(event)); return () => this.listeners.delete(listener); }
+  subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); listener({ ...this.queueSnapshot, pendingMessages: this.pendingMessages }); this.retainedStatuses.forEach((event) => listener(event)); this.retainedRequests.forEach((event) => listener(event)); return () => this.listeners.delete(listener); }
   listSessions() { return call<SessionSummary[]>("list_sessions"); }
   captureGitTree(cwd: string, hostId = "local") { return call<string | null>("capture_git_tree", { cwd, hostId }); }
   discardGitTree(snapshot: string, hostId = "local") { return call<void>("discard_git_tree", { snapshot, hostId }); }

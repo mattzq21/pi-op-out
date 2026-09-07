@@ -309,3 +309,10 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 
 .config-row.model-row { grid-template-columns: 34px minmax(0, 1fr) auto; }
 .model-row small { overflow-wrap: anywhere; }
+
+.pending-messages { display: grid; gap: 6px; max-height: 180px; overflow-y: auto; margin: 0 8px 8px; }
+.pending-message { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; font-size: 12px; }
+.pending-message > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pending-message small { color: var(--muted); margin-right: 8px; }
+.pending-message button { flex-shrink: 0; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--ink); cursor: pointer; }
+.pending-message button:disabled { opacity: .5; cursor: default; }
