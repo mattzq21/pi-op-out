@@ -138,6 +138,7 @@ struct SessionSummary {
     cwd: String,
     cwd_exists: bool,
     project_kind: Option<ProjectKind>,
+    project_root: Option<String>,
     #[serde(skip)]
     modified_at: u64,
     preview: String,
@@ -1622,7 +1623,7 @@ fn parse_session_content(path: &Path, content: &str, modified: SystemTime, cwd_e
     let explicitly_named = name.is_some(); let has_user_message = !first_user_message.is_empty();
     let name = name.unwrap_or_else(|| if first_user_message.is_empty() { "Untitled session".into() } else { first_user_message });
     let project = Path::new(&cwd).file_name().and_then(|value| value.to_str()).unwrap_or("Workspace").to_string();
-    Some((SessionSummary { id, path: path.to_string_lossy().into_owned(), name, project, cwd, cwd_exists, project_kind: None, modified_at: unix_timestamp(modified), preview: preview.chars().take(100).collect(), message_count, api_cost, host_id: host_id.into(), host_name: host_name.into() }, explicitly_named, has_user_message, resume_messages))
+    Some((SessionSummary { id, path: path.to_string_lossy().into_owned(), name, project, cwd, cwd_exists, project_kind: None, project_root: None, modified_at: unix_timestamp(modified), preview: preview.chars().take(100).collect(), message_count, api_cost, host_id: host_id.into(), host_name: host_name.into() }, explicitly_named, has_user_message, resume_messages))
 }
 
 fn hidden_resume_entry(entry: &Value, markers: &mut HashSet<String>) -> bool {
@@ -1656,10 +1657,12 @@ fn apply_session_entries(cached: &mut CachedSession, content: &str, modified: Sy
 fn inspect_session_projects(sessions: &mut [SessionSummary], host: Option<&RemoteHost>) -> Result<(), String> {
     let directories = sessions.iter().map(|session| session.cwd.clone()).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>();
     let script = r#"for path do
-        if [ ! -d "$path" ]; then printf 'missing\000'; continue; fi
-        git_dir=$(git -C "$path" rev-parse --absolute-git-dir 2>/dev/null) || { printf 'no-repo\000'; continue; }
-        common_dir=$(git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || { printf 'unknown\000'; continue; }
+        if [ ! -d "$path" ]; then printf 'missing\000\000'; continue; fi
+        git_dir=$(git -C "$path" rev-parse --absolute-git-dir 2>/dev/null) || { printf 'no-repo\000\000'; continue; }
+        common_dir=$(git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || { printf 'unknown\000\000'; continue; }
         if [ "$git_dir" = "$common_dir" ]; then printf 'main\000'; else printf 'worktree\000'; fi
+        project_root=$(git -C "$path" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
+        printf '%s\000' "$project_root"
     done"#;
     let mut projects = HashMap::new();
     for batch in directories.chunks(128) {
@@ -1673,17 +1676,19 @@ fn inspect_session_projects(sessions: &mut [SessionSummary], host: Option<&Remot
             command.args(["-c", script, "sh"]).args(batch);
             command
         };
-        let output = run_limited(&mut command, batch.len().saturating_mul(16).max(1024), "Could not inspect session projects")?;
+        let output = run_limited(&mut command, MAX_GIT_PATH_LIST_BYTES, "Could not inspect session projects")?;
         if !output.status.success() { return Err(format!("Could not inspect session projects: {}", String::from_utf8_lossy(&output.stderr).trim())); }
-        let flags = output.stdout.split(|byte| *byte == 0).filter(|field| !field.is_empty()).collect::<Vec<_>>();
-        if flags.len() != batch.len() { return Err("Could not inspect every session project".into()); }
-        for (path, flag) in batch.iter().zip(flags) {
+        let fields = output.stdout.strip_suffix(&[0]).ok_or("Incomplete session project details")?.split(|byte| *byte == 0).collect::<Vec<_>>();
+        if fields.len() != batch.len() * 2 { return Err("Could not inspect every session project".into()); }
+        for (path, details) in batch.iter().zip(fields.chunks_exact(2)) {
+            let flag = details[0];
+            let project_root = (!details[1].is_empty()).then(|| String::from_utf8_lossy(details[1]).into_owned());
             let kind = match flag { b"no-repo" => Some(ProjectKind::NoRepo), b"main" => Some(ProjectKind::Main), b"worktree" => Some(ProjectKind::Worktree), _ => None };
-            projects.insert(path.as_str(), (flag != b"missing", kind));
+            projects.insert(path.as_str(), (flag != b"missing", kind, project_root));
         }
     }
     for session in sessions {
-        if let Some(&(exists, kind)) = projects.get(session.cwd.as_str()) { session.cwd_exists = exists; session.project_kind = kind; }
+        if let Some((exists, kind, project_root)) = projects.get(session.cwd.as_str()) { session.cwd_exists = *exists; session.project_kind = *kind; session.project_root = project_root.clone(); }
     }
     Ok(())
 }

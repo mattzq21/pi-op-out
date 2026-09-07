@@ -70,7 +70,8 @@ function savedSidebarOrder() {
 }
 
 function sessionKey(session: SessionSummary) { return `${session.hostId ?? "local"}:${session.id}`; }
-function physicalProjectKey(session: SessionSummary) { return `${session.hostId ?? "local"}:${session.cwd}`; }
+function physicalProjectKey(session: SessionSummary) { return `${session.hostId ?? "local"}:${session.projectRoot ?? session.cwd}`; }
+function projectName(session: SessionSummary) { return session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project; }
 function canPlaceSessionIn(session: SessionSummary, projectKey: string) { return projectKey === UNGROUPED_KEY || projectKey.startsWith(CUSTOM_GROUP_PREFIX) || projectKey === physicalProjectKey(session); }
 function sessionLayoutToken(key: string) { return `session:${key}`; }
 function groupLayoutToken(key: string) { return `group:${key}`; }
@@ -150,7 +151,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   useEffect(() => { if (menu && !sessions.some((session) => sessionKey(session) === sessionKey(menu.session))) closeMenu(); }, [menu, sessions]);
   const groupNameTaken = (name: string, excludedId?: string) => {
     const normalized = name.trim();
-    return sessions.some((session) => { const label = !session.hostId || session.hostId === "local" ? session.project : `${session.hostName ?? session.hostId} / ${session.project}`; return sidebarCollator.compare(label.trim(), normalized) === 0; })
+    return sessions.some((session) => { const label = !session.hostId || session.hostId === "local" ? projectName(session) : `${session.hostName ?? session.hostId} / ${projectName(session)}`; return sidebarCollator.compare(label.trim(), normalized) === 0; })
       || customGroups.some((group) => group.id !== excludedId && sidebarCollator.compare(group.name.trim(), normalized) === 0);
   };
   const finishGroup = (cancel = false) => {
@@ -231,13 +232,13 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   const filtered = sessions.filter((session) => {
     if (!normalizedQuery) return true;
     const groupName = customGroupsByKey.get(visualProjectKey(session))?.name ?? "";
-    return `${session.name} ${session.project} ${session.preview} ${session.hostName ?? session.hostId ?? "Local"} ${groupName}`.toLowerCase().includes(normalizedQuery);
+    return `${session.name} ${session.project} ${projectName(session)} ${session.preview} ${session.hostName ?? session.hostId ?? "Local"} ${groupName}`.toLowerCase().includes(normalizedQuery);
   });
   const groupedSessions = filtered.reduce<Record<string, SessionSummary[]>>((result, session) => {
     (result[visualProjectKey(session)] ??= []).push(session); return result;
   }, {});
   const ungroupedSessions = orderedSessions(UNGROUPED_KEY, groupedSessions[UNGROUPED_KEY] ?? [], sessionOrders);
-  const physicalGroups = [...projectDetails.entries()].map(([key, details]) => [key, details.project, details.hostId ?? "local", details.hostName, orderedSessions(key, groupedSessions[key] ?? [], sessionOrders)] as const)
+  const physicalGroups = [...projectDetails.entries()].map(([key, details]) => [key, projectName(details), details.hostId ?? "local", details.hostName, orderedSessions(key, groupedSessions[key] ?? [], sessionOrders)] as const)
     .filter(([, , , , projectSessions]) => projectSessions.length > 0 || Boolean(draggedSession))
     .sort(([, leftProject, leftHost, leftHostName], [, rightProject, rightHost, rightHostName]) => sidebarCollator.compare(leftHostName ?? leftHost, rightHostName ?? rightHost) || sidebarCollator.compare(leftProject, rightProject));
   const customVisualGroups = customGroups.map((group) => { const key = `${CUSTOM_GROUP_PREFIX}${group.id}`; return [key, group.name, "", undefined, orderedSessions(key, groupedSessions[key] ?? [], sessionOrders)] as const; })
