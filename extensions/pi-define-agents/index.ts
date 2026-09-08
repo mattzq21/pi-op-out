@@ -1,12 +1,12 @@
-import { randomUUID } from "node:crypto";
-import { link, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { link, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { formatSkillsForPrompt, type BuildSystemPromptOptions } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-export type Agent = { name: string; description: string; model: string; effort: string; systemPrompt?: string; path_systemprompt?: string; agentsMd: string; tools: string[]; skills: string[]; mcpServers: string[] };
+export type Agent = { name: string; description: string; model: string; effort: string; path_systemprompt: string; agentsMd: string; tools: string[]; skills: string[]; mcpServers: string[] };
 type RuntimeDefaults = { model: string; effort: string };
 
 
@@ -14,6 +14,7 @@ const STATUS_KEY = "pi-define-agents";
 const STATE_ENTRY = "pi-define-agents-state";
 const DEFAULTS_ENV = "PI_DEFINE_AGENTS_RUNTIME_DEFAULTS";
 const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
+const DEFAULT_PROMPT_PATH = "sysprompt/default.md";
 const DEFAULT_SYSTEM_PROMPT = `You are an expert coding assistant operating inside a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
 
 Available tools:
@@ -38,7 +39,7 @@ Guidelines:
 - Show file paths clearly when working with files`;
 
 type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean };
-const fallbackConfig: Config = { agents: [{ name: "default", description: "General-purpose agent", model: "", effort: "high", agentsMd: "", tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
+const fallbackConfig: Config = { agents: [{ name: "default", description: "General-purpose agent", model: "", effort: "high", path_systemprompt: DEFAULT_PROMPT_PATH, agentsMd: "", tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
 function defaultAgent(): Agent {
   const agent = structuredClone(fallbackConfig.agents[0]);
   if (desktopList("PI_DESKTOP_ALLOWED_TOOLS")?.includes("web_search")) agent.tools.push("web_search");
@@ -57,27 +58,53 @@ async function writeConfig(value: Config, createOnly = false) {
   } finally { await rm(temporary, { force: true }); }
 }
 
-// Collapse the retired field at the storage boundary; runtime profiles have one prompt.
-function systemPromptFromStoredAgent(agent: Agent & { developerPrompt?: unknown }): string | undefined {
-  if (agent.path_systemprompt !== undefined) {
-    if (typeof agent.path_systemprompt !== "string" || !agent.path_systemprompt.trim()) throw new Error(`Agent "${agent.name}" requires a nonempty path_systemprompt`);
-    if (agent.systemPrompt !== undefined || (typeof agent.developerPrompt === "string" && agent.developerPrompt.trim())) throw new Error(`Agent "${agent.name}" must use either systemPrompt or path_systemprompt`);
-    return undefined;
+async function ensurePromptFile(relativePath: string, contents: string) {
+  const path = resolve(dirname(configPath), relativePath);
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporary, contents, { mode: 0o600, flag: "wx" });
+    try { await link(temporary, path); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+  } finally { await rm(temporary, { force: true }); }
+}
+
+type StoredAgent = Omit<Agent, "path_systemprompt"> & { path_systemprompt?: string; systemPrompt?: string; developerPrompt?: string };
+type StoredConfig = { agents?: StoredAgent[]; webSearchDefaultApplied?: boolean };
+async function migratePrompts(stored: StoredConfig): Promise<Config> {
+  const agents = [];
+  for (const agent of Array.isArray(stored.agents) ? stored.agents : []) {
+    if (!agent || typeof agent.name !== "string" || !agent.name.length) continue;
+    let path = agent.path_systemprompt;
+    if (path === undefined) {
+      let prompt = typeof agent.systemPrompt === "string" ? agent.systemPrompt : undefined;
+      if ("developerPrompt" in agent) {
+        prompt = prompt?.trim() ? prompt : undefined;
+        if (typeof agent.developerPrompt === "string" && agent.developerPrompt.trim()) prompt = `${prompt ?? DEFAULT_SYSTEM_PROMPT}\n\n${agent.developerPrompt}`;
+      }
+      path = DEFAULT_PROMPT_PATH;
+      if (prompt !== undefined) {
+        const hash = createHash("sha256").update(agent.name).update("\0").update(prompt).digest("hex");
+        path = `sysprompt/${safeName(agent.name)}-${hash}.md`;
+        await ensurePromptFile(path, prompt);
+      }
+    }
+    const { systemPrompt: _inline, developerPrompt: _legacy, ...profile } = agent;
+    agents.push({ ...profile, path_systemprompt: path });
   }
-  const prompt = typeof agent.systemPrompt === "string" ? agent.systemPrompt : undefined;
-  const legacy = typeof agent.developerPrompt === "string" ? agent.developerPrompt : "";
-  if ("developerPrompt" in agent) {
-    // Profiles from before the single-prompt format used blank to inherit.
-    const inherited = prompt?.trim() ? prompt : undefined;
-    return legacy.trim() ? `${inherited ?? DEFAULT_SYSTEM_PROMPT}\n\n${legacy}` : inherited;
-  }
-  return prompt;
+  return normalize({ ...stored, agents });
+}
+
+function promptPath(agent: Agent): string {
+  if ("systemPrompt" in agent || "developerPrompt" in agent) throw new Error(`Agent "${agent.name}" must link a system prompt file using path_systemprompt`);
+  if (typeof agent.path_systemprompt !== "string" || !agent.path_systemprompt.trim()) throw new Error(`Agent "${agent.name}" requires a nonempty path_systemprompt`);
+  return agent.path_systemprompt;
 }
 
 function normalize(value: Partial<Config>): Config {
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => agent && typeof agent.name === "string" && agent.name.length > 0).map((agent) => ({
     name: agent.name, description: typeof agent.description === "string" ? agent.description : "", model: typeof agent.model === "string" ? agent.model : "", effort: typeof agent.effort === "string" ? agent.effort : fallbackConfig.agents[0].effort,
-    systemPrompt: systemPromptFromStoredAgent(agent), path_systemprompt: agent.path_systemprompt, agentsMd: typeof agent.agentsMd === "string" ? agent.agentsMd : "",
+    path_systemprompt: promptPath(agent), agentsMd: typeof agent.agentsMd === "string" ? agent.agentsMd : "",
     tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => typeof item === "string") : defaultAgent().tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => typeof item === "string") : [], mcpServers: Array.isArray(agent.mcpServers) ? agent.mcpServers.filter((item): item is string => typeof item === "string" && item !== "filesystem") : [],
   })) : [];
   const unique = supplied.filter((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) === index);
@@ -86,20 +113,21 @@ function normalize(value: Partial<Config>): Config {
 }
 
 async function readConfig(): Promise<Config> {
+  await ensurePromptFile(DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT);
   try {
     const stored = JSON.parse(await readFile(configPath, "utf8"));
-    const config = normalize(stored);
-    if (Array.isArray(stored.agents) && stored.agents.some((agent: unknown) => agent && typeof agent === "object" && "developerPrompt" in agent)) await writeConfig(config);
+    const config = await migratePrompts(stored);
+    if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && (agent.path_systemprompt === undefined || "systemPrompt" in agent || "developerPrompt" in agent))) await writeConfig(config);
     return config;
   }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   // Preserve profiles from older installations without changing their legacy data.
   const legacyPath = join(dirname(configPath), "..", "pi-orchestration", "config.json");
-  let legacy: Partial<Config> = {};
+  let legacy: StoredConfig = {};
   try { legacy = JSON.parse(await readFile(legacyPath, "utf8")); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  await writeConfig(normalize({ agents: legacy.agents }), true);
-  return normalize(JSON.parse(await readFile(configPath, "utf8")));
+  await writeConfig(await migratePrompts(legacy), true);
+  return readConfig();
 }
 async function loadConfig(): Promise<Config> {
   const config = await readConfig();
@@ -151,7 +179,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   let applyingAgentModel: string | undefined;
   let applyingAgentEffort: string | undefined;
   let activeToolError: string | undefined;
-  let activeSystemPrompt = DEFAULT_SYSTEM_PROMPT;
+  let activeSystemPrompt = "";
   let modelOverride: string | undefined;
   let effortOverride: string | undefined;
   let reloading = false;
@@ -175,12 +203,10 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (!runtimeDefaults) saveRuntimeDefaults({ model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "", effort: pi.getThinkingLevel() });
   };
   const activate = async (agent: Agent, ctx: ExtensionContext, connectMcp: boolean) => {
-    activeSystemPrompt = DEFAULT_SYSTEM_PROMPT;
-    if (agent.path_systemprompt !== undefined) {
-      const path = agent.path_systemprompt.startsWith("~/") ? join(homedir(), agent.path_systemprompt.slice(2)) : resolve(dirname(configPath), agent.path_systemprompt);
-      try { activeSystemPrompt = await readFile(path, "utf8"); }
-      catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" cannot read system prompt ${path}: ${error instanceof Error ? error.message : String(error)}`; }
-    } else activeSystemPrompt = agent.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    activeSystemPrompt = "";
+    const path = agent.path_systemprompt.startsWith("~/") ? join(homedir(), agent.path_systemprompt.slice(2)) : resolve(dirname(configPath), agent.path_systemprompt);
+    try { activeSystemPrompt = await readFile(path, "utf8"); }
+    catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" cannot read system prompt ${path}: ${error instanceof Error ? error.message : String(error)}`; }
     const toolError = agentToolError(pi, agent); if (toolError) { pi.setActiveTools([]); return toolError; }
     const modelName = modelOverride || agent.model.trim() || runtimeDefaults?.model; const currentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
     if (modelName && modelName !== currentModel) {
