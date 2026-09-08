@@ -7,7 +7,8 @@ interface Props { sessions: SessionSummary[]; activeId?: string; activeHostId?: 
 interface CustomGroup { id: string; name: string; }
 interface DraggedSession { projectKey: string; sessionKey: string; session: SessionSummary; }
 interface DropTarget { projectKey: string; sessionKey: string; edge: "before" | "after"; layoutBefore?: string | null; }
-interface MouseDrag extends DraggedSession { startX: number; startY: number; active: boolean; }
+type DraggedItem = DraggedSession | { projectKey: string };
+type MouseDrag = DraggedItem & { startX: number; startY: number; active: boolean; };
 
 const actions = [
   ["split", Columns2, "Split pane"], ["rename", Pencil, "Rename conversation"], ["clone", CopyPlus, "Clone conversation"], ["open-directory", FolderOpen, "Open project directory"]
@@ -108,6 +109,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   const [editingGroupId, setEditingGroupId] = useState<string>();
   const [groupDraftError, setGroupDraftError] = useState<string>();
   const [draggedSession, setDraggedSession] = useState<DraggedSession>();
+  const [draggedProject, setDraggedProject] = useState<string>();
   const [dropTarget, setDropTarget] = useState<DropTarget>();
   const menuRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -210,8 +212,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
       return next;
     });
   };
-  const placeLooseSession = (key: string, beforeToken: string | null) => {
-    const token = sessionLayoutToken(key);
+  const placeSidebarEntry = (token: string, beforeToken: string | null) => {
     const currentEntries = sidebarEntriesRef.current;
     if (beforeToken === token) return;
     const next = currentEntries.filter((entry) => entry !== token);
@@ -263,13 +264,13 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
     if (drag.projectKey === UNGROUPED_KEY) {
       const entries = sidebarEntriesRef.current; const token = sessionLayoutToken(drag.sessionKey); const index = entries.indexOf(token);
       if (index + direction < 0 || index + direction >= entries.length) return;
-      placeLooseSession(drag.sessionKey, direction < 0 ? entries[index - 1] : entries[index + 2] ?? null); return;
+      placeSidebarEntry(sessionLayoutToken(drag.sessionKey), direction < 0 ? entries[index - 1] : entries[index + 2] ?? null); return;
     }
     const sourceIndex = sourceSessions.findIndex((session) => sessionKey(session) === drag.sessionKey); const target = sourceSessions[sourceIndex + direction];
     if (!target) return;
     moveSession(drag, drag.projectKey, sourceSessions, sessionKey(target), direction < 0 ? "before" : "after");
   };
-  const startMouseDrag = (event: React.MouseEvent<HTMLElement>, drag: DraggedSession) => {
+  const startMouseDrag = (event: React.MouseEvent<HTMLElement>, drag: DraggedItem) => {
     if (normalizedQuery || event.button !== 0) return;
     removeMouseListenersRef.current();
     const mouseDrag: MouseDrag = { ...drag, startX: event.clientX, startY: event.clientY, active: false };
@@ -279,6 +280,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
       mouseDragRef.current = undefined;
       mouseDropTargetRef.current = undefined;
       setDraggedSession(undefined);
+      setDraggedProject(undefined);
       setDropTarget(undefined);
       dragPointerRef.current = undefined;
       if (autoScrollFrameRef.current !== undefined) { cancelAnimationFrame(autoScrollFrameRef.current); autoScrollFrameRef.current = undefined; }
@@ -290,6 +292,15 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
       const sessionElement = hit?.closest<HTMLElement>(".session-item[data-session-key]");
       if (sidebarDropZone) {
         nextTarget = { projectKey: UNGROUPED_KEY, sessionKey: "", edge: "after", layoutBefore: sidebarDropZone.dataset.sidebarEnd === "true" ? null : sidebarDropZone.dataset.sidebarBefore! };
+      } else if (!("session" in current)) {
+        const entryElement = hit?.closest<HTMLElement>("section[data-sidebar-token], .session-item[data-sidebar-token]");
+        const token = entryElement?.dataset.sidebarToken;
+        if (entryElement && token && token !== groupLayoutToken(current.projectKey)) {
+          const bounds = entryElement.getBoundingClientRect();
+          const edge = y < bounds.top + bounds.height / 2 ? "before" : "after";
+          const index = sidebarEntriesRef.current.indexOf(token);
+          nextTarget = { projectKey: UNGROUPED_KEY, sessionKey: "", edge, layoutBefore: edge === "before" ? token : sidebarEntriesRef.current[index + 1] ?? null };
+        }
       } else if (sessionElement && sessionElement.dataset.sessionKey !== current.sessionKey) {
         const bounds = sessionElement.getBoundingClientRect();
         const edge = y < bounds.top + bounds.height / 2 ? "before" : "after";
@@ -318,25 +329,25 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
       const current = mouseDragRef.current;
       if (!current) return;
       if (!current.active && Math.hypot(mouseEvent.clientX - current.startX, mouseEvent.clientY - current.startY) < 5) return;
-      if (!current.active) { current.active = true; setDraggedSession(current); }
+      if (!current.active) { current.active = true; if ("session" in current) setDraggedSession(current); else setDraggedProject(current.projectKey); }
       mouseEvent.preventDefault(); dragPointerRef.current = { x: mouseEvent.clientX, y: mouseEvent.clientY };
       updateDropTarget(mouseEvent.clientX, mouseEvent.clientY, current);
       if (autoScrollFrameRef.current === undefined) autoScrollFrameRef.current = requestAnimationFrame(autoScroll);
     };
-    const finish = (mouseEvent: MouseEvent) => {
+    const finish = () => {
       const current = mouseDragRef.current;
       if (!current) return;
       if (current.active) {
-        const releasedSession = mouseEvent.target instanceof Element ? mouseEvent.target.closest<HTMLElement>(".session-item[data-session-key]")?.dataset.sessionKey : undefined;
-        if (releasedSession === current.sessionKey) {
-          suppressClickRef.current = current.sessionKey;
-          window.setTimeout(() => { if (suppressClickRef.current === current.sessionKey) suppressClickRef.current = undefined; }, 0);
-        }
+        const sourceToken = "session" in current ? sessionLayoutToken(current.sessionKey) : groupLayoutToken(current.projectKey);
+        suppressClickRef.current = sourceToken;
+        window.setTimeout(() => { if (suppressClickRef.current === sourceToken) suppressClickRef.current = undefined; }, 0);
         const target = mouseDropTargetRef.current;
         if (target) {
-          moveSession(current, target.projectKey, groupedSessionsRef.current.get(target.projectKey) ?? [], target.sessionKey || undefined, target.edge);
-          if (target.layoutBefore !== undefined) placeLooseSession(current.sessionKey, target.layoutBefore);
-          expandProject(target.projectKey);
+          if ("session" in current) {
+            moveSession(current, target.projectKey, groupedSessionsRef.current.get(target.projectKey) ?? [], target.sessionKey || undefined, target.edge);
+            if (target.layoutBefore !== undefined) placeSidebarEntry(sourceToken, target.layoutBefore);
+            expandProject(target.projectKey);
+          } else if (target.layoutBefore !== undefined) placeSidebarEntry(sourceToken, target.layoutBefore);
         }
       }
       clear();
@@ -352,8 +363,25 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
       removeMouseListenersRef.current = () => {};
     };
   };
-  const renderSession = (session: SessionSummary, projectKey: string) => { const key = sessionKey(session); const running = runningSessions.has(key); const activity = unseenSessions.has(key) ? "New activity" : undefined; const accessibleActivity = running ? "Running" : activity; const target = dropTarget?.projectKey === projectKey && dropTarget.sessionKey === key ? dropTarget.edge : undefined; const drag = { projectKey, sessionKey: key, session }; return <div key={key} data-session-key={key} data-project-key={projectKey} className={`session-item ${!normalizedQuery ? "reorderable" : ""} ${activeId === session.id && (session.hostId ?? "local") === activeHostId ? "active" : ""} ${running ? "running" : activity ? "unseen" : ""} ${draggedSession?.sessionKey === key ? "dragging" : ""} ${target ? `drop-${target}` : ""}`} onContextMenu={(event) => { event.preventDefault(); const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget.querySelector<HTMLElement>(".session-main") ?? undefined; setMenu({ session, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190), returnFocus }); }}>
-    <button className="session-main" aria-label={`${session.name}, ${projectKindLabel(session)}, ${formatApiCost(session.apiCost)}${accessibleActivity ? `, ${accessibleActivity}` : ""}`} aria-current={activeId === session.id && (session.hostId ?? "local") === activeHostId ? "page" : undefined} aria-description={!normalizedQuery ? "Press Alt plus Up or Down to reorder. Add Shift to move between groups." : undefined} aria-keyshortcuts={!normalizedQuery ? "Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown" : undefined} title={session.name} onMouseDown={(event) => startMouseDrag(event, drag)} onKeyDown={(event) => { if (!normalizedQuery && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); moveSessionByKeyboard(drag, event.key === "ArrowUp" ? -1 : 1, event.shiftKey); } }} onClick={(event) => { if (suppressClickRef.current === key) { suppressClickRef.current = undefined; event.preventDefault(); return; } onSelect(session); }}><span className="session-copy"><span className="session-title-row"><SessionProjectIcon session={session} /><strong>{session.name}</strong>{activity && !running && <small className="session-activity">{activity}</small>}<span className="session-api-cost" title="Would-be API cost">{formatApiCost(session.apiCost)}</span></span></span></button>
+  const projectDragProps = (projectKey: string) => ({
+    onMouseDown: (event: React.MouseEvent<HTMLElement>) => startMouseDrag(event, { projectKey }),
+    onClick: (event: React.MouseEvent<HTMLElement>) => {
+      if (suppressClickRef.current === groupLayoutToken(projectKey)) { suppressClickRef.current = undefined; event.preventDefault(); return; }
+      toggleProject(projectKey);
+    },
+    onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => {
+      if (normalizedQuery || !event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+      event.preventDefault();
+      const entries = sidebarEntriesRef.current; const token = groupLayoutToken(projectKey); const index = entries.indexOf(token);
+      const direction = event.key === "ArrowUp" ? -1 : 1;
+      if (index + direction < 0 || index + direction >= entries.length) return;
+      placeSidebarEntry(token, direction < 0 ? entries[index - 1] : entries[index + 2] ?? null);
+    },
+    "aria-description": !normalizedQuery ? "Drag to reorder. Press Alt plus Up or Down to reorder." : undefined,
+    "aria-keyshortcuts": !normalizedQuery ? "Alt+ArrowUp Alt+ArrowDown" : undefined,
+  });
+  const renderSession = (session: SessionSummary, projectKey: string) => { const key = sessionKey(session); const running = runningSessions.has(key); const activity = unseenSessions.has(key) ? "New activity" : undefined; const accessibleActivity = running ? "Running" : activity; const target = dropTarget?.projectKey === projectKey && dropTarget.sessionKey === key ? dropTarget.edge : undefined; const drag = { projectKey, sessionKey: key, session }; return <div key={key} data-session-key={key} data-project-key={projectKey} data-sidebar-token={projectKey === UNGROUPED_KEY ? sessionLayoutToken(key) : undefined} className={`session-item ${!normalizedQuery ? "reorderable" : ""} ${activeId === session.id && (session.hostId ?? "local") === activeHostId ? "active" : ""} ${running ? "running" : activity ? "unseen" : ""} ${draggedSession?.sessionKey === key ? "dragging" : ""} ${target ? `drop-${target}` : ""}`} onContextMenu={(event) => { event.preventDefault(); const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget.querySelector<HTMLElement>(".session-main") ?? undefined; setMenu({ session, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190), returnFocus }); }}>
+    <button className="session-main" aria-label={`${session.name}, ${projectKindLabel(session)}, ${formatApiCost(session.apiCost)}${accessibleActivity ? `, ${accessibleActivity}` : ""}`} aria-current={activeId === session.id && (session.hostId ?? "local") === activeHostId ? "page" : undefined} aria-description={!normalizedQuery ? "Press Alt plus Up or Down to reorder. Add Shift to move between groups." : undefined} aria-keyshortcuts={!normalizedQuery ? "Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown" : undefined} title={session.name} onMouseDown={(event) => startMouseDrag(event, drag)} onKeyDown={(event) => { if (!normalizedQuery && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); moveSessionByKeyboard(drag, event.key === "ArrowUp" ? -1 : 1, event.shiftKey); } }} onClick={(event) => { if (suppressClickRef.current === sessionLayoutToken(key)) { suppressClickRef.current = undefined; event.preventDefault(); return; } onSelect(session); }}><span className="session-copy"><span className="session-title-row"><SessionProjectIcon session={session} /><strong>{session.name}</strong>{activity && !running && <small className="session-activity">{activity}</small>}<span className="session-api-cost" title="Would-be API cost">{formatApiCost(session.apiCost)}</span></span></span></button>
     <button className="session-archive" aria-label={`Archive ${session.name}`} title={`Archive ${session.name}`} onClick={() => onAction(session, "archive")}><Archive size={14} /></button>
   </div>; };
   const groupsByToken = new Map(groups.map((group) => [groupLayoutToken(group[0]), group] as const));
@@ -363,8 +391,8 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
     <label className="search"><Search size={15} /><input ref={searchRef} aria-label="Search conversations" placeholder="Search conversations" value={query} onChange={(event) => onQuery(event.target.value)} /><kbd>Ctrl G</kbd></label>
     <div ref={sessionScrollRef} className="session-scroll">
       {newGroupName !== undefined && !editingGroupId && <section className="project custom-group-draft"><div className="project-label"><input ref={groupNameRef} aria-label="New session group name" aria-invalid={Boolean(groupDraftError)} aria-describedby={groupDraftError ? "new-group-error" : undefined} placeholder="Group name" value={newGroupName} onChange={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} /></div>{groupDraftError && <small id="new-group-error" className="group-error">{groupDraftError}</small>}</section>}
-      {sidebarEntries.flatMap((token) => { const looseSession = looseSessionsByToken.get(token); const group = groupsByToken.get(token); if (looseSession) return [renderDropZone(token), renderSession(looseSession, UNGROUPED_KEY)]; if (!group) return []; const [projectKey, project, hostId, hostName, projectSessions] = group; const label = !hostId || hostId === "local" ? project : `${hostName ?? hostId} / ${project}`; const collapsed = !normalizedQuery && collapsedProjects.has(projectKey); const groupId = disclosureId(projectKey); return [renderDropZone(token), <section className={`project ${dropTarget?.projectKey === projectKey && !dropTarget.sessionKey && dropTarget.layoutBefore === undefined ? "drop-project" : ""}`} key={projectKey}>
-        {projectKey.startsWith(CUSTOM_GROUP_PREFIX) ? <div className="project-heading" data-drop-project-key={projectKey}>{editingGroupId === projectKey.slice(CUSTOM_GROUP_PREFIX.length) ? <div className="project-label"><input ref={groupNameRef} aria-label="Rename session group" aria-invalid={Boolean(groupDraftError)} value={newGroupName ?? ""} onChange={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} />{groupDraftError && <small className="group-error">{groupDraftError}</small>}</div> : <><button className="project-label" disabled={Boolean(normalizedQuery)} aria-expanded={!collapsed} aria-controls={groupId} onClick={() => toggleProject(projectKey)}><ChevronDown className={collapsed ? "collapsed" : ""} size={13} /><span className={projectKey === activeProjectKey ? "active" : undefined}>{label}</span></button><div className="project-actions"><button aria-label={`Rename group ${label}`} title="Rename group" onClick={() => editGroup(customGroupsByKey.get(projectKey)!)}><Pencil size={12} /></button><button aria-label={`Delete group ${label}`} title="Delete group" onClick={() => deleteGroup(customGroupsByKey.get(projectKey)!)}><Trash2 size={12} /></button></div></>}</div> : <button className="project-label" data-drop-project-key={projectKey} disabled={Boolean(normalizedQuery)} aria-expanded={!collapsed} aria-controls={groupId} onClick={() => toggleProject(projectKey)}><ChevronDown className={collapsed ? "collapsed" : ""} size={13} /><span className={projectKey === activeProjectKey ? "active" : undefined}>{label}</span></button>}
+      {sidebarEntries.flatMap((token) => { const looseSession = looseSessionsByToken.get(token); const group = groupsByToken.get(token); if (looseSession) return [renderDropZone(token), renderSession(looseSession, UNGROUPED_KEY)]; if (!group) return []; const [projectKey, project, hostId, hostName, projectSessions] = group; const label = !hostId || hostId === "local" ? project : `${hostName ?? hostId} / ${project}`; const collapsed = !normalizedQuery && collapsedProjects.has(projectKey); const groupId = disclosureId(projectKey); return [renderDropZone(token), <section data-sidebar-token={token} className={`project ${!normalizedQuery ? "reorderable" : ""} ${draggedProject === projectKey ? "dragging" : ""} ${dropTarget?.projectKey === projectKey && !dropTarget.sessionKey && dropTarget.layoutBefore === undefined ? "drop-project" : ""}`} key={projectKey}>
+        {projectKey.startsWith(CUSTOM_GROUP_PREFIX) ? <div className="project-heading" data-drop-project-key={projectKey}>{editingGroupId === projectKey.slice(CUSTOM_GROUP_PREFIX.length) ? <div className="project-label"><input ref={groupNameRef} aria-label="Rename session group" aria-invalid={Boolean(groupDraftError)} value={newGroupName ?? ""} onChange={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} />{groupDraftError && <small className="group-error">{groupDraftError}</small>}</div> : <><button className="project-label" disabled={Boolean(normalizedQuery)} aria-expanded={!collapsed} aria-controls={groupId} {...projectDragProps(projectKey)}><ChevronDown className={collapsed ? "collapsed" : ""} size={13} /><span className={projectKey === activeProjectKey ? "active" : undefined}>{label}</span></button><div className="project-actions"><button aria-label={`Rename group ${label}`} title="Rename group" onClick={() => editGroup(customGroupsByKey.get(projectKey)!)}><Pencil size={12} /></button><button aria-label={`Delete group ${label}`} title="Delete group" onClick={() => deleteGroup(customGroupsByKey.get(projectKey)!)}><Trash2 size={12} /></button></div></>}</div> : <button className="project-label" data-drop-project-key={projectKey} disabled={Boolean(normalizedQuery)} aria-expanded={!collapsed} aria-controls={groupId} {...projectDragProps(projectKey)}><ChevronDown className={collapsed ? "collapsed" : ""} size={13} /><span className={projectKey === activeProjectKey ? "active" : undefined}>{label}</span></button>}
         <div id={groupId} hidden={collapsed}>{projectSessions.map((session) => renderSession(session, projectKey))}</div>
       </section>]; })}
       {sidebarEntries.length > 0 && renderDropZone(null)}
