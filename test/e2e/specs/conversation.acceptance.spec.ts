@@ -1758,7 +1758,7 @@ describe("Settings acceptance", () => {
     await command.setValue("node");
     await args.setValue("server.js --quiet");
 
-    await expect(card.$("select")).toHaveValue("stdio");
+    await expect(card.$('.mcp-transport-toggle button[aria-pressed="true"]')).toHaveText("stdio");
     await expect(command).toHaveValue("node");
     await expect(args).toHaveValue("server.js --quiet");
     await $('button[aria-label="Remove Acceptance server"]').click();
@@ -1775,13 +1775,13 @@ describe("Settings acceptance", () => {
     const name = names[names.length - 1];
     await name.setValue("Acceptance HTTP");
     const card = await name.$('./ancestor::div[contains(@class, "mcp-card")]');
-    await setSelectValue('select[aria-label="Acceptance HTTP transport"]', "http");
+    await card.$('.//button[normalize-space(.)="HTTP"]').click();
     const url = await card.$('input[placeholder="https://example.com/mcp"]');
     const headers = await card.$('input[placeholder*="Authorization"]');
     await url.setValue("https://mcp.example.test/api");
     await headers.setValue('{"Authorization":"Bearer acceptance"}');
 
-    await expect(card.$("select")).toHaveValue("http");
+    await expect(card.$('.mcp-transport-toggle button[aria-pressed="true"]')).toHaveText("HTTP");
     await expect(url).toHaveValue("https://mcp.example.test/api");
     await expect(headers).toHaveValue('{"Authorization":"Bearer acceptance"}');
     await expect(card.$('.//label[span[normalize-space(.)="Command"]]')).not.toBeExisting();
@@ -1824,7 +1824,7 @@ describe("Settings acceptance", () => {
     await app.openConversations();
   });
 
-  it("bulk toggles discoverable skills without changing user-invoked skills", async () => {
+  it("lists skills without global toggle controls", async () => {
     const settings = {
       ...defaultSettings,
       skills: [
@@ -1839,14 +1839,10 @@ describe("Settings acceptance", () => {
       await app.openSettings();
       await app.openSettingsSection("Skills");
       await expect($(".skill-invocation")).toHaveText("User invoked only");
-      await $('//button[normalize-space(.)="Enable all"]').click();
-      await expect($('[role="switch"][aria-label="Enable Alpha skill"]')).toHaveAttribute("aria-checked", "true");
-      await expect($('[role="switch"][aria-label="Enable Beta skill"]')).toHaveAttribute("aria-checked", "true");
-      await expect($('[role="switch"][aria-label="Enable Explicit only"]')).not.toBeExisting();
-
-      await $('//button[normalize-space(.)="Disable all"]').click();
-      await expect($('[role="switch"][aria-label="Enable Alpha skill"]')).toHaveAttribute("aria-checked", "false");
-      await expect($('[role="switch"][aria-label="Enable Beta skill"]')).toHaveAttribute("aria-checked", "false");
+      await expect($$(".skill-row")).toBeElementsArrayOfSize(3);
+      await expect($('.settings-content [role="switch"]')).not.toBeExisting();
+      await expect($('//button[normalize-space(.)="Enable all"]')).not.toBeExisting();
+      await expect($('//button[normalize-space(.)="Disable all"]')).not.toBeExisting();
     } finally {
       await app.openConversations();
       await resetBackend();
@@ -1863,18 +1859,11 @@ describe("Settings acceptance", () => {
     await app.openConversations();
   });
 
-  it("can preview a tool toggle and restore it before leaving", async () => {
+  it("lists tools without global toggle controls", async () => {
     await app.openSettings();
     await app.openSettingsSection("Tools");
-    const toggles = await $$("[role='switch'][aria-label^='Enable ']");
-    expect(toggles.length).toBeGreaterThan(0);
-    const toggle = toggles[0];
-    const initialValue = await toggle.getAttribute("aria-checked");
-
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-checked", initialValue === "true" ? "false" : "true");
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-checked", initialValue);
+    expect((await $$(".settings-content .config-row")).length).toBeGreaterThan(0);
+    await expect($('.settings-content [role="switch"]')).not.toBeExisting();
     await app.openConversations();
   });
 });
