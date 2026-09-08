@@ -213,6 +213,8 @@ struct AppSettings {
     default_thinking: String,
     #[serde(default = "default_context_window_cap", deserialize_with = "deserialize_context_window_cap")]
     context_window_cap: u64,
+    #[serde(default = "default_context_window_cap_enabled")]
+    context_window_cap_enabled: bool,
     auto_compaction: bool,
     auto_retry: bool,
     #[serde(default)]
@@ -232,6 +234,7 @@ struct AppSettings {
 
 fn default_pi_path() -> String { "pi".into() }
 fn default_context_window_cap() -> u64 { 200_000 }
+fn default_context_window_cap_enabled() -> bool { true }
 fn deserialize_context_window_cap<'de, D>(deserializer: D) -> Result<u64, D::Error> where D: Deserializer<'de> {
     let value = Value::deserialize(deserializer)?;
     value.as_u64().ok_or_else(|| de::Error::custom("Context window cap must be a whole number"))
@@ -500,7 +503,7 @@ fn prepare_context_window_cap_extension(app: &AppHandle, settings: &AppSettings)
     let extension_path = dir.join("index.ts");
     let config_path = dir.join("config.json");
     atomic_write_private(&extension_path, include_str!("../../extensions/pi-context-window-cap/index.ts").as_bytes())?;
-    atomic_write_private(&config_path, &serde_json::to_vec_pretty(&json!({ "contextWindowCap": settings.context_window_cap })).map_err(|error| error.to_string())?)?;
+    atomic_write_private(&config_path, &serde_json::to_vec_pretty(&json!({ "contextWindowCap": settings.context_window_cap, "enabled": settings.context_window_cap_enabled })).map_err(|error| error.to_string())?)?;
     Ok(extension_path)
 }
 
@@ -552,7 +555,7 @@ fn prepare_btw_extension() -> Result<PathBuf, String> {
 
 fn default_settings() -> AppSettings {
     AppSettings {
-        default_model: DEFAULT_MODEL.into(), hidden_models: vec![], default_thinking: "medium".into(), context_window_cap: default_context_window_cap(), auto_compaction: true, auto_retry: true, debug_mode: false, keybindings: default_keybindings(),
+        default_model: DEFAULT_MODEL.into(), hidden_models: vec![], default_thinking: "medium".into(), context_window_cap: default_context_window_cap(), context_window_cap_enabled: default_context_window_cap_enabled(), auto_compaction: true, auto_retry: true, debug_mode: false, keybindings: default_keybindings(),
         tools: ["read", "bash", "edit", "write", "grep", "find", "ls"].iter().map(|name| json!({"name": name, "description": "Pi built-in tool", "enabled": true, "builtin": true})).chain([
             json!({"name":"list_agents","description":"List agents by machine and session","enabled":true,"builtin":false}),
             json!({"name":"send_message","description":"Send a message to another agent","enabled":true,"builtin":false}),
@@ -1268,7 +1271,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let codex_compaction = shell_quote(include_str!("../resources/codex-compaction.bundle.mjs"));
     let fast_mode = shell_quote(include_str!("../resources/fast-mode.bundle.mjs"));
     let project_files_watch = shell_quote(include_str!("../../extensions/pi-project-files-watch/index.ts"));
-    let context_window_config = shell_quote(&serde_json::to_string_pretty(&json!({ "contextWindowCap": settings.context_window_cap })).map_err(|error| error.to_string())?);
+    let context_window_config = shell_quote(&serde_json::to_string_pretty(&json!({ "contextWindowCap": settings.context_window_cap, "enabled": settings.context_window_cap_enabled })).map_err(|error| error.to_string())?);
     let mcp_bridge = shell_quote(include_str!("../resources/mcp-bridge.bundle.mjs"));
     let mcp_config = shell_quote(&serde_json::to_string_pretty(&settings.mcp_servers).map_err(|error| error.to_string())?);
     let remote = format!("umask 077 && rm -rf -- \"$HOME/.piop/pi-git-change-context\" && mkdir -p -m 700 \"$HOME/.piop/sessions\" \"$HOME/.piop/pi-context-window-cap\" \"$HOME/.piop/pi-project-files-watch\" \"$HOME/.piop/pi-define-agents\" && chmod 700 \"$HOME/.piop\" \"$HOME/.piop/sessions\" \"$HOME/.piop/pi-context-window-cap\" \"$HOME/.piop/pi-project-files-watch\" \"$HOME/.piop/pi-define-agents\" && printf %s {broker} > \"$HOME/.piop/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/.piop/pi-desktop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/.piop/pi-desktop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/.piop/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/.piop/pi-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/.piop/pi-context-window-cap/config.json\" && printf %s {project_files_watch} > \"$HOME/.piop/pi-project-files-watch/index.ts\" && printf %s {codex_web_search} > \"$HOME/.piop/pi-desktop-codex-web-search.ts\" && printf %s {codex_compaction} > \"$HOME/.piop/pi-desktop-codex-compaction.ts\" && printf %s {btw} > \"$HOME/.piop/pi-desktop-btw.ts\" && printf %s {defined_agents} > \"$HOME/.piop/pi-define-agents/index.ts\" && chmod 600 -- \"$HOME/.piop/pi-desktop-codex-web-search.ts\" \"$HOME/.piop/pi-desktop-codex-compaction.ts\" \"$HOME/.piop/session-broker.ts\" \"$HOME/.piop/pi-desktop-trace-reader.ts\" \"$HOME/.piop/pi-desktop-mcp-bridge.ts\" \"$HOME/.piop/mcp-servers.json\" \"$HOME/.piop/pi-context-window-cap/index.ts\" \"$HOME/.piop/pi-context-window-cap/config.json\" \"$HOME/.piop/pi-project-files-watch/index.ts\" \"$HOME/.piop/pi-desktop-btw.ts\" \"$HOME/.piop/pi-define-agents/index.ts\"");

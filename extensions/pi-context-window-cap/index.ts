@@ -9,7 +9,7 @@ const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
 const STATUS_KEY = "pi-desktop-prompt-context";
 const PROJECT_CONTEXT_MESSAGE = "pi-desktop-project-context";
 
-async function loadCap(): Promise<number> {
+async function loadCap(): Promise<number | undefined> {
   let config: unknown;
 
   try {
@@ -17,6 +17,8 @@ async function loadCap(): Promise<number> {
   } catch (error) {
     throw new Error(`Could not read ${configPath}: ${error instanceof Error ? error.message : String(error)}`);
   }
+
+  if (config && typeof config === "object" && (config as Record<string, unknown>).enabled === false) return undefined;
 
   const cap = config && typeof config === "object" ? (config as Record<string, unknown>).contextWindowCap : undefined;
   if (typeof cap !== "number" || !Number.isSafeInteger(cap) || cap <= 0) {
@@ -26,8 +28,8 @@ async function loadCap(): Promise<number> {
   return cap;
 }
 
-function capModel(model: Model<any> | undefined, cap: number): boolean {
-  if (!model || model.contextWindow <= cap) return false;
+function capModel(model: Model<any> | undefined, cap: number | undefined): boolean {
+  if (cap === undefined || !model || model.contextWindow <= cap) return false;
   model.contextWindow = Math.min(model.contextWindow, cap);
   return true;
 }
