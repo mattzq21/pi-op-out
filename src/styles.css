@@ -343,10 +343,11 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .pending-message.drop-before { box-shadow: inset 0 2px var(--accent); }
 .pending-message.drop-after { box-shadow: inset 0 -2px var(--accent); }
 
-.project-picker { display: inline-flex; max-width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--dark-subtle); overflow: hidden; }
+.project-picker { position: relative; display: inline-flex; max-width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--dark-subtle); overflow: hidden; }
 .new-chat-project .project-picker button { border: 0; border-radius: 0; background: transparent; }
 .new-chat-project .project-picker button:hover { background: var(--dark-control); }
-.new-chat-project .project-picker .clear-project { flex-shrink: 0; padding: 0 7px; border-left: 1px solid var(--line); }
+.new-chat-project .project-picker .clear-project { position: absolute; inset: 0 0 0 auto; padding: 0 7px; background: var(--dark-control, var(--panel)); opacity: 0; pointer-events: none; }
+.new-chat-project .project-picker:hover .clear-project, .new-chat-project .project-picker:focus-within .clear-project { opacity: 1; pointer-events: auto; }
 .new-chat-project .project-picker button:focus-visible { outline-offset: -2px; }
 .mcp-status-detail { position: relative; cursor: help; }
 .mcp-error-tooltip { display: none; position: absolute; z-index: 50; right: 0; top: 100%; width: min(520px, 70vw); max-height: 280px; overflow: auto; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel, #25241f); color: var(--ink); box-shadow: 0 8px 24px #0005; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 monospace; user-select: text; }
