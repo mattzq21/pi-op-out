@@ -240,15 +240,29 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   }, {});
   const ungroupedSessions = orderedSessions(UNGROUPED_KEY, groupedSessions[UNGROUPED_KEY] ?? [], sessionOrders);
   const physicalGroups = [...projectDetails.entries()].map(([key, details]) => [key, projectName(details), details.hostId ?? "local", details.hostName, orderedSessions(key, groupedSessions[key] ?? [], sessionOrders)] as const)
-    .filter(([, , , , projectSessions]) => projectSessions.length > 0 || Boolean(draggedSession))
     .sort(([, leftProject, leftHost, leftHostName], [, rightProject, rightHost, rightHostName]) => sidebarCollator.compare(leftHostName ?? leftHost, rightHostName ?? rightHost) || sidebarCollator.compare(leftProject, rightProject));
-  const customVisualGroups = customGroups.map((group) => { const key = `${CUSTOM_GROUP_PREFIX}${group.id}`; return [key, group.name, "", undefined, orderedSessions(key, groupedSessions[key] ?? [], sessionOrders)] as const; })
-    .filter(([, , , , projectSessions]) => !normalizedQuery || projectSessions.length > 0);
-  const groups = [...customVisualGroups, ...physicalGroups];
+  const customVisualGroups = customGroups.map((group) => { const key = `${CUSTOM_GROUP_PREFIX}${group.id}`; return [key, group.name, "", undefined, orderedSessions(key, groupedSessions[key] ?? [], sessionOrders)] as const; });
+  // Remember projects even while search or session placement hides them.
+  const projectOrderKey = JSON.stringify([...customVisualGroups, ...physicalGroups].map(([key]) => groupLayoutToken(key)));
+  useEffect(() => {
+    const projectTokens: string[] = JSON.parse(projectOrderKey);
+    setSidebarOrder((current) => {
+      const added = projectTokens.filter((token) => !current.includes(token));
+      if (!added.length) return current;
+      const next = [...added, ...current];
+      try { localStorage.setItem(SIDEBAR_ORDER_KEY, JSON.stringify(next)); } catch { /* Persistence is best-effort. */ }
+      return next;
+    });
+  }, [projectOrderKey]);
+  const groups = [
+    ...customVisualGroups.filter(([, , , , projectSessions]) => !normalizedQuery || projectSessions.length > 0),
+    ...physicalGroups.filter(([, , , , projectSessions]) => projectSessions.length > 0 || Boolean(draggedSession)),
+  ];
   groupedSessionsRef.current = new Map([[UNGROUPED_KEY, ungroupedSessions], ...groups.map(([key, , , , projectSessions]) => [key, projectSessions] as const)]);
   const defaultSidebarEntries = [...ungroupedSessions.map((session) => sessionLayoutToken(sessionKey(session))), ...groups.map(([key]) => groupLayoutToken(key))];
   const availableSidebarEntries = new Set(defaultSidebarEntries);
-  const sidebarEntries = [...sidebarOrder.filter((entry) => availableSidebarEntries.has(entry)), ...defaultSidebarEntries.filter((entry) => !sidebarOrder.includes(entry))];
+  const addedEntries = defaultSidebarEntries.filter((entry) => !sidebarOrder.includes(entry));
+  const sidebarEntries = [...addedEntries.filter((entry) => entry.startsWith("group:")), ...sidebarOrder.filter((entry) => availableSidebarEntries.has(entry)), ...addedEntries.filter((entry) => entry.startsWith("session:"))];
   sidebarEntriesRef.current = sidebarEntries;
   const activeSession = sessions.find((session) => session.id === activeId && (session.hostId ?? "local") === activeHostId);
   const activeProjectKey = activeSession ? visualProjectKey(activeSession) : undefined;
