@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { formatSkillsForPrompt, type BuildSystemPromptOptions } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-export type Agent = { name: string; description: string; model: string; effort: string; systemPrompt?: string; agentsMd: string; tools: string[]; skills: string[]; mcpServers: string[] };
+export type Agent = { name: string; description: string; model: string; effort: string; systemPrompt?: string; path_systemprompt?: string; agentsMd: string; tools: string[]; skills: string[]; mcpServers: string[] };
 type RuntimeDefaults = { model: string; effort: string };
 
 
@@ -59,6 +59,11 @@ async function writeConfig(value: Config, createOnly = false) {
 
 // Collapse the retired field at the storage boundary; runtime profiles have one prompt.
 function systemPromptFromStoredAgent(agent: Agent & { developerPrompt?: unknown }): string | undefined {
+  if (agent.path_systemprompt !== undefined) {
+    if (typeof agent.path_systemprompt !== "string" || !agent.path_systemprompt.trim()) throw new Error(`Agent "${agent.name}" requires a nonempty path_systemprompt`);
+    if (agent.systemPrompt !== undefined || (typeof agent.developerPrompt === "string" && agent.developerPrompt.trim())) throw new Error(`Agent "${agent.name}" must use either systemPrompt or path_systemprompt`);
+    return undefined;
+  }
   const prompt = typeof agent.systemPrompt === "string" ? agent.systemPrompt : undefined;
   const legacy = typeof agent.developerPrompt === "string" ? agent.developerPrompt : "";
   if ("developerPrompt" in agent) {
@@ -72,7 +77,7 @@ function systemPromptFromStoredAgent(agent: Agent & { developerPrompt?: unknown 
 function normalize(value: Partial<Config>): Config {
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => agent && typeof agent.name === "string" && agent.name.length > 0).map((agent) => ({
     name: agent.name, description: typeof agent.description === "string" ? agent.description : "", model: typeof agent.model === "string" ? agent.model : "", effort: typeof agent.effort === "string" ? agent.effort : fallbackConfig.agents[0].effort,
-    systemPrompt: systemPromptFromStoredAgent(agent), agentsMd: typeof agent.agentsMd === "string" ? agent.agentsMd : "",
+    systemPrompt: systemPromptFromStoredAgent(agent), path_systemprompt: agent.path_systemprompt, agentsMd: typeof agent.agentsMd === "string" ? agent.agentsMd : "",
     tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => typeof item === "string") : defaultAgent().tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => typeof item === "string") : [], mcpServers: Array.isArray(agent.mcpServers) ? agent.mcpServers.filter((item): item is string => typeof item === "string" && item !== "filesystem") : [],
   })) : [];
   const unique = supplied.filter((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) === index);
@@ -146,6 +151,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   let applyingAgentModel: string | undefined;
   let applyingAgentEffort: string | undefined;
   let activeToolError: string | undefined;
+  let activeSystemPrompt = DEFAULT_SYSTEM_PROMPT;
   let modelOverride: string | undefined;
   let effortOverride: string | undefined;
   let reloading = false;
@@ -169,6 +175,12 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (!runtimeDefaults) saveRuntimeDefaults({ model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "", effort: pi.getThinkingLevel() });
   };
   const activate = async (agent: Agent, ctx: ExtensionContext) => {
+    activeSystemPrompt = DEFAULT_SYSTEM_PROMPT;
+    if (agent.path_systemprompt !== undefined) {
+      const path = agent.path_systemprompt.startsWith("~/") ? join(homedir(), agent.path_systemprompt.slice(2)) : resolve(dirname(configPath), agent.path_systemprompt);
+      try { activeSystemPrompt = await readFile(path, "utf8"); }
+      catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" cannot read system prompt ${path}: ${error instanceof Error ? error.message : String(error)}`; }
+    } else activeSystemPrompt = agent.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     const toolError = agentToolError(pi, agent); if (toolError) { pi.setActiveTools([]); return toolError; }
     const modelName = modelOverride || agent.model.trim() || runtimeDefaults?.model; const currentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
     if (modelName && modelName !== currentModel) {
@@ -221,7 +233,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   });
   pi.on("before_agent_start", (event, ctx) => {
     const agent = currentAgent(); if (!agent) return;
-    const base = buildAgentSystemPrompt(agent.systemPrompt ?? DEFAULT_SYSTEM_PROMPT, event.systemPromptOptions, event.systemPrompt);
+    const base = buildAgentSystemPrompt(activeSystemPrompt, event.systemPromptOptions, event.systemPrompt);
     const additions = agent.agentsMd.trim() ? `# Agent AGENTS.md\n\n${agent.agentsMd}` : "";
     const systemPrompt = additions ? `${base}\n\n${additions}` : base;
     return { systemPrompt: `${systemPrompt}\n\nCurrent working directory ${ctx.cwd.replace(/\\/g, "/")}` };

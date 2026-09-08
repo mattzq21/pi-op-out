@@ -15,7 +15,9 @@ The extension creates `config.json` beside itself on first load. `config.example
 
 ## Configuration
 
-Agents inherit the built-in default system prompt when `systemPrompt` is omitted from `config.json`. An explicit string replaces it, including `"systemPrompt": ""` for an empty base prompt. In Settings → Agents, “Use default system prompt” omits the field when saved; turning it off allows an empty prompt. Typing in the prompt field switches to a custom prompt. Pi's append prompt, discovered project instructions, and skills remain included. Agent AGENTS.md follows, then the final line `Current working directory {project dir}` uses the session's actual directory. Customize each agent under Settings → Agents. Existing profiles with a separate instruction field are migrated into their system prompt on load, preserving the inherited default when applicable.
+Agents inherit the built-in default system prompt when both `systemPrompt` and `path_systemprompt` are omitted from `config.json`. An explicit string replaces it, including `"systemPrompt": ""` for an empty base prompt. In Settings → Agents, “Use default system prompt” omits the field when saved; turning it off allows an empty prompt. Typing in the prompt field switches to a custom prompt. Pi's append prompt, discovered project instructions, and skills remain included. Agent AGENTS.md follows, then the final line `Current working directory {project dir}` uses the session's actual directory. Customize each agent under Settings → Agents. Existing profiles with a separate instruction field are migrated into their system prompt on load, preserving the inherited default when applicable.
+
+Use `path_systemprompt` instead of `systemPrompt` to load the base prompt from a UTF-8 file. The two fields are mutually exclusive. Relative paths resolve beside `config.json`; absolute paths and `~/` are also supported. Files are read on the host running Pi, including for SSH sessions. The file is reread when the agent activates and before each input; an unreadable file blocks the run. Settings → Agents supports “Use system prompt file”. Empty files provide an empty base prompt.
 
 In piop, `web_search` is included in the default agent when globally enabled. Existing profiles receive it once on upgrade; subsequent per-agent opt-outs are preserved. New agents created in Settings inherit all globally enabled tools.
 
@@ -23,7 +25,7 @@ Legacy agent tool selections migrate on load: `exec_command` becomes `read`, `ba
 
 ## VM tester
 
-`tester.example.json` contains a tester profile that accepts a production executable path and checks to perform. Merge its agent into the existing configuration's `agents` array. It inherits the session model and selects the `cua-vm` MCP server.
+`tester.example.json` contains a tester profile that accepts a production executable path and checks to perform. Merge its agent into the existing configuration's `agents` array and copy `sysprompt/tester.example.md` into a `sysprompt` directory beside that configuration (on each host running the tester). It inherits the session model and selects the `cua-vm` MCP server.
 
 On Matt's local host, register this server in Piop's Settings → MCP (the agent selection uses the server **id**):
 
@@ -41,6 +43,6 @@ On Matt's local host, register this server in Piop's Settings → MCP (the agent
 
 The broker starts or reuses an isolated VM when the tester connects. Piop supplies a stable identity for each conversation, agent name, and MCP server ID. Different conversations get separate VMs, while reconnects reuse their own VM. Selecting another agent releases the previous connection. Configure the broker on the machine where Pi runs; local paths in uploads refer to that machine.
 
-Pass the tester the absolute path to a production binary and the requested checks. The caller builds with `./node_modules/.bin/tauri build --no-bundle -- --locked`; raw Cargo builds can leave the app pointing at the development URL. The tester uses `broker_exec` to inspect the guest launcher and `broker_upload` to transfer the build through its existing MCP lease, then tests through CUA. The guest expires after 60 seconds without MCP activity, including with its viewer open. The tester captures evidence as it works and redeploys after an expired VM is recreated. Existing tester profiles must copy the updated `systemPrompt` from the example to adopt this behavior. See [the integration contract](../../docs/cua-vm-broker.md).
+Pass the tester the absolute path to a production binary and the requested checks. The caller builds with `./node_modules/.bin/tauri build --no-bundle -- --locked`; raw Cargo builds can leave the app pointing at the development URL. The tester uses `broker_exec` to inspect the guest launcher and `broker_upload` to transfer the build through its existing MCP lease, then tests through CUA. The guest expires after 60 seconds without MCP activity, including with its viewer open. The tester captures evidence as it works and redeploys after an expired VM is recreated. Existing tester profiles can replace `systemPrompt` with `"path_systemprompt": "sysprompt/tester.example.md"` after copying the prompt file. See [the integration contract](../../docs/cua-vm-broker.md).
 
 `/pi-define-agents-config <base64url-json>` updates `{ "agents": [...] }` and reloads resources. piop uses this command to save definitions. Writes use temporary files and atomic publication. Older installations can import their existing agent profiles from the legacy configuration without modifying that file.
