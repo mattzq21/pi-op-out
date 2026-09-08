@@ -401,6 +401,15 @@ fn canonical_shortcut(shortcut: &str) -> Result<Option<String>, String> {
     let mut canonical: Vec<&str> = modifiers.iter().copied().filter(|modifier| parts.iter().any(|part| part == modifier)).collect(); canonical.push(key); Ok(Some(canonical.join("+")))
 }
 
+fn migrate_keybindings(settings: &mut AppSettings) {
+    // Retired actions can retain shortcuts now reserved by the app (e.g. conversation search).
+    let supported = default_keybindings();
+    settings.keybindings.retain(|action, _| supported.contains_key(action));
+    if settings.keybindings.get("focusComposer").map(String::as_str) == Some("Ctrl+L") {
+        settings.keybindings.insert("focusComposer".into(), "Ctrl+E".into());
+    }
+}
+
 fn validate_keybindings(settings: &AppSettings) -> Result<(), String> {
     let mut shortcuts = HashSet::new();
     for shortcut in settings.keybindings.values() { if let Some(canonical) = canonical_shortcut(shortcut)? { if matches!(canonical.as_str(), "ctrl+g" | "meta+g" | "mod+g") { return Err(format!("Shortcut '{shortcut}' is reserved for conversation search")); } if !shortcuts.insert(canonical) { return Err(format!("Shortcut '{shortcut}' is assigned more than once")); } } }
@@ -703,7 +712,7 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     if !settings.tools.iter().any(|tool| tool.get("name").and_then(Value::as_str) == Some("web_search")) {
         settings.tools.push(codex_web_search_tool());
     }
-    if settings.keybindings.get("focusComposer").map(String::as_str) == Some("Ctrl+L") { settings.keybindings.insert("focusComposer".into(), "Ctrl+E".into()); }
+    migrate_keybindings(&mut settings);
     if settings.hosts.len() > MAX_REMOTE_HOSTS { return Err(format!("Settings contain more than {MAX_REMOTE_HOSTS} remote machines")); }
     if settings.mcp_servers.len() > MAX_MCP_SERVERS { return Err(format!("Settings contain more than {MAX_MCP_SERVERS} MCP servers")); }
     merge_discovered_skills(&mut settings);
@@ -712,7 +721,8 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
 }
 
 #[tauri::command(async)]
-fn save_app_settings(app: AppHandle, settings: AppSettings) -> Result<(), String> {
+fn save_app_settings(app: AppHandle, mut settings: AppSettings) -> Result<(), String> {
+    migrate_keybindings(&mut settings);
     if settings.context_window_cap < 1000 { return Err("Context window cap must be a whole number of at least 1000".into()); }
     validate_dictionaries(&settings)?;
     validate_keybindings(&settings)?;
