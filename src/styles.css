@@ -360,4 +360,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 
 .mcp-pending-message { filter: brightness(.6); }
 .mcp-pending-message .message-actions { display: none; }
-.mcp-loading { margin: 8px 0 20px; color: var(--muted); font: 12px/1.5 "DM Sans"; }
+.mcp-loading { display: flex; align-items: center; gap: 6px; margin: 8px 0 20px; color: var(--muted); font: 12px/1.5 "DM Sans"; }
+.mcp-loading-spinner { flex-shrink: 0; animation: mcp-loading-spin 1s linear infinite; }
+@keyframes mcp-loading-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .mcp-loading-spinner { animation: none; } }
