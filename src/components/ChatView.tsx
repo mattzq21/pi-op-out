@@ -45,6 +45,14 @@ export function ChatView(props: Props) {
   const onCreateWorktree = useCallback<NonNullable<Props["onCreateWorktree"]>>((message) => actions.current.onCreateWorktree?.(message), []);
   const fastModeStatus = props.statuses["pi-desktop-fast-mode"];
   const mcpLoading = props.statuses["pi-desktop-mcp-loading"];
+  const loadingServers = useMemo((): { id: string; name: string }[] => {
+    if (!mcpLoading) return [];
+    if (!mcpLoading.startsWith("json:")) return [{ id: "loading", name: mcpLoading.replace(/^Loading /, "") }];
+    try {
+      const value: unknown = JSON.parse(mcpLoading.slice(5));
+      return Array.isArray(value) ? value.filter((server): server is { id: string; name: string } => server && typeof server.id === "string" && typeof server.name === "string") : [];
+    } catch { return []; }
+  }, [mcpLoading]);
   const activity = mcpLoading ? undefined : props.state.activity;
   const statuses = Object.entries(props.statuses).filter(([key]) => !["pi-desktop-fast-mode", "pi-desktop-mcp-loading"].includes(key)).map(([, text]) => text);
   const projectName = props.projectCwd?.split(/[\\/]/).filter(Boolean).at(-1);
@@ -86,7 +94,7 @@ export function ChatView(props: Props) {
       {turns.map((turn, index) => <ConversationTurn key={`${turn[0]?.timestamp ?? turn[0]?.id ?? "turn"}:${index}`} messages={turn} gitDiffs={props.gitDiffs} debug={props.debug ?? false} active={props.state.isStreaming && index === turns.length - 1} retryable={retryable && index === turns.length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index === turns.length - 1} onRetry={onRetry} onBranch={onBranch} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} />)}
       {mcpLoading && <section className="mcp-pending-turn" aria-label="Message waiting for MCP" aria-busy="true">
         {submittedMessage && <div className="mcp-pending-message"><Message message={submittedMessage} showActions={false} /></div>}
-        <div className="mcp-loading" role="status"><LoaderCircle className="mcp-loading-spinner" size={14} aria-hidden="true" /><span>{mcpLoading}</span></div>
+        <div className="mcp-loading-list" role="status">{loadingServers.map((server) => <div className="mcp-loading" key={server.id}><LoaderCircle className="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading {server.name}</span></div>)}</div>
       </section>}
       <div className="scroll-anchor" />
     </div></div>

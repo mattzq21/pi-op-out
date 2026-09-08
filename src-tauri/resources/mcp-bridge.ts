@@ -118,7 +118,7 @@ export default async function mcpBridge(pi: ExtensionAPI) {
   const publish = () => {
     context?.ui.setStatus(MCP_STATUS_KEY, `json:${JSON.stringify([...statuses.values()])}`);
     const loading = servers.filter((server) => statuses.get(server.id)?.status === "starting");
-    context?.ui.setStatus("pi-desktop-mcp-loading", loading.length ? loading.map((server) => `Loading ${server.name}`).join(" · ") : undefined);
+    context?.ui.setStatus("pi-desktop-mcp-loading", loading.length ? `json:${JSON.stringify(loading.map(({ id, name }) => ({ id, name })))}` : undefined);
   };
   const close = async (id: string) => {
     const connection = connections.get(id);

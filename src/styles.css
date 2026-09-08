@@ -361,7 +361,8 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .mcp-pending-message { filter: brightness(.6); }
 .mcp-pending-message .user-message { margin-bottom: 0; }
 .mcp-pending-message .message-actions { display: none; }
-.mcp-loading { display: flex; justify-content: flex-end; align-items: center; gap: 6px; margin: 6px 0 20px; color: var(--accent); font: 14px/1.5 "DM Sans"; }
+.mcp-loading-list { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; margin: 6px 0 20px; }
+.mcp-loading { display: flex; justify-content: flex-end; align-items: center; gap: 6px; color: var(--accent); font: 14px/1.5 "DM Sans"; }
 .mcp-loading-spinner { flex-shrink: 0; animation: mcp-loading-spin 1s linear infinite; }
 @keyframes mcp-loading-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .mcp-loading-spinner { animation: none; } }
