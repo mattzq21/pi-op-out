@@ -1,0 +1,92 @@
+# Review fixes
+
+Source: /tmp/piop-review/REVIEW.md (72 findings, reviewed 705437b). Current baseline: 3099656. All 72 findings were checked against the current source: 64 required changes; 8 were already resolved in the baseline. No new tests were added. Existing E2E fixtures were corrected for isolated configuration, settled events, Debug Mode, and fresh-runtime archival.
+
+- 1: Implemented — Transport ownership and timer cancellation.
+- 2: Already resolved in baseline; verified current source.
+- 3: Implemented — Process generations guard stale stdout cleanup.
+- 4: Implemented — Retain advertised diff objects through inference; clean on idle input or shutdown.
+- 5: Implemented — Stream complete summaries on changed fingerprints instead of append assumptions.
+- 6: Implemented — Remote sidecars receive JSON via stdin.
+- 7: Implemented — Unborn worktree copies include staged files.
+- 8: Implemented — Unauthenticated model selection fails activation.
+- 9: Implemented — Missing retry delay header is no longer zero.
+- 10: Already resolved in baseline; verified current source.
+- 11: Already resolved in baseline; verified current source.
+- 12: Implemented — Startup generation checked before and after temporary creation.
+- 13: Implemented — Shared session claims cover UI and broker launches.
+- 14: Implemented — Bounded message jobs leave broker workers available for control.
+- 15: Implemented — Normalized MCP names include original-name hashes.
+- 16: Implemented — Side forks receive a new session header identity.
+- 17: Implemented — Snapshot indexes seed from actual staged tree.
+- 18: Implemented — Dirty notification recomputes after saves and newer edits.
+- 19: Already resolved in baseline; verified current source.
+- 20: Already resolved in baseline; verified current source.
+- 21: Implemented — Local preflight includes staged paths.
+- 22: Implemented — Remote preflight enforces raw input limits before staging.
+- 23: Implemented — Active snapshots are released explicitly rather than pruned by age/count.
+- 24: Implemented — Queue reconciliation retains expanded payload identity and attachments.
+- 25: Implemented — Tool message events reuse toolCallId.
+- 26: Implemented — Only agent_settled clears busy state.
+- 27: Implemented — Remote sidecars use private temporary writes and atomic rename.
+- 28: Implemented — Queue ownership cleared on successful session replacement; archives use fresh runtimes.
+- 29: Implemented — Shutdown no longer persists cached Fast Mode preferences.
+- 30: Implemented — Harness cleanup follows isolated .piop/tmp root.
+- 31: Implemented — Index complete records from actual streamed bytes without speculative offsets.
+- 32: Implemented — Bounded per-terminal input worker keeps controls accessible.
+- 33: Implemented — Split branches use supported next-user fork or clone and update parent ownership.
+- 34: Already resolved in baseline; verified current source.
+- 35: Implemented — Host-removal completion checks original selection.
+- 36: Implemented — Archive uses current terminal selection.
+- 37: Implemented — Settings rollback restores captured connection identity.
+- 38: Already resolved in baseline; verified current source.
+- 39: Implemented — Model changes refresh model-dependent state.
+- 40: Implemented — RPC writes run outside global lock with full-operation timeout.
+- 41: Implemented — Inference slash prompts pass activation guard.
+- 42: Implemented — Inference slash prompts pass file watcher.
+- 43: Implemented — Held queues restore when slash input starts inference.
+- 44: Implemented — Compaction reader cancelled and released in finally.
+- 45: Implemented — Zero character budget returns empty.
+- 46: Implemented — Disconnect converts queued payloads to explicit retry.
+- 47: Implemented — Native runtime retains private side-session files and metadata until disposal.
+- 48: Implemented — Relocation restarts the cached owner with the corrected cwd.
+- 49: Already resolved in baseline; verified current source.
+- 50: Implemented — Terminal snapshot offsets follow parsed writes.
+- 51: Implemented — Broker print prompts are delivered literally through stdin.
+- 52: Implemented — Loose keyboard movement updates visible sidebar order.
+- 53: Implemented — Default thinking validated only when applying defaults.
+- 54: Implemented — Fresh status no longer inferred from allocated session filename.
+- 55: Implemented — Direct legacy orchestration config is migrated locally and remotely.
+- 56: Implemented — E2E configuration assertions and writes use the isolated active config.
+- 57: Implemented — Shutdown cancels broker children.
+- 58: Implemented — Archived conversations replaced with separate runtimes.
+- 59: Implemented — Transport retains partial assistant state for history reloads.
+- 60: Implemented — Existing error detection now correlates SDK command names so concurrent status-query errors cannot roll back a successful configuration save. Native save E2E passed.
+- 61: Implemented — Settings and debug saves share a synchronous UI gate.
+- 62: Implemented — Worktree patches disable textconv and external diff.
+- 63: Implemented — Failed worktree add checks/cleans newly owned artifacts.
+- 64: Implemented — Remote Pi and Node helpers run within the initialized login shell.
+- 65: Implemented — Split agent selection refreshes model state.
+- 66: Implemented — Session summaries stream without a cumulative history size cutoff.
+- 67: Implemented — E2E SDK preferences and desktop settings use private fixture directories.
+- 68: Implemented — Deadlines propagate; caller failures cancel native jobs.
+- 69: Implemented — Remote indexing batches bound encoded argument size and count.
+- 70: Implemented — Quoted empty argv values preserved.
+- 71: Implemented — Cache-write tokens included in totals.
+- 72: Implemented — Visible generic extension messages restored.
+
+## Verification
+
+- Existing agent-reload test: passed (`node --test test/extensions/defined-agents-reload.test.mjs`).
+- Native webdriver release build and TypeScript compilation: passed.
+- Final existing native E2E suite: **103 passing**, no failures (`npm run test:e2e:run`; /tmp/piop-review-fixes-final-e2e.log).
+- Production build, TypeScript, and bundled extensions: passed (`npm run build`; /tmp/piop-review-fixes-final-build.log). Vite reports the existing large-chunk advisory.
+- Offline native check: passed (`cargo check --locked --offline --manifest-path src-tauri/Cargo.toml`; /tmp/piop-review-fixes-final-cargo.log).
+- `git diff --check`: passed.
+- Disposable production-helper replays: Retry-After 30 seconds returns 30000 ms; absent retry headers preserve the fallback; zero truncation budget returns empty; quoted empty MCP argv survives; cache input 100/read 1000/write 10000 reports 9% and 11100 prompt tokens.
+- A 75,497,935-byte JSONL history remains indexable. An incomplete final record is ignored until completed, then counted once. The fork helper writes a distinct header identity and parent-session reference.
+- Git snapshot helper preserves force-added ignored files and rejects a staged 17 MiB file before staging into snapshot storage.
+- Native-save E2E exposed unrelated `pi-desktop-control` errors during reload being attributed to configuration saves. Correlating SDK command names fixed the rollback; the isolated native-save case passed afterward.
+- Hash comparison confirmed the real Pi settings, desktop settings, active agent configuration, and legacy agent configuration remained unchanged during isolated E2E.
+
+These checks cover compilation, existing UI workflows, and the listed helper cases. They are not individual runtime reproductions of every race in the report. SSH changes were checked against source and exercised through local helper replays where applicable; no configured remote host was exercised. Long-running process/PTY races and simultaneous broker saturation were checked at their ownership, locking, timeout, and shutdown boundaries in source.

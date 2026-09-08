@@ -1,13 +1,12 @@
 import { $, $$, browser, expect } from "@wdio/globals";
 import { readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { decodeAgentValue, encodeAgentValue } from "../../../src/lib/agentProtocol.js";
 import type { AppSettings, DefinedAgentsCapability, AgentConfig } from "../../../src/types.js";
 import { app } from "../pageobjects/app.page.js";
 
 type BackendCall = { command: string; args: Record<string, unknown>; mocked: boolean };
-const installedAgentConfigPath = join(homedir(), ".piop", "pi-define-agents", "config.json");
+const installedAgentConfigPath = join(process.env.PIOP_TEST_HOME || (() => { throw new Error("E2E requires an isolated home"); })(), ".piop", "pi-define-agents", "config.json");
 const callBridge = () => $('textarea[aria-label="E2E calls"]');
 const responseBridge = () => $('textarea[aria-label="E2E responses"]');
 const mockBackend = async (responses: Record<string, unknown>) => {
@@ -36,6 +35,8 @@ const emitPiEvent = async (payload: Record<string, unknown>) => {
   await browser.execute(async (event) => {
     const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
     await tauri.invoke("plugin:event|emit", { event: "pi://event", payload: event });
+    // A completed native turn settles after agent_end; fixtures model both events.
+    if (event.type === "agent_end") await tauri.invoke("plugin:event|emit", { event: "pi://event", payload: { type: "agent_settled" } });
   }, payload);
   await browser.execute(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
 };
@@ -849,6 +850,7 @@ describe("Conversation acceptance", () => {
   });
 
   it("renders a tool call from running through completion", async () => {
+    const enableDebug = $('button[aria-label="Enable debug mode"]'); if (await enableDebug.isExisting()) await enableDebug.click();
     await emitPiEvent({ type: "tool_execution_start", toolCallId: "acceptance-tool", toolName: "acceptance_tool", args: { path: "README.md" } });
     const tool = $('//details[contains(@class,"tool-event")][.//strong[contains(.,"acceptance_tool")]]');
     await expect(tool).toHaveText(expect.stringContaining("Running…"));
@@ -861,6 +863,7 @@ describe("Conversation acceptance", () => {
   });
 
   it("renders a failed tool with its diagnostic output", async () => {
+    const enableDebug = $('button[aria-label="Enable debug mode"]'); if (await enableDebug.isExisting()) await enableDebug.click();
     await emitPiEvent({ type: "tool_execution_start", toolCallId: "acceptance-failed-tool", toolName: "write", args: { path: "protected.txt" } });
     await emitPiEvent({ type: "tool_execution_end", toolCallId: "acceptance-failed-tool", result: { content: "Permission denied" }, isError: true });
 
@@ -871,6 +874,7 @@ describe("Conversation acceptance", () => {
   });
 
   it("labels delegated agent tool calls by their target", async () => {
+    const enableDebug = $('button[aria-label="Enable debug mode"]'); if (await enableDebug.isExisting()) await enableDebug.click();
     await emitPiEvent({ type: "tool_execution_start", toolCallId: "acceptance-agent-call", toolName: "call_agent", args: { target: "reviewer", message: "Review this" } });
     const tool = $('//details[contains(@class,"tool-event")][.//strong[contains(.,"reviewer called")]]');
     await expect(tool).toHaveText(expect.stringContaining("Running…"));
@@ -1027,6 +1031,7 @@ describe("Conversation acceptance", () => {
   });
 
   it("presents skill references and compacts repeated intermediate work", async () => {
+    const enableDebug = $('button[aria-label="Enable debug mode"]'); if (await enableDebug.isExisting()) await enableDebug.click();
     const history = {
       entries: [
         { type: "message", id: "work-user", parentId: null, message: { role: "user", content: '<skill name="ponytail" location="/tmp/ponytail/SKILL.md">\nReferences are relative to /tmp/ponytail.\n\nhidden skill instructions</skill>\n\nReview the implementation', timestamp: 1_000 } },
@@ -1049,6 +1054,7 @@ describe("Conversation acceptance", () => {
       await work.$("summary").click();
       await expect(work).toHaveText(expect.stringContaining("Inspecting the behavior carefully"));
       await expect(work).toHaveText(expect.stringContaining("read x2"));
+      await work.$(".tool-event summary").click();
       await expect(work).toHaveText(expect.stringContaining("First file inspected"));
       await expect(work).toHaveText(expect.stringContaining("Second file inspected"));
       await expect($('//article[contains(@class,"assistant-message")][contains(.,"The implementation satisfies the acceptance behavior.")]')).toBeDisplayed();
@@ -1583,6 +1589,7 @@ describe("Agent profiles acceptance", () => {
         const saved = JSON.parse(readFileSync(installedAgentConfigPath, "utf8")) as AgentConfig;
         return saved.agents.some((agent) => agent.name === agentName);
       }, { timeout: 30_000, timeoutMsg: "The GUI-created agent was not written to the installed agent config" });
+      await expect(app.saveSettingsButton).toHaveText("Saved");
       const saved = JSON.parse(readFileSync(installedAgentConfigPath, "utf8")) as AgentConfig;
       expect(saved.agents.find((agent) => agent.name === agentName)).toMatchObject({
         description: "Saved by the native acceptance test",
@@ -2176,7 +2183,7 @@ describe("Conversation lifecycle", () => {
 
       await expect(app.terminalPanel).not.toBeExisting();
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "archive_session"));
-      expect((await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "new_session")).toBe(true);
+      await browser.waitUntil(async () => { const calls = await backendCalls(); const archived = calls.findIndex(({ command }) => command === "archive_session"); return calls.slice(archived + 1).some(({ command, args }) => command === "start_pi" && !args.sessionPath); }, { timeoutMsg: "Archiving did not start a fresh runtime" });
       const calls = await backendCalls();
       const terminalId = calls.find(({ command }) => command === "start_terminal")?.args.terminalId;
       expect(calls.find(({ command }) => command === "archive_session")?.args.terminalIds).toEqual([terminalId]);

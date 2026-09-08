@@ -23,22 +23,22 @@ const MAX_MCP_MESSAGE_BYTES = 4 * 1024 * 1024;
 const MCP_STATUS_KEY = "pi-desktop-mcp-status";
 
 function splitArgs(input = ""): string[] {
-  const result: string[] = []; let current = ""; let quote: "'" | '"' | undefined; let escaped = false;
+  const result: string[] = []; let current = ""; let quote: "'" | '"' | undefined; let escaped = false; let present = false;
   for (const char of input) {
-    if (escaped) { current += char; escaped = false; continue; }
-    if (char === "\\" && quote !== "'") { escaped = true; continue; }
+    if (escaped) { present = true; current += char; escaped = false; continue; }
+    if (char === "\\" && quote !== "'") { escaped = true; present = true; continue; }
     if (quote) { if (char === quote) quote = undefined; else current += char; continue; }
-    if (char === "'" || char === '"') { quote = char; continue; }
-    if (/\s/.test(char)) { if (current) { result.push(current); current = ""; } continue; }
-    current += char;
+    if (char === "'" || char === '"') { quote = char; present = true; continue; }
+    if (/\s/.test(char)) { if (present) { result.push(current); current = ""; present = false; } continue; }
+    current += char; present = true;
   }
   if (escaped) current += "\\";
   if (quote) throw new Error("Unterminated quote in MCP server arguments");
-  if (current) result.push(current); return result;
+  if (present) result.push(current); return result;
 }
 
 function safeName(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool";
+  return `${(value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool").slice(0, 12)}_${createHash("sha256").update(value).digest("hex").slice(0, 12)}`;
 }
 
 function parseHeaders(value: ServerConfig["headers"]): Record<string, string> {

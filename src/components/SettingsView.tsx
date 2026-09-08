@@ -61,9 +61,10 @@ export function SettingsView({ settings, agentConfig: incomingConfiguration, ses
   const [hasAgentConfigDraft, setHasAgentConfigDraft] = useState(agentConfig !== undefined);
   const currentAgentConfig = hasAgentConfigDraft ? { agents: agentDrafts } : undefined;
   const currentSnapshot = settingsSnapshot(draft, currentAgentConfig);
+  const currentSnapshotRef = useRef(currentSnapshot); currentSnapshotRef.current = currentSnapshot;
   const agentConfigDirty = JSON.stringify(currentAgentConfig) !== baselineAgentConfigRef.current;
   const dirty = settingsSnapshot(draft) !== baselineSettingsRef.current || agentConfigDirty;
-  useEffect(() => { onDirtyChange?.(dirty); return () => onDirtyChange?.(false); }, [dirty, onDirtyChange]);
+  useEffect(() => { onDirtyChange?.(dirty); return () => onDirtyChange?.(false); }, [dirty, currentSnapshot, saving, onDirtyChange]);
   useEffect(() => { if (dirty) setSaved(false); }, [dirty]);
   useEffect(() => { setSaveError(undefined); }, [currentSnapshot]);
   useEffect(() => { setDraft((current) => { let changed = false; const mcpServers = current.mcpServers.map((server) => { const external = settings.mcpServers.find((item) => item.id === server.id); if (!external || (external.status === server.status && external.error === server.error)) return server; changed = true; return { ...server, status: external.status, error: external.error }; }); return changed ? { ...current, mcpServers } : current; }); }, [settings.mcpServers]);
@@ -80,7 +81,7 @@ export function SettingsView({ settings, agentConfig: incomingConfiguration, ses
   }, [agentConfigDirty, agentConfig, agentConfigSnapshot]);
   useEffect(() => { if (!agentConfig && section === "agents") setSection("general"); }, [agentConfig, section]);
   const patch = (value: Partial<AppSettings>) => setDraft((current) => ({ ...current, ...value }));
-  const save = async () => { if (savingRef.current || !dirty) return; savingRef.current = true; setSaving(true); setSaveError(undefined); try { await onSave(draft, agentConfigDirty ? currentAgentConfig : undefined); baselineSettingsRef.current = settingsSnapshot(draft); if (agentConfigDirty) baselineAgentConfigRef.current = JSON.stringify(currentAgentConfig); onDirtyChange?.(false); setSaved(true); window.setTimeout(() => setSaved(false), 1600); } catch (reason) { setSaveError(reason instanceof Error ? reason.message : String(reason)); } finally { savingRef.current = false; setSaving(false); } };
+  const save = async () => { if (savingRef.current || !dirty) return; savingRef.current = true; setSaving(true); setSaveError(undefined); try { await onSave(draft, agentConfigDirty ? currentAgentConfig : undefined); baselineSettingsRef.current = settingsSnapshot(draft); if (agentConfigDirty) baselineAgentConfigRef.current = JSON.stringify(currentAgentConfig); setSaved(currentSnapshotRef.current === currentSnapshot); window.setTimeout(() => setSaved(false), 1600); } catch (reason) { setSaveError(reason instanceof Error ? reason.message : String(reason)); } finally { savingRef.current = false; setSaving(false); } };
   const nextAgentSuffixRef = useRef(agentDrafts.length);
   const addMcp = () => setDraft((current) => ({ ...current, mcpServers: [...current.mcpServers, { id: uid("mcp"), name: "New server", transport: "stdio", command: "npx", args: "", url: "", headers: "", enabled: true, status: "stopped" }] }));
   const updateMcp = (id: string, value: Partial<McpServer>) => setDraft((current) => ({ ...current, mcpServers: current.mcpServers.map((server) => server.id === id ? { ...server, ...value } : server) }));

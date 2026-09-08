@@ -349,7 +349,8 @@ function approximateTokens(item: ResponseItem): number {
 
 function truncateMiddle(text: string, maxCharacters: number): string {
 	if (text.length <= maxCharacters) return text;
-	if (maxCharacters <= 1) return text.slice(-maxCharacters);
+	if (maxCharacters <= 0) return "";
+	if (maxCharacters === 1) return text.slice(-1);
 	const marker = "…";
 	const available = Math.max(0, maxCharacters - marker.length);
 	const head = Math.ceil(available / 2);
@@ -504,7 +505,8 @@ export function buildCodexHeaders(params: {
 }
 
 function parseRetryDelay(response: Response): number | undefined {
-	const milliseconds = Number(response.headers.get("retry-after-ms"));
+	const header = response.headers.get("retry-after-ms");
+	const milliseconds = header === null ? NaN : Number(header);
 	if (Number.isFinite(milliseconds) && milliseconds >= 0) return milliseconds;
 	const retryAfter = response.headers.get("retry-after");
 	if (!retryAfter) return undefined;
@@ -583,6 +585,7 @@ async function parseSseResponse(response: Response): Promise<{ item: ResponseIte
 		}
 	};
 
+	try {
 	while (true) {
 		const { done, value } = await reader.read();
 		buffer += decoder.decode(value, { stream: !done });
@@ -595,6 +598,7 @@ async function parseSseResponse(response: Response): Promise<{ item: ResponseIte
 		}
 		if (done) break;
 	}
+	} finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
 	if (buffer.trim()) processBlock(buffer);
 	if (!completed) {
 		throw new RetryableCompactionStreamError(

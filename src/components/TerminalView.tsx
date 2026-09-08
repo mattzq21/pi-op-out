@@ -13,7 +13,7 @@ interface Props {
 }
 
 export function TerminalView({ cwd, terminals, activeId, output, outputEnd, snapshot, snapshotEnd, started, exited, onAdd, onSelect, onStart, onData, onResize, onSnapshot, onDelete, onClose }: Props) {
-  const host = useRef<HTMLDivElement>(null); const terminal = useRef<Terminal | undefined>(undefined); const lastOutputEnd = useRef(0); const tabRefs = useRef(new Map<string, HTMLButtonElement>());
+  const host = useRef<HTMLDivElement>(null); const terminal = useRef<Terminal | undefined>(undefined); const lastOutputEnd = useRef(0); const queuedOutputEnd = useRef(0); const tabRefs = useRef(new Map<string, HTMLButtonElement>());
   const callbacks = useRef({ onData, onResize, onStart, onSnapshot }); callbacks.current = { onData, onResize, onStart, onSnapshot };
 
   useEffect(() => {
@@ -23,19 +23,21 @@ export function TerminalView({ cwd, terminals, activeId, output, outputEnd, snap
     const fit = new FitAddon(); const serializer = new SerializeAddon(); instance.loadAddon(fit); instance.loadAddon(serializer); instance.open(host.current); terminal.current = instance;
     const fitAndResize = () => { try { fit.fit(); callbacks.current.onResize(instance.cols, instance.rows); } catch { /* The panel may be between layouts. */ } };
     fit.fit();
-    if (snapshot) { instance.write(snapshot); lastOutputEnd.current = snapshotEnd ?? 0; }
+    let restored = !snapshot;
+    if (snapshot) { queuedOutputEnd.current = snapshotEnd ?? 0; instance.write(snapshot, () => { if (terminal.current !== instance) return; lastOutputEnd.current = snapshotEnd ?? 0; restored = true; }); }
     if (!started) callbacks.current.onStart(activeId, instance.cols, instance.rows); else callbacks.current.onResize(instance.cols, instance.rows);
     instance.focus();
     const data = instance.onData((value) => callbacks.current.onData(value)); const resize = instance.onResize(({ cols, rows }) => callbacks.current.onResize(cols, rows));
     const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(fitAndResize); observer?.observe(host.current); window.addEventListener("resize", fitAndResize);
-    return () => { callbacks.current.onSnapshot(serializer.serialize(), lastOutputEnd.current); observer?.disconnect(); window.removeEventListener("resize", fitAndResize); data.dispose(); resize.dispose(); instance.dispose(); terminal.current = undefined; lastOutputEnd.current = 0; };
+    return () => { callbacks.current.onSnapshot(restored ? serializer.serialize() : snapshot || "", restored ? lastOutputEnd.current : snapshotEnd ?? 0); observer?.disconnect(); window.removeEventListener("resize", fitAndResize); data.dispose(); resize.dispose(); instance.dispose(); terminal.current = undefined; lastOutputEnd.current = 0; queuedOutputEnd.current = 0; };
   }, [activeId, cwd]);
 
   useEffect(() => {
     const instance = terminal.current; if (!instance) return;
     const outputStart = outputEnd - output.length;
-    if (lastOutputEnd.current >= outputStart && lastOutputEnd.current <= outputEnd) instance.write(output.slice(lastOutputEnd.current - outputStart)); else { instance.reset(); instance.write(output); }
-    lastOutputEnd.current = outputEnd;
+    const parsed = () => { if (terminal.current === instance) lastOutputEnd.current = outputEnd; };
+    if (queuedOutputEnd.current >= outputStart && queuedOutputEnd.current <= outputEnd) instance.write(output.slice(queuedOutputEnd.current - outputStart), parsed); else { instance.reset(); instance.write(output, parsed); }
+    queuedOutputEnd.current = outputEnd;
   }, [output, outputEnd]);
   useEffect(() => { tabRefs.current.get(activeId)?.scrollIntoView({ block: "nearest", inline: "nearest" }); }, [activeId, terminals.length]);
 

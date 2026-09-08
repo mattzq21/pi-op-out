@@ -22,7 +22,7 @@ export function desktopPauseContext(messages: ContextEvent["messages"], resumeMe
 
 async function cancelRequest(requestId: string) {
   if (!url || !token) return;
-  await fetch(`${url}/cancel`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ requestId }) }).catch(() => undefined);
+  await fetch(`${url}/cancel`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ requestId }), signal: AbortSignal.timeout(5_000) }).catch(() => undefined);
 }
 
 async function request(path: string, body?: unknown, signal?: AbortSignal, timeoutMs = 10_000) {
@@ -255,9 +255,9 @@ export default function sessionBroker(pi: ExtensionAPI) {
       const requestId = crypto.randomUUID();
       const abort = () => { void cancelRequest(requestId); }; signal?.addEventListener("abort", abort, { once: true });
       try {
-        const data = await request("/message", { ...params, requestId }, signal, MESSAGE_TIMEOUT_MS);
+        const data = await request("/message", { ...params, requestId, deadline: Date.now() + MESSAGE_TIMEOUT_MS }, signal, MESSAGE_TIMEOUT_MS);
         return { content: [{ type: "text", text: String((data as { reply?: unknown })?.reply ?? "") }], details: data };
-      } finally { signal?.removeEventListener("abort", abort); }
+      } catch (error) { await cancelRequest(requestId); throw error; } finally { signal?.removeEventListener("abort", abort); }
     },
   });
 }

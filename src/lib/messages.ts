@@ -23,9 +23,9 @@ export function checkpointLatestUser(messages: ChatMessage[]) {
   return messages.map((message, candidate) => candidate === index ? { ...message, contextCheckpoint: true } : message);
 }
 
-export function cacheHitStats(usage?: { input: number; cacheRead: number }) {
+export function cacheHitStats(usage?: { input: number; cacheRead: number; cacheWrite?: number }) {
   if (!usage) return undefined;
-  const promptTokens = usage.input + usage.cacheRead;
+  const promptTokens = usage.input + usage.cacheRead + (usage.cacheWrite ?? 0);
   if (promptTokens <= 0) return undefined;
   return { rate: Math.round(usage.cacheRead / promptTokens * 100), low: usage.cacheRead < Math.max(promptTokens * .5, 1000), cachedTokens: usage.cacheRead, promptTokens };
 }
@@ -72,7 +72,7 @@ export function branchMessages(entries: PiEntry[], leafId: string | null): ChatM
       continue;
     }
     if (entry.type === "custom" && entry.customType === "pi-orchestration-sequence-marker") { sequenceMarkerAuthorized = true; continue; }
-    if (entry.type === "custom_message" && SYSTEM_MESSAGES.has(entry.customType ?? "") && entry.display !== false) {
+    if (entry.type === "custom_message" && entry.customType !== "pi-desktop-btw" && entry.display !== false) {
       messages.push(normalizeMessage({ role: "custom", customType: entry.customType, content: entry.content ?? "", timestamp: entry.timestamp }, entry.id, entry.timestamp));
       continue;
     }

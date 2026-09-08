@@ -11,6 +11,7 @@ const rpcContent = (value: unknown): ChatMessage["content"] => (value as { conte
 export function useChatSession(transport: Pick<NativeTransport, "command" | "subscribe">, initialState: AgentState = emptyState) {
   const [state, setState] = useState(initialState); const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [models, setModels] = useState<Model[]>([]); const [commands, setCommands] = useState<SlashCommand[]>([]); const [thinkingLevels, setThinkingLevels] = useState<string[]>(["off"]);
+  const owner = useRef(transport); owner.current = transport;
   const resumeMarkers = useRef(new Set<string>());
   const liveRevision = useRef(0); const activeAssistantId = useRef<string | undefined>(undefined); const activeMessageIds = useRef(new Map<string, string>()); const liveMessageSequence = useRef(0); const pendingUpdates = useRef<MessageUpdate[]>([]); const frame = useRef<number | undefined>(undefined);
   const nextLiveMessageId = (role: unknown) => `live-${String(role)}-${Date.now()}-${++liveMessageSequence.current}`;
@@ -21,10 +22,12 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
   useEffect(() => { liveRevision.current += 1; activeAssistantId.current = undefined; activeMessageIds.current.clear(); resumeMarkers.current.clear(); discardPendingUpdates(); }, [discardPendingUpdates, transport]);
 
   const refresh = useCallback(async () => {
+    if (owner.current !== transport) throw new Error("Conversation changed");
     const revision = liveRevision.current;
     const [stateResult, historyResult, modelResult, thinkingResult, commandResult, statsResult] = await Promise.allSettled([
       transport.command<AgentState>({ type: "get_state" }), transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }), transport.command<{ models: Model[] }>({ type: "get_available_models" }), transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }), transport.command<{ commands: SlashCommand[] }>({ type: "get_commands" }), transport.command<{ contextUsage?: AgentState["contextUsage"] }>({ type: "get_session_stats" })
     ] as const);
+    if (owner.current !== transport) throw new Error("Conversation changed");
     if (stateResult.status === "rejected") throw stateResult.reason;
     if (historyResult.status === "rejected") throw historyResult.reason;
     const nextState = stateResult.value;
@@ -46,6 +49,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
   }, [discardPendingUpdates, transport]);
 
   const handleEvent = useCallback((event: RpcEvent) => {
+    if (owner.current !== transport) return;
     if (event.type === "extension_ui_request" && event.method === "setStatus" && event.statusKey === "pi-desktop-prompt-context" && typeof event.statusText === "string" && event.statusText.startsWith("json:")) {
       try {
         const context = JSON.parse(event.statusText.slice(5)) as PromptContextInfo;
@@ -60,14 +64,14 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
     if (event.type === "agent_start") setState((current) => ({ ...current, isStreaming: true, isPaused: false }));
     if (event.type === "pause_state") setState((current) => ({ ...current, isPaused: event.isPaused === true, isPausing: event.isPausing === true, ...(event.isPaused === true && event.isPausing !== true ? { isStreaming: false, activity: undefined } : {}) }));
     if (event.type === "pause_state" && event.isPaused === true && event.isPausing !== true) { flush(); setMessages(checkpointLatestUser); }
-    if (event.type === "agent_end" || event.type === "agent_settled") setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
+    if (event.type === "agent_settled") setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
     if (event.type === "disconnected") setState((current) => ({ ...current, isStreaming: false, isPausing: false, activity: undefined }));
     if (event.type === "message_start" || event.type === "message_end") {
       if (event.type === "message_end") flush();
       const rawMessage = event.message as Record<string, unknown>; const roleKey = String(rawMessage.role ?? "message");
       if (isResumeMessage(rawMessage, resumeMarkers.current)) return;
       if (rawMessage.role === "custom" && rawMessage.display === false) return;
-      const liveId = event.type === "message_start" ? nextLiveMessageId(roleKey) : activeMessageIds.current.get(roleKey) ?? nextLiveMessageId(roleKey);
+      const liveId = rawMessage.role === "toolResult" && typeof rawMessage.toolCallId === "string" ? rawMessage.toolCallId : event.type === "message_start" ? nextLiveMessageId(roleKey) : activeMessageIds.current.get(roleKey) ?? nextLiveMessageId(roleKey);
       if (event.type === "message_start") activeMessageIds.current.set(roleKey, liveId); else activeMessageIds.current.delete(roleKey);
       let message = normalizeMessage(rawMessage, undefined, undefined, liveId);
       if (message.customType === "pi-desktop-btw") return;
@@ -87,7 +91,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
     if (event.type === "compaction_end") setState((current) => ({ ...current, activity: undefined, contextUsage: contextUsageAfterCompaction(current.contextUsage, event) }));
     if (event.type === "auto_retry_start") setState((current) => ({ ...current, activity: `Retrying · attempt ${event.attempt}` }));
     if (event.type === "thinking_level_changed" && typeof event.level === "string") setState((current) => ({ ...current, thinkingLevel: event.level as string }));
-  }, [flush, queue]);
+  }, [flush, queue, transport]);
 
   return { state, setState, messages, setMessages, models, commands, thinkingLevels, refresh, handleEvent, discardPendingUpdates };
 }

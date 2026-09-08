@@ -118,7 +118,7 @@ export class SessionRuntimePool {
       if (event.type === "agent_start") this.captureTurnStart(transport);
       if (event.type === "agent_end" || event.type === "agent_settled") this.captureTurnEnd(transport);
       if (event.type === "agent_start" || event.type === "message_start") { this.runningTransports.add(transport); this.unseenTransports.delete(transport); }
-      if (event.type === "agent_end" || event.type === "agent_settled") { this.runningTransports.delete(transport); if (transport !== this.activeTransport) this.unseenTransports.add(transport); }
+      if (event.type === "agent_settled") { this.runningTransports.delete(transport); if (transport !== this.activeTransport) this.unseenTransports.add(transport); }
       if (event.type === "disconnected") { this.runningTransports.delete(transport); this.discardBaselines(transport, this.diffState(transport)); }
       this.publishSessionStates();
     });

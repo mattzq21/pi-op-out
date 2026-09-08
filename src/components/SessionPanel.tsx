@@ -260,6 +260,11 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
       moveSession(drag, destinationKey, groupedSessionsRef.current.get(destinationKey) ?? []); expandProject(destinationKey);
       return;
     }
+    if (drag.projectKey === UNGROUPED_KEY) {
+      const entries = sidebarEntriesRef.current; const token = sessionLayoutToken(drag.sessionKey); const index = entries.indexOf(token);
+      if (index + direction < 0 || index + direction >= entries.length) return;
+      placeLooseSession(drag.sessionKey, direction < 0 ? entries[index - 1] : entries[index + 2] ?? null); return;
+    }
     const sourceIndex = sourceSessions.findIndex((session) => sessionKey(session) === drag.sessionKey); const target = sourceSessions[sourceIndex + direction];
     if (!target) return;
     moveSession(drag, drag.projectKey, sourceSessions, sessionKey(target), direction < 0 ? "before" : "after");

@@ -19,7 +19,7 @@ export function ChatView(props: Props) {
   const shell = useRef<HTMLElement>(null);
   const composerStack = useRef<HTMLDivElement>(null);
   const turns = useMemo(() => groupTurns(props.messages), [props.messages]);
-  const sessionUsage = useMemo(() => props.messages.reduce((total, message) => ({ input: total.input + (message.usage?.input ?? 0), cacheRead: total.cacheRead + (message.usage?.cacheRead ?? 0) }), { input: 0, cacheRead: 0 }), [props.messages]);
+  const sessionUsage = useMemo(() => props.messages.reduce((total, message) => ({ input: total.input + (message.usage?.input ?? 0), cacheRead: total.cacheRead + (message.usage?.cacheRead ?? 0), cacheWrite: total.cacheWrite + (message.usage?.cacheWrite ?? 0) }), { input: 0, cacheRead: 0, cacheWrite: 0 }), [props.messages]);
   const sessionCache = cacheHitStats(sessionUsage);
   const actions = useRef({ onSend: props.onSend, onBranch: props.onBranch, onCreateWorktree: props.onCreateWorktree });
   actions.current = { onSend: props.onSend, onBranch: props.onBranch, onCreateWorktree: props.onCreateWorktree };
@@ -137,10 +137,10 @@ function ConversationTurnView({ messages, gitDiffs, debug, active, retryable, pa
   const turnCacheUsage = shown.reduce((total, message) => {
     if (message.role === "assistant" && message.usage) {
       total.input += message.usage.input;
-      total.cacheRead += message.usage.cacheRead;
+      total.cacheRead += message.usage.cacheRead; total.cacheWrite += message.usage.cacheWrite ?? 0;
     }
     return total;
-  }, { input: 0, cacheRead: 0 });
+  }, { input: 0, cacheRead: 0, cacheWrite: 0 });
   const worktreeResponse = finalMessage && !["toolUse", "aborted", "error"].includes(finalMessage.stopReason ?? "") ? onCreateWorktree : undefined;
   const gitDiff = finalMessage ? gitDiffs?.[finalMessage.id] : undefined;
   const workedFor = formatWorkedFor(userIndex >= 0 ? shown[userIndex].timestamp : shown[0]?.timestamp, finalMessage?.completedAt ?? finalMessage?.timestamp);

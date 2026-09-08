@@ -3,11 +3,11 @@ use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
     fs::{self, OpenOptions},
-    io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
+    io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, ExitStatus, Stdio},
-    sync::{mpsc, Arc, Mutex},
+    sync::{mpsc, Arc, Mutex, atomic::{AtomicBool, Ordering}},
     thread,
     time::{Duration, Instant, SystemTime},
 };
@@ -17,9 +17,10 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 
 struct PiProcess {
+    generation: Uuid,
+    claim: Option<BusyAgent>,
     child: Child,
     stdin: Arc<Mutex<ChildStdin>>,
-    ephemeral_session: Option<EphemeralSession>,
     blank_cleanup: BlankSessionCleanup,
     command_timeout: Duration,
 }
@@ -29,9 +30,9 @@ struct BlankSessionCleanup { path: Option<String>, id: Option<String>, host: Opt
 fn cleanup_blank_session(target: BlankSessionCleanup) {
     if target.submitted { return; }
     let script = include_str!("../resources/cleanup-blank-session.cjs");
-    let arguments = json!({"path":target.path,"id":target.id}).to_string();
+    let arguments = json!({"path":target.path,"id":target.id,"root":if target.host.is_none() { home_dir().ok().map(|home| home.join(".piop/sessions")) } else { None }}).to_string();
     let result = if let Some(host) = target.host {
-        ssh(&host).arg(format!("node -e {} {}", shell_quote(script), shell_quote(&arguments))).output()
+        ssh(&host).arg(remote_login_command(&format!("node -e {} {}", shell_quote(script), shell_quote(&arguments)))).output()
     } else { Command::new("node").arg("-e").arg(script).arg(arguments).output() };
     match result {
         Ok(output) if output.status.success() => {},
@@ -40,6 +41,7 @@ fn cleanup_blank_session(target: BlankSessionCleanup) {
     }
 }
 
+#[derive(Clone)]
 enum EphemeralSession {
     Local(PathBuf),
     Remote { host: RemoteHost, path: String },
@@ -49,7 +51,7 @@ struct TerminalProcess {
     session_key: String,
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn PtyChild + Send + Sync>,
-    writer: Box<dyn Write + Send>,
+    writer: mpsc::SyncSender<String>,
 }
 
 #[derive(Default)]
@@ -58,7 +60,7 @@ struct TerminalRuntime {
 }
 
 #[derive(Clone)]
-struct CachedSession { fingerprint: String, bytes: u64, explicitly_named: bool, has_user_message: bool, resume_messages: HashSet<String>, summary: SessionSummary }
+struct CachedSession { fingerprint: String, summary: SessionSummary }
 
 #[derive(Default)]
 struct SessionIndexRuntime {
@@ -80,11 +82,11 @@ const MAX_GIT_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_GIT_PATCH_BYTES: usize = 4 * 1024 * 1024;
 const MAX_GIT_DIFFS_BYTES: usize = 16 * 1024 * 1024;
 const MAX_AGENT_OUTPUT_BYTES: u64 = 16 * 1024 * 1024;
-const MAX_SESSION_INDEX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_SESSION_INDEX_BATCH_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Default)]
 struct PiRuntime {
+    ephemeral_sessions: Mutex<HashMap<String, EphemeralSession>>,
     processes: Arc<Mutex<HashMap<String, PiProcess>>>,
     pending: Arc<Mutex<HashMap<(String, String), mpsc::Sender<Result<Value, String>>>>>,
     active_agents: Arc<Mutex<HashMap<String, AgentAddress>>>,
@@ -95,6 +97,8 @@ struct AgentAddress { host_id: String, session_id: Option<String>, session_path:
 
 #[derive(Clone)]
 struct BrokerRuntime {
+    closing: Arc<AtomicBool>,
+    message_count: Arc<Mutex<usize>>,
     port: Arc<Mutex<u16>>,
     token: String,
     busy: Arc<Mutex<HashSet<String>>>,
@@ -105,6 +109,7 @@ struct BrokerRuntime {
 impl Default for BrokerRuntime {
     fn default() -> Self {
         Self {
+            closing: Arc::new(AtomicBool::new(false)), message_count: Arc::new(Mutex::new(0)),
             port: Arc::new(Mutex::new(0)),
             token: Uuid::new_v4().to_string(),
             busy: Arc::new(Mutex::new(HashSet::new())),
@@ -245,6 +250,8 @@ fn default_keybindings() -> HashMap<String, String> {
 }
 
 fn home_dir() -> Result<PathBuf, String> {
+    #[cfg(feature = "webdriver")]
+    if let Some(path) = std::env::var_os("PIOP_TEST_HOME") { return Ok(PathBuf::from(path)); }
     std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| "HOME is not set".into())
 }
 
@@ -508,6 +515,8 @@ fn prepare_defined_agents_extension() -> Result<PathBuf, String> {
     if !config.exists() && legacy_dir.join("config.json").exists() {
         atomic_write_private(&config, &fs::read(legacy_dir.join("config.json")).map_err(|error| error.to_string())?)?;
     }
+    let orchestration = home_dir()?.join(".pi/agent/extensions/pi-orchestration/config.json");
+    if !config.exists() && orchestration.exists() { atomic_write_private(&config, &fs::read(orchestration).map_err(|e| e.to_string())?)?; }
     let path = dir.join("index.ts");
     atomic_write_private(&path, include_str!("../../extensions/pi-define-agents/index.ts").as_bytes())?;
     if legacy_dir.join("index.ts").exists() { fs::remove_file(legacy_dir.join("index.ts")).map_err(|error| error.to_string())?; }
@@ -779,10 +788,13 @@ fn git_root_and_objects(cwd: &str) -> Result<Option<(PathBuf, PathBuf)>, String>
 }
 
 fn local_git_input_is_bounded(cwd: &str, root: &Path) -> Result<bool, String> {
-    let output = run_limited(Command::new("git").args(["-C", cwd, "ls-files", "-z", "-m", "-o", "--exclude-standard", "--"]), MAX_GIT_PATH_LIST_BYTES, "Could not inspect Git changes")?;
+    let mut output = run_limited(Command::new("git").args(["-C", cwd, "ls-files", "-z", "-m", "-o", "--exclude-standard", "--"]), MAX_GIT_PATH_LIST_BYTES, "Could not inspect Git changes")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-    let mut total = 0u64; let mut count = 0usize;
+    let staged = run_limited(Command::new("git").args(["-C", cwd, "diff", "--cached", "--name-only", "-z", "--"]), MAX_GIT_PATH_LIST_BYTES, "Could not inspect staged changes")?;
+    if !staged.status.success() { return Err(String::from_utf8_lossy(&staged.stderr).into_owned()); } output.stdout.extend(staged.stdout);
+    let mut seen = HashSet::new(); let mut total = 0u64; let mut count = 0usize;
     for raw in output.stdout.split(|byte| *byte == 0).filter(|path| !path.is_empty()) {
+        if !seen.insert(raw) { continue; }
         count += 1; if count > MAX_GIT_CHANGED_PATHS { return Ok(false); }
         let relative = String::from_utf8_lossy(raw); let path = root.join(relative.as_ref());
         let Ok(metadata) = fs::symlink_metadata(path) else { continue };
@@ -796,16 +808,6 @@ fn local_snapshot_parent() -> Result<PathBuf, String> {
     let parent = home_dir()?.join(".piop/git-snapshots"); fs::create_dir_all(&parent).map_err(|error| error.to_string())?; Ok(parent)
 }
 
-fn prune_local_snapshots(parent: &Path) {
-    let mut snapshots: Vec<_> = fs::read_dir(parent).into_iter().flatten().filter_map(Result::ok)
-        .filter(|entry| entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) && entry.file_name().to_string_lossy().starts_with("pi-desktop-diff-"))
-        .filter_map(|entry| Some((entry.path(), entry.metadata().ok()?.modified().ok()?))).collect();
-    snapshots.sort_by_key(|(_, modified)| std::cmp::Reverse(*modified));
-    for (index, (path, modified)) in snapshots.into_iter().enumerate() {
-        let stale = SystemTime::now().duration_since(modified).unwrap_or_default() > Duration::from_secs(24 * 60 * 60);
-        if stale || index >= 32 { let _ = fs::remove_dir_all(path); }
-    }
-}
 
 fn parse_local_snapshot(token: &str) -> Result<GitSnapshotToken, String> {
     let snapshot: GitSnapshotToken = serde_json::from_str(token).map_err(|_| "Invalid Git snapshot token".to_string())?;
@@ -819,14 +821,16 @@ fn parse_local_snapshot(token: &str) -> Result<GitSnapshotToken, String> {
 fn local_git_tree(cwd: &str) -> Result<Option<String>, String> {
     let Some((root, repository_objects)) = git_root_and_objects(cwd)? else { return Ok(None) };
     if !local_git_input_is_bounded(cwd, &root)? { return Ok(None); }
-    let snapshot_parent = local_snapshot_parent()?; prune_local_snapshots(&snapshot_parent);
+    let snapshot_parent = local_snapshot_parent()?;
     let snapshot_root = snapshot_parent.join(format!("pi-desktop-diff-{}", Uuid::new_v4()));
     let objects = snapshot_root.join("objects"); let index = snapshot_root.join("index");
+    let seed = run_limited(Command::new("git").args(["-C", cwd, "write-tree"]), 64 * 1024, "Could not read project index")?;
+    if !seed.status.success() { return Err(String::from_utf8_lossy(&seed.stderr).into_owned()); }
+    let seed = String::from_utf8_lossy(&seed.stdout).trim().to_owned();
     fs::create_dir_all(&objects).map_err(|error| format!("Could not create Git snapshot: {error}"))?;
-    let has_head = Command::new("git").args(["-C", cwd, "rev-parse", "--verify", "HEAD"]).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|status| status.success()).unwrap_or(false);
     let result = (|| {
         let configure = |command: &mut Command| { command.env("GIT_INDEX_FILE", &index).env("GIT_OBJECT_DIRECTORY", &objects).env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &repository_objects); };
-        let mut read_tree = Command::new("git"); read_tree.args(["-C", cwd, "read-tree"]); if has_head { read_tree.arg("HEAD"); } else { read_tree.arg("--empty"); } configure(&mut read_tree);
+        let mut read_tree = Command::new("git"); read_tree.args(["-C", cwd, "read-tree", &seed]); configure(&mut read_tree);
         let output = run_limited(&mut read_tree, 64 * 1024, "Could not prepare Git snapshot")?; if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
         let mut add = Command::new("git"); add.args(["-C", cwd, "add", "-A", "--", "."]); configure(&mut add);
         let output = run_limited(&mut add, 64 * 1024, "Could not capture Git snapshot")?; if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
@@ -985,7 +989,7 @@ fn create_git_worktree(app: AppHandle, cwd: String, name: String, host_id: Optio
         let root = String::from_utf8_lossy(&located.stdout).trim().to_string();
         let project = Path::new(&root).file_name().ok_or("Git repository directory has no name")?.to_string_lossy();
         let branch = worktree_branch_name(&project, name);
-        let script = format!(r#"root={root}; branch={branch}; git check-ref-format --branch "$branch" >/dev/null || {{ printf 'Invalid Git branch name: %s' "$branch" >&2; exit 1; }}; git -C "$root" show-ref --verify --quiet "refs/heads/$branch" && {{ printf 'Git branch already exists: %s' "$branch" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git branches' >&2; exit 1; }}; parent=$(dirname -- "$root"); target="$parent/$branch"; if [ -e "$target" ] || [ -L "$target" ]; then printf 'Worktree directory already exists: %s' "$target" >&2; exit 1; fi; worktrees=$(git -C "$root" worktree list --porcelain) || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; printf '%s\n' "$worktrees" | grep -Fqx "worktree $target" && {{ printf 'Git worktree is already registered: %s' "$target" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; temporary=$(mktemp -d "${{TMPDIR:-/tmp}}/pi-desktop-worktree.XXXXXX") || exit 1; created=0; cleanup() {{ status=$?; rm -rf -- "$temporary"; if [ "$status" -ne 0 ] && [ "$created" -eq 1 ]; then git -C "$root" worktree remove --force "$target" >/dev/null 2>&1; git -C "$root" branch -D "$branch" >/dev/null 2>&1; fi; exit "$status"; }}; trap cleanup EXIT; has_head=0; if git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then has_head=1; fi; : > "$temporary/changes.patch"; if [ "$has_head" -eq 1 ]; then mkfifo "$temporary/patch.pipe" || exit 1; git -C "$root" diff --binary HEAD -- > "$temporary/patch.pipe" 2> "$temporary/diff-error" & diff_pid=$!; head -c {patch_plus_one} < "$temporary/patch.pipe" > "$temporary/changes.patch"; wait "$diff_pid"; diff_status=$?; rm -f -- "$temporary/patch.pipe"; patch_bytes=$(wc -c < "$temporary/changes.patch"); [ "$patch_bytes" -le {max_patch} ] || {{ printf 'Git changes are too large to copy' >&2; exit 1; }}; [ "$diff_status" -eq 0 ] || {{ cat "$temporary/diff-error" >&2; printf 'Could not capture Git changes' >&2; exit 1; }}; fi; git -C "$root" ls-files -z --others --exclude-standard -- > "$temporary/untracked" || exit 1; if [ "$has_head" -eq 1 ]; then git -C "$root" worktree add -b "$branch" "$target" >/dev/null || exit 1; else git -C "$root" worktree add --orphan -b "$branch" "$target" >/dev/null || exit 1; fi; created=1; if [ -s "$temporary/changes.patch" ]; then git -C "$target" apply --whitespace=nowarn "$temporary/changes.patch" || exit 1; fi; if [ -s "$temporary/untracked" ]; then tar -C "$root" --exclude=.git --null -T "$temporary/untracked" -cf "$temporary/untracked.tar" || exit 1; tar -C "$target" -xf "$temporary/untracked.tar" || exit 1; fi; printf '%s\n%s\n' "$branch" "$target""#,
+        let script = format!(r#"root={root}; branch={branch}; git check-ref-format --branch "$branch" >/dev/null || {{ printf 'Invalid Git branch name: %s' "$branch" >&2; exit 1; }}; git -C "$root" show-ref --verify --quiet "refs/heads/$branch" && {{ printf 'Git branch already exists: %s' "$branch" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git branches' >&2; exit 1; }}; parent=$(dirname -- "$root"); target="$parent/$branch"; if [ -e "$target" ] || [ -L "$target" ]; then printf 'Worktree directory already exists: %s' "$target" >&2; exit 1; fi; worktrees=$(git -C "$root" worktree list --porcelain) || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; printf '%s\n' "$worktrees" | grep -Fqx "worktree $target" && {{ printf 'Git worktree is already registered: %s' "$target" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; temporary=$(mktemp -d "${{TMPDIR:-/tmp}}/pi-desktop-worktree.XXXXXX") || exit 1; created=0; cleanup() {{ status=$?; rm -rf -- "$temporary"; if [ "$status" -ne 0 ] && [ "$created" -eq 1 ]; then git -C "$root" worktree remove --force "$target" >/dev/null 2>&1; git -C "$root" branch -D "$branch" >/dev/null 2>&1; fi; exit "$status"; }}; trap cleanup EXIT; has_head=0; if git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then has_head=1; fi; : > "$temporary/changes.patch"; if [ "$has_head" -eq 1 ]; then mkfifo "$temporary/patch.pipe" || exit 1; git -C "$root" diff --binary --no-textconv --no-ext-diff HEAD -- > "$temporary/patch.pipe" 2> "$temporary/diff-error" & diff_pid=$!; head -c {patch_plus_one} < "$temporary/patch.pipe" > "$temporary/changes.patch"; wait "$diff_pid"; diff_status=$?; rm -f -- "$temporary/patch.pipe"; patch_bytes=$(wc -c < "$temporary/changes.patch"); [ "$patch_bytes" -le {max_patch} ] || {{ printf 'Git changes are too large to copy' >&2; exit 1; }}; [ "$diff_status" -eq 0 ] || {{ cat "$temporary/diff-error" >&2; printf 'Could not capture Git changes' >&2; exit 1; }}; fi; git -C "$root" ls-files -z --others --exclude-standard $(test "$has_head" -eq 0 && printf %s --cached) -- > "$temporary/untracked" || exit 1; created=1; if [ "$has_head" -eq 1 ]; then git -C "$root" worktree add -b "$branch" "$target" >/dev/null || exit 1; else git -C "$root" worktree add --orphan -b "$branch" "$target" >/dev/null || exit 1; fi; created=1; if [ -s "$temporary/changes.patch" ]; then git -C "$target" apply --whitespace=nowarn "$temporary/changes.patch" || exit 1; fi; if [ -s "$temporary/untracked" ]; then tar -C "$root" --exclude=.git --null -T "$temporary/untracked" -cf "$temporary/untracked.tar" || exit 1; tar -C "$target" -xf "$temporary/untracked.tar" || exit 1; fi; printf '%s\n%s\n' "$branch" "$target""#,
             root = shell_quote(&root), branch = shell_quote(&branch),
             patch_plus_one = MAX_GIT_PATCH_BYTES + 1, max_patch = MAX_GIT_PATCH_BYTES);
         let output = run_limited(ssh(host).arg(script), 64 * 1024, &format!("Could not create Git worktree on {}", host.name))?;
@@ -1006,11 +1010,12 @@ fn create_git_worktree(app: AppHandle, cwd: String, name: String, host_id: Optio
     if local_worktree_is_registered(&root, &target)? { return Err(format!("Git worktree is already registered: {}", target.display())); }
     let has_head = Command::new("git").arg("-C").arg(&root).args(["rev-parse", "--verify", "HEAD"]).stdout(Stdio::null()).stderr(Stdio::null()).status().map_err(|error| format!("Could not inspect Git HEAD: {error}"))?.success();
     let patch = if has_head {
-        let output = run_limited(Command::new("git").arg("-C").arg(&root).args(["diff", "--binary", "HEAD", "--"]), MAX_GIT_PATCH_BYTES, "Git changes are too large to copy")?;
+        let output = run_limited(Command::new("git").arg("-C").arg(&root).args(["diff", "--binary", "--no-textconv", "--no-ext-diff", "HEAD", "--"]), MAX_GIT_PATCH_BYTES, "Git changes are too large to copy")?;
         if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
         output.stdout
     } else { Vec::new() };
-    let untracked = run_limited(Command::new("git").arg("-C").arg(&root).args(["ls-files", "-z", "--others", "--exclude-standard", "--"]), MAX_GIT_PATH_LIST_BYTES, "Untracked file list is too large to copy")?;
+    let mut files = Command::new("git"); files.arg("-C").arg(&root).args(["ls-files", "-z", "--others", "--exclude-standard"]); if !has_head { files.arg("--cached"); } files.arg("--");
+    let untracked = run_limited(&mut files, MAX_GIT_PATH_LIST_BYTES, "Untracked file list is too large to copy")?;
     if !untracked.status.success() { return Err(String::from_utf8_lossy(&untracked.stderr).trim().to_string()); }
     let mut add_worktree = Command::new("git"); add_worktree.arg("-C").arg(&root).args(["worktree", "add"]);
     if !has_head { add_worktree.arg("--orphan"); }
@@ -1018,6 +1023,8 @@ fn create_git_worktree(app: AppHandle, cwd: String, name: String, host_id: Optio
     let output = run_limited(&mut add_worktree, 64 * 1024, "Could not create Git worktree")?;
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if local_worktree_is_registered(&root, &target).unwrap_or(false) { let _ = Command::new("git").arg("-C").arg(&root).args(["worktree", "remove", "--force"]).arg(&target).status(); }
+        let _ = Command::new("git").arg("-C").arg(&root).args(["branch", "-D", &branch]).status();
         return Err(if error.is_empty() { "Could not create Git worktree".into() } else { error });
     }
     let copy_result = (|| {
@@ -1047,10 +1054,8 @@ fn valid_remote_snapshot(snapshot: &GitSnapshotToken) -> bool {
 }
 
 fn remote_git_tree(host: &RemoteHost, cwd: &str) -> Result<Option<String>, String> {
-    let directory = shell_quote(cwd);
-    let name = format!("pi-desktop-diff-{}", Uuid::new_v4());
-    let script = format!("cd {directory} || exit 2; root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 3; [ \"$(pwd -P)\" = \"$(cd \"$root\" && pwd -P)\" ] || exit 4; parent=\"$HOME/.piop/git-snapshots\"; mkdir -p \"$parent\" || exit 5; find \"$parent\" -mindepth 1 -maxdepth 1 -type d -name 'pi-desktop-diff-*' -mmin +60 -exec rm -rf -- {{}} + 2>/dev/null; snap=\"$parent/{name}\"; mkdir -p \"$snap/objects\" || exit 5; trap 'test -n \"$failed\" && rm -rf -- \"$snap\"' EXIT; repo_objects=$(git rev-parse --git-path objects) || exit 5; repo_objects=$(cd \"$repo_objects\" && pwd -P) || exit 5; export GIT_INDEX_FILE=\"$snap/index\" GIT_OBJECT_DIRECTORY=\"$snap/objects\" GIT_ALTERNATE_OBJECT_DIRECTORIES=\"$repo_objects\"; if git rev-parse --verify HEAD >/dev/null 2>&1; then git read-tree HEAD; else git read-tree --empty; fi && git add -A -- . && tree=$(git write-tree) || {{ failed=1; exit 5; }}; size=$(du -sk \"$snap\" | awk '{{print $1}}'); if [ \"${{size:-999999}}\" -gt 32768 ]; then failed=1; exit 6; fi; printf '%s\n%s\n' \"$(cd \"$snap\" && pwd -P)\" \"$tree\"");
-    let mut command = ssh(host); command.arg(script); let output = run_limited(&mut command, 64 * 1024, &format!("Could not capture Git snapshot on {}", host.name))?;
+    let script = format!("cd {} && node -e {}", shell_quote(cwd), shell_quote(include_str!("../resources/capture-git-tree.cjs")));
+    let mut command = ssh(host); command.arg(remote_login_command(&script)); let output = run_limited(&mut command, 64 * 1024, &format!("Could not capture Git snapshot on {}", host.name))?;
     match output.status.code() { Some(3 | 4 | 6) => return Ok(None), _ => {} }
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let text = String::from_utf8_lossy(&output.stdout);
@@ -1133,8 +1138,10 @@ fn save_git_diffs(app: AppHandle, session_path: String, snapshots: GitDiffSnapsh
     if body.len() > MAX_GIT_DIFFS_BYTES { return Err("Diff history exceeds the 16 MiB limit".into()); }
     if host_id == "local" { return atomic_write_private(&local_git_diffs_path(&session_path)?, body.as_bytes()).map_err(|error| format!("Could not save diffs: {error}")); }
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
-    let action = format!("umask 077; printf %s {} > \"$sidecar\" && chmod 600 -- \"$sidecar\"", shell_quote(&body));
-    let output = ssh(host).arg(remote_session_sidecar_script(&session_path, &action)).output().map_err(|error| format!("Could not save diffs on {}: {error}", host.name))?;
+    let action = "umask 077; temporary=$(mktemp \"$sidecar.XXXXXX\") || exit 1; trap 'rm -f -- \"$temporary\"' EXIT; cat > \"$temporary\" && chmod 600 -- \"$temporary\" && mv -f -- \"$temporary\" \"$sidecar\"";
+    let mut child = ssh(host).arg(remote_session_sidecar_script(&session_path, action)).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
+    let write = child.stdin.take().ok_or("SSH stdin unavailable")?.write_all(body.as_bytes());
+    let output = child.wait_with_output().map_err(|e| e.to_string())?; write.map_err(|e| e.to_string())?;
     output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
 }
 
@@ -1151,6 +1158,8 @@ fn remote_host<'a>(settings: &'a AppSettings, host_id: &str) -> Result<&'a Remot
 }
 
 fn user_ssh_config() -> Option<PathBuf> { home_dir().ok().map(|home| home.join(".ssh/config")).filter(|path| path.is_file()) }
+
+fn remote_login_command(command: &str) -> String { format!("bash -lc {}", shell_quote(command)) }
 
 fn ssh_base() -> Command {
     let mut command = Command::new("ssh");
@@ -1186,12 +1195,14 @@ fn create_ephemeral_fork(settings: &AppSettings, host_id: &str, source_path: &st
     if host_id == "local" {
         let source = local_desktop_session_file(source_path)?;
         let path = std::env::temp_dir().join(format!("pi-desktop-btw-{}.jsonl", Uuid::new_v4()));
-        fs::copy(source, &path).map_err(|error| format!("Could not create temporary side conversation: {error}"))?;
+        let output = Command::new("node").args(["-e", include_str!("../resources/fork-session.cjs")]).arg(source).arg(&path).arg(Uuid::new_v4().to_string()).output().map_err(|e| e.to_string())?;
+        if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).into_owned()); }
         return Ok((path.to_string_lossy().into_owned(), EphemeralSession::Local(path)));
     }
     let host = remote_host(settings, host_id)?.clone();
-    let remote = format!(r#"root=$(cd "$HOME/.piop/sessions" && pwd -P) && source=$(realpath -- {}) && case "$source" in "$root"/*.jsonl) temporary=$(mktemp "${{TMPDIR:-/tmp}}/pi-desktop-btw.XXXXXX") && cp -- "$source" "$temporary" && printf %s "$temporary" ;; *) printf 'Refusing to fork a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(source_path));
-    let output = ssh(&host).arg(remote).output().map_err(|error| format!("Could not create temporary side conversation on {}: {error}", host.name))?;
+    let destination = format!("/tmp/pi-desktop-btw-{}.jsonl", Uuid::new_v4());
+    let remote = format!("node -e {} {} {} {} && printf %s {}", shell_quote(include_str!("../resources/fork-session.cjs")), shell_quote(source_path), shell_quote(&destination), shell_quote(&Uuid::new_v4().to_string()), shell_quote(&destination));
+    let output = ssh(&host).arg(remote_login_command(&remote)).output().map_err(|error| format!("Could not create temporary side conversation on {}: {error}", host.name))?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if path.is_empty() { return Err("Temporary side conversation path was unavailable".into()); }
@@ -1242,7 +1253,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let mcp_bridge = shell_quote(include_str!("../resources/mcp-bridge.bundle.mjs"));
     let mcp_config = shell_quote(&serde_json::to_string_pretty(&settings.mcp_servers).map_err(|error| error.to_string())?);
     let remote = format!("umask 077 && rm -rf -- \"$HOME/.piop/pi-git-change-context\" && mkdir -p -m 700 \"$HOME/.piop/sessions\" \"$HOME/.piop/pi-context-window-cap\" \"$HOME/.piop/pi-project-files-watch\" \"$HOME/.piop/pi-define-agents\" && chmod 700 \"$HOME/.piop\" \"$HOME/.piop/sessions\" \"$HOME/.piop/pi-context-window-cap\" \"$HOME/.piop/pi-project-files-watch\" \"$HOME/.piop/pi-define-agents\" && printf %s {broker} > \"$HOME/.piop/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/.piop/pi-desktop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/.piop/pi-desktop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/.piop/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/.piop/pi-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/.piop/pi-context-window-cap/config.json\" && printf %s {project_files_watch} > \"$HOME/.piop/pi-project-files-watch/index.ts\" && printf %s {codex_web_search} > \"$HOME/.piop/pi-desktop-codex-web-search.ts\" && printf %s {codex_compaction} > \"$HOME/.piop/pi-desktop-codex-compaction.ts\" && printf %s {btw} > \"$HOME/.piop/pi-desktop-btw.ts\" && printf %s {defined_agents} > \"$HOME/.piop/pi-define-agents/index.ts\" && chmod 600 -- \"$HOME/.piop/pi-desktop-codex-web-search.ts\" \"$HOME/.piop/pi-desktop-codex-compaction.ts\" \"$HOME/.piop/session-broker.ts\" \"$HOME/.piop/pi-desktop-trace-reader.ts\" \"$HOME/.piop/pi-desktop-mcp-bridge.ts\" \"$HOME/.piop/mcp-servers.json\" \"$HOME/.piop/pi-context-window-cap/index.ts\" \"$HOME/.piop/pi-context-window-cap/config.json\" \"$HOME/.piop/pi-project-files-watch/index.ts\" \"$HOME/.piop/pi-desktop-btw.ts\" \"$HOME/.piop/pi-define-agents/index.ts\"");
-    let remote = format!(r#"{remote} && if [ ! -f "$HOME/.piop/pi-define-agents/config.json" ] && [ -f "$HOME/.pi/agent/extensions/pi-define-agents/config.json" ]; then cp "$HOME/.pi/agent/extensions/pi-define-agents/config.json" "$HOME/.piop/pi-define-agents/config.json"; fi && rm -f -- "$HOME/.pi/agent/extensions/pi-define-agents/index.ts" "$HOME/.pi/agent/extensions/pi-desktop-btw.ts""#);
+    let remote = format!(r#"{remote} && if [ ! -f "$HOME/.piop/pi-define-agents/config.json" ] && [ -f "$HOME/.pi/agent/extensions/pi-define-agents/config.json" ]; then cp "$HOME/.pi/agent/extensions/pi-define-agents/config.json" "$HOME/.piop/pi-define-agents/config.json"; fi && if [ ! -f "$HOME/.piop/pi-define-agents/config.json" ] && [ -f "$HOME/.pi/agent/extensions/pi-orchestration/config.json" ]; then cp "$HOME/.pi/agent/extensions/pi-orchestration/config.json" "$HOME/.piop/pi-define-agents/config.json"; fi && rm -f -- "$HOME/.pi/agent/extensions/pi-define-agents/index.ts" "$HOME/.pi/agent/extensions/pi-desktop-btw.ts""#);
     // Bundled extensions can exceed the OS limit for a single command argument.
     let mut child = ssh(host).arg("sh -s").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| format!("Could not install piop extensions on {}: {error}", host.name))?;
     let mut stdin = child.stdin.take().ok_or("Remote extension staging stdin was unavailable")?;
@@ -1255,7 +1266,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
 
 enum PiLaunch<'a> {
     Rpc { cwd: Option<&'a str>, session_path: Option<&'a str>, session_id: Option<&'a str>, fork_path: Option<&'a str>, no_session: bool },
-    Print { cwd: &'a str, session_path: &'a str, message: &'a str },
+    Print { cwd: &'a str, session_path: &'a str },
 }
 
 fn build_pi_command(app: &AppHandle, broker: &BrokerRuntime, settings: &AppSettings, host_id: &str, launch: PiLaunch<'_>) -> Result<Command, String> {
@@ -1267,7 +1278,7 @@ fn build_pi_command(app: &AppHandle, broker: &BrokerRuntime, settings: &AppSetti
     let local_skills = serde_json::to_string(&local_skills).unwrap_or_else(|_| "[]".into());
     let remote_skills: Vec<&str> = settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|skill| skill.get("path").and_then(Value::as_str)).collect();
     let remote_skills = serde_json::to_string(&remote_skills).unwrap_or_else(|_| "[]".into());
-    let is_rpc = matches!(launch, PiLaunch::Rpc { .. }); let print_message = match &launch { PiLaunch::Print { message, .. } => Some(*message), PiLaunch::Rpc { .. } => None };
+    let is_rpc = matches!(launch, PiLaunch::Rpc { .. });
     let default_model = std::env::var("PI_DESKTOP_E2E_MODEL").ok().filter(|model| !model.trim().is_empty()).unwrap_or_else(|| settings.default_model.clone());
     if host_id == "local" {
         let (mcp_extension, mcp_config) = prepare_mcp_bridge(app, settings)?; let context_window_cap_extension = prepare_context_window_cap_extension(app, settings)?; let project_files_watch_extension = prepare_project_files_watch_extension(app)?; let trace_reader_extension = prepare_trace_reader(app)?; let codex_compaction_extension = prepare_codex_compaction_extension(app)?; let codex_web_search_extension = prepare_codex_web_search_extension(app)?; let defined_agents_extension = prepare_defined_agents_extension()?; let pi_path = pi_executable();
@@ -1288,7 +1299,6 @@ fn build_pi_command(app: &AppHandle, broker: &BrokerRuntime, settings: &AppSetti
         if !disabled_tools.is_empty() { command.arg("--exclude-tools").arg(disabled_tools.join(",")); }
         if !is_rpc && !default_model.trim().is_empty() { command.arg("--model").arg(default_model.trim()); }
         if !settings.default_thinking.trim().is_empty() { command.arg("--thinking").arg(settings.default_thinking.trim()); }
-        if let Some(message) = print_message { command.arg(message); }
         return Ok(command);
     }
     let host = remote_host(settings, host_id)?; stage_remote_extensions(host, settings)?; let remote_port = remote_broker_port(); let remote_pi = remote_pi_path(&host.pi_path);
@@ -1302,10 +1312,9 @@ fn build_pi_command(app: &AppHandle, broker: &BrokerRuntime, settings: &AppSetti
     if !disabled_tools.is_empty() { arguments.extend(["--exclude-tools".into(), shell_quote(&disabled_tools.join(","))]); }
     if !is_rpc && !default_model.trim().is_empty() { arguments.extend(["--model".into(), shell_quote(default_model.trim())]); }
     if !settings.default_thinking.trim().is_empty() { arguments.extend(["--thinking".into(), shell_quote(settings.default_thinking.trim())]); }
-    if let Some(message) = print_message { arguments.push(shell_quote(message)); }
     let rpc_environment = if is_rpc { format!(" PI_DESKTOP_BTW=1 PI_DESKTOP_PI_EXECUTABLE={remote_pi}") } else { String::new() };
     let remote = format!("cd {} && PI_DESKTOP_DEFINED_AGENTS_EXTENSION=\"$HOME/.piop/pi-define-agents/index.ts\" PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION=\"$HOME/.piop/pi-desktop-codex-web-search.ts\" PI_DESKTOP_CODEX_COMPACTION_EXTENSION=\"$HOME/.piop/pi-desktop-codex-compaction.ts\" PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION=\"$HOME/.piop/pi-context-window-cap/index.ts\" PI_DESKTOP_TRACE_READER_EXTENSION=\"$HOME/.piop/pi-desktop-trace-reader.ts\" PI_DESKTOP_MCP_CONFIG=\"$HOME/.piop/mcp-servers.json\" PI_DESKTOP_BROKER_URL={} PI_DESKTOP_BROKER_TOKEN={} PI_DESKTOP_ALLOWED_TOOLS={} PI_DESKTOP_SKILL_PATHS={}{} exec {}", remote_directory_path(cwd), shell_quote(&format!("http://127.0.0.1:{remote_port}")), shell_quote(&broker_token), shell_quote(&allowed_tools), shell_quote(&remote_skills), rpc_environment, arguments.join(" "));
-    let mut command = remote_broker_command(host, broker_port, remote_port); command.arg(remote); Ok(command)
+    let mut command = remote_broker_command(host, broker_port, remote_port); command.arg(remote_login_command(&remote)); Ok(command)
 }
 
 #[tauri::command(async)]
@@ -1320,29 +1329,40 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
             None => None,
         }
     };
-    if let Some(mut process) = stale { let _ = process.child.wait(); if let Some(session) = process.ephemeral_session { remove_ephemeral_session(session); } }
+    if let Some(mut process) = stale { let _ = process.child.wait(); }
     let settings = load_app_settings(app.clone())?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
-    let session_path = session_path.as_deref().map(|path| desktop_session_file(&settings, &host_id, path)).transpose()?;
+    let saved_ephemeral = runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.get(&runtime_id).cloned();
+    let ephemeral = no_session.unwrap_or(false) || saved_ephemeral.is_some();
+    let session_path = if ephemeral { None } else { session_path.as_deref().map(|path| desktop_session_file(&settings, &host_id, path)).transpose()? };
     let fork_path = fork_path.as_deref().map(|path| desktop_session_file(&settings, &host_id, path)).transpose()?;
-    let ephemeral = no_session.unwrap_or(false);
-    let (ephemeral_path, ephemeral_session) = if ephemeral {
+    let (ephemeral_path, ephemeral_session) = if let Some(saved) = saved_ephemeral {
+        let path = match &saved { EphemeralSession::Local(path) => path.to_string_lossy().into_owned(), EphemeralSession::Remote { path, .. } => path.clone() }; (Some(path), Some(saved))
+    } else if ephemeral {
         match fork_path.as_deref() {
             Some(source_path) => { let (path, cleanup) = create_ephemeral_fork(&settings, &host_id, source_path)?; (Some(path), Some(cleanup)) }
             None => (None, None),
         }
     } else { (None, None) };
+    if let Some(session) = ephemeral_session { runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.insert(runtime_id.clone(), session); }
+    let claim_id = if ephemeral { None } else if let Some(id) = session_id.as_deref() { Some(id.to_string()) } else if let Some(path) = session_path.as_deref() {
+        let header = if host_id == "local" { let mut line = String::new(); BufReader::new(fs::File::open(path).map_err(|e| e.to_string())?).read_line(&mut line).map_err(|e| e.to_string())?; line }
+        else { { let output = run_limited(ssh(remote_host(&settings, &host_id)?).arg(format!("head -n 1 -- {}", shell_quote(path))), 64 * 1024, "Could not read session identity")?; if !output.status.success() { return Err("Could not read session identity".into()); } String::from_utf8(output.stdout).map_err(|e| e.to_string())? } };
+        Some(serde_json::from_str::<Value>(&header).map_err(|e| e.to_string())?.get("id").and_then(Value::as_str).ok_or("Missing session identity")?.to_string())
+    } else { None };
+    let session_claim = claim_id.as_deref().map(|id| claim_agent(&broker, &host_id, id)).transpose()?;
     let launch_session_path = ephemeral_path.as_deref().or(session_path.as_deref());
     let launch_fork_path = if ephemeral_path.is_some() { None } else { fork_path.as_deref() };
     let mut command = match build_pi_command(&app, &broker, &settings, &host_id, PiLaunch::Rpc { cwd: cwd.as_deref(), session_path: launch_session_path, session_id: session_id.as_deref(), fork_path: launch_fork_path, no_session: ephemeral && ephemeral_path.is_none() }) {
         Ok(command) => command,
-        Err(error) => { if let Some(cleanup) = ephemeral_session { remove_ephemeral_session(cleanup); } return Err(error); }
+        Err(error) => return Err(error),
     };
     command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = match command.spawn() {
         Ok(child) => child,
-        Err(error) => { if let Some(cleanup) = ephemeral_session { remove_ephemeral_session(cleanup); } return Err(format!("Could not start pi: {error}")); }
+        Err(error) => return Err(format!("Could not start pi: {error}")),
     };
+    let generation = Uuid::new_v4();
     let stdin = Arc::new(Mutex::new(child.stdin.take().ok_or("Pi stdin was unavailable")?));
     let stdout = child.stdout.take().ok_or("Pi stdout was unavailable")?;
     let stderr = child.stderr.take().ok_or("Pi stderr was unavailable")?;
@@ -1352,11 +1372,12 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
         .filter(|server| server.get("enabled").and_then(Value::as_bool) == Some(true))
         .map(|server| server.get("startupTimeoutSec").and_then(Value::as_u64).unwrap_or(10).clamp(1, 600))
         .max().unwrap_or(0) + 30);
-    runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { child, stdin: stdin.clone(), ephemeral_session, blank_cleanup, command_timeout });
+    runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { generation, claim: session_claim, child, stdin: stdin.clone(), blank_cleanup, command_timeout });
     runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id.clone(), AgentAddress { host_id: host_id.clone(), session_id: session_id.clone(), session_path: session_path.clone(), worktree: None, presence_id: None, working: false });
     let pending = runtime.pending.clone(); let processes = runtime.processes.clone(); let active_agents = runtime.active_agents.clone(); let event_app = app.clone(); let event_runtime_id = runtime_id.clone();
     thread::spawn(move || {
         for line in BufReader::new(stdout).split(b'\n') {
+            if !processes.lock().ok().is_some_and(|values| values.get(&event_runtime_id).is_some_and(|p| p.generation == generation)) { break; }
             let Ok(bytes) = line else { break }; let Ok(mut value) = serde_json::from_slice::<Value>(&bytes) else { continue };
             if value.get("type").and_then(Value::as_str) == Some("extension_ui_request") && value.get("method").and_then(Value::as_str) == Some("setStatus")
                 && matches!(value.get("statusKey").and_then(Value::as_str), Some("pi-desktop-control-response" | "pi-desktop-pause-state")) {
@@ -1367,7 +1388,7 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
                 if let Some(agent) = agents.get_mut(&event_runtime_id) {
                     match value.get("type").and_then(Value::as_str) {
                         Some("agent_start") => agent.working = true,
-                        Some("agent_end" | "agent_settled") => agent.working = false,
+                        Some("agent_settled") => agent.working = false,
                         Some("extension_ui_request") if value.get("statusKey").and_then(Value::as_str) == Some("pi-desktop-worktree-presence") => {
                             if let Some(presence) = value.get("statusText").and_then(Value::as_str).and_then(|text| serde_json::from_str::<Value>(text).ok()) {
                                 agent.worktree = presence.get("worktree").and_then(Value::as_str).map(str::to_owned);
@@ -1397,11 +1418,15 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
             }
             let _ = event_app.emit("pi://event", json!({"runtimeId":event_runtime_id,"event":value}));
         }
-        let exited = processes.lock().ok().and_then(|mut values| values.remove(&event_runtime_id));
-        if let Some(mut process) = exited { let _ = process.child.wait(); if let Some(session) = process.ephemeral_session { remove_ephemeral_session(session); } cleanup_blank_session(process.blank_cleanup); }
-        if let Ok(mut agents) = active_agents.lock() { agents.remove(&event_runtime_id); }
-        fail_pending(&pending, &event_runtime_id, "Pi disconnected before responding");
-        let _ = event_app.emit("pi://event", json!({"runtimeId":event_runtime_id,"event":{"type":"disconnected"}}));
+        let exited = processes.lock().ok().and_then(|mut values| {
+            if !values.get(&event_runtime_id).is_some_and(|p| p.generation == generation) { return None; }
+            if let Ok(mut agents) = active_agents.lock() { agents.remove(&event_runtime_id); }
+            fail_pending(&pending, &event_runtime_id, "Pi disconnected before responding");
+            let _ = event_app.emit("pi://event", json!({"runtimeId":event_runtime_id,"event":{"type":"disconnected"}}));
+            values.remove(&event_runtime_id)
+        });
+        if let Some(mut process) = exited { let _ = process.child.wait(); cleanup_blank_session(process.blank_cleanup); }
+
     });
     let error_app = app.clone(); let error_runtime_id = runtime_id.clone();
     thread::spawn(move || for line in BufReader::new(stderr).lines().map_while(Result::ok) { let _ = error_app.emit("pi://stderr", json!({"runtimeId":error_runtime_id,"line":line})); });
@@ -1411,7 +1436,8 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
 #[tauri::command(async)]
 fn stop_pi(runtime: State<PiRuntime>, runtime_id: String, discard_blank: Option<bool>) -> Result<(), String> {
     let process = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.remove(&runtime_id);
-    if let Some(mut process) = process { let _ = process.child.kill(); let _ = process.child.wait(); if let Some(session) = process.ephemeral_session { remove_ephemeral_session(session); } if discard_blank.unwrap_or(false) { cleanup_blank_session(process.blank_cleanup); } }
+    if let Some(mut process) = process { let _ = process.child.kill(); let _ = process.child.wait(); if discard_blank.unwrap_or(false) { cleanup_blank_session(process.blank_cleanup); } }
+    if discard_blank.unwrap_or(false) { if let Some(session) = runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.remove(&runtime_id) { remove_ephemeral_session(session); } }
     runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.remove(&runtime_id);
     fail_pending(&runtime.pending, &runtime_id, "Pi disconnected before responding");
     Ok(())
@@ -1433,19 +1459,32 @@ fn execute_pi_command(runtime: &PiRuntime, runtime_id: &str, mut command: Value)
         command = json!({"id":format!("{id}:desktop-control"),"type":"prompt","message":format!("/pi-desktop-branch-checkpoint {request}")});
     }
     let (sender, receiver) = mpsc::channel();
+    let started = Instant::now();
+    let (stdin, command_timeout, generation) = {
+        let processes = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?;
+        let process = processes.get(runtime_id).ok_or("Pi is not running")?;
+        (process.stdin.clone(), if abort { Duration::from_secs(5) } else { process.command_timeout }, process.generation)
+    };
     runtime.pending.lock().map_err(|_| "Pending command lock was poisoned")?.insert((runtime_id.to_string(), id.clone()), sender);
-    let mut command_timeout = Duration::from_secs(30);
-    let write_result = (|| {
-        let process_guard = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?;
-        let process = process_guard.get(runtime_id).ok_or("Pi is not running")?;
-        command_timeout = if abort { Duration::from_secs(5) } else { process.command_timeout };
-        let mut stdin = process.stdin.lock().map_err(|_| "Pi stdin lock was poisoned")?;
-        serde_json::to_writer(&mut *stdin, &command).map_err(|error| error.to_string())?;
-        stdin.write_all(b"\n").and_then(|_| stdin.flush()).map_err(|error| error.to_string())
+    let (write_sender, write_receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let result = (|| {
+            let mut stdin = stdin.lock().map_err(|_| "Pi stdin lock was poisoned".to_string())?;
+            serde_json::to_writer(&mut *stdin, &command).map_err(|error| error.to_string())?;
+            stdin.write_all(b"\n").and_then(|_| stdin.flush()).map_err(|error| error.to_string())
+        })();
+        let _ = write_sender.send(result);
+    });
+    let result = (|| {
+        write_receiver.recv_timeout(command_timeout).map_err(|_| "Pi command timed out".to_string())??;
+        if fire_and_forget { return Ok(Value::Null); }
+        receiver.recv_timeout(command_timeout.saturating_sub(started.elapsed())).map_err(|_| "Pi command timed out".to_string())?
     })();
-    if let Err(error) = write_result { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.to_string(), id.clone()))); return Err(error); }
-    if fire_and_forget { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.to_string(), id.clone()))); return Ok(Value::Null); }
-    let result = receiver.recv_timeout(command_timeout).map_err(|_| { runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.to_string(), id))); "Pi command timed out".to_string() })??;
+    runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.to_string(), id)));
+    if result.as_ref().err().is_some_and(|e| e == "Pi command timed out") {
+        if let Ok(mut processes) = runtime.processes.lock() { if let Some(process) = processes.get_mut(runtime_id).filter(|p| p.generation == generation) { let _ = process.child.kill(); } }
+    }
+    let result = result?;
     if resume {
         if let Some(message) = result.get("resumeMessage").and_then(Value::as_str) {
             execute_pi_command(runtime, runtime_id, json!({"type":"prompt","message":message}))?;
@@ -1454,10 +1493,15 @@ fn execute_pi_command(runtime: &PiRuntime, runtime_id: &str, mut command: Value)
     Ok(result)
 }
 
-fn update_active_agent(runtime: &PiRuntime, runtime_id: &str, state: &Value) -> Result<(), String> {
+fn update_active_agent(runtime: &PiRuntime, broker: &BrokerRuntime, runtime_id: &str, state: &Value) -> Result<(), String> {
     if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(runtime_id) {
         if let Some(path) = state.get("sessionFile").and_then(Value::as_str) { process.blank_cleanup.path = Some(path.to_owned()); }
-        if let Some(id) = state.get("sessionId").and_then(Value::as_str) { process.blank_cleanup.id = Some(id.to_owned()); }
+        if let Some(id) = state.get("sessionId").and_then(Value::as_str) {
+            let host_id = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.get(runtime_id).map(|agent| agent.host_id.clone()).unwrap_or_else(|| "local".into());
+            let key = format!("{host_id}\0{id}");
+            if process.claim.as_ref().map(|claim| &claim.key) != Some(&key) { process.claim = Some(claim_agent(broker, &host_id, id)?); }
+            process.blank_cleanup.id = Some(id.to_owned());
+        }
     }
     let mut agents = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?;
     let Some(agent) = agents.get_mut(runtime_id) else { return Ok(()); };
@@ -1467,27 +1511,34 @@ fn update_active_agent(runtime: &PiRuntime, runtime_id: &str, state: &Value) -> 
 }
 
 #[tauri::command(async)]
-fn pi_command(app: AppHandle, runtime: State<PiRuntime>, runtime_id: String, mut command: Value) -> Result<Value, String> {
+fn pi_command(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, mut command: Value) -> Result<Value, String> {
     let command_type = command.get("type").and_then(Value::as_str).unwrap_or_default().to_string();
+    let mut switch_claim = None;
     if command_type == "switch_session" {
         let path = command.get("sessionPath").and_then(Value::as_str).ok_or("Session path is required")?;
         let host_id = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?
             .get(&runtime_id).map(|agent| agent.host_id.clone()).ok_or("Unknown Pi runtime")?;
-        command["sessionPath"] = Value::String(desktop_session_file(&load_app_settings(app)?, &host_id, path)?);
+        let path = desktop_session_file(&load_app_settings(app.clone())?, &host_id, path)?;
+        let sessions = collect_sessions(&app, &app.state::<SessionIndexRuntime>())?;
+        let session = sessions.iter().find(|s| s.host_id == host_id && s.path == path).ok_or("Session identity is unavailable")?;
+        let already_owned = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(&runtime_id).and_then(|p| p.claim.as_ref()).is_some_and(|claim| claim.key == format!("{host_id}\0{}", session.id));
+        if !already_owned { switch_claim = Some(claim_agent(&broker, &host_id, &session.id)?); }
+        command["sessionPath"] = Value::String(path);
     }
     let internal_status = command.get("message").and_then(Value::as_str).is_some_and(|message| message == "/pi-desktop-fast-status" || message == "/pi-desktop-fast-status refresh");
     if matches!(command_type.as_str(), "prompt" | "steer" | "follow_up") && !internal_status {
         if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(&runtime_id) { process.blank_cleanup.submitted = true; }
     }
     let mut result = execute_pi_command(&runtime, &runtime_id, command)?;
+    if result.get("cancelled").and_then(Value::as_bool) != Some(true) { if let Some(claim) = switch_claim { if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(&runtime_id) { process.claim = Some(claim); } } }
     if command_type == "get_state" {
-        update_active_agent(&runtime, &runtime_id, &result)?;
+        update_active_agent(&runtime, &broker, &runtime_id, &result)?;
         let pause = execute_pi_command(&runtime, &runtime_id, json!({"type":"get_pause_state"}))?;
         if let (Some(state), Some(fields)) = (result.as_object_mut(), pause.as_object()) { state.extend(fields.clone()); }
         if result.get("isPaused").and_then(Value::as_bool) == Some(true) && result.get("isPausing").and_then(Value::as_bool) != Some(true) { result["isStreaming"] = Value::Bool(false); }
     }
-    else if matches!(command_type.as_str(), "fork" | "clone" | "new_session") {
-        if let Ok(state) = execute_pi_command(&runtime, &runtime_id, json!({"type":"get_state"})) { update_active_agent(&runtime, &runtime_id, &state)?; }
+    else if matches!(command_type.as_str(), "fork" | "clone" | "new_session" | "switch_session") {
+        if let Ok(state) = execute_pi_command(&runtime, &runtime_id, json!({"type":"get_state"})) { update_active_agent(&runtime, &broker, &runtime_id, &state)?; }
     }
     Ok(result)
 }
@@ -1514,7 +1565,7 @@ fn start_terminal(app: AppHandle, runtime: State<TerminalRuntime>, terminal_id: 
     let child = pair.slave.spawn_command(command).map_err(|error| format!("Could not start terminal shell: {error}"))?;
     drop(pair.slave);
     let mut reader = pair.master.try_clone_reader().map_err(|error| error.to_string())?;
-    let writer = pair.master.take_writer().map_err(|error| error.to_string())?;
+    let mut writer = pair.master.take_writer().map_err(|error| error.to_string())?;
     let event_app = app.clone(); let event_id = terminal_id.clone(); let terminal_processes = runtime.processes.clone();
     thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
@@ -1534,7 +1585,9 @@ fn start_terminal(app: AppHandle, runtime: State<TerminalRuntime>, terminal_id: 
         if let Some(mut process) = terminal_processes.lock().ok().and_then(|mut values| values.remove(&event_id)) { let _ = process.child.wait(); }
         let _ = event_app.emit("pi://event", json!({ "type": "terminal_exit", "terminalId": event_id }));
     });
-    processes.insert(terminal_id, TerminalProcess { session_key, master: pair.master, child, writer });
+    let (input, queued) = mpsc::sync_channel::<String>(32);
+    thread::spawn(move || { while let Ok(data) = queued.recv() { if writer.write_all(data.as_bytes()).and_then(|_| writer.flush()).is_err() { break; } } });
+    processes.insert(terminal_id, TerminalProcess { session_key, master: pair.master, child, writer: input });
     Ok(())
 }
 
@@ -1565,7 +1618,8 @@ fn decode_terminal_bytes(pending: &mut Vec<u8>, bytes: &[u8], eof: bool) -> Stri
 fn write_terminal(runtime: State<TerminalRuntime>, terminal_id: String, data: String) -> Result<(), String> {
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
     let process = processes.get_mut(&terminal_id).ok_or("Terminal is not running")?;
-    process.writer.write_all(data.as_bytes()).and_then(|_| process.writer.flush()).map_err(|error| error.to_string())
+    if data.len() > 1024 * 1024 { return Err("Terminal input exceeds 1 MiB; paste a smaller block".into()); }
+    process.writer.try_send(data).map_err(|_| "Terminal input is busy; wait or close the terminal".to_string())
 }
 
 #[tauri::command]
@@ -1630,56 +1684,8 @@ fn open_project_directory(app: AppHandle, cwd: String, host_id: Option<String>) 
     open_system_resource(path.as_os_str())
 }
 
-fn text_content(message: &Value) -> String {
-    match message.get("content") {
-        Some(Value::String(text)) => text.clone(),
-        Some(Value::Array(parts)) => parts.iter().filter_map(|part| if part.get("type") == Some(&Value::String("text".into())) { part.get("text").and_then(Value::as_str) } else { None }).collect::<Vec<_>>().join(""),
-        _ => String::new(),
-    }
-}
 
 fn unix_timestamp(time: SystemTime) -> u64 { time.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs() }
-
-fn parse_session_content(path: &Path, content: &str, modified: SystemTime, cwd_exists: bool, host_id: &str, host_name: &str) -> Option<(SessionSummary, bool, bool, HashSet<String>)> {
-    let mut lines = content.lines(); let header: Value = serde_json::from_str(lines.next()?).ok()?;
-    if header.get("type")?.as_str()? != "session" { return None; }
-    let cwd = header.get("cwd").and_then(Value::as_str).unwrap_or("Unknown project").to_string();
-    let id = header.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
-    let mut resume_messages = HashSet::new();
-    let mut name = None; let mut first_user_message = String::new(); let mut preview = String::new(); let mut message_count = 0; let mut api_cost = 0.0;
-    for line in lines { let Ok(entry) = serde_json::from_str::<Value>(line) else { continue }; if hidden_resume_entry(&entry, &mut resume_messages) { continue; } if entry.get("type").and_then(Value::as_str) == Some("session_info") { name = entry.get("name").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()).map(str::to_owned); } if entry.get("type").and_then(Value::as_str) == Some("message") { message_count += 1; if let Some(message) = entry.get("message") { let text = text_content(message); if !text.is_empty() { if first_user_message.is_empty() && message.get("role").and_then(Value::as_str) == Some("user") { first_user_message = text.clone(); } preview = text; } if message.get("role").and_then(Value::as_str) == Some("assistant") { api_cost += message.pointer("/usage/cost/total").and_then(Value::as_f64).filter(|cost| cost.is_finite() && *cost >= 0.0).unwrap_or(0.0); } } } }
-    let explicitly_named = name.is_some(); let has_user_message = !first_user_message.is_empty();
-    let name = name.unwrap_or_else(|| if first_user_message.is_empty() { "Untitled session".into() } else { first_user_message });
-    let project = Path::new(&cwd).file_name().and_then(|value| value.to_str()).unwrap_or("Workspace").to_string();
-    Some((SessionSummary { id, path: path.to_string_lossy().into_owned(), name, project, cwd, cwd_exists, project_kind: None, project_root: None, modified_at: unix_timestamp(modified), preview: preview.chars().take(100).collect(), message_count, api_cost, host_id: host_id.into(), host_name: host_name.into() }, explicitly_named, has_user_message, resume_messages))
-}
-
-fn hidden_resume_entry(entry: &Value, markers: &mut HashSet<String>) -> bool {
-    if entry.get("type").and_then(Value::as_str) == Some("custom") && entry.get("customType").and_then(Value::as_str) == Some("pi-desktop-resume") {
-        if let Some(message) = entry.pointer("/data/message").and_then(Value::as_str) { markers.insert(message.to_owned()); }
-    }
-    entry.get("message").is_some_and(|message| message.get("role").and_then(Value::as_str) == Some("user") && markers.contains(&text_content(message)))
-}
-
-fn apply_session_entries(cached: &mut CachedSession, content: &str, modified: SystemTime) {
-    for line in content.lines() {
-        let Ok(entry) = serde_json::from_str::<Value>(line) else { continue };
-        if hidden_resume_entry(&entry, &mut cached.resume_messages) { continue; }
-        if entry.get("type").and_then(Value::as_str) == Some("session_info") {
-            if let Some(name) = entry.get("name").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()) { cached.summary.name = name.to_owned(); cached.explicitly_named = true; }
-        }
-        if entry.get("type").and_then(Value::as_str) != Some("message") { continue; }
-        cached.summary.message_count += 1;
-        let Some(message) = entry.get("message") else { continue };
-        let text = text_content(message);
-        if !text.is_empty() {
-            if message.get("role").and_then(Value::as_str) == Some("user") && !cached.has_user_message { if !cached.explicitly_named { cached.summary.name = text.clone(); } cached.has_user_message = true; }
-            cached.summary.preview = text.chars().take(100).collect();
-        }
-        if message.get("role").and_then(Value::as_str) == Some("assistant") { cached.summary.api_cost += message.pointer("/usage/cost/total").and_then(Value::as_f64).filter(|cost| cost.is_finite() && *cost >= 0.0).unwrap_or(0.0); }
-    }
-    cached.summary.modified_at = unix_timestamp(modified);
-}
 
 // Inspect each distinct directory once per refresh, batching remote checks into one SSH call per batch.
 fn inspect_session_projects(sessions: &mut [SessionSummary], host: Option<&RemoteHost>) -> Result<(), String> {
@@ -1721,84 +1727,63 @@ fn inspect_session_projects(sessions: &mut [SessionSummary], host: Option<&Remot
     Ok(())
 }
 
-fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<SessionSummary>, String> {
-    let mut cache = index.local.lock().map_err(|_| "Local session index lock was poisoned")?;
-    let mut seen = HashSet::new(); let mut sessions = Vec::new();
-    for entry in WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok).filter(|entry| entry.file_type().is_file() && entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")) {
-        let path = entry.path().to_path_buf(); let Ok(metadata) = entry.metadata() else { continue };
-        if metadata.len() > MAX_SESSION_INDEX_FILE_BYTES { continue; }
-        let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-        let fingerprint = format!("{}:{}", modified.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos(), metadata.len());
-        seen.insert(path.clone());
-        if cache.get(&path).is_some_and(|cached| cached.fingerprint != fingerprint && cached.bytes < metadata.len()) {
-            let previous_bytes = cache.get(&path).map(|cached| cached.bytes).unwrap_or(0);
-            let appended = (|| { let mut file = fs::File::open(&path).ok()?; file.seek(SeekFrom::Start(previous_bytes)).ok()?; let mut content = String::new(); file.read_to_string(&mut content).ok()?; Some(content) })();
-            if let (Some(content), Some(cached)) = (appended, cache.get_mut(&path)) { apply_session_entries(cached, &content, modified); cached.bytes = metadata.len(); cached.fingerprint = fingerprint.clone(); }
+fn read_session_summaries(candidates: &[(String, String, u64, u64)], host: Option<&RemoteHost>) -> Result<HashMap<String, CachedSession>, String> {
+    let script = include_str!("../resources/index-sessions.cjs");
+    let mut result = HashMap::new(); let mut cursor = 0;
+    while cursor < candidates.len() {
+        let mut end = cursor; let mut argument_bytes = 0;
+        while end < candidates.len() && end - cursor < 128 {
+            let size = shell_quote(&candidates[end].0).len() + 1;
+            if end > cursor && argument_bytes + size > 16 * 1024 { break; }
+            argument_bytes += size; end += 1;
         }
-        if cache.get(&path).is_none_or(|cached| cached.fingerprint != fingerprint) {
-            let Ok(content) = fs::read_to_string(&path) else { continue };
-            let Some((summary, explicitly_named, has_user_message, resume_messages)) = parse_session_content(&path, &content, modified, true, "local", "Local") else { continue };
-            cache.insert(path.clone(), CachedSession { fingerprint: fingerprint.clone(), bytes: metadata.len(), explicitly_named, has_user_message, resume_messages, summary });
-        }
-        let Some(summary) = cache.get(&path).map(|cached| cached.summary.clone()) else { continue };
-        sessions.push(summary);
-    }
-    cache.retain(|path, _| seen.contains(path));
-    drop(cache);
-    inspect_session_projects(&mut sessions, None)?;
-    Ok(sessions)
-}
-
-fn list_remote_sessions(index: &SessionIndexRuntime, host: &RemoteHost) -> Result<Vec<SessionSummary>, String> {
-    let script = r#"mkdir -p "$HOME/.piop/sessions" && find "$HOME/.piop/sessions" -type f -name '*.jsonl' -printf '%p\000%T@\000%s\000' 2>/dev/null"#;
-    let mut metadata_command = ssh(host); metadata_command.arg(script);
-    let output = run_limited(&mut metadata_command, MAX_SESSION_INDEX_BATCH_BYTES, &format!("Could not list sessions on {}", host.name))?;
-    if !output.status.success() { return Err(format!("Could not list sessions on {}: {}", host.name, String::from_utf8_lossy(&output.stderr).trim())); }
-    let fields: Vec<&[u8]> = output.stdout.split(|byte| *byte == 0).filter(|field| !field.is_empty()).collect();
-    let metadata: Vec<(String, String, u64, u64)> = fields.chunks(3).filter_map(|frame| {
-        if frame.len() != 3 { return None; }
-        let path = String::from_utf8_lossy(frame[0]).into_owned(); let modified = String::from_utf8_lossy(frame[1]).into_owned(); let size: u64 = String::from_utf8_lossy(frame[2]).parse().ok()?;
-        if size > MAX_SESSION_INDEX_FILE_BYTES { return None; }
-        let seconds = modified.split('.').next().and_then(|value| value.parse().ok()).unwrap_or(0);
-        Some((path, format!("{modified}:{size}"), seconds, size))
-    }).collect();
-    let previous = index.remote.lock().map_err(|_| "Remote session index lock was poisoned")?.get(&host.id).cloned().unwrap_or_default();
-    let changed: Vec<_> = metadata.iter().filter(|(path, fingerprint, _, _)| previous.get(path).is_none_or(|cached| cached.fingerprint != *fingerprint)).collect();
-    let mut parsed = HashMap::new();
-    let mut cursor = 0;
-    while cursor < changed.len() {
-        let mut end = cursor; let mut batch_bytes = 0u64;
-        while end < changed.len() {
-            let (path, _, _, size) = changed[end];
-            let offset = previous.get(path).filter(|cached| cached.bytes < *size).map(|cached| cached.bytes).unwrap_or(0);
-            let update_bytes = size.saturating_sub(offset);
-            if end > cursor && batch_bytes.saturating_add(update_bytes) > MAX_SESSION_INDEX_BATCH_BYTES as u64 { break; }
-            batch_bytes = batch_bytes.saturating_add(update_bytes); end += 1;
-        }
-        let batch = &changed[cursor..end];
-        let arguments = batch.iter().flat_map(|(path, _, _, size)| {
-            let offset = previous.get(path).filter(|cached| cached.bytes < *size).map(|cached| cached.bytes).unwrap_or(0);
-            [shell_quote(path), offset.to_string()]
-        }).collect::<Vec<_>>().join(" ");
-        let command = format!(r#"sh -c 'while [ "$#" -ge 2 ]; do path=$1; offset=$2; shift 2; printf "%s\000" "$path"; tail -c "+$((offset + 1))" -- "$path"; printf "\000"; done' sh {arguments}"#);
-        let mut update_command = ssh(host); update_command.arg(command);
-        let output = run_limited(&mut update_command, MAX_SESSION_INDEX_BATCH_BYTES + MAX_GIT_PATH_LIST_BYTES, &format!("Could not update session index on {}", host.name))?;
-        if !output.status.success() { return Err(format!("Could not update session index on {}: {}", host.name, String::from_utf8_lossy(&output.stderr).trim())); }
-        let frames: Vec<&[u8]> = output.stdout.split(|byte| *byte == 0).collect();
-        for frame in frames.chunks(2) {
-            if frame.len() != 2 || frame[0].is_empty() { continue; }
-            let path = String::from_utf8_lossy(frame[0]).into_owned(); let Some((_, fingerprint, seconds, size)) = metadata.iter().find(|(candidate, _, _, _)| candidate == &path) else { continue };
-            let content = String::from_utf8_lossy(frame[1]); let path_buf = PathBuf::from(&path);
-            let modified = SystemTime::UNIX_EPOCH + Duration::from_secs(*seconds);
-            let cached = previous.get(&path).filter(|cached| cached.bytes < *size);
-            if let Some(cached) = cached {
-                let mut next = cached.clone(); apply_session_entries(&mut next, &content, modified); next.bytes = *size; next.fingerprint = fingerprint.clone(); parsed.insert(path, next);
-            } else if let Some((summary, explicitly_named, has_user_message, resume_messages)) = parse_session_content(&path_buf, &content, modified, true, &host.id, &host.name) {
-                parsed.insert(path, CachedSession { fingerprint: fingerprint.clone(), bytes: *size, explicitly_named, has_user_message, resume_messages, summary });
-            }
+        let batch = &candidates[cursor..end];
+        let mut command = if let Some(host) = host {
+            let mut command = ssh(host); command.arg(remote_login_command(&format!("node -e {} {}", shell_quote(script), batch.iter().map(|item| shell_quote(&item.0)).collect::<Vec<_>>().join(" ")))); command
+        } else { let mut command = Command::new("node"); command.args(["-e", script]).args(batch.iter().map(|item| &item.0)); command };
+        let output = run_limited(&mut command, MAX_SESSION_INDEX_BATCH_BYTES, "Could not read session summaries")?;
+        if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).into_owned()); }
+        for line in output.stdout.split(|byte| *byte == b'\n') {
+            let Ok(value) = serde_json::from_slice::<Value>(line) else { continue };
+            let Some(path) = value.get("path").and_then(Value::as_str) else { continue };
+            let Some((_, fingerprint, modified_at, _)) = batch.iter().find(|item| item.0 == path) else { continue };
+            let string = |key| value.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
+            let cwd = string("cwd"); let project = Path::new(&cwd).file_name().and_then(|name| name.to_str()).unwrap_or("Workspace").to_owned();
+            let summary = SessionSummary { id: string("id"), path: path.to_owned(), name: string("name"), project, cwd, cwd_exists: true, project_kind: None, project_root: None, modified_at: *modified_at, preview: string("preview"), message_count: value.get("messageCount").and_then(Value::as_u64).unwrap_or(0) as usize, api_cost: value.get("apiCost").and_then(Value::as_f64).unwrap_or(0.0), host_id: host.map(|host| host.id.clone()).unwrap_or_else(|| "local".into()), host_name: host.map(|host| host.name.clone()).unwrap_or_else(|| "Local".into()) };
+            result.insert(path.to_owned(), CachedSession { fingerprint: fingerprint.clone(), summary });
         }
         cursor = end;
     }
+    Ok(result)
+}
+
+fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<SessionSummary>, String> {
+    let mut cache = index.local.lock().map_err(|_| "Local session index lock was poisoned")?;
+    let mut seen = HashSet::new(); let mut changed = Vec::new();
+    for entry in WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok).filter(|entry| entry.file_type().is_file() && entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")) {
+        let path = entry.path().to_path_buf(); let Ok(metadata) = entry.metadata() else { continue };
+        let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        let fingerprint = format!("{}:{}", modified.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_nanos(), metadata.len());
+        seen.insert(path.clone());
+        if cache.get(&path).is_none_or(|cached| cached.fingerprint != fingerprint) { changed.push((path.to_string_lossy().into_owned(), fingerprint, unix_timestamp(modified), metadata.len())); }
+    }
+    for (path, summary) in read_session_summaries(&changed, None)? { cache.insert(PathBuf::from(path), summary); }
+    cache.retain(|path, _| seen.contains(path)); let mut sessions = cache.values().map(|cached| cached.summary.clone()).collect::<Vec<_>>(); drop(cache);
+    inspect_session_projects(&mut sessions, None)?; Ok(sessions)
+}
+
+fn list_remote_sessions(index: &SessionIndexRuntime, host: &RemoteHost) -> Result<Vec<SessionSummary>, String> {
+    let output = run_limited(ssh(host).arg(r#"mkdir -p "$HOME/.piop/sessions" && find "$HOME/.piop/sessions" -type f -name '*.jsonl' -printf '%p\000%T@\000%s\000' 2>/dev/null"#), MAX_SESSION_INDEX_BATCH_BYTES, "Could not list remote sessions")?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).into_owned()); }
+    let fields = output.stdout.split(|byte| *byte == 0).collect::<Vec<_>>();
+    let metadata = fields.chunks_exact(3).filter_map(|frame| {
+        let path = String::from_utf8_lossy(frame[0]).into_owned(); let modified = String::from_utf8_lossy(frame[1]); let size = String::from_utf8_lossy(frame[2]).parse().ok()?;
+        Some((path, format!("{modified}:{size}"), modified.split('.').next()?.parse().ok()?, size))
+    }).collect::<Vec<(String, String, u64, u64)>>();
+    let previous = index.remote.lock().map_err(|_| "Remote session index lock was poisoned")?.get(&host.id).cloned().unwrap_or_default();
+    let changed = metadata.iter().filter(|(path, fingerprint, _, _)| previous.get(path).is_none_or(|cached| cached.fingerprint != *fingerprint)).cloned().collect::<Vec<_>>();
+    let mut parsed = read_session_summaries(&changed, Some(host))?;
+
     let mut next = HashMap::new(); let mut sessions = Vec::new();
     for (path, _, _, _) in metadata {
         let Some(mut cached) = parsed.remove(&path).or_else(|| previous.get(&path).cloned()) else { continue };
@@ -2024,7 +2009,7 @@ fn relocate_session(app: AppHandle, session_path: String, cwd: String, host_id: 
         let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
         let session = shell_quote(&session_path); let replacement = shell_quote(cwd.trim());
         let script = format!(r#"root=$(cd "$HOME/.piop/sessions" && pwd -P) || exit 1; path=$(realpath -- {session}) || exit 1; case "$path" in "$root"/*.jsonl) ;; *) printf 'Refusing to relocate a non-desktop session file' >&2; exit 1 ;; esac; replacement={replacement}; [ -d "$replacement" ] || {{ printf 'Project directory does not exist: %s' "$replacement" >&2; exit 1; }}; node -e 'const fs=require("fs"); const [path,cwd]=process.argv.slice(1); const content=fs.readFileSync(path,"utf8"); const newline=content.indexOf("\n"); const first=newline<0?content:content.slice(0,newline); const rest=newline<0?"":content.slice(newline+1); const header=JSON.parse(first); if(header.type!=="session") throw new Error("Invalid session header"); header.cwd=cwd; const temporary=path+"."+process.pid+".tmp"; try {{ fs.writeFileSync(temporary,JSON.stringify(header)+(newline<0?"":"\n"+rest),{{mode:fs.statSync(path).mode}}); fs.renameSync(temporary,path); }} catch(error) {{ try {{ fs.unlinkSync(temporary); }} catch {{}} throw error; }}' "$path" "$replacement""#);
-        let output = run_limited(ssh(host).arg(script), 64 * 1024, &format!("Could not relocate conversation on {}", host.name))?;
+        let output = run_limited(ssh(host).arg(remote_login_command(&script)), 64 * 1024, &format!("Could not relocate conversation on {}", host.name))?;
         if output.status.success() { return Ok(()); }
         let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(if error.is_empty() { format!("Could not relocate conversation on {}", host.name) } else { error });
@@ -2064,20 +2049,24 @@ fn agent_is_active(session: &SessionSummary, agent: &AgentAddress) -> bool {
     agent.host_id == session.host_id && (agent.session_id.as_deref() == Some(session.id.as_str()) || agent.session_path.as_deref() == Some(session.path.as_str()))
 }
 
-fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &SessionSummary, message: &str, request_id: &str) -> Result<String, String> {
+fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &SessionSummary, message: &str, request_id: &str, deadline_ms: u64) -> Result<String, String> {
+    let remaining = deadline_ms.saturating_sub(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis() as u64);
+    if remaining == 0 || broker.closing.load(Ordering::SeqCst) { return Err("Agent message expired or app is closing".into()); }
+    let deadline = Instant::now() + Duration::from_millis(remaining.min(120_000));
     let settings = load_app_settings(app.clone())?;
-    let mut command = build_pi_command(app, broker, &settings, &session.host_id, PiLaunch::Print { cwd: &session.cwd, session_path: &session.path, message })?;
+    let mut command = build_pi_command(app, broker, &settings, &session.host_id, PiLaunch::Print { cwd: &session.cwd, session_path: &session.path })?;
     let output_root = std::env::temp_dir().join(format!("pi-desktop-broker-{}", Uuid::new_v4()));
     ensure_private_dir(&output_root).map_err(|error| format!("Could not prepare agent message: {error}"))?;
     let stdout_path = output_root.join("stdout"); let stderr_path = output_root.join("stderr");
     let stdout = fs::File::create(&stdout_path).map_err(|error| format!("Could not capture agent output: {error}"))?;
     let stderr = fs::File::create(&stderr_path).map_err(|error| format!("Could not capture agent errors: {error}"))?;
-    command.stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr));
+    command.stdin(Stdio::piped()).stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr));
     if broker.cancelled.lock().map_err(|_| "Broker cancellation lock was poisoned")?.remove(request_id) { let _ = fs::remove_dir_all(&output_root); return Err("Agent message was cancelled".into()); }
     let spawned = command.spawn();
     let child = match spawned { Ok(child) => Arc::new(Mutex::new(child)), Err(error) => { let _ = fs::remove_dir_all(&output_root); return Err(format!("Could not message agent: {error}")); } };
-    match broker.jobs.lock() { Ok(mut jobs) => { jobs.insert(request_id.to_string(), child.clone()); }, Err(_) => { if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); } let _ = fs::remove_dir_all(&output_root); return Err("Broker job lock was poisoned".into()); } }
-    let deadline = Instant::now() + Duration::from_secs(120);
+    match broker.jobs.lock() { Ok(mut jobs) => { if broker.closing.load(Ordering::SeqCst) { if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); } return Err("App is closing".into()); } jobs.insert(request_id.to_string(), child.clone()); }, Err(_) => { if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); } let _ = fs::remove_dir_all(&output_root); return Err("Broker job lock was poisoned".into()); } }
+    let stdin = child.lock().map_err(|_| "Agent process lock was poisoned")?.stdin.take();
+    let message = message.to_owned(); thread::spawn(move || { if let Some(mut stdin) = stdin { let _ = stdin.write_all(message.as_bytes()); } });
     let status = loop {
         if broker.cancelled.lock().map_err(|_| "Broker cancellation lock was poisoned")?.contains(request_id) {
             if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); }
@@ -2139,6 +2128,29 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
     if !authorized { broker_response(stream, "401 Unauthorized", json!({"error":"Unauthorized"})); return Ok(()); }
     if content_length > BROKER_BODY_BYTES { broker_response(stream, "413 Payload Too Large", json!({"error":"Message is too large"})); return Ok(()); }
     let mut body = vec![0; content_length]; reader.read_exact(&mut body).map_err(|error| error.to_string())?;
+    if method == "POST" && path == "/message" {
+        let mut count = broker.message_count.lock().map_err(|_| "Broker job count lock was poisoned")?;
+        if *count >= BROKER_WORKERS || broker.closing.load(Ordering::SeqCst) { broker_response(stream, "503 Service Unavailable", json!({"error":"Session broker is busy"})); return Ok(()); }
+        *count += 1; drop(count);
+        thread::spawn(move || {
+            let session_index = app.state::<SessionIndexRuntime>();
+            let result: Result<Value, String> = (|| {
+            let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid message request".to_string())?;
+            let request_id = value.get("requestId").and_then(Value::as_str).filter(|value| Uuid::parse_str(value).is_ok()).ok_or("requestId is required")?;
+            let host_id = value.get("hostId").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("hostId is required")?;
+            let session_id = value.get("sessionId").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("sessionId is required")?;
+            let message = value.get("message").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("message is required")?;
+            let sessions = collect_sessions(&app, &session_index)?;
+            let active: Vec<_> = app.state::<PiRuntime>().active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values().cloned().collect();
+            let session = resolve_agent(&sessions, host_id, session_id, &active)?;
+            let _claim = claim_agent(&broker, host_id, session_id)?;
+            dispatch_agent_message(&app, &broker, session, message, request_id, value.get("deadline").and_then(Value::as_u64).unwrap_or_else(|| SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis() as u64 + 120_000)).map(|reply| json!({"reply":reply}))
+        })();
+            if let Ok(mut count) = broker.message_count.lock() { *count = count.saturating_sub(1); }
+            match result { Ok(data) => broker_response(stream, "200 OK", json!({"data":data})), Err(error) => broker_response(stream, "400 Bad Request", json!({"error":error})) }
+        });
+        return Ok(());
+    }
     let session_index = app.state::<SessionIndexRuntime>();
     let result = match (method, path) {
         ("GET", "/agents") => {
@@ -2155,18 +2167,6 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
             let others: Vec<_> = agents.values().filter(|agent| agent.presence_id.as_deref() != Some(id) && agent.host_id == caller.host_id && agent.working && agent.worktree.as_deref() == Some(root))
                 .map(|agent| json!({"sessionId":agent.session_id})).collect();
             Ok(json!(others))
-        })(),
-        ("POST", "/message") => (|| {
-            let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid message request".to_string())?;
-            let request_id = value.get("requestId").and_then(Value::as_str).filter(|value| Uuid::parse_str(value).is_ok()).ok_or("requestId is required")?;
-            let host_id = value.get("hostId").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("hostId is required")?;
-            let session_id = value.get("sessionId").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("sessionId is required")?;
-            let message = value.get("message").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("message is required")?;
-            let sessions = collect_sessions(&app, &session_index)?;
-            let active: Vec<_> = app.state::<PiRuntime>().active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values().cloned().collect();
-            let session = resolve_agent(&sessions, host_id, session_id, &active)?;
-            let _claim = claim_agent(&broker, host_id, session_id)?;
-            dispatch_agent_message(&app, &broker, session, message, request_id).map(|reply| json!({"reply":reply}))
         })(),
         ("POST", "/cancel") => (|| {
             let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid cancellation request".to_string())?;
@@ -2244,15 +2244,20 @@ pub fn run() {
         Ok(())
     }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).build(context).expect("error while building piop").run(|app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
+            let broker = app.state::<BrokerRuntime>(); broker.closing.store(true, Ordering::SeqCst);
+            let jobs = broker.jobs.lock().map(|mut jobs| jobs.drain().map(|(_, child)| child).collect::<Vec<_>>()).unwrap_or_default();
+            for child in jobs { if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); } }
             // The webview cannot await cleanup during pagehide. Own shutdown here.
             let runtime = app.state::<PiRuntime>();
             let processes = runtime.processes.lock().map(|mut processes| processes.drain().map(|(_, process)| process).collect::<Vec<_>>()).unwrap_or_default();
             for mut process in processes {
                 let _ = process.child.kill();
                 let _ = process.child.wait();
-                if let Some(session) = process.ephemeral_session { remove_ephemeral_session(session); }
+
                 cleanup_blank_session(process.blank_cleanup);
             }
+            let ephemeral = runtime.ephemeral_sessions.lock().map(|mut sessions| sessions.drain().map(|(_, session)| session).collect::<Vec<_>>()).unwrap_or_default();
+            for session in ephemeral { remove_ephemeral_session(session); }
         }
     });
 }

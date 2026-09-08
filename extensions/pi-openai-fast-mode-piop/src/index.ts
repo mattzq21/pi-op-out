@@ -142,17 +142,7 @@ export function createPiFastModeExtension(
       return getFastModePayload(config, model, event.payload);
     });
 
-    pi.on("session_shutdown", async (_event, ctx) => {
-      try {
-        if (configPath) {
-          await saveConfigToPath(configPath, config);
-        }
-      } catch (error) {
-        notifyError(ctx, error);
-      } finally {
-        clearFastStatus(ctx);
-      }
-    });
+    pi.on("session_shutdown", (_event, ctx) => { clearFastStatus(ctx); });
   };
 }
 

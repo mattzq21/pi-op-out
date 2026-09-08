@@ -174,7 +174,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (modelName && modelName !== currentModel) {
       const [provider, ...parts] = modelName.split("/"); const model = ctx.modelRegistry.find(provider, parts.join("/"));
       if (!model) { pi.setActiveTools([]); return `Agent "${agent.name}" cannot run because model ${modelName} is unavailable`; }
-      try { applyingAgentModel = modelName; const selected = await pi.setModel(model); if (!selected && applyingAgentModel === modelName) applyingAgentModel = undefined; } catch (error) { if (applyingAgentModel === modelName) applyingAgentModel = undefined; pi.setActiveTools([]); return `Agent "${agent.name}" could not select ${modelName}: ${error instanceof Error ? error.message : String(error)}`; }
+      try { applyingAgentModel = modelName; const selected = await pi.setModel(model); if (!selected) { applyingAgentModel = undefined; pi.setActiveTools([]); return `Agent "${agent.name}" cannot authenticate model ${modelName}`; } } catch (error) { if (applyingAgentModel === modelName) applyingAgentModel = undefined; pi.setActiveTools([]); return `Agent "${agent.name}" could not select ${modelName}: ${error instanceof Error ? error.message : String(error)}`; }
     }
     const effort = effortOverride || agent.effort.trim() || runtimeDefaults?.effort; if (effort && effort !== pi.getThinkingLevel()) { applyingAgentEffort = effort; pi.setThinkingLevel(effort as any); }
     pi.setActiveTools([]);
@@ -215,7 +215,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
   pi.on("session_shutdown", (_event, ctx) => { delete process.env.PI_DEFINE_AGENTS_ACTIVE; if (!reloading) ctx.ui.setStatus(STATUS_KEY, undefined); });
   pi.on("resources_discover", () => { const agent = currentAgent(); const skillPaths = agent ? agentSkills(agent) : []; return skillPaths.length ? { skillPaths } : undefined; });
   pi.on("input", async (event, ctx) => {
-    if (event.text.startsWith("/")) return { action: "continue" };
     const error = await useAgent(active, ctx);
     if (error) { ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error })); ctx.ui.notify(error, "error"); return { action: "handled" }; }
     return { action: "continue" };

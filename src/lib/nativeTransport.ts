@@ -1,4 +1,6 @@
 /// <reference types="vite/client" />
+import { applyAssistantMessageEvent, normalizeMessage, type PiEntry } from "./messages";
+import type { ChatMessage } from "../types";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -20,10 +22,18 @@ export interface GitWorktree { branch: string; path: string; }
 export const openExternalUrl = (url: string) => call<void>("open_external_url", { url });
 
 export class NativeTransport {
+  private liveAssistant?: ChatMessage;
+  private inferenceRevision = 0;
+  private ephemeral = false;
+  private fresh = true;
+  needsDefaults() { return this.fresh; }
+  defaultsApplied() { this.fresh = false; }
+  connectionTarget(): NativeConnectionTarget { return { cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId }; }
+  async restoreConnection(target: NativeConnectionTarget) { await this.disconnect(); this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId || "local"; await this.connect(); }
   private readonly runtimeId = globalThis.crypto?.randomUUID?.() ?? `runtime-${Date.now()}-${Math.random()}`;
   private pendingMessages: PendingMessage[] = [];
   private heldMessages?: PendingMessage[];
-  private commandRejection?: string;
+  private commandRejections = new Map<string, string>();
   private inputRejection?: { text: string; error: string };
   private restoredQueueKey?: string;
   private queueStorageKey() { return this.sessionId ? `piop-pending:${this.hostId}:${this.sessionId}` : undefined; }
@@ -63,7 +73,7 @@ export class NativeTransport {
   private temporaryChatUsed = false;
   private fastStatusCommand?: string;
   private fastCommands = new Set<string>();
-  constructor(target: NativeConnectionTarget = {}) { this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId ?? "local"; }
+  constructor(target: NativeConnectionTarget = {}) { this.fresh = !target.sessionPath && !target.sessionId; this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId ?? "local"; }
   currentHostId() { return this.hostId; }
   currentCwd() { return this.cwd; }
   currentSessionPath() { return this.sessionPath; }
@@ -103,7 +113,16 @@ export class NativeTransport {
     this.listeners.forEach((listener) => listener(event));
   }
   private emit(event: RpcEvent) {
-    if (event.type === "extension_error" && event.event === "command") this.commandRejection = String(event.error || "Extension command failed");
+    if (event.type === "session_switched") this.liveAssistant = undefined;
+    if ((event.type === "message_start" || event.type === "message_end") && (event.message as { role?: string })?.role === "assistant") this.liveAssistant = { ...normalizeMessage(event.message as Record<string, unknown>, undefined, undefined, this.liveAssistant?.streaming ? this.liveAssistant.id : `live-assistant-${crypto.randomUUID()}`), streaming: event.type === "message_start" };
+    if (event.type === "message_update" && event.assistantMessageEvent && this.liveAssistant) this.liveAssistant = applyAssistantMessageEvent(this.liveAssistant, event.assistantMessageEvent);
+
+    if (event.type === "agent_start") this.inferenceRevision += 1;
+    if (event.type === "disconnected") {
+      this.pendingMessages = this.pendingMessages.map((item) => ({ ...item, retry: true })); this.heldMessages = undefined;
+      this.queueSnapshot = { type: "queue_update", steering: [], followUp: [] }; this.awaitingSteering = []; this.publishQueue();
+    }
+    if (event.type === "extension_error" && event.event === "command") this.commandRejections.set(typeof event.extensionPath === "string" && event.extensionPath.startsWith("command:") ? event.extensionPath.slice(8) : "", String(event.error || "Extension command failed"));
     if (event.type === "extension_ui_request" && event.method === "setStatus" && event.statusKey === "piop-input-rejected") {
       try { this.inputRejection = JSON.parse(String(event.statusText)); } catch { /* Ignore invalid status. */ }
       return;
@@ -115,6 +134,12 @@ export class NativeTransport {
           const index = remaining.indexOf(text);
           if (index >= 0) remaining.splice(index, 1); else this.awaitingSteering.push(text);
         }
+      }
+      for (const behavior of ["steer", "followUp"] as const) {
+        const before = [...((this.queueSnapshot[behavior === "steer" ? "steering" : "followUp"] as string[]) ?? [])];
+        const added = ((event[behavior === "steer" ? "steering" : "followUp"] as string[]) ?? []).filter((text) => { const index = before.indexOf(text); if (index < 0) return true; before.splice(index, 1); return false; });
+        const sending = this.pendingMessages.filter((item) => this.sendingPending.has(item.id) && item.behavior === behavior);
+        if (added.length === 1 && sending.length === 1) sending[0].message = added[0];
       }
       this.queueSnapshot = event;
       if (!this.changingQueue) this.publishQueue();
@@ -141,15 +166,16 @@ export class NativeTransport {
     this.listeners.forEach((listener) => listener(event));
   }
   async connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string, ephemeral = false) {
+    this.ephemeral ||= ephemeral;
     if (cwd !== undefined) this.cwd = cwd; if (sessionPath !== undefined) { this.sessionPath = sessionPath; this.sessionId = undefined; } if (hostId !== undefined) this.hostId = hostId;
     if (this.running) return;
     if (this.connectPromise) return this.connectPromise;
     const pending = this.establishConnection(forkPath, ephemeral); this.connectPromise = pending;
     try { await pending; } finally { if (this.connectPromise === pending) this.connectPromise = undefined; }
   }
-  private async establishConnection(forkPath?: string, ephemeral = false) {
-    if (this.cwd === undefined && this.sessionPath === undefined) { const chat = await call<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId: this.hostId, e2e: import.meta.env.MODE === "e2e" }); this.cwd = chat.cwd; this.sessionId = chat.sessionId; this.temporaryChat = true; }
+  private async establishConnection(forkPath?: string, _ephemeral = false) {
     const version = ++this.connectionVersion;
+    if (this.cwd === undefined && this.sessionPath === undefined) { const chat = await call<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId: this.hostId, e2e: import.meta.env.MODE === "e2e" }); if (version !== this.connectionVersion) { await call<void>("remove_temporary_chat", { path: chat.cwd, hostId: this.hostId }); return; } this.cwd = chat.cwd; this.sessionId = chat.sessionId; this.temporaryChat = true; }
     this.fastStatusCommand = undefined; this.fastCommands.clear();
     this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.stderrLines = [];
     const unlisten = await listen<RpcEvent | { runtimeId: string; event: RpcEvent }>("pi://event", ({ payload }) => {
@@ -166,7 +192,7 @@ export class NativeTransport {
     if (version !== this.connectionVersion) { unlisten(); stderrUnlisten(); return; }
     this.unlisten = unlisten; this.stderrUnlisten = stderrUnlisten;
     // Pi can resume by ID before a fresh session has a file on disk.
-    await this.runProcessCommand(() => call("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: ephemeral, hostId: this.hostId }));
+    await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve() : call("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId }));
     if (version === this.connectionVersion) this.running = true;
   }
   async disconnect(discardBlank = false) { ++this.connectionVersion; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; await this.runProcessCommand(() => call("stop_pi", { runtimeId: this.runtimeId, discardBlank })); this.running = false; this.retainedStatuses.clear(); this.retainedRequests.clear(); }
@@ -247,9 +273,10 @@ export class NativeTransport {
       try { return await this.executeCommand<T>(command); }
       catch (reason) { this.heldQueueFailed(); throw reason; }
     });
-    if (command.type === "resume" || (command.type === "prompt" && this.heldMessages && typeof command.message === "string" && !command.message.startsWith("/"))) return this.serializeQueue(async () => {
+    if (command.type === "resume" || (command.type === "prompt" && this.heldMessages && typeof command.message === "string")) return this.serializeQueue(async () => {
+      const revision = this.inferenceRevision;
       const result = await this.executeCommand<T>(command);
-      await this.restoreHeldQueue();
+      if (command.type === "resume" || !String(command.message).startsWith("/") || this.inferenceRevision !== revision) await this.restoreHeldQueue();
       return result;
     });
     if (command.type !== "steer" && command.type !== "follow_up") {
@@ -366,17 +393,22 @@ export class NativeTransport {
     if (compact) command = { type: "compact", ...(compact[1]?.trim() ? { customInstructions: compact[1].trim() } : {}) };
     if (command.type === "clear_queue") this.clearingQueue = true;
     try {
-      if (command.type === "prompt") { this.inputRejection = undefined; this.commandRejection = undefined; }
+      if (command.type === "prompt") { this.inputRejection = undefined; this.commandRejections.clear(); }
       const result = await call<T>("pi_command", { runtimeId: this.runtimeId, command });
-      if (command.type === "prompt" && this.commandRejection) throw new Error(this.commandRejection);
+      const commandError = this.commandRejections.get(String(command.message).match(/^\/(\S+)/)?.[1] ?? "") ?? this.commandRejections.get("");
+      if (command.type === "prompt" && commandError) throw new Error(commandError);
       const rejected = this.inputRejection as { text: string; error: string } | undefined;
       if (command.type === "prompt" && rejected && rejected.text === command.message) throw new Error(rejected.error);
-      if (command.type === "get_state") { const state = result as { sessionFile?: string; sessionId?: string; pendingMessageCount?: number }; this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; this.restoreQueue(); this.publishQueue(); state.pendingMessageCount = (state.pendingMessageCount ?? 0) + (this.heldMessages?.filter((item) => !item.retry).length ?? 0); }
+      if (command.type === "get_state") { const state = result as { sessionFile?: string; sessionId?: string; pendingMessageCount?: number }; if (this.sessionId && this.sessionId !== state.sessionId) this.liveAssistant = undefined; this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; this.restoreQueue(); this.publishQueue(); state.pendingMessageCount = (state.pendingMessageCount ?? 0) + (this.heldMessages?.filter((item) => !item.retry).length ?? 0); }
       if (command.type === "get_entries") {
         const history = result as { entries: Array<{ message?: { role?: string; timestamp?: number; deliveryBehavior?: string } }> };
+        const live = this.liveAssistant; const branch = result as { entries: PiEntry[]; leafId: string | null };
+        if (live?.streaming && !history.entries.some((entry) => entry.message?.role === "assistant" && entry.message.timestamp === live.timestamp)) {
+          branch.entries.push({ type: "message", id: live.id, parentId: branch.leafId, message: live } as PiEntry); branch.leafId = live.id;
+        }
         for (const entry of history.entries) if (entry.message?.role === "user" && this.steeringTimestamps.has(entry.message.timestamp!)) entry.message.deliveryBehavior = "steer";
       }
-      if (["new_session", "switch_session"].includes(command.type)) { this.awaitingSteering = []; this.steeringTimestamps.clear(); }
+      if (["new_session", "switch_session", "fork", "clone"].includes(command.type) && !(result as { cancelled?: boolean })?.cancelled) { this.liveAssistant = undefined; this.pendingMessages = []; this.heldMessages = undefined; this.queueSnapshot = { type: "queue_update", steering: [], followUp: [] }; this.sessionId = undefined; this.restoredQueueKey = undefined; this.awaitingSteering = []; this.steeringTimestamps.clear(); this.publishQueue(); }
       if (command.type === "clear_queue") this.awaitingSteering = [];
       if (command.type === "get_commands") {
         const { commands } = result as { commands: Array<{ name: string; source: string; sourceInfo?: { source?: string; path?: string } }> };

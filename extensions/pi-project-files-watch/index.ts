@@ -180,8 +180,8 @@ async function worktreeTree(root: string, isolated = false) {
       env.GIT_OBJECT_DIRECTORY = objects;
       env.GIT_ALTERNATE_OBJECT_DIRECTORIES = repositoryObjects;
     }
-    try { await runGit(root, ["read-tree", "HEAD"], env); }
-    catch { await runGit(root, ["read-tree", "--empty"], env); }
+    const seed = (await runGit(root, ["write-tree"])).trim();
+    await runGit(root, ["read-tree", seed], env);
     await runGit(root, ["add", "--all", "--", "."], env);
     const tree = (await runGit(root, ["write-tree"], env)).trim();
     return { tree, env, cleanup: () => rm(temporary, { recursive: true, force: true }) };
@@ -313,11 +313,16 @@ async function branchBeforePrompt(ctx: ExtensionContext, entryId: string, name: 
   const id = randomUUID();
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${id}.jsonl`);
+  const existingBranch = await runGit(root, ["show-ref", "--verify", `refs/heads/${branch}`]).catch(() => "");
+  if (existingBranch) throw new Error("Branch already exists");
+  const before = await runGit(root, ["worktree", "list", "--porcelain"]);
+  if (before.split("\n").includes(`worktree ${target}`)) throw new Error("Worktree already exists");
+  try { await lstat(target); throw new Error("Worktree directory already exists"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   let created = false;
   let sessionWritten = false;
   try {
-    await runGit(root, ["worktree", "add", ...(checkpoint.base ? [] : ["--orphan"]), "-b", branch, target, ...(checkpoint.base ? [checkpoint.base] : [])]);
     created = true;
+    await runGit(root, ["worktree", "add", ...(checkpoint.base ? [] : ["--orphan"]), "-b", branch, target, ...(checkpoint.base ? [checkpoint.base] : [])]);
     // Restore into the new worktree, then reset its index so captured changes stay uncommitted.
     await runGit(target, ["read-tree", "--reset", "-u", checkpoint.commit]);
     await runGit(target, ["read-tree", ...(checkpoint.base ? [checkpoint.base] : ["--empty"])]);
@@ -337,8 +342,8 @@ async function branchBeforePrompt(ctx: ExtensionContext, entryId: string, name: 
     if (sessionWritten) await rm(sessionPath, { force: true });
     for (const { ref, commit } of [...await promptRefs(root, id), ...await sessionSnapshots(root, id)]) await runGit(root, ["update-ref", "-d", ref, commit]);
     if (created) {
-      await runGit(root, ["worktree", "remove", "--force", target]);
-      if (checkpoint.base) await runGit(root, ["branch", "-D", branch]);
+      await runGit(root, ["worktree", "remove", "--force", target]).catch(() => undefined);
+      if (checkpoint.base) await runGit(root, ["branch", "-D", branch]).catch(() => undefined);
     }
     throw error;
   }
@@ -437,9 +442,10 @@ export default function projectFilesWatch(pi: ExtensionAPI) {
     },
   });
 
+  pi.on("session_shutdown", async () => { await snapshotQueue; await pendingSnapshotCleanup?.(); pendingSnapshotCleanup = undefined; });
+
   pi.on("message_end", (event, ctx) => {
     snapshotQueue = snapshotQueue.then(async () => {
-      if (pendingSnapshotCleanup) { await pendingSnapshotCleanup(); pendingSnapshotCleanup = undefined; }
       if (event.message.role !== "assistant" || event.message.stopReason !== "stop") return;
       const root = await repositoryRoot(ctx.cwd);
       if (!root) return;
@@ -452,8 +458,8 @@ export default function projectFilesWatch(pi: ExtensionAPI) {
 
   pi.on("input", async (event, ctx) => {
     pendingContext = undefined;
-    if (pendingSnapshotCleanup) { await pendingSnapshotCleanup(); pendingSnapshotCleanup = undefined; }
-    if (event.source === "extension" || !event.text.trim() || event.text.startsWith("/")) {
+    if (pendingSnapshotCleanup && ctx.isIdle()) { await pendingSnapshotCleanup(); pendingSnapshotCleanup = undefined; }
+    if (event.source === "extension" || !event.text.trim()) {
       return { action: "continue" };
     }
     await snapshotQueue;
@@ -471,7 +477,8 @@ export default function projectFilesWatch(pi: ExtensionAPI) {
       const files = rawPaths.split("\0").filter(Boolean);
       if (!files.length) { await current.cleanup(); return { action: "continue" }; }
       lastError = "";
-      pendingSnapshotCleanup = current.cleanup;
+      const previousCleanup = pendingSnapshotCleanup;
+      pendingSnapshotCleanup = async () => { await previousCleanup?.(); await current.cleanup(); };
       pendingContext = projectContext(root, snapshot.commit, current.tree, files, current.env);
       return { action: "continue" };
     } catch (error) {

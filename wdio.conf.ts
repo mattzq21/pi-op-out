@@ -1,7 +1,9 @@
 import path from "node:path";
 import { createServer } from "node:net";
 import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
+import { mkdtempSync, mkdirSync, copyFileSync, chmodSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { selectWindowBounds } from "./scripts/window-placement.mjs";
 
 if (process.platform === "linux") process.env.GDK_BACKEND = "x11";
@@ -12,6 +14,22 @@ const defaultBinary = path.resolve(
   "release",
   process.platform === "win32" ? "piop.exe" : "piop",
 );
+// Each worker and native app share a private fixture root; real preferences are read-only.
+const ownsFixtureHome = !process.env.PIOP_TEST_HOME;
+const fixtureHome = process.env.PIOP_TEST_HOME || mkdtempSync(path.join(tmpdir(), "piop-e2e-"));
+process.env.PIOP_TEST_HOME = fixtureHome;
+const fixtureAgent = path.join(fixtureHome, ".pi", "agent");
+mkdirSync(fixtureAgent, { recursive: true, mode: 0o700 });
+for (const name of ["auth.json", "models.json", "models-store.json"]) {
+  const source = path.join(homedir(), ".pi", "agent", name), destination = path.join(fixtureAgent, name);
+  if (existsSync(source) && !existsSync(destination)) { copyFileSync(source, destination); chmodSync(destination, 0o600); }
+}
+const fixtureEnvironment = {
+  PIOP_TEST_HOME: fixtureHome,
+  PI_CODING_AGENT_DIR: fixtureAgent,
+  XDG_CONFIG_HOME: path.join(fixtureHome, "config"), XDG_DATA_HOME: path.join(fixtureHome, "data"), XDG_CACHE_HOME: path.join(fixtureHome, "cache"),
+  PIOP_PI_PATH: process.env.PIOP_PI_PATH || execFileSync("which", ["pi"], { encoding: "utf8" }).trim(),
+};
 const defaultActualCallModel = "openai-codex/gpt-5.6-luna";
 const actualCallModel = process.env.PI_E2E_ACTUAL_MODEL?.trim() || defaultActualCallModel;
 const driverProvider = "embedded";
@@ -30,13 +48,10 @@ const getOsAssignedPort = () => new Promise<number>((resolve, reject) => {
   });
 });
 const webdriverPort = await getOsAssignedPort();
-const sessionsRoot = path.join(homedir(), ".piop", "sessions");
-const temporaryProjectsRoot = path.join(homedir(), "pi-desktop", "tmp");
-const definedAgentsConfigPath = path.join(homedir(), ".piop", "pi-define-agents", "config.json");
-const absoluteEnvPath = (name: string) => { const value = process.env[name]; return value && path.isAbsolute(value) ? value : undefined; };
-const userConfigRoot = process.platform === "darwin" ? path.join(homedir(), "Library", "Application Support")
-  : process.platform === "win32" ? absoluteEnvPath("APPDATA") ?? path.join(homedir(), "AppData", "Roaming")
-  : absoluteEnvPath("XDG_CONFIG_HOME") ?? path.join(homedir(), ".config");
+const sessionsRoot = path.join(fixtureHome, ".piop", "sessions");
+const temporaryProjectsRoot = path.join(fixtureHome, ".piop", "tmp");
+const definedAgentsConfigPath = path.join(fixtureHome, ".piop", "pi-define-agents", "config.json");
+const userConfigRoot = fixtureEnvironment.XDG_CONFIG_HOME;
 const desktopSettingsPath = path.join(userConfigRoot, "dev.pi.desktop", "settings.json");
 let baselineSessions = new Set<string>();
 let baselineProjects = new Set<string>();
@@ -111,9 +126,10 @@ export const config: WebdriverIO.Config = {
     embeddedPort: webdriverPort,
     captureBackendLogs: true,
     env: process.platform === "linux" ? {
+      ...fixtureEnvironment,
       GDK_BACKEND: "x11",
       PI_WINDOW_BOUNDS: JSON.stringify(selectWindowBounds()),
-    } : undefined,
+    } : fixtureEnvironment,
   }]],
   framework: "mocha",
   reporters: ["spec"],
@@ -135,7 +151,7 @@ export const config: WebdriverIO.Config = {
   },
   onComplete: () => {
     try { cleanupTestSessions(); }
-    finally { restoreNativeConfigs(); }
+    finally { try { restoreNativeConfigs(); } finally { if (ownsFixtureHome) rmSync(fixtureHome, { recursive: true, force: true }); } }
   },
   before: async () => {
     const [mainWindow] = await browser.getWindowHandles();
