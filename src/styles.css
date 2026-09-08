@@ -8,7 +8,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 .app { height: 100vh; display: flex; background: var(--paper); }
 .app-loading { width: 100vw; height: 100vh; display: grid; place-content: center; justify-items: center; gap: 6px; padding: 32px; background: var(--paper); color: var(--ink); text-align: center; }.app-loading h1, .app-loading p { margin: 0; }.app-loading h1 { font: 31px "Instrument Serif"; }.app-loading > p:last-child:not(.eyebrow) { max-width: 560px; color: #d77865; font-size: 13px; white-space: pre-wrap; }
-.icon-rail { width: var(--rail-width); flex: 0 0 var(--rail-width); background: #292824; color: #bdb9b0; display: flex; flex-direction: column; align-items: center; padding: 13px 0 12px; z-index: 3; }
+.icon-rail { position: relative; width: var(--rail-width); flex: 0 0 var(--rail-width); background: #292824; color: #bdb9b0; display: flex; flex-direction: column; align-items: center; padding: 13px 0 12px; z-index: 3; }
 .icon-rail.compact { width: 60px; flex-basis: 60px; }
 .rail-branch { width: calc(100% - 28px); min-width: 0; height: 34px; margin: 0 14px 4px; padding: 0 8px; display: flex; align-items: center; justify-content: center; gap: 7px; color: var(--accent); font-size: 18px; }.rail-branch svg { width: 17px; height: 17px; flex: 0 0 auto; }.rail-branch span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .icon-rail nav { width: 100%; display: flex; flex-direction: row; justify-content: center; align-items: center; gap: 5px; }
@@ -348,3 +348,8 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .mcp-status-detail { position: relative; cursor: help; }
 .mcp-error-tooltip { display: none; position: absolute; z-index: 50; right: 0; top: 100%; width: min(520px, 70vw); max-height: 280px; overflow: auto; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel, #25241f); color: var(--ink); box-shadow: 0 8px 24px #0005; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 monospace; user-select: text; }
 .mcp-status-detail:hover .mcp-error-tooltip, .mcp-status-detail:focus-within .mcp-error-tooltip { display: block; }
+
+.sidebar-resizer { position: absolute; z-index: 5; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; touch-action: none; user-select: none; }
+.sidebar-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: transparent; }
+.sidebar-resizer:hover::after, .sidebar-resizer.dragging::after, .sidebar-resizer:focus-visible::after { background: var(--accent); }
+.sidebar-resizer:focus-visible { outline: none; }
