@@ -92,19 +92,24 @@ function annotateIntraline(files: DiffFile[]) {
 export function parseDiff(patch: string): DiffFile[] {
   const files: DiffFile[] = [];
   let file: DiffFile | undefined;
-  let oldLine = 0; let newLine = 0; let renderedLines = 0;
+  let inHunk = false; let oldLine = 0; let newLine = 0; let renderedLines = 0;
   const boundedPatch = patch.slice(0, MAX_DIFF_INPUT_CHARS);
   const pushLine = (line: DiffLine) => { if (!file || renderedLines >= MAX_RENDERED_DIFF_LINES) return; file.lines.push(line.text.length > MAX_RENDERED_LINE_CHARS ? { ...line, text: `${line.text.slice(0, MAX_RENDERED_LINE_CHARS)}…` } : line); renderedLines += 1; };
   for (const text of boundedPatch.split("\n")) {
     if (text.startsWith("diff --git ")) {
       file = { id: `${files.length}:${text}`, path: displayPath(text), lines: [], additions: 0, deletions: 0 };
-      files.push(file); continue;
+      inHunk = false; files.push(file); continue;
     }
     if (!file) continue;
+    if (!inHunk && (text.startsWith("+++ ") || text.startsWith("--- "))) {
+      const path = decodeGitPath(text.slice(4).split("\t")[0]);
+      if (path !== "/dev/null") file.path = path.replace(/^[ab]\//, "");
+      continue;
+    }
     const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
-    if (hunk) { oldLine = Number(hunk[1]); newLine = Number(hunk[2]); pushLine({ kind: "meta", text }); continue; }
-    if (text.startsWith("+") && !text.startsWith("+++")) { pushLine({ kind: "add", text: text.slice(1), newLine: newLine++ }); file.additions += 1; continue; }
-    if (text.startsWith("-") && !text.startsWith("---")) { pushLine({ kind: "delete", text: text.slice(1), oldLine: oldLine++ }); file.deletions += 1; continue; }
+    if (hunk) { inHunk = true; oldLine = Number(hunk[1]); newLine = Number(hunk[2]); pushLine({ kind: "meta", text }); continue; }
+    if (inHunk && text.startsWith("+")) { pushLine({ kind: "add", text: text.slice(1), newLine: newLine++ }); file.additions += 1; continue; }
+    if (inHunk && text.startsWith("-")) { pushLine({ kind: "delete", text: text.slice(1), oldLine: oldLine++ }); file.deletions += 1; continue; }
     if (text.startsWith(" ")) { pushLine({ kind: "context", text: text.slice(1), oldLine: oldLine++, newLine: newLine++ }); continue; }
     if (text && !text.startsWith("index ") && !text.startsWith("--- ") && !text.startsWith("+++ ")) pushLine({ kind: "meta", text });
   }

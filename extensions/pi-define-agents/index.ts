@@ -146,6 +146,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
   let applyingAgentModel: string | undefined;
   let applyingAgentEffort: string | undefined;
   let activeToolError: string | undefined;
+  let modelOverride: string | undefined;
+  let effortOverride: string | undefined;
   let reloading = false;
   process.env.PI_DEFINE_AGENTS_ACTIVE = "1";
   const findAgent = (name: string) => config.agents.find((agent) => agent.name === name);
@@ -168,13 +170,13 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
   const activate = async (agent: Agent, ctx: ExtensionContext) => {
     const toolError = agentToolError(pi, agent); if (toolError) { pi.setActiveTools([]); return toolError; }
-    const modelName = agent.model.trim() || runtimeDefaults?.model; const currentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
+    const modelName = modelOverride || agent.model.trim() || runtimeDefaults?.model; const currentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
     if (modelName && modelName !== currentModel) {
       const [provider, ...parts] = modelName.split("/"); const model = ctx.modelRegistry.find(provider, parts.join("/"));
       if (!model) { pi.setActiveTools([]); return `Agent "${agent.name}" cannot run because model ${modelName} is unavailable`; }
       try { applyingAgentModel = modelName; const selected = await pi.setModel(model); if (!selected && applyingAgentModel === modelName) applyingAgentModel = undefined; } catch (error) { if (applyingAgentModel === modelName) applyingAgentModel = undefined; pi.setActiveTools([]); return `Agent "${agent.name}" could not select ${modelName}: ${error instanceof Error ? error.message : String(error)}`; }
     }
-    const effort = agent.effort.trim() || runtimeDefaults?.effort; if (effort && effort !== pi.getThinkingLevel()) { applyingAgentEffort = effort; pi.setThinkingLevel(effort as any); }
+    const effort = effortOverride || agent.effort.trim() || runtimeDefaults?.effort; if (effort && effort !== pi.getThinkingLevel()) { applyingAgentEffort = effort; pi.setThinkingLevel(effort as any); }
     pi.setActiveTools([]);
     const tools = new Set(agent.tools);
     if (process.env.PI_DESKTOP_MCP_CONFIG) {
@@ -196,8 +198,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
     publish(ctx);
     return activeToolError;
   };
-  pi.on("model_select", (event) => { const model = `${event.model.provider}/${event.model.id}`; if (applyingAgentModel === model) { applyingAgentModel = undefined; return; } saveRuntimeDefaults({ model, effort: runtimeDefaults?.effort || pi.getThinkingLevel() }); });
-  pi.on("thinking_level_select", (event) => { if (applyingAgentEffort === event.level) { applyingAgentEffort = undefined; return; } saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); });
+  pi.on("model_select", (event) => { const model = `${event.model.provider}/${event.model.id}`; if (applyingAgentModel === model) { applyingAgentModel = undefined; return; } modelOverride = model; saveRuntimeDefaults({ model, effort: runtimeDefaults?.effort || pi.getThinkingLevel() }); });
+  pi.on("thinking_level_select", (event) => { if (applyingAgentEffort === event.level) { applyingAgentEffort = undefined; return; } effortOverride = event.level; saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); });
   pi.on("session_start", async (_event, ctx) => {
     restore(ctx);
     active = "default";
@@ -215,7 +217,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   pi.on("input", async (event, ctx) => {
     if (event.text.startsWith("/")) return { action: "continue" };
     const error = await useAgent(active, ctx);
-    if (error) { ctx.ui.notify(error, "error"); return { action: "handled" }; }
+    if (error) { ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error })); ctx.ui.notify(error, "error"); return { action: "handled" }; }
     return { action: "continue" };
   });
   pi.on("before_agent_start", (event, ctx) => {
@@ -228,7 +230,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   pi.registerCommand("pi-define-agents-use", { description: "Select a defined agent", handler: async (args, ctx) => {
     const argument = args.trim(); let name = argument; try { const decoded = decode<unknown>(argument); if (typeof decoded === "string") name = decoded; } catch { /* Plain CLI name. */ }
     if (!findAgent(name)) throw new Error(`Unknown defined agent: ${name}`);
-    active = name;
+    active = name; modelOverride = undefined; effortOverride = undefined;
     pi.appendEntry(STATE_ENTRY, { active }); await reload(ctx);
   }});
   pi.registerCommand("pi-define-agents-config", { description: "Update agent definitions", handler: async (args, ctx) => {

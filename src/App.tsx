@@ -13,7 +13,7 @@ import { ProjectDialog } from "./components/ProjectDialog";
 import { WorktreeDialog } from "./components/WorktreeDialog";
 import { SplitChatPane } from "./components/SplitChatPane";
 import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
-import { findReplaceableAbortedTurn } from "./lib/abortedTurn";
+
 import { NativeTransport } from "./lib/nativeTransport";
 import { SessionRuntimePool, useTurnDiffs } from "./lib/sessionRuntimePool";
 import { useChatSession } from "./lib/useChatSession";
@@ -64,6 +64,7 @@ export default function App() {
   const [activeConversationKey, setActiveConversationKey] = useState(initialConversationKey.current);
   const activeConversationKeyRef = useRef(activeConversationKey); activeConversationKeyRef.current = activeConversationKey;
   const transportConversationKeys = useRef(new Map<NativeTransport, string>([[transport, initialConversationKey.current]]));
+  useSyncExternalStore((listener) => runtimePool.subscribe(listener), () => runtimePool.liveSessionRevision());
   const runningSessions = useSyncExternalStore((listener) => runtimePool.subscribe(listener), () => runtimePool.runningSessions());
   const unseenSessions = useSyncExternalStore((listener) => runtimePool.subscribe(listener), () => runtimePool.unseenSessions());
   const gitDiffs = useTurnDiffs(runtimePool, transport);
@@ -259,7 +260,7 @@ export default function App() {
         else if (request.method === "setStatus" && request.statusKey && request.statusKey !== PROMPT_CONTEXT_STATUS_KEY) { setExtensionOwner(transport); setStatuses((current) => { const next = { ...current }; if (request.statusText) next[request.statusKey!] = request.statusText; else delete next[request.statusKey!]; return next; }); }
         else if (request.method === "setWidget" && request.widgetKey) { setExtensionOwner(transport); setWidgets((current) => { const next = { ...current }; if (request.widgetLines) next[request.widgetKey!] = request.widgetLines; else delete next[request.widgetKey!]; return next; }); }
         else if (request.method === "setTitle") document.title = request.title || "piop";
-        else if (request.method === "set_editor_text") { setComposerDrafts((current) => { const key = transportConversationKeys.current.get(transport) ?? terminalSessionIdRef.current; const next = { ...current }; if (request.text) next[key] = request.text; else delete next[key]; return next; }); setActivePane("main"); setMainComposerFocusRequest((value) => value + 1); }
+        else if (request.method === "set_editor_text") { setComposerDrafts((current) => { const key = transportConversationKeys.current.get(transport) ?? terminalSessionIdRef.current; const next = { ...current }; if (request.text && !next[key]) next[key] = request.text; return next; }); setActivePane("main"); setMainComposerFocusRequest((value) => value + 1); }
         else if (["input", "editor", "select", "confirm"].includes(request.method)) queueExtensionDialog(request, transport, mainDialogOwnerRef.current);
       }
       if (event.type === "session_switched") void refresh();
@@ -312,29 +313,7 @@ export default function App() {
     }
     if (/^\/catch-up(?:\s|$)/.test(text)) { await transport.command({ type: "prompt", message: text }); return true; }
     if (behavior) { await ownerTransport.command({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...(images.length ? { images } : {}) }); return; }
-    const abandoned = !state.isPaused && !state.isPausing ? findReplaceableAbortedTurn(messages) : undefined;
-    if (abandoned) {
-      let oldSessionPath = state.sessionFile;
-      if (!oldSessionPath) oldSessionPath = (await transport.command<AgentState>({ type: "get_state" })).sessionFile;
-      if (!oldSessionPath) throw new Error("Cannot replace an aborted turn before the session has been saved");
-      let entryId = abandoned.user.entryId;
-      if (!entryId) { const response = await transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }); entryId = findReplaceableAbortedTurn(branchMessages(response.entries, response.leafId))?.user.entryId; }
-      if (!entryId) throw new Error("Cannot find the abandoned turn in the saved session");
-      const fork = await transport.command<{ cancelled?: boolean }>({ type: "fork", entryId });
-      if (fork.cancelled) return false;
-      const previousKey = activeConversationKeyRef.current;
-      const nextState = await refreshSession();
-      runtimePool.bind(activeHostIdRef.current, nextState.sessionId, transport);
-      rekeyConversationUi(previousKey, `${activeHostIdRef.current}:${nextState.sessionId}`, transport);
-      const history = await transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" });
-      await runtimePool.copySavedDiffs(transport, oldSessionPath, transport.currentSessionPath(), new Set(branchMessages(history.entries, history.leafId).map((entry) => entry.id)));
-      await transport.command({ type: "prompt", message: text, ...(images.length ? { images } : {}) });
-      try {
-        await transport.deleteSession(oldSessionPath, activeHostId);
-        setSessions((current) => current.filter((session) => session.path !== oldSessionPath || (session.hostId ?? "local") !== activeHostId));
-      } catch (reason) { addNotice({ title: "Replacement sent, but the old conversation could not be removed", message: reason instanceof Error ? reason.message : String(reason) }); }
-      return true;
-    }
+
     await transport.command({ type: "prompt", message: text, ...(images.length ? { images } : {}) });
     return true;
   };
@@ -442,6 +421,8 @@ export default function App() {
       const session: SessionSummary = { id: result.sessionId, path: result.sessionPath, cwd: result.path, project: result.branch, name: result.branch, preview: "", messageCount: 0, apiCost: 0, hostId: target.hostId };
       setSessions((current) => [...current, session]);
       setComposerDraft(`${target.hostId}:${result.sessionId}`, textOf(target.message.content));
+      const branchTransport = runtimePool.forSession(session);
+      setComposerUploads(branchTransport, Array.isArray(target.message.content) ? target.message.content.flatMap((part) => part.type === "image" && part.data && part.mimeType ? [{ id: crypto.randomUUID(), name: "Attached image", kind: "image" as const, byteSize: Math.ceil(part.data.length * 3 / 4), image: { type: "image" as const, data: part.data, mimeType: part.mimeType } }] : []) : []);
       selectSession(session);
       setActiveBranch(result.branch);
       void syncSessionIndex();
@@ -515,7 +496,7 @@ export default function App() {
     setSettings(next); await runtimePool.reconnectForSettingsChange(transport, next); if (removedActiveHost) { const conversationKey = `local:draft-${crypto.randomUUID()}`; setActiveHostId("local"); setActiveCwd(transport.currentCwd()); transportConversationKeys.current.set(transport, conversationKey); activateConversationKey(conversationKey); setTerminalOpen(false); setTerminalTarget(undefined); } void refresh().catch((reason) => addNotice({ title: "Settings saved, but the view could not refresh", message: reason instanceof Error ? reason.message : String(reason) }));
   };
   const setAgent = async (name: string) => { try { await transport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(name)}` }); } catch (reason) { addNotice({ title: "Could not change agent", message: reason instanceof Error ? reason.message : String(reason) }); } };
-  const openProject = async (cwd: string, hostId: string) => { if (!canLeaveSettings()) return; const request = projectOpenRequest.current; const validatedCwd = await transport.validateProjectDirectory(cwd.trim(), hostId); if (!projectOpenRef.current || request !== projectOpenRequest.current) return; const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setTerminalOpen(false); updateConnected(false); setDefinedAgents(undefined); discardPendingUpdates(); setMessages([]); activateConversationKey(conversationKey); setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, isPaused: false, isPausing: false, activity: undefined, contextUsage: undefined })); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); const nextTransport = runtimePool.create({ cwd: validatedCwd, hostId }); transportConversationKeys.current.set(nextTransport, conversationKey); activateTransport(nextTransport); };
+  const openProject = async (cwd: string, hostId: string) => { if (!canLeaveSettings()) return; const request = projectOpenRequest.current; const validatedCwd = await transport.validateProjectDirectory(cwd.trim(), hostId); if (!projectOpenRef.current || request !== projectOpenRequest.current) return; const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setTerminalOpen(false); updateConnected(false); setDefinedAgents(undefined); discardPendingUpdates(); setMessages([]); activateConversationKey(conversationKey); setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, isPaused: false, isPausing: false, activity: undefined, contextUsage: undefined })); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); const nextTransport = runtimePool.create({ cwd: validatedCwd, hostId }); transportConversationKeys.current.set(nextTransport, conversationKey); setComposerDraft(conversationKey, composerDraft); setComposerUploads(nextTransport, composerUploads); activateTransport(nextTransport); };
   const chooseChatProject = () => { projectOpenRequest.current += 1; setProjectOpen(true); };
   const openSplitPane = (session: SessionSummary) => { closeSplitPane(); setSplitPane({ session }); };
   const sessionAction = async (session: SessionSummary, action: SessionAction) => {
@@ -645,7 +626,7 @@ export default function App() {
   const projectCwd = selectedProjectCwd(activeCwd, transport.isTemporaryChat());
   return <div className="app dark">
     {import.meta.env.MODE === "e2e" && <div className="e2e-bridge"><textarea id="pi-e2e-responses" aria-label="E2E responses" placeholder="E2E responses" /><textarea id="pi-e2e-calls" aria-label="E2E calls" placeholder="E2E calls" /></div>}
-    <ResizableSidebar compact={view === "settings" || !panelOpen}>{activeBranch && <div className="rail-branch" title={activeBranch}><GitBranch size={13} /><span>{activeBranch}</span></div>}<nav><IconButton label="New conversation" onClick={newSession}><MessageSquare size={18} /></IconButton><IconButton label="New session group" onClick={() => { if (!canLeaveSettings()) return; setView("chat"); setPanelOpen(true); setQuery(""); setCreateGroupRequest((request) => request + 1); }}><FolderPlus size={18} /></IconButton><IconButton label={settings.debugMode ? "Disable debug mode" : "Enable debug mode"} className={settings.debugMode ? "active" : ""} disabled={debugModeSaving} onClick={toggleDebugMode}><Bug size={18} /></IconButton><IconButton label={view === "settings" ? "Go back" : "Settings"} className={view === "settings" ? "active" : ""} onClick={() => { if (view !== "settings") { setView("settings"); return; } if (canLeaveSettings()) setView("chat"); }}>{view === "settings" ? <ArrowLeft size={19} /> : <Settings size={19} />}</IconButton></nav>{view === "chat" && panelOpen && <SessionPanel sessions={sessions} activeId={state.sessionId} activeHostId={activeHostId} runningSessions={runningSessions} unseenSessions={unseenSessions} query={query} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} createGroupRequest={createGroupRequest} />}<div className="rail-bottom">{codexUsage !== undefined && <span className="codex-usage" role="status" aria-label={`Codex usage remaining: ${codexUsage.remainingPercent}%${codexUsage.resetAt ? `, resets ${formatCodexReset(codexUsage.resetAt)}` : ""}`} title="Codex usage remaining"><span>{codexUsage.remainingPercent}%<span className="codex-usage-left"> left</span></span>{codexUsage.resetAt && <span className="codex-usage-reset"><span className="codex-usage-separator"> · </span>{formatCodexReset(codexUsage.resetAt)}</span>}</span>}</div></ResizableSidebar>
+    <ResizableSidebar compact={view === "settings" || !panelOpen}>{activeBranch && <div className="rail-branch" title={activeBranch}><GitBranch size={13} /><span>{activeBranch}</span></div>}<nav><IconButton label="New conversation" onClick={newSession}><MessageSquare size={18} /></IconButton><IconButton label="New session group" onClick={() => { if (!canLeaveSettings()) return; setView("chat"); setPanelOpen(true); setQuery(""); setCreateGroupRequest((request) => request + 1); }}><FolderPlus size={18} /></IconButton><IconButton label={settings.debugMode ? "Disable debug mode" : "Enable debug mode"} className={settings.debugMode ? "active" : ""} disabled={debugModeSaving} onClick={toggleDebugMode}><Bug size={18} /></IconButton><IconButton label={view === "settings" ? "Go back" : "Settings"} className={view === "settings" ? "active" : ""} onClick={() => { if (view !== "settings") { setView("settings"); return; } if (canLeaveSettings()) setView("chat"); }}>{view === "settings" ? <ArrowLeft size={19} /> : <Settings size={19} />}</IconButton></nav>{view === "chat" && panelOpen && <SessionPanel sessions={[...sessions, ...runtimePool.liveSessionSummaries().filter((live) => !sessions.some((saved) => saved.id === live.id && saved.hostId === live.hostId))]} activeId={state.sessionId} activeHostId={activeHostId} runningSessions={runningSessions} unseenSessions={unseenSessions} query={query} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} createGroupRequest={createGroupRequest} />}<div className="rail-bottom">{codexUsage !== undefined && <span className="codex-usage" role="status" aria-label={`Codex usage remaining: ${codexUsage.remainingPercent}%${codexUsage.resetAt ? `, resets ${formatCodexReset(codexUsage.resetAt)}` : ""}`} title="Codex usage remaining"><span>{codexUsage.remainingPercent}%<span className="codex-usage-left"> left</span></span>{codexUsage.resetAt && <span className="codex-usage-reset"><span className="codex-usage-separator"> · </span>{formatCodexReset(codexUsage.resetAt)}</span>}</span>}</div></ResizableSidebar>
     <div className="chat-workspace" hidden={view !== "chat"}>
       <div className={`chat-panes ${splitPane ? "split" : ""}`}>
         <ChatView key={activeConversationKey} state={state} messages={messages} gitDiffs={gitDiffs} debug={settings.debugMode} agents={extensionStateIsCurrent ? definedAgents?.config.agents ?? [] : []} activeAgent={extensionStateIsCurrent ? definedAgents?.active : undefined} dictionaries={settings.dictionaries.filter((item) => settings.activeDictionaryIds.includes(item.id))} models={models.filter((model) => !settings.hiddenModels.includes(`${model.provider}/${model.id}`))} commands={[{ name: "branch-off", description: "Branch conversation [number back, default 0]", source: "builtin" }, { name: "worktree", description: "Create worktree [number back, default 0] [name]", source: "builtin" }, ...commands.filter((command) => !["branch-off", "worktree"].includes(command.name))]} thinkingLevels={thinkingLevels} widgets={extensionStateIsCurrent ? Object.values(widgets).flat() : []} statuses={extensionStateIsCurrent ? statuses : {}} projectCwd={projectCwd} controlsDisabled={!connected} draft={composerDraft} onDraftChange={(value) => setComposerDraft(activeConversationKey, value)} focusRequest={mainComposerFocusRequest} onActivate={() => setActivePane("main")} uploads={composerUploads} onUploadsChange={(update) => setComposerUploads(transport, update)} onSend={send} onChangePending={(id, behavior) => transport.changePendingMessage(id, behavior)} onAbort={abortInteraction} onPause={pauseInteraction} onResume={resumeInteraction} onOpenTerminal={() => { terminalPanelRevision.current += 1; setActivePane("main"); setTerminalTarget({ sessionKey: activeConversationKey, cwd: projectCwd, hostId: activeHostId }); setTerminalOpen(true); }} onOpenProject={chooseChatProject} onClearProject={clearChatProject} onBranch={branch} onCreateWorktree={isGitRepository && projectCwd ? (message) => setWorktreeTarget({ cwd: projectCwd, hostId: activeHostId, message, transport }) : undefined} onAgent={setAgent} onModel={setModel} onToggleFastMode={() => enqueueControl(transport, () => transport.toggleFastMode())} onThinking={setThinking} />

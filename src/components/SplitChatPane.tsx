@@ -5,7 +5,7 @@ import { useChatSession } from "../lib/useChatSession";
 import { SessionRuntimePool, useTurnDiffs } from "../lib/sessionRuntimePool";
 import type { NativeTransport } from "../lib/nativeTransport";
 import { decodeAgentValue, encodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "../lib/agentProtocol";
-import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
+
 import { branchMessages, type PiEntry } from "../lib/messages";
 import { ChatView } from "./ChatView";
 
@@ -17,6 +17,7 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
   const gitDiffs = useTurnDiffs(runtimePool, transport); const runtime = useChatSession(transport, initialState(session));
   const { state, setState, messages, models, commands, thinkingLevels, refresh, handleEvent } = runtime; const [error, setError] = useState<string>(); const [connected, setConnected] = useState(false);
   const [controlError, setControlError] = useState<string>();
+  const draftRef = useRef(draft); draftRef.current = draft;
   const connectedRef = useRef(connected); connectedRef.current = connected;
   const updateConnected = (value: boolean) => { connectedRef.current = value; setConnected(value); };
 
@@ -57,15 +58,15 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
       handleEvent(event);
       if (event.type === "extension_ui_request") { const request = event as unknown as ExtensionUiRequest;
         if (request.method === "setStatus" && request.statusKey === DEFINED_AGENTS_STATUS_KEY) try { setDefinedAgents(request.statusText?.startsWith("json:") ? decodeAgentValue<DefinedAgentsCapability>(request.statusText.slice(5)) : undefined); } catch { setDefinedAgents(undefined); }
-        else if (request.method === "setStatus" && request.statusKey && request.statusKey !== "pi-desktop-prompt-context") setStatuses((current) => { const next = { ...current }; if (request.statusText) next[request.statusKey!] = request.statusText; else delete next[request.statusKey!]; return next; });
+        else if (request.method === "setStatus" && request.statusKey && ! ["pi-desktop-prompt-context", "pi-desktop-mcp-status"].includes(request.statusKey)) setStatuses((current) => { const next = { ...current }; if (request.statusText) next[request.statusKey!] = request.statusText; else delete next[request.statusKey!]; return next; });
         else if (request.method === "setWidget" && request.widgetKey) setWidgets((current) => { const next = { ...current }; if (request.widgetLines) next[request.widgetKey!] = request.widgetLines; else delete next[request.widgetKey!]; return next; });
         else if (request.method === "notify") setNotices((current) => [...current, { id: crypto.randomUUID(), title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "piop extension", message: request.message || "Notification" }]);
         else if (request.method === "setTitle") document.title = request.title || "piop";
-        else if (request.method === "set_editor_text") { onDraftChange(request.text || ""); setExtensionFocusRequest((value) => value + 1); }
+        else if (request.method === "set_editor_text") { if (!draftRef.current && request.text) onDraftChange(request.text); setExtensionFocusRequest((value) => value + 1); }
         else if (["input", "editor", "select", "confirm"].includes(request.method)) onDialogRequest(request, transport, `Split: ${session.name}`);
       }
       if (event.type === "extension_error") setNotices((current) => [...current, { id: crypto.randomUUID(), title: "Extension error", message: String(event.error ?? "An extension failed") }]);
-      if (event.type === "message_end") window.setTimeout(() => void refresh(), 30);
+      if (event.type === "message_end") { setError(undefined); window.setTimeout(() => void refresh().catch(reportControlError), 30); }
       if (event.type === "disconnected") { updateConnected(false); setDefinedAgents(undefined); setStatuses({}); setWidgets({}); document.title = "piop"; void onDialogTransportClosed(transport); if (!closing) { setControlError("Connection lost. Reconnecting…"); window.setTimeout(() => void connectRuntime(false), 50); } }
     });
     void connectRuntime(true);
@@ -76,20 +77,7 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
     if (!connectedRef.current) return Promise.reject(new Error("piop is still connecting"));
     if (/^\/catch-up(?:\s|$)/.test(text)) { await transport.command({ type: "prompt", message: text }); return true; }
     if (behavior) { await transport.command({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...(images.length ? { images } : {}) }); return; }
-    const abandoned = !state.isPaused && !state.isPausing ? findReplaceableAbortedTurn(messages) : undefined;
-    if (abandoned) {
-      const sourcePath = transport.currentSessionPath() ?? session.path;
-      let entryId = abandoned.user.entryId;
-      if (!entryId) { const history = await transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }); entryId = findReplaceableAbortedTurn(branchMessages(history.entries, history.leafId))?.user.entryId; }
-      if (!entryId) throw new Error("Cannot find the abandoned turn in the saved session");
-      await transport.command({ type: "fork", entryId }); const nextState = await refresh(); runtimePool.bind(session.hostId ?? "local", nextState.sessionId, transport);
-      const history = await transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" });
-      await runtimePool.copySavedDiffs(transport, sourcePath, transport.currentSessionPath(), new Set(branchMessages(history.entries, history.leafId).map((entry) => entry.id)));
-      await transport.command({ type: "prompt", message: text, ...(images.length ? { images } : {}) });
-      try { await transport.deleteSession(sourcePath, session.hostId); }
-      catch (reason) { setNotices((current) => [...current, { id: crypto.randomUUID(), title: "Replacement sent, but the old conversation could not be removed", message: reason instanceof Error ? reason.message : String(reason) }]); }
-      return true;
-    }
+
     await transport.command({ type: "prompt", message: text, ...(images.length ? { images } : {}) });
   };
   const reportControlError = (reason: unknown) => setControlError(reason instanceof Error ? reason.message : String(reason));

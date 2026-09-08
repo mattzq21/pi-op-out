@@ -144,7 +144,9 @@ function ConversationTurnView({ messages, gitDiffs, debug, active, retryable, pa
   const worktreeResponse = finalMessage && !["toolUse", "aborted", "error"].includes(finalMessage.stopReason ?? "") ? onCreateWorktree : undefined;
   const gitDiff = finalMessage ? gitDiffs?.[finalMessage.id] : undefined;
   const workedFor = formatWorkedFor(userIndex >= 0 ? shown[userIndex].timestamp : shown[0]?.timestamp, finalMessage?.completedAt ?? finalMessage?.timestamp);
-  const retryPrompt = retryable ? findReplaceableAbortedTurn(shown)?.prompt : undefined;
+  const retryTurn = retryable ? findReplaceableAbortedTurn(shown) : undefined;
+  const retryPrompt = retryTurn?.prompt;
+  const retryImages = Array.isArray(retryTurn?.user.content) ? retryTurn.user.content.filter((part) => part.type === "image") : [];
 
   return <section className="conversation-turn">
     {parsed.step && parsed.step.step > 0 && <div className="sequence-step-label">{parsed.step.sequence} · {parsed.step.agent}</div>}
@@ -152,7 +154,7 @@ function ConversationTurnView({ messages, gitDiffs, debug, active, retryable, pa
     {debug && promptContext && <PromptContextBar context={promptContext} />}
     {active || paused ? <div className="active-work-content">{renderMessages(shown.filter((message) => message.role !== "user"), true, false, debug, paused)}</div> : <>
     {intermediate.length > 0 && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}<ChevronRight size={12} className="work-group-chevron" aria-hidden="true" /></summary><div className="work-group-content">{renderMessages(intermediate, true, true, debug, paused, false)}</div></details>}
-    {finalMessage && <Message message={finalMessage} turnCacheUsage={turnCacheUsage} diff={gitDiff} debug={debug} paused={paused} onBranch={onBranch} onCreateWorktree={worktreeResponse} retrying={retrying} onRetry={retryPrompt ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(onRetry(retryPrompt)).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
+    {finalMessage && <Message message={finalMessage} turnCacheUsage={turnCacheUsage} diff={gitDiff} debug={debug} paused={paused} onBranch={onBranch} onCreateWorktree={worktreeResponse} retrying={retrying} onRetry={retryPrompt ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(onRetry(retryPrompt, undefined, retryImages)).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
     {retryError && <div className="message-failure retry-error" role="alert">Retry failed: {retryError}</div>}
     {renderMessages(shown.filter((message) => message.role === "system"), false)}
     </>}

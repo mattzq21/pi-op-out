@@ -168,7 +168,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
     return () => window.removeEventListener("resize", resize);
   }, []);
   useEffect(() => { if (focusRequest) ref.current?.focus(); }, [focusRequest]);
-  useEffect(() => { if (restoredDraft && restoredDraft.id !== restoredDraftId.current) { restoredDraftId.current = restoredDraft.id; setValue(restoredDraft.value); } }, [restoredDraft]);
+  useEffect(() => { if (restoredDraft && restoredDraft.id !== restoredDraftId.current) { restoredDraftId.current = restoredDraft.id; if (!value) setValue(restoredDraft.value); } }, [restoredDraft]);
 
   const addFiles = async (files: FileList | File[] | null) => {
     if (!files) return;
@@ -183,12 +183,16 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
         if (!SUPPORTED_IMAGE_TYPES.has(file.type.toLowerCase())) { errors.push(`${file.name} uses an unsupported image format`); continue; }
         if (file.size > IMAGE_LIMIT) { errors.push(`${file.name} is larger than 10 MB`); continue; }
         const url = await readFile(file, "dataUrl");
+        try { const image = new Image(); image.src = url; await image.decode(); }
+        catch { errors.push(`${file.name} is not a valid image`); continue; }
         next.push({ id: crypto.randomUUID(), name: file.name, kind: "image", byteSize: file.size, image: { type: "image", data: url.slice(url.indexOf(",") + 1), mimeType: file.type || "image/png", name: file.name } });
       } else {
         if (!(file.type.startsWith("text/") || TEXT_MIME_TYPES.has(file.type.toLowerCase()) || TEXT_EXTENSIONS.test(file.name))) { errors.push(`${file.name} is not a supported text file`); continue; }
         if (file.size > TEXT_LIMIT) { errors.push(`${file.name} is larger than 200 KB`); continue; }
-        const text = await readFile(file, "text");
-        if (text.includes("\0") || text.includes("�")) { errors.push(`${file.name} does not contain valid text`); continue; }
+        let text: string;
+        try { text = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer()); }
+        catch { errors.push(`${file.name} does not contain valid UTF-8 text`); continue; }
+        if (text.includes("\0")) { errors.push(`${file.name} does not contain valid text`); continue; }
         next.push({ id: crypto.randomUUID(), name: file.name, kind: "text", byteSize: file.size, text });
       }
       totalBytes += file.size;
@@ -257,11 +261,15 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
     if (!message && !images.length) return;
     if (sendingRef.current) return;
     sendingRef.current = true; setSending(true); setUploadError(undefined);
+    const submittedValue = value; const submittedUploads = uploads;
+    setValue(""); updateUploads([]);
     try {
       const accepted = await onSend(message || "Describe the attached image.", streaming ? behavior : undefined, images);
-      if (accepted === false) return;
-      setValue(""); updateUploads([]);
+      if (accepted === false) throw new Error("Message was not submitted");
     } catch (reason) {
+      const newerDraft = ref.current?.value || "";
+      setValue(newerDraft && newerDraft !== submittedValue ? `${submittedValue}\n\n${newerDraft}` : submittedValue);
+      updateUploads((current) => [...submittedUploads.filter((item) => !current.some((other) => other.id === item.id)), ...current]);
       setUploadError(reason instanceof Error ? reason.message : String(reason));
     } finally { sendingRef.current = false; setSending(false); }
   };

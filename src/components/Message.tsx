@@ -138,6 +138,7 @@ export function Message({ message, turnCacheUsage, diff, expanded = false, showA
     const { skills, text, literalSkill } = userMessageParts(textOf(message.content));
     return <article className={`message user-message${message.deliveryBehavior === "steer" ? " steering-message" : ""}`}>
       <div className="message-body">{skills.map((skill) => <span className="skill-reference" key={skill}>${skill}</span>)}{text && (literalSkill ? <span className="literal-skill-content">{text}</span> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>)}</div>
+      {Array.isArray(message.content) && message.content.map((part, index) => part.type === "image" && part.data && part.mimeType && /^image\/(png|jpeg|gif|webp)$/.test(part.mimeType) ? <img key={index} src={`data:${part.mimeType};base64,${part.data}`} alt="Sent attachment" style={{ maxWidth: "100%", maxHeight: 320, objectFit: "contain" }} /> : null)}
       <div className="message-actions">
         <IconButton label={copyState === "copied" ? "Message copied" : copyState === "error" ? "Copy failed" : "Copy message"} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>
         {copyState === "error" && <span className="copy-feedback" role="status">Could not copy message</span>}

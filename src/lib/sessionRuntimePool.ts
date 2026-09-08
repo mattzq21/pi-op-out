@@ -23,6 +23,10 @@ export class SessionRuntimePool {
   private readonly listeners = new Set<() => void>();
   private runningSessionKeys: ReadonlySet<string> = new Set();
   private unseenSessionKeys: ReadonlySet<string> = new Set();
+  private liveRevision = 0;
+  liveSessionRevision() { return this.liveRevision; }
+  private liveSessions = new Map<NativeTransport, SessionSummary>();
+  liveSessionSummaries() { return [...this.liveSessions.values()]; }
   private activeTransport?: NativeTransport;
   private errorHandler?: (message: string) => void;
   private backgroundInputHandler?: (request: ExtensionUiRequest) => void;
@@ -101,6 +105,16 @@ export class SessionRuntimePool {
           this.backgroundInputHandler?.(request);
         }
       }
+      if (event.type === "message_start" && (event.message as { role?: string })?.role === "user") {
+        const prompt = textOf((event.message as { content: import("../types").ChatMessage["content"] }).content);
+        void transport.command<import("../types").AgentState>({ type: "get_state" }).then((state) => {
+          if (!state.sessionId || !this.transports.has(transport)) return;
+          this.bind(transport.currentHostId(), state.sessionId, transport);
+          const cwd = transport.currentCwd() || "";
+          this.liveSessions.set(transport, { id: state.sessionId, path: state.sessionFile || "", name: state.sessionName || prompt.slice(0, 60), project: cwd.split("/").at(-1) || "Workspace", cwd, preview: prompt, messageCount: Math.max(1, state.messageCount), apiCost: 0, hostId: transport.currentHostId() });
+          this.liveRevision += 1; this.notify();
+        }).catch(() => undefined);
+      }
       if (event.type === "agent_start") this.captureTurnStart(transport);
       if (event.type === "agent_end" || event.type === "agent_settled") this.captureTurnEnd(transport);
       if (event.type === "agent_start" || event.type === "message_start") { this.runningTransports.add(transport); this.unseenTransports.delete(transport); }
@@ -155,7 +169,7 @@ export class SessionRuntimePool {
     if (transport) await this.release(transport);
   }
 
-  async release(transport: NativeTransport) { if (!this.transports.has(transport)) return; for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key); const diffState = this.diffStates.get(transport); if (diffState) this.discardBaselines(transport, diffState); this.transports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport); this.interactiveTransports.delete(transport); this.diffStates.delete(transport); this.publishSessionStates(); await transport.dispose(); }
+  async release(transport: NativeTransport) { if (!this.transports.has(transport)) return; for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key); const diffState = this.diffStates.get(transport); if (diffState) this.discardBaselines(transport, diffState); this.transports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport); this.interactiveTransports.delete(transport); this.diffStates.delete(transport); if (this.liveSessions.delete(transport)) { this.liveRevision += 1; this.notify(); } this.publishSessionStates(); await transport.dispose(); }
 
   subscribe(listener: () => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   runningSessions() { return this.runningSessionKeys; }

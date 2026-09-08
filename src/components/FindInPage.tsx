@@ -9,19 +9,19 @@ function findMatches(root: HTMLElement, query: string): Match[] {
   const pattern = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu");
   const matches: Match[] = [];
   let block: Element | null = null;
-  let nodes: Array<{ node: Text; start: number; end: number }> = [];
   let text = "";
+  let offsets: Array<{ node: Text; start: number; end: number }> = [];
   const flush = () => {
     for (const found of text.matchAll(pattern)) {
       const start = found.index!, end = start + found[0].length;
-      const first = nodes.find(item => item.end > start), last = nodes.find(item => item.end >= end);
+      const first = offsets[start], last = offsets[end - 1];
       if (!first || !last) continue;
       const range = document.createRange();
-      range.setStart(first.node, start - first.start);
-      range.setEnd(last.node, end - last.start);
+      range.setStart(first.node, first.start);
+      range.setEnd(last.node, last.end);
       if (range.getClientRects().length) matches.push({ range });
     }
-    nodes = []; text = "";
+    text = ""; offsets = [];
   };
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   while (walker.nextNode()) {
@@ -31,8 +31,12 @@ function findMatches(root: HTMLElement, query: string): Match[] {
     if (style.visibility === "hidden" || !parent.getClientRects().length) continue;
     const nextBlock = parent.closest("p, pre, li, h1, h2, h3, h4, h5, h6, td, th, summary, button, label, .message-body") ?? parent;
     if (block !== nextBlock) { flush(); block = nextBlock; }
-    nodes.push({ node, start: text.length, end: text.length + node.data.length });
-    text += node.data;
+    const collapse = !["pre", "pre-wrap", "break-spaces"].includes(style.whiteSpace);
+    for (let i = 0; i < node.data.length; i++) {
+      const char = collapse && /[ \t\r\n\f]/.test(node.data[i]) ? " " : node.data[i];
+      if (collapse && char === " " && text.endsWith(" ")) { if (offsets[offsets.length - 1].node === node) offsets[offsets.length - 1].end = i + 1; continue; }
+      text += char; offsets.push({ node, start: i, end: i + 1 });
+    }
   }
   flush();
   return matches;

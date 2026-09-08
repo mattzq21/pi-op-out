@@ -23,6 +23,20 @@ export class NativeTransport {
   private readonly runtimeId = globalThis.crypto?.randomUUID?.() ?? `runtime-${Date.now()}-${Math.random()}`;
   private pendingMessages: PendingMessage[] = [];
   private heldMessages?: PendingMessage[];
+  private commandRejection?: string;
+  private inputRejection?: { text: string; error: string };
+  private restoredQueueKey?: string;
+  private queueStorageKey() { return this.sessionId ? `piop-pending:${this.hostId}:${this.sessionId}` : undefined; }
+  private persistQueue() {
+    const key = this.queueStorageKey(); if (!key || this.restoredQueueKey !== key) return;
+    try { if (this.pendingMessages.length) localStorage.setItem(key, JSON.stringify(this.pendingMessages)); else localStorage.removeItem(key); }
+    catch { this.listeners.forEach((listener) => listener({ type: "extension_error", error: "Queued input could not be saved. Keep this window open until it is sent or copied." })); }
+  }
+  private restoreQueue() {
+    const key = this.queueStorageKey(); if (!key || this.restoredQueueKey === key) return;
+    this.restoredQueueKey = key;
+    try { const saved = JSON.parse(localStorage.getItem(key) || "[]"); if (!this.pendingMessages.length && Array.isArray(saved)) this.pendingMessages = saved.filter((item) => typeof item.message === "string" && typeof item.id === "string").map((item) => ({ ...item, retry: true })); } catch { /* Ignore invalid saved queue data. */ }
+  }
   private queueSnapshot: RpcEvent = { type: "queue_update", steering: [], followUp: [] };
   private changingQueue = false;
   private clearingQueue = false;
@@ -84,10 +98,16 @@ export class NativeTransport {
     }
     const visible = [...pending, ...(this.heldMessages ?? []), ...available.filter((item) => item.retry)];
     this.pendingMessages = [...visible, ...available.filter((item) => !item.retry && this.sendingPending.has(item.id))];
+    this.persistQueue();
     const event = this.queueView(visible);
     this.listeners.forEach((listener) => listener(event));
   }
   private emit(event: RpcEvent) {
+    if (event.type === "extension_error" && event.event === "command") this.commandRejection = String(event.error || "Extension command failed");
+    if (event.type === "extension_ui_request" && event.method === "setStatus" && event.statusKey === "piop-input-rejected") {
+      try { this.inputRejection = JSON.parse(String(event.statusText)); } catch { /* Ignore invalid status. */ }
+      return;
+    }
     if (event.type === "queue_update") {
       if (!this.clearingQueue) {
         const remaining = [...((event.steering as string[]) ?? [])];
@@ -221,7 +241,7 @@ export class NativeTransport {
     this.publishQueue();
   }
   command<T>(command: RpcCommand): Promise<T> {
-    if (command.type === "abort") return this.stop<T>(command);
+    if (command.type === "abort") return this.serializeQueue(async () => { await this.holdQueue(); return this.stop<T>(command); });
     if (command.type === "pause") return this.serializeQueue(async () => {
       await this.holdQueue();
       try { return await this.executeCommand<T>(command); }
@@ -346,8 +366,12 @@ export class NativeTransport {
     if (compact) command = { type: "compact", ...(compact[1]?.trim() ? { customInstructions: compact[1].trim() } : {}) };
     if (command.type === "clear_queue") this.clearingQueue = true;
     try {
+      if (command.type === "prompt") { this.inputRejection = undefined; this.commandRejection = undefined; }
       const result = await call<T>("pi_command", { runtimeId: this.runtimeId, command });
-      if (command.type === "get_state") { const state = result as { sessionFile?: string; sessionId?: string; pendingMessageCount?: number }; this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; state.pendingMessageCount = (state.pendingMessageCount ?? 0) + (this.heldMessages?.filter((item) => !item.retry).length ?? 0); }
+      if (command.type === "prompt" && this.commandRejection) throw new Error(this.commandRejection);
+      const rejected = this.inputRejection as { text: string; error: string } | undefined;
+      if (command.type === "prompt" && rejected && rejected.text === command.message) throw new Error(rejected.error);
+      if (command.type === "get_state") { const state = result as { sessionFile?: string; sessionId?: string; pendingMessageCount?: number }; this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; this.restoreQueue(); this.publishQueue(); state.pendingMessageCount = (state.pendingMessageCount ?? 0) + (this.heldMessages?.filter((item) => !item.retry).length ?? 0); }
       if (command.type === "get_entries") {
         const history = result as { entries: Array<{ message?: { role?: string; timestamp?: number; deliveryBehavior?: string } }> };
         for (const entry of history.entries) if (entry.message?.role === "user" && this.steeringTimestamps.has(entry.message.timestamp!)) entry.message.deliveryBehavior = "steer";

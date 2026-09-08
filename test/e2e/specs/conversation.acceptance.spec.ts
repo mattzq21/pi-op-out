@@ -625,7 +625,7 @@ describe("Conversation acceptance", () => {
     }
   });
 
-  it("forks and retries the latest aborted response", async () => {
+  it("retries the latest aborted response without deleting its history", async () => {
     const history = {
       entries: [
         { type: "message", id: "retry-user", parentId: null, message: { role: "user", content: "Retry this acceptance request", timestamp: 1 } },
@@ -650,9 +650,9 @@ describe("Conversation acceptance", () => {
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "prompt"));
       expect((await backendCalls()).filter(({ args }) => ["fork", "prompt"].includes(String((args.command as { type?: string })?.type))).map(({ args }) => args.command)).toEqual([
-        { type: "fork", entryId: "retry-user" }, { type: "prompt", message: "Retry this acceptance request" },
+        { type: "prompt", message: "Retry this acceptance request" },
       ]);
-      expect((await backendCalls()).find(({ command }) => command === "delete_session")?.args).toEqual({ sessionPath: "/tmp/retry-session.jsonl", hostId: "local" });
+      expect((await backendCalls()).some(({ command }) => command === "delete_session")).toBe(false);
     } finally {
       await updateBackendResponse("pi_command:get_entries", { entries: [], leafId: null });
       await emitPiEvent({ type: "session_switched" });
@@ -1107,11 +1107,13 @@ describe("Conversation acceptance", () => {
   });
 
   it("queues a follow-up and can stop a streaming response", async () => {
-    await mockBackend({ "pi_command:prompt": {}, "pi_command:abort": {} });
+    await mockBackend({ "pi_command:prompt": {}, "pi_command:abort": {}, "pi_command:clear_queue": { steering: [], followUp: ["Check this after the current response"] } });
     try {
       await emitPiEvent({ type: "agent_start" });
       await app.chooseComposerOption("Streaming message behavior", "Queue");
       await app.prepareMessage("Check this after the current response");
+      // The real runtime publishes its queue before acknowledging the prompt.
+      await emitPiEvent({ type: "queue_update", steering: [], followUp: ["Check this after the current response"] });
       await browser.keys("Enter");
 
       await expect(app.composer).toHaveValue("");
@@ -1122,6 +1124,7 @@ describe("Conversation acceptance", () => {
       expect((await backendCalls()).filter(({ args }) => ["prompt", "abort"].includes(String((args.command as { type?: string })?.type))).map(({ args }) => args.command)).toEqual([
         { type: "prompt", message: "Check this after the current response", streamingBehavior: "followUp" }, { type: "abort" },
       ]);
+      await $('button[aria-label="Remove queued message: Check this after the current response"]').click();
     } finally {
       await emitPiEvent({ type: "queue_update", steering: [], followUp: [] });
       await emitPiEvent({ type: "agent_end" });
