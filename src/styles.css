@@ -372,4 +372,6 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 
 .setting-cap-controls { display: flex; align-items: center; gap: 12px; }
 .settings-section + .settings-section { margin-top: 28px; }
+.general-model-defaults { display: grid; grid-template-columns: minmax(0, 1fr) 160px; gap: 12px; }
+.general-model-defaults .field, .general-model-defaults select { min-width: 0; }
 .setting-number:disabled { opacity: .5; cursor: not-allowed; }
