@@ -1,97 +1,85 @@
 # Piop
 
-A Tauri-only native interface for the Pi coding agent. It is not a standalone browser application. The desktop app controls persistent local or SSH-hosted `pi --mode rpc` processes.
+A native Tauri interface for the Pi coding agent, with persistent local or SSH-hosted `pi --mode rpc` sessions.
 
-## What is included
+## Features
 
-- Streaming chat with Markdown, thinking content, per-response and session-wide cache hit rates, tool progress, pause/resume, abort, retry, steering, follow-ups, and queued-message state
-- Project-grouped conversation history, search, switching, rename, clone, branch creation, archiving, and split panes
-- Runtime model and thinking-level controls, slash-command discovery, text/image attachments, and direct project shell execution
-- Pi extension UI support for prompts, confirms, selects, editors, notifications, status lines, widgets, titles, and editor text
-- Settings for retry/compaction behavior, context-window cap, default model, tools, discovered skills, agents, remote machines, and MCP servers
-- Named [pi-define-agents](extensions/pi-define-agents/README.md) profiles with per-agent models, instructions, and resource permissions
-- Live context-window usage gauge in the composer
-- Bundled [pi-codex-compaction](extensions/pi-codex-compaction/README.md) for native OpenAI Codex compaction in local, SSH, and delegated sessions
-- Bundled [pi-codex-web-search](extensions/pi-codex-web-search/README.md), a small `web_search` tool using Pi’s Codex login in local, SSH, and side conversations
-- An MCP SDK-backed stdio/HTTP bridge that discovers server tools and registers them as namespaced Pi tools
-- A `read_trace` Pi tool that finds local or remote session JSONL and returns only user prompts and completed assistant messages
-- A shared session runtime for primary and split chats, with animation-frame batching for streaming message and tool updates
+- Streaming chat with Markdown, thinking content, tool progress, attachments, and context/cache usage
+- Pause/resume, stop, retry, steering, and queued follow-ups
+- Project-grouped conversation history, search, split panes, and Git worktree branching
+- Model and thinking-level controls, slash commands, and a project terminal
+- Named [agent profiles](extensions/pi-define-agents/README.md) with models, instructions, and resource permissions
+- Settings for tools, skills, remote hosts, MCP servers, and compaction
+- Pi extension dialogs, notifications, status lines, and widgets
+- Bundled [Codex compaction](extensions/pi-codex-compaction/README.md) and [web search](extensions/pi-codex-web-search/README.md)
 
-## Run as a desktop app
+## Run
 
-Install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) and make sure `pi` is available on `PATH`, then run:
+Install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) and Pi, then run:
 
 ```bash
 npm run tauri dev
 ```
 
-The native launcher also checks `~/.local/bin/pi`, `~/.npm-global/bin/pi`, and `~/.bun/bin/pi`. Set `PIOP_PI_PATH` to use another executable.
+The launcher checks `~/.local/bin/pi`, `~/.npm-global/bin/pi`, and `~/.bun/bin/pi` before falling back to `PATH`. Set `PIOP_PI_PATH` to use another executable.
 
-Authenticate Pi before starting the desktop app with Pi's normal `/login` flow or provider environment variables. Credentials remain in Pi's own auth store and are never copied into this app's settings.
+Authenticate Pi with its `/login` flow or provider environment variables before starting Piop. Credentials stay in Pi's auth store.
 
-Piop stores its traces separately in `~/.piop/sessions` on each host, with archived traces in `~/.piop/archived`. `/btw` side conversations instead use private temporary session files with distinct identities. Closing their pane removes those files; they do not appear in saved history. Session discovery, opening, and switching use only Piop storage; Pi CLI sessions in `~/.pi/agent/sessions` are not imported or opened. The `read_trace` tool reads only Piop's active and archived traces, including when given an explicit path.
+`npm run dev` starts only the frontend server; use `tauri dev` to run the desktop app.
 
-`npm run dev` only provides the frontend development server consumed by `tauri dev`; opening that server directly in a browser is unsupported.
+## Conversations
 
-Agent profiles are included: piop automatically installs and loads `pi-define-agents` locally and on SSH hosts. Select one agent for each conversation and configure it in Settings → Agents.
+While Piop is responding, Enter queues a follow-up and Ctrl+Enter sends a steering message. When idle or paused, either sends normally. Shift+Enter inserts a new line.
 
-Sequences and orchestration have been removed. On the next local or SSH session launch, piop moves an older `~/.pi/agent/extensions/pi-orchestration/index.ts` installation into `~/.piop/disabled-extensions/` so Pi no longer discovers it. This also disables that installation for standalone Pi on the same machine. The entry point is recoverable from the backup; saved configurations and conversation history are retained.
+Pause saves completed model turns and tool results. Resume continues from that context, including after reopening a saved conversation. Interrupted partial responses remain visible but are excluded from the resumed model context.
 
-Saving native settings restarts the managed Pi process while preserving the active project and session. Enabled tools, skills, default model/thinking level, and MCP configuration are applied at startup.
+Ctrl+click an HTTP or HTTPS Markdown link to open it in your browser. Right-click to copy the link.
 
-Ctrl+left-click a rendered HTTP or HTTPS Markdown link to open it in your default browser. Ordinary clicks keep you in the conversation. Right-click a link for a menu containing only **Copy link**.
+Select an agent in the conversation and configure profiles in Settings → Agents. Piop installs the bundled agent extension locally and on SSH hosts.
 
-While piop is responding, Enter queues a follow-up, and Ctrl+Enter sends a steering message. The send button becomes Pause while running and Resume while paused, with Stop beside it. Shift+Enter inserts a new line. When piop is idle or paused, Enter and Ctrl+Enter send normally.
+### Branching and worktrees
 
-Pause interrupts the current response and saves completed model turns and tool results in the conversation context. Resume continues from that context with the selected agent's instructions, including after reopening a saved conversation. You can also send a new message while paused. An interrupted partial assistant response remains visible in the transcript but is excluded from the resumed model context.
+- `/branch-off [number]` branches the conversation in its current directory.
+- `/worktree [number] [name]` creates a Git worktree and branches the conversation into it. Omit the name to open the name dialog.
 
-Codex sessions use the bundled [pi-codex-compaction](https://github.com/ogulcancelik/pi-extensions/tree/main/packages/pi-codex-compaction) extension with the existing auto-compaction setting, context cap, and `/compact` command. Use Pi 0.84.4 or newer on local and remote hosts. Native checkpoints require the Codex model that created them; other providers retain Pi’s standard compaction.
+The number counts backwards through completed responses: `0` (the default) is the latest, `1` is the previous response. Examples: `/worktree 2 experiment` or `/worktree experiment`. Stop or pause the agent before either command.
 
-MCP servers can use stdio commands or HTTP endpoints. Stdio arguments support shell-style quoting, but the command is launched directly without a shell. MCP tools appear in Pi as `mcp_<server>_<tool>`.
+**Branch before this prompt**, beside a user message, opens a new worktree with that prompt's starting files and conversation history. Piop retains the latest 10 checkpoints per conversation; the original conversation can keep running. See [checkpoint storage and limits](extensions/pi-project-files-watch/README.md#before-prompt-checkpoints).
 
-## Verify
+`/catch-up` resets a secondary worktree's current branch to the main worktree's commit after confirmation. It discards tracked local changes and does not copy the main worktree's uncommitted changes or fetch from a remote. Stop or pause the agent first; the command is also blocked if another Piop agent is working in that worktree. In the main worktree, it does nothing.
+
+## Storage and integrations
+
+Saved conversations live in `~/.piop/sessions` on each host; archived conversations live in `~/.piop/archived`. Pi CLI sessions in `~/.pi/agent/sessions` are not included in Piop history. The `read_trace` tool extracts user prompts and completed assistant messages from Piop's active or archived session files.
+
+`/btw` side conversations use temporary session files. Closing their pane removes those files; they do not appear in saved history.
+
+Codex compaction uses the auto-compaction setting, context cap, and `/compact` command. Pi 0.84.4 or newer is recommended. Native checkpoints require the Codex model that created them; other providers use Pi's standard compaction.
+
+MCP servers can use stdio commands or HTTP endpoints. Stdio arguments support shell-style quoting, but commands run without a shell. Tools appear in Pi as `mcp_<server>_<tool>`.
+
+## Build and checks
+
+Run these from the repository root:
 
 ```bash
 npm run build
-cd src-tauri && cargo check --locked
-cd src-tauri && cargo build --locked
+cargo check --manifest-path src-tauri/Cargo.toml --locked
+cargo build --manifest-path src-tauri/Cargo.toml --locked
+```
+
+To build a desktop package:
+
+```bash
+npm run tauri build
 ```
 
 ## End-to-end tests
 
-The acceptance-oriented WebdriverIO suite builds a release-profile native app with its test-only `webdriver` Cargo feature, then exercises user-visible frontend workflows through the embedded Tauri WebDriver provider. The release profile ensures Tauri embeds the tested frontend rather than loading the development server. Normal builds do not register the test plugin, and no external `tauri-driver` is required.
+The WebdriverIO suite builds and exercises the native app with the test-only `webdriver` Cargo feature:
 
 ```bash
 npm run test:e2e
 ```
 
-After the binary has already been built, use `npm run test:e2e:run` for faster iterations. Set `PI_E2E_BINARY` to test another binary. Add acceptance scenarios under `test/e2e/specs` and reusable interactions under `test/e2e/pageobjects`.
-
-For runner configuration, native-command mocking, synthetic Pi events, and cleanup behavior, see [WebdriverIO acceptance testing](docs/webdriverio-testing.md).
-
-`/catch-up` resets a secondary Git worktree to the main worktree's current commit,
-keeping the secondary worktree's branch. It discards tracked local changes; it does
-not copy uncommitted changes from the main worktree or fetch from a remote. In the
-main worktree it does nothing. Stop or pause a running agent before invoking it.
-Catch-up is blocked with an error if another Pi UI agent is working in the same
-worktree on that host. This is checked both before and after confirmation.
-A confirmation dialog shows the worktree and target commit before resetting.
-Cancelling leaves the worktree and conversation unchanged. The result appears as
-a centered system message in the conversation.
-
-Before-prompt branching retains the latest **10** project checkpoints per conversation.
-Use **Branch before this prompt** beside a user message to open a new worktree with
-that prompt's starting files and conversation history. The original task can keep
-running. New checkpoints automatically expire the oldest; existing uncommitted work
-at capture time is preserved. See [checkpoint storage and limits](extensions/pi-project-files-watch/README.md#before-prompt-checkpoints).
-
-## Compatibility
-
-The app and executable are named `piop`. Sessions, archived conversations, and Git snapshots use `~/.piop` on local and remote machines. When upgrading from a version that used `~/.pi-desktop`, copy its contents into `~/.piop` while the app is closed; resolve any existing destination files before copying. The app does not merge or delete the old directory automatically. The settings identifier (`dev.pi.desktop`), browser-storage keys, and extension protocol IDs remain stable. `PIOP_PI_PATH` selects the upstream Pi executable; the previous `PI_DESKTOP_PI_PATH` override remains supported. The upstream Pi CLI and third-party Pi extension package names are unchanged.
-
-`/branch-off [number]` branches the conversation in the current directory.
-`/worktree [number] [name]` creates a Git worktree and branches the conversation
-into it. The number counts backwards through completed responses: `0` (the
-default) is the latest, `1` is the previous response. For example,
-`/worktree 2 experiment` or `/worktree experiment`. Omitting the worktree name
-opens the name dialog. Stop or pause the agent before using either command.
+Use `npm run test:e2e:run` to reuse an existing test build, or set `PI_E2E_BINARY` to select another test binary. See [WebdriverIO acceptance testing](docs/webdriverio-testing.md) for setup and test authoring.
