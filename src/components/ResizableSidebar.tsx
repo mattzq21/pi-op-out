@@ -2,14 +2,14 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 
 const WIDTH_KEY = "pi-desktop-sidebar-width";
 const MIN_WIDTH = 200;
-const MAX_WIDTH = 480;
+const maximumWidth = () => Math.max(MIN_WIDTH, Math.floor(window.innerWidth / 2));
 
 export function ResizableSidebar({ compact, children }: { compact: boolean; children: ReactNode }) {
-  const [maxWidth, setMaxWidth] = useState(() => Math.min(MAX_WIDTH, window.innerWidth / 2));
+  const [maxWidth, setMaxWidth] = useState(maximumWidth);
   const [width, setWidth] = useState(() => {
     try {
       const saved = Number(localStorage.getItem(WIDTH_KEY));
-      if (Number.isFinite(saved) && saved >= MIN_WIDTH) return Math.min(MAX_WIDTH, saved);
+      if (Number.isFinite(saved) && saved >= MIN_WIDTH) return saved;
     } catch { /* Persistence is best-effort. */ }
     return window.innerWidth <= 1050 ? 232 : 260;
   });
@@ -19,7 +19,7 @@ export function ResizableSidebar({ compact, children }: { compact: boolean; chil
   const resize = (value: number) => setWidth(Math.round(Math.max(MIN_WIDTH, Math.min(maxWidth, value))));
 
   useEffect(() => {
-    const onResize = () => setMaxWidth(Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, window.innerWidth / 2)));
+    const onResize = () => setMaxWidth(maximumWidth());
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
