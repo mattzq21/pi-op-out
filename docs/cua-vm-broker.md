@@ -34,6 +34,10 @@ piop- + first 32 hexadecimal characters of SHA256(
 
 The identity survives reconnects and extension reloads; guest state survives only until idle cleanup. A fork/new conversation, renamed agent, or different server ID gets a different identity. Agents with the same name in different conversations remain isolated.
 
+When an MCP tool declares an `agent_id` input property, Piop removes that property from the model-facing schema and supplies this same identity on every call. Model-supplied values cannot override it. Tools without that property receive their arguments unchanged; the existing stdio environment and broker lease remain supported.
+
+Model-facing tool names use `mcp_<server>_<tool>`, for example `mcp_cua_vm_broker_exec`. Piop adds a hash suffix only when normalization or truncation would collide with another registered tool. Names remain stable across agent switches and reconnects, and calls still use the server's original tool name. Agent identity is carried separately from tool names.
+
 Selecting an agent or opening a session does not connect MCP servers. When a user submits a message, Piop connects the selected agent's enabled MCP servers and waits for tool discovery before allowing inference. On agent/session changes, Piop closes old connections and defers new connections until the next message. Shutdown and reload await MCP transport closure. The broker releases the exclusive lease on disconnect. A simultaneous connection using the same identity is rejected by the broker.
 
 VMs are ephemeral. After 60 seconds without MCP activity, the broker closes the transport, stops the VM, and deletes its writable disk and per-VM artifacts. An open connection or viewer does not keep it alive. Startup and in-flight requests are protected from inactivity cleanup; the countdown starts when they finish. Disconnecting does not reset the countdown. Reconnecting before expiry reuses the running desktop; after cleanup, the same identity starts a fresh desktop from the base image. Save required logs and evidence outside the guest before it expires.

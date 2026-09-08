@@ -38,7 +38,7 @@ function splitArgs(input = ""): string[] {
 }
 
 function safeName(value: string): string {
-  return `${(value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool").slice(0, 12)}_${createHash("sha256").update(value).digest("hex").slice(0, 12)}`;
+  return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool";
 }
 
 function parseHeaders(value: ServerConfig["headers"]): Record<string, string> {
@@ -111,6 +111,24 @@ export default async function mcpBridge(pi: ExtensionAPI) {
   const desktopSkillPaths = (() => { try { const value = JSON.parse(process.env.PI_DESKTOP_SKILL_PATHS || "[]"); return Array.isArray(value) ? value.filter((path): path is string => typeof path === "string") : []; } catch { return []; } })();
   pi.on("resources_discover", () => process.env.PI_DEFINE_AGENTS_ACTIVE === "1" || !desktopSkillPaths.length ? undefined : { skillPaths: desktopSkillPaths });
   const connections = new Map<string, Connection>();
+  // Keep ownership across reconnects so retained tool registrations cannot alias.
+  const toolNames = new Map<string, string>();
+  const toolOwners = new Map<string, string>();
+  const registeredName = (serverId: string, toolName: string) => {
+    const key = JSON.stringify([serverId, toolName]);
+    const existing = toolNames.get(key);
+    if (existing) return existing;
+    const base = `mcp_${safeName(serverId).slice(0, 20)}_${safeName(toolName)}`.slice(0, 64);
+    let name = base;
+    let attempt = 0;
+    while (toolOwners.has(name) || pi.getAllTools().some((tool) => tool.name === name)) {
+      const suffix = createHash("sha256").update(JSON.stringify([key, attempt++])).digest("hex").slice(0, 12);
+      name = `${base.slice(0, 51)}_${suffix}`;
+    }
+    toolNames.set(key, name);
+    toolOwners.set(name, key);
+    return name;
+  };
   const statuses = new Map(servers.map((server) => [server.id, { id: server.id, status: "stopped" as "stopped" | "starting" | "connected" | "error", error: undefined as string | undefined }]));
   const shutdown = new AbortController();
   let context: ExtensionContext | undefined;
@@ -159,15 +177,23 @@ export default async function mcpBridge(pi: ExtensionAPI) {
         } while (cursor);
         if (shutdown.signal.aborted) throw new Error("MCP bridge has shut down");
         for (const tool of discovered) {
-          const name = `mcp_${safeName(server.id)}_${safeName(tool.name)}`;
+          const name = registeredName(server.id, tool.name);
+          const schema = tool.inputSchema ?? { type: "object", properties: {} };
+          const injectAgentId = Object.hasOwn(schema.properties ?? {}, "agent_id");
+          const parameters = injectAgentId ? {
+            ...schema,
+            properties: Object.fromEntries(Object.entries(schema.properties ?? {}).filter(([key]) => key !== "agent_id")),
+            required: schema.required?.filter((key) => key !== "agent_id"),
+          } : schema;
           connection.tools.push(name);
           pi.registerTool({
             name, label: `${server.name} · ${tool.name}`, description: tool.description || `Run ${tool.name} on the ${server.name} MCP server`,
-            promptSnippet: `Use ${tool.name} from the ${server.name} MCP server`, parameters: Type.Unsafe(tool.inputSchema ?? { type: "object", properties: {} }),
+            promptSnippet: `Use ${tool.name} from the ${server.name} MCP server`, parameters: Type.Unsafe(parameters),
             async execute(_toolCallId, params, signal) {
               if (signal?.aborted) throw new Error("MCP tool call aborted");
               if (!connection.connected || connections.get(id) !== connection) throw new Error(`MCP server "${id}" is not connected for this agent`);
-              const result = await client.callTool({ name: tool.name, arguments: params as Record<string, unknown> }, { signal, timeout: TOOL_TIMEOUT_MS });
+              const args = injectAgentId ? { ...params as Record<string, unknown>, agent_id: connection.instanceId } : params as Record<string, unknown>;
+              const result = await client.callTool({ name: tool.name, arguments: args }, { signal, timeout: TOOL_TIMEOUT_MS });
               if ((result as { isError?: boolean })?.isError) throw new Error(resultContent(result).map((part) => part.type === "text" ? part.text : "MCP image result").join("\n"));
               return { content: resultContent(result), details: { server: server.name, tool: tool.name, result } };
             },
