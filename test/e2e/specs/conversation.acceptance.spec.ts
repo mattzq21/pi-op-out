@@ -1278,6 +1278,7 @@ describe("Conversation acceptance", () => {
   });
 
   it("queues extension dialogs behind the project picker", async () => {
+    await resetApp();
     await startTemporaryConversation({ home_directory: "/tmp", "pi_command:extension_ui_response": {} });
     try {
       await app.openProjectChooser();
