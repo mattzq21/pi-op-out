@@ -8,7 +8,7 @@ A native Tauri interface for the Pi coding agent, with persistent local or SSH-h
 - Pause/resume, stop, retry, steering, and queued follow-ups
 - Project-grouped conversation history, search, split panes, and Git worktree branching
 - Model and thinking-level controls, slash commands, and a project terminal
-- Named [agent profiles](extensions/pi-define-agents/README.md) with models, instructions, and resource permissions
+- Named [agent profiles](extensions/pi-define-agents/README.md) with models, instructions, and tool, skill, and MCP server selections
 - Settings for tools, skills, remote hosts, MCP servers, and compaction
 - Pi extension dialogs, notifications, status lines, and widgets
 - Bundled [Codex compaction](extensions/pi-codex-compaction/README.md) and [web search](extensions/pi-codex-web-search/README.md)
@@ -57,22 +57,6 @@ Saved conversations live in `~/.piop/sessions` on each host; archived conversati
 Codex compaction uses the auto-compaction setting, context cap, and `/compact` command. Pi 0.84.4 or newer is recommended. Native checkpoints require the Codex model that created them; other providers use Pi's standard compaction.
 
 MCP servers can use stdio commands or HTTP endpoints. Stdio arguments support shell-style quoting, but commands run without a shell. Tools appear in Pi as `mcp_<server>_<tool>`.
-
-## Build and checks
-
-Run these from the repository root:
-
-```bash
-npm run build
-cargo check --manifest-path src-tauri/Cargo.toml --locked
-cargo build --manifest-path src-tauri/Cargo.toml --locked
-```
-
-To build a desktop package:
-
-```bash
-npm run tauri build
-```
 
 ## End-to-end tests
 
