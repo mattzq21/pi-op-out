@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "npm run build:extensions && tsc -b && vite build",
-    "build:extensions": "npm run build:mcp-bridge && npm run build:codex-compaction",
+    "build:extensions": "npm run build:mcp-bridge && npm run build:codex-compaction && npm run build:fast-mode",
+    "build:fast-mode": "node scripts/build-fast-mode.mjs",
     "build:codex-compaction": "node scripts/build-codex-compaction.mjs",
     "build:mcp-bridge": "node scripts/build-mcp-bridge.mjs",
     "pretauri": "npm install --no-audit --no-fund && npm run build:extensions",

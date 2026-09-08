@@ -6,7 +6,9 @@ Adds gpt-6-astra for both OpenAI and OpenAI Codex, and publishes Fast mode on/of
 
 Commands: /fast, /fast on, /fast off, /fast toggle. The toggle and priority request behavior are unchanged.
 
-Install this directory at ~/.pi/agent/extensions/pi-openai-fast-mode-piop. Pi discovers src/index.ts through package.json. Remove npm:pi-openai-fast-mode from Pi's package settings and uninstall that npm package to avoid registering /fast twice.
+piop bundles and loads this extension automatically for local and remote sessions, including `npm run tauri dev`.
+
+For standalone Pi use, install this directory at ~/.pi/agent/extensions/pi-openai-fast-mode-piop. Pi discovers src/index.ts through package.json. Remove npm:pi-openai-fast-mode from Pi's package settings and uninstall that npm package to avoid registering /fast twice.
 
 User settings are saved in ~/.pi/agent/extensions/pi-openai-fast-mode-piop/config.json; project settings use .pi/pi-openai-fast-mode-piop/config.json. When migrating, copy the original config.json to the corresponding new location to preserve the toggle. On startup, the fork refreshes supported targets while preserving enabled.
 
