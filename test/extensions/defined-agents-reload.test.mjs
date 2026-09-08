@@ -47,8 +47,12 @@ test('agent definitions survive reload while selected MCP tools are pending', as
     const capability = JSON.parse(Buffer.from(status.slice(5), 'base64url').toString());
     assert.equal(capability.active, 'tester');
     assert.deepEqual(capability.config.agents.map(a => a.name), ['default', 'tester']);
+    await startup;
+    assert.equal(finishMcp, undefined, 'selecting an agent must not start MCP');
+    const input = handlers.input({ text: 'Check the app' }, ctx);
     assert.deepEqual(activeTools, [], 'MCP tools must remain unavailable until ready');
-    finishMcp(['mcp_cua_vm_example']); await startup;
+    finishMcp(['mcp_cua_vm_example']);
+    assert.deepEqual(await input, { action: 'continue' });
     assert.deepEqual(activeTools, ['mcp_cua_vm_example']);
     await handlers.session_shutdown({}, ctx);
     assert.equal(status, undefined, 'actual shutdown still clears definitions');
