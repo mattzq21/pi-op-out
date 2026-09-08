@@ -82,6 +82,7 @@ export function FindInPage({ selector, scopeKey, active = true, enabled = true, 
       if (!enabled || event.isComposing || document.querySelector("dialog[open]")) return;
       const root = document.querySelector<HTMLElement>(selector);
       const focused = document.activeElement;
+      if (focused?.closest(".keybind-input") || (event.target instanceof Element && event.target.closest(".keybind-input"))) return;
       const focusedBar = focused?.closest(".find-bar");
       const focusedShell = focused?.closest(".chat-shell");
       if (focusedBar ? focusedBar !== bar.current : focusedShell ? focusedShell !== root : !active) return;

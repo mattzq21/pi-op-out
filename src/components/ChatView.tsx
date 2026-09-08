@@ -23,7 +23,17 @@ export function ChatView(props: Props) {
   const sessionCache = cacheHitStats(sessionUsage);
   const actions = useRef({ onSend: props.onSend, onBranch: props.onBranch, onCreateWorktree: props.onCreateWorktree });
   actions.current = { onSend: props.onSend, onBranch: props.onBranch, onCreateWorktree: props.onCreateWorktree };
-  const onRetry = useCallback<Props["onSend"]>((...args) => actions.current.onSend(...args), []);
+  const retryDraft = useRef({ value: props.draft, change: props.onDraftChange, mounted: true });
+  retryDraft.current.value = props.draft; retryDraft.current.change = props.onDraftChange;
+  useEffect(() => { retryDraft.current.mounted = true; return () => { retryDraft.current.mounted = false; }; }, []);
+  const onRetry = useCallback<Props["onSend"]>(async (...args) => {
+    const submittedDraft = retryDraft.current.value; const change = retryDraft.current.change;
+    const consumed = submittedDraft === args[0];
+    if (consumed) { retryDraft.current.value = ""; change?.(""); }
+    const restore = () => { if (consumed && retryDraft.current.mounted && !retryDraft.current.value) change?.(submittedDraft); };
+    try { const result = await actions.current.onSend(...args); if (result === false) restore(); return result; }
+    catch (reason) { restore(); throw reason; }
+  }, []);
   const onBranch = useCallback<Props["onBranch"]>((message) => actions.current.onBranch(message), []);
   const onCreateWorktree = useCallback<NonNullable<Props["onCreateWorktree"]>>((message) => actions.current.onCreateWorktree?.(message), []);
   const fastModeStatus = props.statuses["pi-desktop-fast-mode"];

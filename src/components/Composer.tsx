@@ -170,11 +170,11 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
   useEffect(() => { if (focusRequest) ref.current?.focus(); }, [focusRequest]);
   useEffect(() => { if (restoredDraft && restoredDraft.id !== restoredDraftId.current) { restoredDraftId.current = restoredDraft.id; if (!value) setValue(restoredDraft.value); } }, [restoredDraft]);
 
-  const addFiles = async (files: FileList | File[] | null) => {
+  const addFiles = async (files: FileList | File[] | null, initialErrors: string[] = []) => {
     if (!files) return;
     setUploadError(undefined);
     const next: ComposerUpload[] = [];
-    const errors: string[] = [];
+    const errors = [...initialErrors];
     let totalBytes = uploads.reduce((total, upload) => total + upload.byteSize, 0);
     for (const file of Array.from(files)) {
       if (uploads.length + next.length >= UPLOAD_COUNT_LIMIT) { errors.push(`Only ${UPLOAD_COUNT_LIMIT} attachments are allowed`); break; }
@@ -209,8 +209,18 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
       return [...current, ...accepted];
     });
   };
-  const nativeDropRef = useRef({ inputDisabled, addFiles });
-  useLayoutEffect(() => { nativeDropRef.current = { inputDisabled, addFiles }; });
+  const addPaths = async (paths: string[], cancelled = () => false) => {
+    const files: File[] = [];
+    const errors = paths.length > UPLOAD_COUNT_LIMIT ? [`Only ${UPLOAD_COUNT_LIMIT} attachments are allowed; extra files were skipped`] : [];
+    for (const path of paths.slice(0, UPLOAD_COUNT_LIMIT)) {
+      if (cancelled()) return;
+      try { files.push(await readDroppedFile(path)); }
+      catch (reason) { errors.push(reason instanceof Error ? reason.message : String(reason)); }
+    }
+    if (!cancelled()) await addFiles(files, errors);
+  };
+  const nativeDropRef = useRef({ inputDisabled, addPaths });
+  useLayoutEffect(() => { nativeDropRef.current = { inputDisabled, addPaths }; });
   useEffect(() => {
     if (!isTauri()) return;
     let disposed = false;
@@ -225,19 +235,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
       const enabled = inside && !nativeDropRef.current.inputDisabled;
       setDraggingFiles(payload.type !== "drop" && enabled);
       if (payload.type !== "drop" || !enabled) return;
-      const paths = payload.paths.slice(0, UPLOAD_COUNT_LIMIT);
-      void (async () => {
-        const errors: string[] = [];
-        for (const path of paths) {
-          if (disposed) return;
-          try {
-            const file = await readDroppedFile(path);
-            if (disposed) return;
-            await nativeDropRef.current.addFiles([file]);
-          } catch (reason) { errors.push(reason instanceof Error ? reason.message : String(reason)); }
-        }
-        if (!disposed && errors.length) setUploadError(errors.join(". "));
-      })();
+      void nativeDropRef.current.addPaths(payload.paths, () => disposed).catch((reason) => { if (!disposed) setUploadError(String(reason)); });
       ref.current?.focus();
     }).then((cleanup) => { if (disposed) cleanup(); else unlisten = cleanup; })
       .catch((reason) => { if (!disposed) setUploadError(`Could not enable file drops: ${String(reason)}`); });
@@ -345,7 +343,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
         });
         void (async () => {
           if (files.length) await addFiles(files);
-          else for (const path of paths.slice(0, UPLOAD_COUNT_LIMIT)) await nativeDropRef.current.addFiles([await readDroppedFile(path)]);
+          else await nativeDropRef.current.addPaths(paths);
         })().catch((reason) => setUploadError(reason instanceof Error ? reason.message : String(reason)));
         ref.current?.focus();
       }}>
