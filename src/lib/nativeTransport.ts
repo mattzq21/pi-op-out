@@ -127,6 +127,10 @@ export class NativeTransport {
       try { this.inputRejection = JSON.parse(String(event.statusText)); } catch { /* Ignore invalid status. */ }
       return;
     }
+    // Visible composers display prompt rejections inline; identify their duplicate notification.
+    if (event.type === "extension_ui_request" && event.method === "notify" && event.notifyType === "error" && this.inputRejection && event.message === this.inputRejection.error) {
+      event = { ...event, inputRejected: true };
+    }
     if (event.type === "queue_update") {
       if (!this.clearingQueue) {
         const remaining = [...((event.steering as string[]) ?? [])];
