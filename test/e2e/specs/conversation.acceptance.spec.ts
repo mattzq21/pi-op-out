@@ -1332,6 +1332,7 @@ describe("Conversation acceptance", () => {
     await app.openSettingsSection("Keybinds");
     const panelShortcut = await $('input[aria-label="Toggle conversations shortcut"]').getValue();
     await app.openConversations();
+    await $('button[aria-label="New conversation"]').click();
     await app.openProjectChooser();
     try {
       await pressShortcut(panelShortcut);
