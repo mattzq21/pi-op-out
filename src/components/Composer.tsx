@@ -2,7 +2,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readDroppedFile } from "../lib/nativeTransport";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type SetStateAction } from "react";
-import { ChevronUp, ChevronDown, CornerDownRight, MoveVertical, Trash2, ArrowUp, CircleStop, FileText, ImagePlus, Pause, Play, TerminalSquare, X, Zap } from "lucide-react";
+import { ChevronUp, ChevronDown, CornerDownRight, MoveVertical, Trash2, ArrowUp, CircleStop, CircleX, FileText, ImagePlus, Pause, Play, TerminalSquare, X, Zap } from "lucide-react";
 import type { AgentProfile, ComposerUpload, ContextUsage, ImageAttachment, Model, PromptDictionary, SlashCommand } from "../types";
 import { applyDictionary, dictionaryMatches } from "../lib/dictionaries";
 import { usePendingMessageDrag } from "../lib/usePendingMessageDrag";
@@ -89,6 +89,11 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
     if (onUploadsChange) onUploadsChange(update); else setLocalUploads(update);
   };
   const [uploadError, setUploadError] = useState<string>();
+  const [imageInputError, setImageInputError] = useState(false);
+  const supportsImages = Boolean((model?.input ?? models.find((item) => item.provider === model?.provider && item.id === model?.id)?.input)?.includes("image"));
+  const supportsImagesRef = useRef(supportsImages);
+  useLayoutEffect(() => { supportsImagesRef.current = supportsImages; }, [supportsImages]);
+  useEffect(() => { if (supportsImages) setImageInputError(false); }, [supportsImages]);
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
   const [controlAction, setControlAction] = useState<"pause" | "resume">();
@@ -177,6 +182,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
     const errors = [...initialErrors];
     let totalBytes = uploads.reduce((total, upload) => total + upload.byteSize, 0);
     for (const file of Array.from(files)) {
+      if ((file.type.toLowerCase().startsWith("image/") || /\.(?:png|jpe?g|gif|webp|svg|bmp|ico|avif|heic|heif|tiff?)$/i.test(file.name)) && !supportsImagesRef.current) { setImageInputError(true); continue; }
       if (uploads.length + next.length >= UPLOAD_COUNT_LIMIT) { errors.push(`Only ${UPLOAD_COUNT_LIMIT} attachments are allowed`); break; }
       if (file.size + totalBytes > TOTAL_UPLOAD_LIMIT) { errors.push(`${file.name} exceeds the 24 MB attachment limit`); continue; }
       if (file.type.startsWith("image/")) {
@@ -201,6 +207,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
       const accepted: ComposerUpload[] = [];
       let currentBytes = current.reduce((total, upload) => total + upload.byteSize, 0);
       for (const upload of next) {
+        if (upload.kind === "image" && !supportsImagesRef.current) { setImageInputError(true); continue; }
         if (current.length + accepted.length >= UPLOAD_COUNT_LIMIT) { errors.push(`Only ${UPLOAD_COUNT_LIMIT} attachments are allowed`); break; }
         if (currentBytes + upload.byteSize > TOTAL_UPLOAD_LIMIT) { errors.push(`${upload.name} exceeds the 24 MB attachment limit`); continue; }
         accepted.push(upload); currentBytes += upload.byteSize;
@@ -255,6 +262,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
     const textFiles = uploads.filter((upload) => upload.kind === "text");
     const message = [expandSkillReference(applyDictionary(value.trim(), dictionaries), commands), ...textFiles.map((file) => `<file name="${escapeAttribute(file.name)}">\n${file.text}\n</file>`)].filter(Boolean).join("\n\n");
     const images = uploads.flatMap((upload) => upload.image ? [upload.image] : []);
+    if (images.length && !supportsImagesRef.current) { setImageInputError(true); return; }
     if (!message && !images.length) return;
     if (sendingRef.current) return;
     sendingRef.current = true; setSending(true); setUploadError(undefined);
@@ -293,6 +301,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
   };
 
   return <div className="composer-wrap">
+    {imageInputError && <div className="image-input-toast" role="alert"><CircleX size={14} aria-hidden="true" /><span>This model does not support image inputs. Try a different model</span><button type="button" aria-label="Dismiss image input error" onClick={() => setImageInputError(false)}><X size={14} /></button></div>}
     {(streaming || paused || pausing) && <div className={`stream-banner${paused ? " paused" : ""}`}>
       <span className="stream-status" role="status">{paused ? <Pause size={11} /> : <span className="pulse" />}{stopping ? "Stopping…" : controlAction === "resume" ? "Resuming…" : pausing || controlAction === "pause" ? "Pausing…" : paused ? "Paused · Completed turns saved" : "piop is working"}{queued > 0 && ` · ${queued} queued`}</span>
     </div>}
@@ -317,6 +326,13 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
       </div>;
     })}</div>}
     <div ref={composerRef} className={`composer${draggingFiles && !inputDisabled ? " dragging-files" : ""}`}
+      onPaste={(event) => {
+        const files = Array.from(event.clipboardData.files);
+        if (!files.length) return;
+        event.preventDefault();
+        if (inputDisabled) return;
+        void addFiles(files).catch((reason) => setUploadError(reason instanceof Error ? reason.message : String(reason)));
+      }}
       onDragEnter={(event) => {
         if (!event.dataTransfer.types.includes("Files") && !(isTauri() && event.dataTransfer.types.includes("text/uri-list"))) return;
         event.preventDefault(); dragDepth.current += 1; setDraggingFiles(true);
