@@ -196,7 +196,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
       pi.events.emit("piop:mcp:select", selection);
       if (!selection.ready) return `Agent "${agent.name}" cannot run because the MCP bridge is unavailable`;
       try { for (const tool of await selection.ready) tools.add(tool); }
-      catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" could not connect its MCP servers: ${error instanceof Error ? error.message : String(error)}`; }
+      catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" could not connect its MCP servers:\n${error instanceof Error ? error.message : String(error)}`; }
     } else if (connectMcp) {
       for (const info of pi.getAllTools()) if (agent.mcpServers.some((server) => info.name.startsWith(`mcp_${safeName(server)}_`))) tools.add(info.name);
     }

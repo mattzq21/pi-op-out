@@ -207,7 +207,7 @@ export default async function mcpBridge(pi: ExtensionAPI) {
       const selection: Selection = { serverIds: servers.filter((server) => server.enabled && (!allowed || allowed.has(server.id))).map((server) => server.id), agentName: "default", sessionId: ctx.sessionManager.getSessionId() };
       try { await select(selection); }
       catch (error) {
-        const message = `Could not connect MCP servers: ${error instanceof Error ? error.message : String(error)}`;
+        const message = `Could not connect MCP servers:\n${error instanceof Error ? error.message : String(error)}`;
         ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error: message }));
         ctx.ui.notify(message, "error");
         return { action: "handled" as const };
