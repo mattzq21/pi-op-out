@@ -115,7 +115,11 @@ export default async function mcpBridge(pi: ExtensionAPI) {
   const shutdown = new AbortController();
   let context: ExtensionContext | undefined;
   let pending: Promise<unknown> = Promise.resolve();
-  const publish = () => context?.ui.setStatus(MCP_STATUS_KEY, `json:${JSON.stringify([...statuses.values()])}`);
+  const publish = () => {
+    context?.ui.setStatus(MCP_STATUS_KEY, `json:${JSON.stringify([...statuses.values()])}`);
+    const loading = servers.filter((server) => statuses.get(server.id)?.status === "starting");
+    context?.ui.setStatus("pi-desktop-mcp-loading", loading.length ? loading.map((server) => `Loading ${server.name}`).join(" · ") : undefined);
+  };
   const close = async (id: string) => {
     const connection = connections.get(id);
     connections.delete(id);
@@ -181,6 +185,8 @@ export default async function mcpBridge(pi: ExtensionAPI) {
         const message = error instanceof Error ? error.message : String(error);
         statuses.set(id, { id, status: "error", error: errorDetails(message) }); errors.push(`${server.name}: ${message}`);
         process.stderr.write(`[mcp:${server.name}] ${message}\n`);
+      } finally {
+        publish();
       }
     }));
     publish();
@@ -218,6 +224,7 @@ export default async function mcpBridge(pi: ExtensionAPI) {
     unsubscribe(); shutdown.abort();
     await pending;
     await Promise.all([...connections.keys()].map(close));
-    context?.ui.setStatus(MCP_STATUS_KEY, undefined); context = undefined;
+    context?.ui.setStatus(MCP_STATUS_KEY, undefined);
+    context?.ui.setStatus("pi-desktop-mcp-loading", undefined); context = undefined;
   });
 }
