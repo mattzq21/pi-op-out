@@ -1096,9 +1096,8 @@ describe("Conversation acceptance", () => {
     await mockBackend({ "pi_command:prompt": {} });
     try {
       await emitPiEvent({ type: "agent_start" });
-      await app.chooseComposerOption("Streaming message behavior", "Steer");
       await app.prepareMessage("Focus on the acceptance criteria");
-      await browser.keys("Enter");
+      await browser.execute(() => document.querySelector('[aria-label="Message piop"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true })));
 
       await expect(app.composer).toHaveValue("");
       await emitPiEvent({ type: "queue_update", steering: ["Focus on the acceptance criteria"], followUp: [] });
@@ -1116,7 +1115,6 @@ describe("Conversation acceptance", () => {
     await mockBackend({ "pi_command:prompt": {}, "pi_command:abort": {}, "pi_command:clear_queue": { steering: [], followUp: ["Check this after the current response"] } });
     try {
       await emitPiEvent({ type: "agent_start" });
-      await app.chooseComposerOption("Streaming message behavior", "Queue");
       await app.prepareMessage("Check this after the current response");
       // The real runtime publishes its queue before acknowledging the prompt.
       await emitPiEvent({ type: "queue_update", steering: [], followUp: ["Check this after the current response"] });
