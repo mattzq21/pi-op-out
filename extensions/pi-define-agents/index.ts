@@ -272,7 +272,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   }});
   pi.registerCommand("pi-define-agents-config", { description: "Update agent definitions", handler: async (args, ctx) => {
     const previous = config;
-    const next = await migratePrompts({ ...decode<StoredConfig>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied }); await writeConfig(next); config = next;
+    const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied }); await writeConfig(next); config = next;
     try { if (!findAgent(active)) active = "default"; pi.appendEntry(STATE_ENTRY, { active }); await reload(ctx); }
     catch (error) { await writeConfig(previous); config = previous; throw error; }
   }});

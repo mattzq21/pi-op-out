@@ -371,4 +371,5 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 @media (max-width: 1050px) { .settings-nav .settings-search { width: 100%; } }
 
 .setting-cap-controls { display: flex; align-items: center; gap: 12px; }
+.settings-section + .settings-section { margin-top: 28px; }
 .setting-number:disabled { opacity: .5; cursor: not-allowed; }
