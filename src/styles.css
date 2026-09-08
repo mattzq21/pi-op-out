@@ -132,6 +132,9 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .prompt-context-content > pre, .prompt-context-content div pre, .prompt-context-content small { overflow-wrap: anywhere; }
 
 .composer-wrap { width: min(740px, calc(100% - 72px)); margin: 0 auto; padding-bottom: 13px; }
+.image-input-toast { display: flex; align-items: center; gap: 9px; width: fit-content; max-width: 100%; box-sizing: border-box; margin: 0 0 10px; padding: 11px 13px; border: 1px solid #792b24; border-radius: 12px; background: #260d0b; color: #ff6557; font-size: 14px; line-height: 1.4; box-shadow: 0 4px 16px #0002; }
+.image-input-toast > svg { flex-shrink: 0; }
+.image-input-toast button { display: grid; place-items: center; flex-shrink: 0; margin-left: 2px; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; }
 .conversation-turn > .prompt-context { margin: 0 0 14px; }
 .conversation-turn > :is(.user-message, .prompt-context):has(+ .work-group) { margin-bottom: 8px; }
 .command-result { margin: 18px auto 28px; color: var(--muted); text-align: center; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
