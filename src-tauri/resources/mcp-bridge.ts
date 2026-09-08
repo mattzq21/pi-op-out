@@ -193,12 +193,21 @@ export default async function mcpBridge(pi: ExtensionAPI) {
     selection.ready = pending.then(() => select(selection));
     pending = selection.ready.catch(() => undefined);
   });
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", (_event, ctx) => {
     context = ctx; publish();
+  });
+  pi.on("input", async (event, ctx) => {
     if (process.env.PI_DEFINE_AGENTS_ACTIVE !== "1") {
       const selection: Selection = { serverIds: servers.filter((server) => server.enabled && (!allowed || allowed.has(server.id))).map((server) => server.id), agentName: "default", sessionId: ctx.sessionManager.getSessionId() };
-      await select(selection);
+      try { await select(selection); }
+      catch (error) {
+        const message = `Could not connect MCP servers: ${error instanceof Error ? error.message : String(error)}`;
+        ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error: message }));
+        ctx.ui.notify(message, "error");
+        return { action: "handled" as const };
+      }
     }
+    return { action: "continue" as const };
   });
   pi.registerCommand("mcp-status", { description: "Show MCP servers and tools loaded by piop", handler: async () => {
     const loaded = [...connections].filter(([, connection]) => connection.connected);

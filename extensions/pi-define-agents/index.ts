@@ -174,7 +174,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     try { const stored = JSON.parse(process.env[DEFAULTS_ENV] || "null"); if (stored?.session === session && typeof stored.model === "string" && typeof stored.effort === "string") runtimeDefaults = { model: stored.model, effort: stored.effort }; } catch { /* Capture clean runtime defaults below. */ }
     if (!runtimeDefaults) saveRuntimeDefaults({ model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "", effort: pi.getThinkingLevel() });
   };
-  const activate = async (agent: Agent, ctx: ExtensionContext) => {
+  const activate = async (agent: Agent, ctx: ExtensionContext, connectMcp: boolean) => {
     activeSystemPrompt = DEFAULT_SYSTEM_PROMPT;
     if (agent.path_systemprompt !== undefined) {
       const path = agent.path_systemprompt.startsWith("~/") ? join(homedir(), agent.path_systemprompt.slice(2)) : resolve(dirname(configPath), agent.path_systemprompt);
@@ -191,21 +191,21 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const effort = effortOverride || agent.effort.trim() || runtimeDefaults?.effort; if (effort && effort !== pi.getThinkingLevel()) { applyingAgentEffort = effort; pi.setThinkingLevel(effort as any); }
     pi.setActiveTools([]);
     const tools = new Set(agent.tools);
-    if (process.env.PI_DESKTOP_MCP_CONFIG) {
+    if (connectMcp && process.env.PI_DESKTOP_MCP_CONFIG) {
       const selection: { serverIds: string[]; agentName: string; sessionId: string; ready?: Promise<string[]> } = { serverIds: agent.mcpServers, agentName: agent.name, sessionId: ctx.sessionManager.getSessionId() };
       pi.events.emit("piop:mcp:select", selection);
       if (!selection.ready) return `Agent "${agent.name}" cannot run because the MCP bridge is unavailable`;
       try { for (const tool of await selection.ready) tools.add(tool); }
       catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" could not connect its MCP servers: ${error instanceof Error ? error.message : String(error)}`; }
-    } else {
+    } else if (connectMcp) {
       for (const info of pi.getAllTools()) if (agent.mcpServers.some((server) => info.name.startsWith(`mcp_${safeName(server)}_`))) tools.add(info.name);
     }
     pi.setActiveTools([...tools]); return undefined;
   };
-  const useAgent = async (name: string, ctx: ExtensionContext) => {
+  const useAgent = async (name: string, ctx: ExtensionContext, connectMcp: boolean) => {
     restore(ctx);
     const agent = findAgent(name);
-    activeToolError = agent ? await activate(agent, ctx) : `Unknown defined agent: ${name}`;
+    activeToolError = agent ? await activate(agent, ctx, connectMcp) : `Unknown defined agent: ${name}`;
     if (activeToolError) pi.setActiveTools([]);
     publish(ctx);
     return activeToolError;
@@ -219,15 +219,15 @@ export default async function defineAgents(pi: ExtensionAPI) {
       const name = (entry.data as { active?: string })?.active;
       if (name && findAgent(name)) active = name;
     }
-    // Configuration is ready even when activating its MCP servers takes longer.
+    // Selection applies the agent's configuration; MCP startup waits for input.
     publish(ctx);
-    await useAgent(active, ctx);
+    await useAgent(active, ctx, false);
     publish(ctx);
   });
   pi.on("session_shutdown", (_event, ctx) => { delete process.env.PI_DEFINE_AGENTS_ACTIVE; if (!reloading) ctx.ui.setStatus(STATUS_KEY, undefined); });
   pi.on("resources_discover", () => { const agent = currentAgent(); const skillPaths = agent ? agentSkills(agent) : []; return skillPaths.length ? { skillPaths } : undefined; });
   pi.on("input", async (event, ctx) => {
-    const error = await useAgent(active, ctx);
+    const error = await useAgent(active, ctx, true);
     if (error) { ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error })); ctx.ui.notify(error, "error"); return { action: "handled" }; }
     return { action: "continue" };
   });

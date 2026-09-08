@@ -34,7 +34,7 @@ piop- + first 32 hexadecimal characters of SHA256(
 
 The identity survives reconnects and extension reloads; guest state survives only until idle cleanup. A fork/new conversation, renamed agent, or different server ID gets a different identity. Agents with the same name in different conversations remain isolated.
 
-Only the selected agent's enabled MCP servers connect. On agent/session changes, Piop closes old connections before acquiring new ones. Shutdown and reload await MCP transport closure. The broker releases the exclusive lease on disconnect. A simultaneous connection using the same identity is rejected by the broker.
+Selecting an agent or opening a session does not connect MCP servers. When a user submits a message, Piop connects the selected agent's enabled MCP servers and waits for tool discovery before allowing inference. On agent/session changes, Piop closes old connections and defers new connections until the next message. Shutdown and reload await MCP transport closure. The broker releases the exclusive lease on disconnect. A simultaneous connection using the same identity is rejected by the broker.
 
 VMs are ephemeral. After 60 seconds without MCP activity, the broker closes the transport, stops the VM, and deletes its writable disk and per-VM artifacts. An open connection or viewer does not keep it alive. Startup and in-flight requests are protected from inactivity cleanup; the countdown starts when they finish. Disconnecting does not reset the countdown. Reconnecting before expiry reuses the running desktop; after cleanup, the same identity starts a fresh desktop from the base image. Save required logs and evidence outside the guest before it expires.
 
@@ -61,7 +61,7 @@ An older running broker daemon must be restarted after its agents disconnect to 
 
 ## Extension coordination
 
-`pi-define-agents` emits `piop:mcp:select` with `{ serverIds, agentName, sessionId }`. The MCP bridge synchronously assigns a `ready` promise, which resolves to the exact discovered tool names after connecting those servers. The agent awaits it before enabling tools. This uses Pi's event bus and dynamic tool registration; it does not depend on extension import order. Without defined agents, the bridge connects the globally enabled servers on session start.
+`pi-define-agents` emits `piop:mcp:select` with `{ serverIds, agentName, sessionId }`. The MCP bridge synchronously assigns a `ready` promise, which resolves to the exact discovered tool names after connecting those servers. The agent awaits it before enabling tools. This uses Pi's event bus and dynamic tool registration; it does not depend on extension import order. Selection and session startup only apply agent configuration. The input handler emits this event and awaits readiness before allowing the message through. Without defined agents, the bridge likewise connects the globally enabled servers on input, blocking the message if connection fails.
 
 ## Contract review on 2026-09-08
 
