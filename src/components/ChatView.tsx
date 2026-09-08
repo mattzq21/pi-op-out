@@ -21,8 +21,15 @@ export function ChatView(props: Props) {
   const turns = useMemo(() => groupTurns(props.messages), [props.messages]);
   const sessionUsage = useMemo(() => props.messages.reduce((total, message) => ({ input: total.input + (message.usage?.input ?? 0), cacheRead: total.cacheRead + (message.usage?.cacheRead ?? 0), cacheWrite: total.cacheWrite + (message.usage?.cacheWrite ?? 0) }), { input: 0, cacheRead: 0, cacheWrite: 0 }), [props.messages]);
   const sessionCache = cacheHitStats(sessionUsage);
-  const actions = useRef({ onSend: props.onSend, onBranch: props.onBranch, onCreateWorktree: props.onCreateWorktree });
-  actions.current = { onSend: props.onSend, onBranch: props.onBranch, onCreateWorktree: props.onCreateWorktree };
+  const [submittedMessage, setSubmittedMessage] = useState<ChatMessage>();
+  const send: Props["onSend"] = async (text, behavior, images = []) => {
+    const message: ChatMessage = { id: crypto.randomUUID(), role: "user", content: [{ type: "text", text }, ...images] };
+    setSubmittedMessage(message);
+    try { return await props.onSend(text, behavior, images); }
+    finally { setSubmittedMessage((current) => current?.id === message.id ? undefined : current); }
+  };
+  const actions = useRef({ onSend: send, onBranch: props.onBranch, onCreateWorktree: props.onCreateWorktree });
+  actions.current = { onSend: send, onBranch: props.onBranch, onCreateWorktree: props.onCreateWorktree };
   const retryDraft = useRef({ value: props.draft, change: props.onDraftChange, mounted: true });
   retryDraft.current.value = props.draft; retryDraft.current.change = props.onDraftChange;
   useEffect(() => { retryDraft.current.mounted = true; return () => { retryDraft.current.mounted = false; }; }, []);
@@ -37,7 +44,8 @@ export function ChatView(props: Props) {
   const onBranch = useCallback<Props["onBranch"]>((message) => actions.current.onBranch(message), []);
   const onCreateWorktree = useCallback<NonNullable<Props["onCreateWorktree"]>>((message) => actions.current.onCreateWorktree?.(message), []);
   const fastModeStatus = props.statuses["pi-desktop-fast-mode"];
-  const activity = props.statuses["pi-desktop-mcp-loading"] || props.state.activity;
+  const mcpLoading = props.statuses["pi-desktop-mcp-loading"];
+  const activity = mcpLoading ? undefined : props.state.activity;
   const statuses = Object.entries(props.statuses).filter(([key]) => !["pi-desktop-fast-mode", "pi-desktop-mcp-loading"].includes(key)).map(([, text]) => text);
   const projectName = props.projectCwd?.split(/[\\/]/).filter(Boolean).at(-1);
   const retryable = !props.state.isStreaming && !props.state.isPaused && !props.state.isPausing;
@@ -48,7 +56,7 @@ export function ChatView(props: Props) {
     element.scrollTop = element.scrollHeight;
     lastScrollTop.current = element.scrollTop;
   }, []);
-  useLayoutEffect(scrollToLatest, [scrollToLatest, props.messages, props.gitDiffs, props.state.isStreaming]);
+  useLayoutEffect(scrollToLatest, [scrollToLatest, props.messages, props.gitDiffs, props.state.isStreaming, mcpLoading, submittedMessage]);
   useEffect(() => {
     const composer = composerStack.current;
     const chatShell = shell.current;
@@ -74,10 +82,15 @@ export function ChatView(props: Props) {
         else if (element.scrollTop > lastScrollTop.current) followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight <= 2;
         lastScrollTop.current = element.scrollTop;
       }}><div className="conversation">
-      {!props.messages.length && <div className="empty-chat"><span>πop</span></div>}
-      {turns.map((turn, index) => <ConversationTurn key={`${turn[0]?.timestamp ?? turn[0]?.id ?? "turn"}:${index}`} messages={turn} gitDiffs={props.gitDiffs} debug={props.debug ?? false} active={props.state.isStreaming && index === turns.length - 1} retryable={retryable && index === turns.length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index === turns.length - 1} onRetry={onRetry} onBranch={onBranch} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} />)}<div className="scroll-anchor" />
+      {!props.messages.length && !mcpLoading && <div className="empty-chat"><span>πop</span></div>}
+      {turns.map((turn, index) => <ConversationTurn key={`${turn[0]?.timestamp ?? turn[0]?.id ?? "turn"}:${index}`} messages={turn} gitDiffs={props.gitDiffs} debug={props.debug ?? false} active={props.state.isStreaming && index === turns.length - 1} retryable={retryable && index === turns.length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index === turns.length - 1} onRetry={onRetry} onBranch={onBranch} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} />)}
+      {mcpLoading && <section className="mcp-pending-turn" aria-label="Message waiting for MCP" aria-busy="true">
+        {submittedMessage && <div className="mcp-pending-message"><Message message={submittedMessage} showActions={false} /></div>}
+        <div className="mcp-loading" role="status">{mcpLoading}</div>
+      </section>}
+      <div className="scroll-anchor" />
     </div></div>
-    {!props.readOnly && <div ref={composerStack} className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.map((line, index) => <div key={index}>{line}</div>)}</div>} {statuses.length > 0 && <div className="extension-status">{statuses.join(" · ")}</div>}{activity && <div className="runtime-activity" role="status">{activity}</div>}{!props.messages.length && props.state.messageCount === 0 && <div className="new-chat-project"><div className="project-picker"><button type="button" className={projectName ? "selected" : undefined} aria-label={projectName ? `Selected project: ${projectName}` : "Choose project"} title={props.projectCwd} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName ?? "Choose project"}</button>{projectName && props.onClearProject && <button type="button" className="clear-project" aria-label="Clear project" title="Clear project" disabled={props.controlsDisabled} onClick={props.onClearProject}><X size={14} /></button>}</div></div>}<Composer streaming={props.state.isStreaming} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} pendingMessages={props.state.pendingMessages} onChangePending={props.onChangePending} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} dictionaries={props.dictionaries} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug ? sessionCache : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn ? { id: `${abortedTurn.assistant.timestamp ?? abortedTurn.assistant.id}:${abortedTurn.prompt}`, value: abortedTurn.prompt } : undefined} onSend={props.onSend} onAbort={props.onAbort} onPause={props.onPause} onResume={props.onResume} onOpenTerminal={props.onOpenTerminal} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div>}
+    {!props.readOnly && <div ref={composerStack} className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.map((line, index) => <div key={index}>{line}</div>)}</div>} {statuses.length > 0 && <div className="extension-status">{statuses.join(" · ")}</div>}{activity && <div className="runtime-activity" role="status">{activity}</div>}{!props.messages.length && props.state.messageCount === 0 && <div className="new-chat-project"><div className="project-picker"><button type="button" className={projectName ? "selected" : undefined} aria-label={projectName ? `Selected project: ${projectName}` : "Choose project"} title={props.projectCwd} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName ?? "Choose project"}</button>{projectName && props.onClearProject && <button type="button" className="clear-project" aria-label="Clear project" title="Clear project" disabled={props.controlsDisabled} onClick={props.onClearProject}><X size={14} /></button>}</div></div>}<Composer streaming={props.state.isStreaming} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} pendingMessages={props.state.pendingMessages} onChangePending={props.onChangePending} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} dictionaries={props.dictionaries} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug ? sessionCache : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn ? { id: `${abortedTurn.assistant.timestamp ?? abortedTurn.assistant.id}:${abortedTurn.prompt}`, value: abortedTurn.prompt } : undefined} onSend={send} onAbort={props.onAbort} onPause={props.onPause} onResume={props.onResume} onOpenTerminal={props.onOpenTerminal} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div>}
   </main>;
 }
 
