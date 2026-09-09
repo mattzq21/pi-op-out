@@ -2185,39 +2185,32 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
 }
 
 #[tauri::command(async)]
-fn delete_session(app: AppHandle, session_path: String, host_id: Option<String>) -> Result<(), String> {
+fn delete_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, host_id: Option<String>) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
-    if host_id != "local" {
-        let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
-        let remote = format!(r#"root=$(cd "$HOME/.piop/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) header=$(head -n 1 -- "$target"); session_id=$(printf '%s\n' "$header" | sed -n 's/^.*"id":"\([^"]*\)".*$/\1/p'); cwd=$(printf '%s\n' "$header" | sed -n 's/^.*"cwd":"\([^"]*\)".*$/\1/p'); diff=${{target%.jsonl}}.diffs.json; rm -- "$target" || exit 1; rm -f -- "$diff" || exit 1; case "$session_id" in ''|*[!a-zA-Z0-9._-]*) ;; *) prefix="refs/pi-session-snapshots/chats/$session_id/"; if git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1; then git -C "$cwd" for-each-ref --format='%(refname)' "$prefix" | while IFS= read -r snapshot_ref; do case "$snapshot_ref" in "$prefix"*) git -C "$cwd" update-ref -d "$snapshot_ref" || exit 1 ;; esac; done || exit 1; git -C "$cwd" update-ref -d "refs/pi-session-snapshots/$session_id" || true; fi ;; esac ;; *) printf 'Refusing to delete a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(&session_path));
-        let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not delete session on {}: {error}", host.name))?;
-        return output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string());
+    let settings = load_app_settings(app)?;
+    let path = desktop_session_file(&settings, &host_id, &session_path)?;
+    if runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values()
+        .any(|agent| agent.host_id == host_id && agent.session_path.as_deref() == Some(path.as_str())) {
+        return Err("Close the session before deleting it".into());
     }
-    let source = local_desktop_session_file(&session_path)?;
-    let snapshot_owner = fs::File::open(&source).ok().and_then(|file| {
-        let mut lines = BufReader::new(file).lines();
-        let header: Value = serde_json::from_str(&lines.next()?.ok()?).ok()?;
-        let id = header.get("id")?.as_str()?.replace(|character: char| !character.is_ascii_alphanumeric() && !matches!(character, '.' | '_' | '-'), "-").trim_matches('.').to_string();
-        let cwd = header.get("cwd")?.as_str()?.to_string();
-        (!id.is_empty() && !cwd.is_empty()).then_some((cwd, id))
-    });
-    fs::remove_file(&source).map_err(|error| format!("Could not delete session: {error}"))?;
-    let diff_path = source.with_extension("diffs.json"); if diff_path.exists() { fs::remove_file(diff_path).map_err(|error| format!("Session deleted, but its diffs could not be deleted: {error}"))?; }
-    if let Some((cwd, id)) = snapshot_owner {
-        let prefix = format!("refs/pi-session-snapshots/chats/{id}/");
-        let output = Command::new("git").args(["-C", &cwd, "for-each-ref", "--format=%(refname)", &prefix]).output();
-        if let Ok(output) = output {
-            if output.status.success() {
-                for snapshot_ref in String::from_utf8_lossy(&output.stdout).lines().filter(|reference| reference.starts_with(&prefix)) {
-                    let status = Command::new("git").args(["-C", &cwd, "update-ref", "-d", snapshot_ref]).status().map_err(|error| format!("Session deleted, but its project snapshot could not be deleted: {error}"))?;
-                    if !status.success() { return Err("Session deleted, but its project snapshot could not be deleted".into()); }
-                }
-                let legacy_ref = format!("refs/pi-session-snapshots/{id}");
-                let _ = Command::new("git").args(["-C", &cwd, "update-ref", "-d", &legacy_ref]).status();
-            }
-        }
-    }
-    Ok(())
+    let active_session_ids: Vec<String> = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values()
+        .filter(|agent| agent.host_id == host_id).filter_map(|agent| agent.session_id.clone()).collect();
+    let arguments = json!({ "path": path, "activeSessionIds": active_session_ids, "root": if host_id == "local" { Some(desktop_sessions_dir(&home_dir()?)) } else { None } }).to_string();
+    let script = include_str!("../resources/delete-session.cjs");
+    let mut command = if host_id == "local" {
+        let mut command = Command::new("node");
+        command.args(["-e", script, &arguments]);
+        command
+    } else {
+        let host = remote_host(&settings, &host_id)?;
+        let mut command = ssh(host);
+        command.arg(remote_login_command(&format!("node -e {} {}", shell_quote(script), shell_quote(&arguments))));
+        command
+    };
+    let output = run_limited(&mut command, 256 * 1024, "Could not delete session")?;
+    if output.status.success() { return Ok(()); }
+    let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(if error.is_empty() { "Could not delete session".into() } else { error })
 }
 
 #[tauri::command(async)]
