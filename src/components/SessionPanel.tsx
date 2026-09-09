@@ -3,7 +3,7 @@ import { Archive, ChevronDown, Columns2, CopyPlus, Folder, FolderOpen, FolderGit
 import type { SessionSummary } from "../types";
 
 export type SessionAction = "split" | "rename" | "clone" | "open-directory" | "archive";
-interface Props { sessions: SessionSummary[]; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; createGroupRequest?: number; }
+interface Props { sessions: SessionSummary[]; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; createGroupRequest?: number; onCreateGroupHandled?: () => void; }
 interface CustomGroup { id: string; name: string; }
 interface DraggedSession { projectKey: string; sessionKey: string; session: SessionSummary; }
 interface DropTarget { projectKey: string; sessionKey: string; edge: "before" | "after"; layoutBefore?: string | null; }
@@ -73,7 +73,6 @@ function savedSidebarOrder() {
 function sessionKey(session: SessionSummary) { return `${session.hostId ?? "local"}:${session.id}`; }
 function physicalProjectKey(session: SessionSummary) { return `${session.hostId ?? "local"}:${session.projectRoot ?? session.cwd}`; }
 function projectName(session: SessionSummary) { return session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project; }
-function canPlaceSessionIn(session: SessionSummary, projectKey: string) { return projectKey === UNGROUPED_KEY || projectKey.startsWith(CUSTOM_GROUP_PREFIX) || projectKey === physicalProjectKey(session); }
 function sessionLayoutToken(key: string) { return `session:${key}`; }
 function groupLayoutToken(key: string) { return `group:${key}`; }
 function disclosureId(key: string) {
@@ -98,7 +97,7 @@ function formatApiCost(cost = 0) {
   return `$${cost.toFixed(2)}`;
 }
 
-export function SessionPanel({ sessions, activeId, activeHostId = "local", runningSessions = new Set(), unseenSessions = new Set(), query, onQuery, onSelect, onAction, createGroupRequest = 0 }: Props) {
+export function SessionPanel({ sessions, activeId, activeHostId = "local", runningSessions = new Set(), unseenSessions = new Set(), query, onQuery, onSelect, onAction, createGroupRequest = 0, onCreateGroupHandled }: Props) {
   const [menu, setMenu] = useState<{ session: SessionSummary; x: number; y: number; returnFocus?: HTMLElement }>();
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(savedCollapsedProjects);
   const [sessionOrders, setSessionOrders] = useState<Record<string, string[]>>(savedSessionOrders);
@@ -115,7 +114,6 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   const searchRef = useRef<HTMLInputElement>(null);
   const groupNameRef = useRef<HTMLInputElement>(null);
   const groupDraftActive = useRef(false);
-  const lastCreateGroupRequestRef = useRef(createGroupRequest);
   const mouseDragRef = useRef<MouseDrag | undefined>(undefined);
   const mouseDropTargetRef = useRef<DropTarget | undefined>(undefined);
   const suppressClickRef = useRef<string | undefined>(undefined);
@@ -143,12 +141,16 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
     return () => window.removeEventListener("keydown", focusSearch);
   }, []);
   useEffect(() => {
-    if (createGroupRequest === lastCreateGroupRequestRef.current) return;
-    lastCreateGroupRequestRef.current = createGroupRequest;
+    if (!createGroupRequest) return;
     groupDraftActive.current = true; setEditingGroupId(undefined); setGroupDraftError(undefined); setNewGroupName("");
+    sessionScrollRef.current?.scrollTo({ top: 0 });
+    onCreateGroupHandled?.();
+  }, [createGroupRequest, onCreateGroupHandled]);
+  useEffect(() => {
+    if (newGroupName === undefined) return;
     const frame = requestAnimationFrame(() => groupNameRef.current?.focus());
     return () => cancelAnimationFrame(frame);
-  }, [createGroupRequest]);
+  }, [newGroupName === undefined, editingGroupId]);
   useEffect(() => () => { removeMouseListenersRef.current(); if (autoScrollFrameRef.current !== undefined) cancelAnimationFrame(autoScrollFrameRef.current); }, []);
   useEffect(() => { if (menu && !sessions.some((session) => sessionKey(session) === sessionKey(menu.session))) closeMenu(); }, [menu, sessions]);
   const groupNameTaken = (name: string, excludedId?: string) => {
@@ -164,7 +166,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
     if (groupNameTaken(name, editingGroupId)) { setGroupDraftError("A project or group already uses that name."); return; }
     groupDraftActive.current = false; setGroupDraftError(undefined); setNewGroupName(undefined);
     setCustomGroups((current) => {
-      const next = editingGroupId ? current.map((group) => group.id === editingGroupId ? { ...group, name } : group) : [...current, { id: crypto.randomUUID(), name }];
+      const next = editingGroupId ? current.map((group) => group.id === editingGroupId ? { ...group, name } : group) : [{ id: crypto.randomUUID(), name }, ...current];
       try { localStorage.setItem(CUSTOM_GROUPS_KEY, JSON.stringify(next)); } catch { /* Persistence is best-effort. */ }
       return next;
     });
@@ -194,7 +196,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
     });
   };
   const moveSession = (drag: DraggedSession, destinationKey: string, destinationSessions: SessionSummary[], targetKey?: string, edge: "before" | "after" = "after") => {
-    if (!canPlaceSessionIn(drag.session, destinationKey)) return;
+    if (!groupedSessionsRef.current.has(destinationKey)) return;
     if (drag.projectKey === destinationKey && drag.sessionKey === targetKey) return;
     const nextOrder = destinationSessions.map(sessionKey).filter((key) => key !== drag.sessionKey);
     const targetIndex = targetKey ? nextOrder.indexOf(targetKey) : -1;
@@ -232,7 +234,9 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   };
   const filtered = sessions.filter((session) => {
     if (!normalizedQuery) return true;
-    const groupName = customGroupsByKey.get(visualProjectKey(session))?.name ?? "";
+    const location = visualProjectKey(session);
+    const project = projectDetails.get(location);
+    const groupName = customGroupsByKey.get(location)?.name ?? (project ? projectName(project) : "");
     return `${session.name} ${session.project} ${projectName(session)} ${session.preview} ${session.hostName ?? session.hostId ?? "Local"} ${groupName}`.toLowerCase().includes(normalizedQuery);
   });
   const groupedSessions = filtered.reduce<Record<string, SessionSummary[]>>((result, session) => {
@@ -256,7 +260,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   }, [projectOrderKey]);
   const groups = [
     ...customVisualGroups.filter(([, , , , projectSessions]) => !normalizedQuery || projectSessions.length > 0),
-    ...physicalGroups.filter(([, , , , projectSessions]) => projectSessions.length > 0 || Boolean(draggedSession)),
+    ...physicalGroups.filter(([, , , , projectSessions]) => !normalizedQuery || projectSessions.length > 0),
   ];
   groupedSessionsRef.current = new Map([[UNGROUPED_KEY, ungroupedSessions], ...groups.map(([key, , , , projectSessions]) => [key, projectSessions] as const)]);
   const defaultSidebarEntries = [...ungroupedSessions.map((session) => sessionLayoutToken(sessionKey(session))), ...groups.map(([key]) => groupLayoutToken(key))];
@@ -269,7 +273,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   const moveSessionByKeyboard = (drag: DraggedSession, direction: -1 | 1, betweenGroups: boolean) => {
     const sourceSessions = groupedSessionsRef.current.get(drag.projectKey) ?? [];
     if (betweenGroups) {
-      const destinationKeys = [UNGROUPED_KEY, ...groups.map(([key]) => key)].filter((key) => canPlaceSessionIn(drag.session, key));
+      const destinationKeys = [UNGROUPED_KEY, ...sidebarEntriesRef.current.filter((token) => token.startsWith("group:")).map((token) => token.slice("group:".length))];
       const sourceIndex = destinationKeys.indexOf(drag.projectKey); const destinationKey = destinationKeys[sourceIndex + direction];
       if (!destinationKey) return;
       moveSession(drag, destinationKey, groupedSessionsRef.current.get(destinationKey) ?? []); expandProject(destinationKey);
@@ -319,14 +323,13 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
         const bounds = sessionElement.getBoundingClientRect();
         const edge = y < bounds.top + bounds.height / 2 ? "before" : "after";
         const projectKey = sessionElement.dataset.projectKey!; const targetKey = sessionElement.dataset.sessionKey!;
-        if (!canPlaceSessionIn(current.session, projectKey)) nextTarget = undefined;
-        else if (projectKey === UNGROUPED_KEY) {
+        if (projectKey === UNGROUPED_KEY) {
           const token = sessionLayoutToken(targetKey); const index = sidebarEntriesRef.current.indexOf(token);
           nextTarget = { projectKey, sessionKey: targetKey, edge, layoutBefore: edge === "before" ? token : sidebarEntriesRef.current[index + 1] ?? null };
         } else nextTarget = { projectKey, sessionKey: targetKey, edge };
       } else if (!sessionElement) {
         const projectElement = hit?.closest<HTMLElement>("[data-drop-project-key]");
-        if (projectElement && canPlaceSessionIn(current.session, projectElement.dataset.dropProjectKey!)) nextTarget = { projectKey: projectElement.dataset.dropProjectKey!, sessionKey: "", edge: "after" };
+        if (projectElement) nextTarget = { projectKey: projectElement.dataset.dropProjectKey!, sessionKey: "", edge: "after" };
       }
       mouseDropTargetRef.current = nextTarget;
       setDropTarget(nextTarget);
