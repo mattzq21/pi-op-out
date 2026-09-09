@@ -31,6 +31,7 @@ async function runFork(sessionFile: string, cwd: string, task: string): Promise<
     ? ["--print", "--approve", "--fork", sessionFile]
     : [process.argv[1], "--print", "--approve", "--fork", sessionFile];
   args.push("--session-dir", join(homedir(), ".piop", "sessions"));
+  args.push("--extension", join(homedir(), ".piop", "hook-loader.ts"));
   const codexCompactionExtension = process.env.PI_DESKTOP_CODEX_COMPACTION_EXTENSION;
   if (codexCompactionExtension) args.push("--extension", codexCompactionExtension);
   const codexWebSearchExtension = process.env.PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION;

@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { ChevronRight, FolderGit2, LoaderCircle, X } from "lucide-react";
 import type { AgentProfile, AgentState, ChatMessage, ComposerUpload, GitDiffSnapshots, ImageAttachment, Model, PromptDictionary, SlashCommand } from "../types";
+import { HOOK_STATS_KEY, messageHookCounts, parseHookStats, type HookCounts } from "../lib/hookStats";
 import { Message } from "./Message";
 import { Composer } from "./Composer";
 import { PromptContextBar } from "./PromptContextBar";
@@ -21,6 +22,7 @@ export function ChatView(props: Props) {
   const turns = useMemo(() => groupTurns(props.messages), [props.messages]);
   const sessionUsage = useMemo(() => props.messages.reduce((total, message) => ({ input: total.input + (message.usage?.input ?? 0), cacheRead: total.cacheRead + (message.usage?.cacheRead ?? 0), cacheWrite: total.cacheWrite + (message.usage?.cacheWrite ?? 0) }), { input: 0, cacheRead: 0, cacheWrite: 0 }), [props.messages]);
   const sessionCache = cacheHitStats(sessionUsage);
+  const hookStats = useMemo(() => parseHookStats(props.statuses[HOOK_STATS_KEY]), [props.statuses[HOOK_STATS_KEY]]);
   const [submittedMessage, setSubmittedMessage] = useState<ChatMessage>();
   const send: Props["onSend"] = async (text, behavior, images = []) => {
     const message: ChatMessage = { id: crypto.randomUUID(), role: "user", content: [{ type: "text", text }, ...images] };
@@ -54,7 +56,7 @@ export function ChatView(props: Props) {
     } catch { return []; }
   }, [mcpLoading]);
   const activity = mcpLoading ? undefined : props.state.activity;
-  const statuses = Object.entries(props.statuses).filter(([key]) => !["pi-desktop-fast-mode", "pi-desktop-mcp-loading"].includes(key)).map(([, text]) => text);
+  const statuses = Object.entries(props.statuses).filter(([key]) => ![HOOK_STATS_KEY, "pi-desktop-fast-mode", "pi-desktop-mcp-loading"].includes(key)).map(([, text]) => text);
   const projectName = props.projectCwd?.split(/[\\/]/).filter(Boolean).at(-1);
   const retryable = !props.state.isStreaming && !props.state.isPaused && !props.state.isPausing;
   const abortedTurn = retryable ? findReplaceableAbortedTurn(props.messages) : undefined;
@@ -91,14 +93,14 @@ export function ChatView(props: Props) {
         lastScrollTop.current = element.scrollTop;
       }}><div className="conversation">
       {!props.messages.length && !mcpLoading && <div className="empty-chat"><span>πop</span></div>}
-      {turns.map((turn, index) => <ConversationTurn key={`${turn[0]?.timestamp ?? turn[0]?.id ?? "turn"}:${index}`} messages={turn} gitDiffs={props.gitDiffs} debug={props.debug ?? false} active={props.state.isStreaming && index === turns.length - 1} retryable={retryable && index === turns.length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index === turns.length - 1} onRetry={onRetry} onBranch={onBranch} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} />)}
+      {turns.map((turn, index) => <ConversationTurn key={`${turn[0]?.timestamp ?? turn[0]?.id ?? "turn"}:${index}`} messages={turn} hookCounts={messageHookCounts(turn, hookStats)} gitDiffs={props.gitDiffs} debug={props.debug ?? false} active={props.state.isStreaming && index === turns.length - 1} retryable={retryable && index === turns.length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index === turns.length - 1} onRetry={onRetry} onBranch={onBranch} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} />)}
       {mcpLoading && <section className="mcp-pending-turn" aria-label="Message waiting for MCP" aria-busy="true">
         {submittedMessage && <div className="mcp-pending-message"><Message message={submittedMessage} showActions={false} /></div>}
         <div className="mcp-loading-list" role="status">{props.debug ? loadingServers.map((server) => <div className="mcp-loading" key={server.id}><LoaderCircle className="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading {server.name}</span></div>) : <div className="mcp-loading"><LoaderCircle className="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading MCPs</span></div>}</div>
       </section>}
       <div className="scroll-anchor" />
     </div></div>
-    {!props.readOnly && <div ref={composerStack} className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.map((line, index) => <div key={index}>{line}</div>)}</div>} {statuses.length > 0 && <div className="extension-status">{statuses.join(" · ")}</div>}{activity && <div className="runtime-activity" role="status">{activity}</div>}{!props.messages.length && props.state.messageCount === 0 && <div className="new-chat-project"><div className="project-picker"><button type="button" className={projectName ? "selected" : undefined} aria-label={projectName ? `Selected project: ${projectName}` : "Choose project"} title={props.projectCwd} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName ?? "Choose project"}</button>{projectName && props.onClearProject && <button type="button" className="clear-project" aria-label="Clear project" title="Clear project" disabled={props.controlsDisabled} onClick={props.onClearProject}><X size={14} /></button>}</div></div>}<Composer streaming={props.state.isStreaming} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} pendingMessages={props.state.pendingMessages} onChangePending={props.onChangePending} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} dictionaries={props.dictionaries} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug ? sessionCache : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn ? { id: `${abortedTurn.assistant.timestamp ?? abortedTurn.assistant.id}:${abortedTurn.prompt}`, value: abortedTurn.prompt } : undefined} onSend={send} onAbort={props.onAbort} onPause={props.onPause} onResume={props.onResume} onOpenTerminal={props.onOpenTerminal} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div>}
+    {!props.readOnly && <div ref={composerStack} className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.map((line, index) => <div key={index}>{line}</div>)}</div>} {statuses.length > 0 && <div className="extension-status">{statuses.join(" · ")}</div>}{activity && <div className="runtime-activity" role="status">{activity}</div>}{!props.messages.length && props.state.messageCount === 0 && <div className="new-chat-project"><div className="project-picker"><button type="button" className={projectName ? "selected" : undefined} aria-label={projectName ? `Selected project: ${projectName}` : "Choose project"} title={props.projectCwd} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName ?? "Choose project"}</button>{projectName && props.onClearProject && <button type="button" className="clear-project" aria-label="Clear project" title="Clear project" disabled={props.controlsDisabled} onClick={props.onClearProject}><X size={14} /></button>}</div></div>}<Composer streaming={props.state.isStreaming} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} pendingMessages={props.state.pendingMessages} onChangePending={props.onChangePending} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} dictionaries={props.dictionaries} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionHooks={hookStats?.other} sessionCache={props.debug ? sessionCache : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn ? { id: `${abortedTurn.assistant.timestamp ?? abortedTurn.assistant.id}:${abortedTurn.prompt}`, value: abortedTurn.prompt } : undefined} onSend={send} onAbort={props.onAbort} onPause={props.onPause} onResume={props.onResume} onOpenTerminal={props.onOpenTerminal} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div>}
   </main>;
 }
 
@@ -140,9 +142,9 @@ function renderMessages(messages: ChatMessage[], expanded: boolean, compact = tr
   return compactCompletedTools(messages, compact && !debug).map(({ message, count }) => <Message key={message.id} message={message} toolCount={count} showActions={showActions} expanded={expanded} debug={debug} paused={paused} />);
 }
 
-type ConversationTurnProps = { messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; debug: boolean; active: boolean; retryable: boolean; paused: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"]; onCreateWorktree?: Props["onCreateWorktree"] };
+type ConversationTurnProps = { hookCounts?: HookCounts; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; debug: boolean; active: boolean; retryable: boolean; paused: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"]; onCreateWorktree?: Props["onCreateWorktree"] };
 
-function ConversationTurnView({ messages, gitDiffs, debug, active, retryable, paused, onRetry, onBranch, onCreateWorktree }: ConversationTurnProps) {
+function ConversationTurnView({ messages, hookCounts, gitDiffs, debug, active, retryable, paused, onRetry, onBranch, onCreateWorktree }: ConversationTurnProps) {
   const [retryError, setRetryError] = useState<string>();
   const [retrying, setRetrying] = useState(false); const retryingRef = useRef(false);
   const userIndex = messages.findIndex((message) => message.role === "user");
@@ -186,7 +188,7 @@ function ConversationTurnView({ messages, gitDiffs, debug, active, retryable, pa
     {debug && promptContext && <PromptContextBar context={promptContext} />}
     {active || paused ? <div className="active-work-content">{renderMessages(shown.filter((message) => message.role !== "user"), true, false, debug, paused)}</div> : <>
     {intermediate.length > 0 && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}<ChevronRight size={12} className="work-group-chevron" aria-hidden="true" /></summary><div className="work-group-content">{renderMessages(intermediate, true, true, debug, paused, false)}</div></details>}
-    {finalMessage && <Message message={finalMessage} turnCacheUsage={turnCacheUsage} diff={gitDiff} debug={debug} paused={paused} onBranch={onBranch} onCreateWorktree={worktreeResponse} retrying={retrying} onRetry={retryPrompt ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(onRetry(retryPrompt, undefined, retryImages)).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
+    {finalMessage && <Message message={finalMessage} hookCounts={hookCounts} turnCacheUsage={turnCacheUsage} diff={gitDiff} debug={debug} paused={paused} onBranch={onBranch} onCreateWorktree={worktreeResponse} retrying={retrying} onRetry={retryPrompt ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(onRetry(retryPrompt, undefined, retryImages)).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
     {retryError && <div className="message-failure retry-error" role="alert">Retry failed: {retryError}</div>}
     {renderMessages(shown.filter((message) => message.role === "system"), false)}
     </>}
@@ -194,6 +196,7 @@ function ConversationTurnView({ messages, gitDiffs, debug, active, retryable, pa
 }
 
 const ConversationTurn = memo(ConversationTurnView, (previous, next) => previous.active === next.active
+  && previous.hookCounts?.completed === next.hookCounts?.completed && previous.hookCounts?.failed === next.hookCounts?.failed
   && previous.retryable === next.retryable && previous.paused === next.paused && previous.debug === next.debug && previous.gitDiffs === next.gitDiffs
   && previous.onRetry === next.onRetry && previous.onBranch === next.onBranch
   && previous.onCreateWorktree === next.onCreateWorktree && previous.messages.length === next.messages.length

@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { Blocks, BookOpen, Bot, Check, CircleGauge, CirclePlus, Cpu, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Sparkles, Trash2, Wrench } from "lucide-react";
+import { HooksSettings, HookIcon } from "./HooksSettings";
 import type { AgentProfile, AppSettings, McpServer, Model, AgentConfig, RemoteHost, SessionSummary } from "../types";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutFromEvent, type KeybindAction } from "../lib/keybindings";
 import { IconButton } from "./IconButton";
 import { Toggle } from "./Toggle";
 
-type Section = "general" | "dictionaries" | "agents" | "machines" | "keybinds" | "tools" | "skills" | "mcp";
+type Section = "general" | "dictionaries" | "agents" | "machines" | "keybinds" | "tools" | "skills" | "hooks" | "mcp";
 const sections = [
   { id: "general" as const, label: "General", icon: Settings2 },
   { id: "keybinds" as const, label: "Keybinds", icon: Keyboard },
   { id: "machines" as const, label: "Machines", icon: Server },
   { id: "dictionaries" as const, label: "Dictionaries", icon: BookOpen },
   { id: "agents" as const, label: "Agents", icon: Bot },
+  { id: "hooks" as const, label: "Hooks", icon: HookIcon },
   { id: "skills" as const, label: "Skills", icon: Sparkles }, { id: "tools" as const, label: "Tools", icon: Wrench }, { id: "mcp" as const, label: "MCP servers", icon: Blocks }
 ];
 const isBuiltInAgent = (agent: AgentProfile) => agent.name === "default";
@@ -146,6 +148,7 @@ export function SettingsView({ settings, pendingSettingsCount = 0, agentConfig: 
     <div className="settings-layout"><nav className="settings-nav"><label className="search settings-search"><Search size={15} /><input autoFocus type="search" aria-label="Search settings" placeholder="Search settings" value={settingsQuery} onChange={(event) => setSettingsQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setSettingsQuery(""); } }} /></label>{matchingSections.map((item) => <button key={item.id} className={visibleSection === item.id ? "active" : ""} aria-current={visibleSection === item.id ? "page" : undefined} onClick={() => setSection(item.id)}><item.icon size={16} /><span>{item.label}</span></button>)}</nav>
       <section className="settings-content">
         {!matchingSections.length && <div className="empty-small" role="status">No settings match your search.</div>}
+        {visibleSection === "hooks" && <HooksSettings hosts={settings.hosts} />}
         {visibleSection === "general" && <SettingsSection title="General" description="Agent behavior.">
           <SettingRow icon={<Cpu />} title="Auto compaction" description="Compact context before it reaches the model limit."><Toggle label="Auto compaction" checked={draft.autoCompaction} onChange={(autoCompaction) => patch({ autoCompaction })} /></SettingRow>
           <SettingRow icon={<CircleGauge />} title="Context window cap" description={draft.contextWindowCapEnabled ? "Treat larger model contexts as this many tokens for compaction." : "Use each model’s full context window."}><div className="setting-cap-controls"><input className="setting-number" aria-label="Context window cap" aria-invalid={!contextWindowValid} disabled={!draft.contextWindowCapEnabled} type="number" min={1000} step={1000} value={draft.contextWindowCap} onChange={(event) => patch({ contextWindowCap: Number(event.target.value) })} /><Toggle label="Enable context window cap" checked={draft.contextWindowCapEnabled} onChange={(contextWindowCapEnabled) => patch({ contextWindowCapEnabled })} /></div></SettingRow>
