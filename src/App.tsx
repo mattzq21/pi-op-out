@@ -179,7 +179,7 @@ export default function App() {
     void transport.gitBranch().then((branch) => { if (!cancelled) setActiveBranch(branch ?? undefined); }).catch(() => undefined);
     void transport.isGitRepository().then((isRepository) => { if (!cancelled) setIsGitRepository(isRepository); }).catch(() => undefined);
     return () => { cancelled = true; };
-  }, [transport, activeCwd]);
+  }, [transport]);
   useEffect(() => {
     if (!codexUsage?.resetAt) return;
     const timer = window.setInterval(() => setUsageClock((value) => value + 1), 60_000);
@@ -404,7 +404,8 @@ export default function App() {
         if (destinationCwd) { setActiveCwd(destinationCwd); setTerminalOpen(false); setTerminalTarget(undefined); }
         setState(nextState); setMessages(branchMessages(history.entries, history.leafId)); updateConnected(true);
       }
-      void syncSessionIndex(); return true;
+      if (destinationCwd) void syncSessionIndex();
+      return true;
     } catch (reason) {
       if (!forked || !sourcePath) throw reason;
       try {
