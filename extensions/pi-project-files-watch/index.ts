@@ -20,7 +20,21 @@ class GitError extends Error {
   constructor(message: string, readonly exitCode: number | null) { super(message); }
 }
 
-function runGit(cwd: string, args: string[], env: Record<string, string> = {}, input?: string): Promise<string> {
+async function runGit(cwd: string, args: string[], env: Record<string, string> = {}, input?: string): Promise<string> {
+  const deadline = Date.now() + 10_000;
+  for (let attempt = 0; ; attempt += 1) {
+    try { return await runGitOnce(cwd, args, env, input); }
+    catch (error) {
+      const indexBusy = error instanceof GitError && error.exitCode === 128
+        && /(?:^|\n)fatal: Unable to create '[^\n]*[\\/]index\.lock': File exists\./.test(error.message);
+      const remaining = deadline - Date.now();
+      if (!indexBusy || remaining <= 0) throw error;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(remaining, 100 * 2 ** Math.min(attempt, 3))));
+    }
+  }
+}
+
+function runGitOnce(cwd: string, args: string[], env: Record<string, string> = {}, input?: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn("git", ["-C", cwd, ...args], { env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"] });
     const stdout: Buffer[] = [];
