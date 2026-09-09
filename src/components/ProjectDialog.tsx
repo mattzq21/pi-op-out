@@ -95,10 +95,10 @@ export function ProjectDialog({ initialPath, hosts, initialHostId, onHomeDirecto
   useEffect(() => { dialogRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" }); }, [active]);
 
   const browse = (path: string) => { setQuery(withSeparator(displayPath(expandHome(path, homePath), homePath))); setBrowseRequest((value) => value + 1); setActive(0); setError(undefined); inputRef.current?.focus(); };
-  const open = async () => {
-    if (!listing || loading || openingRef.current) return;
+  const open = async (path = listing?.path) => {
+    if (!path || loading || openingRef.current) return;
     openingRef.current = true; setOpening(true); setError(undefined);
-    try { await onOpen(listing.path, hostId); }
+    try { await onOpen(path, hostId); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { openingRef.current = false; setOpening(false); }
   };
@@ -113,14 +113,14 @@ export function ProjectDialog({ initialPath, hosts, initialHostId, onHomeDirecto
     <div className="directory-palette-search"><Search size={20} />{hasHomePrefix && <span className="directory-palette-prefix" aria-hidden="true">~/</span>}<input ref={inputRef} autoFocus role="combobox" aria-label={hasHomePrefix ? "Folder path relative to home" : "Search or type a folder path"} aria-autocomplete="list" aria-expanded="true" aria-controls="directory-palette-results" aria-activedescendant={!loading && selected ? "directory-result-" + active : undefined} autoComplete="off" spellCheck={false} placeholder="Type a folder path…" readOnly={opening} value={hasHomePrefix ? query.slice(2) : query} onChange={(event) => { setQuery(hasHomePrefix ? "~/" + event.target.value.replace(/^~[\\/]/, "") : event.target.value); setActive(0); setError(undefined); }} onKeyDown={(event) => {
       if (event.nativeEvent.isComposing || opening || event.metaKey || event.ctrlKey) return;
       if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setActive((index) => results.length ? (index + (event.key === "ArrowDown" ? 1 : -1) + results.length) % results.length : 0); }
-      else if (event.key === "Enter") { event.preventDefault(); if (query === "~") browse(homePath); else if (selected && !loading) browse(selected); else if (query.trim()) browse(separator < 0 && basePath ? withSeparator(basePath) + query : query); }
+      else if (event.key === "Enter") { event.preventDefault(); if (fragment && selected) void open(selected); else if (query.trim()) void open(expandHome(query === "~" || /^(?:~[\\/]|[\\/]|[a-z]:[\\/])/i.test(query) ? query : withSeparator(basePath) + query, homePath)); }
       else if (event.key === "Tab" && !event.shiftKey && selected && !loading) { event.preventDefault(); browse(selected); }
       else if (event.key === "Backspace" && event.altKey && listing?.parent) { event.preventDefault(); browse(listing.parent); }
     }} /></div>
-    <div className="directory-palette-caption"><span>{loading ? "Finding folders…" : fragment ? results.length + " matching folders" : "Continue into a folder"}</span><span>Tab to complete</span></div>
+    <div className="directory-palette-caption"><span>{loading ? "Finding folders…" : fragment ? results.length + " matching folders" : "Continue into a folder"}</span><span>Tab to complete · Enter to open</span></div>
     <div id="directory-palette-results" className="directory-palette-results" role="listbox" aria-label="Matching folders" aria-busy={loading}>
       {!loading && results.map((path, index) => <div id={"directory-result-" + index} key={path} role="option" aria-selected={index === active} className="directory-palette-result" onMouseDown={(event) => event.preventDefault()} onMouseMove={() => setActive(index)} onClick={() => { if (!opening) browse(path); }}><Folder size={17} /><span>{folderName(path)}</span></div>)}
-      {!loading && !results.length && <div className="directory-palette-empty">{error ? "Check the path and try again." : fragment ? "No matches. Keep typing a path, or press Enter to browse it." : "No child folders. Open this folder below."}</div>}
+      {!loading && !results.length && <div className="directory-palette-empty">{error ? "Check the path and try again." : fragment ? "No matches. Keep typing a path, or press Enter to open it." : "No child folders. Press Enter to open this folder."}</div>}
       {loading && <div className="directory-palette-empty" role="status">Loading folder suggestions…</div>}
     </div>
     {error && <p className="dialog-error" role="alert">{error}</p>}
