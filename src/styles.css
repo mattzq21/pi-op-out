@@ -108,6 +108,9 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .tool-event small { font: 10px "DM Sans"; }
 .tool-event pre { margin: 3px 0 0; max-height: 260px; overflow: auto; padding: 0; white-space: pre-wrap; font: 11px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .tool-event.done pre { max-height: 7.75em; overflow-y: auto; }
+.tool-input, .tool-output { margin-top: 8px; }
+.tool-input > strong, .tool-output > strong { color: var(--muted); font-size: 11px; }
+.tool-event .tool-input pre { max-height: none; overflow-wrap: anywhere; }
 .tool-event.running .tool-summary { color: #d5b79d; }
 .tool-event.error .tool-summary { color: #d99e91; }
 .tool-chevron { flex: 0 0 auto; transition: transform .15s; }

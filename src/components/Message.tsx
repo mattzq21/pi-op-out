@@ -132,7 +132,8 @@ export function Message({ message, turnCacheUsage, diff, expanded = false, showA
     const status = message.toolStatus ?? "done";
     const label = <><Wrench size={14} /><span><strong>{message.toolName || "tool"}{toolCount > 1 ? ` x${toolCount}` : ""}</strong><small>{status === "running" ? "Running…" : status === "error" ? "Failed" : "Completed"}</small></span></>;
     if (!debug) return <div className={`tool-event ${status}`}><div className="tool-summary">{label}</div></div>;
-    return <details className={`tool-event ${status}`} open={status === "running" || (expanded && status !== "done")}><summary className="tool-summary">{label}<ChevronRight size={12} className="tool-chevron" aria-hidden="true" /></summary>{output && <pre>{output}</pre>}</details>;
+    const input = message.toolInput === undefined ? undefined : JSON.stringify(message.toolInput, null, 2);
+    return <details className={`tool-event ${status}`} open={status === "running" || (expanded && status !== "done")}><summary className="tool-summary">{label}<ChevronRight size={12} className="tool-chevron" aria-hidden="true" /></summary>{input !== undefined && <div className="tool-input"><strong>Input</strong><pre>{input}</pre></div>}{output && <div className="tool-output"><strong>Output</strong><pre>{output}</pre></div>}</details>;
   }
   if (message.role === "user") {
     const { skills, text, literalSkill } = userMessageParts(textOf(message.content));

@@ -86,12 +86,14 @@ export function branchMessages(entries: PiEntry[], leafId: string | null): ChatM
     }
   }
   const calledTargets = new Map<string, string>();
+  const toolInputs = new Map<string, unknown>();
   for (const message of messages) if (message.role === "assistant" && Array.isArray(message.content)) for (const part of message.content) {
+    if (part.type === "toolCall") toolInputs.set(part.id, part.arguments);
     if (part.type === "toolCall" && part.name === "call_agent" && typeof part.arguments.target === "string") calledTargets.set(part.id, part.arguments.target);
   }
   return messages.map((message) => {
     const toolCallId = (message as ChatMessage & { toolCallId?: string }).toolCallId;
     const target = message.toolName === "call_agent" && toolCallId ? calledTargets.get(toolCallId) : undefined;
-    return target ? { ...message, toolName: `${target} called` } : message;
+    return message.role === "tool" ? { ...message, ...(toolCallId && toolInputs.has(toolCallId) ? { toolInput: toolInputs.get(toolCallId) } : {}), ...(target ? { toolName: `${target} called` } : {}) } : message;
   });
 }

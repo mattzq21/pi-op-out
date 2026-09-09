@@ -137,7 +137,7 @@ function compactCompletedTools(messages: ChatMessage[], groupRepeated = true) {
 }
 
 function renderMessages(messages: ChatMessage[], expanded: boolean, compact = true, debug = false, paused = false, showActions = true) {
-  return compactCompletedTools(messages, compact).map(({ message, count }) => <Message key={message.id} message={message} toolCount={count} showActions={showActions} expanded={expanded} debug={debug} paused={paused} />);
+  return compactCompletedTools(messages, compact && !debug).map(({ message, count }) => <Message key={message.id} message={message} toolCount={count} showActions={showActions} expanded={expanded} debug={debug} paused={paused} />);
 }
 
 type ConversationTurnProps = { messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; debug: boolean; active: boolean; retryable: boolean; paused: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"]; onCreateWorktree?: Props["onCreateWorktree"] };
