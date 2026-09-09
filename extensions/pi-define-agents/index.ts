@@ -40,7 +40,7 @@ Guidelines:
 - Show file paths clearly when working with files`;
 
 type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean };
-const fallbackConfig: Config = { agents: [{ name: "default", model: "", effort: "high", path_systemprompt: DEFAULT_PROMPT_PATH, path_agentprompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
+const fallbackConfig: Config = { agents: [{ name: "general", model: "", effort: "high", path_systemprompt: DEFAULT_PROMPT_PATH, path_agentprompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
 function defaultAgent(pi: ExtensionAPI): Agent {
   const agent = structuredClone(fallbackConfig.agents[0]);
   if (desktopList(pi, "tools")?.includes("web_search")) agent.tools.push("web_search");
@@ -105,7 +105,7 @@ async function migratePrompts(stored: StoredConfig, pi: ExtensionAPI): Promise<C
     }
     let agentPromptPath = agent.path_agentprompt;
     if (agentPromptPath === undefined) {
-      agentPromptPath = agent.name === "default" ? DEFAULT_AGENT_PROMPT_PATH : "";
+      agentPromptPath = ["default", "general"].includes(agent.name) ? DEFAULT_AGENT_PROMPT_PATH : "";
       if (typeof agent.agentsMd === "string" && agent.agentsMd.trim()) {
         const hash = createHash("sha256").update(agent.name).update("\0").update(agent.agentsMd).digest("hex");
         agentPromptPath = `agentprompt/${safeName(agent.name)}-${hash}.md`;
@@ -129,11 +129,15 @@ function normalize(value: Partial<Config>, pi: ExtensionAPI): Config {
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => agent && typeof agent.name === "string" && agent.name.length > 0).map((agent) => ({
     name: agent.name, model: typeof agent.model === "string" ? agent.model : "", effort: typeof agent.effort === "string" ? agent.effort : fallbackConfig.agents[0].effort,
     fastMode: agent.fastMode,
-    path_systemprompt: promptPath(agent), path_agentprompt: typeof agent.path_agentprompt === "string" ? agent.path_agentprompt.trim() : agent.name === "default" ? DEFAULT_AGENT_PROMPT_PATH : "",
+    path_systemprompt: promptPath(agent), path_agentprompt: typeof agent.path_agentprompt === "string" ? agent.path_agentprompt.trim() : ["default", "general"].includes(agent.name) ? DEFAULT_AGENT_PROMPT_PATH : "",
     tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => typeof item === "string") : defaultAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => typeof item === "string") : [], mcpServers: Array.isArray(agent.mcpServers) ? agent.mcpServers.filter((item): item is string => typeof item === "string" && item !== "filesystem") : [],
   })) : [];
+  if (!supplied.some((agent) => agent.name === "general")) {
+    const legacy = supplied.find((agent) => agent.name === "default");
+    if (legacy) legacy.name = "general";
+  }
   const unique = supplied.filter((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) === index);
-  const agents = unique.some((agent) => agent.name === "default") ? unique : [defaultAgent(pi), ...unique];
+  const agents = unique.some((agent) => agent.name === "general") ? unique : [defaultAgent(pi), ...unique];
   return { agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true };
 }
 
@@ -143,7 +147,7 @@ async function readConfig(pi: ExtensionAPI): Promise<Config> {
   try {
     const stored = JSON.parse(await readFile(configPath, "utf8"));
     const config = await migratePrompts(stored, pi);
-    if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && ("description" in agent || agent.path_systemprompt === undefined || agent.path_agentprompt === undefined || "agentsMd" in agent || "systemPrompt" in agent || "developerPrompt" in agent))) await writeConfig(config);
+    if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && (agent.name === "default" && !stored.agents.some((item: StoredAgent) => item.name === "general") || "description" in agent || agent.path_systemprompt === undefined || agent.path_agentprompt === undefined || "agentsMd" in agent || "systemPrompt" in agent || "developerPrompt" in agent))) await writeConfig(config);
     return config;
   }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
@@ -195,7 +199,7 @@ function buildAgentSystemPrompt(prompt: string, options: BuildSystemPromptOption
 
 export default async function defineAgents(pi: ExtensionAPI) {
   let config = await loadConfig(pi);
-  let active = "default";
+  let active = "general";
   let runtimeDefaults: RuntimeDefaults | undefined;
   let runtimeSession = "";
   let applyingAgentModel: string | undefined;
@@ -286,9 +290,10 @@ export default async function defineAgents(pi: ExtensionAPI) {
   pi.on("thinking_level_select", (event) => { if (applyingAgentEffort === event.level) { applyingAgentEffort = undefined; return; } effortOverride = event.level; saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); });
   pi.on("session_start", async (_event, ctx) => {
     restore(ctx);
-    active = "default";
+    active = "general";
     for (const entry of ctx.sessionManager.getBranch()) if (entry.type === "custom" && (entry.customType === STATE_ENTRY || entry.customType === "pi-orchestration-state")) {
-      const name = (entry.data as { active?: string })?.active;
+      const storedName = (entry.data as { active?: string })?.active;
+      const name = storedName === "default" && !findAgent("default") ? "general" : storedName;
       if (name && findAgent(name)) active = name;
     }
     // Selection applies the agent's configuration; MCP startup waits for input.
@@ -325,7 +330,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     restore(ctx);
     for (const agent of next.agents) { const error = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model); if (error) throw new Error(error); }
     await writeConfig(next); config = next;
-    try { if (!findAgent(active)) active = "default"; pi.appendEntry(STATE_ENTRY, { active }); await reload(ctx); }
+    try { if (!findAgent(active)) active = "general"; pi.appendEntry(STATE_ENTRY, { active }); await reload(ctx); }
     catch (error) { await writeConfig(previous); config = previous; throw error; }
   }});
 }

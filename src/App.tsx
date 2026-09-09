@@ -217,12 +217,11 @@ export default function App() {
     const availableModels = modelResult.status === "fulfilled" ? modelResult.value.models : [];
     if (transport.needsDefaults()) {
       const defaultModel = availableModels.find((model) => `${model.provider}/${model.id}` === value.defaultModel);
-      if (!defaultModel && availableModels.length) throw new Error(`Default model is unavailable: ${value.defaultModel}`);
       if (defaultModel) await transport.command({ type: "set_model", provider: defaultModel.provider, modelId: defaultModel.id });
       const { levels } = await transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" });
-      if (!levels.includes(value.defaultThinking)) throw new Error(`Default thinking level is unavailable: ${value.defaultThinking}`);
-      await transport.command({ type: "set_thinking_level", level: value.defaultThinking });
+      if (levels.includes(value.defaultThinking)) await transport.command({ type: "set_thinking_level", level: value.defaultThinking });
       await transport.setFastMode(value.defaultFastMode);
+      await transport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(value.defaultAgent ?? "general")}` });
       transport.defaultsApplied();
     }
   }, [transport]);

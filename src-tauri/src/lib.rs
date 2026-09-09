@@ -214,6 +214,8 @@ type GitDiffSnapshots = HashMap<String, String>;
 struct AppSettings {
     #[serde(default)]
     worktree_setup_scripts: Vec<WorktreeSetupScript>,
+    #[serde(default = "default_agent")]
+    default_agent: String,
     default_model: String,
     #[serde(default)]
     hidden_models: Vec<String>,
@@ -619,9 +621,12 @@ fn prepare_btw_extension() -> Result<PathBuf, String> {
     Ok(path)
 }
 
+fn default_agent() -> String { "general".into() }
+
 fn default_settings() -> AppSettings {
     AppSettings {
         worktree_setup_scripts: vec![],
+        default_agent: default_agent(),
         default_fast_mode: false,
         default_model: DEFAULT_MODEL.into(), hidden_models: vec![], default_thinking: "medium".into(), context_window_cap: default_context_window_cap(), context_window_cap_enabled: default_context_window_cap_enabled(), auto_compaction: true, auto_retry: true, debug_mode: false, keybindings: default_keybindings(),
         tools: ["read", "bash", "edit", "write", "grep", "find", "ls"].iter().map(|name| json!({"name": name, "description": "Pi built-in tool", "enabled": true, "builtin": true})).chain([
