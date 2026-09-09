@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Archive, ChevronDown, Columns2, CopyPlus, Folder, FolderOpen, FolderGit2, GitBranch, Pencil, Search, Trash2 } from "lucide-react";
+import { Archive, ChevronDown, Columns2, CopyPlus, Ellipsis, Folder, FolderOpen, FolderGit2, GitBranch, Pencil, Search, Trash2 } from "lucide-react";
 import type { SessionSummary } from "../types";
 
 export type SessionAction = "split" | "rename" | "clone" | "open-directory" | "archive";
@@ -100,6 +100,7 @@ function formatApiCost(cost = 0) {
 
 export function SessionPanel({ sessions, activeId, activeHostId = "local", runningSessions = new Set(), unseenSessions = new Set(), query, onQuery, onSelect, onAction, createGroupRequest = 0, onCreateGroupHandled }: Props) {
   const [menu, setMenu] = useState<{ session: SessionSummary; x: number; y: number; returnFocus?: HTMLElement }>();
+  const [groupMenu, setGroupMenu] = useState<{ projectKey: string; label: string; x: number; y: number; returnFocus: HTMLElement }>();
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => savedGroupKeys(COLLAPSED_PROJECTS_KEY));
   const [removedProjects, setRemovedProjects] = useState<Set<string>>(() => savedGroupKeys(REMOVED_PROJECTS_KEY));
   const [sessionOrders, setSessionOrders] = useState<Record<string, string[]>>(savedSessionOrders);
@@ -125,10 +126,10 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   const groupedSessionsRef = useRef<Map<string, SessionSummary[]>>(new Map());
   const sidebarEntriesRef = useRef<string[]>([]);
   const removeMouseListenersRef = useRef<() => void>(() => {});
-  const closeMenu = (restoreFocus = false) => { const target = menu?.returnFocus; setMenu(undefined); if (restoreFocus) requestAnimationFrame(() => target?.focus()); };
+  const closeMenu = (restoreFocus = false) => { const target = groupMenu?.returnFocus ?? menu?.returnFocus; setMenu(undefined); setGroupMenu(undefined); if (restoreFocus) requestAnimationFrame(() => target?.focus()); };
   useEffect(() => {
-    if (!menu) return;
-    const frame = requestAnimationFrame(() => menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus());
+    if (!menu && !groupMenu) return;
+    const frame = requestAnimationFrame(() => menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus());
     const close = () => closeMenu();
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") closeMenu(true); };
     window.addEventListener("click", close);
@@ -136,7 +137,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
     window.addEventListener("blur", close);
     const scroll = sessionScrollRef.current; scroll?.addEventListener("scroll", close, { passive: true });
     return () => { cancelAnimationFrame(frame); window.removeEventListener("click", close); window.removeEventListener("keydown", closeOnEscape); window.removeEventListener("blur", close); scroll?.removeEventListener("scroll", close); };
-  }, [menu]);
+  }, [menu, groupMenu]);
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "g") { event.preventDefault(); searchRef.current?.focus(); searchRef.current?.select(); } };
     window.addEventListener("keydown", focusSearch);
@@ -420,12 +421,18 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
     "aria-description": !normalizedQuery ? "Drag to reorder. Press Alt plus Up or Down to reorder." : undefined,
     "aria-keyshortcuts": !normalizedQuery ? "Alt+ArrowUp Alt+ArrowDown" : undefined,
   });
-  const renderSession = (session: SessionSummary, projectKey: string) => { const key = sessionKey(session); const running = runningSessions.has(key); const activity = unseenSessions.has(key) ? "New activity" : undefined; const accessibleActivity = running ? "Running" : activity; const target = dropTarget?.projectKey === projectKey && dropTarget.sessionKey === key ? dropTarget.edge : undefined; const drag = { projectKey, sessionKey: key, session }; return <div key={key} data-session-key={key} data-project-key={projectKey} data-sidebar-token={projectKey === UNGROUPED_KEY ? sessionLayoutToken(key) : undefined} className={`session-item ${!normalizedQuery ? "reorderable" : ""} ${activeId === session.id && (session.hostId ?? "local") === activeHostId ? "active" : ""} ${running ? "running" : activity ? "unseen" : ""} ${draggedSession?.sessionKey === key ? "dragging" : ""} ${target ? `drop-${target}` : ""}`} onContextMenu={(event) => { event.preventDefault(); const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget.querySelector<HTMLElement>(".session-main") ?? undefined; setMenu({ session, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190), returnFocus }); }}>
+  const renderSession = (session: SessionSummary, projectKey: string) => { const key = sessionKey(session); const running = runningSessions.has(key); const activity = unseenSessions.has(key) ? "New activity" : undefined; const accessibleActivity = running ? "Running" : activity; const target = dropTarget?.projectKey === projectKey && dropTarget.sessionKey === key ? dropTarget.edge : undefined; const drag = { projectKey, sessionKey: key, session }; return <div key={key} data-session-key={key} data-project-key={projectKey} data-sidebar-token={projectKey === UNGROUPED_KEY ? sessionLayoutToken(key) : undefined} className={`session-item ${!normalizedQuery ? "reorderable" : ""} ${activeId === session.id && (session.hostId ?? "local") === activeHostId ? "active" : ""} ${running ? "running" : activity ? "unseen" : ""} ${draggedSession?.sessionKey === key ? "dragging" : ""} ${target ? `drop-${target}` : ""}`} onContextMenu={(event) => { event.preventDefault(); const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget.querySelector<HTMLElement>(".session-main") ?? undefined; setGroupMenu(undefined); setMenu({ session, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190), returnFocus }); }}>
     <button className="session-main" aria-label={`${session.name}, ${projectKindLabel(session)}, ${formatApiCost(session.apiCost)}${accessibleActivity ? `, ${accessibleActivity}` : ""}`} aria-current={activeId === session.id && (session.hostId ?? "local") === activeHostId ? "page" : undefined} aria-description={!normalizedQuery ? "Press Alt plus Up or Down to reorder. Add Shift to move between groups." : undefined} aria-keyshortcuts={!normalizedQuery ? "Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown" : undefined} title={session.name} onMouseDown={(event) => startMouseDrag(event, drag)} onKeyDown={(event) => { if (!normalizedQuery && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); moveSessionByKeyboard(drag, event.key === "ArrowUp" ? -1 : 1, event.shiftKey); } }} onClick={(event) => { if (suppressClickRef.current === sessionLayoutToken(key)) { suppressClickRef.current = undefined; event.preventDefault(); return; } onSelect(session); }}><span className="session-copy"><span className="session-title-row">{session.projectKind !== "no-repo" && <SessionProjectIcon session={session} />}<strong>{session.name}</strong><span className="session-api-cost" title="Would-be API cost">{formatApiCost(session.apiCost)}</span></span></span></button>
     <button className="session-archive" aria-label={`Archive ${session.name}`} title={`Archive ${session.name}`} onClick={() => onAction(session, "archive")}><Archive size={14} /></button>
   </div>; };
   const groupsByToken = new Map(groups.map((group) => [groupLayoutToken(group[0]), group] as const));
   const looseSessionsByToken = new Map(ungroupedSessions.map((session) => [sessionLayoutToken(sessionKey(session)), session] as const));
+  const activeMenu = groupMenu ?? menu;
+  const groupDirectory = groupMenu ? projectDetails.get(groupMenu.projectKey) : undefined;
+  const menuItems = groupMenu ? [
+    { label: "Open directory", Icon: FolderOpen, disabled: !groupDirectory, run: () => { if (groupDirectory) onAction({ ...groupDirectory, cwd: groupDirectory.projectRoot ?? groupDirectory.cwd }, "open-directory"); } },
+    { label: "Remove", Icon: Trash2, disabled: false, run: () => removeGroup(groupMenu.projectKey) },
+  ] : menu ? actions.filter(([action]) => action !== "split" || menu.session.id !== activeId || (menu.session.hostId ?? "local") !== activeHostId).map(([action, Icon, label]) => ({ label, Icon, disabled: false, run: () => onAction(menu.session, action) })) : [];
   const renderDropZone = (beforeToken: string | null) => <div key={`drop-${beforeToken ?? "end"}`} data-sidebar-drop-zone data-sidebar-before={beforeToken ?? undefined} data-sidebar-end={beforeToken === null ? true : undefined} className={`sidebar-drop-zone ${dropTarget?.layoutBefore === beforeToken ? "active" : ""}`} />;
   return <aside className="session-panel">
     <label className="search"><Search size={15} /><input ref={searchRef} aria-label="Search conversations" placeholder="Search conversations" value={query} onChange={(event) => onQuery(event.target.value)} /><kbd>Ctrl G</kbd></label>
@@ -437,7 +444,13 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
             <button className="project-label" disabled={Boolean(normalizedQuery)} aria-expanded={!collapsed} aria-controls={groupId} {...projectDragProps(projectKey)}><ChevronDown className={collapsed ? "collapsed" : ""} size={13} />{projectDetails.get(projectKey)?.projectKind === "no-repo" && <Folder size={14} aria-hidden="true" />}<span className={projectKey === activeProjectKey ? "active" : undefined}>{label}</span></button>
             <div className="project-actions">
               {customGroupsByKey.has(projectKey) && <button aria-label={`Rename group ${label}`} title="Rename group" onClick={() => editGroup(customGroupsByKey.get(projectKey)!)}><Pencil size={12} /></button>}
-              <button aria-label={`Remove group ${label}`} title="Remove group and ungroup its chats" onClick={() => removeGroup(projectKey)}><Trash2 size={12} /></button>
+              <button aria-label={`Group actions for ${label}`} title="Group actions" aria-haspopup="menu" aria-expanded={groupMenu?.projectKey === projectKey} onClick={(event) => {
+                event.stopPropagation();
+                if (groupMenu?.projectKey === projectKey) { closeMenu(true); return; }
+                const bounds = event.currentTarget.getBoundingClientRect();
+                setMenu(undefined);
+                setGroupMenu({ projectKey, label, x: Math.max(8, Math.min(bounds.right - 188, window.innerWidth - 196)), y: Math.max(8, Math.min(bounds.bottom + 4, window.innerHeight - 84)), returnFocus: event.currentTarget });
+              }}><Ellipsis size={14} /></button>
             </div>
           </>}
         </div>
@@ -446,11 +459,11 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
       {sidebarEntries.length > 0 && renderDropZone(null)}
       {!filtered.length && <div className="empty-small">{normalizedQuery ? `No conversations match “${query.trim()}”.` : "No conversations yet."}</div>}
     </div>
-    {menu && <div ref={menuRef} className="conversation-menu session-context-menu" role="menu" aria-label={`${menu.session.name} actions`} style={{ left: menu.x, top: menu.y }} onContextMenu={(event) => event.preventDefault()} onKeyDown={(event) => {
-      const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]; const index = items.indexOf(document.activeElement as HTMLButtonElement);
+    {activeMenu && <div ref={menuRef} className="conversation-menu session-context-menu" role="menu" aria-label={`${groupMenu?.label ?? menu?.session.name} actions`} style={{ left: activeMenu.x, top: activeMenu.y }} onContextMenu={(event) => event.preventDefault()} onKeyDown={(event) => {
+      const items = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')]; const index = items.indexOf(document.activeElement as HTMLButtonElement);
       if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); items[(index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus(); }
       else if (event.key === "Home" || event.key === "End") { event.preventDefault(); items[event.key === "Home" ? 0 : items.length - 1]?.focus(); }
       else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeMenu(true); }
-    }}>{actions.filter(([action]) => action !== "split" || menu.session.id !== activeId || (menu.session.hostId ?? "local") !== activeHostId).map(([action, Icon, label]) => <button key={action} role="menuitem" onClick={() => { setMenu(undefined); onAction(menu.session, action); }}><Icon size={14} />{label}</button>)}</div>}
+    }}>{menuItems.map(({ label, Icon, disabled, run }) => <button key={label} role="menuitem" disabled={disabled} title={disabled ? "Custom groups have no directory" : undefined} onClick={() => { closeMenu(true); run(); }}><Icon size={14} />{label}</button>)}</div>}
   </aside>;
 }
