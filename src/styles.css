@@ -87,6 +87,8 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .user-message .message-actions { margin-top: 4px; opacity: 0; pointer-events: none; }
 .user-message:hover .message-actions, .user-message:focus-within .message-actions { opacity: 1; pointer-events: auto; }
 @media (hover: none) { .user-message .message-actions { opacity: 1; pointer-events: auto; } }
+.hook-wheel { display: inline-flex; flex: 0 0 20px; width: 20px; height: 20px; margin-left: 5px; border-radius: 50%; background: conic-gradient(#d9534f var(--hook-failure), #41464f 0); box-shadow: inset 0 0 0 1px #ffffff20; vertical-align: middle; }
+.hook-wheel svg { width: 20px; height: 20px; fill: none; stroke: white; stroke-opacity: .65; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .cache-hit-rate { margin-left: 5px; color: var(--muted); font: 10px "DM Sans"; }.cache-hit-rate.low { color: #d77865; }
 .message-failure { display: flex; align-items: center; gap: 7px; color: #c64f38; font-size: 12px; }.message-failure button { margin-left: 5px; border: 1px solid currentColor; border-radius: 6px; background: transparent; color: inherit; padding: 4px 9px; font: inherit; cursor: pointer; }.message-failure button:hover { background: #c64f3812; }
 .message-paused { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
