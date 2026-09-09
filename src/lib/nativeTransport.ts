@@ -38,18 +38,6 @@ export class NativeTransport {
   private heldMessages?: PendingMessage[];
   private commandRejections = new Map<string, string>();
   private inputRejection?: { text: string; error: string };
-  private restoredQueueKey?: string;
-  private queueStorageKey() { return this.sessionId ? `piop-pending:${this.hostId}:${this.sessionId}` : undefined; }
-  private persistQueue() {
-    const key = this.queueStorageKey(); if (!key || this.restoredQueueKey !== key) return;
-    try { if (this.pendingMessages.length) localStorage.setItem(key, JSON.stringify(this.pendingMessages)); else localStorage.removeItem(key); }
-    catch { this.listeners.forEach((listener) => listener({ type: "extension_error", error: "Queued input could not be saved. Keep this window open until it is sent or copied." })); }
-  }
-  private restoreQueue() {
-    const key = this.queueStorageKey(); if (!key || this.restoredQueueKey === key) return;
-    this.restoredQueueKey = key;
-    try { const saved = JSON.parse(localStorage.getItem(key) || "[]"); if (!this.pendingMessages.length && Array.isArray(saved)) this.pendingMessages = saved.filter((item) => typeof item.message === "string" && typeof item.id === "string").map((item) => ({ ...item, retry: true })); } catch { /* Ignore invalid saved queue data. */ }
-  }
   private queueSnapshot: RpcEvent = { type: "queue_update", steering: [], followUp: [] };
   private changingQueue = false;
   private clearingQueue = false;
@@ -151,7 +139,6 @@ export class NativeTransport {
     }
     const visible = [...pending, ...(this.heldMessages ?? []), ...available.filter((item) => item.retry)];
     this.pendingMessages = [...visible, ...available.filter((item) => !item.retry && this.sendingPending.has(item.id))];
-    this.persistQueue();
     const event = this.queueView(visible);
     this.listeners.forEach((listener) => listener(event));
   }
@@ -458,7 +445,7 @@ export class NativeTransport {
       if (command.type === "prompt" && commandError) throw new Error(commandError);
       const rejected = this.inputRejection as { text: string; error: string } | undefined;
       if (command.type === "prompt" && rejected && rejected.text === command.message) throw new Error(rejected.error);
-      if (command.type === "get_state") { const state = result as { sessionFile?: string; sessionId?: string; pendingMessageCount?: number }; if (this.sessionId && this.sessionId !== state.sessionId) this.liveAssistant = undefined; this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; this.restoreQueue(); this.publishQueue(); state.pendingMessageCount = (state.pendingMessageCount ?? 0) + (this.heldMessages?.filter((item) => !item.retry).length ?? 0); }
+      if (command.type === "get_state") { const state = result as { sessionFile?: string; sessionId?: string; pendingMessageCount?: number }; if (this.sessionId && this.sessionId !== state.sessionId) this.liveAssistant = undefined; this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; this.publishQueue(); state.pendingMessageCount = (state.pendingMessageCount ?? 0) + (this.heldMessages?.filter((item) => !item.retry).length ?? 0); }
       if (command.type === "get_entries") {
         const history = result as { entries: Array<{ message?: { role?: string; timestamp?: number; deliveryBehavior?: string } }> };
         const live = this.liveAssistant; const branch = result as { entries: PiEntry[]; leafId: string | null };
@@ -467,7 +454,7 @@ export class NativeTransport {
         }
         for (const entry of history.entries) if (entry.message?.role === "user" && this.steeringTimestamps.has(entry.message.timestamp!)) entry.message.deliveryBehavior = "steer";
       }
-      if (["new_session", "switch_session", "fork", "clone"].includes(command.type) && !(result as { cancelled?: boolean })?.cancelled) { this.liveAssistant = undefined; this.pendingMessages = []; this.heldMessages = undefined; this.queueSnapshot = { type: "queue_update", steering: [], followUp: [] }; this.sessionId = undefined; this.restoredQueueKey = undefined; this.awaitingSteering = []; this.steeringTimestamps.clear(); this.publishQueue(); }
+      if (["new_session", "switch_session", "fork", "clone"].includes(command.type) && !(result as { cancelled?: boolean })?.cancelled) { this.liveAssistant = undefined; this.pendingMessages = []; this.heldMessages = undefined; this.queueSnapshot = { type: "queue_update", steering: [], followUp: [] }; this.sessionId = undefined; this.awaitingSteering = []; this.steeringTimestamps.clear(); this.publishQueue(); }
       if (command.type === "clear_queue") this.awaitingSteering = [];
       if (command.type === "get_commands") {
         const { commands } = result as { commands: Array<{ name: string; source: string; sourceInfo?: { source?: string; path?: string } }> };
