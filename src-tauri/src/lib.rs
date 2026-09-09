@@ -1206,6 +1206,34 @@ fn local_worktree_is_registered(root: &Path, target: &Path) -> Result<bool, Stri
 }
 
 #[tauri::command(async)]
+fn create_project_worktree(app: AppHandle, cwd: String, name: String, host_id: Option<String>) -> Result<GitWorktree, String> {
+    let name = worktree_suffix(&name)?;
+    let settings = load_app_settings(app)?;
+    let host_id = host_id.as_deref().unwrap_or("local");
+    let host = if host_id == "local" { None } else { Some(remote_host(&settings, host_id)?) };
+    let located = if let Some(host) = host {
+        run_limited(ssh(host).arg(format!("git -C {} rev-parse --show-toplevel", shell_quote(&cwd))), 64 * 1024, "Could not locate Git repository")?
+    } else {
+        run_limited(Command::new("git").args(["-C", &cwd, "rev-parse", "--show-toplevel"]), 64 * 1024, "Could not locate Git repository")?
+    };
+    if !located.status.success() { return Err("Project is not a Git repository".into()); }
+    let root = PathBuf::from(String::from_utf8_lossy(&located.stdout).trim());
+    let project = root.file_name().ok_or("Git repository directory has no name")?.to_string_lossy();
+    let branch = worktree_branch_name(&project, name);
+    let target = root.parent().ok_or("Git repository has no parent directory")?.join(&branch);
+    let output = if let Some(host) = host {
+        run_limited(ssh(host).arg(format!("git -C {} worktree add -b {} {} HEAD", shell_quote(&root.to_string_lossy()), shell_quote(&branch), shell_quote(&target.to_string_lossy()))), 64 * 1024, "Could not create Git worktree")?
+    } else {
+        run_limited(Command::new("git").arg("-C").arg(&root).args(["worktree", "add", "-b", &branch]).arg(&target).arg("HEAD"), 64 * 1024, "Could not create Git worktree")?
+    };
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if error.is_empty() { "Could not create Git worktree".into() } else { error });
+    }
+    Ok(GitWorktree { branch, path: target.to_string_lossy().into_owned() })
+}
+
+#[tauri::command(async)]
 fn create_git_worktree(app: AppHandle, cwd: String, name: String, host_id: Option<String>) -> Result<GitWorktree, String> {
     let name = worktree_suffix(&name)?;
     let host_id = host_id.as_deref().unwrap_or("local");
@@ -2473,7 +2501,7 @@ pub fn run() {
         }
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
-    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_groups, change_session_groups, list_hooks, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, prepare_worktree_setup, cancel_worktree_setup, run_worktree_setup, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).build(context).expect("error while building piop").run(|app, event| {
+    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_groups, change_session_groups, list_hooks, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_project_worktree, create_git_worktree, prepare_worktree_setup, cancel_worktree_setup, run_worktree_setup, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).build(context).expect("error while building piop").run(|app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
             let broker = app.state::<BrokerRuntime>(); broker.closing.store(true, Ordering::SeqCst);
             let jobs = broker.jobs.lock().map(|mut jobs| jobs.drain().map(|(_, child)| child).collect::<Vec<_>>()).unwrap_or_default();

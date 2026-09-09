@@ -4,11 +4,12 @@ import type { GitWorktree } from "../lib/nativeTransport";
 interface Props {
   projectPath: string;
   beforePrompt?: boolean;
+  fromProject?: boolean;
   onCreate: (name: string, onSetup: (cancel: (() => Promise<void>) | undefined) => void) => Promise<GitWorktree>;
   onCancel: () => void;
 }
 
-export function WorktreeDialog({ projectPath, beforePrompt = false, onCreate, onCancel }: Props) {
+export function WorktreeDialog({ projectPath, beforePrompt = false, fromProject = false, onCreate, onCancel }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const returnFocusRef = useRef(document.activeElement instanceof HTMLElement ? document.activeElement : undefined);
   const [name, setName] = useState("");
@@ -38,7 +39,7 @@ export function WorktreeDialog({ projectPath, beforePrompt = false, onCreate, on
   };
 
   return <dialog ref={dialogRef} className="extension-dialog" aria-labelledby="worktree-dialog-title" onCancel={(event) => { event.preventDefault(); void cancel(); }} onMouseDown={(event) => { const bounds = event.currentTarget.getBoundingClientRect(); if (!creatingRef.current && (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)) onCancel(); }}>
-    <p className="eyebrow">Git</p><h2 id="worktree-dialog-title">{beforePrompt ? "Branch before this prompt" : "Create worktree"}</h2><p>{beforePrompt ? "Create a worktree with the files and conversation from before this prompt. The latest 10 prompt checkpoints are retained." : "Create a branch and worktree from this response’s settled commit and conversation."}</p>
+    <p className="eyebrow">Git</p><h2 id="worktree-dialog-title">{beforePrompt ? "Branch before this prompt" : "Create worktree"}</h2><p>{fromProject ? "Create a matching branch and worktree from this project’s current commit, then run your environment setup scripts." : beforePrompt ? "Create a worktree with the files and conversation from before this prompt. The latest 10 prompt checkpoints are retained." : "Create a branch and worktree from this response’s settled commit and conversation."}</p>
     <input autoFocus aria-label="Worktree name" value={name} placeholder="Worktree name" disabled={creating} onChange={(event) => { setName(event.target.value); setError(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) void create(); }} />
     {name.trim() && <p className="worktree-preview" title={projectPath}>Name: <code>{name.trim()}</code>. The repository root determines the branch and directory prefix.</p>}
     {error && <p className="dialog-error" role="alert">{error}</p>}
