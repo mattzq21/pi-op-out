@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, CornerDownLeft, Folder, FolderOpen, Search } from "lucide-react";
+import { ArrowDown, ArrowUp, Folder, FolderOpen, Search } from "lucide-react";
 import type { DirectoryListing, RemoteHost } from "../types";
 
 interface Props {
@@ -119,12 +119,12 @@ export function ProjectDialog({ initialPath, hosts, initialHostId, onHomeDirecto
     }} /></div>
     <div className="directory-palette-caption"><span>{loading ? "Finding folders…" : fragment ? results.length + " matching folders" : "Continue into a folder"}</span><span>Tab to complete</span></div>
     <div id="directory-palette-results" className="directory-palette-results" role="listbox" aria-label="Matching folders" aria-busy={loading}>
-      {!loading && results.map((path, index) => <div id={"directory-result-" + index} key={path} role="option" aria-selected={index === active} className="directory-palette-result" onMouseDown={(event) => event.preventDefault()} onMouseMove={() => setActive(index)} onClick={() => { if (!opening) browse(path); }}><Folder size={17} /><span>{folderName(path)}</span>{index === active && <small>Browse <CornerDownLeft size={13} /></small>}</div>)}
+      {!loading && results.map((path, index) => <div id={"directory-result-" + index} key={path} role="option" aria-selected={index === active} className="directory-palette-result" onMouseDown={(event) => event.preventDefault()} onMouseMove={() => setActive(index)} onClick={() => { if (!opening) browse(path); }}><Folder size={17} /><span>{folderName(path)}</span></div>)}
       {!loading && !results.length && <div className="directory-palette-empty">{error ? "Check the path and try again." : fragment ? "No matches. Keep typing a path, or press Enter to browse it." : "No child folders. Open this folder below."}</div>}
       {loading && <div className="directory-palette-empty" role="status">Loading folder suggestions…</div>}
     </div>
     {error && <p className="dialog-error" role="alert">{error}</p>}
-    <button className="directory-palette-open" disabled={!listing || loading || opening} onClick={() => void open()}><FolderOpen size={18} /><span><strong>{opening ? "Opening…" : "Open current folder"}</strong><small title={listing?.path}>{displayPath(listing?.path || parent, homePath) || "Type a path to begin"}</small></span><kbd>{isMac ? "⌘" : "Ctrl"} ↵</kbd></button>
-    <footer className="directory-palette-hints"><span><ArrowUp size={12} /><ArrowDown size={12} /> navigate</span><span><CornerDownLeft size={12} /> browse</span><span>Alt + Backspace parent</span></footer>
+    <button className="directory-palette-open" disabled={!listing || loading || opening} onClick={() => void open()}><FolderOpen size={18} /><span><strong>{opening ? "Opening…" : "Open current folder"}</strong><small title={listing?.path}>{displayPath(listing?.path || parent, homePath) || "Type a path to begin"}</small></span><kbd>{isMac ? "⌘" : "Ctrl"} Enter</kbd></button>
+    <footer className="directory-palette-hints"><span><ArrowUp size={12} /><ArrowDown size={12} /> navigate</span><span>Alt + Backspace parent</span></footer>
   </dialog>;
 }
