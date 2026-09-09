@@ -12,7 +12,10 @@ const desktopContext: ContextMessagesTransform = (messages, branch) => {
     const message = (entry.data as { message?: unknown } | undefined)?.message;
     if (typeof message === "string") resumeMessages.add(message);
   }
-  const context = desktopPauseContext(messages, resumeMessages).filter((message) => message.role !== "custom" || message.customType !== "pi-desktop-mcp-status");
+  const context = desktopPauseContext(messages, resumeMessages).filter((message) => message.role !== "custom" || (
+    message.customType !== "pi-desktop-mcp-status"
+    && (process.env.PI_DEFINE_AGENTS_ACTIVE !== "1" || message.customType !== "pi-desktop-project-context")
+  ));
   for (const customType of ["pi-desktop-project-context", "pi-project-files-watch"]) {
     const index = context.findLastIndex((message) => message.role === "custom" && message.customType === customType);
     if (index > 0 && context[index - 1].role === "user") {
