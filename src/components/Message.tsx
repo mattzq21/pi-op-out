@@ -169,7 +169,7 @@ export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = 
       {pausedResponse && <div className="message-paused" role="status"><Pause size={14} /><span>Response paused</span></div>}
       {message.streaming && <span className="stream-caret" />}
       {diff && <DiffViewer snapshot={diff} />}
-      {showActions && !message.streaming && output.trim().length > 0 && <div className="message-actions">
+      {showActions && !message.streaming && (output.trim().length > 0 || onCreateWorktree) && <div className="message-actions">
         <IconButton label={copyState === "copied" ? `${responseLabel} copied` : copyState === "error" ? `Copy failed for ${responseLabel.toLowerCase()}` : `Copy ${responseLabel.toLowerCase()}`} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>
         {copyState === "error" && <span className="copy-feedback" role="status">Could not copy response</span>}
         {onBranch && <button className="branch-button" aria-label={`Branch from ${responseLabel.toLowerCase()}`} title="Branch from here" disabled={branching} onClick={() => void branch()}><GitBranch size={14} /></button>}

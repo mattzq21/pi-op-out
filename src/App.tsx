@@ -313,7 +313,7 @@ export default function App() {
       const number = hasNumber ? args.shift()! : "0";
       if (!/^\d+$/.test(number) || !Number.isSafeInteger(Number(number))) throw new Error("The response number must be a non-negative integer");
       if (command === "branch-off" && args.length) throw new Error("Usage: /branch-off [number]");
-      const responses = messages.filter((message) => message.role === "assistant" && message.entryId && !message.streaming && !["toolUse", "aborted", "error"].includes(message.stopReason ?? "") && (typeof message.content === "string" ? message.content.trim() : message.content.some((part) => part.type === "text" && part.text?.trim())));
+      const responses = messages.filter((message) => message.role === "assistant" && message.entryId && !message.streaming && message.stopReason !== "toolUse" && (message.stopReason === "aborted" || message.stopReason === "error" || (typeof message.content === "string" ? message.content.trim() : message.content.some((part) => part.type === "text" && part.text?.trim()))));
       const message = responses.at(-1 - Number(number));
       if (!message) throw new Error(`No response exists ${number} responses back`);
       if (command === "branch-off") return branchConversation(message);
@@ -428,30 +428,21 @@ export default function App() {
     } finally { branchPending.current.delete(pendingKey); }
   };
   const createWorktree = async (target: WorktreeTarget, name: string) => {
-    if (target.message.role === "user") {
-      const owner = target.transport;
-      const history = await owner.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" });
-      const prompt = branchMessages(history.entries, history.leafId).find((message) => message.role === "user" && (target.message.entryId ? message.entryId === target.message.entryId : message.timestamp === target.message.timestamp && textOf(message.content) === textOf(target.message.content)));
-      if (!prompt?.entryId) throw new Error("Could not find the prompt in the saved conversation");
-      const result = await owner.command<{ branch: string; path: string; sessionPath: string; sessionId: string }>({ type: "branch_checkpoint", entryId: prompt.entryId, name });
-      setWorktreeTarget(undefined);
-      const session: SessionSummary = { id: result.sessionId, path: result.sessionPath, cwd: result.path, project: result.branch, name: result.branch, preview: "", messageCount: 0, apiCost: 0, hostId: target.hostId };
-      setSessions((current) => [...current, session]);
-      setComposerDraft(`${target.hostId}:${result.sessionId}`, textOf(target.message.content));
-      const branchTransport = runtimePool.forSession(session);
-      setComposerUploads(branchTransport, Array.isArray(target.message.content) ? target.message.content.flatMap((part) => part.type === "image" && part.data && part.mimeType ? [{ id: crypto.randomUUID(), name: "Attached image", kind: "image" as const, byteSize: Math.ceil(part.data.length * 3 / 4), image: { type: "image" as const, data: part.data, mimeType: part.mimeType } }] : []) : []);
-      selectSession(session);
-      setActiveBranch(result.branch);
-      void syncSessionIndex();
-      return result;
-    }
-    const result = await target.transport.createGitWorktree(target.cwd, name, target.hostId);
+    const owner = target.transport;
+    const beforePrompt = target.message.role === "user";
+    const history = await owner.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" });
+    const message = branchMessages(history.entries, history.leafId).find((message) => message.role === target.message.role && (target.message.entryId ? message.entryId === target.message.entryId : message.timestamp === target.message.timestamp && textOf(message.content) === textOf(target.message.content)));
+    if (!message?.entryId) throw new Error("Could not find the message in the saved conversation");
+    const result = await owner.command<{ branch: string; path: string; sessionPath: string; sessionId: string }>({ type: "branch_checkpoint", entryId: message.entryId, name, afterResponse: !beforePrompt });
     setWorktreeTarget(undefined);
-    try {
-      const branched = await branchConversation(target.message, result.path);
-      if (!branched) throw new Error("Conversation branching was cancelled");
-      setActiveBranch(result.branch);
-    } catch (reason) { addNotice({ title: "Worktree created, but conversation could not be branched", message: reason instanceof Error ? reason.message : String(reason) }); }
+    const session: SessionSummary = { id: result.sessionId, path: result.sessionPath, cwd: result.path, project: result.branch, name: result.branch, preview: "", messageCount: 0, apiCost: 0, hostId: target.hostId };
+    setSessions((current) => [...current, session]);
+    setComposerDraft(`${target.hostId}:${result.sessionId}`, beforePrompt ? textOf(target.message.content) : "");
+    const branchTransport = runtimePool.forSession(session);
+    setComposerUploads(branchTransport, beforePrompt && Array.isArray(target.message.content) ? target.message.content.flatMap((part) => part.type === "image" && part.data && part.mimeType ? [{ id: crypto.randomUUID(), name: "Attached image", kind: "image" as const, byteSize: Math.ceil(part.data.length * 3 / 4), image: { type: "image" as const, data: part.data, mimeType: part.mimeType } }] : []) : []);
+    selectSession(session);
+    setActiveBranch(result.branch);
+    void syncSessionIndex();
     return result;
   };
   const branch = async (message: ChatMessage) => { try { await branchConversation(message); } catch (reason) { addNotice({ title: "Could not branch conversation", message: reason instanceof Error ? reason.message : String(reason) }); } };
