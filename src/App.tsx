@@ -461,9 +461,8 @@ export default function App() {
     if (!target.message) {
       const result = await target.transport.createProjectWorktree(target.cwd, name, target.hostId);
       await addWorktreeGroup(result);
-      const setupSucceeded = await setup(result.path);
+      await setup(result.path);
       setWorktreeTarget(undefined);
-      if (setupSucceeded) addNotice({ title: "Worktree created", message: `${result.branch}\n${result.path}` });
       return result;
     }
     const sourceMessage = target.message;
