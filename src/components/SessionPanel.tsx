@@ -14,6 +14,7 @@ const actions = [
   ["split", Columns2, "Split pane"], ["rename", Pencil, "Rename conversation"], ["clone", CopyPlus, "Clone conversation"], ["open-directory", FolderOpen, "Open project directory"]
 ] as const;
 const COLLAPSED_PROJECTS_KEY = "pi-desktop-collapsed-projects";
+const REMOVED_PROJECTS_KEY = "pi-desktop-removed-project-groups";
 const SESSION_ORDERS_KEY = "pi-desktop-session-orders";
 const SESSION_LOCATIONS_KEY = "pi-desktop-session-locations";
 const SIDEBAR_ORDER_KEY = "pi-desktop-sidebar-order";
@@ -37,8 +38,8 @@ function stableSessionOrder(left: SessionSummary, right: SessionSummary) {
   return sidebarCollator.compare(left.name, right.name) || sidebarCollator.compare(left.id, right.id);
 }
 
-function savedCollapsedProjects() {
-  try { const value = JSON.parse(localStorage.getItem(COLLAPSED_PROJECTS_KEY) || "[]"); return new Set<string>(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []); }
+function savedGroupKeys(storageKey: string) {
+  try { const value = JSON.parse(localStorage.getItem(storageKey) || "[]"); return new Set<string>(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []); }
   catch { return new Set<string>(); }
 }
 
@@ -99,7 +100,8 @@ function formatApiCost(cost = 0) {
 
 export function SessionPanel({ sessions, activeId, activeHostId = "local", runningSessions = new Set(), unseenSessions = new Set(), query, onQuery, onSelect, onAction, createGroupRequest = 0, onCreateGroupHandled }: Props) {
   const [menu, setMenu] = useState<{ session: SessionSummary; x: number; y: number; returnFocus?: HTMLElement }>();
-  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(savedCollapsedProjects);
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => savedGroupKeys(COLLAPSED_PROJECTS_KEY));
+  const [removedProjects, setRemovedProjects] = useState<Set<string>>(() => savedGroupKeys(REMOVED_PROJECTS_KEY));
   const [sessionOrders, setSessionOrders] = useState<Record<string, string[]>>(savedSessionOrders);
   const [sessionLocations, setSessionLocations] = useState<Record<string, string>>(savedSessionLocations);
   const [customGroups, setCustomGroups] = useState<CustomGroup[]>(savedCustomGroups);
@@ -155,7 +157,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   useEffect(() => { if (menu && !sessions.some((session) => sessionKey(session) === sessionKey(menu.session))) closeMenu(); }, [menu, sessions]);
   const groupNameTaken = (name: string, excludedId?: string) => {
     const normalized = name.trim();
-    return sessions.some((session) => { const label = !session.hostId || session.hostId === "local" ? projectName(session) : `${session.hostName ?? session.hostId} / ${projectName(session)}`; return sidebarCollator.compare(label.trim(), normalized) === 0; })
+    return sessions.some((session) => { if (removedProjects.has(physicalProjectKey(session))) return false; const label = !session.hostId || session.hostId === "local" ? projectName(session) : `${session.hostName ?? session.hostId} / ${projectName(session)}`; return sidebarCollator.compare(label.trim(), normalized) === 0; })
       || customGroups.some((group) => group.id !== excludedId && sidebarCollator.compare(group.name.trim(), normalized) === 0);
   };
   const finishGroup = (cancel = false) => {
@@ -173,13 +175,31 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
     setEditingGroupId(undefined);
   };
   const editGroup = (group: CustomGroup) => { groupDraftActive.current = true; setEditingGroupId(group.id); setGroupDraftError(undefined); setNewGroupName(group.name); requestAnimationFrame(() => groupNameRef.current?.select()); };
-  const deleteGroup = (group: CustomGroup) => {
-    const projectKey = `${CUSTOM_GROUP_PREFIX}${group.id}`;
-    setCustomGroups((current) => { const next = current.filter((item) => item.id !== group.id); try { localStorage.setItem(CUSTOM_GROUPS_KEY, JSON.stringify(next)); } catch { /* Persistence is best-effort. */ } return next; });
-    setSessionLocations((current) => { const next = Object.fromEntries(Object.entries(current).filter(([, location]) => location !== projectKey)); try { localStorage.setItem(SESSION_LOCATIONS_KEY, JSON.stringify(next)); } catch { /* Persistence is best-effort. */ } return next; });
+  const removeGroup = (projectKey: string) => {
+    const releasedSessions = orderedSessions(projectKey, sessions.filter((session) => visualProjectKey(session) === projectKey), sessionOrders);
+    const releasedTokens = releasedSessions.map((session) => sessionLayoutToken(sessionKey(session)));
+    if (projectKey.startsWith(CUSTOM_GROUP_PREFIX)) {
+      setCustomGroups((current) => { const next = current.filter((item) => `${CUSTOM_GROUP_PREFIX}${item.id}` !== projectKey); try { localStorage.setItem(CUSTOM_GROUPS_KEY, JSON.stringify(next)); } catch { /* Persistence is best-effort. */ } return next; });
+    } else {
+      setRemovedProjects((current) => { const next = new Set(current); next.add(projectKey); try { localStorage.setItem(REMOVED_PROJECTS_KEY, JSON.stringify([...next])); } catch { /* Persistence is best-effort. */ } return next; });
+    }
+    setSessionLocations((current) => {
+      const next = { ...current };
+      for (const [key, location] of Object.entries(next)) if (location === projectKey) next[key] = UNGROUPED_KEY;
+      for (const session of releasedSessions) next[sessionKey(session)] = UNGROUPED_KEY;
+      try { localStorage.setItem(SESSION_LOCATIONS_KEY, JSON.stringify(next)); } catch { /* Persistence is best-effort. */ }
+      return next;
+    });
     setSessionOrders((current) => { const next = { ...current }; delete next[projectKey]; try { localStorage.setItem(SESSION_ORDERS_KEY, JSON.stringify(next)); } catch { /* Persistence is best-effort. */ } return next; });
     setCollapsedProjects((current) => { const next = new Set(current); next.delete(projectKey); try { localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...next])); } catch { /* Persistence is best-effort. */ } return next; });
-    setSidebarOrder((current) => { const next = current.filter((token) => token !== groupLayoutToken(projectKey)); try { localStorage.setItem(SIDEBAR_ORDER_KEY, JSON.stringify(next)); } catch { /* Persistence is best-effort. */ } return next; });
+    setSidebarOrder((current) => {
+      const token = groupLayoutToken(projectKey);
+      const next = current.filter((entry) => !releasedTokens.includes(entry));
+      const index = next.indexOf(token);
+      next.splice(index < 0 ? next.length : index, index < 0 ? 0 : 1, ...releasedTokens);
+      try { localStorage.setItem(SIDEBAR_ORDER_KEY, JSON.stringify(next)); } catch { /* Persistence is best-effort. */ }
+      return next;
+    });
   };
   const toggleProject = (projectKey: string) => setCollapsedProjects((current) => {
     const next = new Set(current); if (next.has(projectKey)) next.delete(projectKey); else next.add(projectKey);
@@ -230,7 +250,10 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   const customGroupKeys = new Set(customGroups.map((group) => `${CUSTOM_GROUP_PREFIX}${group.id}`));
   const visualProjectKey = (session: SessionSummary) => {
     const savedLocation = sessionLocations[sessionKey(session)];
-    return savedLocation === UNGROUPED_KEY || (typeof savedLocation === "string" && (projectDetails.has(savedLocation) || customGroupKeys.has(savedLocation))) ? savedLocation : physicalProjectKey(session);
+    if (savedLocation && removedProjects.has(savedLocation)) return UNGROUPED_KEY;
+    if (savedLocation === UNGROUPED_KEY || (typeof savedLocation === "string" && (projectDetails.has(savedLocation) || customGroupKeys.has(savedLocation)))) return savedLocation;
+    const projectKey = physicalProjectKey(session);
+    return removedProjects.has(projectKey) ? UNGROUPED_KEY : projectKey;
   };
   const filtered = sessions.filter((session) => {
     if (!normalizedQuery) return true;
@@ -243,7 +266,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
     (result[visualProjectKey(session)] ??= []).push(session); return result;
   }, {});
   const ungroupedSessions = orderedSessions(UNGROUPED_KEY, groupedSessions[UNGROUPED_KEY] ?? [], sessionOrders);
-  const physicalGroups = [...projectDetails.entries()].map(([key, details]) => [key, projectName(details), details.hostId ?? "local", details.hostName, orderedSessions(key, groupedSessions[key] ?? [], sessionOrders)] as const)
+  const physicalGroups = [...projectDetails.entries()].filter(([key]) => !removedProjects.has(key)).map(([key, details]) => [key, projectName(details), details.hostId ?? "local", details.hostName, orderedSessions(key, groupedSessions[key] ?? [], sessionOrders)] as const)
     .sort(([, leftProject, leftHost, leftHostName], [, rightProject, rightHost, rightHostName]) => sidebarCollator.compare(leftHostName ?? leftHost, rightHostName ?? rightHost) || sidebarCollator.compare(leftProject, rightProject));
   const customVisualGroups = customGroups.map((group) => { const key = `${CUSTOM_GROUP_PREFIX}${group.id}`; return [key, group.name, "", undefined, orderedSessions(key, groupedSessions[key] ?? [], sessionOrders)] as const; });
   // Remember projects even while search or session placement hides them.
@@ -409,7 +432,15 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
     <div ref={sessionScrollRef} className="session-scroll">
       {newGroupName !== undefined && !editingGroupId && <section className="project custom-group-draft"><div className="project-label"><input ref={groupNameRef} aria-label="New session group name" aria-invalid={Boolean(groupDraftError)} aria-describedby={groupDraftError ? "new-group-error" : undefined} placeholder="Group name" value={newGroupName} onChange={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} /></div>{groupDraftError && <small id="new-group-error" className="group-error">{groupDraftError}</small>}</section>}
       {sidebarEntries.flatMap((token) => { const looseSession = looseSessionsByToken.get(token); const group = groupsByToken.get(token); if (looseSession) return [renderDropZone(token), renderSession(looseSession, UNGROUPED_KEY)]; if (!group) return []; const [projectKey, project, hostId, hostName, projectSessions] = group; const label = !hostId || hostId === "local" ? project : `${hostName ?? hostId} / ${project}`; const collapsed = !normalizedQuery && collapsedProjects.has(projectKey); const groupId = disclosureId(projectKey); return [renderDropZone(token), <section data-sidebar-token={token} className={`project ${!normalizedQuery ? "reorderable" : ""} ${draggedProject === projectKey ? "dragging" : ""} ${dropTarget?.projectKey === projectKey && !dropTarget.sessionKey && dropTarget.layoutBefore === undefined ? "drop-project" : ""}`} key={projectKey}>
-        {projectKey.startsWith(CUSTOM_GROUP_PREFIX) ? <div className="project-heading" data-drop-project-key={projectKey}>{editingGroupId === projectKey.slice(CUSTOM_GROUP_PREFIX.length) ? <div className="project-label"><input ref={groupNameRef} aria-label="Rename session group" aria-invalid={Boolean(groupDraftError)} value={newGroupName ?? ""} onChange={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} />{groupDraftError && <small className="group-error">{groupDraftError}</small>}</div> : <><button className="project-label" disabled={Boolean(normalizedQuery)} aria-expanded={!collapsed} aria-controls={groupId} {...projectDragProps(projectKey)}><ChevronDown className={collapsed ? "collapsed" : ""} size={13} /><span className={projectKey === activeProjectKey ? "active" : undefined}>{label}</span></button><div className="project-actions"><button aria-label={`Rename group ${label}`} title="Rename group" onClick={() => editGroup(customGroupsByKey.get(projectKey)!)}><Pencil size={12} /></button><button aria-label={`Delete group ${label}`} title="Delete group" onClick={() => deleteGroup(customGroupsByKey.get(projectKey)!)}><Trash2 size={12} /></button></div></>}</div> : <button className="project-label" data-drop-project-key={projectKey} disabled={Boolean(normalizedQuery)} aria-expanded={!collapsed} aria-controls={groupId} {...projectDragProps(projectKey)}><ChevronDown className={collapsed ? "collapsed" : ""} size={13} />{projectDetails.get(projectKey)?.projectKind === "no-repo" && <Folder size={14} aria-hidden="true" />}<span className={projectKey === activeProjectKey ? "active" : undefined}>{label}</span></button>}
+        <div className="project-heading" data-drop-project-key={projectKey}>
+          {customGroupsByKey.has(projectKey) && editingGroupId === customGroupsByKey.get(projectKey)?.id ? <div className="project-label"><input ref={groupNameRef} aria-label="Rename session group" aria-invalid={Boolean(groupDraftError)} value={newGroupName ?? ""} onChange={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} />{groupDraftError && <small className="group-error">{groupDraftError}</small>}</div> : <>
+            <button className="project-label" disabled={Boolean(normalizedQuery)} aria-expanded={!collapsed} aria-controls={groupId} {...projectDragProps(projectKey)}><ChevronDown className={collapsed ? "collapsed" : ""} size={13} />{projectDetails.get(projectKey)?.projectKind === "no-repo" && <Folder size={14} aria-hidden="true" />}<span className={projectKey === activeProjectKey ? "active" : undefined}>{label}</span></button>
+            <div className="project-actions">
+              {customGroupsByKey.has(projectKey) && <button aria-label={`Rename group ${label}`} title="Rename group" onClick={() => editGroup(customGroupsByKey.get(projectKey)!)}><Pencil size={12} /></button>}
+              <button aria-label={`Remove group ${label}`} title="Remove group and ungroup its chats" onClick={() => removeGroup(projectKey)}><Trash2 size={12} /></button>
+            </div>
+          </>}
+        </div>
         <div id={groupId} hidden={collapsed}>{projectSessions.map((session) => renderSession(session, projectKey))}</div>
       </section>]; })}
       {sidebarEntries.length > 0 && renderDropZone(null)}
