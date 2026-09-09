@@ -2,7 +2,6 @@
   "agents": [
     {
       "name": "default",
-      "description": "General-purpose agent",
       "model": "",
       "effort": "high",
       "agentsMd": "",

@@ -2,7 +2,6 @@
   "agents": [
     {
       "name": "tester",
-      "description": "Test a supplied production build in the CUA VM",
       "model": "",
       "effort": "high",
       "path_systemprompt": "sysprompt/tester.example.md",
