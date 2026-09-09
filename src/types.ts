@@ -32,7 +32,7 @@ export interface SlashCommand { name: string; description?: string; source: "bui
 export interface ImageAttachment { type: "image"; data: string; mimeType: string; name?: string; }
 export interface ComposerUpload { id: string; name: string; kind: "image" | "text"; byteSize: number; image?: ImageAttachment; text?: string; }
 export interface WorktreeSetupScript { id: string; name: string; script: string; enabled: boolean; }
-export interface AppSettings { worktreeSetupScripts: WorktreeSetupScript[]; defaultModel: string; hiddenModels: string[]; defaultThinking: string; contextWindowCap: number; contextWindowCapEnabled: boolean; autoCompaction: boolean; autoRetry: boolean; debugMode: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; mcpServers: McpServer[]; hosts: RemoteHost[]; dictionaries: PromptDictionary[]; activeDictionaryIds: string[]; }
+export interface AppSettings { worktreeSetupScripts: WorktreeSetupScript[]; defaultModel: string; hiddenModels: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; autoCompaction: boolean; autoRetry: boolean; debugMode: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; mcpServers: McpServer[]; hosts: RemoteHost[]; dictionaries: PromptDictionary[]; activeDictionaryIds: string[]; }
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
 export type GitDiffSnapshot = string;
 export type GitDiffSnapshots = Record<string, GitDiffSnapshot>;

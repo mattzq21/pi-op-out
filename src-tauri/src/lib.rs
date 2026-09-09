@@ -214,6 +214,8 @@ struct AppSettings {
     #[serde(default)]
     hidden_models: Vec<String>,
     default_thinking: String,
+    #[serde(default)]
+    default_fast_mode: bool,
     #[serde(default = "default_context_window_cap", deserialize_with = "deserialize_context_window_cap")]
     context_window_cap: u64,
     #[serde(default = "default_context_window_cap_enabled")]
@@ -592,6 +594,7 @@ fn prepare_btw_extension() -> Result<PathBuf, String> {
 fn default_settings() -> AppSettings {
     AppSettings {
         worktree_setup_scripts: vec![],
+        default_fast_mode: false,
         default_model: DEFAULT_MODEL.into(), hidden_models: vec![], default_thinking: "medium".into(), context_window_cap: default_context_window_cap(), context_window_cap_enabled: default_context_window_cap_enabled(), auto_compaction: true, auto_retry: true, debug_mode: false, keybindings: default_keybindings(),
         tools: ["read", "bash", "edit", "write", "grep", "find", "ls"].iter().map(|name| json!({"name": name, "description": "Pi built-in tool", "enabled": true, "builtin": true})).chain([
             json!({"name":"list_agents","description":"List agents by machine and session","enabled":true,"builtin":false}),

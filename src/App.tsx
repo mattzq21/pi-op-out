@@ -220,7 +220,9 @@ export default function App() {
       if (defaultModel) await transport.command({ type: "set_model", provider: defaultModel.provider, modelId: defaultModel.id });
       const { levels } = await transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" });
       if (!levels.includes(value.defaultThinking)) throw new Error(`Default thinking level is unavailable: ${value.defaultThinking}`);
-      await transport.command({ type: "set_thinking_level", level: value.defaultThinking }); transport.defaultsApplied();
+      await transport.command({ type: "set_thinking_level", level: value.defaultThinking });
+      await transport.setFastMode(value.defaultFastMode);
+      transport.defaultsApplied();
     }
   }, [transport]);
   const resolveHomeDirectory = useCallback((hostId: string) => transport.homeDirectory(hostId), [transport]);

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Blocks, BookOpen, Bot, Check, CircleGauge, CirclePlus, Cpu, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Sparkles, Trash2, Wrench } from "lucide-react";
+import { Blocks, BookOpen, Bot, Check, CircleGauge, CirclePlus, Cpu, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Sparkles, Trash2, Wrench, Zap } from "lucide-react";
 import { HooksSettings, HookIcon } from "./HooksSettings";
 import type { AgentProfile, AppSettings, McpServer, Model, AgentConfig, RemoteHost, SessionSummary } from "../types";
 import { uid } from "../lib/content";
@@ -163,6 +163,7 @@ export function SettingsView({ settings, pendingSettingsCount = 0, agentConfig: 
           {!draft.worktreeSetupScripts?.length && <div className="empty-small">Add a script to install dependencies or copy environment files when creating a worktree.</div>}
         </SettingsSection>}
         {visibleSection === "general" && <SettingsSection title="General" description="Agent behavior.">
+          <SettingRow icon={<Zap />} title="Fast mode by default" description="Start new conversations with fast mode enabled for supported models."><Toggle label="Fast mode by default" checked={draft.defaultFastMode} onChange={(defaultFastMode) => patch({ defaultFastMode })} /></SettingRow>
           <SettingRow icon={<Cpu />} title="Auto compaction" description="Compact context before it reaches the model limit."><Toggle label="Auto compaction" checked={draft.autoCompaction} onChange={(autoCompaction) => patch({ autoCompaction })} /></SettingRow>
           <SettingRow icon={<CircleGauge />} title="Context window cap" description={draft.contextWindowCapEnabled ? "Treat larger model contexts as this many tokens for compaction." : "Use each model’s full context window."}><div className="setting-cap-controls"><input className="setting-number" aria-label="Context window cap" aria-invalid={!contextWindowValid} disabled={!draft.contextWindowCapEnabled} type="number" min={1000} step={1000} value={draft.contextWindowCap} onChange={(event) => patch({ contextWindowCap: Number(event.target.value) })} /><Toggle label="Enable context window cap" checked={draft.contextWindowCapEnabled} onChange={(contextWindowCapEnabled) => patch({ contextWindowCapEnabled })} /></div></SettingRow>
           <SettingRow icon={<ShieldCheck />} title="Automatic retry" description="Retry transient provider and network errors."><Toggle label="Automatic retry" checked={draft.autoRetry} onChange={(autoRetry) => patch({ autoRetry })} /></SettingRow>

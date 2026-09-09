@@ -266,9 +266,16 @@ export class NativeTransport {
     }
   }
   async toggleFastMode() {
+    await this.changeFastMode("toggle");
+  }
+  async setFastMode(enabled: boolean) {
+    await this.command({ type: "get_commands" });
+    await this.changeFastMode(enabled ? "on" : "off");
+  }
+  private async changeFastMode(mode: "on" | "off" | "toggle") {
     const command = this.fastCommands.values().next().value;
     if (!command) throw new Error("Fast mode is unavailable in this conversation");
-    await call("pi_command", { runtimeId: this.runtimeId, command: { type: "prompt", message: `/${command} toggle` } });
+    await call("pi_command", { runtimeId: this.runtimeId, command: { type: "prompt", message: `/${command} ${mode}` } });
     await this.refreshFastStatus(true);
   }
   private serializeQueue<T>(action: () => Promise<T>): Promise<T> {
