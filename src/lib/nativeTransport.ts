@@ -250,7 +250,7 @@ export class NativeTransport {
     try { await this.connect(); }
     catch (reason) { this.emit({ type: "disconnected" }); throw reason; }
   }
-  async dispose() { const temporaryPath = this.temporaryChat && !this.temporaryChatUsed ? this.cwd : undefined; const temporaryHost = this.hostId; await this.disconnect(true); if (temporaryPath) await call<void>("remove_temporary_chat", { path: temporaryPath, hostId: temporaryHost }); this.temporaryChat = false; this.temporaryChatUsed = false; }
+  async dispose() { this.disposed = true; this.pendingSettings = undefined; await this.applyingSettings; const temporaryPath = this.temporaryChat && !this.temporaryChatUsed ? this.cwd : undefined; const temporaryHost = this.hostId; await this.disconnect(true); if (temporaryPath) await call<void>("remove_temporary_chat", { path: temporaryPath, hostId: temporaryHost }); this.temporaryChat = false; this.temporaryChatUsed = false; }
   private async refreshFastStatus(reload: boolean) {
     if (!this.fastStatusCommand) return;
     try {

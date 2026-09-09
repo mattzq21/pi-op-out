@@ -67,6 +67,7 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
       }
       if (event.type === "extension_error") setNotices((current) => [...current, { id: crypto.randomUUID(), title: "Extension error", message: String(event.error ?? "An extension failed") }]);
       if (event.type === "message_end") { setError(undefined); window.setTimeout(() => void refresh().catch(reportControlError), 30); }
+      if (event.type === "settings_applied") void refresh().then(() => setConnected(true)).catch(reportControlError);
       if (event.type === "disconnected") { updateConnected(false); setDefinedAgents(undefined); setStatuses({}); setWidgets({}); document.title = "piop"; void onDialogTransportClosed(transport); if (!closing) { setControlError("Connection lost. Reconnecting…"); window.setTimeout(() => void connectRuntime(false), 50); } }
     });
     void connectRuntime(true);
