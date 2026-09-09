@@ -101,7 +101,15 @@ export default function hookStats(pi: ExtensionAPI) {
       const key = eventName.startsWith("message_") ? prompt : "other";
       const bucket = key === "other" ? snapshot.other : key ? snapshot.messages[key] ??= empty() : undefined;
       let failed = false;
-      try { return await handler(event, ctx); }
+      try {
+        const result = await handler(event, ctx);
+        if (eventName === "message_end") {
+          const replacement = (result as { message?: { role?: unknown } } | null | undefined)?.message;
+          // Match emitMessageEnd's rejection while leaving error reporting to Pi.
+          failed = Boolean(replacement && replacement.role !== event.message.role);
+        }
+        return result;
+      }
       catch (error) { failed = true; throw error; }
       finally {
         if (bucket && owner === sessionId && owner === ctx.sessionManager.getSessionId()) {
