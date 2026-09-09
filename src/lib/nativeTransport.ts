@@ -516,10 +516,10 @@ export class NativeTransport {
   openProjectDirectory(cwd: string, hostId = "local") { return call<void>("open_project_directory", { cwd, hostId }); }
   createProjectWorktree(cwd: string, name: string, hostId = "local") { return call<GitWorktree>("create_project_worktree", { cwd, name, hostId }); }
   createGitWorktree(cwd: string, name: string, hostId = "local") { return call<GitWorktree>("create_git_worktree", { cwd, name, hostId }); }
-  async runWorktreeSetup(cwd: string, worktreePath: string, hostId = "local", onSetup?: (cancel: (() => Promise<void>) | undefined) => void, phase: "setup" | "cleanup" = "setup") {
+  async runWorktreeSetup(cwd: string, worktreePath: string, hostId = "local", onSetup?: (cancel: (() => Promise<void>) | undefined) => void) {
     const setupId = await call<string>("prepare_worktree_setup");
     onSetup?.(() => call<void>("cancel_worktree_setup", { setupId }));
-    try { await call<void>("run_worktree_setup", { setupId, cwd, worktreePath, hostId, phase }); }
+    try { await call<void>("run_worktree_setup", { setupId, cwd, worktreePath, hostId }); }
     finally { onSetup?.(undefined); }
   }
   async isGitRepository() { if (!this.cwd) return false; return call<boolean>("is_git_repository", { cwd: this.cwd, hostId: this.hostId }); }

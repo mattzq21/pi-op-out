@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Archive, ChevronDown, Columns2, CopyPlus, Ellipsis, Folder, FolderOpen, FolderGit2, GitBranch, Brush, MessageSquarePlus, Pencil, Search, Trash2 } from "lucide-react";
+import { Archive, ChevronDown, Columns2, CopyPlus, Ellipsis, Folder, FolderOpen, FolderGit2, GitBranch, MessageSquarePlus, Pencil, Search, Trash2 } from "lucide-react";
 import type { SessionSummary } from "../types";
 import { useSessionGroups, type SessionGroup } from "../lib/sessionGroups";
 import { openGroupDirectory } from "../lib/nativeTransport";
 import { RemoveGroupDialog } from "./RemoveGroupDialog";
 
 export type SessionAction = "split" | "rename" | "clone" | "open-directory" | "archive";
-interface Props { sessions: SessionSummary[]; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; onNewChat: (group: SessionGroup) => void; onCleanupWorktree: (cwd: string, hostId: string) => void; onCreateWorktree: (cwd: string, hostId: string) => void; createGroupRequest?: number; onCreateGroupHandled?: () => void; }
+interface Props { sessions: SessionSummary[]; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; onNewChat: (group: SessionGroup) => void; onCreateWorktree: (cwd: string, hostId: string) => void; createGroupRequest?: number; onCreateGroupHandled?: () => void; }
 type CustomGroup = SessionGroup;
 interface DraggedSession { projectKey: string; sessionKey: string; session: SessionSummary; }
 interface DropTarget { projectKey: string; sessionKey: string; edge: "before" | "after"; layoutBefore?: string | null; }
@@ -82,7 +82,7 @@ function formatApiCost(cost = 0) {
   return `$${cost.toFixed(2)}`;
 }
 
-export function SessionPanel({ sessions, activeId, activeHostId = "local", runningSessions = new Set(), unseenSessions = new Set(), query, onQuery, onSelect, onAction, onNewChat, onCleanupWorktree, onCreateWorktree, createGroupRequest = 0, onCreateGroupHandled }: Props) {
+export function SessionPanel({ sessions, activeId, activeHostId = "local", runningSessions = new Set(), unseenSessions = new Set(), query, onQuery, onSelect, onAction, onNewChat, onCreateWorktree, createGroupRequest = 0, onCreateGroupHandled }: Props) {
   const [menu, setMenu] = useState<{ session: SessionSummary; x: number; y: number; returnFocus?: HTMLElement }>();
   const [groupMenu, setGroupMenu] = useState<{ projectKey: string; label: string; x: number; y: number; returnFocus: HTMLElement }>();
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => savedGroupKeys(COLLAPSED_PROJECTS_KEY));
@@ -390,7 +390,6 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   const menuItems = groupMenu ? [
     { label: "Open directory", Icon: FolderOpen, disabled: !groupDirectory, run: () => { if (groupDirectory?.cwd) { setGroupActionError(undefined); void openGroupDirectory(groupDirectory.cwd, groupDirectory.hostId ?? "local").catch((reason) => setGroupActionError(String(reason))); } } },
     { label: "Create worktree", Icon: GitBranch, disabled: !groupDirectory, run: () => { if (groupDirectory?.cwd) onCreateWorktree(groupDirectory.cwd, groupDirectory.hostId ?? "local"); } },
-    { label: "Clean up worktree", Icon: Brush, disabled: !groupDirectory, run: () => { if (groupDirectory?.cwd) onCleanupWorktree(groupDirectory.cwd, groupDirectory.hostId ?? "local"); } },
     { label: "Remove", Icon: Trash2, disabled: false, run: () => setRemovingGroup({ id: groupMenu.projectKey, name: groupMenu.label }) },
   ] : menu ? actions.filter(([action]) => action !== "split" || menu.session.id !== activeId || (menu.session.hostId ?? "local") !== activeHostId).map(([action, Icon, label]) => ({ label, Icon, disabled: false, run: () => onAction(menu.session, action) })) : [];
   const renderDropZone = (beforeToken: string | null) => <div key={`drop-${beforeToken ?? "end"}`} data-sidebar-drop-zone data-sidebar-before={beforeToken ?? undefined} data-sidebar-end={beforeToken === null ? true : undefined} className={`sidebar-drop-zone ${dropTarget?.layoutBefore === beforeToken ? "active" : ""}`} />;

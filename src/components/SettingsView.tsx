@@ -10,7 +10,7 @@ import { Toggle } from "./Toggle";
 type Section = "general" | "environment" | "dictionaries" | "agents" | "machines" | "keybinds" | "tools" | "skills" | "hooks" | "mcp";
 const sections = [
   { id: "general" as const, label: "General", icon: Settings2 },
-  { id: "environment" as const, label: "Worktree scripts", icon: Wrench },
+  { id: "environment" as const, label: "Environment setup", icon: Wrench },
   { id: "keybinds" as const, label: "Keybinds", icon: Keyboard },
   { id: "machines" as const, label: "Machines", icon: Server },
   { id: "dictionaries" as const, label: "Dictionaries", icon: BookOpen },
@@ -152,14 +152,13 @@ export function SettingsView({ settings, pendingSettingsCount = 0, agentConfig: 
       <section className="settings-content">
         {!matchingSections.length && <div className="empty-small" role="status">No settings match your search.</div>}
         {visibleSection === "hooks" && <HooksSettings hosts={settings.hosts} />}
-        {visibleSection === "environment" && <SettingsSection title="Worktree scripts" description="Assign each script to a project and machine. Setup scripts run when a worktree is created. Cleanup scripts run when requested for that worktree. Scripts run in order and stop on the first failure." headerAction={<button className="secondary-button" onClick={() => patch({ worktreeSetupScripts: [...(draft.worktreeSetupScripts ?? []), { id: uid("setup"), name: "Setup script", script: "", enabled: true, projectPath: "", hostId: "local" }] })}><CirclePlus size={15} />Add script</button>}>
+        {visibleSection === "environment" && <SettingsSection title="Environment setup" description="Assign each script to a project and machine. Enabled scripts run in order for new worktrees of that repository, including worktrees created from another worktree. Setup stops on the first failure and keeps the worktree." headerAction={<button className="secondary-button" onClick={() => patch({ worktreeSetupScripts: [...(draft.worktreeSetupScripts ?? []), { id: uid("setup"), name: "Setup script", script: "", enabled: true, projectPath: "", hostId: "local" }] })}><CirclePlus size={15} />Add script</button>}>
           <p>Source workspace path: <code>PIOP_SOURCE_TREE_PATH</code><br />New worktree path: <code>PIOP_WORKTREE_PATH</code></p>
           {(draft.worktreeSetupScripts ?? []).map((script, index, scripts) => {
             const update = (value: Partial<typeof script>) => patch({ worktreeSetupScripts: scripts.map((item) => item.id === script.id ? { ...item, ...value } : item) });
             return <div className="setup-script" key={script.id}>
               <div className="section-actions"><strong>Script {index + 1}</strong><Toggle label={`Enable ${script.name}`} checked={script.enabled} onChange={(enabled) => update({ enabled })} /><button disabled={index === 0} onClick={() => { const reordered = [...scripts]; [reordered[index - 1], reordered[index]] = [reordered[index], reordered[index - 1]]; patch({ worktreeSetupScripts: reordered }); }}>Move up</button><button onClick={() => patch({ worktreeSetupScripts: scripts.filter((item) => item.id !== script.id) })}>Remove</button></div>
               <label className="field"><span>Name</span><input aria-label={`Script ${index + 1} name`} value={script.name} onChange={(event) => update({ name: event.target.value })} /></label>
-              <label className="field"><span>Run during</span><select aria-label={`Script ${index + 1} phase`} value={script.phase ?? "setup"} onChange={(event) => update({ phase: event.target.value as "setup" | "cleanup" })}><option value="setup">Setup</option><option value="cleanup">Cleanup</option></select></label>
               <label className="field"><span>Machine</span><select aria-label={`Script ${index + 1} machine`} value={script.hostId ?? "local"} onChange={(event) => update({ hostId: event.target.value, projectPath: "" })}><option value="local">Local</option>{draft.hosts.map((host) => <option key={host.id} value={host.id}>{host.name}</option>)}{script.hostId && script.hostId !== "local" && !draft.hosts.some((host) => host.id === script.hostId) && <option value={script.hostId}>Unavailable machine</option>}</select></label>
               <label className="field"><span>Project directory</span><input aria-label={`Script ${index + 1} project directory`} list={`setup-projects-${script.id}`} placeholder="Absolute path to the repository" value={script.projectPath ?? ""} onChange={(event) => update({ projectPath: event.target.value })} /></label>
               <datalist id={`setup-projects-${script.id}`}>{[...new Set(sessions.filter((session) => (session.hostId ?? "local") === (script.hostId ?? "local") && session.projectKind !== "no-repo").map((session) => session.projectRoot ?? session.cwd))].map((path) => <option key={path} value={path} />)}</datalist>
@@ -167,7 +166,7 @@ export function SettingsView({ settings, pendingSettingsCount = 0, agentConfig: 
               <label className="field"><span>Bash script</span><textarea className="setup-script-code" aria-label={`Script ${index + 1} Bash code`} rows={8} spellCheck={false} placeholder={'npm ci\n# Or copy files from "$PIOP_SOURCE_TREE_PATH"'} value={script.script} onChange={(event) => update({ script: event.target.value })} /></label>
             </div>;
           })}
-          {!draft.worktreeSetupScripts?.length && <div className="empty-small">Add setup or cleanup scripts for a project.</div>}
+          {!draft.worktreeSetupScripts?.length && <div className="empty-small">Add a script to install dependencies or copy environment files when creating a worktree.</div>}
         </SettingsSection>}
         {visibleSection === "general" && <SettingsSection title="General" description="Agent behavior.">
           <SettingRow icon={<Cpu />} title="Auto compaction" description="Compact context before it reaches the model limit."><Toggle label="Auto compaction" checked={draft.autoCompaction} onChange={(autoCompaction) => patch({ autoCompaction })} /></SettingRow>
