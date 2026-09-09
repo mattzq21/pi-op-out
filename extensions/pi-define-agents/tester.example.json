@@ -5,7 +5,7 @@
       "model": "",
       "effort": "high",
       "path_systemprompt": "sysprompt/tester.example.md",
-      "agentsMd": "",
+      "path_agentprompt": "",
       "tools": [
         "read",
         "bash",

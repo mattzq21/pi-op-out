@@ -162,6 +162,7 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
   });
 
   pi.on("before_agent_start", (event, ctx) => {
+    if (process.env.PI_DEFINE_AGENTS_ACTIVE === "1") return;
     const projectContext = movableProjectContext(event.systemPrompt, ctx.cwd);
     const previous = latestCustomMessage(ctx.sessionManager.buildContextEntries(), PROJECT_CONTEXT_MESSAGE);
     return {
@@ -171,7 +172,9 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
   });
 
   pi.on("context", (event, ctx) => {
-    let messages = event.messages;
+    let messages = process.env.PI_DEFINE_AGENTS_ACTIVE === "1"
+      ? event.messages.filter((message) => customMessageContent(message, PROJECT_CONTEXT_MESSAGE) === undefined)
+      : event.messages;
     let contextIndex = -1;
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       if (customMessageContent(messages[index], PROJECT_CONTEXT_MESSAGE) !== undefined) { contextIndex = index; break; }
