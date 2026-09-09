@@ -10,7 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "piop", "width": 1440, "height": 900, "minWidth": 900, "minHeight": 640, "focus": true, "decorations": true, "transparent": false, "dragDropEnabled": true }],
+    "windows": [{ "title": "piop", "width": 1280, "height": 800, "minWidth": 900, "minHeight": 640, "focus": true, "decorations": true, "transparent": false, "dragDropEnabled": true }],
     "security": { "csp": null }
   },
   "bundle": {
