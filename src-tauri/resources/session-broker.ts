@@ -1,4 +1,4 @@
-import { Type } from "@earendil-works/pi-ai";
+import { Type, type AssistantMessage } from "@earendil-works/pi-ai";
 import { existsSync } from "node:fs";
 import { readFile, realpath } from "node:fs/promises";
 import { execFile } from "node:child_process";
@@ -12,8 +12,27 @@ const token = process.env.PI_DESKTOP_BROKER_TOKEN;
 
 const MESSAGE_TIMEOUT_MS = 120_000;
 
+type StoppedAssistantMessage = AssistantMessage & { piopCompletedBlocks?: true };
+
 export function desktopPauseContext(messages: ContextEvent["messages"], resumeMessages: ReadonlySet<string>): ContextEvent["messages"] {
   return messages.filter((message) => !(message.role === "assistant" && message.stopReason === "aborted" && message.errorMessage === "Response paused")).map((message) => {
+    if (message.role === "assistant" && message.stopReason === "aborted" && (message as StoppedAssistantMessage).piopCompletedBlocks && message.content.length) {
+      const content = message.content.flatMap<AssistantMessage["content"][number]>((block) => {
+        if (block.type !== "thinking" || !["openai-responses", "openai-codex-responses", "azure-openai-responses"].includes(message.api)) return [block];
+        try {
+          const signature = JSON.parse(block.thinkingSignature ?? "null");
+          if (signature?.type === "reasoning" && typeof signature.encrypted_content === "string" && signature.encrypted_content.trim()) return [block];
+        } catch { /* A stopped stream may not have finalized its replay metadata. */ }
+        return !block.redacted && block.thinking.trim() ? [{ type: "text", text: block.thinking }] : [];
+      });
+      if (!content.length) return message;
+      return {
+        ...message,
+        stopReason: "stop" as const,
+        errorMessage: undefined,
+        content: [...content, { type: "text" as const, text: "[Response stopped by the user. Only completed content blocks are retained. Any tool calls in this response were not executed.]" }],
+      };
+    }
     if (message.role !== "user") return message;
     const text = typeof message.content === "string" ? message.content : message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
     return resumeMessages.has(text) ? { ...message, content: [{ type: "text" as const, text: "Continue the previous task using the completed turns and tool results already in context. The last run was paused by the user. Check the current state of any interrupted work before continuing, and finish the remaining task without repeating completed work." }] } : message;
@@ -57,6 +76,7 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
   let pauseOperation: Promise<void> | undefined;
   let controlContext: ExtensionContext | undefined;
   const resumeMessages = new Set<string>();
+  const completedBlocks = new Map<number, AssistantMessage["content"][number]>();
   let generation = 0;
   const publishPause = () => {
     controlContext?.ui.setStatus(pauseEntry, `json:${JSON.stringify({ type: "pause_state", isPaused, isPausing })}`);
@@ -64,7 +84,7 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
   const persistPause = (paused: boolean) => { isPaused = paused; pi.appendEntry(pauseEntry, { isPaused: paused }); };
   const restorePause = (ctx: ExtensionContext) => {
     generation += 1; controlContext = ctx;
-    isPaused = false; isPausing = false; pauseStopped = false; resumeMessages.clear();
+    isPaused = false; isPausing = false; pauseStopped = false; resumeMessages.clear(); completedBlocks.clear();
     for (const entry of ctx.sessionManager.getBranch()) {
       if (entry.type !== "custom") continue;
       if (entry.customType === pauseEntry) isPaused = (entry.data as { isPaused?: boolean } | undefined)?.isPaused === true;
@@ -80,8 +100,24 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
     if (isPausing) { ctx.abort(); return; }
     if (isPaused) { persistPause(false); publishPause(); }
   });
+  pi.on("message_start", (event) => {
+    if (event.message.role === "assistant") completedBlocks.clear();
+  });
+  pi.on("message_update", (event) => {
+    const update = event.assistantMessageEvent;
+    if (update.type !== "text_end" && update.type !== "thinking_end" && update.type !== "toolcall_end") return;
+    const block = update.partial.content[update.contentIndex];
+    if (block) completedBlocks.set(update.contentIndex, structuredClone(block));
+  });
   pi.on("message_end", (event, ctx) => {
-    if (isPausing && event.message.role === "assistant" && (event.message.stopReason === "aborted" || (event.message.stopReason === "error" && ctx.signal?.aborted))) return { message: { ...event.message, stopReason: "aborted", errorMessage: "Response paused" } };
+    if (event.message.role !== "assistant") return;
+    const content = [...completedBlocks].sort(([left], [right]) => left - right).map(([, block]) => block);
+    completedBlocks.clear();
+    if (isPausing && (event.message.stopReason === "aborted" || (event.message.stopReason === "error" && ctx.signal?.aborted))) return { message: { ...event.message, stopReason: "aborted", errorMessage: "Response paused" } };
+    if (event.message.stopReason === "aborted") {
+      const message: StoppedAssistantMessage = { ...event.message, content, piopCompletedBlocks: true };
+      return { message };
+    }
   });
   pi.on("context", (event) => ({ messages: desktopPauseContext(event.messages, resumeMessages) }));
   const waitForIdle = async (ctx: ExtensionContext, version: number) => {
