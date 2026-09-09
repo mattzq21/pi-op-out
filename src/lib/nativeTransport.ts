@@ -86,6 +86,7 @@ export class NativeTransport {
           const state = await this.executeCommandNow<{ isStreaming?: boolean; isCompacting?: boolean; pendingMessageCount?: number }>({ type: "get_state" });
           if (this.inferenceBusy || this.compactionBusy || state.isStreaming || state.isCompacting || ((this.queueSnapshot.steering as string[]).length + (this.queueSnapshot.followUp as string[]).length) > 0) return;
         }
+        if (this.disposed || !this.pendingSettings) return;
         const settings = this.pendingSettings;
         await this.reconnectForSettings(settings);
         if (this.running) {
@@ -190,6 +191,7 @@ export class NativeTransport {
       }
       this.queueSnapshot = event;
       if (!this.changingQueue) this.publishQueue();
+      this.applyPendingSettings();
       return;
     }
     if ((event.type === "message_start" || event.type === "message_end") && event.message) {

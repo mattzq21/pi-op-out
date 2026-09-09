@@ -274,7 +274,7 @@ export default function App() {
           transportConversationKeys.current.set(transport, conversationKey); activateConversationKey(conversationKey);
           setTerminalOpen(false); setTerminalTarget(undefined);
         }
-        void refresh().then(() => { setError(undefined); updateConnected(true); }).catch((reason) => setError(String(reason)));
+        void refresh().then((value) => configureRuntime(value)).then(() => { setError(undefined); updateConnected(true); }).catch((reason) => setError(String(reason)));
       }
       if (event.type === "session_info_changed") void refresh();
       if (event.type === "disconnected") {
