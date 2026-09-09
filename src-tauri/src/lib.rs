@@ -86,6 +86,7 @@ const MAX_SESSION_INDEX_BATCH_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Default)]
 struct PiRuntime {
+    worktree_setups: Mutex<HashMap<String, Arc<AtomicBool>>>,
     ephemeral_sessions: Mutex<HashMap<String, EphemeralSession>>,
     processes: Arc<Mutex<HashMap<String, PiProcess>>>,
     pending: Arc<Mutex<HashMap<(String, String), mpsc::Sender<Result<Value, String>>>>>,
@@ -808,12 +809,15 @@ struct GitWorktree { branch: String, path: String }
 struct LimitedOutput { status: ExitStatus, stdout: Vec<u8>, stderr: Vec<u8> }
 
 #[tauri::command]
-async fn run_worktree_setup(app: AppHandle, cwd: String, worktree_path: String, host_id: Option<String>) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let settings = load_app_settings(app)?;
+async fn run_worktree_setup(app: AppHandle, setup_id: String, cwd: String, worktree_path: String, host_id: Option<String>) -> Result<(), String> {
+    let cancelled = app.state::<PiRuntime>().worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.get(&setup_id).cloned().ok_or("Unknown setup")?;
+    let worker_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let settings = load_app_settings(worker_app)?;
         let host_id = host_id.as_deref().unwrap_or("local");
         let host = if host_id == "local" { None } else { Some(remote_host(&settings, host_id)?) };
         for setup in settings.worktree_setup_scripts.iter().filter(|setup| setup.enabled && !setup.script.trim().is_empty()) {
+            if cancelled.load(Ordering::SeqCst) { return Err("Environment setup cancelled".into()); }
             let context = format!("Setup script '{}' failed", setup.name);
             if setup.script.len() > 32 * 1024 { return Err(format!("{context}: script exceeds 32 KiB")); }
             let script = format!(r#"exec 1>&2
@@ -822,17 +826,85 @@ PIOP_SOURCE_TREE_PATH=$(cd -- "$root" && pwd -P) || exit 1
 cd -- {target} || exit 1
 PIOP_WORKTREE_PATH=$(pwd -P) || exit 1
 export PIOP_SOURCE_TREE_PATH PIOP_WORKTREE_PATH
-exec bash -e -c {code}"#, source = shell_quote(&cwd), target = shell_quote(&worktree_path), code = shell_quote(&setup.script));
-            let mut command = if let Some(host) = host { let mut command = ssh(host); command.arg(script); command } else { let mut command = Command::new("bash"); command.args(["-c", &script]); command };
-            command.stdin(Stdio::null());
-            let output = run_limited(&mut command, 64 * 1024, &context)?;
+exec 3<&0
+set -m
+bash -e -c {code} </dev/null 3<&- &
+setup_pid=$!
+set +m
+# Keep cancellation separate from script input. EOF also stops setup if SSH disconnects.
+( IFS= read -r cancel; kill -KILL -- "-$setup_pid" 2>/dev/null ) <&3 &
+watcher=$!
+wait "$setup_pid"
+status=$?
+kill "$watcher" 2>/dev/null
+wait "$watcher" 2>/dev/null
+exit "$status""#, source = shell_quote(&cwd), target = shell_quote(&worktree_path), code = shell_quote(&setup.script));
+            let mut command = if let Some(host) = host { let mut command = ssh(host); command.arg(format!("bash -c {}", shell_quote(&script))); command } else { let mut command = Command::new("bash"); command.args(["-c", &script]); command };
+            let output = run_setup_process(&mut command, &cancelled, &context)?;
             if !output.status.success() {
                 let detail = String::from_utf8_lossy(&output.stderr);
                 return Err(format!("{context} ({}):\n{}", output.status, detail.trim()));
             }
         }
         Ok(())
-    }).await.map_err(|error| error.to_string())?
+    }).await.map_err(|error| error.to_string());
+    app.state::<PiRuntime>().worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.remove(&setup_id);
+    result?
+}
+
+#[tauri::command]
+fn prepare_worktree_setup(runtime: State<PiRuntime>) -> Result<String, String> {
+    let id = Uuid::new_v4().to_string();
+    runtime.worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.insert(id.clone(), Arc::new(AtomicBool::new(false)));
+    Ok(id)
+}
+
+#[tauri::command]
+fn cancel_worktree_setup(runtime: State<PiRuntime>, setup_id: String) -> Result<(), String> {
+    if let Some(cancelled) = runtime.worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.get(&setup_id) { cancelled.store(true, Ordering::SeqCst); }
+    Ok(())
+}
+
+fn run_setup_process(command: &mut Command, cancelled: &AtomicBool, context: &str) -> Result<LimitedOutput, String> {
+    let mut child = command.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().map_err(|error| format!("{context}: {error}"))?;
+    let mut input = child.stdin.take();
+    let mut stderr = child.stderr.take().ok_or("Setup stderr was unavailable")?;
+    let retained = Arc::new(Mutex::new(Vec::new()));
+    let reader_output = retained.clone();
+    let (done_tx, done_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut buffer = [0u8; 8192];
+        while let Ok(count) = stderr.read(&mut buffer) {
+            if count == 0 { break; }
+            let mut output = reader_output.lock().unwrap();
+            let remaining = (64 * 1024usize).saturating_sub(output.len());
+            output.extend_from_slice(&buffer[..count.min(remaining)]);
+        }
+        let _ = done_tx.send(());
+    });
+    let mut cancelling_at = None;
+    let status = loop {
+        if cancelled.load(Ordering::SeqCst) && cancelling_at.is_none() {
+            if let Some(mut input) = input.take() { let _ = input.write_all(b"cancel\n"); }
+            cancelling_at = Some(Instant::now());
+        }
+        if cancelling_at.is_some_and(|started: Instant| started.elapsed() >= Duration::from_secs(2)) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Environment setup cancelled".into());
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => thread::sleep(Duration::from_millis(50)),
+            Err(error) => { drop(input); let _ = child.kill(); let _ = child.wait(); return Err(format!("{context}: {error}")); }
+        }
+    };
+    drop(input);
+    if cancelled.load(Ordering::SeqCst) { return Err("Environment setup cancelled".into()); }
+    // A background descendant may retain stderr; it must not keep the dialog open.
+    let _ = done_rx.recv_timeout(Duration::from_millis(100));
+    let stderr = retained.lock().map_err(|_| "Setup output lock was poisoned")?.clone();
+    Ok(LimitedOutput { status, stdout: vec![], stderr })
 }
 
 fn run_limited(command: &mut Command, max_stdout: usize, context: &str) -> Result<LimitedOutput, String> {
@@ -2333,7 +2405,7 @@ pub fn run() {
         }
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
-    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, list_hooks, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, run_worktree_setup, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).build(context).expect("error while building piop").run(|app, event| {
+    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, list_hooks, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, prepare_worktree_setup, cancel_worktree_setup, run_worktree_setup, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).build(context).expect("error while building piop").run(|app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
             let broker = app.state::<BrokerRuntime>(); broker.closing.store(true, Ordering::SeqCst);
             let jobs = broker.jobs.lock().map(|mut jobs| jobs.drain().map(|(_, child)| child).collect::<Vec<_>>()).unwrap_or_default();

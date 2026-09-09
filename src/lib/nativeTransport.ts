@@ -503,7 +503,12 @@ export class NativeTransport {
   relocateSession(sessionPath: string, cwd: string, hostId = "local") { return call<void>("relocate_session", { sessionPath, cwd, hostId }); }
   openProjectDirectory(cwd: string, hostId = "local") { return call<void>("open_project_directory", { cwd, hostId }); }
   createGitWorktree(cwd: string, name: string, hostId = "local") { return call<GitWorktree>("create_git_worktree", { cwd, name, hostId }); }
-  runWorktreeSetup(cwd: string, worktreePath: string, hostId = "local") { return call<void>("run_worktree_setup", { cwd, worktreePath, hostId }); }
+  async runWorktreeSetup(cwd: string, worktreePath: string, hostId = "local", onSetup?: (cancel: (() => Promise<void>) | undefined) => void) {
+    const setupId = await call<string>("prepare_worktree_setup");
+    onSetup?.(() => call<void>("cancel_worktree_setup", { setupId }));
+    try { await call<void>("run_worktree_setup", { setupId, cwd, worktreePath, hostId }); }
+    finally { onSetup?.(undefined); }
+  }
   async isGitRepository() { if (!this.cwd) return false; return call<boolean>("is_git_repository", { cwd: this.cwd, hostId: this.hostId }); }
   async gitBranch() { if (!this.cwd) return null; const branch = await call<unknown>("git_branch", { cwd: this.cwd, hostId: this.hostId }); return typeof branch === "string" ? branch : null; }
   loadSettings() { return call<AppSettings>("load_app_settings"); }
