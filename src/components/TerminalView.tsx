@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { Terminal } from "@xterm/xterm";
@@ -13,6 +13,7 @@ interface Props {
 }
 
 export function TerminalView({ cwd, terminals, activeId, output, outputEnd, snapshot, snapshotEnd, started, exited, onAdd, onSelect, onStart, onData, onResize, onSnapshot, onDelete, onClose }: Props) {
+  const [copyError, setCopyError] = useState(false);
   const host = useRef<HTMLDivElement>(null); const terminal = useRef<Terminal | undefined>(undefined); const lastOutputEnd = useRef(0); const queuedOutputEnd = useRef(0); const tabRefs = useRef(new Map<string, HTMLButtonElement>());
   const callbacks = useRef({ onData, onResize, onStart, onSnapshot }); callbacks.current = { onData, onResize, onStart, onSnapshot };
 
@@ -21,6 +22,24 @@ export function TerminalView({ cwd, terminals, activeId, output, outputEnd, snap
     const testPalette = import.meta.env.MODE === "e2e";
     const instance = new Terminal({ cursorBlink: true, convertEol: false, fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace", fontSize: 12, lineHeight: 1.25, scrollback: 5000, theme: { background: "#1d1d1b", foreground: "#e5e1d8", cursor: testPalette ? "#d7b84d" : "#d46a24", selectionBackground: "#5a554b88", black: "#242320", red: "#d77865", green: "#72ad8d", yellow: testPalette ? "#d46a24" : "#c49b52", blue: "#7496b8", magenta: "#ad83ad", cyan: "#72aaa9", white: "#e5e1d8" } });
     const fit = new FitAddon(); const serializer = new SerializeAddon(); instance.loadAddon(fit); instance.loadAddon(serializer); instance.open(host.current); terminal.current = instance;
+    setCopyError(false);
+    instance.attachCustomKeyEventHandler((event) => {
+      if (!event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey || event.key.toLowerCase() !== "c") return true;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.type === "keydown") {
+        const selection = instance.getSelection();
+        setCopyError(false);
+        if (selection) {
+          const copy = async () => {
+            try { await navigator.clipboard.writeText(selection); }
+            catch { if (terminal.current === instance) setCopyError(true); }
+          };
+          void copy();
+        }
+      }
+      return false;
+    });
     const fitAndResize = () => { try { fit.fit(); callbacks.current.onResize(instance.cols, instance.rows); } catch { /* The panel may be between layouts. */ } };
     fit.fit();
     let restored = !snapshot;
@@ -42,7 +61,7 @@ export function TerminalView({ cwd, terminals, activeId, output, outputEnd, snap
   useEffect(() => { tabRefs.current.get(activeId)?.scrollIntoView({ block: "nearest", inline: "nearest" }); }, [activeId, terminals.length]);
 
   const canAdd = terminals.length < 8;
-  return <section className="terminal-shell" aria-label="Session terminal"><header><div className="terminal-tabs">{terminals.map((item) => <button ref={(element) => { if (element) tabRefs.current.set(item.id, element); else tabRefs.current.delete(item.id); }} key={item.id} className={`terminal-tab ${item.id === activeId ? "active" : ""}`} aria-pressed={item.id === activeId} onClick={() => onSelect(item.id)}><TerminalSquare size={14} /><strong>{item.label}</strong></button>)}<IconButton label={canAdd ? "Add terminal" : "Terminal limit reached"} disabled={!canAdd} onClick={onAdd}><Plus size={16} /></IconButton></div><div>{exited && <><span className="terminal-exited">exited</span><IconButton label="Restart terminal" onClick={() => onStart(activeId, terminal.current?.cols ?? 80, terminal.current?.rows ?? 24)}><RotateCcw size={14} /></IconButton></>}<IconButton label="Delete terminal" onClick={onDelete}><Trash2 size={15} /></IconButton><IconButton label="Close terminal panel" onClick={onClose}><X size={16} /></IconButton></div></header>
+  return <section className="terminal-shell" aria-label="Session terminal"><header><div className="terminal-tabs">{terminals.map((item) => <button ref={(element) => { if (element) tabRefs.current.set(item.id, element); else tabRefs.current.delete(item.id); }} key={item.id} className={`terminal-tab ${item.id === activeId ? "active" : ""}`} aria-pressed={item.id === activeId} onClick={() => onSelect(item.id)}><TerminalSquare size={14} /><strong>{item.label}</strong></button>)}<IconButton label={canAdd ? "Add terminal" : "Terminal limit reached"} disabled={!canAdd} onClick={onAdd}><Plus size={16} /></IconButton></div><div>{copyError && <span className="copy-feedback" role="status">Could not copy terminal selection</span>}{exited && <><span className="terminal-exited">exited</span><IconButton label="Restart terminal" onClick={() => onStart(activeId, terminal.current?.cols ?? 80, terminal.current?.rows ?? 24)}><RotateCcw size={14} /></IconButton></>}<IconButton label="Delete terminal" onClick={onDelete}><Trash2 size={15} /></IconButton><IconButton label="Close terminal panel" onClick={onClose}><X size={16} /></IconButton></div></header>
     {cwd ? <div className="terminal-host" ref={host} onMouseDown={() => terminal.current?.focus()} /> : <div className="terminal-unavailable">Start the conversation to get a CWD</div>}
   </section>;
 }
