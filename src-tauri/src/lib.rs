@@ -251,7 +251,13 @@ struct WorktreeSetupScript {
     project_path: Option<String>,
     #[serde(default)]
     host_id: Option<String>,
+    #[serde(default)]
+    phase: WorktreeScriptPhase,
 }
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum WorktreeScriptPhase { #[default] Setup, Cleanup }
 
 fn default_pi_path() -> String { "pi".into() }
 fn default_context_window_cap() -> u64 { 200_000 }
@@ -851,18 +857,20 @@ struct GitWorktree { branch: String, path: String }
 struct LimitedOutput { status: ExitStatus, stdout: Vec<u8>, stderr: Vec<u8> }
 
 #[tauri::command]
-async fn run_worktree_setup(app: AppHandle, setup_id: String, cwd: String, worktree_path: String, host_id: Option<String>) -> Result<(), String> {
+async fn run_worktree_setup(app: AppHandle, setup_id: String, cwd: String, worktree_path: String, host_id: Option<String>, phase: Option<WorktreeScriptPhase>) -> Result<(), String> {
     let cancelled = app.state::<PiRuntime>().worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.get(&setup_id).cloned().ok_or("Unknown setup")?;
     let worker_app = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let settings = load_app_settings(worker_app)?;
+        let phase = phase.unwrap_or_default();
+        let action = if phase == WorktreeScriptPhase::Cleanup { "Cleanup" } else { "Setup" };
         let host_id = host_id.as_deref().unwrap_or("local");
         let host = if host_id == "local" { None } else { Some(remote_host(&settings, host_id)?) };
-        for setup in settings.worktree_setup_scripts.iter().filter(|setup| setup.enabled && !setup.script.trim().is_empty()) {
+        for setup in settings.worktree_setup_scripts.iter().filter(|setup| setup.phase == phase && setup.enabled && !setup.script.trim().is_empty()) {
             let Some(project_path) = setup.project_path.as_deref().filter(|path| !path.trim().is_empty()) else { continue; };
             if setup.host_id.as_deref().unwrap_or("local") != host_id { continue; }
-            if cancelled.load(Ordering::SeqCst) { return Err("Environment setup cancelled".into()); }
-            let context = format!("Setup script '{}' failed", setup.name);
+            if cancelled.load(Ordering::SeqCst) { return Err(format!("Environment {} cancelled", action.to_lowercase())); }
+            let context = format!("{action} script '{}' failed", setup.name);
             if setup.script.len() > 32 * 1024 { return Err(format!("{context}: script exceeds 32 KiB")); }
             let completion_marker = format!("piop-setup-complete-{}", Uuid::new_v4());
             let script = format!(r#"exec 4>&1
@@ -874,6 +882,15 @@ project_common=$(git -C {project} rev-parse --path-format=absolute --git-common-
 if [ "$source_common" != "$project_common" ]; then
     printf '\n%s 0\n' {marker} >&4
     exit 0
+fi
+if [ {action} = Cleanup ]; then
+    worktree_git=$(git -C {target} rev-parse --absolute-git-dir) || exit 1
+    worktree_git=$(cd -- "$worktree_git" && pwd -P) || exit 1
+    if [ "$worktree_git" = "$source_common" ]; then
+        printf 'Cleanup requires a linked worktree, not the main checkout.\n' >&2
+        printf '\n%s 1\n' {marker} >&4
+        exit 1
+    fi
 fi
 root=$(git -C {source} rev-parse --show-toplevel) || exit 1
 PIOP_SOURCE_TREE_PATH=$(cd -- "$root" && pwd -P) || exit 1
@@ -909,9 +926,11 @@ done
 head -c 65536 "$setup_output" >&2
 rm -f -- "$setup_output"
 printf '\n%s %s\n' {marker} "$status" >&4
-exit "$status""#, source = shell_quote(&cwd), project = shell_quote(project_path), target = shell_quote(&worktree_path), code = shell_quote(&setup.script), marker = shell_quote(&completion_marker));
+exit "$status""#, action = shell_quote(action), source = shell_quote(&cwd), project = shell_quote(project_path), target = shell_quote(&worktree_path), code = shell_quote(&setup.script), marker = shell_quote(&completion_marker));
             let mut command = if let Some(host) = host { let mut command = ssh(host); command.arg(remote_login_command(&script)); command } else { let mut command = Command::new("bash"); command.args(["-c", &script]); command };
-            let (status, stderr) = run_setup_process(&mut command, &cancelled, &context, completion_marker)?;
+            let (status, stderr) = run_setup_process(&mut command, &cancelled, &context, completion_marker).map_err(|error| {
+                if phase == WorktreeScriptPhase::Cleanup && error == "Environment setup cancelled" { "Environment cleanup cancelled".into() } else { error }
+            })?;
             if status != 0 {
                 let detail = String::from_utf8_lossy(&stderr);
                 return Err(format!("{context} (exit status {status}):\n{}", detail.trim()));

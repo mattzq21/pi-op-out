@@ -31,7 +31,7 @@ export interface DirectoryListing { path: string; parent?: string; directories: 
 export interface SlashCommand { name: string; description?: string; source: "builtin" | "extension" | "prompt" | "skill"; sourceInfo?: { source?: string }; }
 export interface ImageAttachment { type: "image"; data: string; mimeType: string; name?: string; }
 export interface ComposerUpload { id: string; name: string; kind: "image" | "text"; byteSize: number; image?: ImageAttachment; text?: string; }
-export interface WorktreeSetupScript { id: string; name: string; script: string; enabled: boolean; projectPath?: string; hostId?: string; }
+export interface WorktreeSetupScript { id: string; name: string; script: string; enabled: boolean; projectPath?: string; hostId?: string; phase?: "setup" | "cleanup"; }
 export interface AppSettings { worktreeSetupScripts: WorktreeSetupScript[]; defaultAgent?: string; defaultModel: string; hiddenModels: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; autoCompaction: boolean; autoRetry: boolean; debugMode: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; mcpServers: McpServer[]; hosts: RemoteHost[]; dictionaries: PromptDictionary[]; activeDictionaryIds: string[]; }
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
 export type GitDiffSnapshot = string;
