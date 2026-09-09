@@ -134,7 +134,7 @@ export function Message({ message, turnCacheUsage, diff, expanded = false, showA
     if (!debug) return <div className={`tool-event ${status}`}><div className="tool-summary">{label}</div></div>;
     const input = message.toolInput === undefined ? undefined : JSON.stringify(message.toolInput, null, 2);
     const inputLines = input && message.toolInput !== null && typeof message.toolInput === "object" ? input.slice(1, -1).replace(/^\n|\n$/g, "").replace(/^  /gm, "") : input;
-    return <details className={`tool-event ${status}`} open={status === "running" || (expanded && status !== "done")}><summary className="tool-summary">{label}<ChevronRight size={12} className="tool-chevron" aria-hidden="true" /></summary>{inputLines !== undefined && <div className="tool-input" aria-label="Tool arguments"><pre>{inputLines}</pre></div>}{output && <div className="tool-output" aria-label="Tool output"><pre>{output}</pre></div>}</details>;
+    return <details className={`tool-event ${status}`} open={status === "running" || (expanded && status !== "done")}><summary className="tool-summary">{label}<ChevronRight size={12} className="tool-chevron" aria-hidden="true" /></summary>{inputLines !== undefined && <div className="tool-payload"><div className="tool-payload-label">In</div><div className="tool-input" aria-label="Tool arguments"><pre>{inputLines}</pre></div></div>}{output && <div className="tool-payload"><div className="tool-payload-label">Out</div><div className="tool-output" aria-label="Tool output"><pre>{output}</pre></div></div>}</details>;
   }
   if (message.role === "user") {
     const { skills, text, literalSkill } = userMessageParts(textOf(message.content));
