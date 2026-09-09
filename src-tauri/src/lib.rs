@@ -823,23 +823,40 @@ async fn run_worktree_setup(app: AppHandle, setup_id: String, cwd: String, workt
             let completion_marker = format!("piop-setup-complete-{}", Uuid::new_v4());
             let script = format!(r#"exec 4>&1
 exec 1>&2
+set +e
 root=$(git -C {source} rev-parse --show-toplevel) || exit 1
 PIOP_SOURCE_TREE_PATH=$(cd -- "$root" && pwd -P) || exit 1
 cd -- {target} || exit 1
 PIOP_WORKTREE_PATH=$(pwd -P) || exit 1
 export PIOP_SOURCE_TREE_PATH PIOP_WORKTREE_PATH
 exec 3<&0
+setup_output=$(mktemp "${{TMPDIR:-/tmp}}/piop-setup.XXXXXX") || exit 1
+trap 'rm -f -- "$setup_output"' EXIT
+exec 6>"$setup_output" || exit 1
+# The drain inherits no SSH streams or cancellation descriptors. It can outlive
+# setup while background jobs write, retaining at most 64 KiB and discarding more.
+# Byte-sized reads keep short diagnostics available without waiting for EOF.
+exec 5> >( trap - EXIT; exec >/dev/null 2>&1 3<&- 4>&-; dd bs=1 count=65536 >&6; exec 6>&-; cat >/dev/null )
+output_pid=$!
+exec 6>&-
 set -m
-bash -e -c {code} </dev/null 3<&- 4>&- &
+bash -e -c {code} </dev/null >&5 2>&1 3<&- 4>&- 5>&- &
 setup_pid=$!
+exec 5>&-
 set +m
 # Keep cancellation separate from script input. EOF also stops setup if SSH disconnects.
-( IFS= read -r cancel; kill -KILL -- "-$setup_pid" 2>/dev/null ) <&3 4>&- &
+( trap - EXIT; IFS= read -r cancel; kill -KILL -- "-$setup_pid" 2>/dev/null ) <&3 4>&- &
 watcher=$!
 wait "$setup_pid"
 status=$?
 kill "$watcher" 2>/dev/null
 wait "$watcher" 2>/dev/null
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    kill -0 "$output_pid" 2>/dev/null || break
+    sleep 0.01
+done
+head -c 65536 "$setup_output" >&2
+rm -f -- "$setup_output"
 printf '\n%s %s\n' {marker} "$status" >&4
 exit "$status""#, source = shell_quote(&cwd), target = shell_quote(&worktree_path), code = shell_quote(&setup.script), marker = shell_quote(&completion_marker));
             let mut command = if let Some(host) = host { let mut command = ssh(host); command.arg(remote_login_command(&script)); command } else { let mut command = Command::new("bash"); command.args(["-c", &script]); command };
@@ -928,7 +945,7 @@ fn run_setup_process(command: &mut Command, cancelled: &AtomicBool, context: &st
     };
     drop(input);
     if cancelled.load(Ordering::SeqCst) { return Err("Environment setup cancelled".into()); }
-    // A background descendant may retain stderr; it must not keep the dialog open.
+    // Collect final diagnostics without waiting indefinitely on inherited descriptors.
     let _ = done_rx.recv_timeout(Duration::from_millis(100));
     let stderr = retained.lock().map_err(|_| "Setup output lock was poisoned")?.clone();
     Ok((status, stderr))
