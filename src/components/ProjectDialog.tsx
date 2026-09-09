@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, ChevronRight, Folder, FolderOpen, Home, Search } from "lucide-react";
+import { ArrowDown, ArrowUp, CornerDownLeft, Folder, FolderOpen, Search } from "lucide-react";
 import type { DirectoryListing, RemoteHost } from "../types";
 
 interface Props {
@@ -12,63 +12,105 @@ interface Props {
   onCancel: () => void;
 }
 
+const folderName = (path: string) => path.split(/[\\/]/).filter(Boolean).at(-1) || path;
+const withSeparator = (path: string) => /[\\/]$/.test(path) ? path : path + (path.includes("\\") ? "\\" : "/");
+
 export function ProjectDialog({ initialPath, hosts, initialHostId, onHomeDirectory, onChooseDirectory, onOpen, onCancel }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const pathRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const returnFocusRef = useRef(document.activeElement instanceof HTMLElement ? document.activeElement : undefined);
-  const [path, setPath] = useState(initialPath);
+  const callbacks = useRef({ onHomeDirectory, onChooseDirectory });
+  callbacks.current = { onHomeDirectory, onChooseDirectory };
+  const initialLocation = useRef({ path: initialPath, hostId: initialHostId });
   const [hostId, setHostId] = useState(initialHostId);
+  const [query, setQuery] = useState("");
+  const [basePath, setBasePath] = useState("");
+  const [loaded, setLoaded] = useState<{ hostId: string; requested: string; listing: DirectoryListing }>();
   const [error, setError] = useState<string>();
-  const [choosing, setChoosing] = useState(false);
-  const choosingRef = useRef(false);
-  const [listing, setListing] = useState<DirectoryListing>();
-  const [filter, setFilter] = useState("");
+  const [loading, setLoading] = useState(true);
   const [opening, setOpening] = useState(false);
-  const initialLocation = useRef({ hostId: initialHostId, path: initialPath });
-  const directoryCallbacks = useRef({ onHomeDirectory, onChooseDirectory });
-  directoryCallbacks.current = { onHomeDirectory, onChooseDirectory };
-  useEffect(() => { const dialog = dialogRef.current; dialog?.showModal(); const frame = requestAnimationFrame(() => pathRef.current?.focus()); return () => { cancelAnimationFrame(frame); if (dialog?.open) dialog.close(); requestAnimationFrame(() => returnFocusRef.current?.focus()); }; }, []);
+  const openingRef = useRef(false);
+  const [active, setActive] = useState(0);
+  const [browseRequest, setBrowseRequest] = useState(0);
+  const separator = Math.max(query.lastIndexOf("/"), query.lastIndexOf("\\"));
+  const typedParent = separator < 0 ? "" : query.slice(0, separator + 1);
+  const parent = !typedParent ? basePath : /^(?:[\\/]|[a-z]:[\\/])/i.test(typedParent) ? typedParent : basePath ? withSeparator(basePath) + typedParent : typedParent;
+  const fragment = query.slice(separator + 1);
+  const listing = loaded?.hostId === hostId && loaded.requested === parent ? loaded.listing : undefined;
+  const results = (listing?.directories ?? []).filter((path) => folderName(path).toLocaleLowerCase().includes(fragment.toLocaleLowerCase())).sort((a, b) => {
+    const prefix = fragment.toLocaleLowerCase();
+    return Number(folderName(b).toLocaleLowerCase().startsWith(prefix)) - Number(folderName(a).toLocaleLowerCase().startsWith(prefix)) || a.localeCompare(b);
+  });
+  const selected = results[active];
+  const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+
   useEffect(() => {
-    let cancelled = false; choosingRef.current = true; setChoosing(true); setError(undefined); setListing(undefined); setFilter("");
-    const load = async () => {
-      const directory = hostId === initialLocation.current.hostId && initialLocation.current.path.trim() ? initialLocation.current.path : await directoryCallbacks.current.onHomeDirectory(hostId);
-      if (cancelled) return;
-      setPath(directory);
-      const selected = await directoryCallbacks.current.onChooseDirectory(directory, hostId);
-      if (cancelled) return;
-      if (typeof selected === "string") setPath(selected);
-      else if (selected) { setPath(selected.path); setListing(selected); }
+    const dialog = dialogRef.current;
+    dialog?.showModal();
+    inputRef.current?.focus();
+    return () => { if (dialog?.open) dialog.close(); requestAnimationFrame(() => returnFocusRef.current?.focus()); };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoaded(undefined); setBasePath(""); setQuery(""); setLoading(true); setError(undefined);
+    const initialize = async () => {
+      const location = initialLocation.current;
+      const path = location.hostId === hostId && location.path.trim() ? location.path : await callbacks.current.onHomeDirectory(hostId);
+      if (!cancelled) { setBasePath(path); setQuery(withSeparator(path)); }
     };
-    void load().catch((reason) => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); }).finally(() => { if (!cancelled) { choosingRef.current = false; setChoosing(false); } });
+    void initialize().catch((reason) => { if (!cancelled) { setError(String(reason instanceof Error ? reason.message : reason)); setLoading(false); } });
     return () => { cancelled = true; };
   }, [hostId]);
-  const open = async () => { if (choosingRef.current) return; const normalizedPath = path.trim(); if (!normalizedPath) { setError("Path can't be empty"); return; } choosingRef.current = true; setChoosing(true); setOpening(true); setError(undefined); try { await onOpen(normalizedPath, hostId); } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); } finally { choosingRef.current = false; setChoosing(false); setOpening(false); } };
-  const choose = async (directory = path, home = false) => {
-    if (choosingRef.current) return; choosingRef.current = true; setChoosing(true); setError(undefined);
-    try { const selected = await onChooseDirectory(home ? await onHomeDirectory(hostId) : directory.trim(), hostId); if (typeof selected === "string") { setPath(selected); setListing(undefined); } else if (selected) { setPath(selected.path); setListing(selected); setFilter(""); } }
+
+  useEffect(() => {
+    if (!parent) return;
+    let cancelled = false;
+    setLoading(true); setError(undefined);
+    const timer = setTimeout(() => {
+      void callbacks.current.onChooseDirectory(parent, hostId).then((value) => {
+        if (cancelled) return;
+        if (value && typeof value !== "string") setLoaded({ hostId, requested: parent, listing: value });
+        else { setLoaded(undefined); setError("Could not list this folder. Try another path."); }
+      }).catch((reason) => { if (!cancelled) { setLoaded(undefined); setError(reason instanceof Error ? reason.message : String(reason)); } }).finally(() => { if (!cancelled) setLoading(false); });
+    }, 150);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [hostId, parent, browseRequest]);
+
+  useEffect(() => { setActive(0); }, [query, loaded]);
+  useEffect(() => { dialogRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" }); }, [active]);
+
+  const browse = (path: string) => { setQuery(withSeparator(path)); setBrowseRequest((value) => value + 1); setActive(0); setError(undefined); inputRef.current?.focus(); };
+  const open = async () => {
+    if (!listing || loading || openingRef.current) return;
+    openingRef.current = true; setOpening(true); setError(undefined);
+    try { await onOpen(listing.path, hostId); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
-    finally { choosingRef.current = false; setChoosing(false); }
+    finally { openingRef.current = false; setOpening(false); }
   };
-  const folderName = (directory: string) => directory.split(/[\\/]/).filter(Boolean).at(-1) || directory;
-  const directories = listing?.directories.filter((directory) => folderName(directory).toLocaleLowerCase().includes(filter.toLocaleLowerCase())) ?? [];
-  return <dialog ref={dialogRef} className="extension-dialog project-dialog" aria-labelledby="project-dialog-title" onCancel={(event) => { event.preventDefault(); if (!opening) onCancel(); }} onMouseDown={(event) => { const bounds = event.currentTarget.getBoundingClientRect(); if (!opening && (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)) onCancel(); }}>
-      <p className="eyebrow">Project</p><h2 id="project-dialog-title">Open project</h2><p>Find a folder to start working in.</p>
-      <label className="field"><span>Machine</span><select aria-label="Machine" disabled={choosing} value={hostId} onChange={(event) => { setHostId(event.target.value); setPath(""); setListing(undefined); setError(undefined); }}><option value="local">Local</option>{hosts.map((host) => <option key={host.id} value={host.id}>{host.name}</option>)}</select></label>
-      <label className="project-path-label" htmlFor="project-path">Folder path</label>
-      <div className="project-navigation">
-        <button className="icon-button" aria-label="Go to home folder" title="Home folder" disabled={choosing} onClick={() => void choose("", true)}><Home size={16} /></button>
-        <button className="icon-button" aria-label="Go to parent folder" title="Parent folder" disabled={choosing || !listing?.parent} onClick={() => void choose(listing!.parent)}><ArrowUp size={16} /></button>
-        <input id="project-path" ref={pathRef} autoFocus disabled={choosing} value={path} placeholder="/path/to/project" onChange={(event) => { setPath(event.target.value); setListing(undefined); setFilter(""); setError(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); void choose(); } }} />
-        <button className="project-go" disabled={choosing || !path.trim()} onClick={() => void choose()}>Go</button>
-      </div>
-      <div className="project-browser" aria-busy={choosing && !opening}>
-        <label className="project-filter"><Search size={15} /><input aria-label="Filter folders" placeholder="Filter folders…" value={filter} disabled={choosing || !listing} onChange={(event) => setFilter(event.target.value)} /><span>{listing?.directories.length ?? 0}</span></label>
-        <div className="project-folders" aria-label="Folders">
-          {choosing && !opening ? <p className="project-empty" role="status">Loading folders…</p> : !listing ? <p className="project-empty">Enter a path and choose Go to browse its folders.</p> : directories.length === 0 ? <p className="project-empty">{filter ? "No folders match your filter." : "No subfolders. You can open this folder."}</p> : directories.map((directory) => <button key={directory} disabled={choosing} onClick={() => void choose(directory)}><Folder size={17} /><span>{folderName(directory)}</span><ChevronRight size={15} /></button>)}
-        </div>
-      </div>
-      {error && <p className="dialog-error" role="alert">{error}</p>}
-      <div className="project-selection"><FolderOpen size={18} /><div><span>Selected folder</span><strong title={path}>{path.trim() || "Choose a folder"}</strong></div></div>
-      <div className="dialog-actions"><button disabled={opening} onClick={onCancel}>Cancel</button><button className="primary-button" disabled={choosing || !path.trim()} onClick={() => void open()}>{opening ? "Opening…" : "Open project"}</button></div>
+
+  return <dialog ref={dialogRef} className="extension-dialog directory-palette" aria-labelledby="project-dialog-title" onCancel={(event) => { event.preventDefault(); if (!openingRef.current) onCancel(); }} onMouseDown={(event) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    if (!openingRef.current && (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)) onCancel();
+  }} onKeyDown={(event) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void open(); }
+  }}>
+    <header className="directory-palette-heading"><h2 id="project-dialog-title">Jump to a folder</h2><select aria-label="Machine" disabled={opening} value={hostId} onChange={(event) => setHostId(event.target.value)}><option value="local">Local</option>{hosts.map((host) => <option key={host.id} value={host.id}>{host.name}</option>)}</select><button className="directory-palette-escape" disabled={opening} onClick={onCancel}>esc</button></header>
+    <div className="directory-palette-search"><Search size={20} /><input ref={inputRef} autoFocus role="combobox" aria-label="Search or type a folder path" aria-autocomplete="list" aria-expanded="true" aria-controls="directory-palette-results" aria-activedescendant={!loading && selected ? "directory-result-" + active : undefined} autoComplete="off" spellCheck={false} placeholder="Type a folder path…" readOnly={opening} value={query} onChange={(event) => { setQuery(event.target.value); setActive(0); setError(undefined); }} onKeyDown={(event) => {
+      if (event.nativeEvent.isComposing || opening || event.metaKey || event.ctrlKey) return;
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setActive((index) => results.length ? (index + (event.key === "ArrowDown" ? 1 : -1) + results.length) % results.length : 0); }
+      else if (event.key === "Enter") { event.preventDefault(); if (selected && !loading) browse(selected); else if (query.trim()) browse(separator < 0 && basePath ? withSeparator(basePath) + query : query); }
+      else if (event.key === "Tab" && !event.shiftKey && selected && !loading) { event.preventDefault(); browse(selected); }
+      else if (event.key === "Backspace" && event.altKey && listing?.parent) { event.preventDefault(); browse(listing.parent); }
+    }} /></div>
+    <div className="directory-palette-caption"><span>{loading ? "Finding folders…" : fragment ? results.length + " matching folders" : "Continue into a folder"}</span><span>Tab to complete</span></div>
+    <div id="directory-palette-results" className="directory-palette-results" role="listbox" aria-label="Matching folders" aria-busy={loading}>
+      {!loading && results.map((path, index) => <div id={"directory-result-" + index} key={path} role="option" aria-selected={index === active} className="directory-palette-result" onMouseDown={(event) => event.preventDefault()} onMouseMove={() => setActive(index)} onClick={() => { if (!opening) browse(path); }}><Folder size={17} /><span>{folderName(path)}</span>{index === active && <small>Browse <CornerDownLeft size={13} /></small>}</div>)}
+      {!loading && !results.length && <div className="directory-palette-empty">{error ? "Check the path and try again." : fragment ? "No matches. Keep typing a path, or press Enter to browse it." : "No child folders. Open this folder below."}</div>}
+      {loading && <div className="directory-palette-empty" role="status">Loading folder suggestions…</div>}
+    </div>
+    {error && <p className="dialog-error" role="alert">{error}</p>}
+    <button className="directory-palette-open" disabled={!listing || loading || opening} onClick={() => void open()}><FolderOpen size={18} /><span><strong>{opening ? "Opening…" : "Open current folder"}</strong><small title={listing?.path}>{listing?.path || parent || "Type a path to begin"}</small></span><kbd>{isMac ? "⌘" : "Ctrl"} ↵</kbd></button>
+    <footer className="directory-palette-hints"><span><ArrowUp size={12} /><ArrowDown size={12} /> navigate</span><span><CornerDownLeft size={12} /> browse</span><span>Alt + Backspace parent</span></footer>
   </dialog>;
 }
