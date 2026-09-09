@@ -176,7 +176,8 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
     setEditingGroupId(undefined);
   };
   const editGroup = (group: CustomGroup) => { groupDraftActive.current = true; setEditingGroupId(group.id); setGroupDraftError(undefined); setNewGroupName(group.name); requestAnimationFrame(() => groupNameRef.current?.select()); };
-  const removeGroup = (projectKey: string) => {
+  const removeGroup = (projectKey: string, label: string) => {
+    if (!window.confirm(`Remove group “${label}”? All its chats will move outside all groups. No chats will be deleted.`)) return;
     const releasedSessions = orderedSessions(projectKey, sessions.filter((session) => visualProjectKey(session) === projectKey), sessionOrders);
     const releasedTokens = releasedSessions.map((session) => sessionLayoutToken(sessionKey(session)));
     if (projectKey.startsWith(CUSTOM_GROUP_PREFIX)) {
@@ -431,7 +432,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   const groupDirectory = groupMenu ? projectDetails.get(groupMenu.projectKey) : undefined;
   const menuItems = groupMenu ? [
     { label: "Open directory", Icon: FolderOpen, disabled: !groupDirectory, run: () => { if (groupDirectory) onAction({ ...groupDirectory, cwd: groupDirectory.projectRoot ?? groupDirectory.cwd }, "open-directory"); } },
-    { label: "Remove", Icon: Trash2, disabled: false, run: () => removeGroup(groupMenu.projectKey) },
+    { label: "Remove", Icon: Trash2, disabled: false, run: () => removeGroup(groupMenu.projectKey, groupMenu.label) },
   ] : menu ? actions.filter(([action]) => action !== "split" || menu.session.id !== activeId || (menu.session.hostId ?? "local") !== activeHostId).map(([action, Icon, label]) => ({ label, Icon, disabled: false, run: () => onAction(menu.session, action) })) : [];
   const renderDropZone = (beforeToken: string | null) => <div key={`drop-${beforeToken ?? "end"}`} data-sidebar-drop-zone data-sidebar-before={beforeToken ?? undefined} data-sidebar-end={beforeToken === null ? true : undefined} className={`sidebar-drop-zone ${dropTarget?.layoutBefore === beforeToken ? "active" : ""}`} />;
   return <aside className="session-panel">
