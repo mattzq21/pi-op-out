@@ -100,6 +100,13 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .stream-caret { display: inline-block; width: 5px; height: 14px; margin-left: 3px; background: var(--accent); animation: blink 1s steps(2) infinite; vertical-align: -2px; }
 @keyframes blink { 50% { opacity: 0; } }
 .tool-event { margin: 0 0 3px; font-size: 12px; color: var(--muted); }
+.tool-group { margin: 6px 0; color: var(--muted); font-size: 12px; }
+.tool-group > summary { display: flex; align-items: center; gap: 6px; width: fit-content; list-style: none; cursor: pointer; }
+.tool-group > summary::-webkit-details-marker { display: none; }
+.tool-group > summary small { font-size: 10px; }
+.tool-group-chevron { transition: transform .15s; }
+.tool-group[open] > summary .tool-group-chevron { transform: rotate(90deg); }
+.tool-group-content { margin: 8px 0 0 18px; }
 .tool-event .tool-summary { list-style: none; width: fit-content; padding: 0; display: flex; align-items: center; gap: 4px; }
 .tool-event summary { cursor: pointer; }
 .tool-event summary::-webkit-details-marker { display: none; }
