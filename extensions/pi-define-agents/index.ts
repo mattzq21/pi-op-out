@@ -213,6 +213,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   process.env.PI_DEFINE_AGENTS_ACTIVE = "1";
   const findAgent = (name: string) => config.agents.find((agent) => agent.name === name);
   const currentAgent = () => findAgent(active);
+  const currentSkillPaths = () => [...new Set(currentAgent() ? agentSkills(pi, currentAgent()!).map(normalizedPath) : [])].sort();
   const fastModeModels = () => { const request: { models?: string[] } = {}; pi.events.emit("piop:fast-mode", request); return request.models ?? []; };
   const fastModeError = (agent: Agent, model: string | undefined) => agent.fastMode === true && (!model || !fastModeModels().includes(model)) ? `Agent "${agent.name}" cannot run because model ${model || "(unset)"} does not support fast mode` : undefined;
   const publish = (ctx: ExtensionContext) => ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: currentAgent()?.name ?? active, config: { ...config, fastModeModels: fastModeModels() } })}`);
@@ -321,16 +322,27 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const agent = findAgent(name)!;
     const error = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model);
     if (error) throw new Error(error);
+    const previousSkills = currentSkillPaths();
     active = name; modelOverride = undefined; effortOverride = undefined;
-    pi.appendEntry(STATE_ENTRY, { active }); await reload(ctx);
+    pi.appendEntry(STATE_ENTRY, { active });
+    if (JSON.stringify(previousSkills) !== JSON.stringify(currentSkillPaths())) return reload(ctx);
+    const activationError = await useAgent(active, ctx, false);
+    if (activationError) throw new Error(activationError);
   }});
   pi.registerCommand("pi-define-agents-config", { description: "Update agent definitions", handler: async (args, ctx) => {
     const previous = config;
+    const previousSkills = currentSkillPaths();
     const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied }, pi);
     restore(ctx);
     for (const agent of next.agents) { const error = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model); if (error) throw new Error(error); }
     await writeConfig(next); config = next;
-    try { if (!findAgent(active)) active = "general"; pi.appendEntry(STATE_ENTRY, { active }); await reload(ctx); }
+    try {
+      if (!findAgent(active)) active = "general";
+      pi.appendEntry(STATE_ENTRY, { active });
+      if (JSON.stringify(previousSkills) !== JSON.stringify(currentSkillPaths())) { await reload(ctx); return; }
+      const activationError = await useAgent(active, ctx, false);
+      if (activationError) throw new Error(activationError);
+    }
     catch (error) { await writeConfig(previous); config = previous; throw error; }
   }});
 }
