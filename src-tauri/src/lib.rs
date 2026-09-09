@@ -245,7 +245,13 @@ struct AppSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct WorktreeSetupScript { id: String, name: String, script: String, enabled: bool }
+struct WorktreeSetupScript {
+    id: String, name: String, script: String, enabled: bool,
+    #[serde(default)]
+    project_path: Option<String>,
+    #[serde(default)]
+    host_id: Option<String>,
+}
 
 fn default_pi_path() -> String { "pi".into() }
 fn default_context_window_cap() -> u64 { 200_000 }
@@ -853,6 +859,8 @@ async fn run_worktree_setup(app: AppHandle, setup_id: String, cwd: String, workt
         let host_id = host_id.as_deref().unwrap_or("local");
         let host = if host_id == "local" { None } else { Some(remote_host(&settings, host_id)?) };
         for setup in settings.worktree_setup_scripts.iter().filter(|setup| setup.enabled && !setup.script.trim().is_empty()) {
+            let Some(project_path) = setup.project_path.as_deref().filter(|path| !path.trim().is_empty()) else { continue; };
+            if setup.host_id.as_deref().unwrap_or("local") != host_id { continue; }
             if cancelled.load(Ordering::SeqCst) { return Err("Environment setup cancelled".into()); }
             let context = format!("Setup script '{}' failed", setup.name);
             if setup.script.len() > 32 * 1024 { return Err(format!("{context}: script exceeds 32 KiB")); }
@@ -860,6 +868,13 @@ async fn run_worktree_setup(app: AppHandle, setup_id: String, cwd: String, workt
             let script = format!(r#"exec 4>&1
 exec 1>&2
 set +e
+source_common=$(git -C {source} rev-parse --path-format=absolute --git-common-dir) || exit 1
+source_common=$(cd -- "$source_common" && pwd -P) || exit 1
+project_common=$(git -C {project} rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && project_common=$(cd -- "$project_common" && pwd -P) || project_common=
+if [ "$source_common" != "$project_common" ]; then
+    printf '\n%s 0\n' {marker} >&4
+    exit 0
+fi
 root=$(git -C {source} rev-parse --show-toplevel) || exit 1
 PIOP_SOURCE_TREE_PATH=$(cd -- "$root" && pwd -P) || exit 1
 cd -- {target} || exit 1
@@ -894,7 +909,7 @@ done
 head -c 65536 "$setup_output" >&2
 rm -f -- "$setup_output"
 printf '\n%s %s\n' {marker} "$status" >&4
-exit "$status""#, source = shell_quote(&cwd), target = shell_quote(&worktree_path), code = shell_quote(&setup.script), marker = shell_quote(&completion_marker));
+exit "$status""#, source = shell_quote(&cwd), project = shell_quote(project_path), target = shell_quote(&worktree_path), code = shell_quote(&setup.script), marker = shell_quote(&completion_marker));
             let mut command = if let Some(host) = host { let mut command = ssh(host); command.arg(remote_login_command(&script)); command } else { let mut command = Command::new("bash"); command.args(["-c", &script]); command };
             let (status, stderr) = run_setup_process(&mut command, &cancelled, &context, completion_marker)?;
             if status != 0 {
