@@ -475,6 +475,25 @@ fn prepare_hooks_extension() -> Result<PathBuf, String> {
     Ok(path)
 }
 
+#[tauri::command(async)]
+fn list_hooks(app: AppHandle, host_id: String) -> Result<Value, String> {
+    let script = include_str!("../resources/list-hooks.cjs");
+    let mut command = if host_id == "local" {
+        let mut command = Command::new("node");
+        command.args(["-e", script]);
+        command
+    } else {
+        let settings = load_app_settings(app)?;
+        let host = remote_host(&settings, &host_id)?;
+        let mut command = ssh(host);
+        command.arg(format!("node -e {}", shell_quote(script)));
+        command
+    };
+    let output = run_limited(&mut command, 4 * 1024 * 1024, "Could not list hooks")?;
+    if !output.status.success() { return Err(format!("Could not list hooks: {}", String::from_utf8_lossy(&output.stderr).trim())); }
+    serde_json::from_slice(&output.stdout).map_err(|error| format!("Could not read hook list: {error}"))
+}
+
 fn prepare_trace_reader(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_config_dir().map_err(|error| error.to_string())?;
     ensure_private_dir(&dir)?;
@@ -2279,7 +2298,7 @@ pub fn run() {
         }
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
-    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).build(context).expect("error while building piop").run(|app, event| {
+    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, list_hooks, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).build(context).expect("error while building piop").run(|app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
             let broker = app.state::<BrokerRuntime>(); broker.closing.store(true, Ordering::SeqCst);
             let jobs = broker.jobs.lock().map(|mut jobs| jobs.drain().map(|(_, child)| child).collect::<Vec<_>>()).unwrap_or_default();

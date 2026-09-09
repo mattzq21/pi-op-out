@@ -20,6 +20,9 @@ export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; se
 export interface GitWorktree { branch: string; path: string; }
 
 export const openExternalUrl = (url: string) => call<void>("open_external_url", { url });
+export interface HookListing { directory: string; exists: boolean; hooks: Array<{ name: string; path: string; entry: string }> }
+export const listHooks = (hostId: string) => call<HookListing>("list_hooks", { hostId });
+export const openHooksDirectory = (cwd: string) => call<void>("open_project_directory", { cwd, hostId: "local" });
 
 export class NativeTransport {
   private liveAssistant?: ChatMessage;
