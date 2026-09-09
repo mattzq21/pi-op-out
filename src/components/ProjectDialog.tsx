@@ -35,6 +35,7 @@ export function ProjectDialog({ initialPath, hosts, initialHostId, onHomeDirecto
   const initialLocation = useRef({ path: initialPath, hostId: initialHostId });
   const [hostId, setHostId] = useState(initialHostId);
   const [query, setQuery] = useState("");
+  const queryHistory = useRef({ current: "", past: [] as string[], future: [] as string[] });
   const [basePath, setBasePath] = useState("");
   const [homePath, setHomePath] = useState("");
   const [loaded, setLoaded] = useState<{ hostId: string; requested: string; listing: DirectoryListing }>();
@@ -57,6 +58,33 @@ export function ProjectDialog({ initialPath, hosts, initialHostId, onHomeDirecto
   const hasHomePrefix = query.startsWith("~/");
   const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
 
+  const resetQuery = (path: string) => {
+    queryHistory.current = { current: path, past: [], future: [] };
+    setQuery(path);
+  };
+  const changeQuery = (path: string) => {
+    const history = queryHistory.current;
+    if (path === history.current) return;
+    history.past = [...history.past.slice(-199), history.current];
+    history.current = path; history.future = [];
+    setQuery(path); setActive(0); setError(undefined);
+  };
+  const navigateHistory = (redo: boolean) => {
+    const history = queryHistory.current;
+    const source = redo ? history.future : history.past;
+    const path = source.pop();
+    if (path === undefined) return;
+    (redo ? history.past : history.future).push(history.current);
+    history.current = path;
+    setQuery(path); setActive(0); setError(undefined);
+    setBrowseRequest((value) => value + 1);
+    inputRef.current?.focus();
+    requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (input) input.setSelectionRange(input.value.length, input.value.length);
+    });
+  };
+
   useEffect(() => {
     const dialog = dialogRef.current;
     dialog?.showModal();
@@ -66,12 +94,12 @@ export function ProjectDialog({ initialPath, hosts, initialHostId, onHomeDirecto
 
   useEffect(() => {
     let cancelled = false;
-    setLoaded(undefined); setBasePath(""); setHomePath(""); setQuery(""); setLoading(true); setError(undefined);
+    setLoaded(undefined); setBasePath(""); setHomePath(""); resetQuery(""); setLoading(true); setError(undefined);
     const initialize = async () => {
       const location = initialLocation.current;
       const home = await callbacks.current.onHomeDirectory(hostId);
       const path = location.hostId === hostId && location.path.trim() ? expandHome(location.path, home) : home;
-      if (!cancelled) { setHomePath(home); setBasePath(path); setQuery(withSeparator(displayPath(path, home))); }
+      if (!cancelled) { setHomePath(home); setBasePath(path); resetQuery(withSeparator(displayPath(path, home))); }
     };
     void initialize().catch((reason) => { if (!cancelled) { setError(String(reason instanceof Error ? reason.message : reason)); setLoading(false); } });
     return () => { cancelled = true; };
@@ -94,7 +122,7 @@ export function ProjectDialog({ initialPath, hosts, initialHostId, onHomeDirecto
   useEffect(() => { setActive(0); }, [query, loaded]);
   useEffect(() => { dialogRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" }); }, [active]);
 
-  const browse = (path: string) => { setQuery(withSeparator(displayPath(expandHome(path, homePath), homePath))); setBrowseRequest((value) => value + 1); setActive(0); setError(undefined); inputRef.current?.focus(); };
+  const browse = (path: string) => { changeQuery(withSeparator(displayPath(expandHome(path, homePath), homePath))); setBrowseRequest((value) => value + 1); setActive(0); setError(undefined); inputRef.current?.focus(); };
   const open = async (path = listing?.path) => {
     if (!path || loading || openingRef.current) return;
     openingRef.current = true; setOpening(true); setError(undefined);
@@ -107,10 +135,16 @@ export function ProjectDialog({ initialPath, hosts, initialHostId, onHomeDirecto
     const bounds = event.currentTarget.getBoundingClientRect();
     if (!openingRef.current && (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)) onCancel();
   }} onKeyDown={(event) => {
+    const key = event.key.toLowerCase();
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.nativeEvent.isComposing && (key === "z" || key === "y")) {
+      event.preventDefault(); event.stopPropagation();
+      if (!openingRef.current) navigateHistory(key === "y" || event.shiftKey);
+      return;
+    }
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void open(); }
   }}>
     <header className="directory-palette-heading"><h2 id="project-dialog-title">Jump to a folder</h2><select aria-label="Machine" disabled={opening} value={hostId} onChange={(event) => setHostId(event.target.value)}><option value="local">Local</option>{hosts.map((host) => <option key={host.id} value={host.id}>{host.name}</option>)}</select><button className="directory-palette-escape" disabled={opening} onClick={onCancel}>esc</button></header>
-    <div className="directory-palette-search"><Search size={20} />{hasHomePrefix && <span className="directory-palette-prefix" aria-hidden="true">~/</span>}<input ref={inputRef} autoFocus role="combobox" aria-label={hasHomePrefix ? "Folder path relative to home" : "Search or type a folder path"} aria-autocomplete="list" aria-expanded="true" aria-controls="directory-palette-results" aria-activedescendant={!loading && selected ? "directory-result-" + active : undefined} autoComplete="off" spellCheck={false} placeholder="Type a folder path…" readOnly={opening} value={hasHomePrefix ? query.slice(2) : query} onChange={(event) => { setQuery(hasHomePrefix ? "~/" + event.target.value.replace(/^~[\\/]/, "") : event.target.value); setActive(0); setError(undefined); }} onKeyDown={(event) => {
+    <div className="directory-palette-search"><Search size={20} />{hasHomePrefix && <span className="directory-palette-prefix" aria-hidden="true">~/</span>}<input ref={inputRef} autoFocus role="combobox" aria-label={hasHomePrefix ? "Folder path relative to home" : "Search or type a folder path"} aria-autocomplete="list" aria-expanded="true" aria-controls="directory-palette-results" aria-activedescendant={!loading && selected ? "directory-result-" + active : undefined} autoComplete="off" spellCheck={false} placeholder="Type a folder path…" readOnly={opening} value={hasHomePrefix ? query.slice(2) : query} onChange={(event) => { changeQuery(hasHomePrefix ? "~/" + event.target.value.replace(/^~[\\/]/, "") : event.target.value); }} onKeyDown={(event) => {
       if (event.nativeEvent.isComposing || opening || event.metaKey || event.ctrlKey) return;
       if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setActive((index) => results.length ? (index + (event.key === "ArrowDown" ? 1 : -1) + results.length) % results.length : 0); }
       else if (event.key === "Enter") { event.preventDefault(); if (fragment && selected) void open(selected); else if (query.trim()) void open(expandHome(query === "~" || /^(?:~[\\/]|[\\/]|[a-z]:[\\/])/i.test(query) ? query : withSeparator(basePath) + query, homePath)); }
