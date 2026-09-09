@@ -2,12 +2,19 @@ import { ExtensionRunner, type ExtensionAPI, type ExtensionContext } from "@eare
 
 type Counts = { completed: number; failed: number };
 type Snapshot = { other: Counts; messages: Record<string, Counts> };
+type Message = { role?: string; timestamp?: number; content?: unknown };
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
 type Runner = { extensions: { handlers: Map<string, Handler[]> }[] };
 const KEY = "pi-desktop-hook-stats";
 const PATCH = Symbol.for("piop.hook-stats.adapter");
 const observers = Symbol.for("piop.hook-stats.observers");
 const empty = (): Counts => ({ completed: 0, failed: 0 });
+const resumeMarker = (entry: { type: string; customType?: string; data?: unknown }) => {
+  const message = (entry.data as { message?: unknown } | undefined)?.message;
+  return entry.type === "custom" && entry.customType === "pi-desktop-resume" && typeof message === "string" ? message : undefined;
+};
+const messageText = (message: Message) => typeof message.content === "string" ? message.content
+  : Array.isArray(message.content) ? message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n") : "";
 
 // Pi has no public per-handler observer. Keep the runner compatibility seam here.
 function observe(marker: Handler, wrap: (handler: Handler, event: string) => Handler) {
@@ -42,6 +49,24 @@ export default function hookStats(pi: ExtensionAPI) {
   let context: ExtensionContext | undefined;
   let snapshot: Snapshot = { other: empty(), messages: {} };
   let prompt: string | undefined;
+  const resumeMessages = new Set<string>();
+  const resumePrompts = new Map<string, string>();
+  const selectPrompt = (message: Message) => {
+    if (message.role !== "user") return;
+    const timestamp = String(message.timestamp);
+    if (resumeMessages.has(messageText(message))) {
+      if (prompt) resumePrompts.set(timestamp, prompt);
+    } else prompt = timestamp;
+  };
+  const selectLivePrompt = (message: Message, ctx: ExtensionContext) => {
+    if (message.role !== "user") return;
+    // Resume markers are appended before dispatch, including before our handler runs.
+    for (const entry of ctx.sessionManager.getBranch()) {
+      const marker = resumeMarker(entry);
+      if (marker !== undefined) resumeMessages.add(marker);
+    }
+    selectPrompt(message);
+  };
   let timer: ReturnType<typeof setTimeout> | undefined;
   let persistPending = false;
   const dirty = new Set<string>();
@@ -54,7 +79,14 @@ export default function hookStats(pi: ExtensionAPI) {
         for (const key of dirty) pi.appendEntry(KEY, { sessionId, key, counts: key === "other" ? snapshot.other : snapshot.messages[key] });
         dirty.clear(); persistPending = false;
       }
-      context.ui.setStatus(KEY, `json:${JSON.stringify(snapshot)}`);
+      // Keep persisted buckets separate so legacy resume counts are never folded twice.
+      const messages: Record<string, Counts> = {};
+      for (const [key, counts] of Object.entries(snapshot.messages)) {
+        const target = resumePrompts.get(key) ?? key;
+        const total = messages[target] ??= empty();
+        total.completed += counts.completed; total.failed += counts.failed;
+      }
+      context.ui.setStatus(KEY, `json:${JSON.stringify({ ...snapshot, messages })}`);
     } catch { /* Telemetry must not change hook execution or errors. */ }
   };
   const initialize = (ctx: ExtensionContext) => {
@@ -63,9 +95,12 @@ export default function hookStats(pi: ExtensionAPI) {
     if (id === sessionId) return;
     if (timer) clearTimeout(timer);
     timer = undefined; dirty.clear(); persistPending = false; sessionId = id; prompt = undefined;
+    resumeMessages.clear(); resumePrompts.clear();
     snapshot = { other: empty(), messages: {} };
     for (const entry of ctx.sessionManager.getBranch()) {
-      if (entry.type === "message" && entry.message.role === "user") prompt = String(entry.message.timestamp);
+      const marker = resumeMarker(entry);
+      if (marker !== undefined) resumeMessages.add(marker);
+      if (entry.type === "message") selectPrompt(entry.message);
       if (entry.type !== "custom" || entry.customType !== KEY) continue;
       const data = entry.data as { key?: string; counts?: Counts };
       if (!data || typeof data.key !== "string" || !data.counts || !Number.isSafeInteger(data.counts.completed) || !Number.isSafeInteger(data.counts.failed) || data.counts.failed < 0 || data.counts.completed < data.counts.failed) continue;
@@ -79,10 +114,10 @@ export default function hookStats(pi: ExtensionAPI) {
   };
   const start = (_event: unknown, ctx: ExtensionContext) => { initialize(ctx); publish(); };
   pi.on("session_start", start);
-  const messageStart = (event: { message: { role: string; timestamp?: number } }, ctx: ExtensionContext) => {
+  const messageStart = (event: { message: Message }, ctx: ExtensionContext) => {
     initialize(ctx);
-    if (event.message?.role === "user") {
-      prompt = String(event.message.timestamp);
+    selectLivePrompt(event.message, ctx);
+    if (event.message?.role === "user" && prompt) {
       snapshot.messages[prompt] ??= empty();
       dirty.add(prompt);
       persistPending = true;
@@ -97,7 +132,7 @@ export default function hookStats(pi: ExtensionAPI) {
     const replacement: Handler = async (event, ctx) => {
       initialize(ctx);
       const owner = sessionId;
-      if (eventName === "message_start" && event.message?.role === "user") prompt = String(event.message.timestamp);
+      if (eventName === "message_start") selectLivePrompt(event.message, ctx);
       const key = eventName.startsWith("message_") ? prompt : "other";
       const bucket = key === "other" ? snapshot.other : key ? snapshot.messages[key] ??= empty() : undefined;
       let failed = false;
