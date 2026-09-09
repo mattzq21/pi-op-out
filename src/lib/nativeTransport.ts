@@ -55,7 +55,7 @@ export class NativeTransport {
   private connectPromise?: Promise<void>;
   private processLifecycle: Promise<unknown> = Promise.resolve();
   private settingsLifecycle: Promise<unknown> = Promise.resolve();
-  private pendingSettings?: AppSettings;
+  private pendingSettings?: { settings: AppSettings; reconnect: boolean; autoCompaction: boolean; autoRetry: boolean };
   private applyingSettings?: Promise<void>;
   private settingsApplyFailed = false;
   private inferenceBusy = false;
@@ -63,8 +63,15 @@ export class NativeTransport {
   private activeCommands = 0;
   private disposed = false;
   hasPendingSettings() { return Boolean(this.pendingSettings || this.applyingSettings); }
-  queueSettings(settings: AppSettings) {
-    this.pendingSettings = structuredClone(settings);
+  queueSettings(settings: AppSettings, changes: { reconnect: boolean; autoCompaction: boolean; autoRetry: boolean }) {
+    if (this.disposed || (!this.pendingSettings && !changes.reconnect && !changes.autoCompaction && !changes.autoRetry)) return;
+    if (!this.running && !this.connectPromise && !this.applyingSettings && !this.pendingSettings) return;
+    this.pendingSettings = {
+      settings: structuredClone(settings),
+      reconnect: changes.reconnect || Boolean(this.pendingSettings?.reconnect),
+      autoCompaction: changes.autoCompaction || Boolean(this.pendingSettings?.autoCompaction),
+      autoRetry: changes.autoRetry || Boolean(this.pendingSettings?.autoRetry),
+    };
     this.settingsApplyFailed = false;
     this.emit({ type: "settings_pending" });
     this.applyPendingSettings();
@@ -78,13 +85,14 @@ export class NativeTransport {
           if (this.inferenceBusy || this.compactionBusy || state.isStreaming || state.isCompacting || ((this.queueSnapshot.steering as string[]).length + (this.queueSnapshot.followUp as string[]).length) > 0) return;
         }
         if (this.disposed || !this.pendingSettings) return;
-        const settings = this.pendingSettings;
-        await this.reconnectForSettings(settings);
+        const update = this.pendingSettings;
+        const { settings } = update;
+        if (update.reconnect) await this.reconnectForSettings(settings);
         if (this.running) {
-          await this.executeCommandNow({ type: "set_auto_compaction", enabled: settings.autoCompaction });
-          await this.executeCommandNow({ type: "set_auto_retry", enabled: settings.autoRetry });
+          if (update.reconnect || update.autoCompaction) await this.executeCommandNow({ type: "set_auto_compaction", enabled: settings.autoCompaction });
+          if (update.reconnect || update.autoRetry) await this.executeCommandNow({ type: "set_auto_retry", enabled: settings.autoRetry });
         }
-        if (this.pendingSettings === settings) this.pendingSettings = undefined;
+        if (this.pendingSettings === update) this.pendingSettings = undefined;
         this.emit({ type: "settings_applied" });
       }
     }).catch((reason) => {

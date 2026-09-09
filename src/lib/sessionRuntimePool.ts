@@ -172,7 +172,28 @@ export class SessionRuntimePool {
   isRetained(transport: NativeTransport) { return this.retainedTransports.has(transport); }
   isAnyRunning() { return this.runningTransports.size > 0; }
 
-  queueSettingsChange(settings: AppSettings) { for (const transport of this.transports) transport.queueSettings(settings); }
+  queueSettingsChange(previous: AppSettings, settings: AppSettings, agentHostId?: string) {
+    const changed = (before: unknown, after: unknown) => JSON.stringify(before) !== JSON.stringify(after);
+    const runtimeConfig = (value: AppSettings) => ({
+      contextWindowCap: value.contextWindowCapEnabled ? value.contextWindowCap : null,
+      tools: value.tools.map((tool) => ({ name: tool.name, enabled: tool.enabled })).sort((a, b) => a.name.localeCompare(b.name)),
+      skills: value.skills.filter((skill) => skill.enabled).map((skill) => skill.path).sort(),
+      mcpServers: value.mcpServers.filter((server) => server.enabled).map(({ status: _status, error: _error, ...server }) => server).sort((a, b) => a.id.localeCompare(b.id)),
+    });
+    const reloadAll = changed(runtimeConfig(previous), runtimeConfig(settings));
+    const hostConnection = (value: AppSettings, hostId: string) => {
+      const host = value.hosts.find((host) => host.id === hostId);
+      return host ? { target: host.target, piPath: host.piPath } : undefined;
+    };
+    for (const transport of this.transports) {
+      const hostId = transport.currentHostId();
+      transport.queueSettings(settings, {
+        reconnect: reloadAll || agentHostId === hostId || (hostId !== "local" && changed(hostConnection(previous, hostId), hostConnection(settings, hostId))),
+        autoCompaction: previous.autoCompaction !== settings.autoCompaction,
+        autoRetry: previous.autoRetry !== settings.autoRetry,
+      });
+    }
+  }
   pendingSettingsCount() { return [...this.transports].filter((transport) => transport.hasPendingSettings()).length; }
 
   async copySavedDiffs(transport: NativeTransport, sourcePath: string | undefined, destinationPath: string | undefined, retainedMessageIds?: ReadonlySet<string>) {
