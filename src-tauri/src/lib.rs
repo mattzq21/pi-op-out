@@ -207,6 +207,8 @@ type GitDiffSnapshots = HashMap<String, String>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AppSettings {
+    #[serde(default)]
+    worktree_setup_scripts: Vec<WorktreeSetupScript>,
     default_model: String,
     #[serde(default)]
     hidden_models: Vec<String>,
@@ -231,6 +233,10 @@ struct AppSettings {
     #[serde(default)]
     active_dictionary_ids: Vec<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorktreeSetupScript { id: String, name: String, script: String, enabled: bool }
 
 fn default_pi_path() -> String { "pi".into() }
 fn default_context_window_cap() -> u64 { 200_000 }
@@ -584,6 +590,7 @@ fn prepare_btw_extension() -> Result<PathBuf, String> {
 
 fn default_settings() -> AppSettings {
     AppSettings {
+        worktree_setup_scripts: vec![],
         default_model: DEFAULT_MODEL.into(), hidden_models: vec![], default_thinking: "medium".into(), context_window_cap: default_context_window_cap(), context_window_cap_enabled: default_context_window_cap_enabled(), auto_compaction: true, auto_retry: true, debug_mode: false, keybindings: default_keybindings(),
         tools: ["read", "bash", "edit", "write", "grep", "find", "ls"].iter().map(|name| json!({"name": name, "description": "Pi built-in tool", "enabled": true, "builtin": true})).chain([
             json!({"name":"list_agents","description":"List agents by machine and session","enabled":true,"builtin":false}),
@@ -799,6 +806,34 @@ struct GitSnapshotToken { root: String, tree: String }
 struct GitWorktree { branch: String, path: String }
 
 struct LimitedOutput { status: ExitStatus, stdout: Vec<u8>, stderr: Vec<u8> }
+
+#[tauri::command]
+async fn run_worktree_setup(app: AppHandle, cwd: String, worktree_path: String, host_id: Option<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = load_app_settings(app)?;
+        let host_id = host_id.as_deref().unwrap_or("local");
+        let host = if host_id == "local" { None } else { Some(remote_host(&settings, host_id)?) };
+        for setup in settings.worktree_setup_scripts.iter().filter(|setup| setup.enabled && !setup.script.trim().is_empty()) {
+            let context = format!("Setup script '{}' failed", setup.name);
+            if setup.script.len() > 32 * 1024 { return Err(format!("{context}: script exceeds 32 KiB")); }
+            let script = format!(r#"exec 1>&2
+root=$(git -C {source} rev-parse --show-toplevel) || exit 1
+PIOP_SOURCE_TREE_PATH=$(cd -- "$root" && pwd -P) || exit 1
+cd -- {target} || exit 1
+PIOP_WORKTREE_PATH=$(pwd -P) || exit 1
+export PIOP_SOURCE_TREE_PATH PIOP_WORKTREE_PATH
+exec bash -e -c {code}"#, source = shell_quote(&cwd), target = shell_quote(&worktree_path), code = shell_quote(&setup.script));
+            let mut command = if let Some(host) = host { let mut command = ssh(host); command.arg(script); command } else { let mut command = Command::new("bash"); command.args(["-c", &script]); command };
+            command.stdin(Stdio::null());
+            let output = run_limited(&mut command, 64 * 1024, &context)?;
+            if !output.status.success() {
+                let detail = String::from_utf8_lossy(&output.stderr);
+                return Err(format!("{context} ({}):\n{}", output.status, detail.trim()));
+            }
+        }
+        Ok(())
+    }).await.map_err(|error| error.to_string())?
+}
 
 fn run_limited(command: &mut Command, max_stdout: usize, context: &str) -> Result<LimitedOutput, String> {
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -2298,7 +2333,7 @@ pub fn run() {
         }
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
-    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, list_hooks, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).build(context).expect("error while building piop").run(|app, event| {
+    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, list_hooks, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, run_worktree_setup, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).build(context).expect("error while building piop").run(|app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
             let broker = app.state::<BrokerRuntime>(); broker.closing.store(true, Ordering::SeqCst);
             let jobs = broker.jobs.lock().map(|mut jobs| jobs.drain().map(|(_, child)| child).collect::<Vec<_>>()).unwrap_or_default();

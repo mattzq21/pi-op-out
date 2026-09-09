@@ -428,12 +428,17 @@ export default function App() {
     } finally { branchPending.current.delete(pendingKey); }
   };
   const createWorktree = async (target: WorktreeTarget, name: string) => {
+    const setup = async (path: string) => {
+      try { await target.transport.runWorktreeSetup(target.cwd, path, target.hostId); }
+      catch (reason) { addNotice({ title: "Worktree created, but environment setup failed", message: `${path}\n${reason instanceof Error ? reason.message : String(reason)}` }); }
+    };
     if (target.message.role === "user") {
       const owner = target.transport;
       const history = await owner.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" });
       const prompt = branchMessages(history.entries, history.leafId).find((message) => message.role === "user" && (target.message.entryId ? message.entryId === target.message.entryId : message.timestamp === target.message.timestamp && textOf(message.content) === textOf(target.message.content)));
       if (!prompt?.entryId) throw new Error("Could not find the prompt in the saved conversation");
       const result = await owner.command<{ branch: string; path: string; sessionPath: string; sessionId: string }>({ type: "branch_checkpoint", entryId: prompt.entryId, name });
+      await setup(result.path);
       setWorktreeTarget(undefined);
       const session: SessionSummary = { id: result.sessionId, path: result.sessionPath, cwd: result.path, project: result.branch, name: result.branch, preview: "", messageCount: 0, apiCost: 0, hostId: target.hostId };
       setSessions((current) => [...current, session]);
@@ -446,6 +451,7 @@ export default function App() {
       return result;
     }
     const result = await target.transport.createGitWorktree(target.cwd, name, target.hostId);
+    await setup(result.path);
     setWorktreeTarget(undefined);
     try {
       const branched = await branchConversation(target.message, result.path);
