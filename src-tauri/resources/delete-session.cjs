@@ -79,15 +79,16 @@ async function main() {
   const source = await fs.realpath(target.path);
   const relative = path.relative(root, source);
   if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || path.extname(source) !== ".jsonl") {
-    throw new Error("Only Piop session files can be deleted");
+    throw new Error("Only Piop sessions can have their supporting data deleted");
   }
   const lock = path.join(root, `.delete-${createHash("sha256").update(source).digest("hex")}.lock`);
   try { await fs.mkdir(lock, { mode: 0o700 }); }
   catch (error) { if (error.code === "EEXIST") throw new Error("Deletion is already in progress for this session"); throw error; }
   let preserveRecovery = false;
   try {
-    const files = (await Promise.all([readFile(source), readFile(source.replace(/\.jsonl$/, ".diffs.json"), true)])).filter(Boolean);
-    const entries = files[0].body.toString("utf8").split("\n").filter((line) => line.trim()).map(JSON.parse);
+    const [trace, sidecar] = await Promise.all([readFile(source), readFile(source.replace(/\.jsonl$/, ".diffs.json"), true)]);
+    const files = sidecar ? [sidecar] : [];
+    const entries = trace.body.toString("utf8").split("\n").filter((line) => line.trim()).map(JSON.parse);
     const header = entries[0];
     if (header?.type !== "session" || typeof header.id !== "string" || !header.id || typeof header.cwd !== "string" || !path.isAbsolute(header.cwd)) {
       throw new Error("Invalid session header; nothing was deleted");
