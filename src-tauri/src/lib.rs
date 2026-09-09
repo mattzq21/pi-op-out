@@ -820,7 +820,9 @@ async fn run_worktree_setup(app: AppHandle, setup_id: String, cwd: String, workt
             if cancelled.load(Ordering::SeqCst) { return Err("Environment setup cancelled".into()); }
             let context = format!("Setup script '{}' failed", setup.name);
             if setup.script.len() > 32 * 1024 { return Err(format!("{context}: script exceeds 32 KiB")); }
-            let script = format!(r#"exec 1>&2
+            let completion_marker = format!("piop-setup-complete-{}", Uuid::new_v4());
+            let script = format!(r#"exec 4>&1
+exec 1>&2
 root=$(git -C {source} rev-parse --show-toplevel) || exit 1
 PIOP_SOURCE_TREE_PATH=$(cd -- "$root" && pwd -P) || exit 1
 cd -- {target} || exit 1
@@ -828,22 +830,23 @@ PIOP_WORKTREE_PATH=$(pwd -P) || exit 1
 export PIOP_SOURCE_TREE_PATH PIOP_WORKTREE_PATH
 exec 3<&0
 set -m
-bash -e -c {code} </dev/null 3<&- &
+bash -e -c {code} </dev/null 3<&- 4>&- &
 setup_pid=$!
 set +m
 # Keep cancellation separate from script input. EOF also stops setup if SSH disconnects.
-( IFS= read -r cancel; kill -KILL -- "-$setup_pid" 2>/dev/null ) <&3 &
+( IFS= read -r cancel; kill -KILL -- "-$setup_pid" 2>/dev/null ) <&3 4>&- &
 watcher=$!
 wait "$setup_pid"
 status=$?
 kill "$watcher" 2>/dev/null
 wait "$watcher" 2>/dev/null
-exit "$status""#, source = shell_quote(&cwd), target = shell_quote(&worktree_path), code = shell_quote(&setup.script));
-            let mut command = if let Some(host) = host { let mut command = ssh(host); command.arg(format!("bash -c {}", shell_quote(&script))); command } else { let mut command = Command::new("bash"); command.args(["-c", &script]); command };
-            let output = run_setup_process(&mut command, &cancelled, &context)?;
-            if !output.status.success() {
-                let detail = String::from_utf8_lossy(&output.stderr);
-                return Err(format!("{context} ({}):\n{}", output.status, detail.trim()));
+printf '\n%s %s\n' {marker} "$status" >&4
+exit "$status""#, source = shell_quote(&cwd), target = shell_quote(&worktree_path), code = shell_quote(&setup.script), marker = shell_quote(&completion_marker));
+            let mut command = if let Some(host) = host { let mut command = ssh(host); command.arg(remote_login_command(&script)); command } else { let mut command = Command::new("bash"); command.args(["-c", &script]); command };
+            let (status, stderr) = run_setup_process(&mut command, &cancelled, &context, completion_marker)?;
+            if status != 0 {
+                let detail = String::from_utf8_lossy(&stderr);
+                return Err(format!("{context} (exit status {status}):\n{}", detail.trim()));
             }
         }
         Ok(())
@@ -865,9 +868,26 @@ fn cancel_worktree_setup(runtime: State<PiRuntime>, setup_id: String) -> Result<
     Ok(())
 }
 
-fn run_setup_process(command: &mut Command, cancelled: &AtomicBool, context: &str) -> Result<LimitedOutput, String> {
-    let mut child = command.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().map_err(|error| format!("{context}: {error}"))?;
+fn run_setup_process(command: &mut Command, cancelled: &AtomicBool, context: &str, completion_marker: String) -> Result<(i32, Vec<u8>), String> {
+    let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| format!("{context}: {error}"))?;
     let mut input = child.stdin.take();
+    let stdout = child.stdout.take().ok_or("Setup stdout was unavailable")?;
+    let (completed_tx, completed_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let prefix = format!("{completion_marker} ");
+        let mut line = Vec::new();
+        // Login profiles may print output; retain only short protocol lines.
+        for byte in BufReader::new(stdout).bytes() {
+            let Ok(byte) = byte else { break };
+            if byte == b'\n' {
+                if let Some(status) = std::str::from_utf8(&line).ok().and_then(|line| line.strip_prefix(&prefix)).and_then(|status| status.parse::<i32>().ok()) {
+                    let _ = completed_tx.send(status);
+                    break;
+                }
+                line.clear();
+            } else if line.len() < 256 { line.push(byte); }
+        }
+    });
     let mut stderr = child.stderr.take().ok_or("Setup stderr was unavailable")?;
     let retained = Arc::new(Mutex::new(Vec::new()));
     let reader_output = retained.clone();
@@ -893,8 +913,15 @@ fn run_setup_process(command: &mut Command, cancelled: &AtomicBool, context: &st
             let _ = child.wait();
             return Err("Environment setup cancelled".into());
         }
+        if let Ok(status) = completed_rx.try_recv() {
+            // The wrapper has finished and stopped its cancellation watcher. Only
+            // close the transport without signalling the script's process group.
+            let _ = child.kill();
+            let _ = child.wait();
+            break status;
+        }
         match child.try_wait() {
-            Ok(Some(status)) => break status,
+            Ok(Some(status)) => break completed_rx.recv_timeout(Duration::from_millis(100)).unwrap_or_else(|_| status.code().unwrap_or(1)),
             Ok(None) => thread::sleep(Duration::from_millis(50)),
             Err(error) => { drop(input); let _ = child.kill(); let _ = child.wait(); return Err(format!("{context}: {error}")); }
         }
@@ -904,7 +931,7 @@ fn run_setup_process(command: &mut Command, cancelled: &AtomicBool, context: &st
     // A background descendant may retain stderr; it must not keep the dialog open.
     let _ = done_rx.recv_timeout(Duration::from_millis(100));
     let stderr = retained.lock().map_err(|_| "Setup output lock was poisoned")?.clone();
-    Ok(LimitedOutput { status, stdout: vec![], stderr })
+    Ok((status, stderr))
 }
 
 fn run_limited(command: &mut Command, max_stdout: usize, context: &str) -> Result<LimitedOutput, String> {
