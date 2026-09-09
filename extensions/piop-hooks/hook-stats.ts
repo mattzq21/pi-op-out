@@ -1,13 +1,10 @@
-import { ExtensionRunner, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 type Counts = { completed: number; failed: number };
 type Snapshot = { other: Counts; messages: Record<string, Counts> };
 type Message = { role?: string; timestamp?: number; content?: unknown };
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
-type Runner = { extensions: { handlers: Map<string, Handler[]> }[] };
 const KEY = "pi-desktop-hook-stats";
-const PATCH = Symbol.for("piop.hook-stats.adapter");
-const observers = Symbol.for("piop.hook-stats.observers");
 const empty = (): Counts => ({ completed: 0, failed: 0 });
 const resumeMarker = (entry: { type: string; customType?: string; data?: unknown }) => {
   const message = (entry.data as { message?: unknown } | undefined)?.message;
@@ -15,34 +12,6 @@ const resumeMarker = (entry: { type: string; customType?: string; data?: unknown
 };
 const messageText = (message: Message) => typeof message.content === "string" ? message.content
   : Array.isArray(message.content) ? message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n") : "";
-
-// Pi has no public per-handler observer. Keep the runner compatibility seam here.
-function observe(marker: Handler, wrap: (handler: Handler, event: string) => Handler) {
-  const prototype = ExtensionRunner.prototype as unknown as Runner & {
-    createContext: (...args: unknown[]) => ExtensionContext;
-    [PATCH]?: boolean;
-    [observers]?: Map<Handler, typeof wrap>;
-  };
-  const registry = prototype[observers] ??= new Map();
-  registry.set(marker, wrap);
-  if (!prototype[PATCH]) {
-    const original = prototype.createContext;
-    if (typeof original !== "function") throw new Error("This Pi version cannot observe extension hooks");
-    prototype.createContext = function (...args) {
-      const ctx = original.apply(this, args);
-      if (!Array.isArray(this.extensions)) return ctx;
-      for (const [sentinel, decorate] of registry) {
-        if (!this.extensions.some((extension) => extension.handlers.get("session_start")?.includes(sentinel))) continue;
-        for (const extension of this.extensions) for (const [event, handlers] of extension.handlers) {
-          extension.handlers.set(event, handlers.map((handler) => handler === sentinel ? handler : decorate(handler, event)));
-        }
-      }
-      return ctx;
-    };
-    prototype[PATCH] = true;
-  }
-  return () => registry.delete(marker);
-}
 
 export default function hookStats(pi: ExtensionAPI) {
   let sessionId: string | undefined;
@@ -70,7 +39,6 @@ export default function hookStats(pi: ExtensionAPI) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let persistPending = false;
   const dirty = new Set<string>();
-  const wrapped = new WeakSet<Handler>();
   const publish = () => {
     timer = undefined;
     if (!context) return;
@@ -125,10 +93,11 @@ export default function hookStats(pi: ExtensionAPI) {
     }
   };
   pi.on("message_start", messageStart);
-  const stop = () => { if (timer) clearTimeout(timer); persistPending = true; publish(); dispose(); };
+  const stop = () => { if (timer) clearTimeout(timer); persistPending = true; publish(); };
   pi.on("session_shutdown", stop);
-  const dispose = observe(start, (handler, eventName) => {
-    if (wrapped.has(handler) || handler === stop || handler === messageStart) return handler;
+  const wrap = (handler: Handler, eventName: string): Handler => {
+    // Trust decisions run before a session exists and have no session context.
+    if (eventName === "project_trust") return handler;
     const replacement: Handler = async (event, ctx) => {
       initialize(ctx);
       const owner = sessionId;
@@ -155,7 +124,14 @@ export default function hookStats(pi: ExtensionAPI) {
         }
       }
     };
-    wrapped.add(replacement);
     return replacement;
+  };
+  return new Proxy(pi, {
+    get(target, property, receiver) {
+      if (property === "on") return (event: string, handler: Handler) => {
+        (target.on as (event: string, handler: Handler) => void)(event, wrap(handler, event));
+      };
+      return Reflect.get(target, property, receiver);
+    },
   });
 }
