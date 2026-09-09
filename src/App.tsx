@@ -67,6 +67,7 @@ export default function App() {
   useSyncExternalStore((listener) => runtimePool.subscribe(listener), () => runtimePool.liveSessionRevision());
   const runningSessions = useSyncExternalStore((listener) => runtimePool.subscribe(listener), () => runtimePool.runningSessions());
   const unseenSessions = useSyncExternalStore((listener) => runtimePool.subscribe(listener), () => runtimePool.unseenSessions());
+  const pendingSettingsCount = useSyncExternalStore((listener) => runtimePool.subscribe(listener), () => runtimePool.pendingSettingsCount());
   const gitDiffs = useTurnDiffs(runtimePool, transport);
   const sessionRuntime = useChatSession(transport); const { state, setState, messages, setMessages, models, commands, thinkingLevels, refresh: refreshSession, handleEvent, discardPendingUpdates } = sessionRuntime;
   const [sessions, setSessions] = useState<SessionSummary[]>([]); const [settings, setSettings] = useState<AppSettings>();
@@ -266,6 +267,15 @@ export default function App() {
         else if (["input", "editor", "select", "confirm"].includes(request.method)) queueExtensionDialog(request, transport, mainDialogOwnerRef.current);
       }
       if (event.type === "session_switched") void refresh().catch(() => undefined);
+      if (event.type === "settings_applied") {
+        if (transport.currentHostId() !== activeHostIdRef.current) {
+          const conversationKey = `local:draft-${crypto.randomUUID()}`;
+          setActiveHostId(transport.currentHostId()); setActiveCwd(transport.currentCwd());
+          transportConversationKeys.current.set(transport, conversationKey); activateConversationKey(conversationKey);
+          setTerminalOpen(false); setTerminalTarget(undefined);
+        }
+        void refresh().then(() => { setError(undefined); updateConnected(true); }).catch((reason) => setError(String(reason)));
+      }
       if (event.type === "session_info_changed") void refresh();
       if (event.type === "disconnected") {
         setDefinedAgents(undefined); setMcpStatuses({}); setStatuses({}); setWidgets({}); document.title = "piop"; setDialogs((current) => current.filter((dialog) => dialog.transport !== transport)); updateConnected(false);
@@ -485,23 +495,30 @@ export default function App() {
     try { await applySettings(value, nextConfig); } finally { settingsSavePending.current = false; setSettingsSaving(false); }
   };
   const applySettings = async (value: AppSettings, nextConfig?: AgentConfig) => {
-    const ownerKey = activeConversationKeyRef.current; const originalConnection = transport.connectionTarget();
     if (!settings) throw new Error("Settings are still loading");
-    if (runtimePool.isAnyRunning() || state.isStreaming) throw new Error("Wait for every response to finish before saving settings");
-    const clean = (source: AppSettings) => ({ ...source, mcpServers: source.mcpServers.map(({ error: _error, ...server }) => ({ ...server, status: "stopped" as const })) });
-    const previous = clean(settings); const previousConfig = agentSettings; const next = { ...clean(value), debugMode: settings.debugMode }; const removedActiveHost = activeHostId !== "local" && !next.hosts.some((host) => host.id === activeHostId); let settingsApplied = false; let agentsAttempted = false;
+    const next = { ...value, debugMode: settings.debugMode, mcpServers: value.mcpServers.map(({ error: _error, ...server }) => ({ ...server, status: "stopped" as const })) };
+    // Use a separate, sessionless runtime to persist agent definitions without
+    // reloading the extension inside a conversation that is still responding.
+    const writeAgents = async (configuration: AgentConfig) => {
+      const writer = new NativeTransport({ cwd: transport.currentCwd(), hostId: transport.currentHostId() });
+      try {
+        await writer.connect(undefined, undefined, undefined, undefined, true);
+        await writer.command({ type: "prompt", message: `/pi-define-agents-config ${encodeAgentValue(configuration)}` });
+      } finally { await writer.dispose(); }
+    };
+    let agentsSaved = false;
     try {
-      await transport.saveSettings(next); settingsApplied = true; await configureRuntime(next);
-      if (nextConfig) {
-        agentsAttempted = true;
-        await transport.command({ type: "prompt", message: `/pi-define-agents-config ${encodeAgentValue({ agents: nextConfig.agents })}` });
-      }
+      if (nextConfig) { await writeAgents(nextConfig); agentsSaved = true; }
+      await transport.saveSettings(next, false);
     } catch (reason) {
-      if (agentsAttempted && previousConfig) await transport.command({ type: "prompt", message: `/pi-define-agents-config ${encodeAgentValue({ agents: previousConfig.agents })}` }).catch(() => undefined);
-      if (settingsApplied) try { await transport.saveSettings(previous); await transport.restoreConnection(originalConnection); await configureRuntime(previous); } catch { /* Keep the original failure; NativeTransport owns persistence and reconnect rollback. */ }
+      if (agentsSaved && agentSettings) {
+        try { await writeAgents(agentSettings); }
+        catch { throw new Error(`Settings could not be saved, and the agent definitions could not be restored: ${reason instanceof Error ? reason.message : String(reason)}`); }
+      }
       throw reason;
     }
-    setSettings(next); await runtimePool.reconnectForSettingsChange(transport, next); if (removedActiveHost && activeTransportRef.current === transport && activeConversationKeyRef.current === ownerKey) { const conversationKey = `local:draft-${crypto.randomUUID()}`; setActiveHostId("local"); setActiveCwd(transport.currentCwd()); transportConversationKeys.current.set(transport, conversationKey); activateConversationKey(conversationKey); setTerminalOpen(false); setTerminalTarget(undefined); } void refresh().catch((reason) => addNotice({ title: "Settings saved, but the view could not refresh", message: reason instanceof Error ? reason.message : String(reason) }));
+    setSettings(next);
+    runtimePool.queueSettingsChange(next);
   };
   const setAgent = async (name: string) => { try { await transport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(name)}` }); } catch (reason) { addNotice({ title: "Could not change agent", message: reason instanceof Error ? reason.message : String(reason) }); } };
   const openProject = async (cwd: string, hostId: string) => { if (!canLeaveSettings()) return; const request = projectOpenRequest.current; const validatedCwd = await transport.validateProjectDirectory(cwd.trim(), hostId); if (!projectOpenRef.current || request !== projectOpenRequest.current) return; const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setTerminalOpen(false); updateConnected(false); setDefinedAgents(undefined); discardPendingUpdates(); setMessages([]); activateConversationKey(conversationKey); setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, isPaused: false, isPausing: false, activity: undefined, contextUsage: undefined })); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); const nextTransport = runtimePool.create({ cwd: validatedCwd, hostId }); transportConversationKeys.current.set(nextTransport, conversationKey); setComposerDraft(conversationKey, composerDraft); setComposerUploads(nextTransport, composerUploads); activateTransport(nextTransport); };

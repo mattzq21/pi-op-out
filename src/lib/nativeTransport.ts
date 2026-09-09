@@ -68,6 +68,7 @@ export class NativeTransport {
   private applyingSettings?: Promise<void>;
   private settingsApplyFailed = false;
   private inferenceBusy = false;
+  private compactionBusy = false;
   private activeCommands = 0;
   private disposed = false;
   hasPendingSettings() { return Boolean(this.pendingSettings || this.applyingSettings); }
@@ -78,12 +79,12 @@ export class NativeTransport {
     this.applyPendingSettings();
   }
   private applyPendingSettings() {
-    if (!this.pendingSettings || this.applyingSettings || this.inferenceBusy || this.activeCommands || this.disposed || this.settingsApplyFailed) return;
+    if (!this.pendingSettings || this.applyingSettings || this.inferenceBusy || this.compactionBusy || this.activeCommands || this.disposed || this.settingsApplyFailed) return;
     this.applyingSettings = Promise.resolve().then(async () => {
       while (this.pendingSettings && !this.disposed) {
         if (this.running) {
           const state = await this.executeCommandNow<{ isStreaming?: boolean; isCompacting?: boolean; pendingMessageCount?: number }>({ type: "get_state" });
-          if (this.inferenceBusy || state.isStreaming || state.isCompacting || (state.pendingMessageCount ?? 0) > 0) return;
+          if (this.inferenceBusy || this.compactionBusy || state.isStreaming || state.isCompacting || ((this.queueSnapshot.steering as string[]).length + (this.queueSnapshot.followUp as string[]).length) > 0) return;
         }
         const settings = this.pendingSettings;
         await this.reconnectForSettings(settings);
@@ -151,7 +152,9 @@ export class NativeTransport {
     this.listeners.forEach((listener) => listener(event));
   }
   private emit(event: RpcEvent) {
-    if (event.type === "agent_start" || event.type === "message_start" || event.type === "auto_compaction_start") this.inferenceBusy = true;
+    if (event.type === "agent_start" || event.type === "message_start") this.inferenceBusy = true;
+    if (event.type === "auto_compaction_start") this.compactionBusy = true;
+    if (event.type === "auto_compaction_end" || event.type === "disconnected") this.compactionBusy = false;
     if (event.type === "agent_settled" || event.type === "disconnected") this.inferenceBusy = false;
     if (event.type === "session_switched") this.liveAssistant = undefined;
     if ((event.type === "message_start" || event.type === "message_end") && (event.message as { role?: string })?.role === "assistant") this.liveAssistant = { ...normalizeMessage(event.message as Record<string, unknown>, undefined, undefined, this.liveAssistant?.streaming ? this.liveAssistant.id : `live-assistant-${crypto.randomUUID()}`), streaming: event.type === "message_start" };
@@ -243,7 +246,7 @@ export class NativeTransport {
   async disconnect(discardBlank = false) { ++this.connectionVersion; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; await this.runProcessCommand(() => call("stop_pi", { runtimeId: this.runtimeId, discardBlank })); this.running = false; this.retainedStatuses.clear(); this.retainedRequests.clear(); }
   async reconnectForSettings(settings: AppSettings) {
     await this.disconnect();
-    if (this.hostId !== "local" && !settings.hosts.some((host) => host.id === this.hostId)) { this.emit({ type: "disconnected" }); return; }
+    if (this.hostId !== "local" && !settings.hosts.some((host) => host.id === this.hostId)) { this.hostId = "local"; this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined; this.temporaryChat = false; this.temporaryChatUsed = false; this.fresh = true; }
     try { await this.connect(); }
     catch (reason) { this.emit({ type: "disconnected" }); throw reason; }
   }
