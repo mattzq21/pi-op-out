@@ -150,7 +150,7 @@ function renderMessages(messages: ChatMessage[], expanded: boolean, compact = tr
     if (first.role !== "tool" || count < 2) return content;
     const running = group.some(({ message }) => message.toolStatus === "running");
     const failed = group.some(({ message }) => message.toolStatus === "error");
-    return <details className="tool-group" key={first.id}><summary><ChevronRight size={12} className="tool-group-chevron" aria-hidden="true" /><span>Tools</span><small>{count}{running ? " · Running…" : failed ? " · Failed" : ""}</small></summary><div className="tool-group-content">{content}</div></details>;
+    return <details className="tool-group" key={first.id}><summary><ChevronRight size={12} className="tool-group-chevron" aria-hidden="true" /><span>Tools</span>{(running || failed) && <small>{running ? "Running…" : "Failed"}</small>}</summary><div className="tool-group-content">{content}</div></details>;
   });
 }
 
