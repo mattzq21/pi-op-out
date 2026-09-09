@@ -321,9 +321,20 @@ fn codex_usage() -> Result<CodexUsage, String> {
 }
 
 fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_config_dir().map_err(|error| error.to_string())?;
+    let dir = home_dir()?.join(".piop");
     ensure_private_dir(&dir)?;
     let path = dir.join("settings.json");
+    if !path.exists() {
+        let legacy = app.path().app_config_dir().map_err(|error| error.to_string())?.join("settings.json");
+        match fs::read(&legacy) {
+            Ok(body) => {
+                atomic_write_private(&path, &body)?;
+                fs::remove_file(&legacy).map_err(|error| format!("Settings migrated, but could not remove old settings: {error}"))?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("Could not migrate settings: {error}")),
+        }
+    }
     set_private_file_permissions(&path)?;
     Ok(path)
 }
