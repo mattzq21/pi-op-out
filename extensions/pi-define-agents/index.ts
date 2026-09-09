@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { formatSkillsForPrompt, type BuildSystemPromptOptions } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-export type Agent = { name: string; model: string; effort: string; path_systemprompt: string; agentsMd: string; tools: string[]; skills: string[]; mcpServers: string[] };
+export type Agent = { name: string; model: string; effort: string; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: string[] };
 type RuntimeDefaults = { model: string; effort: string };
 
 
@@ -15,6 +15,7 @@ const STATE_ENTRY = "pi-define-agents-state";
 const DEFAULTS_ENV = "PI_DEFINE_AGENTS_RUNTIME_DEFAULTS";
 const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
 const DEFAULT_PROMPT_PATH = "sysprompt/default.md";
+const DEFAULT_AGENT_PROMPT_PATH = "~/.piop/agents/default.md";
 const DEFAULT_SYSTEM_PROMPT = `You are an expert coding assistant operating inside a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
 
 Available tools:
@@ -39,7 +40,7 @@ Guidelines:
 - Show file paths clearly when working with files`;
 
 type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean };
-const fallbackConfig: Config = { agents: [{ name: "default", model: "", effort: "high", path_systemprompt: DEFAULT_PROMPT_PATH, agentsMd: "", tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
+const fallbackConfig: Config = { agents: [{ name: "default", model: "", effort: "high", path_systemprompt: DEFAULT_PROMPT_PATH, path_agentprompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
 function defaultAgent(): Agent {
   const agent = structuredClone(fallbackConfig.agents[0]);
   if (desktopList("PI_DESKTOP_ALLOWED_TOOLS")?.includes("web_search")) agent.tools.push("web_search");
@@ -58,8 +59,12 @@ async function writeConfig(value: Config, createOnly = false) {
   } finally { await rm(temporary, { force: true }); }
 }
 
+function resolvePromptPath(path: string) {
+  return path.startsWith("~/") ? join(homedir(), path.slice(2)) : resolve(dirname(configPath), path);
+}
+
 async function ensurePromptFile(relativePath: string, contents: string) {
-  const path = resolve(dirname(configPath), relativePath);
+  const path = resolvePromptPath(relativePath);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
@@ -69,7 +74,16 @@ async function ensurePromptFile(relativePath: string, contents: string) {
   } finally { await rm(temporary, { force: true }); }
 }
 
-type StoredAgent = Omit<Agent, "path_systemprompt"> & { path_systemprompt?: string; systemPrompt?: string; developerPrompt?: string };
+async function ensureDefaultAgentPrompt() {
+  try { await readFile(resolvePromptPath(DEFAULT_AGENT_PROMPT_PATH), "utf8"); return; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  let prompt = "";
+  try { prompt = await readFile(join(homedir(), ".agents", "AGENTS.md"), "utf8"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  await ensurePromptFile(DEFAULT_AGENT_PROMPT_PATH, prompt);
+}
+
+type StoredAgent = Omit<Agent, "path_systemprompt" | "path_agentprompt"> & { path_systemprompt?: string; path_agentprompt?: string; agentsMd?: string; systemPrompt?: string; developerPrompt?: string };
 type StoredConfig = { agents?: StoredAgent[]; webSearchDefaultApplied?: boolean };
 async function migratePrompts(stored: StoredConfig): Promise<Config> {
   const agents = [];
@@ -89,8 +103,17 @@ async function migratePrompts(stored: StoredConfig): Promise<Config> {
         await ensurePromptFile(path, prompt);
       }
     }
-    const { systemPrompt: _inline, developerPrompt: _legacy, ...profile } = agent;
-    agents.push({ ...profile, path_systemprompt: path });
+    let agentPromptPath = agent.path_agentprompt;
+    if (agentPromptPath === undefined) {
+      agentPromptPath = agent.name === "default" ? DEFAULT_AGENT_PROMPT_PATH : "";
+      if (typeof agent.agentsMd === "string" && agent.agentsMd.trim()) {
+        const hash = createHash("sha256").update(agent.name).update("\0").update(agent.agentsMd).digest("hex");
+        agentPromptPath = `agentprompt/${safeName(agent.name)}-${hash}.md`;
+        await ensurePromptFile(agentPromptPath, agent.agentsMd);
+      }
+    }
+    const { systemPrompt: _inline, developerPrompt: _legacy, agentsMd: _instructions, ...profile } = agent;
+    agents.push({ ...profile, path_systemprompt: path, path_agentprompt: agentPromptPath });
   }
   return normalize({ ...stored, agents });
 }
@@ -104,7 +127,7 @@ function promptPath(agent: Agent): string {
 function normalize(value: Partial<Config>): Config {
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => agent && typeof agent.name === "string" && agent.name.length > 0).map((agent) => ({
     name: agent.name, model: typeof agent.model === "string" ? agent.model : "", effort: typeof agent.effort === "string" ? agent.effort : fallbackConfig.agents[0].effort,
-    path_systemprompt: promptPath(agent), agentsMd: typeof agent.agentsMd === "string" ? agent.agentsMd : "",
+    path_systemprompt: promptPath(agent), path_agentprompt: typeof agent.path_agentprompt === "string" ? agent.path_agentprompt.trim() : agent.name === "default" ? DEFAULT_AGENT_PROMPT_PATH : "",
     tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => typeof item === "string") : defaultAgent().tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => typeof item === "string") : [], mcpServers: Array.isArray(agent.mcpServers) ? agent.mcpServers.filter((item): item is string => typeof item === "string" && item !== "filesystem") : [],
   })) : [];
   const unique = supplied.filter((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) === index);
@@ -114,10 +137,11 @@ function normalize(value: Partial<Config>): Config {
 
 async function readConfig(): Promise<Config> {
   await ensurePromptFile(DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT);
+  await ensureDefaultAgentPrompt();
   try {
     const stored = JSON.parse(await readFile(configPath, "utf8"));
     const config = await migratePrompts(stored);
-    if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && ("description" in agent || agent.path_systemprompt === undefined || "systemPrompt" in agent || "developerPrompt" in agent))) await writeConfig(config);
+    if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && ("description" in agent || agent.path_systemprompt === undefined || agent.path_agentprompt === undefined || "agentsMd" in agent || "systemPrompt" in agent || "developerPrompt" in agent))) await writeConfig(config);
     return config;
   }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
@@ -159,13 +183,9 @@ function agentToolError(pi: ExtensionAPI, agent: Agent) {
   return denied.length ? `Agent "${agent.name}" cannot run because Pi does not allow its configured tool${denied.length === 1 ? "" : "s"}: ${denied.join(", ")}` : undefined;
 }
 
-// Keep Pi's discovered context and skills when replacing an agent's base instructions.
-function buildAgentSystemPrompt(prompt: string, options: BuildSystemPromptOptions, currentPrompt: string): string {
+function buildAgentSystemPrompt(prompt: string, options: BuildSystemPromptOptions): string {
   const sections = [prompt];
   if (options.appendSystemPrompt) sections.push(options.appendSystemPrompt);
-  // The context-window extension may already have moved these into a context message.
-  const projectContext = currentPrompt.match(/\n\n(<project_context>[\s\S]*?<\/project_context>)/)?.[1];
-  if (projectContext) sections.push(projectContext);
   const readTool = (["read", "bash"] as const).find((tool) => (options.selectedTools ?? ["read", "bash", "edit", "write"]).includes(tool));
   if (readTool && options.skills?.length) sections.push(formatSkillsForPrompt(options.skills, readTool));
   return sections.join("\n\n");
@@ -180,6 +200,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   let applyingAgentEffort: string | undefined;
   let activeToolError: string | undefined;
   let activeSystemPrompt = "";
+  let activeAgentPrompt = "";
   let modelOverride: string | undefined;
   let effortOverride: string | undefined;
   let reloading = false;
@@ -204,9 +225,15 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
   const activate = async (agent: Agent, ctx: ExtensionContext, connectMcp: boolean) => {
     activeSystemPrompt = "";
-    const path = agent.path_systemprompt.startsWith("~/") ? join(homedir(), agent.path_systemprompt.slice(2)) : resolve(dirname(configPath), agent.path_systemprompt);
+    activeAgentPrompt = "";
+    const path = resolvePromptPath(agent.path_systemprompt);
     try { activeSystemPrompt = await readFile(path, "utf8"); }
     catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" cannot read system prompt ${path}: ${error instanceof Error ? error.message : String(error)}`; }
+    if (agent.path_agentprompt) {
+      const path = resolvePromptPath(agent.path_agentprompt);
+      try { activeAgentPrompt = await readFile(path, "utf8"); }
+      catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" cannot read agent prompt ${path}: ${error instanceof Error ? error.message : String(error)}`; }
+    }
     const toolError = agentToolError(pi, agent); if (toolError) { pi.setActiveTools([]); return toolError; }
     const modelName = modelOverride || agent.model.trim() || runtimeDefaults?.model; const currentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
     if (modelName && modelName !== currentModel) {
@@ -259,9 +286,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
   });
   pi.on("before_agent_start", (event, ctx) => {
     const agent = currentAgent(); if (!agent) return;
-    const base = buildAgentSystemPrompt(activeSystemPrompt, event.systemPromptOptions, event.systemPrompt);
-    const additions = agent.agentsMd.trim() ? `# Agent AGENTS.md\n\n${agent.agentsMd}` : "";
-    const systemPrompt = additions ? `${base}\n\n${additions}` : base;
+    const base = buildAgentSystemPrompt(activeSystemPrompt, event.systemPromptOptions);
+    const systemPrompt = activeAgentPrompt.trim() ? `${base}\n\n${activeAgentPrompt}` : base;
     return { systemPrompt: `${systemPrompt}\n\nCurrent working directory ${ctx.cwd.replace(/\\/g, "/")}` };
   });
   pi.registerCommand("pi-define-agents-use", { description: "Select a defined agent", handler: async (args, ctx) => {

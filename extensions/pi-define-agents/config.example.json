@@ -4,7 +4,8 @@
       "name": "default",
       "model": "",
       "effort": "high",
-      "agentsMd": "",
+      "path_systemprompt": "sysprompt/default.md",
+      "path_agentprompt": "~/.piop/agents/default.md",
       "tools": [
         "read",
         "bash",
