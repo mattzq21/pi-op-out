@@ -9,6 +9,7 @@ const OUTPUT_LIMIT = 4 * 1024 * 1024;
 const execFile = promisify(execFileCallback);
 
 type PiApi = {
+  events: { emit(name: string, value: unknown): void };
   registerCommand(name: string, command: { description: string; handler(args: string, ctx: CommandContext): Promise<void> }): void;
   sendMessage(message: { customType: string; content: string; display: boolean; details?: unknown }, options?: { triggerTurn?: boolean }): void;
 };
@@ -24,13 +25,17 @@ type CommandContext = {
   };
 };
 
-async function runFork(sessionFile: string, cwd: string, task: string): Promise<string> {
+async function runFork(pi: PiApi, sessionFile: string, cwd: string, task: string): Promise<string> {
   const executable = process.env.PI_DESKTOP_PI_EXECUTABLE;
   const command = executable || process.execPath;
   const args = executable
     ? ["--print", "--approve", "--fork", sessionFile]
     : [process.argv[1], "--print", "--approve", "--fork", sessionFile];
   args.push("--session-dir", join(homedir(), ".piop", "sessions"));
+  args.push("--extension", join(homedir(), ".piop", "runtime-settings.ts"));
+  const settings: { settings?: unknown } = {};
+  pi.events.emit("piop:runtime-settings", settings);
+  if (settings.settings) args.push("--piop-runtime-settings", JSON.stringify(settings.settings));
   args.push("--extension", join(homedir(), ".piop", "hook-loader.ts"));
   const codexCompactionExtension = process.env.PI_DESKTOP_CODEX_COMPACTION_EXTENSION;
   if (codexCompactionExtension) args.push("--extension", codexCompactionExtension);
@@ -78,7 +83,7 @@ export default function btwExtension(pi: PiApi) {
             await ctx.ui.input(DESKTOP_TITLE, JSON.stringify({ task, sessionFile, leafId: parentLeafId, cwd: ctx.cwd }));
             return;
           }
-          const answer = await runFork(sessionFile, ctx.cwd, task);
+          const answer = await runFork(pi, sessionFile, ctx.cwd, task);
           if (!answer?.trim()) {
             ctx.ui.notify("The /btw conversation did not return an answer", "warning");
             return;

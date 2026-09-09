@@ -477,6 +477,19 @@ fn prepare_mcp_bridge(settings: &AppSettings) -> Result<(PathBuf, PathBuf), Stri
     Ok((extension_path, config_path))
 }
 
+fn runtime_settings(settings: &AppSettings) -> Value {
+    json!({ "tools": enabled_tool_names(settings), "skills": settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|skill| skill.get("path").and_then(Value::as_str)).collect::<Vec<_>>(), "mcpServers": settings.mcp_servers, "contextWindowCap": settings.context_window_cap, "contextWindowCapEnabled": settings.context_window_cap_enabled })
+}
+
+fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf, String> {
+    let dir = home_dir()?.join(".piop");
+    ensure_private_dir(&dir)?;
+    let path = dir.join("runtime-settings.ts");
+    atomic_write_private(&path, include_str!("../../extensions/pi-runtime-settings/index.ts").as_bytes())?;
+    atomic_write_private(&dir.join("runtime-settings.json"), &serde_json::to_vec(&runtime_settings(settings)).map_err(|error| error.to_string())?)?;
+    Ok(path)
+}
+
 fn prepare_session_broker() -> Result<PathBuf, String> {
     let dir = home_dir()?.join(".piop");
     ensure_private_dir(&dir)?;
@@ -1456,6 +1469,8 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let disable = format!("if [ -f \"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\" ]; then mkdir -p -m 700 \"$HOME/.piop/disabled-extensions\" && mv -- \"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\" \"$HOME/.piop/disabled-extensions/pi-orchestration-{}.ts\"; fi", Uuid::new_v4());
     let output = ssh(host).arg(disable).output().map_err(|error| format!("Could not disable legacy orchestration on {}: {error}", host.name))?;
     if !output.status.success() { return Err(format!("Could not disable legacy orchestration on {}: {}", host.name, String::from_utf8_lossy(&output.stderr))); }
+    let runtime_settings_extension = shell_quote(include_str!("../../extensions/pi-runtime-settings/index.ts"));
+    let runtime_settings_config = shell_quote(&serde_json::to_string(&runtime_settings(settings)).map_err(|error| error.to_string())?);
     let hook_stats = shell_quote(include_str!("../../extensions/piop-hooks/hook-stats.ts"));
     let hooks = shell_quote(include_str!("../../extensions/piop-hooks/index.ts"));
     let broker = shell_quote(include_str!("../resources/session-broker.ts"));
@@ -1473,6 +1488,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let remote = format!("umask 077 && rm -rf -- \"$HOME/.piop/pi-git-change-context\" && mkdir -p -m 700 \"$HOME/.piop/sessions\" \"$HOME/.piop/pi-context-window-cap\" \"$HOME/.piop/pi-project-files-watch\" \"$HOME/.piop/pi-define-agents\" && chmod 700 \"$HOME/.piop\" \"$HOME/.piop/sessions\" \"$HOME/.piop/pi-context-window-cap\" \"$HOME/.piop/pi-project-files-watch\" \"$HOME/.piop/pi-define-agents\" && mkdir -p -m 700 \"$HOME/.piop/hooks\" && printf %s {hook_stats} > \"$HOME/.piop/hook-stats.ts\" && printf %s {hooks} > \"$HOME/.piop/hook-loader.ts\" && printf %s {broker} > \"$HOME/.piop/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/.piop/pi-desktop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/.piop/pi-desktop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/.piop/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/.piop/pi-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/.piop/pi-context-window-cap/config.json\" && printf %s {project_files_watch} > \"$HOME/.piop/pi-project-files-watch/index.ts\" && printf %s {codex_web_search} > \"$HOME/.piop/pi-desktop-codex-web-search.ts\" && printf %s {codex_compaction} > \"$HOME/.piop/pi-desktop-codex-compaction.ts\" && printf %s {btw} > \"$HOME/.piop/pi-desktop-btw.ts\" && printf %s {defined_agents} > \"$HOME/.piop/pi-define-agents/index.ts\" && chmod 600 -- \"$HOME/.piop/pi-desktop-codex-web-search.ts\" \"$HOME/.piop/pi-desktop-codex-compaction.ts\" \"$HOME/.piop/session-broker.ts\" \"$HOME/.piop/pi-desktop-trace-reader.ts\" \"$HOME/.piop/pi-desktop-mcp-bridge.ts\" \"$HOME/.piop/mcp-servers.json\" \"$HOME/.piop/pi-context-window-cap/index.ts\" \"$HOME/.piop/pi-context-window-cap/config.json\" \"$HOME/.piop/pi-project-files-watch/index.ts\" \"$HOME/.piop/pi-desktop-btw.ts\" \"$HOME/.piop/pi-define-agents/index.ts\"");
     let remote = format!(r#"{remote} && if [ ! -f "$HOME/.piop/pi-define-agents/config.json" ] && [ -f "$HOME/.pi/agent/extensions/pi-define-agents/config.json" ]; then cp "$HOME/.pi/agent/extensions/pi-define-agents/config.json" "$HOME/.piop/pi-define-agents/config.json"; fi && if [ ! -f "$HOME/.piop/pi-define-agents/config.json" ] && [ -f "$HOME/.pi/agent/extensions/pi-orchestration/config.json" ]; then cp "$HOME/.pi/agent/extensions/pi-orchestration/config.json" "$HOME/.piop/pi-define-agents/config.json"; fi && rm -f -- "$HOME/.pi/agent/extensions/pi-define-agents/index.ts" "$HOME/.pi/agent/extensions/pi-desktop-btw.ts""#);
     let remote = format!(r#"{remote} && mkdir -p -m 700 "$HOME/.piop/pi-openai-fast-mode-piop" && printf %s {fast_mode} > "$HOME/.piop/pi-openai-fast-mode-piop/index.ts" && chmod 600 "$HOME/.piop/pi-openai-fast-mode-piop/index.ts""#);
+    let remote = format!(r#"{remote} && printf %s {runtime_settings_extension} > "$HOME/.piop/runtime-settings.ts" && printf %s {runtime_settings_config} > "$HOME/.piop/runtime-settings.json" && chmod 600 "$HOME/.piop/runtime-settings.ts" "$HOME/.piop/runtime-settings.json""#);
     // Bundled extensions can exceed the OS limit for a single command argument.
     let mut child = ssh(host).arg("sh -s").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| format!("Could not install piop extensions on {}: {error}", host.name))?;
     let mut stdin = child.stdin.take().ok_or("Remote extension staging stdin was unavailable")?;
@@ -1490,21 +1506,15 @@ enum PiLaunch<'a> {
 
 fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &str, launch: PiLaunch<'_>) -> Result<Command, String> {
     let (broker_port, broker_token) = broker_environment(broker)?;
-    let enabled_tools = enabled_tool_names(settings); let allowed_tools = serde_json::to_string(&enabled_tools).unwrap_or_else(|_| "[]".into());
-    let disabled_tools: Vec<&str> = settings.tools.iter().filter(|tool| !tool.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|tool| tool.get("name").and_then(Value::as_str)).collect();
     let desktop_home = home_dir()?;
-    let local_skills: Vec<PathBuf> = settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|skill| skill.get("path").and_then(Value::as_str).map(|path| expand_skill_path(path, &desktop_home))).collect();
-    let local_skills = serde_json::to_string(&local_skills).unwrap_or_else(|_| "[]".into());
-    let remote_skills: Vec<&str> = settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|skill| skill.get("path").and_then(Value::as_str)).collect();
-    let remote_skills = serde_json::to_string(&remote_skills).unwrap_or_else(|_| "[]".into());
     let is_rpc = matches!(launch, PiLaunch::Rpc { .. });
     let default_model = std::env::var("PI_DESKTOP_E2E_MODEL").ok().filter(|model| !model.trim().is_empty()).unwrap_or_else(|| settings.default_model.clone());
     if host_id == "local" {
         let (mcp_extension, mcp_config) = prepare_mcp_bridge(settings)?; let context_window_cap_extension = prepare_context_window_cap_extension(settings)?; let project_files_watch_extension = prepare_project_files_watch_extension()?; let trace_reader_extension = prepare_trace_reader()?; let codex_compaction_extension = prepare_codex_compaction_extension()?; let codex_web_search_extension = prepare_codex_web_search_extension()?; let defined_agents_extension = prepare_defined_agents_extension()?; let pi_path = pi_executable();
         let session_dir = ensure_desktop_sessions_dir(&desktop_home)?;
         let mut command = Command::new(&pi_path); command.arg(if is_rpc { "--mode" } else { "--print" }); if is_rpc { command.arg("rpc"); }
-        command.arg("--session-dir").arg(session_dir).arg("--approve").arg("--no-skills").arg("--extension").arg(prepare_hooks_extension()?).arg("--extension").arg(mcp_extension).arg("--extension").arg(prepare_session_broker()?).arg("--extension").arg(&trace_reader_extension).arg("--extension").arg(&context_window_cap_extension).arg("--extension").arg(&project_files_watch_extension).arg("--extension").arg(prepare_fast_mode_extension()?).arg("--extension").arg(&codex_compaction_extension).arg("--extension").arg(&codex_web_search_extension).arg("--extension").arg(&defined_agents_extension)
-            .env("PI_DESKTOP_DEFINED_AGENTS_EXTENSION", &defined_agents_extension).env("PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION", &codex_web_search_extension).env("PI_DESKTOP_CODEX_COMPACTION_EXTENSION", &codex_compaction_extension).env("PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION", &context_window_cap_extension).env("PI_DESKTOP_TRACE_READER_EXTENSION", &trace_reader_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config).env("PI_DESKTOP_BROKER_URL", format!("http://127.0.0.1:{broker_port}")).env("PI_DESKTOP_BROKER_TOKEN", &broker_token).env("PI_DESKTOP_ALLOWED_TOOLS", &allowed_tools).env("PI_DESKTOP_SKILL_PATHS", &local_skills);
+        command.arg("--extension").arg(prepare_runtime_settings(settings)?).arg("--session-dir").arg(session_dir).arg("--approve").arg("--no-skills").arg("--extension").arg(prepare_hooks_extension()?).arg("--extension").arg(mcp_extension).arg("--extension").arg(prepare_session_broker()?).arg("--extension").arg(&trace_reader_extension).arg("--extension").arg(&context_window_cap_extension).arg("--extension").arg(&project_files_watch_extension).arg("--extension").arg(prepare_fast_mode_extension()?).arg("--extension").arg(&codex_compaction_extension).arg("--extension").arg(&codex_web_search_extension).arg("--extension").arg(&defined_agents_extension)
+            .env("PI_DESKTOP_DEFINED_AGENTS_EXTENSION", &defined_agents_extension).env("PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION", &codex_web_search_extension).env("PI_DESKTOP_CODEX_COMPACTION_EXTENSION", &codex_compaction_extension).env("PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION", &context_window_cap_extension).env("PI_DESKTOP_TRACE_READER_EXTENSION", &trace_reader_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config).env("PI_DESKTOP_BROKER_URL", format!("http://127.0.0.1:{broker_port}")).env("PI_DESKTOP_BROKER_TOKEN", &broker_token);
         match launch {
             PiLaunch::Rpc { cwd, session_path, session_id, fork_path, no_session } => {
                 let working_dir = match cwd { Some("~") => home_dir()?, Some(path) => PathBuf::from(path), None => std::env::current_dir().map_err(|error| error.to_string())? };
@@ -1515,14 +1525,13 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
             }
             PiLaunch::Print { cwd, session_path, .. } => { command.current_dir(cwd).arg("--session").arg(session_path); }
         }
-        if !disabled_tools.is_empty() { command.arg("--exclude-tools").arg(disabled_tools.join(",")); }
         if !is_rpc && !default_model.trim().is_empty() { command.arg("--model").arg(default_model.trim()); }
         if !settings.default_thinking.trim().is_empty() { command.arg("--thinking").arg(settings.default_thinking.trim()); }
         return Ok(command);
     }
     let host = remote_host(settings, host_id)?; stage_remote_extensions(host, settings)?; let remote_port = remote_broker_port(); let remote_pi = remote_pi_path(&host.pi_path);
     let mut arguments = vec![remote_pi.clone()]; if is_rpc { arguments.extend(["--mode".into(), "rpc".into()]); } else { arguments.push("--print".into()); }
-    arguments.extend(["--extension".into(), "\"$HOME/.piop/hook-loader.ts\"".into()]);
+    arguments.extend(["--extension".into(), "\"$HOME/.piop/runtime-settings.ts\"".into(), "--extension".into(), "\"$HOME/.piop/hook-loader.ts\"".into()]);
     arguments.extend(["--session-dir".into(), "\"$HOME/.piop/sessions\"".into(), "--approve".into(), "--no-skills".into(), "--extension".into(), "\"$HOME/.piop/pi-desktop-mcp-bridge.ts\"".into(), "--extension".into(), "\"$HOME/.piop/session-broker.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-desktop-trace-reader.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-context-window-cap/index.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-project-files-watch/index.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-define-agents/index.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-desktop-codex-compaction.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-desktop-codex-web-search.ts\"".into()]);
     arguments.extend(["--extension".into(), "\"$HOME/.piop/pi-openai-fast-mode-piop/index.ts\"".into()]);
     if is_rpc { arguments.extend(["--extension".into(), "\"$HOME/.piop/pi-desktop-btw.ts\"".into()]); }
@@ -1530,11 +1539,10 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
         PiLaunch::Rpc { cwd, session_path, session_id, fork_path, no_session } => { if let Some(path) = fork_path { arguments.extend(["--fork".into(), shell_quote(path)]); } else if let Some(path) = session_path { arguments.extend(["--session".into(), shell_quote(path)]); } else if let Some(id) = session_id { arguments.extend(["--session-id".into(), shell_quote(id)]); } if no_session { arguments.push("--no-session".into()); } cwd },
         PiLaunch::Print { cwd, session_path, .. } => { arguments.extend(["--session".into(), shell_quote(session_path)]); Some(cwd) },
     };
-    if !disabled_tools.is_empty() { arguments.extend(["--exclude-tools".into(), shell_quote(&disabled_tools.join(","))]); }
     if !is_rpc && !default_model.trim().is_empty() { arguments.extend(["--model".into(), shell_quote(default_model.trim())]); }
     if !settings.default_thinking.trim().is_empty() { arguments.extend(["--thinking".into(), shell_quote(settings.default_thinking.trim())]); }
     let rpc_environment = if is_rpc { format!(" PI_DESKTOP_BTW=1 PI_DESKTOP_PI_EXECUTABLE={remote_pi}") } else { String::new() };
-    let remote = format!("cd {} && PI_DESKTOP_DEFINED_AGENTS_EXTENSION=\"$HOME/.piop/pi-define-agents/index.ts\" PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION=\"$HOME/.piop/pi-desktop-codex-web-search.ts\" PI_DESKTOP_CODEX_COMPACTION_EXTENSION=\"$HOME/.piop/pi-desktop-codex-compaction.ts\" PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION=\"$HOME/.piop/pi-context-window-cap/index.ts\" PI_DESKTOP_TRACE_READER_EXTENSION=\"$HOME/.piop/pi-desktop-trace-reader.ts\" PI_DESKTOP_MCP_CONFIG=\"$HOME/.piop/mcp-servers.json\" PI_DESKTOP_BROKER_URL={} PI_DESKTOP_BROKER_TOKEN={} PI_DESKTOP_ALLOWED_TOOLS={} PI_DESKTOP_SKILL_PATHS={}{} exec {}", remote_directory_path(cwd), shell_quote(&format!("http://127.0.0.1:{remote_port}")), shell_quote(&broker_token), shell_quote(&allowed_tools), shell_quote(&remote_skills), rpc_environment, arguments.join(" "));
+    let remote = format!("cd {} && PI_DESKTOP_DEFINED_AGENTS_EXTENSION=\"$HOME/.piop/pi-define-agents/index.ts\" PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION=\"$HOME/.piop/pi-desktop-codex-web-search.ts\" PI_DESKTOP_CODEX_COMPACTION_EXTENSION=\"$HOME/.piop/pi-desktop-codex-compaction.ts\" PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION=\"$HOME/.piop/pi-context-window-cap/index.ts\" PI_DESKTOP_TRACE_READER_EXTENSION=\"$HOME/.piop/pi-desktop-trace-reader.ts\" PI_DESKTOP_MCP_CONFIG=\"$HOME/.piop/mcp-servers.json\" PI_DESKTOP_BROKER_URL={} PI_DESKTOP_BROKER_TOKEN={}{} exec {}", remote_directory_path(cwd), shell_quote(&format!("http://127.0.0.1:{remote_port}")), shell_quote(&broker_token), rpc_environment, arguments.join(" "));
     let mut command = remote_broker_command(host, broker_port, remote_port); command.arg(remote_login_command(&remote)); Ok(command)
 }
 
@@ -1674,6 +1682,10 @@ fn execute_pi_command(runtime: &PiRuntime, runtime_id: &str, mut command: Value)
     if let Some(action) = desktop_action {
         let control = serde_json::to_string(&json!({"id":id,"action":action})).map_err(|error| error.to_string())?;
         command = json!({"id":format!("{id}:desktop-control"),"type":"prompt","message":format!("/pi-desktop-control {control}")});
+    }
+    if command.get("type").and_then(Value::as_str) == Some("runtime_settings") {
+        let request = serde_json::to_string(&command).map_err(|error| error.to_string())?;
+        command = json!({"id":format!("{id}:desktop-control"),"type":"prompt","message":format!("/piop-runtime-settings {request}")});
     }
     if command.get("type").and_then(Value::as_str) == Some("branch_checkpoint") {
         let request = serde_json::to_string(&command).map_err(|error| error.to_string())?;

@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { formatSkillsForPrompt, type BuildSystemPromptOptions } from "@earendil-works/pi-coding-agent";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: string[] };
 type RuntimeDefaults = { model: string; effort: string };
@@ -41,9 +41,9 @@ Guidelines:
 
 type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean };
 const fallbackConfig: Config = { agents: [{ name: "default", model: "", effort: "high", path_systemprompt: DEFAULT_PROMPT_PATH, path_agentprompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
-function defaultAgent(): Agent {
+function defaultAgent(pi: ExtensionAPI): Agent {
   const agent = structuredClone(fallbackConfig.agents[0]);
-  if (desktopList("PI_DESKTOP_ALLOWED_TOOLS")?.includes("web_search")) agent.tools.push("web_search");
+  if (desktopList(pi, "tools")?.includes("web_search")) agent.tools.push("web_search");
   return agent;
 }
 
@@ -85,7 +85,7 @@ async function ensureDefaultAgentPrompt() {
 
 type StoredAgent = Omit<Agent, "path_systemprompt" | "path_agentprompt"> & { path_systemprompt?: string; path_agentprompt?: string; agentsMd?: string; systemPrompt?: string; developerPrompt?: string };
 type StoredConfig = { agents?: StoredAgent[]; webSearchDefaultApplied?: boolean };
-async function migratePrompts(stored: StoredConfig): Promise<Config> {
+async function migratePrompts(stored: StoredConfig, pi: ExtensionAPI): Promise<Config> {
   const agents = [];
   for (const agent of Array.isArray(stored.agents) ? stored.agents : []) {
     if (!agent || typeof agent.name !== "string" || !agent.name.length) continue;
@@ -115,7 +115,7 @@ async function migratePrompts(stored: StoredConfig): Promise<Config> {
     const { systemPrompt: _inline, developerPrompt: _legacy, agentsMd: _instructions, ...profile } = agent;
     agents.push({ ...profile, path_systemprompt: path, path_agentprompt: agentPromptPath });
   }
-  return normalize({ ...stored, agents });
+  return normalize({ ...stored, agents }, pi);
 }
 
 function promptPath(agent: Agent): string {
@@ -124,25 +124,25 @@ function promptPath(agent: Agent): string {
   return agent.path_systemprompt;
 }
 
-function normalize(value: Partial<Config>): Config {
+function normalize(value: Partial<Config>, pi: ExtensionAPI): Config {
   for (const agent of Array.isArray(value.agents) ? value.agents : []) if (agent && agent.fastMode !== undefined && typeof agent.fastMode !== "boolean") throw new Error(`Agent "${agent.name}" fastMode must be a boolean`);
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => agent && typeof agent.name === "string" && agent.name.length > 0).map((agent) => ({
     name: agent.name, model: typeof agent.model === "string" ? agent.model : "", effort: typeof agent.effort === "string" ? agent.effort : fallbackConfig.agents[0].effort,
     fastMode: agent.fastMode,
     path_systemprompt: promptPath(agent), path_agentprompt: typeof agent.path_agentprompt === "string" ? agent.path_agentprompt.trim() : agent.name === "default" ? DEFAULT_AGENT_PROMPT_PATH : "",
-    tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => typeof item === "string") : defaultAgent().tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => typeof item === "string") : [], mcpServers: Array.isArray(agent.mcpServers) ? agent.mcpServers.filter((item): item is string => typeof item === "string" && item !== "filesystem") : [],
+    tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => typeof item === "string") : defaultAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => typeof item === "string") : [], mcpServers: Array.isArray(agent.mcpServers) ? agent.mcpServers.filter((item): item is string => typeof item === "string" && item !== "filesystem") : [],
   })) : [];
   const unique = supplied.filter((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) === index);
-  const agents = unique.some((agent) => agent.name === "default") ? unique : [defaultAgent(), ...unique];
+  const agents = unique.some((agent) => agent.name === "default") ? unique : [defaultAgent(pi), ...unique];
   return { agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true };
 }
 
-async function readConfig(): Promise<Config> {
+async function readConfig(pi: ExtensionAPI): Promise<Config> {
   await ensurePromptFile(DEFAULT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT);
   await ensureDefaultAgentPrompt();
   try {
     const stored = JSON.parse(await readFile(configPath, "utf8"));
-    const config = await migratePrompts(stored);
+    const config = await migratePrompts(stored, pi);
     if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && ("description" in agent || agent.path_systemprompt === undefined || agent.path_agentprompt === undefined || "agentsMd" in agent || "systemPrompt" in agent || "developerPrompt" in agent))) await writeConfig(config);
     return config;
   }
@@ -152,11 +152,11 @@ async function readConfig(): Promise<Config> {
   let legacy: StoredConfig = {};
   try { legacy = JSON.parse(await readFile(legacyPath, "utf8")); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  await writeConfig(await migratePrompts(legacy), true);
-  return readConfig();
+  await writeConfig(await migratePrompts(legacy, pi), true);
+  return readConfig(pi);
 }
-async function loadConfig(): Promise<Config> {
-  const config = await readConfig();
+async function loadConfig(pi: ExtensionAPI): Promise<Config> {
+  const config = await readConfig(pi);
   let changed = false;
   for (const agent of config.agents) {
     if (!agent.tools.some((tool) => tool === "exec_command" || tool === "apply_patch")) continue;
@@ -165,7 +165,7 @@ async function loadConfig(): Promise<Config> {
       : tool === "apply_patch" ? ["edit", "write"] : [tool]))];
     changed = true;
   }
-  if (!config.webSearchDefaultApplied && desktopList("PI_DESKTOP_ALLOWED_TOOLS")?.includes("web_search")) {
+  if (!config.webSearchDefaultApplied && desktopList(pi, "tools")?.includes("web_search")) {
     for (const agent of config.agents) if (!agent.tools.includes("web_search")) agent.tools.push("web_search");
     config.webSearchDefaultApplied = true;
     changed = true;
@@ -176,11 +176,11 @@ async function loadConfig(): Promise<Config> {
 function encode(value: unknown) { return Buffer.from(JSON.stringify(value), "utf8").toString("base64url"); }
 function decode<T>(value: string): T { return JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as T; }
 function safeName(value: string) { return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool"; }
-function desktopList(name: string) { try { const value = JSON.parse(process.env[name] || "null"); return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined; } catch { return undefined; } }
+function desktopList(pi: ExtensionAPI, name: "tools" | "skills") { const request: { settings?: { tools: string[]; skills: string[] } } = {}; pi.events.emit("piop:runtime-settings", request); return request.settings?.[name]; }
 function normalizedPath(value: string) { return resolve(value.startsWith("~/") ? join(homedir(), value.slice(2)) : value); }
-function agentSkills(agent: Agent) { const global = desktopList("PI_DESKTOP_SKILL_PATHS"); if (!global) return agent.skills; const allowed = new Set(global.map(normalizedPath)); return agent.skills.filter((skill) => allowed.has(normalizedPath(skill))); }
+function agentSkills(pi: ExtensionAPI, agent: Agent) { const global = desktopList(pi, "skills"); if (!global) return agent.skills; const allowed = new Set(global.map(normalizedPath)); return agent.skills.filter((skill) => allowed.has(normalizedPath(skill))); }
 function agentToolError(pi: ExtensionAPI, agent: Agent) {
-  const globallyAllowed = desktopList("PI_DESKTOP_ALLOWED_TOOLS"); const available = new Set(pi.getAllTools().map((tool) => tool.name));
+  const globallyAllowed = desktopList(pi, "tools"); const available = new Set(pi.getAllTools().map((tool) => tool.name));
   const denied = [...new Set(agent.tools.filter((tool) => (globallyAllowed && !globallyAllowed.includes(tool)) || !available.has(tool)))];
   return denied.length ? `Agent "${agent.name}" cannot run because Pi does not allow its configured tool${denied.length === 1 ? "" : "s"}: ${denied.join(", ")}` : undefined;
 }
@@ -194,7 +194,7 @@ function buildAgentSystemPrompt(prompt: string, options: BuildSystemPromptOption
 }
 
 export default async function defineAgents(pi: ExtensionAPI) {
-  let config = await loadConfig();
+  let config = await loadConfig(pi);
   let active = "default";
   let runtimeDefaults: RuntimeDefaults | undefined;
   let runtimeSession = "";
@@ -212,7 +212,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const fastModeModels = () => { const request: { models?: string[] } = {}; pi.events.emit("piop:fast-mode", request); return request.models ?? []; };
   const fastModeError = (agent: Agent, model: string | undefined) => agent.fastMode === true && (!model || !fastModeModels().includes(model)) ? `Agent "${agent.name}" cannot run because model ${model || "(unset)"} does not support fast mode` : undefined;
   const publish = (ctx: ExtensionContext) => ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: currentAgent()?.name ?? active, config: { ...config, fastModeModels: fastModeModels() } })}`);
-  const reload = async (ctx: ExtensionContext) => {
+  const reload = async (ctx: ExtensionCommandContext) => {
     // Reloading resources does not invalidate the definitions already loaded.
     publish(ctx);
     reloading = true;
@@ -270,6 +270,18 @@ export default async function defineAgents(pi: ExtensionAPI) {
     publish(ctx);
     return activeToolError;
   };
+  const stopRefresh = pi.events.on("piop:agents:refresh", (value) => {
+    const request = value as { ctx: ExtensionContext; ready?: Promise<void> };
+    request.ready = Promise.resolve().then(() => {
+      const agent = currentAgent();
+      if (!agent) throw new Error(`Unknown defined agent: ${active}`);
+      activeToolError = agentToolError(pi, agent);
+      const mcpTools = pi.getActiveTools().filter((name) => name.startsWith("mcp_"));
+      pi.setActiveTools(activeToolError ? [] : [...new Set([...agent.tools, ...mcpTools])]);
+      publish(request.ctx);
+    });
+  });
+  pi.on("session_shutdown", () => { stopRefresh(); });
   pi.on("model_select", (event) => { const model = `${event.model.provider}/${event.model.id}`; if (applyingAgentModel === model) { applyingAgentModel = undefined; return; } modelOverride = model; saveRuntimeDefaults({ model, effort: runtimeDefaults?.effort || pi.getThinkingLevel() }); });
   pi.on("thinking_level_select", (event) => { if (applyingAgentEffort === event.level) { applyingAgentEffort = undefined; return; } effortOverride = event.level; saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); });
   pi.on("session_start", async (_event, ctx) => {
@@ -285,7 +297,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     publish(ctx);
   });
   pi.on("session_shutdown", (_event, ctx) => { delete process.env.PI_DEFINE_AGENTS_ACTIVE; if (!reloading) ctx.ui.setStatus(STATUS_KEY, undefined); });
-  pi.on("resources_discover", () => { const agent = currentAgent(); const skillPaths = agent ? agentSkills(agent) : []; return skillPaths.length ? { skillPaths } : undefined; });
+  pi.on("resources_discover", () => { const agent = currentAgent(); const skillPaths = agent ? agentSkills(pi, agent) : []; return skillPaths.length ? { skillPaths } : undefined; });
   pi.on("input", async (event, ctx) => {
     const error = await useAgent(active, ctx, true);
     if (error) { ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error })); ctx.ui.notify(error, "error"); return { action: "handled" }; }
@@ -309,7 +321,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   }});
   pi.registerCommand("pi-define-agents-config", { description: "Update agent definitions", handler: async (args, ctx) => {
     const previous = config;
-    const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied });
+    const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied }, pi);
     restore(ctx);
     for (const agent of next.agents) { const error = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model); if (error) throw new Error(error); }
     await writeConfig(next); config = next;

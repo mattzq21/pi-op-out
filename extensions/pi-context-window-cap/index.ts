@@ -28,11 +28,6 @@ async function loadCap(): Promise<number | undefined> {
   return cap;
 }
 
-function capModel(model: Model<any> | undefined, cap: number | undefined): boolean {
-  if (cap === undefined || !model || model.contextWindow <= cap) return false;
-  model.contextWindow = Math.min(model.contextWindow, cap);
-  return true;
-}
 
 function skillsFromPrompt(prompt: string) {
   const block = prompt.match(/\n\nThe following skills provide specialized instructions[\s\S]*?<\/available_skills>/)?.[0] ?? "";
@@ -115,7 +110,27 @@ function changeInstructionFromMessages(messages: unknown[]) {
 }
 
 export default async function contextWindowCap(pi: ExtensionAPI) {
-  const cap = await loadCap();
+  const settings = () => { const request: { settings?: { contextWindowCap: number; contextWindowCapEnabled: boolean } } = {}; pi.events.emit("piop:runtime-settings", request); return request.settings; };
+  const initial = settings();
+  let cap = initial ? (initial.contextWindowCapEnabled ? initial.contextWindowCap : undefined) : await loadCap();
+  const originalWindows = new Map<Model<any>, number>();
+  const capModel = (model: Model<any> | undefined) => {
+    if (!model) return;
+    if (!originalWindows.has(model)) originalWindows.set(model, model.contextWindow);
+    const original = originalWindows.get(model)!;
+    model.contextWindow = cap === undefined ? original : Math.min(original, cap);
+  };
+  const stopUpdates = pi.events.on("piop:context-cap:update", (value) => {
+    const request = value as { ctx: ExtensionContext; ready?: Promise<void> };
+    request.ready = Promise.resolve().then(() => {
+      const next = settings();
+      if (!next) throw new Error("Runtime settings are unavailable");
+      cap = next.contextWindowCapEnabled ? next.contextWindowCap : undefined;
+      for (const model of originalWindows.keys()) capModel(model);
+      capModel(request.ctx.model);
+    });
+  });
+  pi.on("session_shutdown", () => { stopUpdates(); for (const [model, original] of originalWindows) model.contextWindow = original; });
   const publishPromptContext = (ctx: ExtensionContext, messages: unknown[]) => {
     const branch = ctx.sessionManager.getBranch();
     const resumeMessages = new Set(branch.flatMap((entry) => {
@@ -153,12 +168,14 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
   };
 
   pi.on("session_start", (_event, ctx) => {
-    capModel(ctx.model, cap);
+    const next = settings();
+    if (next) cap = next.contextWindowCapEnabled ? next.contextWindowCap : undefined;
+    capModel(ctx.model);
     ctx.ui.setStatus(STATUS_KEY, undefined);
   });
 
   pi.on("model_select", (event) => {
-    capModel(event.model, cap);
+    capModel(event.model);
   });
 
   pi.on("before_agent_start", (event, ctx) => {

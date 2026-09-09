@@ -105,11 +105,10 @@ const SELECT_EVENT = "piop:mcp:select";
 
 export default async function mcpBridge(pi: ExtensionAPI) {
   const configPath = process.env.PI_DESKTOP_MCP_CONFIG; if (!configPath) return;
-  const servers = JSON.parse(await readFile(configPath, "utf8")) as ServerConfig[];
+  const settings = () => { const request: { settings?: { mcpServers: ServerConfig[] } } = {}; pi.events.emit("piop:runtime-settings", request); return request.settings; };
+  let servers = settings()?.mcpServers ?? JSON.parse(await readFile(configPath, "utf8")) as ServerConfig[];
   const allowedServerIds = process.env.PI_DESKTOP_MCP_ALLOWED_SERVER_IDS?.split(",").map((id) => id.trim()).filter(Boolean);
   const allowed = allowedServerIds ? new Set(allowedServerIds) : undefined;
-  const desktopSkillPaths = (() => { try { const value = JSON.parse(process.env.PI_DESKTOP_SKILL_PATHS || "[]"); return Array.isArray(value) ? value.filter((path): path is string => typeof path === "string") : []; } catch { return []; } })();
-  pi.on("resources_discover", () => process.env.PI_DEFINE_AGENTS_ACTIVE === "1" || !desktopSkillPaths.length ? undefined : { skillPaths: desktopSkillPaths });
   const connections = new Map<string, Connection>();
   // Keep ownership across reconnects so retained tool registrations cannot alias.
   const toolNames = new Map<string, string>();
@@ -141,7 +140,7 @@ export default async function mcpBridge(pi: ExtensionAPI) {
   const close = async (id: string) => {
     const connection = connections.get(id);
     connections.delete(id);
-    if (connection) { connection.connected = false; await connection.client.close().catch(() => undefined); }
+    if (connection) { pi.setActiveTools(pi.getActiveTools().filter((name) => !connection.tools.includes(name))); connection.connected = false; await connection.client.close().catch(() => undefined); }
     statuses.set(id, { id, status: "stopped", error: undefined });
   };
   const select = async (selection: Selection): Promise<string[]> => {
@@ -225,7 +224,22 @@ export default async function mcpBridge(pi: ExtensionAPI) {
     selection.ready = pending.then(() => select(selection));
     pending = selection.ready.catch(() => undefined);
   });
+  const stopUpdates = pi.events.on("piop:mcp:update", (value) => {
+    const request = value as { ctx: ExtensionContext; ready?: Promise<void> };
+    request.ready = pending.then(async () => {
+      const next = settings()?.mcpServers;
+      if (!next) throw new Error("Runtime settings are unavailable");
+      context = request.ctx;
+      await Promise.all([...connections.keys()].filter((id) => JSON.stringify(servers.find((server) => server.id === id)) !== JSON.stringify(next.find((server) => server.id === id))).map(close));
+      servers = next;
+      for (const id of statuses.keys()) if (!servers.some((server) => server.id === id)) statuses.delete(id);
+      for (const server of servers) if (!statuses.has(server.id)) statuses.set(server.id, { id: server.id, status: "stopped", error: undefined });
+      publish();
+    });
+    pending = request.ready.catch(() => undefined);
+  });
   pi.on("session_start", (_event, ctx) => {
+    servers = settings()?.mcpServers ?? servers;
     context = ctx; publish();
   });
   pi.on("input", async (event, ctx) => {
@@ -247,7 +261,7 @@ export default async function mcpBridge(pi: ExtensionAPI) {
   } });
   pi.on("context", (event) => ({ messages: event.messages.filter((message) => message.role !== "custom" || message.customType !== MCP_STATUS_KEY) }));
   pi.on("session_shutdown", async () => {
-    unsubscribe(); shutdown.abort();
+    unsubscribe(); stopUpdates(); shutdown.abort();
     await pending;
     await Promise.all([...connections.keys()].map(close));
     context?.ui.setStatus(MCP_STATUS_KEY, undefined);

@@ -180,7 +180,7 @@ export class SessionRuntimePool {
       skills: value.skills.filter((skill) => skill.enabled).map((skill) => skill.path).sort(),
       mcpServers: value.mcpServers.filter((server) => server.enabled).map(({ status: _status, error: _error, ...server }) => server).sort((a, b) => a.id.localeCompare(b.id)),
     });
-    const reloadAll = changed(runtimeConfig(previous), runtimeConfig(settings));
+    const live = changed(runtimeConfig(previous), runtimeConfig(settings));
     const hostConnection = (value: AppSettings, hostId: string) => {
       const host = value.hosts.find((host) => host.id === hostId);
       return host ? { target: host.target, piPath: host.piPath } : undefined;
@@ -188,7 +188,8 @@ export class SessionRuntimePool {
     for (const transport of this.transports) {
       const hostId = transport.currentHostId();
       transport.queueSettings(settings, {
-        reconnect: reloadAll || agentHostId === hostId || (hostId !== "local" && changed(hostConnection(previous, hostId), hostConnection(settings, hostId))),
+        live,
+        reconnect: agentHostId === hostId || (hostId !== "local" && changed(hostConnection(previous, hostId), hostConnection(settings, hostId))),
         autoCompaction: previous.autoCompaction !== settings.autoCompaction,
         autoRetry: previous.autoRetry !== settings.autoRetry,
       });

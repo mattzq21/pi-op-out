@@ -55,7 +55,7 @@ export class NativeTransport {
   private connectPromise?: Promise<void>;
   private processLifecycle: Promise<unknown> = Promise.resolve();
   private settingsLifecycle: Promise<unknown> = Promise.resolve();
-  private pendingSettings?: { settings: AppSettings; reconnect: boolean; autoCompaction: boolean; autoRetry: boolean };
+  private pendingSettings?: { settings: AppSettings; reconnect: boolean; live: boolean; autoCompaction: boolean; autoRetry: boolean };
   private applyingSettings?: Promise<void>;
   private settingsApplyFailed = false;
   private inferenceBusy = false;
@@ -63,11 +63,12 @@ export class NativeTransport {
   private activeCommands = 0;
   private disposed = false;
   hasPendingSettings() { return Boolean(this.pendingSettings || this.applyingSettings); }
-  queueSettings(settings: AppSettings, changes: { reconnect: boolean; autoCompaction: boolean; autoRetry: boolean }) {
-    if (this.disposed || (!this.pendingSettings && !changes.reconnect && !changes.autoCompaction && !changes.autoRetry)) return;
+  queueSettings(settings: AppSettings, changes: { reconnect: boolean; live: boolean; autoCompaction: boolean; autoRetry: boolean }) {
+    if (this.disposed || (!this.pendingSettings && !changes.reconnect && !changes.live && !changes.autoCompaction && !changes.autoRetry)) return;
     if (!this.running && !this.connectPromise && !this.applyingSettings && !this.pendingSettings) return;
     this.pendingSettings = {
       settings: structuredClone(settings),
+      live: changes.live || Boolean(this.pendingSettings?.live),
       reconnect: changes.reconnect || Boolean(this.pendingSettings?.reconnect),
       autoCompaction: changes.autoCompaction || Boolean(this.pendingSettings?.autoCompaction),
       autoRetry: changes.autoRetry || Boolean(this.pendingSettings?.autoRetry),
@@ -89,6 +90,12 @@ export class NativeTransport {
         const { settings } = update;
         if (update.reconnect) await this.reconnectForSettings(settings);
         if (this.running) {
+          if (update.live) await this.executeCommandNow({ type: "runtime_settings", settings: {
+            tools: settings.tools.filter((tool) => tool.enabled).map((tool) => tool.name),
+            skills: settings.skills.filter((skill) => skill.enabled).map((skill) => skill.path),
+            mcpServers: settings.mcpServers.map(({ status: _status, error: _error, ...server }) => server),
+            contextWindowCap: settings.contextWindowCap, contextWindowCapEnabled: settings.contextWindowCapEnabled,
+          } });
           if (update.reconnect || update.autoCompaction) await this.executeCommandNow({ type: "set_auto_compaction", enabled: settings.autoCompaction });
           if (update.reconnect || update.autoRetry) await this.executeCommandNow({ type: "set_auto_retry", enabled: settings.autoRetry });
         }
