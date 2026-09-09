@@ -146,7 +146,6 @@ export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = 
       <div className="message-actions">
         <IconButton label={copyState === "copied" ? "Message copied" : copyState === "error" ? "Copy failed" : "Copy message"} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>
         {copyState === "error" && <span className="copy-feedback" role="status">Could not copy message</span>}
-        {onCreateWorktree && <button className="branch-button" aria-label="Branch before this prompt" title="Branch before this prompt (latest 10 checkpoints)" onClick={() => onCreateWorktree(message)}><FolderGit2 size={14} /></button>}
       </div>
     </article>;
   }
@@ -173,7 +172,7 @@ export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = 
         <IconButton label={copyState === "copied" ? `${responseLabel} copied` : copyState === "error" ? `Copy failed for ${responseLabel.toLowerCase()}` : `Copy ${responseLabel.toLowerCase()}`} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>
         {copyState === "error" && <span className="copy-feedback" role="status">Could not copy response</span>}
         {onBranch && <button className="branch-button" aria-label={`Branch from ${responseLabel.toLowerCase()}`} title="Branch from here" disabled={branching} onClick={() => void branch()}><GitBranch size={14} /></button>}
-        {onCreateWorktree && <button className="branch-button" aria-label="Create Git worktree" title="Create Git worktree" onClick={() => onCreateWorktree(message)}><FolderGit2 size={14} /></button>}
+        {onCreateWorktree && <button className="branch-button" aria-label="Create Git worktree" title="Create Git worktree from before this response’s prompt (latest 10 checkpoints)" onClick={() => onCreateWorktree(message)}><FolderGit2 size={14} /></button>}
         <HookWheel counts={hookCounts} label="Message hooks" />
         {debug && cache && <span className={`cache-hit-rate${cache.low ? " low" : ""}`} title={`${cache.cachedTokens.toLocaleString()} of ${cache.promptTokens.toLocaleString()} prompt tokens read from cache${turnCacheUsage ? " across all calls in this response" : ""}`}>Cache {cache.rate}%</span>}
       </div>}

@@ -175,7 +175,7 @@ function ConversationTurnView({ messages, hookCounts, gitDiffs, debug, active, r
     }
     return total;
   }, { input: 0, cacheRead: 0, cacheWrite: 0 });
-  const worktreeResponse = finalMessage && finalMessage.stopReason !== "toolUse" ? onCreateWorktree : undefined;
+  const worktreeResponse = onCreateWorktree && userIndex >= 0 && finalMessage && finalMessage.stopReason !== "toolUse" ? () => onCreateWorktree(messages[userIndex]) : undefined;
   const gitDiff = finalMessage ? gitDiffs?.[finalMessage.id] : undefined;
   const workedFor = formatWorkedFor(userIndex >= 0 ? shown[userIndex].timestamp : shown[0]?.timestamp, finalMessage?.completedAt ?? finalMessage?.timestamp);
   const retryTurn = retryable ? findReplaceableAbortedTurn(shown) : undefined;
@@ -184,7 +184,7 @@ function ConversationTurnView({ messages, hookCounts, gitDiffs, debug, active, r
 
   return <section className="conversation-turn">
     {parsed.step && parsed.step.step > 0 && <div className="sequence-step-label">{parsed.step.sequence} · {parsed.step.agent}</div>}
-    {userMessages.map((message) => <Message key={message.id} message={message} debug={debug} onCreateWorktree={onCreateWorktree} />)}
+    {userMessages.map((message) => <Message key={message.id} message={message} debug={debug} />)}
     {debug && promptContext && <PromptContextBar context={promptContext} />}
     {active || paused ? <div className="active-work-content">{renderMessages(shown.filter((message) => message.role !== "user"), true, false, debug, paused)}</div> : <>
     {intermediate.length > 0 && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}<ChevronRight size={12} className="work-group-chevron" aria-hidden="true" /></summary><div className="work-group-content">{renderMessages(intermediate, true, true, debug, paused, false)}</div></details>}
