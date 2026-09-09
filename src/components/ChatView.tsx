@@ -137,21 +137,7 @@ function compactCompletedTools(messages: ChatMessage[], groupRepeated = true) {
 }
 
 function renderMessages(messages: ChatMessage[], expanded: boolean, compact = true, debug = false, paused = false, showActions = true) {
-  const groups: Array<Array<{ message: ChatMessage; count: number }>> = [];
-  for (const entry of compactCompletedTools(messages, compact && !debug)) {
-    const previous = groups.at(-1);
-    if (entry.message.role === "tool" && previous?.[0].message.role === "tool") previous.push(entry);
-    else groups.push([entry]);
-  }
-  return groups.map((group) => {
-    const first = group[0].message;
-    const count = group.reduce((total, entry) => total + entry.count, 0);
-    const content = group.map(({ message, count }) => <Message key={message.id} message={message} toolCount={count} showActions={showActions} expanded={expanded} debug={debug} paused={paused} />);
-    if (first.role !== "tool" || count < 2) return content;
-    const running = group.some(({ message }) => message.toolStatus === "running");
-    const failed = group.some(({ message }) => message.toolStatus === "error");
-    return <details className="tool-group" key={first.id}><summary><ChevronRight size={12} className="tool-group-chevron" aria-hidden="true" /><span>Tools</span>{(running || failed) && <small>{running ? "Running…" : "Failed"}</small>}</summary><div className="tool-group-content">{content}</div></details>;
-  });
+  return compactCompletedTools(messages, compact && !debug).map(({ message, count }) => <Message key={message.id} message={message} toolCount={count} showActions={showActions} expanded={expanded} debug={debug} paused={paused} />);
 }
 
 type ConversationTurnProps = { messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; debug: boolean; active: boolean; retryable: boolean; paused: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"]; onCreateWorktree?: Props["onCreateWorktree"] };
