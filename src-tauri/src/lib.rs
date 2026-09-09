@@ -465,8 +465,8 @@ fn validate_mcp_servers(settings: &AppSettings) -> Result<(), String> {
     Ok(())
 }
 
-fn prepare_mcp_bridge(app: &AppHandle, settings: &AppSettings) -> Result<(PathBuf, PathBuf), String> {
-    let dir = app.path().app_config_dir().map_err(|error| error.to_string())?;
+fn prepare_mcp_bridge(settings: &AppSettings) -> Result<(PathBuf, PathBuf), String> {
+    let dir = home_dir()?.join(".piop");
     ensure_private_dir(&dir)?;
     let extension_path = dir.join("pi-desktop-mcp-bridge.ts");
     let config_path = dir.join("mcp-servers.json");
@@ -475,10 +475,10 @@ fn prepare_mcp_bridge(app: &AppHandle, settings: &AppSettings) -> Result<(PathBu
     Ok((extension_path, config_path))
 }
 
-fn prepare_session_broker(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_config_dir().map_err(|error| error.to_string())?;
+fn prepare_session_broker() -> Result<PathBuf, String> {
+    let dir = home_dir()?.join(".piop");
     ensure_private_dir(&dir)?;
-    let path = dir.join("pi-desktop-session-broker.ts");
+    let path = dir.join("session-broker.ts");
     atomic_write_private(&path, include_str!("../resources/session-broker.ts").as_bytes())?;
     Ok(path)
 }
@@ -512,40 +512,40 @@ fn list_hooks(app: AppHandle, host_id: String) -> Result<Value, String> {
     serde_json::from_slice(&output.stdout).map_err(|error| format!("Could not read hook list: {error}"))
 }
 
-fn prepare_trace_reader(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_config_dir().map_err(|error| error.to_string())?;
+fn prepare_trace_reader() -> Result<PathBuf, String> {
+    let dir = home_dir()?.join(".piop");
     ensure_private_dir(&dir)?;
     let path = dir.join("pi-desktop-trace-reader.ts");
     atomic_write_private(&path, include_str!("../resources/trace-reader.ts").as_bytes())?;
     Ok(path)
 }
 
-fn prepare_codex_compaction_extension(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_config_dir().map_err(|error| error.to_string())?;
+fn prepare_codex_compaction_extension() -> Result<PathBuf, String> {
+    let dir = home_dir()?.join(".piop");
     ensure_private_dir(&dir)?;
     let path = dir.join("pi-desktop-codex-compaction.ts");
     atomic_write_private(&path, include_str!("../resources/codex-compaction.bundle.mjs").as_bytes())?;
     Ok(path)
 }
 
-fn prepare_fast_mode_extension(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_config_dir().map_err(|error| error.to_string())?.join("pi-openai-fast-mode-piop");
+fn prepare_fast_mode_extension() -> Result<PathBuf, String> {
+    let dir = home_dir()?.join(".piop/pi-openai-fast-mode-piop");
     ensure_private_dir(&dir)?;
     let path = dir.join("index.ts");
     atomic_write_private(&path, include_str!("../resources/fast-mode.bundle.mjs").as_bytes())?;
     Ok(path)
 }
 
-fn prepare_codex_web_search_extension(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app.path().app_config_dir().map_err(|error| error.to_string())?;
+fn prepare_codex_web_search_extension() -> Result<PathBuf, String> {
+    let dir = home_dir()?.join(".piop");
     ensure_private_dir(&dir)?;
     let path = dir.join("pi-desktop-codex-web-search.ts");
     atomic_write_private(&path, include_str!("../../extensions/pi-codex-web-search/index.ts").as_bytes())?;
     Ok(path)
 }
 
-fn prepare_context_window_cap_extension(app: &AppHandle, settings: &AppSettings) -> Result<PathBuf, String> {
-    let dir = app.path().app_config_dir().map_err(|error| error.to_string())?.join("pi-context-window-cap");
+fn prepare_context_window_cap_extension(settings: &AppSettings) -> Result<PathBuf, String> {
+    let dir = home_dir()?.join(".piop/pi-context-window-cap");
     ensure_private_dir(&dir)?;
     let extension_path = dir.join("index.ts");
     let config_path = dir.join("config.json");
@@ -554,8 +554,8 @@ fn prepare_context_window_cap_extension(app: &AppHandle, settings: &AppSettings)
     Ok(extension_path)
 }
 
-fn prepare_project_files_watch_extension(app: &AppHandle) -> Result<PathBuf, String> {
-    let config_dir = app.path().app_config_dir().map_err(|error| error.to_string())?;
+fn prepare_project_files_watch_extension() -> Result<PathBuf, String> {
+    let config_dir = home_dir()?.join(".piop");
     let legacy_dir = config_dir.join("pi-git-change-context");
     if legacy_dir.exists() { fs::remove_dir_all(&legacy_dir).map_err(|error| format!("Could not remove legacy project files watch extension: {error}"))?; }
     let dir = config_dir.join("pi-project-files-watch");
@@ -1485,7 +1485,7 @@ enum PiLaunch<'a> {
     Print { cwd: &'a str, session_path: &'a str },
 }
 
-fn build_pi_command(app: &AppHandle, broker: &BrokerRuntime, settings: &AppSettings, host_id: &str, launch: PiLaunch<'_>) -> Result<Command, String> {
+fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &str, launch: PiLaunch<'_>) -> Result<Command, String> {
     let (broker_port, broker_token) = broker_environment(broker)?;
     let enabled_tools = enabled_tool_names(settings); let allowed_tools = serde_json::to_string(&enabled_tools).unwrap_or_else(|_| "[]".into());
     let disabled_tools: Vec<&str> = settings.tools.iter().filter(|tool| !tool.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|tool| tool.get("name").and_then(Value::as_str)).collect();
@@ -1497,10 +1497,10 @@ fn build_pi_command(app: &AppHandle, broker: &BrokerRuntime, settings: &AppSetti
     let is_rpc = matches!(launch, PiLaunch::Rpc { .. });
     let default_model = std::env::var("PI_DESKTOP_E2E_MODEL").ok().filter(|model| !model.trim().is_empty()).unwrap_or_else(|| settings.default_model.clone());
     if host_id == "local" {
-        let (mcp_extension, mcp_config) = prepare_mcp_bridge(app, settings)?; let context_window_cap_extension = prepare_context_window_cap_extension(app, settings)?; let project_files_watch_extension = prepare_project_files_watch_extension(app)?; let trace_reader_extension = prepare_trace_reader(app)?; let codex_compaction_extension = prepare_codex_compaction_extension(app)?; let codex_web_search_extension = prepare_codex_web_search_extension(app)?; let defined_agents_extension = prepare_defined_agents_extension()?; let pi_path = pi_executable();
+        let (mcp_extension, mcp_config) = prepare_mcp_bridge(settings)?; let context_window_cap_extension = prepare_context_window_cap_extension(settings)?; let project_files_watch_extension = prepare_project_files_watch_extension()?; let trace_reader_extension = prepare_trace_reader()?; let codex_compaction_extension = prepare_codex_compaction_extension()?; let codex_web_search_extension = prepare_codex_web_search_extension()?; let defined_agents_extension = prepare_defined_agents_extension()?; let pi_path = pi_executable();
         let session_dir = ensure_desktop_sessions_dir(&desktop_home)?;
         let mut command = Command::new(&pi_path); command.arg(if is_rpc { "--mode" } else { "--print" }); if is_rpc { command.arg("rpc"); }
-        command.arg("--session-dir").arg(session_dir).arg("--approve").arg("--no-skills").arg("--extension").arg(prepare_hooks_extension()?).arg("--extension").arg(mcp_extension).arg("--extension").arg(prepare_session_broker(app)?).arg("--extension").arg(&trace_reader_extension).arg("--extension").arg(&context_window_cap_extension).arg("--extension").arg(&project_files_watch_extension).arg("--extension").arg(prepare_fast_mode_extension(app)?).arg("--extension").arg(&codex_compaction_extension).arg("--extension").arg(&codex_web_search_extension).arg("--extension").arg(&defined_agents_extension)
+        command.arg("--session-dir").arg(session_dir).arg("--approve").arg("--no-skills").arg("--extension").arg(prepare_hooks_extension()?).arg("--extension").arg(mcp_extension).arg("--extension").arg(prepare_session_broker()?).arg("--extension").arg(&trace_reader_extension).arg("--extension").arg(&context_window_cap_extension).arg("--extension").arg(&project_files_watch_extension).arg("--extension").arg(prepare_fast_mode_extension()?).arg("--extension").arg(&codex_compaction_extension).arg("--extension").arg(&codex_web_search_extension).arg("--extension").arg(&defined_agents_extension)
             .env("PI_DESKTOP_DEFINED_AGENTS_EXTENSION", &defined_agents_extension).env("PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION", &codex_web_search_extension).env("PI_DESKTOP_CODEX_COMPACTION_EXTENSION", &codex_compaction_extension).env("PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION", &context_window_cap_extension).env("PI_DESKTOP_TRACE_READER_EXTENSION", &trace_reader_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config).env("PI_DESKTOP_BROKER_URL", format!("http://127.0.0.1:{broker_port}")).env("PI_DESKTOP_BROKER_TOKEN", &broker_token).env("PI_DESKTOP_ALLOWED_TOOLS", &allowed_tools).env("PI_DESKTOP_SKILL_PATHS", &local_skills);
         match launch {
             PiLaunch::Rpc { cwd, session_path, session_id, fork_path, no_session } => {
@@ -1571,7 +1571,7 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
     let session_claim = claim_id.as_deref().map(|id| claim_agent(&broker, &host_id, id)).transpose()?;
     let launch_session_path = ephemeral_path.as_deref().or(session_path.as_deref());
     let launch_fork_path = if ephemeral_path.is_some() { None } else { fork_path.as_deref() };
-    let mut command = match build_pi_command(&app, &broker, &settings, &host_id, PiLaunch::Rpc { cwd: cwd.as_deref(), session_path: launch_session_path, session_id: session_id.as_deref(), fork_path: launch_fork_path, no_session: ephemeral && ephemeral_path.is_none() }) {
+    let mut command = match build_pi_command(&broker, &settings, &host_id, PiLaunch::Rpc { cwd: cwd.as_deref(), session_path: launch_session_path, session_id: session_id.as_deref(), fork_path: launch_fork_path, no_session: ephemeral && ephemeral_path.is_none() }) {
         Ok(command) => command,
         Err(error) => return Err(error),
     };
@@ -2272,7 +2272,7 @@ fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &Ses
     if remaining == 0 || broker.closing.load(Ordering::SeqCst) { return Err("Agent message expired or app is closing".into()); }
     let deadline = Instant::now() + Duration::from_millis(remaining.min(120_000));
     let settings = load_app_settings(app.clone())?;
-    let mut command = build_pi_command(app, broker, &settings, &session.host_id, PiLaunch::Print { cwd: &session.cwd, session_path: &session.path })?;
+    let mut command = build_pi_command(broker, &settings, &session.host_id, PiLaunch::Print { cwd: &session.cwd, session_path: &session.path })?;
     let output_root = std::env::temp_dir().join(format!("pi-desktop-broker-{}", Uuid::new_v4()));
     ensure_private_dir(&output_root).map_err(|error| format!("Could not prepare agent message: {error}"))?;
     let stdout_path = output_root.join("stdout"); let stderr_path = output_root.join("stderr");
