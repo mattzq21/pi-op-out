@@ -8,6 +8,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
 const STATUS_KEY = "pi-desktop-prompt-context";
 const PROJECT_CONTEXT_MESSAGE = "pi-desktop-project-context";
+const CAP_ENTRY = "piop-session-context-cap";
 
 async function loadCap(): Promise<number | undefined> {
   let config: unknown;
@@ -120,17 +121,21 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
     const original = originalWindows.get(model)!;
     model.contextWindow = cap === undefined ? original : Math.min(original, cap);
   };
-  const stopUpdates = pi.events.on("piop:context-cap:update", (value) => {
-    const request = value as { ctx: ExtensionContext; ready?: Promise<void> };
-    request.ready = Promise.resolve().then(() => {
-      const next = settings();
-      if (!next) throw new Error("Runtime settings are unavailable");
-      cap = next.contextWindowCapEnabled ? next.contextWindowCap : undefined;
-      for (const model of originalWindows.keys()) capModel(model);
-      capModel(request.ctx.model);
-    });
-  });
-  pi.on("session_shutdown", () => { stopUpdates(); for (const [model, original] of originalWindows) model.contextWindow = original; });
+  const restoreCap = (ctx: ExtensionContext) => {
+    const entry = ctx.sessionManager.getEntries().find((entry) => entry.type === "custom" && entry.customType === CAP_ENTRY);
+    if (entry?.type === "custom") {
+      const saved = (entry.data as { cap?: unknown } | undefined)?.cap;
+      if (saved !== null && (typeof saved !== "number" || !Number.isSafeInteger(saved) || saved < 1000)) throw new Error("Invalid saved session context cap");
+      cap = saved === null ? undefined : saved as number;
+    } else {
+      const defaults = settings();
+      if (defaults) cap = defaults.contextWindowCapEnabled ? defaults.contextWindowCap : undefined;
+      pi.appendEntry(CAP_ENTRY, { cap: cap ?? null });
+    }
+    for (const model of originalWindows.keys()) capModel(model);
+    capModel(ctx.model);
+  };
+  pi.on("session_shutdown", () => { for (const [model, original] of originalWindows) model.contextWindow = original; });
   const publishPromptContext = (ctx: ExtensionContext, messages: unknown[]) => {
     const branch = ctx.sessionManager.getBranch();
     const resumeMessages = new Set(branch.flatMap((entry) => {
@@ -168,11 +173,10 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
   };
 
   pi.on("session_start", (_event, ctx) => {
-    const next = settings();
-    if (next) cap = next.contextWindowCapEnabled ? next.contextWindowCap : undefined;
-    capModel(ctx.model);
+    restoreCap(ctx);
     ctx.ui.setStatus(STATUS_KEY, undefined);
   });
+  pi.on("session_tree", (_event, ctx) => { restoreCap(ctx); });
 
   pi.on("model_select", (event) => {
     capModel(event.model);

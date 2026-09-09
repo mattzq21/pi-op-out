@@ -175,7 +175,6 @@ export class SessionRuntimePool {
   queueSettingsChange(previous: AppSettings, settings: AppSettings, agentHostId?: string) {
     const changed = (before: unknown, after: unknown) => JSON.stringify(before) !== JSON.stringify(after);
     const runtimeConfig = (value: AppSettings) => ({
-      contextWindowCap: value.contextWindowCapEnabled ? value.contextWindowCap : null,
       tools: value.tools.map((tool) => ({ name: tool.name, enabled: tool.enabled })).sort((a, b) => a.name.localeCompare(b.name)),
       skills: value.skills.filter((skill) => skill.enabled).map((skill) => skill.path).sort(),
       mcpServers: value.mcpServers.filter((server) => server.enabled).map(({ status: _status, error: _error, ...server }) => server).sort((a, b) => a.id.localeCompare(b.id)),

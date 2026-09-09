@@ -94,7 +94,6 @@ export class NativeTransport {
             tools: settings.tools.filter((tool) => tool.enabled).map((tool) => tool.name),
             skills: settings.skills.filter((skill) => skill.enabled).map((skill) => skill.path),
             mcpServers: settings.mcpServers.map(({ status: _status, error: _error, ...server }) => server),
-            contextWindowCap: settings.contextWindowCap, contextWindowCapEnabled: settings.contextWindowCapEnabled,
           } });
           if (update.reconnect || update.autoCompaction) await this.executeCommandNow({ type: "set_auto_compaction", enabled: settings.autoCompaction });
           if (update.reconnect || update.autoRetry) await this.executeCommandNow({ type: "set_auto_retry", enabled: settings.autoRetry });
