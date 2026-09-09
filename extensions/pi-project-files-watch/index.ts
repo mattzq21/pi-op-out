@@ -345,12 +345,7 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
   let sessionWritten = false;
   try {
     created = true;
-    await runGit(root, ["worktree", "add", ...(checkpoint.base ? [] : ["--orphan"]), "-b", branch, target, ...(checkpoint.base ? [checkpoint.base] : [])]);
-    if (!afterResponse) {
-      // Before-prompt checkpoints preserve uncommitted changes above their original base.
-      await runGit(target, ["read-tree", "--reset", "-u", checkpoint.commit]);
-      await runGit(target, ["read-tree", ...(checkpoint.base ? [checkpoint.base] : ["--empty"])]);
-    }
+    await runGit(root, ["worktree", "add", "-b", branch, target, checkpoint.commit]);
     const retained = afterResponse ? history : history.slice(0, -1);
     await pinPromptHistory(root, id, retained, owner);
     const baselineRef = `${sessionRefPrefix(id)}${snapshotName(timestamp, checkpoint.commit)}`;
@@ -368,7 +363,7 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
     for (const { ref, commit } of [...await promptRefs(root, id), ...await sessionSnapshots(root, id)]) await runGit(root, ["update-ref", "-d", ref, commit]);
     if (created) {
       await runGit(root, ["worktree", "remove", "--force", target]).catch(() => undefined);
-      if (checkpoint.base) await runGit(root, ["branch", "-D", branch]).catch(() => undefined);
+      await runGit(root, ["branch", "-D", branch]).catch(() => undefined);
     }
     throw error;
   }
