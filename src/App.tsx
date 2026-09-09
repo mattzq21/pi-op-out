@@ -179,7 +179,7 @@ export default function App() {
     void transport.gitBranch().then((branch) => { if (!cancelled) setActiveBranch(branch ?? undefined); }).catch(() => undefined);
     void transport.isGitRepository().then((isRepository) => { if (!cancelled) setIsGitRepository(isRepository); }).catch(() => undefined);
     return () => { cancelled = true; };
-  }, [transport, state.sessionId, activeCwd]);
+  }, [transport, activeCwd]);
   useEffect(() => {
     if (!codexUsage?.resetAt) return;
     const timer = window.setInterval(() => setUsageClock((value) => value + 1), 60_000);
@@ -376,6 +376,7 @@ export default function App() {
     branchPending.current.add(pendingKey);
     const sourceCwd = ownerTransport.currentCwd();
     const sourceHostId = ownerTransport.currentHostId();
+    const parentSession = [...sessions, ...runtimePool.liveSessionSummaries()].find((session) => session.path === sourcePath && (session.hostId ?? "local") === sourceHostId);
     let forked = false;
     try {
       const messageIndex = messages.findIndex((candidate) => candidate.entryId === entryId);
@@ -395,13 +396,15 @@ export default function App() {
       }
       const nextKey = `${sourceHostId}:${nextState.sessionId}`;
       runtimePool.bind(sourceHostId, nextState.sessionId, ownerTransport);
+      if (!destinationCwd && parentSession) {
+        runtimePool.setLiveSession(ownerTransport, { ...parentSession, id: nextState.sessionId, path: nextState.sessionFile ?? "", name: nextState.sessionName || parentSession.name, messageCount: nextState.messageCount });
+      }
       rekeyConversationUi(previousKey, nextKey, ownerTransport, !destinationCwd);
       if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === nextKey) {
         if (destinationCwd) { setActiveCwd(destinationCwd); setTerminalOpen(false); setTerminalTarget(undefined); }
         setState(nextState); setMessages(branchMessages(history.entries, history.leafId)); updateConnected(true);
       }
-      await sessionIndexRequest.current;
-      await syncSessionIndex(); return true;
+      void syncSessionIndex(); return true;
     } catch (reason) {
       if (!forked || !sourcePath) throw reason;
       try {

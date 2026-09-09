@@ -28,6 +28,10 @@ export class SessionRuntimePool {
   liveSessionRevision() { return this.liveRevision; }
   private liveSessions = new Map<NativeTransport, SessionSummary>();
   liveSessionSummaries() { return [...this.liveSessions.values()]; }
+  setLiveSession(transport: NativeTransport, session: SessionSummary) {
+    this.liveSessions.set(transport, session);
+    this.liveRevision += 1; this.notify();
+  }
   private activeTransport?: NativeTransport;
   private errorHandler?: (message: string) => void;
   private backgroundInputHandler?: (request: ExtensionUiRequest) => void;
@@ -104,7 +108,8 @@ export class SessionRuntimePool {
       this.bind(transport.currentHostId(), state.sessionId, transport);
       const cwd = transport.currentCwd() || "";
       const previous = this.liveSessions.get(transport);
-      this.liveSessions.set(transport, { id: state.sessionId, path: state.sessionFile || "", name: state.sessionName || prompt?.slice(0, 60) || previous?.name || "New session", project: cwd.split("/").at(-1) || "Workspace", cwd, preview: prompt ?? previous?.preview ?? "", messageCount: Math.max(prompt ? 1 : 0, state.messageCount, previous?.messageCount ?? 0), apiCost: previous?.apiCost ?? 0, hostId: transport.currentHostId() });
+      const projectDetails = previous?.cwd === cwd && previous.hostId === transport.currentHostId() ? { projectKind: previous.projectKind, projectRoot: previous.projectRoot, cwdExists: previous.cwdExists } : {};
+      this.liveSessions.set(transport, { ...projectDetails, id: state.sessionId, path: state.sessionFile || "", name: state.sessionName || prompt?.slice(0, 60) || previous?.name || "New session", project: cwd.split("/").at(-1) || "Workspace", cwd, preview: prompt ?? previous?.preview ?? "", messageCount: Math.max(prompt ? 1 : 0, state.messageCount, previous?.messageCount ?? 0), apiCost: previous?.apiCost ?? 0, hostId: transport.currentHostId() });
       this.liveRevision += 1; this.notify();
     }).catch((reason) => this.errorHandler?.(`Could not list the retained session: ${reason instanceof Error ? reason.message : String(reason)}`));
   }
