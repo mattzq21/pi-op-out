@@ -54,6 +54,7 @@ export function ProjectDialog({ initialPath, hosts, initialHostId, onHomeDirecto
     return Number(folderName(b).toLocaleLowerCase().startsWith(prefix)) - Number(folderName(a).toLocaleLowerCase().startsWith(prefix)) || a.localeCompare(b);
   });
   const selected = results[active];
+  const hasHomePrefix = query.startsWith("~/");
   const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
 
   useEffect(() => {
@@ -109,7 +110,7 @@ export function ProjectDialog({ initialPath, hosts, initialHostId, onHomeDirecto
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void open(); }
   }}>
     <header className="directory-palette-heading"><h2 id="project-dialog-title">Jump to a folder</h2><select aria-label="Machine" disabled={opening} value={hostId} onChange={(event) => setHostId(event.target.value)}><option value="local">Local</option>{hosts.map((host) => <option key={host.id} value={host.id}>{host.name}</option>)}</select><button className="directory-palette-escape" disabled={opening} onClick={onCancel}>esc</button></header>
-    <div className="directory-palette-search"><Search size={20} /><input ref={inputRef} autoFocus role="combobox" aria-label="Search or type a folder path" aria-autocomplete="list" aria-expanded="true" aria-controls="directory-palette-results" aria-activedescendant={!loading && selected ? "directory-result-" + active : undefined} autoComplete="off" spellCheck={false} placeholder="Type a folder path…" readOnly={opening} value={query} onChange={(event) => { setQuery(event.target.value); setActive(0); setError(undefined); }} onKeyDown={(event) => {
+    <div className="directory-palette-search"><Search size={20} />{hasHomePrefix && <span className="directory-palette-prefix" aria-hidden="true">~/</span>}<input ref={inputRef} autoFocus role="combobox" aria-label={hasHomePrefix ? "Folder path relative to home" : "Search or type a folder path"} aria-autocomplete="list" aria-expanded="true" aria-controls="directory-palette-results" aria-activedescendant={!loading && selected ? "directory-result-" + active : undefined} autoComplete="off" spellCheck={false} placeholder="Type a folder path…" readOnly={opening} value={hasHomePrefix ? query.slice(2) : query} onChange={(event) => { setQuery(hasHomePrefix ? "~/" + event.target.value.replace(/^~[\\/]/, "") : event.target.value); setActive(0); setError(undefined); }} onKeyDown={(event) => {
       if (event.nativeEvent.isComposing || opening || event.metaKey || event.ctrlKey) return;
       if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setActive((index) => results.length ? (index + (event.key === "ArrowDown" ? 1 : -1) + results.length) % results.length : 0); }
       else if (event.key === "Enter") { event.preventDefault(); if (query === "~") browse(homePath); else if (selected && !loading) browse(selected); else if (query.trim()) browse(separator < 0 && basePath ? withSeparator(basePath) + query : query); }
