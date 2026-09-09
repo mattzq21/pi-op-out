@@ -4,6 +4,7 @@ import type { ChatMessage } from "../types";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+import type { GroupChange, SessionGroups, SessionGroupSeed } from "./sessionGroups";
 import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, PendingMessage, RpcCommand, RpcEvent, SessionSummary } from "../types";
 
 const call = <T>(command: string, args?: Record<string, unknown>) => {
@@ -17,6 +18,9 @@ const call = <T>(command: string, args?: Record<string, unknown>) => {
 };
 
 export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; sessionId?: string; hostId?: string; }
+export const loadSessionGroups = (seeds: SessionGroupSeed[], legacy: SessionGroups) => call<SessionGroups>("load_session_groups", { seeds, legacy });
+export const changeSessionGroups = (change: GroupChange) => call<SessionGroups>("change_session_groups", { change });
+export const openGroupDirectory = (cwd: string, hostId: string) => call<void>("open_project_directory", { cwd, hostId });
 export interface GitWorktree { branch: string; path: string; }
 
 export const openExternalUrl = (url: string) => call<void>("open_external_url", { url });

@@ -1,3 +1,6 @@
+mod session_groups;
+use session_groups::{load_session_groups, change_session_groups};
+
 use serde::{de, Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -139,6 +142,7 @@ enum ProjectKind { NoRepo, Main, Worktree }
 #[serde(rename_all = "camelCase")]
 struct SessionSummary {
     id: String,
+    group_id: Option<String>,
     path: String,
     name: String,
     project: String,
@@ -1982,7 +1986,7 @@ fn read_session_summaries(candidates: &[(String, String, u64, u64)], host: Optio
             let Some((_, fingerprint, modified_at, _)) = batch.iter().find(|item| item.0 == path) else { continue };
             let string = |key| value.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
             let cwd = string("cwd"); let project = Path::new(&cwd).file_name().and_then(|name| name.to_str()).unwrap_or("Workspace").to_owned();
-            let summary = SessionSummary { id: string("id"), path: path.to_owned(), name: string("name"), project, cwd, cwd_exists: true, project_kind: None, project_root: None, modified_at: *modified_at, preview: string("preview"), message_count: value.get("messageCount").and_then(Value::as_u64).unwrap_or(0) as usize, api_cost: value.get("apiCost").and_then(Value::as_f64).unwrap_or(0.0), host_id: host.map(|host| host.id.clone()).unwrap_or_else(|| "local".into()), host_name: host.map(|host| host.name.clone()).unwrap_or_else(|| "Local".into()) };
+            let summary = SessionSummary { group_id: None, id: string("id"), path: path.to_owned(), name: string("name"), project, cwd, cwd_exists: true, project_kind: None, project_root: None, modified_at: *modified_at, preview: string("preview"), message_count: value.get("messageCount").and_then(Value::as_u64).unwrap_or(0) as usize, api_cost: value.get("apiCost").and_then(Value::as_f64).unwrap_or(0.0), host_id: host.map(|host| host.id.clone()).unwrap_or_else(|| "local".into()), host_name: host.map(|host| host.name.clone()).unwrap_or_else(|| "Local".into()) };
             result.insert(path.to_owned(), CachedSession { fingerprint: fingerprint.clone(), summary });
         }
         cursor = end;
@@ -2140,6 +2144,7 @@ fn collect_sessions(app: &AppHandle, index: &SessionIndexRuntime) -> Result<Vec<
         drop(sender);
         for result in receiver { if let Ok(mut remote) = result { sessions.append(&mut remote); } }
     });
+    session_groups::attach_assignments(&mut sessions)?;
     sessions.sort_by(|left, right| right.modified_at.cmp(&left.modified_at)); Ok(sessions)
 }
 
@@ -2468,7 +2473,7 @@ pub fn run() {
         }
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
-    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, list_hooks, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, prepare_worktree_setup, cancel_worktree_setup, run_worktree_setup, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).build(context).expect("error while building piop").run(|app, event| {
+    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_groups, change_session_groups, list_hooks, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_git_worktree, prepare_worktree_setup, cancel_worktree_setup, run_worktree_setup, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).build(context).expect("error while building piop").run(|app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
             let broker = app.state::<BrokerRuntime>(); broker.closing.store(true, Ordering::SeqCst);
             let jobs = broker.jobs.lock().map(|mut jobs| jobs.drain().map(|(_, child)| child).collect::<Vec<_>>()).unwrap_or_default();
