@@ -7,7 +7,6 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 
 const REF_ROOT = "refs/pi-session-snapshots";
 const PROMPT_ENTRY = "pi-project-prompt-checkpoint";
-const PROMPT_LIMIT = 10;
 const SNAPSHOT_ENTRY = "pi-project-files-watch-snapshot";
 const CHANGE_CONTEXT_MESSAGE = "pi-project-files-watch";
 const MAX_LISTED_FILES = 200;
@@ -249,12 +248,6 @@ async function promptRefs(root: string, sessionId: string) {
 
 async function capturePrompt(root: string, ctx: ExtensionContext): Promise<PromptCheckpoint> {
   const sessionId = ctx.sessionManager.getSessionId();
-  // Expire by prompt order, even if the host's wall clock moves backwards.
-  const order = new Map(ctx.sessionManager.getEntries().flatMap((entry, index) => {
-    const data = entry.type === "custom" && entry.customType === PROMPT_ENTRY ? checkpointData(entry.data) : undefined;
-    return data ? [[promptRef(sessionId, data.key), index] as const] : [];
-  }));
-  const previous = (await promptRefs(root, sessionId)).sort((a, b) => (order.get(b.ref) ?? -1) - (order.get(a.ref) ?? -1));
   const base = await resolveRef(root, "HEAD") ?? null;
   const captured = await worktreeTree(root);
   const capturedAt = new Date().toISOString();
@@ -268,7 +261,6 @@ async function capturePrompt(root: string, ctx: ExtensionContext): Promise<Promp
   const key = `${capturedAt.replace(/[-:.]/g, "")}-${randomUUID()}`;
   await runGit(root, ["update-ref", "--stdin"], {}, [
     "start", `create ${promptRef(sessionId, key)} ${commit}`,
-    ...previous.slice(PROMPT_LIMIT - 1).map(({ ref, commit }) => `delete ${ref} ${commit}`),
     "prepare", "commit", "",
   ].join("\n"));
   return { key, owner: sessionId, commit, base, capturedAt };
@@ -277,7 +269,7 @@ async function capturePrompt(root: string, ctx: ExtensionContext): Promise<Promp
 // A child owns its own refs, so deleting or advancing its parent cannot expire them.
 async function pinPromptHistory(root: string, sessionId: string, entries: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>, sourceOwner?: string) {
   const checkpoints = entries.flatMap((entry) => entry.type === "custom" && entry.customType === PROMPT_ENTRY
-    ? [checkpointData(entry.data)].filter((value): value is PromptCheckpoint => Boolean(value)) : []).slice(-PROMPT_LIMIT);
+    ? [checkpointData(entry.data)].filter((value): value is PromptCheckpoint => Boolean(value)) : []);
   for (const checkpoint of checkpoints) {
     const target = promptRef(sessionId, checkpoint.key);
     if (await resolveRef(root, target)) continue;
@@ -313,7 +305,7 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
     checkpoint = { key: "", owner, commit: data.commit, base: data.commit, capturedAt: "" };
   }
   if (!checkpoint || (!afterResponse && await resolveRef(root, promptRef(owner, checkpoint.key)) !== checkpoint.commit)) {
-    throw new Error("Project snapshot unavailable. Only the latest 10 prompt checkpoints are retained; older prompts cannot restore historical files.");
+    throw new Error("Project snapshot unavailable. This prompt's checkpoint is missing or was removed.");
   }
   name = name.trim();
   if (!name || !/^[a-zA-Z0-9._-]+$/.test(name)) throw new Error("Name may only contain letters, numbers, dots, hyphens, and underscores");
