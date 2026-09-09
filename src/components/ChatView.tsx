@@ -175,7 +175,7 @@ function ConversationTurnView({ messages, hookCounts, gitDiffs, debug, active, r
     }
     return total;
   }, { input: 0, cacheRead: 0, cacheWrite: 0 });
-  const worktreeResponse = onCreateWorktree && userIndex >= 0 && finalMessage && finalMessage.stopReason !== "toolUse" ? () => onCreateWorktree(messages[userIndex]) : undefined;
+  const worktreeResponse = onCreateWorktree && finalMessage && finalMessage.stopReason !== "toolUse" ? () => onCreateWorktree(finalMessage) : undefined;
   const gitDiff = finalMessage ? gitDiffs?.[finalMessage.id] : undefined;
   const workedFor = formatWorkedFor(userIndex >= 0 ? shown[userIndex].timestamp : shown[0]?.timestamp, finalMessage?.completedAt ?? finalMessage?.timestamp);
   const retryTurn = retryable ? findReplaceableAbortedTurn(shown) : undefined;
