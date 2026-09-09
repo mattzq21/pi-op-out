@@ -32,6 +32,7 @@ pub struct SessionSeed {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum GroupChange {
     Create { name: String },
+    Project { project: SessionGroup, key: Option<String> },
     Rename { id: String, name: String },
     Remove { id: String },
     Assign { key: String, group: Option<String> },
@@ -96,6 +97,12 @@ pub fn change_session_groups(change: GroupChange) -> Result<SessionGroups, Strin
     let path = storage_path()?;
     let mut state = read(&path)?.ok_or("Session groups have not loaded yet")?;
     match change {
+        GroupChange::Project { project, key } => {
+            if project.cwd.as_ref().is_none_or(|cwd| cwd.trim().is_empty()) { return Err("Enter a project directory".into()); }
+            state.removed_projects.remove(&project.id);
+            if let Some(key) = key { state.assignments.insert(key, Some(project.id.clone())); }
+            if !state.groups.iter().any(|group| group.id == project.id) { state.groups.insert(0, project); }
+        }
         GroupChange::Create { name } => {
             let name = name.trim();
             if name.is_empty() { return Err("Enter a group name".into()); }
@@ -117,7 +124,6 @@ pub fn change_session_groups(change: GroupChange) -> Result<SessionGroups, Strin
             }
         }
         GroupChange::Assign { key, group } => {
-            if !state.assignments.contains_key(&key) { return Err("Session groups are still loading".into()); }
             if group.as_ref().is_some_and(|id| !state.groups.iter().any(|item| &item.id == id)) { return Err("Group no longer exists".into()); }
             state.assignments.insert(key, group);
         }

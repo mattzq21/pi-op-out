@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Archive, ChevronDown, Columns2, CopyPlus, Ellipsis, Folder, FolderOpen, FolderGit2, GitBranch, Pencil, Search, Trash2 } from "lucide-react";
+import { Archive, ChevronDown, Columns2, CopyPlus, Ellipsis, Folder, FolderOpen, FolderGit2, GitBranch, MessageSquarePlus, Pencil, Search, Trash2 } from "lucide-react";
 import type { SessionSummary } from "../types";
 import { useSessionGroups, type SessionGroup } from "../lib/sessionGroups";
 import { openGroupDirectory } from "../lib/nativeTransport";
 import { RemoveGroupDialog } from "./RemoveGroupDialog";
 
 export type SessionAction = "split" | "rename" | "clone" | "open-directory" | "archive";
-interface Props { sessions: SessionSummary[]; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; onCreateWorktree: (cwd: string, hostId: string) => void; createGroupRequest?: number; onCreateGroupHandled?: () => void; }
+interface Props { sessions: SessionSummary[]; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; onNewChat: (group: SessionGroup) => void; onCreateWorktree: (cwd: string, hostId: string) => void; createGroupRequest?: number; onCreateGroupHandled?: () => void; }
 type CustomGroup = SessionGroup;
 interface DraggedSession { projectKey: string; sessionKey: string; session: SessionSummary; }
 interface DropTarget { projectKey: string; sessionKey: string; edge: "before" | "after"; layoutBefore?: string | null; }
@@ -82,7 +82,7 @@ function formatApiCost(cost = 0) {
   return `$${cost.toFixed(2)}`;
 }
 
-export function SessionPanel({ sessions, activeId, activeHostId = "local", runningSessions = new Set(), unseenSessions = new Set(), query, onQuery, onSelect, onAction, onCreateWorktree, createGroupRequest = 0, onCreateGroupHandled }: Props) {
+export function SessionPanel({ sessions, activeId, activeHostId = "local", runningSessions = new Set(), unseenSessions = new Set(), query, onQuery, onSelect, onAction, onNewChat, onCreateWorktree, createGroupRequest = 0, onCreateGroupHandled }: Props) {
   const [menu, setMenu] = useState<{ session: SessionSummary; x: number; y: number; returnFocus?: HTMLElement }>();
   const [groupMenu, setGroupMenu] = useState<{ projectKey: string; label: string; x: number; y: number; returnFocus: HTMLElement }>();
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => savedGroupKeys(COLLAPSED_PROJECTS_KEY));
@@ -406,6 +406,12 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
             <button className="project-label" disabled={Boolean(normalizedQuery)} aria-expanded={!collapsed} aria-controls={groupId} {...projectDragProps(projectKey)}><ChevronDown className={collapsed ? "collapsed" : ""} size={13} />{projectDetails.get(projectKey)?.projectKind === "no-repo" && <Folder size={14} aria-hidden="true" />}<span className={projectKey === activeProjectKey ? "active" : undefined}>{label}</span></button>
             <div className="project-actions">
               {customGroupsByKey.has(projectKey) && <button aria-label={`Rename group ${label}`} title="Rename group" onClick={() => editGroup(customGroupsByKey.get(projectKey)!)}><Pencil size={12} /></button>}
+              <button aria-label={`New chat in ${label}`} title="New chat in group" onClick={() => {
+                const destination = storedGroups?.groups.find((item) => item.id === projectKey);
+                if (!destination) return;
+                expandProject(projectKey);
+                onNewChat(destination);
+              }}><MessageSquarePlus size={14} /></button>
               <button aria-label={`Group actions for ${label}`} title="Group actions" aria-haspopup="menu" aria-expanded={groupMenu?.projectKey === projectKey} onClick={(event) => {
                 event.stopPropagation();
                 if (groupMenu?.projectKey === projectKey) { closeMenu(true); return; }

@@ -14,6 +14,7 @@ import { WorktreeDialog } from "./components/WorktreeDialog";
 import { SplitChatPane } from "./components/SplitChatPane";
 import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
 
+import { updateSessionGroups, type SessionGroup } from "./lib/sessionGroups";
 import { NativeTransport } from "./lib/nativeTransport";
 import { SessionRuntimePool, useTurnDiffs } from "./lib/sessionRuntimePool";
 import { useChatSession } from "./lib/useChatSession";
@@ -60,6 +61,7 @@ export function formatCodexReset(resetAt: number, now = Date.now()) {
 export default function App() {
   const runtimePool = useMemo(() => new SessionRuntimePool(), []); const [transport, setTransport] = useState(() => { const initial = runtimePool.create(); runtimePool.activate(initial); return initial; }); const [view, setView] = useState<"chat" | "settings">("chat");
   const activeTransportRef = useRef(transport); activeTransportRef.current = transport;
+  const pendingSessionGroups = useRef(new WeakMap<NativeTransport, string>());
   const initialConversationKey = useRef(`local:draft-${crypto.randomUUID()}`);
   const [activeConversationKey, setActiveConversationKey] = useState(initialConversationKey.current);
   const activeConversationKeyRef = useRef(activeConversationKey); activeConversationKeyRef.current = activeConversationKey;
@@ -202,8 +204,16 @@ export default function App() {
   const refresh = useCallback(async (hostId?: string) => {
     void syncSessionIndex();
     const settingsRequest = transport.loadSettings().then((nextSettings) => { setSettings(nextSettings); return nextSettings; });
-    const [nextState, nextSettings] = await Promise.all([refreshSession(), settingsRequest]); runtimePool.bind(hostId ?? transport.currentHostId(), nextState.sessionId, transport); return nextSettings;
-  }, [refreshSession, runtimePool, syncSessionIndex, transport]);
+    const [nextState, nextSettings] = await Promise.all([refreshSession(), settingsRequest]); runtimePool.bind(hostId ?? transport.currentHostId(), nextState.sessionId, transport);
+    const group = pendingSessionGroups.current.get(transport);
+    if (group && nextState.sessionId) {
+      try {
+        await updateSessionGroups({ type: "assign", key: `${hostId ?? transport.currentHostId()}:${nextState.sessionId}`, group });
+        pendingSessionGroups.current.delete(transport);
+      } catch (reason) { addNotice({ title: "Could not add chat to group", message: String(reason) }); }
+    }
+    return nextSettings;
+  }, [addNotice, refreshSession, runtimePool, syncSessionIndex, transport]);
 
   const configureRuntime = useCallback(async (value: AppSettings) => {
     const [modelResult] = await Promise.allSettled([
@@ -430,6 +440,16 @@ export default function App() {
     } finally { branchPending.current.delete(pendingKey); }
   };
   const createWorktree = async (target: WorktreeTarget, name: string, onSetup?: (cancel: (() => Promise<void>) | undefined) => void) => {
+    const addWorktreeGroup = async (result: { path: string; branch: string; sessionId?: string }) => {
+      try {
+        await updateSessionGroups({ type: "project", project: {
+          id: `${target.hostId}:${result.path}`, name: result.branch, cwd: result.path,
+          hostId: target.hostId, hostName: settings?.hosts.find((host) => host.id === target.hostId)?.name ?? (target.hostId === "local" ? "Local" : target.hostId),
+        }, key: result.sessionId ? `${target.hostId}:${result.sessionId}` : undefined });
+      } catch (reason) {
+        addNotice({ title: "Worktree created, but could not add its group", message: `${result.path}\n${String(reason)}` });
+      }
+    };
     const setup = async (path: string) => {
       try { await target.transport.runWorktreeSetup(target.cwd, path, target.hostId, onSetup); return true; }
       catch (reason) {
@@ -440,6 +460,7 @@ export default function App() {
     };
     if (!target.message) {
       const result = await target.transport.createProjectWorktree(target.cwd, name, target.hostId);
+      await addWorktreeGroup(result);
       const setupSucceeded = await setup(result.path);
       setWorktreeTarget(undefined);
       if (setupSucceeded) addNotice({ title: "Worktree created", message: `${result.branch}\n${result.path}` });
@@ -452,6 +473,7 @@ export default function App() {
     const message = branchMessages(history.entries, history.leafId).find((message) => message.role === sourceMessage.role && (sourceMessage.entryId ? message.entryId === sourceMessage.entryId : message.timestamp === sourceMessage.timestamp && textOf(message.content) === textOf(sourceMessage.content)));
     if (!message?.entryId) throw new Error("Could not find the message in the saved conversation");
     const result = await owner.command<{ branch: string; path: string; sessionPath: string; sessionId: string }>({ type: "branch_checkpoint", entryId: message.entryId, name, afterResponse: !beforePrompt });
+    await addWorktreeGroup(result);
     await setup(result.path);
     setWorktreeTarget(undefined);
     const session: SessionSummary = { id: result.sessionId, path: result.sessionPath, cwd: result.path, project: result.branch, name: result.branch, preview: "", messageCount: 0, apiCost: 0, hostId: target.hostId };
@@ -465,7 +487,7 @@ export default function App() {
     return result;
   };
   const branch = async (message: ChatMessage) => { try { await branchConversation(message); } catch (reason) { addNotice({ title: "Could not branch conversation", message: reason instanceof Error ? reason.message : String(reason) }); } };
-  const startNewSession = async (clearProject = false) => { if (newSessionPending.current || !canLeaveSettings()) return; if (!clearProject && (composerDraft.trim() || composerUploads.length) && !window.confirm("Start a new conversation and discard the unsent draft?")) return; newSessionPending.current = true; const hostId = activeHostIdRef.current; const projectCwd = clearProject ? undefined : selectedProjectCwd(activeCwd, transport.isTemporaryChat()); const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; activateConversationKey(conversationKey); setView("chat"); closeSplitPane(); setTerminalOpen(false); setTerminalTarget(undefined); updateConnected(false); setDefinedAgents(undefined); discardPendingUpdates(); setMessages([]); setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, isPaused: false, isPausing: false, activity: undefined, contextUsage: undefined })); const nextTransport = runtimePool.create(projectCwd ? { cwd: projectCwd, hostId } : { hostId }); transportConversationKeys.current.set(nextTransport, conversationKey); try { const cwd = projectCwd ?? await nextTransport.prepareTemporaryChat(hostId); if (activeConversationKeyRef.current !== conversationKey) { transportConversationKeys.current.delete(nextTransport); void runtimePool.release(nextTransport); return; } if (clearProject) { setComposerDraft(conversationKey, composerDraft); setComposerUploads(nextTransport, composerUploads); } setActiveCwd(cwd); setActiveHostId(hostId); activateTransport(nextTransport); } catch (reason) { transportConversationKeys.current.delete(nextTransport); void runtimePool.release(nextTransport); if (activeConversationKeyRef.current === conversationKey) { updateConnected(false); setError(reason instanceof Error ? reason.message : String(reason)); } } finally { newSessionPending.current = false; } };
+  const startNewSession = async (clearProject = false, group?: SessionGroup) => { if (newSessionPending.current || !canLeaveSettings()) return; if (!clearProject && (composerDraft.trim() || composerUploads.length) && !window.confirm("Start a new conversation and discard the unsent draft?")) return; newSessionPending.current = true; const hostId = group ? group.hostId ?? "local" : activeHostIdRef.current; const projectCwd = group ? group.cwd ?? undefined : clearProject ? undefined : selectedProjectCwd(activeCwd, transport.isTemporaryChat()); const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; activateConversationKey(conversationKey); setView("chat"); closeSplitPane(); setTerminalOpen(false); setTerminalTarget(undefined); updateConnected(false); setDefinedAgents(undefined); discardPendingUpdates(); setMessages([]); setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, isPaused: false, isPausing: false, activity: undefined, contextUsage: undefined })); const nextTransport = runtimePool.create(projectCwd ? { cwd: projectCwd, hostId } : { hostId }); transportConversationKeys.current.set(nextTransport, conversationKey); if (group) pendingSessionGroups.current.set(nextTransport, group.id); try { const cwd = projectCwd ?? await nextTransport.prepareTemporaryChat(hostId); if (activeConversationKeyRef.current !== conversationKey) { transportConversationKeys.current.delete(nextTransport); void runtimePool.release(nextTransport); return; } if (clearProject) { setComposerDraft(conversationKey, composerDraft); setComposerUploads(nextTransport, composerUploads); } setActiveCwd(cwd); setActiveHostId(hostId); activateTransport(nextTransport); } catch (reason) { transportConversationKeys.current.delete(nextTransport); void runtimePool.release(nextTransport); if (activeConversationKeyRef.current === conversationKey) { updateConnected(false); setError(reason instanceof Error ? reason.message : String(reason)); } } finally { newSessionPending.current = false; } };
   const newSession = () => startNewSession();
   const clearChatProject = () => startNewSession(true);
   const selectSession = (session: SessionSummary) => {
@@ -668,7 +690,7 @@ export default function App() {
   const projectCwd = selectedProjectCwd(activeCwd, transport.isTemporaryChat());
   return <div className="app dark">
     {import.meta.env.MODE === "e2e" && <div className="e2e-bridge"><textarea id="pi-e2e-responses" aria-label="E2E responses" placeholder="E2E responses" /><textarea id="pi-e2e-calls" aria-label="E2E calls" placeholder="E2E calls" /></div>}
-    <ResizableSidebar compact={view === "settings" || !panelOpen}>{activeBranch && <div className="rail-branch" title={activeBranch}><GitBranch size={13} /><span>{activeBranch}</span></div>}<nav><IconButton label="New conversation" onClick={newSession}><MessageSquare size={18} /></IconButton><IconButton label="New session group" onClick={() => { if (!canLeaveSettings()) return; setView("chat"); setPanelOpen(true); setQuery(""); setCreateGroupRequest((request) => request + 1); }}><FolderPlus size={18} /></IconButton><IconButton label={settings.debugMode ? "Disable debug mode" : "Enable debug mode"} className={settings.debugMode ? "active" : ""} disabled={debugModeSaving || settingsSaving} onClick={toggleDebugMode}><Bug size={18} /></IconButton><IconButton label={view === "settings" ? "Go back" : "Settings"} className={view === "settings" ? "active" : ""} onClick={() => { if (view !== "settings") { setView("settings"); return; } if (canLeaveSettings()) setView("chat"); }}>{view === "settings" ? <ArrowLeft size={19} /> : <Settings size={19} />}</IconButton></nav>{view === "chat" && panelOpen && <SessionPanel sessions={[...sessions, ...runtimePool.liveSessionSummaries().filter((live) => !sessions.some((saved) => saved.id === live.id && saved.hostId === live.hostId))]} activeId={state.sessionId} activeHostId={activeHostId} runningSessions={runningSessions} unseenSessions={unseenSessions} query={query} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} onCreateWorktree={(cwd, hostId) => setWorktreeTarget({ cwd, hostId, transport })} createGroupRequest={createGroupRequest} onCreateGroupHandled={handleCreateGroup} />}<div className="rail-bottom">{codexUsage !== undefined && <span className="codex-usage" role="status" aria-label={`Codex usage remaining: ${codexUsage.remainingPercent}%${codexUsage.resetAt ? `, resets ${formatCodexReset(codexUsage.resetAt)}` : ""}`} title="Codex usage remaining"><span>{codexUsage.remainingPercent}%<span className="codex-usage-left"> left</span></span>{codexUsage.resetAt && <span className="codex-usage-reset"><span className="codex-usage-separator"> · </span>{formatCodexReset(codexUsage.resetAt)}</span>}</span>}</div></ResizableSidebar>
+    <ResizableSidebar compact={view === "settings" || !panelOpen}>{activeBranch && <div className="rail-branch" title={activeBranch}><GitBranch size={13} /><span>{activeBranch}</span></div>}<nav><IconButton label="New conversation" onClick={newSession}><MessageSquare size={18} /></IconButton><IconButton label="New session group" onClick={() => { if (!canLeaveSettings()) return; setView("chat"); setPanelOpen(true); setQuery(""); setCreateGroupRequest((request) => request + 1); }}><FolderPlus size={18} /></IconButton><IconButton label={settings.debugMode ? "Disable debug mode" : "Enable debug mode"} className={settings.debugMode ? "active" : ""} disabled={debugModeSaving || settingsSaving} onClick={toggleDebugMode}><Bug size={18} /></IconButton><IconButton label={view === "settings" ? "Go back" : "Settings"} className={view === "settings" ? "active" : ""} onClick={() => { if (view !== "settings") { setView("settings"); return; } if (canLeaveSettings()) setView("chat"); }}>{view === "settings" ? <ArrowLeft size={19} /> : <Settings size={19} />}</IconButton></nav>{view === "chat" && panelOpen && <SessionPanel sessions={[...sessions, ...runtimePool.liveSessionSummaries().filter((live) => !sessions.some((saved) => saved.id === live.id && saved.hostId === live.hostId))]} activeId={state.sessionId} activeHostId={activeHostId} runningSessions={runningSessions} unseenSessions={unseenSessions} query={query} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} onNewChat={(group) => void startNewSession(false, group)} onCreateWorktree={(cwd, hostId) => setWorktreeTarget({ cwd, hostId, transport })} createGroupRequest={createGroupRequest} onCreateGroupHandled={handleCreateGroup} />}<div className="rail-bottom">{codexUsage !== undefined && <span className="codex-usage" role="status" aria-label={`Codex usage remaining: ${codexUsage.remainingPercent}%${codexUsage.resetAt ? `, resets ${formatCodexReset(codexUsage.resetAt)}` : ""}`} title="Codex usage remaining"><span>{codexUsage.remainingPercent}%<span className="codex-usage-left"> left</span></span>{codexUsage.resetAt && <span className="codex-usage-reset"><span className="codex-usage-separator"> · </span>{formatCodexReset(codexUsage.resetAt)}</span>}</span>}</div></ResizableSidebar>
     <div className="chat-workspace" hidden={view !== "chat"}>
       <div className={`chat-panes ${splitPane ? "split" : ""}`}>
         <ChatView key={activeConversationKey} state={state} messages={messages} gitDiffs={gitDiffs} debug={settings.debugMode} agents={extensionStateIsCurrent ? definedAgents?.config.agents ?? [] : []} activeAgent={extensionStateIsCurrent ? definedAgents?.active : undefined} dictionaries={settings.dictionaries.filter((item) => settings.activeDictionaryIds.includes(item.id))} models={models.filter((model) => !settings.hiddenModels.includes(`${model.provider}/${model.id}`))} commands={[{ name: "branch-off", description: "Branch conversation [number back, default 0]", source: "builtin" }, { name: "worktree", description: "Create worktree [number back, default 0] [name]", source: "builtin" }, ...commands.filter((command) => !["branch-off", "worktree"].includes(command.name))]} thinkingLevels={thinkingLevels} widgets={extensionStateIsCurrent ? Object.values(widgets).flat() : []} statuses={extensionStateIsCurrent ? statuses : {}} projectCwd={projectCwd} controlsDisabled={!connected} draft={composerDraft} onDraftChange={(value) => setComposerDraft(activeConversationKey, value)} focusRequest={mainComposerFocusRequest} onActivate={() => setActivePane("main")} uploads={composerUploads} onUploadsChange={(update) => setComposerUploads(transport, update)} onSend={send} onChangePending={(id, behavior) => transport.changePendingMessage(id, behavior)} onAbort={abortInteraction} onPause={pauseInteraction} onResume={resumeInteraction} onOpenTerminal={() => { terminalPanelRevision.current += 1; setActivePane("main"); setTerminalTarget({ sessionKey: activeConversationKey, cwd: projectCwd, hostId: activeHostId }); setTerminalOpen(true); }} onOpenProject={chooseChatProject} onClearProject={clearChatProject} onBranch={branch} onCreateWorktree={isGitRepository && projectCwd ? (message) => setWorktreeTarget({ cwd: projectCwd, hostId: activeHostId, message, transport }) : undefined} onAgent={setAgent} onModel={setModel} onToggleFastMode={() => enqueueControl(transport, () => transport.toggleFastMode())} onThinking={setThinking} />
