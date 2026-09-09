@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Blocks, BookOpen, Bot, Check, CircleGauge, CirclePlus, Cpu, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Sparkles, Trash2, Wrench } from "lucide-react";
+import { Blocks, BookOpen, Bot, Check, CircleGauge, CirclePlus, Cpu, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Sparkles, Trash2, Wrench, Zap } from "lucide-react";
 import { HooksSettings, HookIcon } from "./HooksSettings";
 import type { AgentProfile, AppSettings, McpServer, Model, AgentConfig, RemoteHost, SessionSummary } from "../types";
 import { uid } from "../lib/content";
@@ -170,7 +170,7 @@ export function SettingsView({ settings, pendingSettingsCount = 0, agentConfig: 
           <SettingRow icon={<ShieldCheck />} title="Automatic retry" description="Retry transient provider and network errors."><Toggle label="Automatic retry" checked={draft.autoRetry} onChange={(autoRetry) => patch({ autoRetry })} /></SettingRow>
           <div className="general-model-defaults">
           <label className="field"><span>Default model</span><select aria-label="Default model" value={draft.defaultModel} onChange={(event) => patch({ defaultModel: event.target.value })}>{!modelAvailable && <option value={draft.defaultModel} disabled>Unavailable: {draft.defaultModel}</option>}{models.map((model) => <option key={`${model.provider}/${model.id}`} value={`${model.provider}/${model.id}`}>{model.name || model.id}</option>)}</select></label>
-          <div className="field general-fast-mode" title="Start new conversations with fast mode enabled for supported models."><span>Fast mode</span><div><Toggle label="Fast mode by default" checked={draft.defaultFastMode} onChange={(defaultFastMode) => patch({ defaultFastMode })} /></div></div>
+          <div className="field general-fast-mode" title="Start new conversations with fast mode enabled for supported models."><span>Fast mode</span><div><button type="button" className={`fast-mode-indicator${draft.defaultFastMode ? " active" : ""}`} aria-label="Fast mode by default" aria-description={draft.defaultFastMode ? "Fast mode on" : "Fast mode off"} aria-pressed={draft.defaultFastMode} onClick={() => patch({ defaultFastMode: !draft.defaultFastMode })}><Zap size={14} strokeWidth={1.5} fill={draft.defaultFastMode ? "currentColor" : "none"} aria-hidden="true" /></button></div></div>
           <label className="field"><span>Thinking level</span><select value={draft.defaultThinking} onChange={(e) => patch({ defaultThinking: e.target.value })}>{!thinkingAvailable && <option value={draft.defaultThinking} disabled>Unavailable: {draft.defaultThinking}</option>}{thinkingLevels.map((level) => <option key={level} value={level}>{level.charAt(0).toUpperCase() + level.slice(1)}</option>)}</select></label>
           </div>
         </SettingsSection>}
