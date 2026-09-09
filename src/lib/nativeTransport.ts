@@ -64,6 +64,44 @@ export class NativeTransport {
   private connectPromise?: Promise<void>;
   private processLifecycle: Promise<unknown> = Promise.resolve();
   private settingsLifecycle: Promise<unknown> = Promise.resolve();
+  private pendingSettings?: AppSettings;
+  private applyingSettings?: Promise<void>;
+  private settingsApplyFailed = false;
+  private inferenceBusy = false;
+  private activeCommands = 0;
+  private disposed = false;
+  hasPendingSettings() { return Boolean(this.pendingSettings || this.applyingSettings); }
+  queueSettings(settings: AppSettings) {
+    this.pendingSettings = structuredClone(settings);
+    this.settingsApplyFailed = false;
+    this.emit({ type: "settings_pending" });
+    this.applyPendingSettings();
+  }
+  private applyPendingSettings() {
+    if (!this.pendingSettings || this.applyingSettings || this.inferenceBusy || this.activeCommands || this.disposed || this.settingsApplyFailed) return;
+    this.applyingSettings = Promise.resolve().then(async () => {
+      while (this.pendingSettings && !this.disposed) {
+        if (this.running) {
+          const state = await this.executeCommandNow<{ isStreaming?: boolean; isCompacting?: boolean; pendingMessageCount?: number }>({ type: "get_state" });
+          if (this.inferenceBusy || state.isStreaming || state.isCompacting || (state.pendingMessageCount ?? 0) > 0) return;
+        }
+        const settings = this.pendingSettings;
+        await this.reconnectForSettings(settings);
+        if (this.running) {
+          await this.executeCommandNow({ type: "set_auto_compaction", enabled: settings.autoCompaction });
+          await this.executeCommandNow({ type: "set_auto_retry", enabled: settings.autoRetry });
+        }
+        if (this.pendingSettings === settings) this.pendingSettings = undefined;
+        this.emit({ type: "settings_applied" });
+      }
+    }).catch((reason) => {
+      this.settingsApplyFailed = true;
+      this.emit({ type: "extension_error", error: `Settings saved, but this session could not apply them: ${reason instanceof Error ? reason.message : String(reason)}. Save again to retry.` });
+    }).finally(() => {
+      this.applyingSettings = undefined;
+      this.emit({ type: "settings_pending" });
+    });
+  }
   private cwd?: string;
   private sessionPath?: string;
   private sessionId?: string;
@@ -113,6 +151,8 @@ export class NativeTransport {
     this.listeners.forEach((listener) => listener(event));
   }
   private emit(event: RpcEvent) {
+    if (event.type === "agent_start" || event.type === "message_start" || event.type === "auto_compaction_start") this.inferenceBusy = true;
+    if (event.type === "agent_settled" || event.type === "disconnected") this.inferenceBusy = false;
     if (event.type === "session_switched") this.liveAssistant = undefined;
     if ((event.type === "message_start" || event.type === "message_end") && (event.message as { role?: string })?.role === "assistant") this.liveAssistant = { ...normalizeMessage(event.message as Record<string, unknown>, undefined, undefined, this.liveAssistant?.streaming ? this.liveAssistant.id : `live-assistant-${crypto.randomUUID()}`), streaming: event.type === "message_start" };
     if (event.type === "message_update" && event.assistantMessageEvent && this.liveAssistant) this.liveAssistant = applyAssistantMessageEvent(this.liveAssistant, event.assistantMessageEvent);
@@ -168,6 +208,7 @@ export class NativeTransport {
     }
     if (event.type === "extension_ui_request" && ["input", "editor", "select", "confirm"].includes(String(event.method)) && typeof event.id === "string") this.retainedRequests.set(event.id, event);
     this.listeners.forEach((listener) => listener(event));
+    if (["agent_settled", "auto_compaction_end", "queue_update"].includes(event.type)) this.applyPendingSettings();
   }
   async connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string, ephemeral = false) {
     this.ephemeral ||= ephemeral;
@@ -392,7 +433,13 @@ export class NativeTransport {
       } finally { this.changingQueue = false; this.publishQueue(); }
     });
   }
-  private async executeCommand<T>(command: RpcCommand) {
+  private async executeCommand<T>(command: RpcCommand): Promise<T> {
+    if (this.applyingSettings) await this.applyingSettings;
+    this.activeCommands += 1;
+    try { return await this.executeCommandNow<T>(command); }
+    finally { this.activeCommands -= 1; this.applyPendingSettings(); }
+  }
+  private async executeCommandNow<T>(command: RpcCommand) {
     const compact = command.type === "prompt" && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null;
     if (compact) command = { type: "compact", ...(compact[1]?.trim() ? { customInstructions: compact[1].trim() } : {}) };
     if (command.type === "clear_queue") this.clearingQueue = true;

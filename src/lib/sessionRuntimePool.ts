@@ -139,6 +139,7 @@ export class SessionRuntimePool {
       if (event.type === "agent_settled") { this.runningTransports.delete(transport); if (transport !== this.activeTransport) this.unseenTransports.add(transport); }
       if (event.type === "disconnected") { this.runningTransports.delete(transport); this.discardBaselines(transport, this.diffState(transport)); }
       this.publishSessionStates();
+      if (event.type === "settings_pending" || event.type === "settings_applied") this.notify();
     });
     return transport;
   }
@@ -166,12 +167,8 @@ export class SessionRuntimePool {
   isRetained(transport: NativeTransport) { return this.retainedTransports.has(transport); }
   isAnyRunning() { return this.runningTransports.size > 0; }
 
-  async reconnectForSettingsChange(activeTransport: NativeTransport, settings: AppSettings) {
-    const targets = [...this.transports].filter((transport) => transport !== activeTransport);
-    const results = await Promise.allSettled(targets.map((transport) => transport.reconnectForSettings(settings)));
-    const failures = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
-    if (failures.length) this.errorHandler?.(`Settings were saved, but ${failures.length} background conversation${failures.length === 1 ? "" : "s"} could not be restarted safely. Close and reopen the app before using them.`);
-  }
+  queueSettingsChange(settings: AppSettings) { for (const transport of this.transports) transport.queueSettings(settings); }
+  pendingSettingsCount() { return [...this.transports].filter((transport) => transport.hasPendingSettings()).length; }
 
   async copySavedDiffs(transport: NativeTransport, sourcePath: string | undefined, destinationPath: string | undefined, retainedMessageIds?: ReadonlySet<string>) {
     if (!sourcePath || !destinationPath || sourcePath === destinationPath) return;
