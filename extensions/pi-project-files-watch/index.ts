@@ -189,23 +189,11 @@ async function worktreeTree(root: string, isolated = false) {
 }
 
 async function saveSnapshot(root: string, sessionId: string) {
-  const sourceBranch = (await runGit(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch((error) => {
-    if (error instanceof GitError && error.exitCode === 1) return `detached-${sessionId}`;
+  const branch = (await runGit(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch((error) => {
+    if (error instanceof GitError && error.exitCode === 1) throw new Error("Check out a branch before saving an agent-settled commit");
     throw error;
   })).trim();
-  const branch = `piop/${sourceBranch}`;
-  const branchRef = `refs/heads/${branch}`;
-  await runGit(root, ["check-ref-format", branchRef]);
-  const worktrees = await runGit(root, ["worktree", "list", "--porcelain", "-z"]);
-  if (worktrees.split("\0").includes(`branch ${branchRef}`)) throw new Error(`Snapshot branch ${branch} is checked out in a worktree`);
-  const previous = await resolveRef(root, branchRef);
-  const head = await resolveRef(root, "HEAD");
-  const parents = previous ? [previous] : [];
-  if (head && (!previous || !await runGit(root, ["merge-base", "--is-ancestor", head, previous]).then(() => true, (error) => {
-    if (error instanceof GitError && error.exitCode === 1) return false;
-    throw error;
-  }))) parents.push(head);
-  const captured = await worktreeTree(root);
+  await assertSnapshotInputBounded(root);
   const timestamp = new Date().toISOString();
   const identity = {
     GIT_AUTHOR_NAME: "Pi session snapshot",
@@ -215,14 +203,14 @@ async function saveSnapshot(root: string, sessionId: string) {
     GIT_AUTHOR_DATE: timestamp,
     GIT_COMMITTER_DATE: timestamp,
   };
-  let commit: string;
-  try { commit = (await runGit(root, ["commit-tree", captured.tree, ...parents.flatMap((parent) => ["-p", parent])], identity, `Pi agent settled ${sessionId} ${timestamp}\n`)).trim(); }
-  finally { await captured.cleanup(); }
+  await runGit(root, ["add", "--all", "--", "."]);
+  await runGit(root, ["commit", "--allow-empty", "-m", `Pi agent settled ${sessionId} ${timestamp}`], identity);
+  const commit = await resolveRef(root, "HEAD");
+  if (!commit) throw new Error("Could not resolve the agent-settled commit");
   const ref = `${sessionRefPrefix(sessionId)}${snapshotName(timestamp, commit)}`;
   const transaction = [
     "start",
     `create ${ref} ${commit}`,
-    previous ? `update ${branchRef} ${commit} ${previous}` : `create ${branchRef} ${commit}`,
     "prepare",
     "commit",
     "",
