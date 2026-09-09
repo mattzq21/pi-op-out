@@ -415,6 +415,8 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .settings-section + .settings-section { margin-top: 28px; }
 .general-model-defaults { display: grid; grid-template-columns: minmax(0, 1fr) auto 240px; gap: 12px; }
 .general-model-defaults .field, .general-model-defaults select { min-width: 0; }
+.agent-defaults { grid-template-columns: minmax(0, 1fr) auto 140px; }
+.agent-defaults .field, .agent-defaults select { min-width: 0; }
 .general-fast-mode > div { display: flex; align-items: center; justify-content: center; min-height: 35px; }
 .general-fast-mode .fast-mode-indicator { width: 35px; height: 35px; flex-basis: 35px; }
 .general-fast-mode .fast-mode-indicator svg { width: 22px; height: 22px; }
