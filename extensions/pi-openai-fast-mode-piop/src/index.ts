@@ -10,7 +10,6 @@ import { getFastCommandCompletions, parseFastCommand } from "./commands";
 import {
   cloneConfig,
   loadConfigForScope,
-  saveConfigToPath,
   syncSupportedTargets,
 } from "./config";
 import { getFastModePayload, toModelRef } from "./payload";
@@ -25,6 +24,7 @@ export type FastModeExtensionOptions = {
 };
 
 const DEFAULT_EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
+const STATE_ENTRY = "piop-fast-mode-state";
 
 function notifyError(
   ctx: Pick<ExtensionContext, "hasUI" | "ui">,
@@ -43,12 +43,12 @@ export function createPiFastModeExtension(
 
   return function piFastModeExtension(pi: ExtensionAPI): void {
     let config: FastModeConfig = cloneConfig();
-    let configPath: string | undefined;
+    let loadedSessionId: string | undefined;
     let loadedCwd: string | undefined;
     let currentModel: ModelRef | undefined;
 
     async function loadForContext(
-      ctx: Pick<ExtensionContext, "cwd">,
+      ctx: Pick<ExtensionContext, "cwd" | "sessionManager">,
     ): Promise<void> {
       const loaded = await loadConfigForScope({
         cwd: ctx.cwd,
@@ -57,34 +57,24 @@ export function createPiFastModeExtension(
       });
 
       config = syncSupportedTargets(loaded.config);
-      configPath = loaded.path;
+      let savedEnabled: boolean | undefined;
+      for (const entry of ctx.sessionManager.getBranch()) {
+        if (entry.type !== "custom" || entry.customType !== STATE_ENTRY) continue;
+        const enabled = (entry.data as { enabled?: unknown } | undefined)?.enabled;
+        if (typeof enabled === "boolean") savedEnabled = enabled;
+      }
+      config.enabled = savedEnabled ?? (pi.getFlag("fast") === true || config.enabled);
+      if (savedEnabled === undefined) pi.appendEntry(STATE_ENTRY, { enabled: config.enabled });
       loadedCwd = ctx.cwd;
-
-      // Persist the package's current target list on every load so upgrades
-      // automatically update existing config files without changing enabled.
-      await saveConfigToPath(configPath, config);
+      loadedSessionId = ctx.sessionManager.getSessionId();
     }
 
     async function ensureLoaded(
-      ctx: Pick<ExtensionContext, "cwd">,
+      ctx: Pick<ExtensionContext, "cwd" | "sessionManager">,
     ): Promise<void> {
-      if (!configPath || loadedCwd !== ctx.cwd) {
+      if (loadedSessionId !== ctx.sessionManager.getSessionId() || loadedCwd !== ctx.cwd) {
         await loadForContext(ctx);
       }
-    }
-
-    async function saveCurrent(
-      ctx: Pick<ExtensionContext, "cwd">,
-    ): Promise<void> {
-      if (!configPath || loadedCwd !== ctx.cwd) {
-        await loadForContext(ctx);
-      }
-
-      if (!configPath) {
-        throw new Error("Fast Mode config path was not resolved");
-      }
-
-      await saveConfigToPath(configPath, config);
     }
 
     function refreshCurrentModel(ctx: Pick<ExtensionContext, "model">): void {
@@ -107,8 +97,9 @@ export function createPiFastModeExtension(
         try {
           await ensureLoaded(ctx);
           refreshCurrentModel(ctx);
-          config.enabled = parseFastCommand(args, config.enabled);
-          await saveCurrent(ctx);
+          const enabled = parseFastCommand(args, config.enabled);
+          pi.appendEntry(STATE_ENTRY, { enabled });
+          config.enabled = enabled;
           updateFastStatus(ctx, config, currentModel);
         } catch (error) {
           notifyError(ctx, error);
@@ -121,11 +112,16 @@ export function createPiFastModeExtension(
         currentModel = toModelRef(ctx.model);
         await loadForContext(ctx);
 
-        if (pi.getFlag("fast") === true) {
-          config.enabled = true;
-          await saveCurrent(ctx);
-        }
+        updateFastStatus(ctx, config, currentModel);
+      } catch (error) {
+        notifyError(ctx, error);
+      }
+    });
 
+    pi.on("session_tree", async (_event, ctx) => {
+      try {
+        await loadForContext(ctx);
+        currentModel = toModelRef(ctx.model);
         updateFastStatus(ctx, config, currentModel);
       } catch (error) {
         notifyError(ctx, error);
