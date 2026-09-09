@@ -17,11 +17,20 @@ type StoppedAssistantMessage = AssistantMessage & { piopCompletedBlocks?: true }
 export function desktopPauseContext(messages: ContextEvent["messages"], resumeMessages: ReadonlySet<string>): ContextEvent["messages"] {
   return messages.filter((message) => !(message.role === "assistant" && message.stopReason === "aborted" && message.errorMessage === "Response paused")).map((message) => {
     if (message.role === "assistant" && message.stopReason === "aborted" && (message as StoppedAssistantMessage).piopCompletedBlocks && message.content.length) {
+      const content = message.content.flatMap<AssistantMessage["content"][number]>((block) => {
+        if (block.type !== "thinking" || !["openai-responses", "openai-codex-responses", "azure-openai-responses"].includes(message.api)) return [block];
+        try {
+          const signature = JSON.parse(block.thinkingSignature ?? "null");
+          if (signature?.type === "reasoning" && typeof signature.encrypted_content === "string" && signature.encrypted_content.trim()) return [block];
+        } catch { /* A stopped stream may not have finalized its replay metadata. */ }
+        return !block.redacted && block.thinking.trim() ? [{ type: "text", text: block.thinking }] : [];
+      });
+      if (!content.length) return message;
       return {
         ...message,
         stopReason: "stop" as const,
         errorMessage: undefined,
-        content: [...message.content, { type: "text" as const, text: "[Response stopped by the user. Only completed content blocks are retained. Any tool calls in this response were not executed.]" }],
+        content: [...content, { type: "text" as const, text: "[Response stopped by the user. Only completed content blocks are retained. Any tool calls in this response were not executed.]" }],
       };
     }
     if (message.role !== "user") return message;
