@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { formatSkillsForPrompt, type BuildSystemPromptOptions } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-export type Agent = { name: string; model: string; effort: string; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: string[] };
+export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: string[] };
 type RuntimeDefaults = { model: string; effort: string };
 
 
@@ -125,8 +125,10 @@ function promptPath(agent: Agent): string {
 }
 
 function normalize(value: Partial<Config>): Config {
+  for (const agent of Array.isArray(value.agents) ? value.agents : []) if (agent && agent.fastMode !== undefined && typeof agent.fastMode !== "boolean") throw new Error(`Agent "${agent.name}" fastMode must be a boolean`);
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => agent && typeof agent.name === "string" && agent.name.length > 0).map((agent) => ({
     name: agent.name, model: typeof agent.model === "string" ? agent.model : "", effort: typeof agent.effort === "string" ? agent.effort : fallbackConfig.agents[0].effort,
+    fastMode: agent.fastMode,
     path_systemprompt: promptPath(agent), path_agentprompt: typeof agent.path_agentprompt === "string" ? agent.path_agentprompt.trim() : agent.name === "default" ? DEFAULT_AGENT_PROMPT_PATH : "",
     tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => typeof item === "string") : defaultAgent().tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => typeof item === "string") : [], mcpServers: Array.isArray(agent.mcpServers) ? agent.mcpServers.filter((item): item is string => typeof item === "string" && item !== "filesystem") : [],
   })) : [];
@@ -207,7 +209,9 @@ export default async function defineAgents(pi: ExtensionAPI) {
   process.env.PI_DEFINE_AGENTS_ACTIVE = "1";
   const findAgent = (name: string) => config.agents.find((agent) => agent.name === name);
   const currentAgent = () => findAgent(active);
-  const publish = (ctx: ExtensionContext) => ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: currentAgent()?.name ?? active, config })}`);
+  const fastModeModels = () => { const request: { models?: string[] } = {}; pi.events.emit("piop:fast-mode", request); return request.models ?? []; };
+  const fastModeError = (agent: Agent, model: string | undefined) => agent.fastMode === true && (!model || !fastModeModels().includes(model)) ? `Agent "${agent.name}" cannot run because model ${model || "(unset)"} does not support fast mode` : undefined;
+  const publish = (ctx: ExtensionContext) => ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: currentAgent()?.name ?? active, config: { ...config, fastModeModels: fastModeModels() } })}`);
   const reload = async (ctx: ExtensionContext) => {
     // Reloading resources does not invalidate the definitions already loaded.
     publish(ctx);
@@ -236,12 +240,15 @@ export default async function defineAgents(pi: ExtensionAPI) {
     }
     const toolError = agentToolError(pi, agent); if (toolError) { pi.setActiveTools([]); return toolError; }
     const modelName = modelOverride || agent.model.trim() || runtimeDefaults?.model; const currentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
+    const fastError = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model || currentModel) || fastModeError(agent, modelName || currentModel);
+    if (fastError) { pi.setActiveTools([]); return fastError; }
     if (modelName && modelName !== currentModel) {
       const [provider, ...parts] = modelName.split("/"); const model = ctx.modelRegistry.find(provider, parts.join("/"));
       if (!model) { pi.setActiveTools([]); return `Agent "${agent.name}" cannot run because model ${modelName} is unavailable`; }
       try { applyingAgentModel = modelName; const selected = await pi.setModel(model); if (!selected) { applyingAgentModel = undefined; pi.setActiveTools([]); return `Agent "${agent.name}" cannot authenticate model ${modelName}`; } } catch (error) { if (applyingAgentModel === modelName) applyingAgentModel = undefined; pi.setActiveTools([]); return `Agent "${agent.name}" could not select ${modelName}: ${error instanceof Error ? error.message : String(error)}`; }
     }
     const effort = effortOverride || agent.effort.trim() || runtimeDefaults?.effort; if (effort && effort !== pi.getThinkingLevel()) { applyingAgentEffort = effort; pi.setThinkingLevel(effort as any); }
+    pi.events.emit("piop:fast-mode", { apply: true, enabled: agent.fastMode, ctx });
     pi.setActiveTools([]);
     const tools = new Set(agent.tools);
     if (connectMcp && process.env.PI_DESKTOP_MCP_CONFIG) {
@@ -293,12 +300,19 @@ export default async function defineAgents(pi: ExtensionAPI) {
   pi.registerCommand("pi-define-agents-use", { description: "Select a defined agent", handler: async (args, ctx) => {
     const argument = args.trim(); let name = argument; try { const decoded = decode<unknown>(argument); if (typeof decoded === "string") name = decoded; } catch { /* Plain CLI name. */ }
     if (!findAgent(name)) throw new Error(`Unknown defined agent: ${name}`);
+    restore(ctx);
+    const agent = findAgent(name)!;
+    const error = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model);
+    if (error) throw new Error(error);
     active = name; modelOverride = undefined; effortOverride = undefined;
     pi.appendEntry(STATE_ENTRY, { active }); await reload(ctx);
   }});
   pi.registerCommand("pi-define-agents-config", { description: "Update agent definitions", handler: async (args, ctx) => {
     const previous = config;
-    const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied }); await writeConfig(next); config = next;
+    const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied });
+    restore(ctx);
+    for (const agent of next.agents) { const error = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model); if (error) throw new Error(error); }
+    await writeConfig(next); config = next;
     try { if (!findAgent(active)) active = "default"; pi.appendEntry(STATE_ENTRY, { active }); await reload(ctx); }
     catch (error) { await writeConfig(previous); config = previous; throw error; }
   }});

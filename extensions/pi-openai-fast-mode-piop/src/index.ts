@@ -46,6 +46,15 @@ export function createPiFastModeExtension(
     let configPath: string | undefined;
     let loadedCwd: string | undefined;
     let currentModel: ModelRef | undefined;
+    let agentEnabled: boolean | undefined;
+    const effectiveConfig = () => ({ ...config, enabled: agentEnabled ?? config.enabled });
+    pi.events.on("piop:fast-mode", (request: { models?: string[]; apply?: boolean; enabled?: boolean; ctx?: ExtensionContext }) => {
+      request.models = cloneConfig().targets.map((target) => `${target.provider}/${target.model}`);
+      if (request.apply) {
+        agentEnabled = request.enabled;
+        if (request.ctx) updateFastStatus(request.ctx, effectiveConfig(), toModelRef(request.ctx.model) ?? currentModel);
+      }
+    });
 
     async function loadForContext(
       ctx: Pick<ExtensionContext, "cwd">,
@@ -107,9 +116,10 @@ export function createPiFastModeExtension(
         try {
           await ensureLoaded(ctx);
           refreshCurrentModel(ctx);
-          config.enabled = parseFastCommand(args, config.enabled);
+          config.enabled = parseFastCommand(args, effectiveConfig().enabled);
+          agentEnabled = undefined;
           await saveCurrent(ctx);
-          updateFastStatus(ctx, config, currentModel);
+          updateFastStatus(ctx, effectiveConfig(), currentModel);
         } catch (error) {
           notifyError(ctx, error);
         }
@@ -126,7 +136,7 @@ export function createPiFastModeExtension(
           await saveCurrent(ctx);
         }
 
-        updateFastStatus(ctx, config, currentModel);
+        updateFastStatus(ctx, effectiveConfig(), currentModel);
       } catch (error) {
         notifyError(ctx, error);
       }
@@ -134,12 +144,12 @@ export function createPiFastModeExtension(
 
     pi.on("model_select", async (event, ctx) => {
       currentModel = toModelRef(event.model) ?? toModelRef(ctx.model);
-      updateFastStatus(ctx, config, currentModel);
+      updateFastStatus(ctx, effectiveConfig(), currentModel);
     });
 
     pi.on("before_provider_request", (event, ctx) => {
       const model = toModelRef(ctx.model) ?? currentModel;
-      return getFastModePayload(config, model, event.payload);
+      return getFastModePayload(effectiveConfig(), model, event.payload);
     });
 
     pi.on("session_shutdown", (_event, ctx) => { clearFastStatus(ctx); });

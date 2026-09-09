@@ -494,7 +494,7 @@ export default function App() {
     catch (reason) { addNotice({ title: "Could not resume piop", message: reason instanceof Error ? reason.message : String(reason) }); }
     finally { pauseResumePending.current.delete(ownerTransport); }
   };
-  const agentSettings: AgentConfig | undefined = definedAgents ? { agents: definedAgents.config.agents } : undefined;
+  const agentSettings: AgentConfig | undefined = definedAgents ? { agents: definedAgents.config.agents, fastModeModels: definedAgents.config.fastModeModels } : undefined;
   const saveSettings = async (value: AppSettings, nextConfig?: AgentConfig) => {
     if (settingsSavePending.current || debugModePending.current) throw new Error("Wait for the current settings save to finish");
     settingsSavePending.current = true; setSettingsSaving(true);
@@ -505,20 +505,22 @@ export default function App() {
     const next = { ...value, debugMode: settings.debugMode, mcpServers: value.mcpServers.map(({ error: _error, ...server }) => ({ ...server, status: "stopped" as const })) };
     // Use a separate, sessionless runtime to persist agent definitions without
     // reloading the extension inside a conversation that is still responding.
-    const writeAgents = async (configuration: AgentConfig) => {
+    const writeAgents = async (configuration: AgentConfig, defaultModel: string) => {
       const writer = new NativeTransport({ cwd: transport.currentCwd(), hostId: transport.currentHostId() });
       try {
         await writer.connect(undefined, undefined, undefined, undefined, true);
+        const [provider, ...modelId] = defaultModel.split("/");
+        await writer.command({ type: "set_model", provider, modelId: modelId.join("/") });
         await writer.command({ type: "prompt", message: `/pi-define-agents-config ${encodeAgentValue(configuration)}` });
       } finally { await writer.dispose(); }
     };
     let agentsSaved = false;
     try {
-      if (nextConfig) { await writeAgents(nextConfig); agentsSaved = true; }
+      if (nextConfig) { await writeAgents(nextConfig, next.defaultModel); agentsSaved = true; }
       await transport.saveSettings(next, false);
     } catch (reason) {
       if (agentsSaved && agentSettings) {
-        try { await writeAgents(agentSettings); }
+        try { await writeAgents(agentSettings, settings.defaultModel); }
         catch { throw new Error(`Settings could not be saved, and the agent definitions could not be restored: ${reason instanceof Error ? reason.message : String(reason)}`); }
       }
       throw reason;
