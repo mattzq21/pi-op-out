@@ -411,8 +411,9 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 
 .setting-cap-controls { display: flex; align-items: center; gap: 12px; }
 .settings-section + .settings-section { margin-top: 28px; }
-.general-model-defaults { display: grid; grid-template-columns: minmax(0, 1fr) 240px; gap: 12px; }
+.general-model-defaults { display: grid; grid-template-columns: minmax(0, 1fr) auto 240px; gap: 12px; }
 .general-model-defaults .field, .general-model-defaults select { min-width: 0; }
+.general-fast-mode > div { display: flex; align-items: center; min-height: 35px; }
 .setting-number:disabled { opacity: .5; cursor: not-allowed; }
 .setup-script { display: grid; gap: 12px; padding: 16px 0; border-top: 1px solid var(--line); }
 .setup-script-code { min-height: 160px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; resize: vertical; }
