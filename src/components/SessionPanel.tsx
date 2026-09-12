@@ -252,17 +252,21 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   ];
   groupedSessionsRef.current = new Map([[RECENT_KEY, recentSessions], ...groups.map(([key, , , , projectSessions]) => [key, projectSessions] as const)]);
   const defaultSidebarEntries = groups.map(([key]) => groupLayoutToken(key));
-  const availableSidebarEntries = new Set(defaultSidebarEntries);
-  const addedEntries = defaultSidebarEntries.filter((entry) => !sidebarOrder.includes(entry));
   const recentToken = groupLayoutToken(RECENT_KEY);
-  const sidebarEntries = [...addedEntries.filter((entry) => entry !== recentToken), ...sidebarOrder.filter((entry) => availableSidebarEntries.has(entry)), ...addedEntries.filter((entry) => entry === recentToken)];
+  const orderedSidebarEntries = (entries: string[]) => {
+    const availableEntries = new Set(entries);
+    const addedEntries = entries.filter((entry) => !sidebarOrder.includes(entry));
+    return [...addedEntries.filter((entry) => entry !== recentToken), ...sidebarOrder.filter((entry) => availableEntries.has(entry)), ...addedEntries.filter((entry) => entry === recentToken)];
+  };
+  const sidebarEntries = orderedSidebarEntries(defaultSidebarEntries);
+  const keyboardSidebarEntries = defaultSidebarEntries.includes(recentToken) ? sidebarEntries : orderedSidebarEntries([...defaultSidebarEntries, recentToken]);
   sidebarEntriesRef.current = sidebarEntries;
   const activeSession = sessions.find((session) => session.id === activeId && (session.hostId ?? "local") === activeHostId);
   const activeProjectKey = activeSession ? visualProjectKey(activeSession) : undefined;
   const moveSessionByKeyboard = (drag: DraggedSession, direction: -1 | 1, betweenGroups: boolean) => {
     const sourceSessions = groupedSessionsRef.current.get(drag.projectKey) ?? [];
     if (betweenGroups) {
-      const destinationKeys = sidebarEntriesRef.current.filter((token) => token.startsWith("group:")).map((token) => token.slice("group:".length));
+      const destinationKeys = keyboardSidebarEntries.filter((token) => token.startsWith("group:")).map((token) => token.slice("group:".length));
       const sourceIndex = destinationKeys.indexOf(drag.projectKey); const destinationKey = destinationKeys[sourceIndex + direction];
       if (!destinationKey) return;
       moveSession(drag, destinationKey, groupedSessionsRef.current.get(destinationKey) ?? []); expandProject(destinationKey);
