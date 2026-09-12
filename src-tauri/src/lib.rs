@@ -52,6 +52,8 @@ enum EphemeralSession {
 
 struct TerminalProcess {
     session_key: String,
+    cwd: String,
+    host_id: String,
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn PtyChild + Send + Sync>,
     writer: mpsc::SyncSender<String>,
@@ -86,6 +88,7 @@ const MAX_GIT_PATCH_BYTES: usize = 4 * 1024 * 1024;
 const MAX_GIT_DIFFS_BYTES: usize = 16 * 1024 * 1024;
 const MAX_AGENT_OUTPUT_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_SESSION_INDEX_BATCH_BYTES: usize = 64 * 1024 * 1024;
+const WORKTREE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Default)]
 struct PiRuntime {
@@ -134,9 +137,9 @@ fn fail_pending(pending: &Arc<Mutex<HashMap<(String, String), mpsc::Sender<Resul
     for sender in senders { let _ = sender.send(Err(error.into())); }
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-enum ProjectKind { NoRepo, Main, Worktree }
+pub(crate) enum ProjectKind { NoRepo, Main, Worktree }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -247,6 +250,8 @@ struct AppSettings {
 #[serde(rename_all = "camelCase")]
 struct WorktreeSetupScript {
     id: String, name: String, script: String, enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cleanup_script: Option<String>,
     #[serde(default)]
     project_path: Option<String>,
     #[serde(default)]
@@ -848,24 +853,36 @@ struct GitSnapshotToken { root: String, tree: String }
 #[serde(rename_all = "camelCase")]
 struct GitWorktree { branch: String, path: String }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitWorktreeRemoval {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    branch: Option<String>,
+    branch_deleted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    warning: Option<String>,
+}
+
 struct LimitedOutput { status: ExitStatus, stdout: Vec<u8>, stderr: Vec<u8> }
 
-#[tauri::command]
-async fn run_worktree_setup(app: AppHandle, setup_id: String, cwd: String, worktree_path: String, host_id: Option<String>) -> Result<(), String> {
-    let cancelled = app.state::<PiRuntime>().worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.get(&setup_id).cloned().ok_or("Unknown setup")?;
-    let worker_app = app.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let settings = load_app_settings(worker_app)?;
-        let host_id = host_id.as_deref().unwrap_or("local");
-        let host = if host_id == "local" { None } else { Some(remote_host(&settings, host_id)?) };
-        for setup in settings.worktree_setup_scripts.iter().filter(|setup| setup.enabled && !setup.script.trim().is_empty()) {
-            let Some(project_path) = setup.project_path.as_deref().filter(|path| !path.trim().is_empty()) else { continue; };
-            if setup.host_id.as_deref().unwrap_or("local") != host_id { continue; }
-            if cancelled.load(Ordering::SeqCst) { return Err("Environment setup cancelled".into()); }
-            let context = format!("Setup script '{}' failed", setup.name);
-            if setup.script.len() > 32 * 1024 { return Err(format!("{context}: script exceeds 32 KiB")); }
-            let completion_marker = format!("piop-setup-complete-{}", Uuid::new_v4());
-            let script = format!(r#"exec 4>&1
+#[derive(Clone, Copy)]
+enum WorktreeScriptPhase { Setup, Cleanup }
+
+fn run_worktree_scripts(settings: &AppSettings, cwd: &str, worktree_path: &str, host_id: &str, cancelled: &AtomicBool, phase: WorktreeScriptPhase) -> Result<(), String> {
+    let host = if host_id == "local" { None } else { Some(remote_host(settings, host_id)?) };
+    let mut scripts = settings.worktree_setup_scripts.iter().filter(|setup| setup.enabled).collect::<Vec<_>>();
+    if matches!(phase, WorktreeScriptPhase::Cleanup) { scripts.reverse(); }
+    for setup in scripts {
+        let code = match phase { WorktreeScriptPhase::Setup => setup.script.as_str(), WorktreeScriptPhase::Cleanup => setup.cleanup_script.as_deref().unwrap_or_default() };
+        if code.trim().is_empty() { continue; }
+        let Some(project_path) = setup.project_path.as_deref().filter(|path| !path.trim().is_empty()) else { continue; };
+        if setup.host_id.as_deref().unwrap_or("local") != host_id { continue; }
+        let phase_name = match phase { WorktreeScriptPhase::Setup => "Setup", WorktreeScriptPhase::Cleanup => "Cleanup" };
+        if cancelled.load(Ordering::SeqCst) { return Err(match phase { WorktreeScriptPhase::Setup => "Environment setup cancelled", WorktreeScriptPhase::Cleanup => "Worktree cleanup cancelled" }.into()); }
+        let context = format!("{phase_name} script '{}' failed", setup.name);
+        if code.len() > 32 * 1024 { return Err(format!("{context}: script exceeds 32 KiB")); }
+        let completion_marker = format!("piop-worktree-script-complete-{}", Uuid::new_v4());
+        let script = format!(r#"exec 4>&1
 exec 1>&2
 set +e
 source_common=$(git -C {source} rev-parse --path-format=absolute --git-common-dir) || exit 1
@@ -877,16 +894,16 @@ if [ "$source_common" != "$project_common" ]; then
 fi
 root=$(git -C {source} rev-parse --show-toplevel) || exit 1
 PIOP_SOURCE_TREE_PATH=$(cd -- "$root" && pwd -P) || exit 1
+PIOP_WORKTREE_BRANCH=$(git -C {target} symbolic-ref --quiet --short HEAD 2>/dev/null) || PIOP_WORKTREE_BRANCH=
 cd -- {target} || exit 1
 PIOP_WORKTREE_PATH=$(pwd -P) || exit 1
-export PIOP_SOURCE_TREE_PATH PIOP_WORKTREE_PATH
+export PIOP_SOURCE_TREE_PATH PIOP_WORKTREE_PATH PIOP_WORKTREE_BRANCH
 exec 3<&0
-setup_output=$(mktemp "${{TMPDIR:-/tmp}}/piop-setup.XXXXXX") || exit 1
+setup_output=$(mktemp "${{TMPDIR:-/tmp}}/piop-worktree-script.XXXXXX") || exit 1
 trap 'rm -f -- "$setup_output"' EXIT
 exec 6>"$setup_output" || exit 1
 # The drain inherits no SSH streams or cancellation descriptors. It can outlive
-# setup while background jobs write, retaining at most 64 KiB and discarding more.
-# Byte-sized reads keep short diagnostics available without waiting for EOF.
+# the script while background jobs write, retaining at most 64 KiB.
 exec 5> >( trap - EXIT; exec >/dev/null 2>&1 3<&- 4>&-; dd bs=1 count=65536 >&6; exec 6>&-; cat >/dev/null )
 output_pid=$!
 exec 6>&-
@@ -895,7 +912,7 @@ bash -e -c {code} </dev/null >&5 2>&1 3<&- 4>&- 5>&- &
 setup_pid=$!
 exec 5>&-
 set +m
-# Keep cancellation separate from script input. EOF also stops setup if SSH disconnects.
+# Keep cancellation separate from script input. EOF also stops the script if SSH disconnects.
 ( trap - EXIT; IFS= read -r cancel; kill -KILL -- "-$setup_pid" 2>/dev/null ) <&3 4>&- &
 watcher=$!
 wait "$setup_pid"
@@ -909,15 +926,27 @@ done
 head -c 65536 "$setup_output" >&2
 rm -f -- "$setup_output"
 printf '\n%s %s\n' {marker} "$status" >&4
-exit "$status""#, source = shell_quote(&cwd), project = shell_quote(project_path), target = shell_quote(&worktree_path), code = shell_quote(&setup.script), marker = shell_quote(&completion_marker));
-            let mut command = if let Some(host) = host { let mut command = ssh(host); command.arg(remote_login_command(&script)); command } else { let mut command = Command::new("bash"); command.args(["-c", &script]); command };
-            let (status, stderr) = run_setup_process(&mut command, &cancelled, &context, completion_marker)?;
-            if status != 0 {
-                let detail = String::from_utf8_lossy(&stderr);
-                return Err(format!("{context} (exit status {status}):\n{}", detail.trim()));
-            }
+exit "$status""#, source = shell_quote(cwd), project = shell_quote(project_path), target = shell_quote(worktree_path), code = shell_quote(code), marker = shell_quote(&completion_marker));
+        let mut command = if let Some(host) = host { let mut command = ssh(host); command.arg(remote_login_command(&script)); command } else { let mut command = Command::new("bash"); command.args(["-c", &script]); command };
+        let cancellation_message = match phase { WorktreeScriptPhase::Setup => "Environment setup cancelled", WorktreeScriptPhase::Cleanup => "Worktree cleanup cancelled" };
+        let timeout = matches!(phase, WorktreeScriptPhase::Cleanup).then_some(WORKTREE_CLEANUP_TIMEOUT);
+        let (status, stderr) = run_setup_process(&mut command, cancelled, &context, completion_marker, cancellation_message, timeout)?;
+        if status != 0 {
+            let detail = String::from_utf8_lossy(&stderr);
+            return Err(format!("{context} (exit status {status}):\n{}", detail.trim()));
         }
-        Ok(())
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn run_worktree_setup(app: AppHandle, setup_id: String, cwd: String, worktree_path: String, host_id: Option<String>) -> Result<(), String> {
+    let cancelled = app.state::<PiRuntime>().worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.get(&setup_id).cloned().ok_or("Unknown setup")?;
+    let worker_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let settings = load_app_settings(worker_app)?;
+        let host_id = host_id.as_deref().unwrap_or("local");
+        run_worktree_scripts(&settings, &cwd, &worktree_path, host_id, &cancelled, WorktreeScriptPhase::Setup)
     }).await.map_err(|error| error.to_string());
     app.state::<PiRuntime>().worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.remove(&setup_id);
     result?
@@ -936,7 +965,7 @@ fn cancel_worktree_setup(runtime: State<PiRuntime>, setup_id: String) -> Result<
     Ok(())
 }
 
-fn run_setup_process(command: &mut Command, cancelled: &AtomicBool, context: &str, completion_marker: String) -> Result<(i32, Vec<u8>), String> {
+fn run_setup_process(command: &mut Command, cancelled: &AtomicBool, context: &str, completion_marker: String, cancellation_message: &str, timeout: Option<Duration>) -> Result<(i32, Vec<u8>), String> {
     let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| format!("{context}: {error}"))?;
     let mut input = child.stdin.take();
     let stdout = child.stdout.take().ok_or("Setup stdout was unavailable")?;
@@ -970,16 +999,25 @@ fn run_setup_process(command: &mut Command, cancelled: &AtomicBool, context: &st
         }
         let _ = done_tx.send(());
     });
-    let mut cancelling_at = None;
+    let started_at = Instant::now();
+    let mut stopping_at = None;
+    let mut stop_reason = None;
     let status = loop {
-        if cancelled.load(Ordering::SeqCst) && cancelling_at.is_none() {
-            if let Some(mut input) = input.take() { let _ = input.write_all(b"cancel\n"); }
-            cancelling_at = Some(Instant::now());
+        if stop_reason.is_none() {
+            if cancelled.load(Ordering::SeqCst) {
+                stop_reason = Some(cancellation_message.to_string());
+            } else if timeout.is_some_and(|limit| started_at.elapsed() >= limit) {
+                stop_reason = Some(format!("{context} timed out after 5 minutes"));
+            }
         }
-        if cancelling_at.is_some_and(|started: Instant| started.elapsed() >= Duration::from_secs(2)) {
+        if stop_reason.is_some() && stopping_at.is_none() {
+            if let Some(mut input) = input.take() { let _ = input.write_all(b"cancel\n"); }
+            stopping_at = Some(Instant::now());
+        }
+        if stopping_at.is_some_and(|started: Instant| started.elapsed() >= Duration::from_secs(2)) {
             let _ = child.kill();
             let _ = child.wait();
-            return Err("Environment setup cancelled".into());
+            return Err(stop_reason.unwrap_or_else(|| cancellation_message.to_string()));
         }
         if let Ok(status) = completed_rx.try_recv() {
             // The wrapper has finished and stopped its cancellation watcher. Only
@@ -995,7 +1033,8 @@ fn run_setup_process(command: &mut Command, cancelled: &AtomicBool, context: &st
         }
     };
     drop(input);
-    if cancelled.load(Ordering::SeqCst) { return Err("Environment setup cancelled".into()); }
+    if let Some(reason) = stop_reason { return Err(reason); }
+    if cancelled.load(Ordering::SeqCst) { return Err(cancellation_message.into()); }
     // Collect final diagnostics without waiting indefinitely on inherited descriptors.
     let _ = done_rx.recv_timeout(Duration::from_millis(100));
     let stderr = retained.lock().map_err(|_| "Setup output lock was poisoned")?.clone();
@@ -1135,6 +1174,38 @@ fn git_branch(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<Op
     if !output.status.success() { return Ok(None); }
     let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
     Ok((!branch.is_empty()).then_some(branch))
+}
+
+fn inspect_git_project_kind(settings: &AppSettings, cwd: &str, host_id: &str) -> Result<ProjectKind, String> {
+    let script = format!(r#"[ -d {cwd} ] || {{ printf 'Project directory does not exist' >&2; exit 3; }}
+git_dir=$(git -C {cwd} rev-parse --absolute-git-dir 2>/dev/null) || {{ printf 'no-repo'; exit 0; }}
+common_dir=$(git -C {cwd} rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 1
+git_dir=$(cd -- "$git_dir" && pwd -P) || exit 1
+common_dir=$(cd -- "$common_dir" && pwd -P) || exit 1
+if [ "$git_dir" = "$common_dir" ]; then printf 'main'; else printf 'worktree'; fi"#, cwd = shell_quote(cwd));
+    let mut command = if host_id == "local" {
+        let mut command = Command::new("sh"); command.args(["-c", &script]); command
+    } else {
+        let host = remote_host(settings, host_id)?;
+        let mut command = ssh(host); command.arg(remote_login_command(&script)); command
+    };
+    let output = run_limited(&mut command, 64 * 1024, "Could not inspect project Git repository")?;
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if error.is_empty() { "Could not inspect project Git repository".into() } else { error });
+    }
+    match output.stdout.as_slice() {
+        b"no-repo" => Ok(ProjectKind::NoRepo),
+        b"main" => Ok(ProjectKind::Main),
+        b"worktree" => Ok(ProjectKind::Worktree),
+        _ => Err("Git returned an unknown project kind".into()),
+    }
+}
+
+#[tauri::command(async)]
+fn git_project_kind(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<ProjectKind, String> {
+    let settings = load_app_settings(app)?;
+    inspect_git_project_kind(&settings, &cwd, host_id.as_deref().unwrap_or("local"))
 }
 
 fn worktree_suffix(name: &str) -> Result<&str, String> {
@@ -1323,6 +1394,169 @@ fn create_git_worktree(app: AppHandle, cwd: String, name: String, host_id: Optio
     })();
     if let Err(error) = copy_result { remove_created_worktree(&root, &target, &branch); return Err(error); }
     Ok(GitWorktree { branch, path: target.to_string_lossy().into_owned() })
+}
+
+struct WorktreeRemovalTarget { path: String, source: String, branch: Option<String> }
+
+fn canonical_worktree_roots(settings: &AppSettings, host_id: &str, paths: &[String]) -> Result<Vec<Option<String>>, String> {
+    let script = r#"command -v git >/dev/null 2>&1 || exit 2
+for path do
+    if root=$(git -C "$path" rev-parse --show-toplevel 2>/dev/null) && root=$(cd -- "$root" 2>/dev/null && pwd -P); then
+        printf '%s\000' "$root"
+    else
+        printf '\000'
+    fi
+done"#;
+    let host = if host_id == "local" { None } else { Some(remote_host(settings, host_id)?) };
+    let mut roots = Vec::with_capacity(paths.len());
+    for batch in paths.chunks(128) {
+        let mut command = if let Some(host) = host {
+            let arguments = batch.iter().map(|path| shell_quote(path)).collect::<Vec<_>>().join(" ");
+            let remote = format!("sh -c {} sh {arguments}", shell_quote(script));
+            let mut command = ssh(host); command.arg(remote_login_command(&remote)); command
+        } else {
+            let mut command = Command::new("sh"); command.args(["-c", script, "sh"]).args(batch); command
+        };
+        let context = host.map(|host| format!("Could not resolve worktree paths on {}", host.name)).unwrap_or_else(|| "Could not resolve worktree paths".into());
+        let output = run_limited(&mut command, MAX_GIT_PATH_LIST_BYTES, &context)?;
+        if !output.status.success() {
+            let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if error.is_empty() { context } else { format!("{context}: {error}") });
+        }
+        let fields = output.stdout.strip_suffix(&[0]).ok_or("Incomplete worktree path details")?.split(|byte| *byte == 0).collect::<Vec<_>>();
+        if fields.len() != batch.len() { return Err("Could not resolve every worktree path".into()); }
+        roots.extend(fields.into_iter().map(|field| (!field.is_empty()).then(|| String::from_utf8_lossy(field).into_owned())));
+    }
+    Ok(roots)
+}
+
+#[tauri::command]
+async fn git_worktree_roots(app: AppHandle, paths: Vec<String>, host_id: Option<String>) -> Result<Vec<Option<String>>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = load_app_settings(app)?;
+        canonical_worktree_roots(&settings, host_id.as_deref().unwrap_or("local"), &paths)
+    }).await.map_err(|error| error.to_string())?
+}
+
+fn sessions_on_host(settings: &AppSettings, index: &SessionIndexRuntime, host_id: &str) -> Result<Vec<SessionSummary>, String> {
+    if host_id == "local" {
+        let root = ensure_desktop_sessions_dir(&home_dir()?)?;
+        return list_local_sessions(index, &root);
+    }
+    let host = remote_host(settings, host_id)?;
+    list_remote_sessions(index, host).map_err(|error| format!("Could not verify conversations on {}: {error}", host.name))
+}
+
+fn inspect_worktree_removal(settings: &AppSettings, cwd: &str, host_id: &str) -> Result<WorktreeRemovalTarget, String> {
+    let script = format!(r#"target=$(git -C {cwd} rev-parse --show-toplevel 2>/dev/null) || {{ printf 'Project is not a Git repository' >&2; exit 1; }}
+target=$(cd -- "$target" && pwd -P) || exit 1
+git_dir=$(git -C "$target" rev-parse --absolute-git-dir) || exit 1
+common_dir=$(git -C "$target" rev-parse --path-format=absolute --git-common-dir) || exit 1
+git_dir=$(cd -- "$git_dir" && pwd -P) || exit 1
+common_dir=$(cd -- "$common_dir" && pwd -P) || exit 1
+[ "$git_dir" != "$common_dir" ] || {{ printf 'The main checkout cannot be deleted as a worktree' >&2; exit 1; }}
+worktree_list=$(mktemp "${{TMPDIR:-/tmp}}/piop-worktree-list.XXXXXX") || exit 1
+trap 'rm -f -- "$worktree_list"' EXIT
+git -C "$target" worktree list --porcelain -z >"$worktree_list" || exit 1
+source=
+record_path=
+target_locked=0
+target_lock_reason=
+while IFS= read -r -d '' field; do
+    case "$field" in
+        "worktree "*)
+            record_path=${{field#worktree }}
+            [ -n "$source" ] || source=$record_path
+            ;;
+        locked)
+            if [ "$record_path" = "$target" ]; then target_locked=1; fi
+            ;;
+        "locked "*)
+            if [ "$record_path" = "$target" ]; then target_locked=1; target_lock_reason=${{field#locked }}; fi
+            ;;
+        "") record_path= ;;
+    esac
+done <"$worktree_list"
+[ -n "$source" ] || {{ printf 'Could not locate the main checkout' >&2; exit 1; }}
+[ "$target_locked" -eq 0 ] || {{
+    if [ -n "$target_lock_reason" ]; then printf 'Worktree is locked: %s' "$target_lock_reason" >&2; else printf 'Worktree is locked; unlock it before deletion' >&2; fi
+    exit 1
+}}
+source=$(cd -- "$source" && pwd -P) || exit 1
+status=$(git -C "$target" status --porcelain=v1 --untracked-files=normal) || exit 1
+[ -z "$status" ] || {{ printf 'Worktree has uncommitted or untracked changes; commit or remove them before deletion' >&2; exit 1; }}
+branch=$(git -C "$target" symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=
+printf '%s\000%s\000%s\000' "$target" "$source" "$branch""#, cwd = shell_quote(cwd));
+    let mut command = if host_id == "local" {
+        let mut command = Command::new("bash"); command.args(["-c", &script]); command
+    } else {
+        let host = remote_host(settings, host_id)?;
+        let mut command = ssh(host); command.arg(remote_login_command(&script)); command
+    };
+    let output = run_limited(&mut command, 64 * 1024, "Could not inspect Git worktree")?;
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if error.is_empty() { "Could not inspect Git worktree".into() } else { error });
+    }
+    let fields = output.stdout.split(|byte| *byte == 0).collect::<Vec<_>>();
+    if fields.len() < 4 || fields[0].is_empty() || fields[1].is_empty() { return Err("Git returned incomplete worktree details".into()); }
+    Ok(WorktreeRemovalTarget {
+        path: String::from_utf8_lossy(fields[0]).into_owned(),
+        source: String::from_utf8_lossy(fields[1]).into_owned(),
+        branch: (!fields[2].is_empty()).then(|| String::from_utf8_lossy(fields[2]).into_owned()),
+    })
+}
+
+fn remove_git_worktree_blocking(app: AppHandle, cwd: String, host_id: Option<String>, delete_branch: bool) -> Result<GitWorktreeRemoval, String> {
+    let host_id = host_id.unwrap_or_else(|| "local".into());
+    let settings = load_app_settings(app.clone())?;
+    let runtime = app.state::<PiRuntime>();
+    let terminals = app.state::<TerminalRuntime>();
+    let session_index = app.state::<SessionIndexRuntime>();
+    let target = inspect_worktree_removal(&settings, &cwd, &host_id)?;
+    let session_paths = sessions_on_host(&settings, &session_index, &host_id)?.into_iter().map(|session| session.cwd).collect::<Vec<_>>();
+    let conversations = canonical_worktree_roots(&settings, &host_id, &session_paths)?.into_iter().filter(|root| root.as_deref() == Some(target.path.as_str())).count();
+    if conversations > 0 {
+        return Err(format!("Archive or relocate the {conversations} conversation{} using this worktree before deleting it", if conversations == 1 { "" } else { "s" }));
+    }
+    let agent_paths = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values().filter(|agent| agent.host_id == host_id).filter_map(|agent| agent.worktree.clone()).collect::<Vec<_>>();
+    if canonical_worktree_roots(&settings, &host_id, &agent_paths)?.into_iter().any(|root| root.as_deref() == Some(target.path.as_str())) {
+        return Err("Close every conversation using this worktree before deleting it".into());
+    }
+    let terminal_paths = terminals.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.values().filter(|terminal| terminal.host_id == host_id).map(|terminal| terminal.cwd.clone()).collect::<Vec<_>>();
+    if canonical_worktree_roots(&settings, &host_id, &terminal_paths)?.into_iter().any(|root| root.as_deref() == Some(target.path.as_str())) {
+        return Err("Close every terminal using this worktree before deleting it".into());
+    }
+    run_worktree_scripts(&settings, &target.source, &target.path, &host_id, &AtomicBool::new(false), WorktreeScriptPhase::Cleanup)?;
+    let removed = if host_id == "local" {
+        run_limited(Command::new("git").arg("-C").arg(&target.source).args(["worktree", "remove"]).arg(&target.path), 64 * 1024, "Could not remove Git worktree")?
+    } else {
+        let host = remote_host(&settings, &host_id)?;
+        run_limited(ssh(host).arg(format!("git -C {} worktree remove -- {}", shell_quote(&target.source), shell_quote(&target.path))), 64 * 1024, &format!("Could not remove Git worktree on {}", host.name))?
+    };
+    if !removed.status.success() {
+        let error = String::from_utf8_lossy(&removed.stderr).trim().to_string();
+        return Err(if error.is_empty() { "Could not remove Git worktree".into() } else { error });
+    }
+    if !delete_branch { return Ok(GitWorktreeRemoval { branch: target.branch, branch_deleted: false, warning: None }); }
+    let Some(branch) = target.branch.as_deref() else {
+        return Ok(GitWorktreeRemoval { branch: None, branch_deleted: false, warning: Some("The detached worktree was removed; there was no branch to delete".into()) });
+    };
+    let deleted = if host_id == "local" {
+        run_limited(Command::new("git").arg("-C").arg(&target.source).args(["branch", "-d", "--", branch]), 64 * 1024, "Could not delete Git branch")?
+    } else {
+        let host = remote_host(&settings, &host_id)?;
+        run_limited(ssh(host).arg(format!("git -C {} branch -d -- {}", shell_quote(&target.source), shell_quote(branch))), 64 * 1024, &format!("Could not delete Git branch on {}", host.name))?
+    };
+    if deleted.status.success() { return Ok(GitWorktreeRemoval { branch: target.branch, branch_deleted: true, warning: None }); }
+    let detail = String::from_utf8_lossy(&deleted.stderr).trim().to_string();
+    let warning = if detail.is_empty() { format!("Worktree removed, but branch '{branch}' could not be deleted") } else { format!("Worktree removed, but branch '{branch}' was kept:\n{detail}") };
+    Ok(GitWorktreeRemoval { branch: target.branch, branch_deleted: false, warning: Some(warning) })
+}
+
+#[tauri::command]
+async fn remove_git_worktree(app: AppHandle, cwd: String, host_id: Option<String>, delete_branch: bool) -> Result<GitWorktreeRemoval, String> {
+    tauri::async_runtime::spawn_blocking(move || remove_git_worktree_blocking(app, cwd, host_id, delete_branch)).await.map_err(|error| error.to_string())?
 }
 
 fn valid_remote_snapshot(snapshot: &GitSnapshotToken) -> bool {
@@ -1876,7 +2110,7 @@ fn start_terminal(app: AppHandle, runtime: State<TerminalRuntime>, terminal_id: 
     });
     let (input, queued) = mpsc::sync_channel::<String>(32);
     thread::spawn(move || { while let Ok(data) = queued.recv() { if writer.write_all(data.as_bytes()).and_then(|_| writer.flush()).is_err() { break; } } });
-    processes.insert(terminal_id, TerminalProcess { session_key, master: pair.master, child, writer: input });
+    processes.insert(terminal_id, TerminalProcess { session_key, cwd, host_id, master: pair.master, child, writer: input });
     Ok(())
 }
 
@@ -2562,7 +2796,7 @@ pub fn run() {
         }
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
-    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_groups, change_session_groups, list_hooks, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, create_project_worktree, create_git_worktree, prepare_worktree_setup, cancel_worktree_setup, run_worktree_setup, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).build(context).expect("error while building piop").run(|app, event| {
+    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_groups, change_session_groups, list_hooks, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, git_project_kind, git_worktree_roots, create_project_worktree, create_git_worktree, remove_git_worktree, prepare_worktree_setup, cancel_worktree_setup, run_worktree_setup, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).build(context).expect("error while building piop").run(|app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
             let broker = app.state::<BrokerRuntime>(); broker.closing.store(true, Ordering::SeqCst);
             let jobs = broker.jobs.lock().map(|mut jobs| jobs.drain().map(|(_, child)| child).collect::<Vec<_>>()).unwrap_or_default();

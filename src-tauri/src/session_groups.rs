@@ -11,6 +11,8 @@ pub struct SessionGroup {
     pub cwd: Option<String>,
     pub host_id: Option<String>,
     pub host_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_kind: Option<super::ProjectKind>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -101,13 +103,15 @@ pub fn change_session_groups(change: GroupChange) -> Result<SessionGroups, Strin
             if project.cwd.as_ref().is_none_or(|cwd| cwd.trim().is_empty()) { return Err("Enter a project directory".into()); }
             state.removed_projects.remove(&project.id);
             if let Some(key) = key { state.assignments.insert(key, Some(project.id.clone())); }
-            if !state.groups.iter().any(|group| group.id == project.id) { state.groups.insert(0, project); }
+            if let Some(group) = state.groups.iter_mut().find(|group| group.id == project.id) {
+                if project.project_kind.is_some() { group.project_kind = project.project_kind; }
+            } else { state.groups.insert(0, project); }
         }
         GroupChange::Create { name } => {
             let name = name.trim();
             if name.is_empty() { return Err("Enter a group name".into()); }
             if state.groups.iter().any(|group| group.name.to_lowercase() == name.to_lowercase()) { return Err("A group already uses that name".into()); }
-            state.groups.insert(0, SessionGroup { id: format!("__pi-desktop-custom-group__:{}", uuid::Uuid::new_v4()), name: name.into(), cwd: None, host_id: None, host_name: None });
+            state.groups.insert(0, SessionGroup { id: format!("__pi-desktop-custom-group__:{}", uuid::Uuid::new_v4()), name: name.into(), cwd: None, host_id: None, host_name: None, project_kind: None });
         }
         GroupChange::Rename { id, name } => {
             let name = name.trim();

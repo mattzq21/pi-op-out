@@ -21,7 +21,10 @@ export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; se
 export const loadSessionGroups = (seeds: SessionGroupSeed[], legacy: SessionGroups) => call<SessionGroups>("load_session_groups", { seeds, legacy });
 export const changeSessionGroups = (change: GroupChange) => call<SessionGroups>("change_session_groups", { change });
 export const openGroupDirectory = (cwd: string, hostId: string) => call<void>("open_project_directory", { cwd, hostId });
+export const gitProjectKind = (cwd: string, hostId: string) => call<"no-repo" | "main" | "worktree">("git_project_kind", { cwd, hostId });
+export const gitWorktreeRoots = (paths: string[], hostId: string) => call<Array<string | null>>("git_worktree_roots", { paths, hostId });
 export interface GitWorktree { branch: string; path: string; }
+export interface GitWorktreeRemoval { branch?: string; branchDeleted: boolean; warning?: string; }
 
 export const openExternalUrl = (url: string) => call<void>("open_external_url", { url });
 export interface HookListing { directory: string; exists: boolean; hooks: Array<{ name: string; path: string; entry: string }> }
@@ -516,6 +519,7 @@ export class NativeTransport {
   openProjectDirectory(cwd: string, hostId = "local") { return call<void>("open_project_directory", { cwd, hostId }); }
   createProjectWorktree(cwd: string, name: string, hostId = "local") { return call<GitWorktree>("create_project_worktree", { cwd, name, hostId }); }
   createGitWorktree(cwd: string, name: string, hostId = "local") { return call<GitWorktree>("create_git_worktree", { cwd, name, hostId }); }
+  removeGitWorktree(cwd: string, hostId = "local", deleteBranch = false) { return call<GitWorktreeRemoval>("remove_git_worktree", { cwd, hostId, deleteBranch }); }
   async runWorktreeSetup(cwd: string, worktreePath: string, hostId = "local", onSetup?: (cancel: (() => Promise<void>) | undefined) => void) {
     const setupId = await call<string>("prepare_worktree_setup");
     onSetup?.(() => call<void>("cancel_worktree_setup", { setupId }));

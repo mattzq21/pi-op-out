@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionSummary } from "../types";
 import { changeSessionGroups, loadSessionGroups } from "./nativeTransport";
 
-export interface SessionGroup { id: string; name: string; cwd?: string | null; hostId?: string | null; hostName?: string | null; }
+export interface SessionGroup { id: string; name: string; cwd?: string | null; hostId?: string | null; hostName?: string | null; projectKind?: "no-repo" | "main" | "worktree" | null; }
 export interface SessionGroups { groups: SessionGroup[]; assignments: Record<string, string | null>; removedProjects: string[]; }
 export interface SessionGroupSeed { sessionKey: string; project: SessionGroup; }
 export type GroupChange = { type: "create"; name: string } | { type: "project"; project: SessionGroup; key?: string } | { type: "rename"; id: string; name: string } | { type: "remove"; id: string } | { type: "assign"; key: string; group: string | null };
@@ -68,7 +68,7 @@ export function useSessionGroups(sessions: SessionSummary[]) {
   }, []);
   const seedsJson = JSON.stringify(sessions.filter((session) => !isTemporaryChatCwd(session.cwd)).map((session): SessionGroupSeed => ({
     sessionKey: `${session.hostId ?? "local"}:${session.id}`,
-    project: { id: `${session.hostId ?? "local"}:${session.projectRoot ?? session.cwd}`, name: session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project, cwd: session.projectRoot ?? session.cwd, hostId: session.hostId ?? "local", hostName: session.hostName ?? session.hostId ?? "Local" },
+    project: { id: `${session.hostId ?? "local"}:${session.projectRoot ?? session.cwd}`, name: session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project, cwd: session.projectRoot ?? session.cwd, hostId: session.hostId ?? "local", hostName: session.hostName ?? session.hostId ?? "Local", projectKind: session.projectKind },
   })).sort((a, b) => a.sessionKey.localeCompare(b.sessionKey)));
   useEffect(() => {
     const seeds: SessionGroupSeed[] = JSON.parse(seedsJson);

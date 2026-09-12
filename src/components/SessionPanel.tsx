@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { Archive, ChevronDown, Columns2, CopyPlus, Ellipsis, Folder, FolderOpen, FolderGit2, GitBranch, MessageSquarePlus, Pencil, Search, Trash2 } from "lucide-react";
 import type { SessionSummary } from "../types";
 import { isTemporaryChatCwd, useSessionGroups, type SessionGroup } from "../lib/sessionGroups";
-import { openGroupDirectory } from "../lib/nativeTransport";
+import { gitProjectKind, gitWorktreeRoots, openGroupDirectory } from "../lib/nativeTransport";
 import { RemoveGroupDialog } from "./RemoveGroupDialog";
+import { RemoveWorktreeDialog } from "./RemoveWorktreeDialog";
 
 export type SessionAction = "split" | "rename" | "clone" | "open-directory" | "archive";
-interface Props { sessions: SessionSummary[]; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; onNewChat: (group: SessionGroup) => void; onCreateWorktree: (cwd: string, hostId: string) => void; createGroupRequest?: number; onCreateGroupHandled?: () => void; }
+interface Props { sessions: SessionSummary[]; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; onNewChat: (group: SessionGroup) => void; onCreateWorktree: (cwd: string, hostId: string) => void; onDeleteWorktree: (cwd: string, hostId: string, deleteBranch: boolean) => Promise<void>; createGroupRequest?: number; onCreateGroupHandled?: () => void; }
 type CustomGroup = SessionGroup;
 interface DraggedSession { projectKey: string; sessionKey: string; session: SessionSummary; }
 interface DropTarget { projectKey: string; sessionKey: string; edge: "before" | "after"; layoutBefore?: string | null; }
@@ -83,13 +84,14 @@ function formatApiCost(cost = 0) {
   return `$${cost.toFixed(2)}`;
 }
 
-export function SessionPanel({ sessions, activeId, activeHostId = "local", runningSessions = new Set(), unseenSessions = new Set(), query, onQuery, onSelect, onAction, onNewChat, onCreateWorktree, createGroupRequest = 0, onCreateGroupHandled }: Props) {
+export function SessionPanel({ sessions, activeId, activeHostId = "local", runningSessions = new Set(), unseenSessions = new Set(), query, onQuery, onSelect, onAction, onNewChat, onCreateWorktree, onDeleteWorktree, createGroupRequest = 0, onCreateGroupHandled }: Props) {
   const [menu, setMenu] = useState<{ session: SessionSummary; x: number; y: number; returnFocus?: HTMLElement }>();
   const [groupMenu, setGroupMenu] = useState<{ projectKey: string; label: string; x: number; y: number; returnFocus: HTMLElement }>();
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => savedGroupKeys(COLLAPSED_PROJECTS_KEY));
   const { state: storedGroups, error: groupStorageError, change: changeGroup } = useSessionGroups(sessions);
   const customGroups = storedGroups?.groups.filter((group) => !group.cwd) ?? [];
   const [removingGroup, setRemovingGroup] = useState<{ id: string; name: string }>();
+  const [removingWorktree, setRemovingWorktree] = useState<{ id: string; name: string; cwd: string; hostId: string; conversationCount: number }>();
   const [groupSaving, setGroupSaving] = useState(false);
   const groupSavePending = useRef(false);
   const [groupActionError, setGroupActionError] = useState<string>();
@@ -114,6 +116,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   const groupedSessionsRef = useRef<Map<string, SessionSummary[]>>(new Map());
   const sidebarEntriesRef = useRef<string[]>([]);
   const removeMouseListenersRef = useRef<() => void>(() => {});
+  const projectKindInspectionsRef = useRef(new Set<string>());
   const closeMenu = (restoreFocus = false) => { const target = groupMenu?.returnFocus ?? menu?.returnFocus; setMenu(undefined); setGroupMenu(undefined); if (restoreFocus) requestAnimationFrame(() => target?.focus()); };
   useEffect(() => {
     if (!menu && !groupMenu) return;
@@ -144,6 +147,20 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   }, [newGroupName === undefined, editingGroupId]);
   useEffect(() => () => { removeMouseListenersRef.current(); if (autoScrollFrameRef.current !== undefined) cancelAnimationFrame(autoScrollFrameRef.current); }, []);
   useEffect(() => { if (menu && !sessions.some((session) => sessionKey(session) === sessionKey(menu.session))) closeMenu(); }, [menu, sessions]);
+  useEffect(() => {
+    for (const group of storedGroups?.groups ?? []) {
+      if (!group.cwd || group.projectKind || projectKindInspectionsRef.current.has(group.id)) continue;
+      projectKindInspectionsRef.current.add(group.id);
+      void gitProjectKind(group.cwd, group.hostId ?? "local")
+        .then((projectKind) => changeGroup({ type: "project", project: { ...group, projectKind } }))
+        .catch(() => undefined);
+    }
+  }, [changeGroup, storedGroups?.groups]);
+  const inferredWorktreeGroup = storedGroups?.groups.find((group) => group.cwd && group.projectKind !== "worktree" && sessions.some((session) => (session.hostId ?? "local") === (group.hostId ?? "local") && session.cwd === group.cwd && session.projectKind === "worktree"));
+  useEffect(() => {
+    if (!inferredWorktreeGroup) return;
+    void changeGroup({ type: "project", project: { ...inferredWorktreeGroup, projectKind: "worktree" } }).catch(() => undefined);
+  }, [changeGroup, inferredWorktreeGroup?.id]);
   const groupNameTaken = (name: string, excludedId?: string) => sidebarCollator.compare(RECENT_LABEL, name.trim()) === 0 || storedGroups?.groups.some((group) => group.id !== excludedId && sidebarCollator.compare(group.name.trim(), name.trim()) === 0);
   const finishGroup = async (cancel = false) => {
     if (!groupDraftActive.current || groupSavePending.current) return;
@@ -386,17 +403,36 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
     <button className="session-main" aria-label={`${session.name}, ${projectKindLabel(session)}, ${formatApiCost(session.apiCost)}${accessibleActivity ? `, ${accessibleActivity}` : ""}`} aria-current={activeId === session.id && (session.hostId ?? "local") === activeHostId ? "page" : undefined} aria-description={!normalizedQuery ? "Press Alt plus Up or Down to reorder. Add Shift to move between groups." : undefined} aria-keyshortcuts={!normalizedQuery ? "Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown" : undefined} title={session.name} onMouseDown={(event) => startMouseDrag(event, drag)} onKeyDown={(event) => { if (!normalizedQuery && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); moveSessionByKeyboard(drag, event.key === "ArrowUp" ? -1 : 1, event.shiftKey); } }} onClick={(event) => { if (suppressClickRef.current === sessionLayoutToken(key)) { suppressClickRef.current = undefined; event.preventDefault(); return; } onSelect(session); }}><span className="session-copy"><span className="session-title-row">{session.projectKind !== "no-repo" && <SessionProjectIcon session={session} />}<strong>{session.name}</strong><span className="session-api-cost" title="Would-be API cost">{formatApiCost(session.apiCost)}</span></span></span></button>
     <button className="session-archive" aria-label={`Archive ${session.name}`} title={`Archive ${session.name}`} onClick={() => onAction(session, "archive")}><Archive size={14} /></button>
   </div>; };
+  const prepareWorktreeRemoval = async (id: string, name: string, group: SessionGroup) => {
+    const cwd = group.cwd!; const hostId = group.hostId ?? "local";
+    const hostSessions = sessions.filter((session) => (session.hostId ?? "local") === hostId);
+    setGroupActionError(undefined);
+    try {
+      const [targetRoot, ...conversationRoots] = await gitWorktreeRoots([cwd, ...hostSessions.map((session) => session.cwd)], hostId);
+      if (!targetRoot) throw new Error("Could not resolve the worktree directory");
+      setRemovingWorktree({ id, name, cwd, hostId, conversationCount: conversationRoots.filter((root) => root === targetRoot).length });
+    } catch (reason) { setGroupActionError(reason instanceof Error ? reason.message : String(reason)); }
+  };
   const groupsByToken = new Map(groups.map((group) => [groupLayoutToken(group[0]), group] as const));
   const activeMenu = groupMenu ?? menu;
   const groupDirectory = groupMenu ? storedGroups?.groups.find((group) => group.id === groupMenu.projectKey && group.cwd) : undefined;
+  const groupDirectorySession = groupDirectory && sessions.find((session) => (session.hostId ?? "local") === (groupDirectory.hostId ?? "local") && session.cwd === groupDirectory.cwd);
+  const isWorktreeGroup = groupDirectory?.projectKind === "worktree" || groupDirectorySession?.projectKind === "worktree";
   const menuItems = groupMenu ? [
     { label: "Open directory", Icon: FolderOpen, disabled: !groupDirectory, run: () => { if (groupDirectory?.cwd) { setGroupActionError(undefined); void openGroupDirectory(groupDirectory.cwd, groupDirectory.hostId ?? "local").catch((reason) => setGroupActionError(String(reason))); } } },
     { label: "Create worktree", Icon: GitBranch, disabled: !groupDirectory, run: () => { if (groupDirectory?.cwd) onCreateWorktree(groupDirectory.cwd, groupDirectory.hostId ?? "local"); } },
-    { label: "Remove", Icon: Trash2, disabled: false, run: () => setRemovingGroup({ id: groupMenu.projectKey, name: groupMenu.label }) },
+    ...(isWorktreeGroup && groupDirectory?.cwd ? [{ label: "Delete worktree…", Icon: Trash2, disabled: false, run: () => void prepareWorktreeRemoval(groupMenu.projectKey, groupMenu.label, groupDirectory) }] : []),
+    { label: "Forget group", Icon: Trash2, disabled: false, run: () => setRemovingGroup({ id: groupMenu.projectKey, name: groupMenu.label }) },
   ] : menu ? actions.filter(([action]) => action !== "split" || menu.session.id !== activeId || (menu.session.hostId ?? "local") !== activeHostId).map(([action, Icon, label]) => ({ label, Icon, disabled: false, run: () => onAction(menu.session, action) })) : [];
   const renderDropZone = (beforeToken: string | null) => <div key={`drop-${beforeToken ?? "end"}`} data-sidebar-drop-zone data-sidebar-before={beforeToken ?? undefined} data-sidebar-end={beforeToken === null ? true : undefined} className={`sidebar-drop-zone ${dropTarget?.layoutBefore === beforeToken ? "active" : ""}`} />;
   return <aside className="session-panel">
     {removingGroup && <RemoveGroupDialog name={removingGroup.name} onCancel={() => setRemovingGroup(undefined)} onRemove={async () => { await removeGroup(removingGroup.id); setRemovingGroup(undefined); }} />}
+    {removingWorktree && <RemoveWorktreeDialog name={removingWorktree.name} path={removingWorktree.cwd} conversationCount={removingWorktree.conversationCount} onCancel={() => setRemovingWorktree(undefined)} onRemove={async (deleteBranch) => {
+      await onDeleteWorktree(removingWorktree.cwd, removingWorktree.hostId, deleteBranch);
+      try { await removeGroup(removingWorktree.id); }
+      catch (reason) { setGroupActionError(`Worktree deleted, but its sidebar group could not be forgotten: ${String(reason)}`); }
+      setRemovingWorktree(undefined);
+    }} />}
     <label className="search"><Search size={15} /><input ref={searchRef} aria-label="Search conversations" placeholder="Search conversations" value={query} onChange={(event) => onQuery(event.target.value)} /><kbd>Ctrl G</kbd></label>
     <div ref={sessionScrollRef} className="session-scroll">
       {(groupStorageError || groupActionError) && <p className="group-error" role="alert">{groupStorageError || groupActionError}</p>}
