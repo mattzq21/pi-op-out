@@ -8,7 +8,7 @@ export interface SessionGroupSeed { sessionKey: string; project: SessionGroup; }
 export type GroupChange = { type: "create"; name: string } | { type: "project"; project: SessionGroup; key?: string } | { type: "rename"; id: string; name: string } | { type: "remove"; id: string } | { type: "assign"; key: string; group: string | null };
 
 export function isTemporaryChatCwd(cwd: string) {
-  return /(?:^|[\\/])\.piop[\\/]tmp(?:[\\/]|$)/.test(cwd);
+  return /(?:^|[\\/])\.piop[\\/]tmp[\\/][0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}[\\/]?$/i.test(cwd);
 }
 
 const listeners = new Set<(state: SessionGroups) => void>();
