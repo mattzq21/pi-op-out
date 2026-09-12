@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { Blocks, BookOpen, Bot, Check, CircleGauge, CirclePlus, Cpu, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Sparkles, Trash2, Wrench, Zap } from "lucide-react";
+import { Blocks, BookOpen, Bot, Check, CircleGauge, CirclePlus, Cpu, HardDrive, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Sparkles, Trash2, Wrench, Zap } from "lucide-react";
 import { HooksSettings, HookIcon } from "./HooksSettings";
+import { StorageSettings } from "./StorageSettings";
 import type { AgentProfile, AppSettings, McpServer, Model, AgentConfig, RemoteHost, SessionSummary } from "../types";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutFromEvent, type KeybindAction } from "../lib/keybindings";
 import { IconButton } from "./IconButton";
 import { Toggle } from "./Toggle";
 
-type Section = "general" | "environment" | "dictionaries" | "agents" | "machines" | "keybinds" | "tools" | "skills" | "hooks" | "mcp";
+type Section = "general" | "storage" | "environment" | "dictionaries" | "agents" | "machines" | "keybinds" | "tools" | "skills" | "hooks" | "mcp";
 const sections = [
   { id: "general" as const, label: "General", icon: Settings2 },
+  { id: "storage" as const, label: "Storage", icon: HardDrive },
   { id: "environment" as const, label: "Worktree scripts", icon: Wrench },
   { id: "keybinds" as const, label: "Keybinds", icon: Keyboard },
   { id: "machines" as const, label: "Machines", icon: Server },
@@ -198,6 +200,7 @@ export function SettingsView({ settings, pendingSettingsCount = 0, agentConfig: 
             </div>}
           </div>
         </SettingsSection>}
+        {visibleSection === "storage" && <StorageSettings />}
         {visibleSection === "machines" && <SettingsSection title="Machines" description="Run projects through Pi installations reachable with SSH."><div className="mcp-list"><div className="mcp-card"><div className="mcp-card-head"><span className="config-icon mcp"><Server size={16} /></span><strong>Local</strong><code>This machine</code></div></div>{draft.hosts.map((host) => <div className="mcp-card" key={host.id}><div className="mcp-card-head"><span className="config-icon mcp"><Server size={16} /></span><input aria-label="Machine name" aria-invalid={!host.name.trim() || host.name.trim().toLowerCase() === "local" || duplicateHostNames.has(host.name.trim().toLowerCase())} value={host.name} onChange={(event) => updateHost(host.id, { name: event.target.value })} /><IconButton label={`Remove ${host.name}`} onClick={() => removeHost(host)}><Trash2 size={15} /></IconButton></div><div className="command-fields"><label><span>SSH target</span><input aria-label={`${host.name} SSH target`} aria-invalid={!host.target.trim()} placeholder="user@example.com" value={host.target} onChange={(event) => updateHost(host.id, { target: event.target.value })} /></label><label><span>Pi executable</span><input aria-label={`${host.name} Pi executable`} aria-invalid={!host.piPath.trim()} placeholder="pi" value={host.piPath} onChange={(event) => updateHost(host.id, { piPath: event.target.value })} /></label></div></div>)}</div><button className="secondary-button" disabled={draft.hosts.length >= 16} onClick={addHost}><CirclePlus size={15} />Add machine</button></SettingsSection>}
         {visibleSection === "keybinds" && <SettingsSection title="Keybinds" description="Customize global application shortcuts."><div className="keybind-list">{keybindDefinitions.map((binding) => <label className="keybind-row" key={binding.action}><span><strong>{binding.label}</strong><small>{binding.description}</small></span><KeybindInput action={binding.action} value={draft.keybindings[binding.action]} invalid={duplicateShortcuts.has(draft.keybindings[binding.action].trim().toLowerCase())} onChange={(shortcut) => setDraft((current) => ({ ...current, keybindings: { ...current.keybindings, [binding.action]: shortcut } }))} /></label>)}</div><button className="secondary-button" onClick={() => patch({ keybindings: { ...defaultKeybindings } })}><RotateCcw size={15} />Restore defaults</button></SettingsSection>}
         {visibleSection === "tools" && <SettingsSection title="Tools" description="Available tools. Choose which tools each agent may use in Agents."><div className="config-list">{draft.tools.map((tool) => <div className="config-row" key={tool.name}><span className="config-icon"><Wrench size={16} /></span><span><strong>{tool.name}</strong><small>{tool.description}</small></span><code>{tool.builtin ? "built-in" : "desktop"}</code></div>)}</div></SettingsSection>}

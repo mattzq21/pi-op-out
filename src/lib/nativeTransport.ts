@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { GroupChange, SessionGroups, SessionGroupSeed } from "./sessionGroups";
-import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, PendingMessage, RpcCommand, RpcEvent, SessionSummary } from "../types";
+import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, PendingMessage, RpcCommand, RpcEvent, SessionSummary, StorageReport } from "../types";
 
 const call = <T>(command: string, args?: Record<string, unknown>) => {
   if (import.meta.env.MODE !== "e2e") return invoke<T>(command, args);
@@ -27,6 +27,8 @@ export interface GitWorktree { branch: string; path: string; }
 export interface GitWorktreeRemoval { branch?: string; branchDeleted: boolean; warning?: string; }
 
 export const openExternalUrl = (url: string) => call<void>("open_external_url", { url });
+export const loadStorageReport = () => call<StorageReport>("storage_report");
+export const deleteArchivedConversation = (sessionPath: string, hostId = "local") => call<void>("delete_archived_session", { sessionPath, hostId });
 export interface HookListing { directory: string; exists: boolean; hooks: Array<{ name: string; path: string; entry: string }> }
 export const listHooks = (hostId: string) => call<HookListing>("list_hooks", { hostId });
 export const openHooksDirectory = (cwd: string) => call<void>("open_project_directory", { cwd, hostId: "local" });

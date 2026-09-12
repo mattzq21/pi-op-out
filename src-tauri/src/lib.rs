@@ -210,6 +210,55 @@ struct TemporaryChat {
     session_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StorageCategory {
+    id: String,
+    byte_size: u64,
+    item_count: usize,
+    #[serde(default)]
+    estimated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ArchivedConversation {
+    id: String,
+    path: String,
+    name: String,
+    cwd: String,
+    modified_at: u64,
+    byte_size: u64,
+    deletable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    delete_error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StorageInventory {
+    categories: Vec<StorageCategory>,
+    archives: Vec<ArchivedConversation>,
+    #[serde(default)]
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HostStorage {
+    host_id: String,
+    host_name: String,
+    categories: Vec<StorageCategory>,
+    archives: Vec<ArchivedConversation>,
+    warnings: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StorageReport { hosts: Vec<HostStorage> }
+
 type GitDiffSnapshots = HashMap<String, String>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2423,10 +2472,72 @@ fn collect_sessions(app: &AppHandle, index: &SessionIndexRuntime) -> Result<Vec<
 #[tauri::command(async)]
 fn list_sessions(app: AppHandle, index: State<SessionIndexRuntime>) -> Result<Vec<SessionSummary>, String> { collect_sessions(&app, &index) }
 
+fn inspect_storage(host: Option<&RemoteHost>) -> Result<HostStorage, String> {
+    let script = include_str!("../resources/storage-inventory.cjs");
+    let mut command = if let Some(host) = host {
+        let mut command = ssh(host);
+        command.arg(remote_login_command(&format!("node -e {}", shell_quote(script))));
+        command
+    } else {
+        let mut command = Command::new("node");
+        command.args(["-e", script]);
+        command
+    };
+    let label = host.map(|value| value.name.as_str()).unwrap_or("Local");
+    let output = run_limited(&mut command, MAX_SESSION_INDEX_BATCH_BYTES, &format!("Could not inspect storage on {label}"))?;
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if error.is_empty() { format!("Could not inspect storage on {label}") } else { error });
+    }
+    let inventory: StorageInventory = serde_json::from_slice(&output.stdout).map_err(|error| format!("Could not read storage inventory from {label}: {error}"))?;
+    Ok(HostStorage {
+        host_id: host.map(|value| value.id.clone()).unwrap_or_else(|| "local".into()),
+        host_name: label.into(),
+        categories: inventory.categories,
+        archives: inventory.archives,
+        warnings: inventory.warnings,
+        error: None,
+    })
+}
+
+fn failed_storage(host_id: String, host_name: String, error: String) -> HostStorage {
+    HostStorage { host_id, host_name, categories: Vec::new(), archives: Vec::new(), warnings: Vec::new(), error: Some(error) }
+}
+
+#[tauri::command(async)]
+fn storage_report(app: AppHandle) -> Result<StorageReport, String> {
+    let mut hosts = vec![inspect_storage(None).unwrap_or_else(|error| failed_storage("local".into(), "Local".into(), error))];
+    let remote_hosts = load_app_settings(app)?.hosts;
+    thread::scope(|scope| {
+        let queue = Arc::new(Mutex::new(remote_hosts));
+        let (sender, receiver) = mpsc::channel();
+        for _ in 0..MAX_REMOTE_HOSTS.min(4).min(queue.lock().map(|items| items.len()).unwrap_or(0)) {
+            let queue = queue.clone(); let sender = sender.clone();
+            scope.spawn(move || loop {
+                let host = queue.lock().ok().and_then(|mut items| items.pop());
+                let Some(host) = host else { break };
+                let result = inspect_storage(Some(&host)).unwrap_or_else(|error| failed_storage(host.id.clone(), host.name.clone(), error));
+                let _ = sender.send(result);
+            });
+        }
+        drop(sender);
+        hosts.extend(receiver);
+    });
+    hosts[1..].sort_by(|left, right| left.host_name.to_lowercase().cmp(&right.host_name.to_lowercase()));
+    Ok(StorageReport { hosts })
+}
+
 fn local_desktop_session_file(session_path: &str) -> Result<PathBuf, String> {
     let root = desktop_sessions_dir(&home_dir()?).canonicalize().map_err(|error| format!("Could not locate piop sessions: {error}"))?;
     let source = PathBuf::from(session_path).canonicalize().map_err(|error| format!("Could not locate session file: {error}"))?;
     if !source.starts_with(&root) || source.extension().and_then(|value| value.to_str()) != Some("jsonl") || !source.is_file() { return Err("Only piop session files can be accessed".into()); }
+    Ok(source)
+}
+
+fn local_archived_session_file(session_path: &str) -> Result<PathBuf, String> {
+    let root = home_dir()?.join(".piop/archived").canonicalize().map_err(|error| format!("Could not locate piop archives: {error}"))?;
+    let source = PathBuf::from(session_path).canonicalize().map_err(|error| format!("Could not locate archived conversation: {error}"))?;
+    if !source.starts_with(&root) || source.extension().and_then(|value| value.to_str()) != Some("jsonl") || !source.is_file() { return Err("Only archived piop conversations can be accessed".into()); }
     Ok(source)
 }
 
@@ -2436,6 +2547,15 @@ fn desktop_session_file(settings: &AppSettings, host_id: &str, path: &str) -> Re
     let script = format!(r#"root=$(cd "$HOME/.piop/sessions" && pwd -P) && session=$(realpath -- {}) && [ -f "$session" ] && case "$session" in "$root"/*.jsonl) printf '%s' "$session" ;; *) exit 1 ;; esac"#, shell_quote(path));
     let output = run_limited(ssh(host).arg(script), MAX_GIT_PATH_LIST_BYTES, "Could not locate Piop session")?;
     if !output.status.success() { return Err("Only Piop session files in ~/.piop/sessions can be opened".into()); }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn archived_session_file(settings: &AppSettings, host_id: &str, path: &str) -> Result<String, String> {
+    if host_id == "local" { return Ok(local_archived_session_file(path)?.to_string_lossy().into_owned()); }
+    let host = remote_host(settings, host_id)?;
+    let script = format!(r#"root=$(cd "$HOME/.piop/archived" && pwd -P) && session=$(realpath -- {}) && [ -f "$session" ] && case "$session" in "$root"/*.jsonl) printf '%s' "$session" ;; *) exit 1 ;; esac"#, shell_quote(path));
+    let output = run_limited(ssh(host).arg(script), MAX_GIT_PATH_LIST_BYTES, "Could not locate archived Piop conversation")?;
+    if !output.status.success() { return Err("Only Piop conversation files in ~/.piop/archived can be deleted".into()); }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
@@ -2476,18 +2596,18 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
     Ok(())
 }
 
-#[tauri::command(async)]
-fn delete_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, host_id: Option<String>) -> Result<(), String> {
+fn delete_stored_session(app: AppHandle, runtime: &PiRuntime, session_path: String, host_id: Option<String>, archived: bool) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let settings = load_app_settings(app)?;
-    let path = desktop_session_file(&settings, &host_id, &session_path)?;
+    let path = if archived { archived_session_file(&settings, &host_id, &session_path)? } else { desktop_session_file(&settings, &host_id, &session_path)? };
     if runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values()
         .any(|agent| agent.host_id == host_id && agent.session_path.as_deref() == Some(path.as_str())) {
         return Err("Close the session before deleting it".into());
     }
     let active_session_ids: Vec<String> = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values()
         .filter(|agent| agent.host_id == host_id).filter_map(|agent| agent.session_id.clone()).collect();
-    let arguments = json!({ "path": path, "activeSessionIds": active_session_ids, "root": if host_id == "local" { Some(desktop_sessions_dir(&home_dir()?)) } else { None } }).to_string();
+    let local_root = if archived { home_dir()?.join(".piop/archived") } else { desktop_sessions_dir(&home_dir()?) };
+    let arguments = json!({ "path": path, "activeSessionIds": active_session_ids, "area": if archived { "archived" } else { "sessions" }, "root": if host_id == "local" { Some(local_root) } else { None } }).to_string();
     let script = include_str!("../resources/delete-session.cjs");
     let mut command = if host_id == "local" {
         let mut command = Command::new("node");
@@ -2503,6 +2623,16 @@ fn delete_session(app: AppHandle, runtime: State<PiRuntime>, session_path: Strin
     if output.status.success() { return Ok(()); }
     let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
     Err(if error.is_empty() { "Could not delete session".into() } else { error })
+}
+
+#[tauri::command(async)]
+fn delete_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, host_id: Option<String>) -> Result<(), String> {
+    delete_stored_session(app, &runtime, session_path, host_id, false)
+}
+
+#[tauri::command(async)]
+fn delete_archived_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, host_id: Option<String>) -> Result<(), String> {
+    delete_stored_session(app, &runtime, session_path, host_id, true)
 }
 
 #[tauri::command(async)]
@@ -2782,7 +2912,7 @@ pub fn run() {
         }
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
-    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, load_session_groups, change_session_groups, list_hooks, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, git_project_kind, git_worktree_roots, create_project_worktree, create_git_worktree, remove_git_worktree, prepare_worktree_setup, cancel_worktree_setup, run_worktree_setup, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).build(context).expect("error while building piop").run(|app, event| {
+    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, storage_report, load_session_groups, change_session_groups, list_hooks, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, git_project_kind, git_worktree_roots, create_project_worktree, create_git_worktree, remove_git_worktree, prepare_worktree_setup, cancel_worktree_setup, run_worktree_setup, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, delete_archived_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).build(context).expect("error while building piop").run(|app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
             let broker = app.state::<BrokerRuntime>(); broker.closing.store(true, Ordering::SeqCst);
             let jobs = broker.jobs.lock().map(|mut jobs| jobs.drain().map(|(_, child)| child).collect::<Vec<_>>()).unwrap_or_default();
