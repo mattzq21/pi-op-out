@@ -74,6 +74,14 @@ pub fn load_session_groups(seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Re
     let stored = read(&path)?;
     let mut dirty = stored.is_none();
     let mut state = stored.unwrap_or(legacy);
+    for group in &mut state.groups {
+        if group.name != "Workspace" { continue; }
+        let Some(cwd) = group.cwd.as_deref() else { continue; };
+        if !cwd.ends_with('/') || group.id != format!("{}:{cwd}", group.host_id.as_deref().unwrap_or("local")) { continue; }
+        if let Some(name) = cwd.rsplit('/').find(|part| !part.is_empty()) {
+            if name != group.name { group.name = name.to_owned(); dirty = true; }
+        }
+    }
     for seed in seeds {
         if state.assignments.contains_key(&seed.session_key) { continue; }
         let destination = if state.removed_projects.contains(&seed.project.id) { None } else {
