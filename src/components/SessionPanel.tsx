@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Archive, ChevronDown, Columns2, CopyPlus, Ellipsis, Folder, FolderOpen, FolderGit2, GitBranch, MessageSquarePlus, Pencil, Search, Trash2 } from "lucide-react";
 import type { SessionSummary } from "../types";
-import { useSessionGroups, type SessionGroup } from "../lib/sessionGroups";
+import { isTemporaryChatCwd, useSessionGroups, type SessionGroup } from "../lib/sessionGroups";
 import { openGroupDirectory } from "../lib/nativeTransport";
 import { RemoveGroupDialog } from "./RemoveGroupDialog";
 
@@ -19,7 +19,8 @@ const actions = [
 const COLLAPSED_PROJECTS_KEY = "pi-desktop-collapsed-projects";
 const SESSION_ORDERS_KEY = "pi-desktop-session-orders";
 const SIDEBAR_ORDER_KEY = "pi-desktop-sidebar-order";
-const UNGROUPED_KEY = "__pi-desktop-ungrouped__";
+const RECENT_KEY = "__pi-desktop-ungrouped__";
+const RECENT_LABEL = "Recent";
 const sidebarCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
 function projectKindLabel(session: SessionSummary) {
@@ -143,7 +144,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   }, [newGroupName === undefined, editingGroupId]);
   useEffect(() => () => { removeMouseListenersRef.current(); if (autoScrollFrameRef.current !== undefined) cancelAnimationFrame(autoScrollFrameRef.current); }, []);
   useEffect(() => { if (menu && !sessions.some((session) => sessionKey(session) === sessionKey(menu.session))) closeMenu(); }, [menu, sessions]);
-  const groupNameTaken = (name: string, excludedId?: string) => storedGroups?.groups.some((group) => group.id !== excludedId && sidebarCollator.compare(group.name.trim(), name.trim()) === 0);
+  const groupNameTaken = (name: string, excludedId?: string) => sidebarCollator.compare(RECENT_LABEL, name.trim()) === 0 || storedGroups?.groups.some((group) => group.id !== excludedId && sidebarCollator.compare(group.name.trim(), name.trim()) === 0);
   const finishGroup = async (cancel = false) => {
     if (!groupDraftActive.current || groupSavePending.current) return;
     const name = newGroupName?.trim();
@@ -180,7 +181,6 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
     return next;
   });
   const expandProject = (projectKey: string) => {
-    if (projectKey === UNGROUPED_KEY) return;
     setCollapsedProjects((current) => {
       if (!current.has(projectKey)) return current;
       const next = new Set(current); next.delete(projectKey);
@@ -199,7 +199,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
       try { localStorage.setItem(SESSION_ORDERS_KEY, JSON.stringify(next)); } catch { /* Persistence is best-effort. */ }
       return next;
     });
-    void changeGroup({ type: "assign", key: drag.sessionKey, group: destinationKey === UNGROUPED_KEY ? null : destinationKey }).catch(() => undefined);
+    void changeGroup({ type: "assign", key: drag.sessionKey, group: destinationKey === RECENT_KEY ? null : destinationKey }).catch(() => undefined);
   };
   const placeSidebarEntry = (token: string, beforeToken: string | null) => {
     const currentEntries = sidebarEntriesRef.current;
@@ -214,19 +214,24 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   sessions.forEach((session) => { const key = physicalProjectKey(session); if (!projectDetails.has(key)) projectDetails.set(key, session); });
   const normalizedQuery = query.trim().toLowerCase();
   const customGroupsByKey = new Map(customGroups.map((group) => [group.id, group]));
-  const visualProjectKey = (session: SessionSummary) => storedGroups?.assignments[sessionKey(session)] ?? UNGROUPED_KEY;
+  const visualProjectKey = (session: SessionSummary) => {
+    const destination = storedGroups?.assignments[sessionKey(session)];
+    if (!destination) return RECENT_KEY;
+    const group = storedGroups?.groups.find((item) => item.id === destination);
+    return group?.cwd && isTemporaryChatCwd(group.cwd) ? RECENT_KEY : destination;
+  };
   const filtered = sessions.filter((session) => {
     if (!storedGroups) return false;
     if (!normalizedQuery) return true;
     const location = visualProjectKey(session);
-    const groupName = storedGroups?.groups.find((group) => group.id === location)?.name ?? "";
+    const groupName = location === RECENT_KEY ? RECENT_LABEL : storedGroups?.groups.find((group) => group.id === location)?.name ?? "";
     return `${session.name} ${session.project} ${projectName(session)} ${session.preview} ${session.hostName ?? session.hostId ?? "Local"} ${groupName}`.toLowerCase().includes(normalizedQuery);
   });
   const groupedSessions = filtered.reduce<Record<string, SessionSummary[]>>((result, session) => {
     (result[visualProjectKey(session)] ??= []).push(session); return result;
   }, {});
-  const ungroupedSessions = orderedSessions(UNGROUPED_KEY, groupedSessions[UNGROUPED_KEY] ?? [], sessionOrders);
-  const physicalGroups = (storedGroups?.groups ?? []).filter((group) => group.cwd).map((group) => [group.id, group.name, group.hostId ?? "local", group.hostName ?? undefined, orderedSessions(group.id, groupedSessions[group.id] ?? [], sessionOrders)] as const);
+  const recentSessions = orderedSessions(RECENT_KEY, groupedSessions[RECENT_KEY] ?? [], sessionOrders);
+  const physicalGroups = (storedGroups?.groups ?? []).filter((group) => group.cwd && !isTemporaryChatCwd(group.cwd)).map((group) => [group.id, group.name, group.hostId ?? "local", group.hostName ?? undefined, orderedSessions(group.id, groupedSessions[group.id] ?? [], sessionOrders)] as const);
   const customVisualGroups = customGroups.map((group) => [group.id, group.name, "", undefined, orderedSessions(group.id, groupedSessions[group.id] ?? [], sessionOrders)] as const);
   // Remember projects even while search or session placement hides them.
   const projectOrderKey = JSON.stringify((storedGroups?.groups ?? []).map((group) => groupLayoutToken(group.id)));
@@ -243,28 +248,25 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   const groups = [
     ...customVisualGroups.filter(([, , , , projectSessions]) => !normalizedQuery || projectSessions.length > 0),
     ...physicalGroups.filter(([, , , , projectSessions]) => !normalizedQuery || projectSessions.length > 0),
+    ...(recentSessions.length ? [[RECENT_KEY, RECENT_LABEL, "", undefined, recentSessions] as const] : []),
   ];
-  groupedSessionsRef.current = new Map([[UNGROUPED_KEY, ungroupedSessions], ...groups.map(([key, , , , projectSessions]) => [key, projectSessions] as const)]);
-  const defaultSidebarEntries = [...ungroupedSessions.map((session) => sessionLayoutToken(sessionKey(session))), ...groups.map(([key]) => groupLayoutToken(key))];
+  groupedSessionsRef.current = new Map([[RECENT_KEY, recentSessions], ...groups.map(([key, , , , projectSessions]) => [key, projectSessions] as const)]);
+  const defaultSidebarEntries = groups.map(([key]) => groupLayoutToken(key));
   const availableSidebarEntries = new Set(defaultSidebarEntries);
   const addedEntries = defaultSidebarEntries.filter((entry) => !sidebarOrder.includes(entry));
-  const sidebarEntries = [...addedEntries.filter((entry) => entry.startsWith("group:")), ...sidebarOrder.filter((entry) => availableSidebarEntries.has(entry)), ...addedEntries.filter((entry) => entry.startsWith("session:"))];
+  const recentToken = groupLayoutToken(RECENT_KEY);
+  const sidebarEntries = [...addedEntries.filter((entry) => entry !== recentToken), ...sidebarOrder.filter((entry) => availableSidebarEntries.has(entry)), ...addedEntries.filter((entry) => entry === recentToken)];
   sidebarEntriesRef.current = sidebarEntries;
   const activeSession = sessions.find((session) => session.id === activeId && (session.hostId ?? "local") === activeHostId);
   const activeProjectKey = activeSession ? visualProjectKey(activeSession) : undefined;
   const moveSessionByKeyboard = (drag: DraggedSession, direction: -1 | 1, betweenGroups: boolean) => {
     const sourceSessions = groupedSessionsRef.current.get(drag.projectKey) ?? [];
     if (betweenGroups) {
-      const destinationKeys = [UNGROUPED_KEY, ...sidebarEntriesRef.current.filter((token) => token.startsWith("group:")).map((token) => token.slice("group:".length))];
+      const destinationKeys = sidebarEntriesRef.current.filter((token) => token.startsWith("group:")).map((token) => token.slice("group:".length));
       const sourceIndex = destinationKeys.indexOf(drag.projectKey); const destinationKey = destinationKeys[sourceIndex + direction];
       if (!destinationKey) return;
       moveSession(drag, destinationKey, groupedSessionsRef.current.get(destinationKey) ?? []); expandProject(destinationKey);
       return;
-    }
-    if (drag.projectKey === UNGROUPED_KEY) {
-      const entries = sidebarEntriesRef.current; const token = sessionLayoutToken(drag.sessionKey); const index = entries.indexOf(token);
-      if (index + direction < 0 || index + direction >= entries.length) return;
-      placeSidebarEntry(sessionLayoutToken(drag.sessionKey), direction < 0 ? entries[index - 1] : entries[index + 2] ?? null); return;
     }
     const sourceIndex = sourceSessions.findIndex((session) => sessionKey(session) === drag.sessionKey); const target = sourceSessions[sourceIndex + direction];
     if (!target) return;
@@ -291,7 +293,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
       const sidebarDropZone = hit?.closest<HTMLElement>("[data-sidebar-drop-zone]");
       const sessionElement = hit?.closest<HTMLElement>(".session-item[data-session-key]");
       if (sidebarDropZone) {
-        nextTarget = { projectKey: UNGROUPED_KEY, sessionKey: "", edge: "after", layoutBefore: sidebarDropZone.dataset.sidebarEnd === "true" ? null : sidebarDropZone.dataset.sidebarBefore! };
+        nextTarget = { projectKey: RECENT_KEY, sessionKey: "", edge: "after", layoutBefore: sidebarDropZone.dataset.sidebarEnd === "true" ? null : sidebarDropZone.dataset.sidebarBefore! };
       } else if (!("session" in current)) {
         const entryElement = hit?.closest<HTMLElement>("section[data-sidebar-token], .session-item[data-sidebar-token]");
         const token = entryElement?.dataset.sidebarToken;
@@ -299,16 +301,13 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
           const bounds = entryElement.getBoundingClientRect();
           const edge = y < bounds.top + bounds.height / 2 ? "before" : "after";
           const index = sidebarEntriesRef.current.indexOf(token);
-          nextTarget = { projectKey: UNGROUPED_KEY, sessionKey: "", edge, layoutBefore: edge === "before" ? token : sidebarEntriesRef.current[index + 1] ?? null };
+          nextTarget = { projectKey: RECENT_KEY, sessionKey: "", edge, layoutBefore: edge === "before" ? token : sidebarEntriesRef.current[index + 1] ?? null };
         }
       } else if (sessionElement && sessionElement.dataset.sessionKey !== current.sessionKey) {
         const bounds = sessionElement.getBoundingClientRect();
         const edge = y < bounds.top + bounds.height / 2 ? "before" : "after";
         const projectKey = sessionElement.dataset.projectKey!; const targetKey = sessionElement.dataset.sessionKey!;
-        if (projectKey === UNGROUPED_KEY) {
-          const token = sessionLayoutToken(targetKey); const index = sidebarEntriesRef.current.indexOf(token);
-          nextTarget = { projectKey, sessionKey: targetKey, edge, layoutBefore: edge === "before" ? token : sidebarEntriesRef.current[index + 1] ?? null };
-        } else nextTarget = { projectKey, sessionKey: targetKey, edge };
+        nextTarget = { projectKey, sessionKey: targetKey, edge };
       } else if (!sessionElement) {
         const projectElement = hit?.closest<HTMLElement>("[data-drop-project-key]");
         if (projectElement) nextTarget = { projectKey: projectElement.dataset.dropProjectKey!, sessionKey: "", edge: "after" };
@@ -344,7 +343,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
         if (target) {
           if ("session" in current) {
             moveSession(current, target.projectKey, groupedSessionsRef.current.get(target.projectKey) ?? [], target.sessionKey || undefined, target.edge);
-            if (target.layoutBefore !== undefined) placeSidebarEntry(sourceToken, target.layoutBefore);
+            if (target.layoutBefore !== undefined) placeSidebarEntry(groupLayoutToken(RECENT_KEY), target.layoutBefore);
             expandProject(target.projectKey);
           } else if (target.layoutBefore !== undefined) placeSidebarEntry(sourceToken, target.layoutBefore);
         }
@@ -379,12 +378,11 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
     "aria-description": !normalizedQuery ? "Drag to reorder. Press Alt plus Up or Down to reorder." : undefined,
     "aria-keyshortcuts": !normalizedQuery ? "Alt+ArrowUp Alt+ArrowDown" : undefined,
   });
-  const renderSession = (session: SessionSummary, projectKey: string) => { const key = sessionKey(session); const running = runningSessions.has(key); const activity = unseenSessions.has(key) ? "New activity" : undefined; const accessibleActivity = running ? "Running" : activity; const target = dropTarget?.projectKey === projectKey && dropTarget.sessionKey === key ? dropTarget.edge : undefined; const drag = { projectKey, sessionKey: key, session }; return <div key={key} data-session-key={key} data-project-key={projectKey} data-sidebar-token={projectKey === UNGROUPED_KEY ? sessionLayoutToken(key) : undefined} className={`session-item ${!normalizedQuery ? "reorderable" : ""} ${activeId === session.id && (session.hostId ?? "local") === activeHostId ? "active" : ""} ${running ? "running" : activity ? "unseen" : ""} ${draggedSession?.sessionKey === key ? "dragging" : ""} ${target ? `drop-${target}` : ""}`} onContextMenu={(event) => { event.preventDefault(); const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget.querySelector<HTMLElement>(".session-main") ?? undefined; setGroupMenu(undefined); setMenu({ session, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190), returnFocus }); }}>
+  const renderSession = (session: SessionSummary, projectKey: string) => { const key = sessionKey(session); const running = runningSessions.has(key); const activity = unseenSessions.has(key) ? "New activity" : undefined; const accessibleActivity = running ? "Running" : activity; const target = dropTarget?.projectKey === projectKey && dropTarget.sessionKey === key ? dropTarget.edge : undefined; const drag = { projectKey, sessionKey: key, session }; return <div key={key} data-session-key={key} data-project-key={projectKey} className={`session-item ${!normalizedQuery ? "reorderable" : ""} ${activeId === session.id && (session.hostId ?? "local") === activeHostId ? "active" : ""} ${running ? "running" : activity ? "unseen" : ""} ${draggedSession?.sessionKey === key ? "dragging" : ""} ${target ? `drop-${target}` : ""}`} onContextMenu={(event) => { event.preventDefault(); const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget.querySelector<HTMLElement>(".session-main") ?? undefined; setGroupMenu(undefined); setMenu({ session, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190), returnFocus }); }}>
     <button className="session-main" aria-label={`${session.name}, ${projectKindLabel(session)}, ${formatApiCost(session.apiCost)}${accessibleActivity ? `, ${accessibleActivity}` : ""}`} aria-current={activeId === session.id && (session.hostId ?? "local") === activeHostId ? "page" : undefined} aria-description={!normalizedQuery ? "Press Alt plus Up or Down to reorder. Add Shift to move between groups." : undefined} aria-keyshortcuts={!normalizedQuery ? "Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown" : undefined} title={session.name} onMouseDown={(event) => startMouseDrag(event, drag)} onKeyDown={(event) => { if (!normalizedQuery && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); moveSessionByKeyboard(drag, event.key === "ArrowUp" ? -1 : 1, event.shiftKey); } }} onClick={(event) => { if (suppressClickRef.current === sessionLayoutToken(key)) { suppressClickRef.current = undefined; event.preventDefault(); return; } onSelect(session); }}><span className="session-copy"><span className="session-title-row">{session.projectKind !== "no-repo" && <SessionProjectIcon session={session} />}<strong>{session.name}</strong><span className="session-api-cost" title="Would-be API cost">{formatApiCost(session.apiCost)}</span></span></span></button>
     <button className="session-archive" aria-label={`Archive ${session.name}`} title={`Archive ${session.name}`} onClick={() => onAction(session, "archive")}><Archive size={14} /></button>
   </div>; };
   const groupsByToken = new Map(groups.map((group) => [groupLayoutToken(group[0]), group] as const));
-  const looseSessionsByToken = new Map(ungroupedSessions.map((session) => [sessionLayoutToken(sessionKey(session)), session] as const));
   const activeMenu = groupMenu ?? menu;
   const groupDirectory = groupMenu ? storedGroups?.groups.find((group) => group.id === groupMenu.projectKey && group.cwd) : undefined;
   const menuItems = groupMenu ? [
@@ -400,11 +398,11 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
       {(groupStorageError || groupActionError) && <p className="group-error" role="alert">{groupStorageError || groupActionError}</p>}
       {!storedGroups && !groupStorageError && <p className="empty-small">Loading groups…</p>}
       {newGroupName !== undefined && !editingGroupId && <section className="project custom-group-draft"><div className="project-label"><input ref={groupNameRef} disabled={groupSaving} aria-label="New session group name" aria-invalid={Boolean(groupDraftError)} aria-describedby={groupDraftError ? "new-group-error" : undefined} placeholder="Group name" value={newGroupName} onChange={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} /></div>{groupDraftError && <small id="new-group-error" className="group-error">{groupDraftError}</small>}</section>}
-      {sidebarEntries.flatMap((token) => { const looseSession = looseSessionsByToken.get(token); const group = groupsByToken.get(token); if (looseSession) return [renderDropZone(token), renderSession(looseSession, UNGROUPED_KEY)]; if (!group) return []; const [projectKey, project, hostId, hostName, projectSessions] = group; const label = !hostId || hostId === "local" ? project : `${hostName ?? hostId} / ${project}`; const collapsed = !normalizedQuery && collapsedProjects.has(projectKey); const groupId = disclosureId(projectKey); return [renderDropZone(token), <section data-sidebar-token={token} className={`project ${!normalizedQuery ? "reorderable" : ""} ${draggedProject === projectKey ? "dragging" : ""} ${dropTarget?.projectKey === projectKey && !dropTarget.sessionKey && dropTarget.layoutBefore === undefined ? "drop-project" : ""}`} key={projectKey}>
+      {sidebarEntries.flatMap((token) => { const group = groupsByToken.get(token); if (!group) return []; const [projectKey, project, hostId, hostName, projectSessions] = group; const label = !hostId || hostId === "local" ? project : `${hostName ?? hostId} / ${project}`; const collapsed = !normalizedQuery && collapsedProjects.has(projectKey); const groupId = disclosureId(projectKey); return [renderDropZone(token), <section data-sidebar-token={token} className={`project ${!normalizedQuery ? "reorderable" : ""} ${draggedProject === projectKey ? "dragging" : ""} ${dropTarget?.projectKey === projectKey && !dropTarget.sessionKey && dropTarget.layoutBefore === undefined ? "drop-project" : ""}`} key={projectKey}>
         <div className="project-heading" data-drop-project-key={projectKey}>
           {customGroupsByKey.has(projectKey) && editingGroupId === customGroupsByKey.get(projectKey)?.id ? <div className="project-label"><input ref={groupNameRef} disabled={groupSaving} aria-label="Rename session group" aria-invalid={Boolean(groupDraftError)} value={newGroupName ?? ""} onChange={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} />{groupDraftError && <small className="group-error">{groupDraftError}</small>}</div> : <>
             <button className="project-label" disabled={Boolean(normalizedQuery)} aria-expanded={!collapsed} aria-controls={groupId} {...projectDragProps(projectKey)}><ChevronDown className={collapsed ? "collapsed" : ""} size={13} />{projectDetails.get(projectKey)?.projectKind === "no-repo" && <Folder size={14} aria-hidden="true" />}<span className={projectKey === activeProjectKey ? "active" : undefined}>{label}</span></button>
-            <div className="project-actions">
+            {projectKey !== RECENT_KEY && <div className="project-actions">
               {customGroupsByKey.has(projectKey) && <button aria-label={`Rename group ${label}`} title="Rename group" onClick={() => editGroup(customGroupsByKey.get(projectKey)!)}><Pencil size={12} /></button>}
               <button aria-label={`New chat in ${label}`} title="New chat in group" onClick={() => {
                 const destination = storedGroups?.groups.find((item) => item.id === projectKey);
@@ -419,7 +417,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
                 setMenu(undefined);
                 setGroupMenu({ projectKey, label, x: Math.max(8, Math.min(bounds.right - 188, window.innerWidth - 196)), y: Math.max(8, Math.min(bounds.bottom + 4, window.innerHeight - 84)), returnFocus: event.currentTarget });
               }}><Ellipsis size={14} /></button>
-            </div>
+            </div>}
           </>}
         </div>
         <div id={groupId} hidden={collapsed}>{projectSessions.map((session) => renderSession(session, projectKey))}</div>

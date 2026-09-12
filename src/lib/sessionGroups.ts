@@ -7,6 +7,10 @@ export interface SessionGroups { groups: SessionGroup[]; assignments: Record<str
 export interface SessionGroupSeed { sessionKey: string; project: SessionGroup; }
 export type GroupChange = { type: "create"; name: string } | { type: "project"; project: SessionGroup; key?: string } | { type: "rename"; id: string; name: string } | { type: "remove"; id: string } | { type: "assign"; key: string; group: string | null };
 
+export function isTemporaryChatCwd(cwd: string) {
+  return /(?:^|[\\/])\.piop[\\/]tmp(?:[\\/]|$)/.test(cwd);
+}
+
 const listeners = new Set<(state: SessionGroups) => void>();
 function publish(state: SessionGroups) { listeners.forEach((listener) => listener(state)); return state; }
 
@@ -62,7 +66,7 @@ export function useSessionGroups(sessions: SessionSummary[]) {
     listeners.add(listener);
     return () => { mounted.current = false; listeners.delete(listener); };
   }, []);
-  const seedsJson = JSON.stringify(sessions.map((session): SessionGroupSeed => ({
+  const seedsJson = JSON.stringify(sessions.filter((session) => !isTemporaryChatCwd(session.cwd)).map((session): SessionGroupSeed => ({
     sessionKey: `${session.hostId ?? "local"}:${session.id}`,
     project: { id: `${session.hostId ?? "local"}:${session.projectRoot ?? session.cwd}`, name: session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project, cwd: session.projectRoot ?? session.cwd, hostId: session.hostId ?? "local", hostName: session.hostName ?? session.hostId ?? "Local" },
   })).sort((a, b) => a.sessionKey.localeCompare(b.sessionKey)));
