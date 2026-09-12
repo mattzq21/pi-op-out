@@ -7,7 +7,7 @@ import { textOf } from "./content";
 const sessionKey = (hostId: string, sessionId: string) => `${hostId}:${sessionId}`;
 const EMPTY_DIFFS: GitDiffSnapshots = {};
 type DiffBaseline = { cwd: string; hostId: string; tree: Promise<string | null> };
-type DiffState = { snapshots: GitDiffSnapshots; path?: string; load?: { key: string; promise: Promise<GitDiffSnapshots> }; baselines: DiffBaseline[]; captureQueue: Promise<void> };
+type DiffState = { snapshots: GitDiffSnapshots; path?: string; load?: { key: string; promise: Promise<GitDiffSnapshots> }; baselines: DiffBaseline[]; captureQueue: Promise<void>; persistence: "session" | "memory" };
 
 function latestAssistantEntry(entries: PiEntry[], leafId: string | null) {
   return [...branchMessages(entries, leafId)].reverse().find((message) => message.role === "assistant" && (textOf(message.content).trim() || message.stopReason === "aborted" || message.stopReason === "error"));
@@ -38,7 +38,7 @@ export class SessionRuntimePool {
 
   private notify() { for (const listener of this.listeners) listener(); }
 
-  private diffState(transport: NativeTransport) { let state = this.diffStates.get(transport); if (!state) { state = { snapshots: EMPTY_DIFFS, baselines: [], captureQueue: Promise.resolve() }; this.diffStates.set(transport, state); } return state; }
+  private diffState(transport: NativeTransport) { let state = this.diffStates.get(transport); if (!state) { state = { snapshots: EMPTY_DIFFS, baselines: [], captureQueue: Promise.resolve(), persistence: "session" }; this.diffStates.set(transport, state); } return state; }
 
   private loadSavedDiffs(transport: NativeTransport, sessionPath: string) {
     const key = `${transport.currentHostId()}:${sessionPath}`;
@@ -82,9 +82,12 @@ export class SessionRuntimePool {
     diffState.captureQueue = diffState.captureQueue.then(async () => {
       const result = await capture; if (!result) return;
       const key = `${baseline.hostId}:${result.sessionFile}`;
-      const saved = diffState.path === key ? diffState.snapshots : await this.loadSavedDiffs(transport, result.sessionFile);
+      const saved = diffState.persistence === "memory"
+        ? await (diffState.load?.promise ?? Promise.resolve(diffState.snapshots))
+        : diffState.path === key ? diffState.snapshots : await this.loadSavedDiffs(transport, result.sessionFile);
       const previous = saved; const snapshots = { ...saved, [result.messageId]: result.snapshot };
       diffState.snapshots = snapshots; diffState.path = key; diffState.load = { key, promise: Promise.resolve(snapshots) }; this.notify();
+      if (diffState.persistence === "memory") return;
       try { await transport.saveGitDiffs(result.sessionFile, snapshots, baseline.hostId); }
       catch (reason) { diffState.snapshots = previous; diffState.load = { key, promise: Promise.resolve(previous) }; this.notify(); this.errorHandler?.(`Could not save project changes: ${reason instanceof Error ? reason.message : String(reason)}`); }
     }).catch(async () => { const snapshot = await baseline.tree.catch(() => null); if (snapshot) await transport.discardGitTree(snapshot, baseline.hostId).catch(() => undefined); });
@@ -149,6 +152,13 @@ export class SessionRuntimePool {
     return transport;
   }
 
+  createEphemeralFork(target: NativeConnectionTarget, sourceSessionPath: string) {
+    const transport = this.create(target); const state = this.diffState(transport);
+    state.persistence = "memory";
+    if (sourceSessionPath) void this.loadSavedDiffs(transport, sourceSessionPath);
+    return transport;
+  }
+
   forSession(session: SessionSummary) {
     const hostId = session.hostId ?? "local"; const key = sessionKey(hostId, session.id);
     const existing = this.sessions.get(key); if (existing) return existing;
@@ -159,7 +169,8 @@ export class SessionRuntimePool {
     for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key);
     if (!sessionId) { this.publishSessionStates(); return; }
     this.sessions.set(sessionKey(hostId, sessionId), transport);
-    const sessionPath = transport.currentSessionPath(); if (sessionPath) void this.loadSavedDiffs(transport, sessionPath);
+    const state = this.diffState(transport); const sessionPath = transport.currentSessionPath();
+    if (state.persistence === "session" && sessionPath) void this.loadSavedDiffs(transport, sessionPath);
     this.publishSessionStates();
   }
 

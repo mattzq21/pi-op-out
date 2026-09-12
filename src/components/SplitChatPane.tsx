@@ -13,7 +13,7 @@ interface Props { runtimePool: SessionRuntimePool; session: SessionSummary; sett
 const initialState = (session: SessionSummary): AgentState => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, pendingMessageCount: 0 });
 
 export function SplitChatPane({ runtimePool, session, settings, draft, onDraftChange, focusRequest = 0, onActivate, onOpenTerminal, onDialogRequest, onDialogTransportClosed, onReleaseTransport, forkFrom, initialPrompt, onReady, onFailed, onSessionChange, onClose }: Props) {
-  const [transport] = useState(() => forkFrom ? runtimePool.create({ cwd: session.cwd, hostId: session.hostId }) : runtimePool.forSession(session));
+  const [transport] = useState(() => forkFrom ? runtimePool.createEphemeralFork({ cwd: session.cwd, hostId: session.hostId }, forkFrom) : runtimePool.forSession(session));
   const gitDiffs = useTurnDiffs(runtimePool, transport); const runtime = useChatSession(transport, initialState(session));
   const { state, setState, messages, models, commands, thinkingLevels, refresh, handleEvent } = runtime; const [error, setError] = useState<string>(); const [connected, setConnected] = useState(false);
   const [controlError, setControlError] = useState<string>();

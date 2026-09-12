@@ -10,7 +10,9 @@ import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 import { cacheHitStats } from "../lib/messages";
 import { parseSequencePrompt } from "../lib/sequence";
 
-interface Props { state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; debug?: boolean; agents?: AgentProfile[]; activeAgent?: string; dictionaries?: PromptDictionary[]; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: string) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: SetStateAction<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onPause: () => void | Promise<void>; onResume: () => void | Promise<void>; onOpenTerminal?: () => void; onOpenProject: () => void; onClearProject?: () => void; onBranch: (message: ChatMessage) => void; onCreateWorktree?: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
+interface Props { state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; debug?: boolean; agents?: AgentProfile[]; activeAgent?: string; dictionaries?: PromptDictionary[]; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; selectionBtw?: boolean; draft?: string; onDraftChange?: (value: string) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: SetStateAction<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onPause: () => void | Promise<void>; onResume: () => void | Promise<void>; onOpenTerminal?: () => void; onOpenProject: () => void; onClearProject?: () => void; onBranch: (message: ChatMessage) => void; onCreateWorktree?: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
+
+type SelectionBtwTip = { text: string; left: number; top: number; below: boolean };
 
 export function ChatView(props: Props) {
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -19,6 +21,9 @@ export function ChatView(props: Props) {
   const touchY = useRef<number | undefined>(undefined);
   const shell = useRef<HTMLElement>(null);
   const composerStack = useRef<HTMLDivElement>(null);
+  const [selectionBtwTip, setSelectionBtwTip] = useState<SelectionBtwTip>();
+  const [askingSelection, setAskingSelection] = useState(false);
+  const [selectionBtwError, setSelectionBtwError] = useState(false);
   const turns = useMemo(() => groupTurns(props.messages), [props.messages]);
   const sessionUsage = useMemo(() => props.messages.reduce((total, message) => ({ input: total.input + (message.usage?.input ?? 0), cacheRead: total.cacheRead + (message.usage?.cacheRead ?? 0), cacheWrite: total.cacheWrite + (message.usage?.cacheWrite ?? 0) }), { input: 0, cacheRead: 0, cacheWrite: 0 }), [props.messages]);
   const sessionCache = cacheHitStats(sessionUsage);
@@ -78,6 +83,44 @@ export function ChatView(props: Props) {
     observer.observe(composer);
     return () => observer.disconnect();
   }, [props.readOnly, scrollToLatest]);
+  const selectionBtwEnabled = Boolean(props.selectionBtw && !props.readOnly && !props.controlsDisabled && props.commands.some((command) => command.name === "btw"));
+  useEffect(() => {
+    if (!selectionBtwEnabled) { setSelectionBtwTip(undefined); return; }
+    const updateTip = () => {
+      const selection = window.getSelection();
+      const messages = messagesRef.current;
+      if (!selection || selection.isCollapsed || !selection.rangeCount || !messages) { setSelectionBtwTip(undefined); return; }
+      const range = selection.getRangeAt(0);
+      const ancestor = range.commonAncestorContainer instanceof Element ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement;
+      const messageBody = ancestor?.closest(".message-body");
+      if (!messageBody || !messages.contains(messageBody) || !messageBody.contains(range.startContainer) || !messageBody.contains(range.endContainer)) { setSelectionBtwTip(undefined); return; }
+      const text = selection.toString().trim();
+      const rect = Array.from(range.getClientRects()).filter((box) => box.width || box.height).at(-1);
+      if (!text || !rect) { setSelectionBtwTip(undefined); return; }
+      const below = rect.top < 48;
+      setSelectionBtwError(false);
+      setSelectionBtwTip({ text, left: Math.max(112, Math.min(rect.left + rect.width / 2, window.innerWidth - 112)), top: below ? rect.bottom + 8 : rect.top - 8, below });
+    };
+    const dismiss = () => setSelectionBtwTip(undefined);
+    document.addEventListener("selectionchange", updateTip);
+    window.addEventListener("resize", dismiss);
+    window.addEventListener("blur", dismiss);
+    return () => {
+      document.removeEventListener("selectionchange", updateTip);
+      window.removeEventListener("resize", dismiss);
+      window.removeEventListener("blur", dismiss);
+    };
+  }, [selectionBtwEnabled]);
+  const askSelectionInBtw = async () => {
+    if (!selectionBtwTip || askingSelection) return;
+    setAskingSelection(true);
+    try {
+      await send(`/btw ${selectionBtwTip.text}`, props.state.isStreaming ? "followUp" : undefined);
+      window.getSelection()?.removeAllRanges();
+      setSelectionBtwTip(undefined);
+    } catch { setSelectionBtwError(true); }
+    finally { setAskingSelection(false); }
+  };
   return <main ref={shell} className="chat-shell" onFocusCapture={props.onActivate} onPointerDownCapture={props.onActivate}>
     <div ref={messagesRef} className="messages" aria-live="polite"
       onWheel={(event) => { if (event.deltaY < 0 && event.currentTarget.scrollTop > 0) followLatest.current = false; }}
@@ -85,6 +128,7 @@ export function ChatView(props: Props) {
       onTouchMove={(event) => { const y = event.touches[0]?.clientY; if (y !== undefined && touchY.current !== undefined && y > touchY.current && event.currentTarget.scrollTop > 0) followLatest.current = false; touchY.current = y; }}
       onKeyDownCapture={(event) => { if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) followLatest.current = false; }}
       onScroll={(event) => {
+        setSelectionBtwTip(undefined);
         const element = event.currentTarget;
         // Our own scroll writes update lastScrollTop before their scroll event.
         // Only downward movement all the way to the bottom resumes following.
@@ -100,6 +144,7 @@ export function ChatView(props: Props) {
       </section>}
       <div className="scroll-anchor" />
     </div></div>
+    {selectionBtwTip && <button type="button" className={`selection-btw-tip${selectionBtwTip.below ? " below" : ""}${selectionBtwError ? " error" : ""}`} style={{ left: selectionBtwTip.left, top: selectionBtwTip.top }} aria-label="Ask about selected text in a side chat with /btw" aria-live="polite" disabled={askingSelection} onPointerDown={(event) => event.preventDefault()} onClick={() => void askSelectionInBtw()}><span>{askingSelection ? "Opening side chat…" : selectionBtwError ? "Could not open side chat" : "Ask in side chat"}</span><kbd>/btw</kbd></button>}
     {!props.readOnly && <div ref={composerStack} className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.map((line, index) => <div key={index}>{line}</div>)}</div>} {statuses.length > 0 && <div className="extension-status">{statuses.join(" · ")}</div>}{activity && <div className="runtime-activity" role="status">{activity}</div>}{!props.messages.length && props.state.messageCount === 0 && <div className="new-chat-project"><div className="project-picker"><button type="button" className={projectName ? "selected" : undefined} aria-label={projectName ? `Selected project: ${projectName}` : "Choose project"} title={props.projectCwd} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName ?? "Choose project"}</button>{projectName && props.onClearProject && <button type="button" className="clear-project" aria-label="Clear project" title="Clear project" disabled={props.controlsDisabled} onClick={props.onClearProject}><X size={14} /></button>}</div></div>}<Composer streaming={props.state.isStreaming} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} pendingMessages={props.state.pendingMessages} onChangePending={props.onChangePending} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} dictionaries={props.dictionaries} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionHooks={hookStats?.other} sessionCache={props.debug ? sessionCache : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn ? { id: `${abortedTurn.assistant.timestamp ?? abortedTurn.assistant.id}:${abortedTurn.prompt}`, value: abortedTurn.prompt } : undefined} onSend={send} onAbort={props.onAbort} onPause={props.onPause} onResume={props.onResume} onOpenTerminal={props.onOpenTerminal} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div>}
   </main>;
 }
