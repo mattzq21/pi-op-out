@@ -2489,6 +2489,36 @@ fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), Str
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+const LOAD_ERROR_HTML: &str = r#"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>piop - connection error</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #181817; color: #e8e5dd; }
+    * { box-sizing: border-box; }
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 32px; background: #181817; }
+    main { width: min(440px, 100%); padding: 30px; border: 1px solid #34322d; border-radius: 12px; background: #1f1f1c; box-shadow: 0 18px 60px #0006; }
+    .eyebrow { margin: 0 0 10px; color: #d46a24; font-size: 11px; font-weight: 600; letter-spacing: .15em; text-transform: uppercase; }
+    h1 { margin: 0 0 10px; font-size: 24px; font-weight: 600; letter-spacing: -.02em; }
+    p { margin: 0; color: #a09c93; font-size: 14px; line-height: 1.55; }
+    button { margin-top: 22px; padding: 9px 14px; border: 1px solid #48453e; border-radius: 7px; background: #292824; color: #e8e5dd; font: 600 13px system-ui, sans-serif; cursor: pointer; }
+    button:hover { border-color: #d46a24; color: #fff; }
+    button:focus-visible { outline: 2px solid #d46a24; outline-offset: 2px; }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">piop</p>
+    <h1>Could not connect</h1>
+    <p>The local app server is not available. Start or restart it, then try again.</p>
+    <button type="button" onclick="window.location.reload()">Try again</button>
+  </main>
+</body>
+</html>"#;
+
 pub fn run() {
     let context = tauri::generate_context!();
     #[cfg(target_os = "linux")]
@@ -2519,7 +2549,14 @@ pub fn run() {
         #[cfg(target_os = "linux")]
         if let Some((label, focus)) = start_window.as_ref() {
             use gtk::prelude::GtkWindowExt;
+            use webkit2gtk::WebViewExt;
             let window = app.get_webview_window(label).ok_or("Missing main window")?;
+            window.with_webview(|platform_webview| {
+                platform_webview.inner().connect_load_failed(|webview, _, failing_uri, _| {
+                    webview.load_alternate_html(LOAD_ERROR_HTML, failing_uri, None);
+                    true
+                });
+            })?;
             window.gtk_window()?.set_focus_on_map(*focus);
             window.show()?;
         }
