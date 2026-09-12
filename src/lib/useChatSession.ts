@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentState, ChatMessage, Model, PromptContextInfo, RpcEvent, SlashCommand } from "../types";
 import type { NativeTransport } from "./nativeTransport";
-import { applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
+import { appendFileChanges, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
 import { contextUsageAfterCompaction } from "./contextUsage";
 
 type MessageUpdate = (messages: ChatMessage[]) => ChatMessage[];
@@ -59,7 +59,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
         }
       } catch { /* Ignore malformed extension status data. */ }
     }
-    if (event.type === "entry_appended" && event.entry) { const marker = resumeMarker(event.entry as PiEntry); if (marker) { resumeMarkers.current.add(marker); setMessages(checkpointLatestUser); } }
+    if (event.type === "entry_appended" && event.entry) { const entry = event.entry as PiEntry; const marker = resumeMarker(entry); if (marker) { resumeMarkers.current.add(marker); setMessages(checkpointLatestUser); } if (entry.customType === "piop-file-changes") { liveRevision.current += 1; setMessages((current) => appendFileChanges(current, entry)); } }
     if (["agent_start", "agent_end", "agent_settled", "pause_state", "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end"].includes(event.type)) liveRevision.current += 1;
     if (event.type === "agent_start") setState((current) => ({ ...current, isStreaming: true, isPaused: false }));
     if (event.type === "pause_state") setState((current) => ({ ...current, isPaused: event.isPaused === true, isPausing: event.isPausing === true, ...(event.isPaused === true && event.isPausing !== true ? { isStreaming: false, activity: undefined } : {}) }));
@@ -77,7 +77,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
       if (message.customType === "pi-desktop-btw") return;
       if (message.role === "assistant" && event.type === "message_start") { message = { ...message, streaming: true }; activeAssistantId.current = message.id; }
       if (message.role === "assistant" && event.type === "message_end") { message = { ...message, ...(activeAssistantId.current ? { id: activeAssistantId.current } : {}), completedAt: Date.now(), streaming: false }; activeAssistantId.current = undefined; }
-      setMessages((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? { ...message, toolInput: message.toolInput ?? item.toolInput, promptContext: item.promptContext } : item) : [...current, message]);
+      setMessages((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? { ...message, toolInput: message.toolInput ?? item.toolInput, details: message.details ?? item.details, fileChanges: item.fileChanges, promptContext: item.promptContext } : item) : [...current, message]);
     }
     if (event.type === "message_update") {
       if (event.assistantMessageEvent) queue((current) => { let index = -1; for (let candidate = current.length - 1; candidate >= 0; candidate -= 1) { const message = current[candidate]; if (message.role === "assistant" && (message.id === activeAssistantId.current || message.streaming)) { index = candidate; break; } } if (index < 0) return current; const next = [...current]; next[index] = applyAssistantMessageEvent(next[index], event.assistantMessageEvent); return next; });
@@ -85,7 +85,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
     }
     if (event.type === "tool_execution_start") { const message: ChatMessage = { id: String(event.toolCallId), role: "tool", toolName: String(event.toolName), toolStatus: "running", toolInput: event.args ?? {}, content: "", timestamp: Date.now() }; setMessages((current) => [...current.filter((item) => item.id !== message.id), message]); }
     if (event.type === "tool_execution_update") queue((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.partialResult), toolStatus: "running" } : item));
-    if (event.type === "tool_execution_end") { flush(); setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.result), toolStatus: event.isError ? "error" : "done" } : item)); }
+    if (event.type === "tool_execution_end") { flush(); setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.result), details: (event.result as { details?: unknown })?.details, toolStatus: event.isError ? "error" : "done" } : item)); }
     if (event.type === "queue_update") setState((current) => ({ ...current, pendingMessages: event.pendingMessages as AgentState["pendingMessages"], pendingMessageCount: [...((event.steering as unknown[]) ?? []), ...((event.followUp as unknown[]) ?? [])].length }));
     if (event.type === "compaction_start") setState((current) => ({ ...current, activity: "Compacting context…" }));
     if (event.type === "compaction_end") setState((current) => ({ ...current, activity: undefined, contextUsage: contextUsageAfterCompaction(current.contextUsage, event) }));

@@ -259,7 +259,24 @@ struct HostStorage {
 #[serde(rename_all = "camelCase")]
 struct StorageReport { hosts: Vec<HostStorage> }
 
-type GitDiffSnapshots = HashMap<String, String>;
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DiffToolPathMapping { tool_call_id: String, path: String, absolute_path: String, canonical_path: String }
+
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum GitDiffSnapshot {
+    Legacy(String),
+    Located {
+        patch: String,
+        #[serde(rename = "repositoryRoot")]
+        repository_root: String,
+        #[serde(default, rename = "toolPaths", skip_serializing_if = "Vec::is_empty")]
+        tool_paths: Vec<DiffToolPathMapping>,
+    },
+}
+
+type GitDiffSnapshots = HashMap<String, GitDiffSnapshot>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -643,14 +660,21 @@ fn prepare_context_window_cap_extension(settings: &AppSettings) -> Result<PathBu
     Ok(extension_path)
 }
 
-fn prepare_project_files_watch_extension() -> Result<PathBuf, String> {
+const FILE_CHANGE_ASSETS: [(&str, &str); 3] = [
+    ("file-changes.ts", include_str!("../../extensions/pi-diff-watch/file-changes.ts")),
+    ("sitecustomize.py", include_str!("../../extensions/pi-diff-watch/sitecustomize.py")),
+    ("node_fs.cjs", include_str!("../../extensions/pi-diff-watch/node_fs.cjs")),
+];
+
+fn prepare_diff_watch_extension() -> Result<PathBuf, String> {
     let config_dir = home_dir()?.join(".piop");
     let legacy_dir = config_dir.join("pi-git-change-context");
-    if legacy_dir.exists() { fs::remove_dir_all(&legacy_dir).map_err(|error| format!("Could not remove legacy project files watch extension: {error}"))?; }
-    let dir = config_dir.join("pi-project-files-watch");
+    if legacy_dir.exists() { fs::remove_dir_all(&legacy_dir).map_err(|error| format!("Could not remove legacy diff watch extension: {error}"))?; }
+    let dir = config_dir.join("pi-diff-watch");
     ensure_private_dir(&dir)?;
     let extension_path = dir.join("index.ts");
-    atomic_write_private(&extension_path, include_str!("../../extensions/pi-project-files-watch/index.ts").as_bytes())?;
+    atomic_write_private(&extension_path, include_str!("../../extensions/pi-diff-watch/index.ts").as_bytes())?;
+    for (name, content) in FILE_CHANGE_ASSETS { atomic_write_private(&dir.join(name), content.as_bytes())?; }
     Ok(extension_path)
 }
 
@@ -893,7 +917,7 @@ fn ensure_desktop_sessions_dir(home: &Path) -> Result<PathBuf, String> {
 }
 
 #[derive(Serialize, Deserialize)]
-struct GitSnapshotToken { root: String, tree: String }
+struct GitSnapshotToken { root: String, tree: String, #[serde(default)] repository_root: String }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1118,9 +1142,8 @@ fn git_root_and_objects(cwd: &str) -> Result<Option<(PathBuf, PathBuf)>, String>
     let text = String::from_utf8_lossy(&output.stdout);
     let mut lines = text.lines().map(str::to_owned);
     let root = PathBuf::from(lines.next().unwrap_or_default()).canonicalize().map_err(|error| format!("Could not resolve Git root: {error}"))?;
-    if root != requested { return Ok(None); }
     let objects = PathBuf::from(lines.next().unwrap_or_default());
-    let objects = if objects.is_absolute() { objects } else { root.join(objects) }.canonicalize().map_err(|error| format!("Could not resolve Git objects: {error}"))?;
+    let objects = if objects.is_absolute() { objects } else { requested.join(objects) }.canonicalize().map_err(|error| format!("Could not resolve Git objects: {error}"))?;
     Ok(Some((root, objects)))
 }
 
@@ -1152,11 +1175,12 @@ fn parse_local_snapshot(token: &str) -> Result<GitSnapshotToken, String> {
     let parent = local_snapshot_parent()?.canonicalize().map_err(|error| error.to_string())?;
     let root = PathBuf::from(&snapshot.root).canonicalize().map_err(|_| "Git snapshot expired".to_string())?;
     if root.parent() != Some(parent.as_path()) || !root.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.starts_with("pi-desktop-diff-")) { return Err("Invalid Git snapshot location".into()); }
-    Ok(GitSnapshotToken { root: root.to_string_lossy().into_owned(), tree: snapshot.tree })
+    Ok(GitSnapshotToken { root: root.to_string_lossy().into_owned(), ..snapshot })
 }
 
 fn local_git_tree(cwd: &str) -> Result<Option<String>, String> {
     let Some((root, repository_objects)) = git_root_and_objects(cwd)? else { return Ok(None) };
+    let cwd = root.to_str().ok_or("Git root is not valid UTF-8")?;
     if !local_git_input_is_bounded(cwd, &root)? { return Ok(None); }
     let snapshot_parent = local_snapshot_parent()?;
     let snapshot_root = snapshot_parent.join(format!("pi-desktop-diff-{}", Uuid::new_v4()));
@@ -1174,24 +1198,24 @@ fn local_git_tree(cwd: &str) -> Result<Option<String>, String> {
         let mut write_tree = Command::new("git"); write_tree.args(["-C", cwd, "write-tree"]); configure(&mut write_tree);
         let output = run_limited(&mut write_tree, 64 * 1024, "Could not finalize Git snapshot")?; if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
         let tree = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        serde_json::to_string(&GitSnapshotToken { root: snapshot_root.to_string_lossy().into_owned(), tree }).map_err(|error| error.to_string())
+        serde_json::to_string(&GitSnapshotToken { root: snapshot_root.to_string_lossy().into_owned(), tree, repository_root: cwd.to_owned() }).map_err(|error| error.to_string())
     })();
     if result.is_err() { let _ = fs::remove_dir_all(&snapshot_root); }
     result.map(Some)
 }
 
-fn local_git_diff(cwd: &str, base_token: &str) -> Result<Option<String>, String> {
+fn local_git_diff(cwd: &str, base_token: &str) -> Result<Option<GitDiffSnapshot>, String> {
     let base = parse_local_snapshot(base_token)?;
     let Some(current_token) = local_git_tree(cwd)? else { let _ = fs::remove_dir_all(&base.root); return Ok(None) };
     let current = parse_local_snapshot(&current_token)?;
     let result = (|| {
         let Some((_, repository_objects)) = git_root_and_objects(cwd)? else { return Ok(None) };
         let alternates = std::env::join_paths([Path::new(&base.root).join("objects"), repository_objects]).map_err(|error| error.to_string())?;
-        let mut command = Command::new("git"); command.args(["-C", cwd, "diff", "--no-color", "--no-ext-diff", "--find-renames", &base.tree, &current.tree, "--"])
+        let mut command = Command::new("git"); command.args(["-C", &current.repository_root, "diff", "--no-relative", "--no-color", "--no-ext-diff", "--find-renames", &base.tree, &current.tree, "--"])
             .env("GIT_OBJECT_DIRECTORY", Path::new(&current.root).join("objects")).env("GIT_ALTERNATE_OBJECT_DIRECTORIES", alternates);
         let output = run_limited(&mut command, MAX_GIT_PATCH_BYTES, "Git patch is too large")?;
         if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-        let patch = String::from_utf8_lossy(&output.stdout).into_owned(); Ok((!patch.trim().is_empty()).then_some(patch))
+        let patch = String::from_utf8_lossy(&output.stdout).into_owned(); Ok((!patch.trim().is_empty()).then_some(GitDiffSnapshot::Located { patch, repository_root: current.repository_root.clone(), tool_paths: Vec::new() }))
     })();
     let _ = fs::remove_dir_all(&base.root); let _ = fs::remove_dir_all(&current.root); result
 }
@@ -1618,10 +1642,8 @@ fn remote_git_tree(host: &RemoteHost, cwd: &str) -> Result<Option<String>, Strin
     let mut command = ssh(host); command.arg(remote_login_command(&script)); let output = run_limited(&mut command, 64 * 1024, &format!("Could not capture Git snapshot on {}", host.name))?;
     match output.status.code() { Some(3 | 4 | 6) => return Ok(None), _ => {} }
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut lines = text.lines().map(str::to_owned);
-    let snapshot = GitSnapshotToken { root: lines.next().unwrap_or_default(), tree: lines.next().unwrap_or_default() };
-    if !valid_remote_snapshot(&snapshot) { return Err("Remote Git snapshot was invalid".into()); }
+    let snapshot: GitSnapshotToken = serde_json::from_slice(&output.stdout).map_err(|error| format!("Remote Git snapshot was invalid: {error}"))?;
+    if !valid_remote_snapshot(&snapshot) || !Path::new(&snapshot.repository_root).is_absolute() { return Err("Remote Git snapshot was invalid".into()); }
     serde_json::to_string(&snapshot).map(Some).map_err(|error| error.to_string())
 }
 
@@ -1645,7 +1667,7 @@ fn discard_git_tree(app: AppHandle, snapshot: String, host_id: Option<String>) -
 }
 
 #[tauri::command(async)]
-fn load_git_diff(app: AppHandle, cwd: String, base_tree: String, host_id: Option<String>) -> Result<Option<String>, String> {
+fn load_git_diff(app: AppHandle, cwd: String, base_tree: String, host_id: Option<String>) -> Result<Option<GitDiffSnapshot>, String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     if host_id == "local" { return local_git_diff(&cwd, &base_tree); }
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
@@ -1653,11 +1675,11 @@ fn load_git_diff(app: AppHandle, cwd: String, base_tree: String, host_id: Option
     if !valid_remote_snapshot(&base) { return Err("Invalid remote Git snapshot location".into()); }
     let Some(current_token) = remote_git_tree(host, &cwd)? else { return Ok(None) };
     let current: GitSnapshotToken = serde_json::from_str(&current_token).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
-    let script = format!("cd {} || exit 2; parent=$(cd \"$HOME/.piop/git-snapshots\" && pwd -P) || exit 7; base=$(cd {} && pwd -P) || exit 7; [ \"$(dirname -- \"$base\")\" = \"$parent\" ] || exit 7; case \"$(basename -- \"$base\")\" in pi-desktop-diff-*) ;; *) exit 7;; esac; trap 'rm -rf -- \"$base\" {}' EXIT; repo_objects=$(git rev-parse --git-path objects) || exit 3; repo_objects=$(cd \"$repo_objects\" && pwd -P) || exit 3; GIT_OBJECT_DIRECTORY={} GIT_ALTERNATE_OBJECT_DIRECTORIES=\"$base/objects:$repo_objects\" git diff --no-color --no-ext-diff --find-renames {} {} --", shell_quote(&cwd), shell_quote(&base.root), shell_quote(&current.root), shell_quote(&format!("{}/objects", current.root)), shell_quote(&base.tree), shell_quote(&current.tree));
+    let script = format!("cd {} || exit 2; parent=$(cd \"$HOME/.piop/git-snapshots\" && pwd -P) || exit 7; base=$(cd {} && pwd -P) || exit 7; [ \"$(dirname -- \"$base\")\" = \"$parent\" ] || exit 7; case \"$(basename -- \"$base\")\" in pi-desktop-diff-*) ;; *) exit 7;; esac; trap 'rm -rf -- \"$base\" {}' EXIT; repo_objects=$(git rev-parse --git-path objects) || exit 3; repo_objects=$(cd \"$repo_objects\" && pwd -P) || exit 3; GIT_OBJECT_DIRECTORY={} GIT_ALTERNATE_OBJECT_DIRECTORIES=\"$base/objects:$repo_objects\" git diff --no-relative --no-color --no-ext-diff --find-renames {} {} --", shell_quote(&current.repository_root), shell_quote(&base.root), shell_quote(&current.root), shell_quote(&format!("{}/objects", current.root)), shell_quote(&base.tree), shell_quote(&current.tree));
     let mut command = ssh(host); command.arg(script); let output = run_limited(&mut command, MAX_GIT_PATCH_BYTES, &format!("Git patch on {} is too large", host.name))?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let patch = String::from_utf8_lossy(&output.stdout).into_owned();
-    Ok((!patch.trim().is_empty()).then_some(patch))
+    Ok((!patch.trim().is_empty()).then_some(GitDiffSnapshot::Located { patch, repository_root: current.repository_root, tool_paths: Vec::new() }))
 }
 
 fn local_git_diffs_path(session_path: &str) -> Result<PathBuf, String> { Ok(local_desktop_session_file(session_path)?.with_extension("diffs.json")) }
@@ -1811,14 +1833,18 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let codex_compaction = shell_quote(include_str!("../resources/codex-compaction.bundle.mjs"));
     let openai_cache_lineage = shell_quote(include_str!("../../extensions/pi-openai-cache-lineage/index.ts"));
     let fast_mode = shell_quote(include_str!("../resources/fast-mode.bundle.mjs"));
-    let project_files_watch = shell_quote(include_str!("../../extensions/pi-project-files-watch/index.ts"));
+    let diff_watch = shell_quote(include_str!("../../extensions/pi-diff-watch/index.ts"));
     let context_window_config = shell_quote(&serde_json::to_string_pretty(&json!({ "contextWindowCap": settings.context_window_cap, "enabled": settings.context_window_cap_enabled })).map_err(|error| error.to_string())?);
     let mcp_bridge = shell_quote(include_str!("../resources/mcp-bridge.bundle.mjs"));
     let mcp_config = shell_quote(&serde_json::to_string_pretty(&settings.mcp_servers).map_err(|error| error.to_string())?);
-    let remote = format!("umask 077 && rm -rf -- \"$HOME/.piop/pi-git-change-context\" && mkdir -p -m 700 \"$HOME/.piop/sessions\" \"$HOME/.piop/pi-context-window-cap\" \"$HOME/.piop/pi-project-files-watch\" \"$HOME/.piop/pi-define-agents\" && chmod 700 \"$HOME/.piop\" \"$HOME/.piop/sessions\" \"$HOME/.piop/pi-context-window-cap\" \"$HOME/.piop/pi-project-files-watch\" \"$HOME/.piop/pi-define-agents\" && mkdir -p -m 700 \"$HOME/.piop/hooks\" && printf %s {hook_stats} > \"$HOME/.piop/hook-stats.ts\" && printf %s {hooks} > \"$HOME/.piop/hook-loader.ts\" && printf %s {broker} > \"$HOME/.piop/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/.piop/pi-desktop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/.piop/pi-desktop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/.piop/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/.piop/pi-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/.piop/pi-context-window-cap/config.json\" && printf %s {project_files_watch} > \"$HOME/.piop/pi-project-files-watch/index.ts\" && printf %s {codex_web_search} > \"$HOME/.piop/pi-desktop-codex-web-search.ts\" && printf %s {codex_compaction} > \"$HOME/.piop/pi-desktop-codex-compaction.ts\" && printf %s {openai_cache_lineage} > \"$HOME/.piop/pi-openai-cache-lineage.ts\" && printf %s {btw} > \"$HOME/.piop/pi-desktop-btw.ts\" && printf %s {defined_agents} > \"$HOME/.piop/pi-define-agents/index.ts\" && chmod 600 -- \"$HOME/.piop/pi-desktop-codex-web-search.ts\" \"$HOME/.piop/pi-desktop-codex-compaction.ts\" \"$HOME/.piop/pi-openai-cache-lineage.ts\" \"$HOME/.piop/session-broker.ts\" \"$HOME/.piop/pi-desktop-trace-reader.ts\" \"$HOME/.piop/pi-desktop-mcp-bridge.ts\" \"$HOME/.piop/mcp-servers.json\" \"$HOME/.piop/pi-context-window-cap/index.ts\" \"$HOME/.piop/pi-context-window-cap/config.json\" \"$HOME/.piop/pi-project-files-watch/index.ts\" \"$HOME/.piop/pi-desktop-btw.ts\" \"$HOME/.piop/pi-define-agents/index.ts\"");
+    let remote = format!("umask 077 && rm -rf -- \"$HOME/.piop/pi-git-change-context\" && mkdir -p -m 700 \"$HOME/.piop/sessions\" \"$HOME/.piop/pi-context-window-cap\" \"$HOME/.piop/pi-diff-watch\" \"$HOME/.piop/pi-define-agents\" && chmod 700 \"$HOME/.piop\" \"$HOME/.piop/sessions\" \"$HOME/.piop/pi-context-window-cap\" \"$HOME/.piop/pi-diff-watch\" \"$HOME/.piop/pi-define-agents\" && mkdir -p -m 700 \"$HOME/.piop/hooks\" && printf %s {hook_stats} > \"$HOME/.piop/hook-stats.ts\" && printf %s {hooks} > \"$HOME/.piop/hook-loader.ts\" && printf %s {broker} > \"$HOME/.piop/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/.piop/pi-desktop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/.piop/pi-desktop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/.piop/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/.piop/pi-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/.piop/pi-context-window-cap/config.json\" && printf %s {diff_watch} > \"$HOME/.piop/pi-diff-watch/index.ts\" && printf %s {codex_web_search} > \"$HOME/.piop/pi-desktop-codex-web-search.ts\" && printf %s {codex_compaction} > \"$HOME/.piop/pi-desktop-codex-compaction.ts\" && printf %s {openai_cache_lineage} > \"$HOME/.piop/pi-openai-cache-lineage.ts\" && printf %s {btw} > \"$HOME/.piop/pi-desktop-btw.ts\" && printf %s {defined_agents} > \"$HOME/.piop/pi-define-agents/index.ts\" && chmod 600 -- \"$HOME/.piop/pi-desktop-codex-web-search.ts\" \"$HOME/.piop/pi-desktop-codex-compaction.ts\" \"$HOME/.piop/pi-openai-cache-lineage.ts\" \"$HOME/.piop/session-broker.ts\" \"$HOME/.piop/pi-desktop-trace-reader.ts\" \"$HOME/.piop/pi-desktop-mcp-bridge.ts\" \"$HOME/.piop/mcp-servers.json\" \"$HOME/.piop/pi-context-window-cap/index.ts\" \"$HOME/.piop/pi-context-window-cap/config.json\" \"$HOME/.piop/pi-diff-watch/index.ts\" \"$HOME/.piop/pi-desktop-btw.ts\" \"$HOME/.piop/pi-define-agents/index.ts\"");
     let remote = format!(r#"{remote} && if [ ! -f "$HOME/.piop/pi-define-agents/config.json" ] && [ -f "$HOME/.pi/agent/extensions/pi-define-agents/config.json" ]; then cp "$HOME/.pi/agent/extensions/pi-define-agents/config.json" "$HOME/.piop/pi-define-agents/config.json"; fi && rm -f -- "$HOME/.pi/agent/extensions/pi-define-agents/index.ts" "$HOME/.pi/agent/extensions/pi-desktop-btw.ts""#);
     let remote = format!(r#"{remote} && mkdir -p -m 700 "$HOME/.piop/pi-openai-fast-mode-piop" && printf %s {fast_mode} > "$HOME/.piop/pi-openai-fast-mode-piop/index.ts" && chmod 600 "$HOME/.piop/pi-openai-fast-mode-piop/index.ts""#);
     let remote = format!(r#"{remote} && printf %s {runtime_settings_extension} > "$HOME/.piop/runtime-settings.ts" && printf %s {runtime_settings_config} > "$HOME/.piop/runtime-settings.json" && chmod 600 "$HOME/.piop/runtime-settings.ts" "$HOME/.piop/runtime-settings.json""#);
+    let mut remote = remote;
+    for (name, content) in FILE_CHANGE_ASSETS {
+        remote.push_str(&format!(" && printf %s {} > \"$HOME/.piop/pi-diff-watch/{}\" && chmod 600 \"$HOME/.piop/pi-diff-watch/{}\"", shell_quote(content), name, name));
+    }
     // Bundled extensions can exceed the OS limit for a single command argument.
     let mut child = ssh(host).arg("sh -s").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| format!("Could not install piop extensions on {}: {error}", host.name))?;
     let mut stdin = child.stdin.take().ok_or("Remote extension staging stdin was unavailable")?;
@@ -1840,10 +1866,10 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
     let is_rpc = matches!(launch, PiLaunch::Rpc { .. });
     let default_model = std::env::var("PI_DESKTOP_E2E_MODEL").ok().filter(|model| !model.trim().is_empty()).unwrap_or_else(|| settings.default_model.clone());
     if host_id == "local" {
-        let (mcp_extension, mcp_config) = prepare_mcp_bridge(settings)?; let context_window_cap_extension = prepare_context_window_cap_extension(settings)?; let project_files_watch_extension = prepare_project_files_watch_extension()?; let trace_reader_extension = prepare_trace_reader()?; let codex_compaction_extension = prepare_codex_compaction_extension()?; let openai_cache_lineage_extension = prepare_openai_cache_lineage_extension()?; let codex_web_search_extension = prepare_codex_web_search_extension()?; let defined_agents_extension = prepare_defined_agents_extension()?; let pi_path = pi_executable();
+        let (mcp_extension, mcp_config) = prepare_mcp_bridge(settings)?; let context_window_cap_extension = prepare_context_window_cap_extension(settings)?; let diff_watch_extension = prepare_diff_watch_extension()?; let trace_reader_extension = prepare_trace_reader()?; let codex_compaction_extension = prepare_codex_compaction_extension()?; let openai_cache_lineage_extension = prepare_openai_cache_lineage_extension()?; let codex_web_search_extension = prepare_codex_web_search_extension()?; let defined_agents_extension = prepare_defined_agents_extension()?; let pi_path = pi_executable();
         let session_dir = ensure_desktop_sessions_dir(&desktop_home)?;
         let mut command = Command::new(&pi_path); command.arg(if is_rpc { "--mode" } else { "--print" }); if is_rpc { command.arg("rpc"); }
-        command.arg("--extension").arg(prepare_runtime_settings(settings)?).arg("--session-dir").arg(session_dir).arg("--approve").arg("--no-skills").arg("--extension").arg(prepare_hooks_extension()?).arg("--extension").arg(mcp_extension).arg("--extension").arg(prepare_session_broker()?).arg("--extension").arg(&trace_reader_extension).arg("--extension").arg(&context_window_cap_extension).arg("--extension").arg(&project_files_watch_extension).arg("--extension").arg(prepare_fast_mode_extension()?).arg("--extension").arg(&codex_compaction_extension).arg("--extension").arg(&openai_cache_lineage_extension).arg("--extension").arg(&codex_web_search_extension).arg("--extension").arg(&defined_agents_extension)
+        command.arg("--extension").arg(prepare_runtime_settings(settings)?).arg("--session-dir").arg(session_dir).arg("--approve").arg("--no-skills").arg("--extension").arg(prepare_hooks_extension()?).arg("--extension").arg(mcp_extension).arg("--extension").arg(prepare_session_broker()?).arg("--extension").arg(&trace_reader_extension).arg("--extension").arg(&context_window_cap_extension).arg("--extension").arg(&diff_watch_extension).arg("--extension").arg(prepare_fast_mode_extension()?).arg("--extension").arg(&codex_compaction_extension).arg("--extension").arg(&openai_cache_lineage_extension).arg("--extension").arg(&codex_web_search_extension).arg("--extension").arg(&defined_agents_extension)
             .env("PI_DESKTOP_DEFINED_AGENTS_EXTENSION", &defined_agents_extension).env("PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION", &codex_web_search_extension).env("PI_DESKTOP_CODEX_COMPACTION_EXTENSION", &codex_compaction_extension).env("PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION", &context_window_cap_extension).env("PI_DESKTOP_TRACE_READER_EXTENSION", &trace_reader_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config).env("PI_DESKTOP_BROKER_URL", format!("http://127.0.0.1:{broker_port}")).env("PI_DESKTOP_BROKER_TOKEN", &broker_token);
         match launch {
             PiLaunch::Rpc { cwd, session_path, session_id, fork_path, no_session } => {
@@ -1862,7 +1888,7 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
     let host = remote_host(settings, host_id)?; stage_remote_extensions(host, settings)?; let remote_port = remote_broker_port(); let remote_pi = remote_pi_path(&host.pi_path);
     let mut arguments = vec![remote_pi.clone()]; if is_rpc { arguments.extend(["--mode".into(), "rpc".into()]); } else { arguments.push("--print".into()); }
     arguments.extend(["--extension".into(), "\"$HOME/.piop/runtime-settings.ts\"".into(), "--extension".into(), "\"$HOME/.piop/hook-loader.ts\"".into()]);
-    arguments.extend(["--session-dir".into(), "\"$HOME/.piop/sessions\"".into(), "--approve".into(), "--no-skills".into(), "--extension".into(), "\"$HOME/.piop/pi-desktop-mcp-bridge.ts\"".into(), "--extension".into(), "\"$HOME/.piop/session-broker.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-desktop-trace-reader.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-context-window-cap/index.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-project-files-watch/index.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-define-agents/index.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-desktop-codex-compaction.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-openai-cache-lineage.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-desktop-codex-web-search.ts\"".into()]);
+    arguments.extend(["--session-dir".into(), "\"$HOME/.piop/sessions\"".into(), "--approve".into(), "--no-skills".into(), "--extension".into(), "\"$HOME/.piop/pi-desktop-mcp-bridge.ts\"".into(), "--extension".into(), "\"$HOME/.piop/session-broker.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-desktop-trace-reader.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-context-window-cap/index.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-diff-watch/index.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-define-agents/index.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-desktop-codex-compaction.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-openai-cache-lineage.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-desktop-codex-web-search.ts\"".into()]);
     arguments.extend(["--extension".into(), "\"$HOME/.piop/pi-openai-fast-mode-piop/index.ts\"".into()]);
     if is_rpc { arguments.extend(["--extension".into(), "\"$HOME/.piop/pi-desktop-btw.ts\"".into()]); }
     let cwd = match launch {
