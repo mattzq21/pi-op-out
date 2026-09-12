@@ -3,6 +3,7 @@ import type { AppSettings, ExtensionUiRequest, GitDiffSnapshots, SessionSummary 
 import { NativeTransport, type NativeConnectionTarget } from "./nativeTransport";
 import { branchMessages, type PiEntry } from "./messages";
 import { textOf } from "./content";
+import { mergeDiffSnapshots } from "./turnDiff";
 
 const sessionKey = (hostId: string, sessionId: string) => `${hostId}:${sessionId}`;
 const EMPTY_DIFFS: GitDiffSnapshots = {};
@@ -74,8 +75,11 @@ export class SessionRuntimePool {
       transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }),
       transport.command<{ sessionFile?: string }>({ type: "get_state" }),
     ]).then(async ([baseTree, history, state]) => {
-      if (!baseTree || !state.sessionFile) { if (baseTree) await transport.discardGitTree(baseTree, baseline.hostId).catch(() => undefined); return undefined; }
-      const snapshot = await transport.loadGitDiff(baseline.cwd, baseTree, baseline.hostId);
+      if (!state.sessionFile) { if (baseTree) await transport.discardGitTree(baseTree, baseline.hostId).catch(() => undefined); return undefined; }
+      const gitPatch = baseTree ? await transport.loadGitDiff(baseline.cwd, baseTree, baseline.hostId).catch(async () => { await transport.discardGitTree(baseTree, baseline.hostId).catch(() => undefined); return null; }) : null;
+      const messages = branchMessages(history.entries, history.leafId);
+      const turnStart = messages.map((message) => message.role).lastIndexOf("user");
+      const snapshot = mergeDiffSnapshots(gitPatch, messages.slice(Math.max(0, turnStart)).flatMap((message) => message.fileChanges ?? []), baseline.cwd);
       const message = latestAssistantEntry(history.entries, history.leafId);
       return snapshot && message ? { snapshot, messageId: message.id, sessionFile: state.sessionFile } : undefined;
     });

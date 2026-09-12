@@ -1,9 +1,22 @@
-import type { ChatMessage, ContentPart, PromptContextInfo } from "../types";
+import type { ChatMessage, ContentPart, FileChangeSnapshot, PromptContextInfo } from "../types";
 
 const visibleUserContent = (content: unknown) => content;
 const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "pi-desktop-catch-up"]);
 
 export type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number }; customType?: string; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string };
+
+export function appendFileChanges(messages: ChatMessage[], entry: PiEntry): ChatMessage[] {
+  if (entry.type !== "custom" || entry.customType !== "piop-file-changes") return messages;
+  const data = entry.data as Partial<FileChangeSnapshot> | undefined;
+  if (!data || typeof data.cwd !== "string" || typeof data.patch !== "string" || !Array.isArray(data.toolCallIds) || !Array.isArray(data.paths)) return messages;
+  const ids = new Set(data.toolCallIds);
+  let index = messages.length - 1;
+  while (index >= 0 && !(messages[index].role === "tool" && ids.has(messages[index].toolCallId ?? messages[index].id))) index--;
+  if (index < 0) return messages;
+  const toolPaths = Array.isArray(data.toolPaths) ? data.toolPaths.filter((value) => value && typeof value === "object" && typeof value.toolCallId === "string" && typeof value.path === "string" && typeof value.absolutePath === "string" && typeof value.canonicalPath === "string") : [];
+  const snapshot: FileChangeSnapshot = { id: entry.id, cwd: data.cwd, patch: data.patch, toolCallIds: data.toolCallIds.filter((id) => typeof id === "string"), toolPaths, paths: data.paths.filter((path) => typeof path === "string"), warnings: Array.isArray(data.warnings) ? data.warnings.filter((value) => typeof value === "string") : [] };
+  return messages.map((message, candidate) => candidate === index ? { ...message, fileChanges: [...(message.fileChanges ?? []).filter((change) => change.id !== entry.id), snapshot] } : message);
+}
 
 export function resumeMarker(entry: PiEntry) {
   const message = (entry.data as { message?: unknown } | undefined)?.message;
@@ -64,6 +77,7 @@ export function branchMessages(entries: PiEntry[], leafId: string | null): ChatM
   while (cursor && !visited.has(cursor)) { visited.add(cursor); const entry = byId.get(cursor); if (!entry) break; branch.unshift(entry); cursor = entry.parentId; }
   let messages: ChatMessage[] = []; const resumeMarkers = new Set<string>();
   for (const entry of branch) {
+    if (entry.type === "custom" && entry.customType === "piop-file-changes") { messages = appendFileChanges(messages, entry); continue; }
     const marker = resumeMarker(entry); if (marker) { resumeMarkers.add(marker); messages = checkpointLatestUser(messages); continue; }
     if (entry.type === "custom" && entry.customType === "pi-desktop-pause-state" && (entry.data as { isPaused?: boolean } | undefined)?.isPaused) messages = checkpointLatestUser(messages);
     if (entry.type === "custom" && entry.customType === "pi-desktop-prompt-context") {

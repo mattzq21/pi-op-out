@@ -1,6 +1,6 @@
 export type DiffPart = { text: string; changed: boolean };
 export type DiffLine = { kind: "add" | "delete" | "context" | "meta"; text: string; oldLine?: number; newLine?: number; parts?: DiffPart[] };
-export type DiffFile = { id: string; path: string; lines: DiffLine[]; additions: number; deletions: number };
+export type DiffFile = { id: string; path: string; oldPath?: string; lines: DiffLine[]; additions: number; deletions: number };
 
 const MAX_DIFF_INPUT_CHARS = 4 * 1024 * 1024;
 const MAX_RENDERED_DIFF_LINES = 10_000;
@@ -89,28 +89,49 @@ function annotateIntraline(files: DiffFile[]) {
   }
 }
 
-export function parseDiff(patch: string): DiffFile[] {
+export function parseDiff(patch: string, fallbackPath?: string): DiffFile[] {
   const files: DiffFile[] = [];
   let file: DiffFile | undefined;
-  let inHunk = false; let oldLine = 0; let newLine = 0; let renderedLines = 0;
+  let inHunk = false; let oldLine: number | undefined; let newLine: number | undefined; let renderedLines = 0;
+  let gitPaths = false; let oldRemaining = 0; let newRemaining = 0; let codex = false;
   const boundedPatch = patch.slice(0, MAX_DIFF_INPUT_CHARS);
   const pushLine = (line: DiffLine) => { if (!file || renderedLines >= MAX_RENDERED_DIFF_LINES) return; file.lines.push(line.text.length > MAX_RENDERED_LINE_CHARS ? { ...line, text: `${line.text.slice(0, MAX_RENDERED_LINE_CHARS)}…` } : line); renderedLines += 1; };
-  for (const text of boundedPatch.split("\n")) {
+  const startFile = (path: string) => { file = { id: `${files.length}:${path}`, path, lines: [], additions: 0, deletions: 0 }; files.push(file); inHunk = false; oldLine = undefined; newLine = undefined; };
+  const lines = boundedPatch.split("\n");
+  for (let index = 0; index < lines.length; index++) {
+    const text = lines[index];
     if (text.startsWith("diff --git ")) {
-      file = { id: `${files.length}:${text}`, path: displayPath(text), lines: [], additions: 0, deletions: 0 };
-      inHunk = false; files.push(file); continue;
+      startFile(displayPath(text)); gitPaths = true; codex = false; continue;
     }
+    const operation = /^\*\*\* (Add File|Update File|Delete File): (.+)$/.exec(text);
+    if (operation) { startFile(operation[2]); gitPaths = false; codex = true; inHunk = operation[1] === "Add File"; newLine = inHunk ? 1 : undefined; pushLine({ kind: "meta", text }); continue; }
+    if (codex && text.startsWith("*** Move to: ") && file) { file.oldPath = file.path; file.path = text.slice(13); pushLine({ kind: "meta", text }); continue; }
+    if (codex && text.startsWith("*** ")) { inHunk = false; continue; }
+    if (!codex && text.startsWith("--- ") && lines[index + 1]?.startsWith("+++ ") && (!inHunk || (oldRemaining <= 0 && newRemaining <= 0))) {
+      if (!file || inHunk) { startFile(fallbackPath ?? ""); gitPaths = false; }
+      inHunk = false;
+    }
+    if (!file && fallbackPath && (text.startsWith("@@") || /^[ +\-]\s*\d+\s/.test(text))) startFile(fallbackPath);
     if (!file) continue;
     if (!inHunk && (text.startsWith("+++ ") || text.startsWith("--- "))) {
       const path = decodeGitPath(text.slice(4).split("\t")[0]);
-      if (path !== "/dev/null") file.path = path.replace(/^[ab]\//, "");
+      if (path !== "/dev/null") { file.path = gitPaths ? path.replace(/^[ab]\//, "") : path; if (text.startsWith("--- ")) file.oldPath = file.path; }
       continue;
     }
-    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
-    if (hunk) { inHunk = true; oldLine = Number(hunk[1]); newLine = Number(hunk[2]); pushLine({ kind: "meta", text }); continue; }
-    if (inHunk && text.startsWith("+")) { pushLine({ kind: "add", text: text.slice(1), newLine: newLine++ }); file.additions += 1; continue; }
-    if (inHunk && text.startsWith("-")) { pushLine({ kind: "delete", text: text.slice(1), oldLine: oldLine++ }); file.deletions += 1; continue; }
-    if (text.startsWith(" ")) { pushLine({ kind: "context", text: text.slice(1), oldLine: oldLine++, newLine: newLine++ }); continue; }
+    const hunk = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(text);
+    if (hunk) { inHunk = true; oldLine = Number(hunk[1]); newLine = Number(hunk[3]); oldRemaining = Number(hunk[2] ?? 1); newRemaining = Number(hunk[4] ?? 1); pushLine({ kind: "meta", text }); continue; }
+    if (codex && text.startsWith("@@")) { inHunk = true; oldLine = undefined; newLine = undefined; pushLine({ kind: "meta", text }); continue; }
+    const numbered = !inHunk && fallbackPath ? /^([ +\-])\s*(\d+) (.*)$/.exec(text) : null;
+    if (numbered) {
+      const kind = numbered[1] === "+" ? "add" : numbered[1] === "-" ? "delete" : "context";
+      pushLine({ kind, text: numbered[3], ...(kind !== "add" ? { oldLine: Number(numbered[2]) } : {}), ...(kind !== "delete" ? { newLine: Number(numbered[2]) } : {}) });
+      if (kind === "add") file.additions++; if (kind === "delete") file.deletions++; continue;
+    }
+    if (inHunk && text.startsWith("+")) { pushLine({ kind: "add", text: text.slice(1), newLine }); if (newLine !== undefined) newLine++; newRemaining--; file.additions += 1; continue; }
+    if (inHunk && text.startsWith("-")) { pushLine({ kind: "delete", text: text.slice(1), oldLine }); if (oldLine !== undefined) oldLine++; oldRemaining--; file.deletions += 1; continue; }
+    if (inHunk && text.startsWith(" ")) { pushLine({ kind: "context", text: text.slice(1), oldLine, newLine }); if (oldLine !== undefined) oldLine++; if (newLine !== undefined) newLine++; oldRemaining--; newRemaining--; continue; }
+    if (text.startsWith("rename from ")) file.oldPath = decodeGitPath(text.slice(12));
+    if (text.startsWith("rename to ")) file.path = decodeGitPath(text.slice(10));
     if (text && !text.startsWith("index ") && !text.startsWith("--- ") && !text.startsWith("+++ ")) pushLine({ kind: "meta", text });
   }
   if (patch.length > boundedPatch.length || renderedLines >= MAX_RENDERED_DIFF_LINES) files.at(-1)?.lines.push({ kind: "meta", text: "Diff display truncated for performance." });

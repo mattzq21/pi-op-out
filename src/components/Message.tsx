@@ -3,7 +3,8 @@ import { createPortal } from "react-dom";
 import { Check, ChevronRight, CircleAlert, Copy, FolderGit2, GitBranch, Pause, Undo2, Wrench } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ChatMessage, GitDiffSnapshot } from "../types";
+import type { ChatMessage } from "../types";
+import type { turnDiff } from "../lib/turnDiff";
 import { textOf, thinkingOf } from "../lib/content";
 import { HookWheel } from "./HookWheel";
 import type { HookCounts } from "../lib/hookStats";
@@ -12,7 +13,7 @@ import { openExternalUrl } from "../lib/nativeTransport";
 import { IconButton } from "./IconButton";
 import { DiffViewer } from "./DiffViewer";
 
-interface Props { hookCounts?: HookCounts; message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; diff?: GitDiffSnapshot; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
+interface Props { hookCounts?: HookCounts; message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; diff?: ReturnType<typeof turnDiff>; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
 
 function nodeText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -174,7 +175,7 @@ export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = 
       {failure && <div className="message-failure" role="status"><CircleAlert size={14} /><span>{failure}</span>{onRetry && <button disabled={retrying} onClick={onRetry}>{retrying ? "Retrying…" : "Retry"}</button>}</div>}
       {pausedResponse && <div className="message-paused" role="status"><Pause size={14} /><span>Response paused</span></div>}
       {message.streaming && <span className="stream-caret" />}
-      {diff && <DiffViewer snapshot={diff} />}
+      {diff && <DiffViewer {...diff} />}
       {showActions && !message.streaming && (output.trim().length > 0 || onCreateWorktree) && <div className="message-actions">
         <IconButton label={copyState === "copied" ? `${responseLabel} copied` : copyState === "error" ? `Copy failed for ${responseLabel.toLowerCase()}` : `Copy ${responseLabel.toLowerCase()}`} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>
         {copyState === "error" && <span className="copy-feedback" role="status">Could not copy response</span>}

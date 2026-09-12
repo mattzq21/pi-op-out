@@ -1,17 +1,16 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { FileDiff, Files } from "lucide-react";
-import type { GitDiffSnapshot } from "../types";
-import { parseDiff } from "../lib/diff";
+import type { turnDiff } from "../lib/turnDiff";
 
-export function DiffViewer({ snapshot }: { snapshot: GitDiffSnapshot }) {
-  const files = useMemo(() => parseDiff(snapshot), [snapshot]);
+export function DiffViewer({ files, warnings }: ReturnType<typeof turnDiff>) {
   const [previewId, setPreviewId] = useState<string>();
   const preview = files.find((file) => file.id === previewId);
   const additions = files.reduce((total, file) => total + file.additions, 0);
   const deletions = files.reduce((total, file) => total + file.deletions, 0);
-  if (!files.length) return null;
-  return <section className="diff-viewer" aria-label="Project changes">
+  if (!files.length && !warnings.length) return null;
+  return <section className="diff-viewer" aria-label="File changes">
     <div className="diff-summary"><FileDiff size={16} /><strong>Changes</strong><span><Files size={13} />{files.length} {files.length === 1 ? "file" : "files"}</span><em className="diff-additions">+{additions}</em><em className="diff-deletions">−{deletions}</em></div>
+    {warnings.map((warning) => <div className="diff-line meta" key={warning}>{warning}</div>)}
     <div className="diff-files" onMouseLeave={(event) => { if (!event.currentTarget.contains(document.activeElement)) setPreviewId(undefined); }} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setPreviewId(undefined); }}>
       <nav aria-label="Changed files">{files.map((file) => <button className="diff-file-chip" type="button" key={file.id} title={file.path} onMouseEnter={() => setPreviewId(file.id)} onFocus={() => setPreviewId(file.id)}><span>{file.path}</span><small><b>+{file.additions}</b> <i>−{file.deletions}</i></small></button>)}</nav>
       {preview && <section className="diff-file">
