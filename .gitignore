@@ -8,7 +8,6 @@ src-tauri/gen/
 logs/
 .trace/
 extensions/pi-orchestration/config.json
-extensions/pi-orchestration/config.json.pre-define-agents.bak
 extensions/pi-define-agents/config.json
 .DS_Store
 piop.png

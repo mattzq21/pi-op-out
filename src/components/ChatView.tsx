@@ -8,7 +8,6 @@ import { PromptContextBar } from "./PromptContextBar";
 import { textOf, thinkingOf } from "../lib/content";
 import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 import { cacheHitStats } from "../lib/messages";
-import { parseSequencePrompt } from "../lib/sequence";
 
 interface Props { state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; debug?: boolean; agents?: AgentProfile[]; activeAgent?: string; dictionaries?: PromptDictionary[]; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; selectionBtw?: boolean; draft?: string; onDraftChange?: (value: string) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: SetStateAction<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onPause: () => void | Promise<void>; onResume: () => void | Promise<void>; onOpenTerminal?: () => void; onOpenProject: () => void; onClearProject?: () => void; onBranch: (message: ChatMessage) => void; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
 
@@ -194,27 +193,24 @@ function ConversationTurnView({ messages, hookCounts, gitDiffs, debug, active, r
   const [retryError, setRetryError] = useState<string>();
   const [retrying, setRetrying] = useState(false); const retryingRef = useRef(false);
   const userIndex = messages.findIndex((message) => message.role === "user");
-  const parsed = userIndex >= 0 && (!messages[userIndex].entryId || messages[userIndex].sequenceMarkerAuthorized) ? parseSequencePrompt(textOf(messages[userIndex].content)) : { text: userIndex >= 0 ? textOf(messages[userIndex].content) : "" };
-  if (parsed.step && !parsed.step.visible) return null;
-  const shown = parsed.step ? messages.map((message, index) => index === userIndex ? { ...message, content: parsed.text } : message) : messages;
-  const promptContext = userIndex >= 0 && shown[userIndex].deliveryBehavior !== "steer" ? shown[userIndex].promptContext : undefined;
+  const promptContext = userIndex >= 0 && messages[userIndex].deliveryBehavior !== "steer" ? messages[userIndex].promptContext : undefined;
 
   let finalIndex = -1;
-  for (let index = shown.length - 1; index >= 0; index -= 1) {
-    const message = shown[index];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
     if (message.role === "assistant" && (textOf(message.content).trim().length > 0 || message.stopReason === "aborted" || message.stopReason === "error")) { finalIndex = index; break; }
   }
-  const finalThinking = finalIndex >= 0 ? thinkingOf(shown[finalIndex].content) : "";
-  const intermediate = shown.flatMap((message, index) => {
+  const finalThinking = finalIndex >= 0 ? thinkingOf(messages[finalIndex].content) : "";
+  const intermediate = messages.flatMap((message, index) => {
     if (message.role === "user" || message.role === "system") return [];
     if (index !== finalIndex) return [message];
     if (!finalThinking) return [];
     const { promptContext: _promptContext, ...reasoningMessage } = message;
     return [{ ...reasoningMessage, id: `${message.id}:reasoning`, content: [{ type: "thinking" as const, thinking: finalThinking }], stopReason: undefined, errorMessage: undefined }];
   });
-  const userMessages = !active && !paused && parsed.step?.step ? [] : shown.filter((message) => message.role === "user");
-  const finalMessage = finalIndex >= 0 ? { ...shown[finalIndex], content: textOf(shown[finalIndex].content) } : undefined;
-  const turnCacheUsage = shown.reduce((total, message) => {
+  const userMessages = messages.filter((message) => message.role === "user");
+  const finalMessage = finalIndex >= 0 ? { ...messages[finalIndex], content: textOf(messages[finalIndex].content) } : undefined;
+  const turnCacheUsage = messages.reduce((total, message) => {
     if (message.role === "assistant" && message.usage) {
       total.input += message.usage.input;
       total.cacheRead += message.usage.cacheRead; total.cacheWrite += message.usage.cacheWrite ?? 0;
@@ -223,20 +219,19 @@ function ConversationTurnView({ messages, hookCounts, gitDiffs, debug, active, r
   }, { input: 0, cacheRead: 0, cacheWrite: 0 });
   const worktreeResponse = onCreateWorktree && finalMessage && finalMessage.stopReason !== "toolUse" ? () => onCreateWorktree(finalMessage) : undefined;
   const gitDiff = finalMessage ? gitDiffs?.[finalMessage.id] : undefined;
-  const workedFor = formatWorkedFor(userIndex >= 0 ? shown[userIndex].timestamp : shown[0]?.timestamp, finalMessage?.completedAt ?? finalMessage?.timestamp);
-  const retryTurn = retryable ? findReplaceableAbortedTurn(shown) : undefined;
+  const workedFor = formatWorkedFor(userIndex >= 0 ? messages[userIndex].timestamp : messages[0]?.timestamp, finalMessage?.completedAt ?? finalMessage?.timestamp);
+  const retryTurn = retryable ? findReplaceableAbortedTurn(messages) : undefined;
   const retryPrompt = retryTurn?.prompt;
   const retryImages = Array.isArray(retryTurn?.user.content) ? retryTurn.user.content.filter((part) => part.type === "image") : [];
 
   return <section className="conversation-turn">
-    {parsed.step && parsed.step.step > 0 && <div className="sequence-step-label">{parsed.step.sequence} · {parsed.step.agent}</div>}
     {userMessages.map((message) => <Message key={message.id} message={message} debug={debug} />)}
     {debug && promptContext && <PromptContextBar context={promptContext} />}
-    {active || paused ? <div className="active-work-content">{renderMessages(shown.filter((message) => message.role !== "user"), true, false, debug, paused)}</div> : <>
+    {active || paused ? <div className="active-work-content">{renderMessages(messages.filter((message) => message.role !== "user"), true, false, debug, paused)}</div> : <>
     {intermediate.length > 0 && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}<ChevronRight size={12} className="work-group-chevron" aria-hidden="true" /></summary><div className="work-group-content">{renderMessages(intermediate, true, true, debug, paused, false)}</div></details>}
     {finalMessage && <Message message={finalMessage} hookCounts={hookCounts} turnCacheUsage={turnCacheUsage} diff={gitDiff} debug={debug} paused={paused} onBranch={onBranch} onForkAndForget={onForkAndForget} onCreateWorktree={worktreeResponse} retrying={retrying} onRetry={retryPrompt ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(onRetry(retryPrompt, undefined, retryImages)).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
     {retryError && <div className="message-failure retry-error" role="alert">Retry failed: {retryError}</div>}
-    {renderMessages(shown.filter((message) => message.role === "system"), false)}
+    {renderMessages(messages.filter((message) => message.role === "system"), false)}
     </>}
   </section>;
 }

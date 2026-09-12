@@ -151,12 +151,7 @@ async function readConfig(pi: ExtensionAPI): Promise<Config> {
     return config;
   }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  // Preserve profiles from older installations without changing their legacy data.
-  const legacyPath = join(dirname(configPath), "..", "pi-orchestration", "config.json");
-  let legacy: StoredConfig = {};
-  try { legacy = JSON.parse(await readFile(legacyPath, "utf8")); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  await writeConfig(await migratePrompts(legacy, pi), true);
+  await writeConfig(normalize({}, pi), true);
   return readConfig(pi);
 }
 async function loadConfig(pi: ExtensionAPI): Promise<Config> {
@@ -292,7 +287,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     restore(ctx);
     active = "general";
-    for (const entry of ctx.sessionManager.getBranch()) if (entry.type === "custom" && (entry.customType === STATE_ENTRY || entry.customType === "pi-orchestration-state")) {
+    for (const entry of ctx.sessionManager.getBranch()) if (entry.type === "custom" && entry.customType === STATE_ENTRY) {
       const storedName = (entry.data as { active?: string })?.active;
       const name = storedName === "default" && !findAgent("default") ? "general" : storedName;
       if (name && findAgent(name)) active = name;

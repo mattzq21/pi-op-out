@@ -598,15 +598,6 @@ fn prepare_project_files_watch_extension() -> Result<PathBuf, String> {
 }
 
 fn prepare_defined_agents_extension() -> Result<PathBuf, String> {
-    // Older app installations left an auto-discovered orchestration entry point.
-    // Preserve it outside Pi's discovery directory, along with all existing config.
-    let legacy = home_dir()?.join(".pi/agent/extensions/pi-orchestration/index.ts");
-    if legacy.exists() {
-        let backup = home_dir()?.join(".piop/disabled-extensions");
-        ensure_private_dir(&backup)?;
-        fs::rename(&legacy, backup.join(format!("pi-orchestration-{}.ts", Uuid::new_v4())))
-            .map_err(|error| format!("Could not disable legacy orchestration: {error}"))?;
-    }
     let dir = home_dir()?.join(".piop/pi-define-agents");
     ensure_private_dir(&dir)?;
     let legacy_dir = home_dir()?.join(".pi/agent/extensions/pi-define-agents");
@@ -614,8 +605,6 @@ fn prepare_defined_agents_extension() -> Result<PathBuf, String> {
     if !config.exists() && legacy_dir.join("config.json").exists() {
         atomic_write_private(&config, &fs::read(legacy_dir.join("config.json")).map_err(|error| error.to_string())?)?;
     }
-    let orchestration = home_dir()?.join(".pi/agent/extensions/pi-orchestration/config.json");
-    if !config.exists() && orchestration.exists() { atomic_write_private(&config, &fs::read(orchestration).map_err(|e| e.to_string())?)?; }
     let path = dir.join("index.ts");
     atomic_write_private(&path, include_str!("../../extensions/pi-define-agents/index.ts").as_bytes())?;
     if legacy_dir.join("index.ts").exists() { fs::remove_file(legacy_dir.join("index.ts")).map_err(|error| error.to_string())?; }
@@ -1752,9 +1741,6 @@ fn remote_broker_command(host: &RemoteHost, local_port: u16, remote_port: u16) -
 }
 
 fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<(), String> {
-    let disable = format!("if [ -f \"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\" ]; then mkdir -p -m 700 \"$HOME/.piop/disabled-extensions\" && mv -- \"$HOME/.pi/agent/extensions/pi-orchestration/index.ts\" \"$HOME/.piop/disabled-extensions/pi-orchestration-{}.ts\"; fi", Uuid::new_v4());
-    let output = ssh(host).arg(disable).output().map_err(|error| format!("Could not disable legacy orchestration on {}: {error}", host.name))?;
-    if !output.status.success() { return Err(format!("Could not disable legacy orchestration on {}: {}", host.name, String::from_utf8_lossy(&output.stderr))); }
     let runtime_settings_extension = shell_quote(include_str!("../../extensions/pi-runtime-settings/index.ts"));
     let runtime_settings_config = shell_quote(&serde_json::to_string(&runtime_settings(settings)).map_err(|error| error.to_string())?);
     let hook_stats = shell_quote(include_str!("../../extensions/piop-hooks/hook-stats.ts"));
@@ -1772,7 +1758,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let mcp_bridge = shell_quote(include_str!("../resources/mcp-bridge.bundle.mjs"));
     let mcp_config = shell_quote(&serde_json::to_string_pretty(&settings.mcp_servers).map_err(|error| error.to_string())?);
     let remote = format!("umask 077 && rm -rf -- \"$HOME/.piop/pi-git-change-context\" && mkdir -p -m 700 \"$HOME/.piop/sessions\" \"$HOME/.piop/pi-context-window-cap\" \"$HOME/.piop/pi-project-files-watch\" \"$HOME/.piop/pi-define-agents\" && chmod 700 \"$HOME/.piop\" \"$HOME/.piop/sessions\" \"$HOME/.piop/pi-context-window-cap\" \"$HOME/.piop/pi-project-files-watch\" \"$HOME/.piop/pi-define-agents\" && mkdir -p -m 700 \"$HOME/.piop/hooks\" && printf %s {hook_stats} > \"$HOME/.piop/hook-stats.ts\" && printf %s {hooks} > \"$HOME/.piop/hook-loader.ts\" && printf %s {broker} > \"$HOME/.piop/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/.piop/pi-desktop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/.piop/pi-desktop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/.piop/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/.piop/pi-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/.piop/pi-context-window-cap/config.json\" && printf %s {project_files_watch} > \"$HOME/.piop/pi-project-files-watch/index.ts\" && printf %s {codex_web_search} > \"$HOME/.piop/pi-desktop-codex-web-search.ts\" && printf %s {codex_compaction} > \"$HOME/.piop/pi-desktop-codex-compaction.ts\" && printf %s {btw} > \"$HOME/.piop/pi-desktop-btw.ts\" && printf %s {defined_agents} > \"$HOME/.piop/pi-define-agents/index.ts\" && chmod 600 -- \"$HOME/.piop/pi-desktop-codex-web-search.ts\" \"$HOME/.piop/pi-desktop-codex-compaction.ts\" \"$HOME/.piop/session-broker.ts\" \"$HOME/.piop/pi-desktop-trace-reader.ts\" \"$HOME/.piop/pi-desktop-mcp-bridge.ts\" \"$HOME/.piop/mcp-servers.json\" \"$HOME/.piop/pi-context-window-cap/index.ts\" \"$HOME/.piop/pi-context-window-cap/config.json\" \"$HOME/.piop/pi-project-files-watch/index.ts\" \"$HOME/.piop/pi-desktop-btw.ts\" \"$HOME/.piop/pi-define-agents/index.ts\"");
-    let remote = format!(r#"{remote} && if [ ! -f "$HOME/.piop/pi-define-agents/config.json" ] && [ -f "$HOME/.pi/agent/extensions/pi-define-agents/config.json" ]; then cp "$HOME/.pi/agent/extensions/pi-define-agents/config.json" "$HOME/.piop/pi-define-agents/config.json"; fi && if [ ! -f "$HOME/.piop/pi-define-agents/config.json" ] && [ -f "$HOME/.pi/agent/extensions/pi-orchestration/config.json" ]; then cp "$HOME/.pi/agent/extensions/pi-orchestration/config.json" "$HOME/.piop/pi-define-agents/config.json"; fi && rm -f -- "$HOME/.pi/agent/extensions/pi-define-agents/index.ts" "$HOME/.pi/agent/extensions/pi-desktop-btw.ts""#);
+    let remote = format!(r#"{remote} && if [ ! -f "$HOME/.piop/pi-define-agents/config.json" ] && [ -f "$HOME/.pi/agent/extensions/pi-define-agents/config.json" ]; then cp "$HOME/.pi/agent/extensions/pi-define-agents/config.json" "$HOME/.piop/pi-define-agents/config.json"; fi && rm -f -- "$HOME/.pi/agent/extensions/pi-define-agents/index.ts" "$HOME/.pi/agent/extensions/pi-desktop-btw.ts""#);
     let remote = format!(r#"{remote} && mkdir -p -m 700 "$HOME/.piop/pi-openai-fast-mode-piop" && printf %s {fast_mode} > "$HOME/.piop/pi-openai-fast-mode-piop/index.ts" && chmod 600 "$HOME/.piop/pi-openai-fast-mode-piop/index.ts""#);
     let remote = format!(r#"{remote} && printf %s {runtime_settings_extension} > "$HOME/.piop/runtime-settings.ts" && printf %s {runtime_settings_config} > "$HOME/.piop/runtime-settings.json" && chmod 600 "$HOME/.piop/runtime-settings.ts" "$HOME/.piop/runtime-settings.json""#);
     // Bundled extensions can exceed the OS limit for a single command argument.

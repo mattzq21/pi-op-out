@@ -173,7 +173,7 @@ const installedAgents = (): DefinedAgentsCapability => {
 };
 const enableAgents = async (capability = acceptanceAgents()) => emitPiEvent({
   type: "extension_ui_request",
-  id: "acceptance-orchestration",
+  id: "acceptance-agents",
   method: "setStatus",
   statusKey: "pi-define-agents",
   statusText: `json:${encodeAgentValue(capability)}`,
@@ -607,7 +607,6 @@ describe("Conversation acceptance", () => {
       "pi_command:get_commands": { commands: [
         { name: "review", description: "Visible review command", source: "extension", sourceInfo: { source: "acceptance" } },
         { name: "internal-inline", description: "Inline-only command", source: "extension", sourceInfo: { source: "inline" } },
-        { name: "pi-orchestration-next", description: "Internal orchestration command", source: "extension", sourceInfo: { source: "acceptance" } },
       ] },
     });
     try {
@@ -617,7 +616,6 @@ describe("Conversation acceptance", () => {
       await expect(palette).toHaveText(expect.stringContaining("/review"));
       const text = await palette.getText();
       expect(text).not.toContain("internal-inline");
-      expect(text).not.toContain("pi-orchestration-next");
       expect(await palette.$$("[role=option] strong").map((option) => option.getText())).toEqual(["/branch-off", "/worktree", "/compact", "/review"]);
       await expect(palette).toHaveText(expect.stringContaining("/compact"));
     } finally {
@@ -819,36 +817,6 @@ describe("Conversation acceptance", () => {
     }
   });
 
-  it("shows visible sequence outputs and omits synthetic or background-only prompts", async () => {
-    const hiddenMarker = `<!-- pi-desktop-sequence:${encodeURIComponent(JSON.stringify({ sequence: "release-flow", step: 1, agent: "builder", visible: false }))} -->\n`;
-    const visibleMarker = `<!-- pi-desktop-sequence:${encodeURIComponent(JSON.stringify({ sequence: "release-flow", step: 2, agent: "reviewer", visible: true }))} -->\n`;
-    const history = {
-      entries: [
-        { type: "custom", customType: "pi-orchestration-sequence-marker", id: "sequence-hidden-marker", parentId: null, data: { message: `${hiddenMarker}Background implementation` } },
-        { type: "message", id: "sequence-hidden-user", parentId: "sequence-hidden-marker", message: { role: "user", content: `${hiddenMarker}Background implementation`, timestamp: 1 } },
-        { type: "message", id: "sequence-hidden-answer", parentId: "sequence-hidden-user", message: { role: "assistant", content: "Hidden builder answer", timestamp: 2 } },
-        { type: "custom", customType: "pi-orchestration-sequence-marker", id: "sequence-visible-marker", parentId: "sequence-hidden-answer", data: { message: `${visibleMarker}Review the implementation` } },
-        { type: "message", id: "sequence-visible-user", parentId: "sequence-visible-marker", message: { role: "user", content: `${visibleMarker}Review the implementation`, timestamp: 3 } },
-        { type: "message", id: "sequence-visible-answer", parentId: "sequence-visible-user", message: { role: "assistant", content: "Visible reviewer answer", timestamp: 4 } },
-      ],
-      leafId: "sequence-visible-answer",
-    };
-    await mockBackend({ ...connectedSessionResponses("sequence-display-session"), "pi_command:get_entries": history });
-    try {
-      await emitPiEvent({ type: "session_switched" });
-      await expect($(".sequence-step-label")).toHaveText("release-flow · reviewer");
-      await expect($(".user-message")).not.toBeExisting();
-      await expect($('//article[contains(@class,"assistant-message")][contains(.,"Visible reviewer answer")]')).toBeDisplayed();
-      const conversation = await $(".conversation").getText();
-      expect(conversation).not.toContain("Review the implementation");
-      expect(conversation).not.toContain("Background implementation");
-      expect(conversation).not.toContain("Hidden builder answer");
-      expect(conversation).not.toContain("pi-desktop-sequence");
-    } finally {
-      await resetBackend();
-    }
-  });
-
   it("renders a tool call from running through completion", async () => {
     const enableDebug = $('button[aria-label="Enable debug mode"]'); if (await enableDebug.isExisting()) await enableDebug.click();
     await emitPiEvent({ type: "tool_execution_start", toolCallId: "acceptance-tool", toolName: "acceptance_tool", args: { path: "README.md" } });
@@ -871,15 +839,6 @@ describe("Conversation acceptance", () => {
     await expect(tool).toHaveText(expect.stringContaining("Failed"));
     await tool.$("summary").click();
     await expect(tool.$("pre")).toHaveText("Permission denied");
-  });
-
-  it("labels delegated agent tool calls by their target", async () => {
-    const enableDebug = $('button[aria-label="Enable debug mode"]'); if (await enableDebug.isExisting()) await enableDebug.click();
-    await emitPiEvent({ type: "tool_execution_start", toolCallId: "acceptance-agent-call", toolName: "call_agent", args: { target: "reviewer", message: "Review this" } });
-    const tool = $('//details[contains(@class,"tool-event")][.//strong[contains(.,"reviewer called")]]');
-    await expect(tool).toHaveText(expect.stringContaining("Running…"));
-    await emitPiEvent({ type: "tool_execution_end", toolCallId: "acceptance-agent-call", result: { content: "Review complete" }, isError: false });
-    await expect(tool).toHaveText(expect.stringContaining("Completed"));
   });
 
   it("tracks queued steering and follow-up messages from backend events", async () => {
@@ -1539,7 +1498,7 @@ describe("Agent profiles acceptance", () => {
   it("saves the encoded agent configuration and reconnects", async () => {
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
     await mockBackend({
-      ...connectedSessionResponses("orchestration-save"),
+      ...connectedSessionResponses("agents-save"),
       "pi_command:set_model": {}, "pi_command:prompt": {}, save_app_settings: {}, stop_pi: {}, start_pi: {}, list_sessions: [], load_app_settings: settings,
     });
     await emitPiEvent({ type: "session_switched" });
@@ -1615,10 +1574,10 @@ describe("Agent profiles acceptance", () => {
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
     const capability = acceptanceAgents();
     await mockBackend({
-      ...connectedSessionResponses("orchestration-rollback"),
+      ...connectedSessionResponses("agents-rollback"),
       load_app_settings: settings, save_app_settings: {}, start_pi: {}, stop_pi: {},
       "pi_command:set_model": {},
-      "pi_command:prompt": { error: "Orchestration configuration was rejected" },
+      "pi_command:prompt": { error: "Agent configuration was rejected" },
     });
     await emitPiEvent({ type: "session_switched" });
     await enableAgents(capability);
@@ -1629,7 +1588,7 @@ describe("Agent profiles acceptance", () => {
     await $('input[aria-label="Agent description"]').setValue("Rejected configuration change");
     await app.saveSettingsButton.click();
 
-    await expect($(".settings-save [role='alert']")).toHaveText("Orchestration configuration was rejected");
+    await expect($(".settings-save [role='alert']")).toHaveText("Agent configuration was rejected");
     const calls = await backendCalls();
     const settingsWrites = calls.filter(({ command }) => command === "save_app_settings");
     expect(settingsWrites.map(({ args }) => (args.settings as AppSettings).autoRetry)).toEqual([!settings.autoRetry, settings.autoRetry]);

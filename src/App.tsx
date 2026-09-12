@@ -483,7 +483,6 @@ export default function App() {
     const branchTransport = runtimePool.forSession(session);
     setComposerUploads(branchTransport, beforePrompt && Array.isArray(sourceMessage.content) ? sourceMessage.content.flatMap((part) => part.type === "image" && part.data && part.mimeType ? [{ id: crypto.randomUUID(), name: "Attached image", kind: "image" as const, byteSize: Math.ceil(part.data.length * 3 / 4), image: { type: "image" as const, data: part.data, mimeType: part.mimeType } }] : []) : []);
     selectSession(session);
-    setActiveBranch(result.branch);
     void syncSessionIndex();
     return result;
   };
