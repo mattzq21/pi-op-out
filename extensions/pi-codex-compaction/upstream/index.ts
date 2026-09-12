@@ -42,8 +42,26 @@ type LegacyCompactionState = {
 };
 
 const COMPACTION_STATUS_KIND = "openai-codex-compaction-status";
+const CACHE_LINEAGE_KIND = "piop-openai-cache-lineage";
+const MAX_CACHE_KEY_CHARS = 64;
 const PI_MID_RUN_COMPACTION_MIN_VERSION = "0.84.4";
 const CONTINUATION_PROMPT = "Compaction completed. Continue.";
+
+function normalizeCacheKey(value: unknown): string | undefined {
+	if (typeof value !== "string" || value.length === 0) return undefined;
+	return Array.from(value).slice(0, MAX_CACHE_KEY_CHARS).join("");
+}
+
+function cacheLineageId(ctx: ExtensionContext): string {
+	const branch = ctx.sessionManager.getBranch() as SessionEntry[];
+	for (let index = branch.length - 1; index >= 0; index--) {
+		const entry = branch[index];
+		if (entry?.type !== "custom" || entry.customType !== CACHE_LINEAGE_KIND || !isJsonObject(entry.data)) continue;
+		const id = normalizeCacheKey(entry.data.id);
+		if (id) return id;
+	}
+	return normalizeCacheKey(ctx.sessionManager.getSessionId()) ?? "session";
+}
 
 function parseVersion(version: string): [number, number, number] | undefined {
 	const match = /^v?(\d+)\.(\d+)\.(\d+)/.exec(version);
@@ -137,7 +155,7 @@ export function registerCodexCompactionExtension(pi: ExtensionAPI, hostVersion =
 			input: params.input,
 			instructions: params.ctx.getSystemPrompt(),
 			tools: buildToolPayload(allTools, pi.getActiveTools()),
-			sessionId,
+			sessionId: cacheLineageId(params.ctx),
 		});
 		const remote = await callRemoteCompaction({
 			url: resolveCodexResponsesUrl(effectiveBaseUrl(params.model)),
