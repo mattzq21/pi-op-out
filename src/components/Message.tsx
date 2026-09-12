@@ -1,6 +1,6 @@
 import { isValidElement, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronRight, CircleAlert, Copy, FolderGit2, GitBranch, Pause, Wrench } from "lucide-react";
+import { Check, ChevronRight, CircleAlert, Copy, FolderGit2, GitBranch, Pause, Undo2, Wrench } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage, GitDiffSnapshot } from "../types";
@@ -12,7 +12,7 @@ import { openExternalUrl } from "../lib/nativeTransport";
 import { IconButton } from "./IconButton";
 import { DiffViewer } from "./DiffViewer";
 
-interface Props { hookCounts?: HookCounts; message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; diff?: GitDiffSnapshot; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
+interface Props { hookCounts?: HookCounts; message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; diff?: GitDiffSnapshot; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
 
 function nodeText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -113,10 +113,12 @@ function userMessageParts(content: string) {
   return { skills: [invocation[1]], text: (invocation[2] ?? "").trim(), literalSkill: false };
 }
 
-export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = false, showActions = true, toolCount = 1, debug = false, paused = false, onBranch, onCreateWorktree, onRetry, retrying = false }: Props) {
+export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = false, showActions = true, toolCount = 1, debug = false, paused = false, onBranch, onForkAndForget, onCreateWorktree, onRetry, retrying = false }: Props) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [branching, setBranching] = useState(false);
   const branchingRef = useRef(false);
+  const [forgetting, setForgetting] = useState(false);
+  const forgettingRef = useRef(false);
 
   const copy = async () => {
     try {
@@ -156,9 +158,14 @@ export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = 
   const pausedResponse = message.stopReason === "aborted" && (paused || message.errorMessage === "Response paused");
   const failure = message.stopReason === "aborted" ? (pausedResponse ? undefined : message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
   const branch = async () => {
-    if (!onBranch || branchingRef.current) return;
+    if (!onBranch || branchingRef.current || forgettingRef.current) return;
     branchingRef.current = true; setBranching(true);
     try { await onBranch(message); } finally { branchingRef.current = false; setBranching(false); }
+  };
+  const forkAndForget = async () => {
+    if (!onForkAndForget || branchingRef.current || forgettingRef.current) return;
+    forgettingRef.current = true; setForgetting(true);
+    try { await onForkAndForget(message); } finally { forgettingRef.current = false; setForgetting(false); }
   };
   return <article className={`message assistant-message ${thinking ? "reasoning-message" : ""}`} aria-label={responseLabel}>
     <div className="message-body">
@@ -171,7 +178,8 @@ export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = 
       {showActions && !message.streaming && (output.trim().length > 0 || onCreateWorktree) && <div className="message-actions">
         <IconButton label={copyState === "copied" ? `${responseLabel} copied` : copyState === "error" ? `Copy failed for ${responseLabel.toLowerCase()}` : `Copy ${responseLabel.toLowerCase()}`} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>
         {copyState === "error" && <span className="copy-feedback" role="status">Could not copy response</span>}
-        {onBranch && <button className="branch-button" aria-label={`Branch from ${responseLabel.toLowerCase()}`} title="Branch from here" disabled={branching} onClick={() => void branch()}><GitBranch size={14} /></button>}
+        {onBranch && <button className="branch-button" aria-label={`Branch from ${responseLabel.toLowerCase()}`} title="Branch from here" disabled={branching || forgetting} onClick={() => void branch()}><GitBranch size={14} /></button>}
+        {onForkAndForget && <button className="branch-button" aria-label={`Fork and forget from ${responseLabel.toLowerCase()}`} title="Fork and forget from here" disabled={branching || forgetting} onClick={() => void forkAndForget()}><Undo2 size={14} /></button>}
         {onCreateWorktree && <button className="branch-button" aria-label="Create Git worktree" title="Create Git worktree after this response" onClick={() => onCreateWorktree(message)}><FolderGit2 size={14} /></button>}
         <HookWheel counts={hookCounts} label="Message hooks" />
         {debug && cache && <span className={`cache-hit-rate${cache.low ? " low" : ""}`} title={`${cache.cachedTokens.toLocaleString()} of ${cache.promptTokens.toLocaleString()} prompt tokens read from cache${turnCacheUsage ? " across all calls in this response" : ""}`}>Cache {cache.rate}%</span>}

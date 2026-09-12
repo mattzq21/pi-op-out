@@ -345,7 +345,7 @@ export class NativeTransport {
       return result;
     });
     if (command.type !== "steer" && command.type !== "follow_up") {
-      if (["clear_queue", "new_session", "switch_session", "fork", "clone"].includes(command.type)) return this.serializeQueue(() => this.executeCommand<T>(command));
+      if (["clear_queue", "new_session", "switch_session", "fork", "clone", "fork_and_forget"].includes(command.type)) return this.serializeQueue(() => this.executeCommand<T>(command));
       return this.executeCommand<T>(command);
     }
     return this.serializeQueue(async () => {

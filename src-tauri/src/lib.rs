@@ -1743,6 +1743,10 @@ fn execute_pi_command(runtime: &PiRuntime, runtime_id: &str, mut command: Value)
         let request = serde_json::to_string(&command).map_err(|error| error.to_string())?;
         command = json!({"id":format!("{id}:desktop-control"),"type":"prompt","message":format!("/pi-desktop-branch-checkpoint {request}")});
     }
+    if command.get("type").and_then(Value::as_str) == Some("fork_and_forget") {
+        let request = serde_json::to_string(&command).map_err(|error| error.to_string())?;
+        command = json!({"id":format!("{id}:desktop-control"),"type":"prompt","message":format!("/pi-desktop-fork-and-forget {request}")});
+    }
     let (sender, receiver) = mpsc::channel();
     let started = Instant::now();
     let (stdin, command_timeout, generation) = {

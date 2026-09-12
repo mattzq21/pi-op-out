@@ -223,6 +223,29 @@ export function registerFastModeStatus(pi: ExtensionAPI) {
   pi.on("model_select", (event, ctx) => { if (ctx.mode === "rpc" && loaded) publish(ctx, event.model); });
 }
 
+function registerForkAndForget(pi: ExtensionAPI) {
+  const statusKey = "pi-desktop-control-response";
+  pi.registerCommand("pi-desktop-fork-and-forget", {
+    description: "Continue this session from an earlier assistant response",
+    async handler(args, ctx) {
+      let id: string | undefined;
+      try {
+        const request = JSON.parse(args) as { id?: string; entryId?: string };
+        id = request.id;
+        if (!id || ctx.mode !== "rpc" || typeof request.entryId !== "string") throw new Error("Invalid fork-and-forget request");
+        const entry = ctx.sessionManager.getEntry(request.entryId);
+        if (!entry || entry.type !== "message" || entry.message.role !== "assistant") throw new Error("Assistant response not found in this conversation");
+        const result = await ctx.navigateTree(request.entryId);
+        if (!result.cancelled) pi.appendEntry("pi-desktop-fork-and-forget", { entryId: request.entryId });
+        ctx.ui.setStatus(statusKey, `json:${JSON.stringify({ type: "response", id, success: true, data: { cancelled: result.cancelled } })}`);
+      } catch (error) {
+        if (id) ctx.ui.setStatus(statusKey, `json:${JSON.stringify({ type: "response", id, success: false, error: error instanceof Error ? error.message : String(error) })}`);
+        else ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+      }
+    },
+  });
+}
+
 const runFile = promisify(execFile);
 const CATCH_UP_MESSAGE = "pi-desktop-catch-up";
 
@@ -279,6 +302,7 @@ export default function sessionBroker(pi: ExtensionAPI) {
   registerCatchUp(pi);
   registerPauseControl(pi);
   registerFastModeStatus(pi);
+  registerForkAndForget(pi);
   pi.registerTool({
     name: "list_agents", label: "List agents", description: "List Pi agents addressable through piop", promptSnippet: "List agents by hostId and sessionId",
     parameters: Type.Object({}),
