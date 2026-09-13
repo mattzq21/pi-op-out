@@ -12,6 +12,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [features]
 webdriver = ["dep:tauri-plugin-wdio-webdriver"]
 
+[lints.clippy]
+cognitive_complexity = "warn"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

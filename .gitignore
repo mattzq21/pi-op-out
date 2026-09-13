@@ -7,6 +7,10 @@ src-tauri/target/
 src-tauri/gen/
 logs/
 .trace/
+.stryker-tmp/
+reports/mutation/
+mutants.out/
+mutants.out.old/
 extensions/pi-orchestration/config.json
 extensions/pi-define-agents/config.json
 .DS_Store
