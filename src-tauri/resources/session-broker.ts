@@ -249,6 +249,54 @@ function registerForkAndForget(pi: ExtensionAPI) {
 const runFile = promisify(execFile);
 const CATCH_UP_MESSAGE = "pi-desktop-catch-up";
 
+function registerTurnCapture(pi: ExtensionAPI) {
+  const script = process.env.PI_DESKTOP_GIT_CAPTURE_SCRIPT;
+  if (!script) return;
+  const publish = (ctx: ExtensionContext, capture: object) => ctx.ui.setStatus("pi-desktop-turn-capture", JSON.stringify(capture));
+  const snapshot = async (cwd: string) => {
+    try {
+      const { stdout } = await runFile(process.execPath, ["-e", script], { cwd, maxBuffer: 64 * 1024 });
+      const [root, tree] = stdout.trimEnd().split("\n");
+      if (!root || !tree) throw new Error("Git snapshot was incomplete");
+      return JSON.stringify({ root, tree });
+    } catch (error) {
+      if ([3, 4, 6].includes(Number((error as { code?: unknown }).code))) return null;
+      throw error;
+    }
+  };
+  let turn: { id: string; cwd: string; sessionId: string; entries: Set<string> } | undefined;
+  const cancel = (ctx: ExtensionContext) => {
+    if (turn) publish(ctx, { phase: "end", turnId: turn.id });
+    turn = undefined;
+  };
+  pi.on("agent_start", async (_event, ctx) => {
+    cancel(ctx);
+    const started = { id: crypto.randomUUID(), cwd: ctx.cwd, sessionId: ctx.sessionManager.getSessionId(), entries: new Set(ctx.sessionManager.getBranch().map((entry) => entry.id)) };
+    try {
+      // Pi awaits this hook before inference, including automatic queued continuations.
+      const baseline = await snapshot(started.cwd);
+      if (baseline) { turn = started; publish(ctx, { phase: "start", turnId: started.id, cwd: started.cwd, baseline }); }
+    } catch (error) { ctx.ui.notify(`Could not capture project changes: ${error instanceof Error ? error.message : String(error)}`, "error"); }
+  });
+  pi.on("agent_end", async (_event, ctx) => {
+    const ended = turn; turn = undefined;
+    if (!ended) return;
+    let current: string | null = null;
+    let messageId: string | undefined;
+    const sessionPath = ctx.sessionManager.getSessionFile();
+    try {
+      if (ctx.sessionManager.getSessionId() !== ended.sessionId || !sessionPath) return;
+      const response = [...ctx.sessionManager.getBranch()].reverse().find((entry) => entry.type === "message" && !ended.entries.has(entry.id) && entry.message.role === "assistant" && (entry.message.content.some((part) => part.type === "text" && part.text.trim()) || ["aborted", "error"].includes(entry.message.stopReason)));
+      if (!response) return;
+      messageId = response.id;
+      // Freeze the endpoint before Pi may start its next run; persistence uses only these trees.
+      current = await snapshot(ended.cwd);
+    } catch (error) { ctx.ui.notify(`Could not capture project changes: ${error instanceof Error ? error.message : String(error)}`, "error"); }
+    finally { publish(ctx, { phase: "end", turnId: ended.id, cwd: ended.cwd, current, sessionPath, messageId }); }
+  });
+  pi.on("session_shutdown", (_event, ctx) => cancel(ctx));
+}
+
 export function registerCatchUp(pi: ExtensionAPI) {
   let running = false;
   const presenceId = crypto.randomUUID();
@@ -299,6 +347,7 @@ export function registerCatchUp(pi: ExtensionAPI) {
 }
 
 export default function sessionBroker(pi: ExtensionAPI) {
+  registerTurnCapture(pi);
   registerCatchUp(pi);
   registerPauseControl(pi);
   registerFastModeStatus(pi);

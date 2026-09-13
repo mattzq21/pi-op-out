@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { GroupChange, SessionGroups, SessionGroupSeed } from "./sessionGroups";
-import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, PendingMessage, RpcCommand, RpcEvent, SessionSummary, StorageReport } from "../types";
+import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, PendingMessage, RpcCommand, RpcEvent, SessionSummary, SettingsChange, StorageReport } from "../types";
 
 const call = <T>(command: string, args?: Record<string, unknown>) => {
   if (import.meta.env.MODE !== "e2e") return invoke<T>(command, args);
@@ -17,6 +17,11 @@ const call = <T>(command: string, args?: Record<string, unknown>) => {
   const response = responses[key]; return response?.error ? Promise.reject(new Error(response.error)) : Promise.resolve(response as T);
 };
 
+export const openSessionWindow = (target: NativeConnectionTarget & { sessionId: string }) => call<string>("new_window", { target });
+export function initialWindowTarget(): NativeConnectionTarget {
+  try { const value = JSON.parse(new URLSearchParams(window.location.search).get("target") || "{}"); return value && typeof value === "object" ? value : {}; }
+  catch { return {}; }
+}
 export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; sessionId?: string; hostId?: string; }
 export const loadSessionGroups = (seeds: SessionGroupSeed[], legacy: SessionGroups) => call<SessionGroups>("load_session_groups", { seeds, legacy });
 export const changeSessionGroups = (change: GroupChange) => call<SessionGroups>("change_session_groups", { change });
@@ -35,7 +40,6 @@ export const openHooksDirectory = (cwd: string) => call<void>("open_project_dire
 
 export class NativeTransport {
   private liveAssistant?: ChatMessage;
-  private inferenceRevision = 0;
   private ephemeral = false;
   private fresh = true;
   needsDefaults() { return this.fresh; }
@@ -43,17 +47,12 @@ export class NativeTransport {
   connectionTarget(): NativeConnectionTarget { return { cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId }; }
   async restoreConnection(target: NativeConnectionTarget) { await this.disconnect(); this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId || "local"; await this.connect(); }
   private readonly runtimeId = globalThis.crypto?.randomUUID?.() ?? `runtime-${Date.now()}-${Math.random()}`;
-  private pendingMessages: PendingMessage[] = [];
-  private heldMessages?: PendingMessage[];
-  private commandRejections = new Map<string, string>();
-  private inputRejection?: { text: string; error: string };
-  private queueSnapshot: RpcEvent = { type: "queue_update", steering: [], followUp: [] };
-  private changingQueue = false;
-  private clearingQueue = false;
-  private sendingPending = new Set<string>();
-  private awaitingSteering: string[] = [];
-  private steeringTimestamps = new Set<number>();
-  private queueCommands: Promise<unknown> = Promise.resolve();
+  private queueSnapshot: RpcEvent = { type: "queue_update", steering: [], followUp: [], pendingMessages: [] };
+  private visible = false;
+  private presenceCleanup?: () => void;
+  setVisible(visible: boolean) { this.visible = visible; this.publishPresence(); }
+  private presence() { return { visible: this.visible && document.visibilityState !== "hidden", focused: document.hasFocus() }; }
+  private publishPresence = () => { if (this.running) void call("pi_presence", { runtimeId: this.runtimeId, presence: this.presence() }).catch(() => undefined); };
   private listeners = new Set<(event: RpcEvent) => void>();
   private retainedStatuses = new Map<string, RpcEvent>();
   private retainedRequests = new Map<string, RpcEvent>();
@@ -64,49 +63,26 @@ export class NativeTransport {
   private connectPromise?: Promise<void>;
   private processLifecycle: Promise<unknown> = Promise.resolve();
   private settingsLifecycle: Promise<unknown> = Promise.resolve();
-  private pendingSettings?: { settings: AppSettings; reconnect: boolean; live: boolean; autoCompaction: boolean; autoRetry: boolean };
+  private pendingSettings?: { settings: AppSettings };
+  private daemonSettingsPending = false;
   private applyingSettings?: Promise<void>;
   private settingsApplyFailed = false;
-  private inferenceBusy = false;
-  private compactionBusy = false;
   private activeCommands = 0;
   private disposed = false;
-  hasPendingSettings() { return Boolean(this.pendingSettings || this.applyingSettings); }
-  queueSettings(settings: AppSettings, changes: { reconnect: boolean; live: boolean; autoCompaction: boolean; autoRetry: boolean }) {
-    if (this.disposed || (!this.pendingSettings && !changes.reconnect && !changes.live && !changes.autoCompaction && !changes.autoRetry)) return;
-    if (!this.running && !this.connectPromise && !this.applyingSettings && !this.pendingSettings) return;
-    this.pendingSettings = {
-      settings: structuredClone(settings),
-      live: changes.live || Boolean(this.pendingSettings?.live),
-      reconnect: changes.reconnect || Boolean(this.pendingSettings?.reconnect),
-      autoCompaction: changes.autoCompaction || Boolean(this.pendingSettings?.autoCompaction),
-      autoRetry: changes.autoRetry || Boolean(this.pendingSettings?.autoRetry),
-    };
+  hasPendingSettings() { return Boolean(this.daemonSettingsPending || this.pendingSettings || this.applyingSettings); }
+  queueSettings(settings: AppSettings, changes: { reconnect: boolean }) {
+    if (this.disposed || (!this.pendingSettings && !changes.reconnect)) return;
+    this.pendingSettings = { settings: structuredClone(settings) };
     this.settingsApplyFailed = false;
     this.emit({ type: "settings_pending" });
     this.applyPendingSettings();
   }
   private applyPendingSettings() {
-    if (!this.pendingSettings || this.applyingSettings || this.inferenceBusy || this.compactionBusy || this.activeCommands || this.disposed || this.settingsApplyFailed) return;
+    if (!this.pendingSettings || this.applyingSettings || this.activeCommands || this.disposed || this.settingsApplyFailed) return;
     this.applyingSettings = Promise.resolve().then(async () => {
       while (this.pendingSettings && !this.disposed) {
-        if (this.running) {
-          const state = await this.executeCommandNow<{ isStreaming?: boolean; isCompacting?: boolean; pendingMessageCount?: number }>({ type: "get_state" });
-          if (this.inferenceBusy || this.compactionBusy || state.isStreaming || state.isCompacting || ((this.queueSnapshot.steering as string[]).length + (this.queueSnapshot.followUp as string[]).length) > 0) return;
-        }
-        if (this.disposed || !this.pendingSettings) return;
         const update = this.pendingSettings;
-        const { settings } = update;
-        if (update.reconnect) await this.reconnectForSettings(settings);
-        if (this.running) {
-          if (update.live) await this.executeCommandNow({ type: "runtime_settings", settings: {
-            tools: settings.tools.filter((tool) => tool.enabled).map((tool) => tool.name),
-            skills: settings.skills.filter((skill) => skill.enabled).map((skill) => skill.path),
-            mcpServers: settings.mcpServers.map(({ status: _status, error: _error, ...server }) => server),
-          } });
-          if (update.reconnect || update.autoCompaction) await this.executeCommandNow({ type: "set_auto_compaction", enabled: settings.autoCompaction });
-          if (update.reconnect || update.autoRetry) await this.executeCommandNow({ type: "set_auto_retry", enabled: settings.autoRetry });
-        }
+        await this.reconnectForSettings(update.settings);
         if (this.pendingSettings === update) this.pendingSettings = undefined;
         this.emit({ type: "settings_applied" });
       }
@@ -134,93 +110,17 @@ export class NativeTransport {
   isTemporaryChat() { return this.temporaryChat; }
   lastDiagnostic() { return this.stderrLines.join("\n"); }
   private runProcessCommand<T>(command: () => Promise<T>) { const result = this.processLifecycle.then(command, command); this.processLifecycle = result.then(() => undefined, () => undefined); return result; }
-  private queueView(pendingMessages = this.pendingMessages): RpcEvent {
-    return { ...this.queueSnapshot,
-      steering: [...((this.queueSnapshot.steering as string[]) ?? []), ...(this.heldMessages ?? []).filter((item) => item.behavior === "steer" && !item.retry).map((item) => item.message)],
-      followUp: [...((this.queueSnapshot.followUp as string[]) ?? []), ...(this.heldMessages ?? []).filter((item) => item.behavior === "followUp" && !item.retry).map((item) => item.message)],
-      pendingMessages };
-  }
-  private publishQueue() {
-    const heldIds = new Set(this.heldMessages?.map((item) => item.id));
-    const available = this.pendingMessages.filter((item) => !heldIds.has(item.id));
-    const pending: PendingMessage[] = [];
-    // Consumption is FIFO within each mode. When identical texts remain, keep
-    // the newest matching payloads so a consumed image cannot attach to a later row.
-    for (const behavior of ["steer", "followUp"] as const) {
-      const texts = (this.queueSnapshot[behavior === "steer" ? "steering" : "followUp"] as string[] | undefined) ?? [];
-      for (const text of new Set(texts)) {
-        const matches = available.filter((item) => !item.retry && !this.sendingPending.has(item.id) && item.behavior === behavior && item.message === text);
-        const count = texts.filter((item) => item === text).length;
-        for (const stale of matches.slice(0, Math.max(0, matches.length - count))) available.splice(available.indexOf(stale), 1);
-      }
-    }
-    for (const behavior of ["steer", "followUp"] as const) {
-      for (const message of (this.queueSnapshot[behavior === "steer" ? "steering" : "followUp"] as string[] | undefined) ?? []) {
-        const index = available.findIndex((item) => !item.retry && item.behavior === behavior && item.message === message);
-        if (index >= 0) pending.push(available.splice(index, 1)[0]);
-      }
-    }
-    const visible = [...pending, ...(this.heldMessages ?? []), ...available.filter((item) => item.retry)];
-    this.pendingMessages = [...visible, ...available.filter((item) => !item.retry && this.sendingPending.has(item.id))];
-    const event = this.queueView(visible);
-    this.listeners.forEach((listener) => listener(event));
-  }
+  private queueView(): RpcEvent { return this.queueSnapshot; }
   private emit(event: RpcEvent) {
-    if (event.type === "agent_start" || event.type === "message_start") this.inferenceBusy = true;
-    if (event.type === "auto_compaction_start") this.compactionBusy = true;
-    if (event.type === "auto_compaction_end" || event.type === "disconnected") this.compactionBusy = false;
-    if (event.type === "agent_settled" || event.type === "disconnected") this.inferenceBusy = false;
+    if (event.type === "settings_pending" && typeof event.pending === "boolean") this.daemonSettingsPending = event.pending;
+    if (event.type === "disconnected") this.daemonSettingsPending = false;
+    if (event.type === "agent_start" || (event.type === "message_start" && (event.message as { role?: string })?.role === "user")) this.temporaryChatUsed = true;
     if (event.type === "session_switched") this.liveAssistant = undefined;
     if ((event.type === "message_start" || event.type === "message_end") && (event.message as { role?: string })?.role === "assistant") this.liveAssistant = { ...normalizeMessage(event.message as Record<string, unknown>, undefined, undefined, this.liveAssistant?.streaming ? this.liveAssistant.id : `live-assistant-${crypto.randomUUID()}`), streaming: event.type === "message_start" };
     if (event.type === "message_update" && event.assistantMessageEvent && this.liveAssistant) this.liveAssistant = applyAssistantMessageEvent(this.liveAssistant, event.assistantMessageEvent);
 
-    if (event.type === "agent_start") this.inferenceRevision += 1;
-    if (event.type === "disconnected") {
-      this.pendingMessages = this.pendingMessages.map((item) => ({ ...item, retry: true })); this.heldMessages = undefined;
-      this.queueSnapshot = { type: "queue_update", steering: [], followUp: [] }; this.awaitingSteering = []; this.publishQueue();
-    }
-    if (event.type === "extension_error" && event.event === "command") this.commandRejections.set(typeof event.extensionPath === "string" && event.extensionPath.startsWith("command:") ? event.extensionPath.slice(8) : "", String(event.error || "Extension command failed"));
-    if (event.type === "extension_ui_request" && event.method === "setStatus" && event.statusKey === "piop-input-rejected") {
-      try { this.inputRejection = JSON.parse(String(event.statusText)); } catch { /* Ignore invalid status. */ }
-      return;
-    }
-    // Visible composers display prompt rejections inline; identify their duplicate notification.
-    if (event.type === "extension_ui_request" && event.method === "notify" && event.notifyType === "error" && this.inputRejection && event.message === this.inputRejection.error) {
-      event = { ...event, inputRejected: true };
-    }
-    if (event.type === "queue_update") {
-      if (!this.clearingQueue) {
-        const remaining = [...((event.steering as string[]) ?? [])];
-        for (const text of (this.queueSnapshot.steering as string[]) ?? []) {
-          const index = remaining.indexOf(text);
-          if (index >= 0) remaining.splice(index, 1); else this.awaitingSteering.push(text);
-        }
-      }
-      for (const behavior of ["steer", "followUp"] as const) {
-        const before = [...((this.queueSnapshot[behavior === "steer" ? "steering" : "followUp"] as string[]) ?? [])];
-        const added = ((event[behavior === "steer" ? "steering" : "followUp"] as string[]) ?? []).filter((text) => { const index = before.indexOf(text); if (index < 0) return true; before.splice(index, 1); return false; });
-        const sending = this.pendingMessages.filter((item) => this.sendingPending.has(item.id) && item.behavior === behavior);
-        if (added.length === 1 && sending.length === 1) sending[0].message = added[0];
-      }
-      this.queueSnapshot = event;
-      if (!this.changingQueue) this.publishQueue();
-      this.applyPendingSettings();
-      return;
-    }
-    if ((event.type === "message_start" || event.type === "message_end") && event.message) {
-      const message = event.message as Record<string, unknown>;
-      if (message.role === "user" && typeof message.timestamp === "number") {
-        const text = typeof message.content === "string" ? message.content : Array.isArray(message.content) ? message.content.filter((part) => part.type === "text").map((part) => part.text).join("") : "";
-        if (event.type === "message_start") {
-          const index = this.awaitingSteering.indexOf(text);
-          const sending = this.pendingMessages.some((item) => this.sendingPending.has(item.id) && item.behavior === "steer" && item.message === text);
-          if (index >= 0 || sending) this.steeringTimestamps.add(message.timestamp);
-          if (index >= 0) this.awaitingSteering.splice(index, 1);
-        }
-        if (this.steeringTimestamps.has(message.timestamp)) event = { ...event, message: { ...message, deliveryBehavior: "steer" } };
-      }
-    }
-    if (event.type === "agent_settled") this.awaitingSteering = [];
+    if (event.type === "extension_ui_resolved" && typeof event.id === "string") this.retainedRequests.delete(event.id);
+    if (event.type === "queue_update") this.queueSnapshot = event;
     if (event.type === "extension_ui_request" && event.method === "setStatus" && typeof event.statusKey === "string") {
       if (event.statusText) this.retainedStatuses.set(event.statusKey, event); else this.retainedStatuses.delete(event.statusKey);
     }
@@ -255,17 +155,24 @@ export class NativeTransport {
     if (version !== this.connectionVersion) { unlisten(); stderrUnlisten(); return; }
     this.unlisten = unlisten; this.stderrUnlisten = stderrUnlisten;
     // Pi can resume by ID before a fresh session has a file on disk.
-    await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve() : call("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId }));
-    if (version === this.connectionVersion) this.running = true;
+    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call<{ attached: boolean }>("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }));
+    if (attached?.attached) this.fresh = false;
+    if (version === this.connectionVersion) {
+      this.running = true;
+      this.presenceCleanup?.();
+      window.addEventListener("focus", this.publishPresence); window.addEventListener("blur", this.publishPresence); document.addEventListener("visibilitychange", this.publishPresence);
+      this.presenceCleanup = () => { window.removeEventListener("focus", this.publishPresence); window.removeEventListener("blur", this.publishPresence); document.removeEventListener("visibilitychange", this.publishPresence); };
+      this.publishPresence();
+    }
   }
-  async disconnect(discardBlank = false) { ++this.connectionVersion; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; await this.runProcessCommand(() => call("stop_pi", { runtimeId: this.runtimeId, discardBlank })); this.running = false; this.retainedStatuses.clear(); this.retainedRequests.clear(); }
+  async disconnect(discardBlank = false) { ++this.connectionVersion; this.presenceCleanup?.(); this.presenceCleanup = undefined; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; const stopped = await this.runProcessCommand(() => call<boolean>("stop_pi", { runtimeId: this.runtimeId, discardBlank })); this.running = false; this.retainedStatuses.clear(); this.retainedRequests.clear(); return stopped; }
   async reconnectForSettings(settings: AppSettings) {
     await this.disconnect();
     if (this.hostId !== "local" && !settings.hosts.some((host) => host.id === this.hostId)) { this.hostId = "local"; this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined; this.temporaryChat = false; this.temporaryChatUsed = false; this.fresh = true; }
     try { await this.connect(); }
     catch (reason) { this.emit({ type: "disconnected" }); throw reason; }
   }
-  async dispose() { this.disposed = true; this.pendingSettings = undefined; await this.applyingSettings; const temporaryPath = this.temporaryChat && !this.temporaryChatUsed ? this.cwd : undefined; const temporaryHost = this.hostId; await this.disconnect(true); if (temporaryPath) await call<void>("remove_temporary_chat", { path: temporaryPath, hostId: temporaryHost }); this.temporaryChat = false; this.temporaryChatUsed = false; }
+  async dispose() { this.disposed = true; this.pendingSettings = undefined; await this.applyingSettings; const temporaryPath = this.temporaryChat && !this.temporaryChatUsed ? this.cwd : undefined; const temporaryHost = this.hostId; const stopped = await this.disconnect(true); if (temporaryPath && stopped) await call<void>("remove_temporary_chat", { path: temporaryPath, hostId: temporaryHost }); this.temporaryChat = false; this.temporaryChatUsed = false; }
   private async refreshFastStatus(reload: boolean) {
     if (!this.fastStatusCommand) return;
     try {
@@ -288,175 +195,9 @@ export class NativeTransport {
     await call("pi_command", { runtimeId: this.runtimeId, command: { type: "prompt", message: `/${command} ${mode}` } });
     await this.refreshFastStatus(true);
   }
-  private serializeQueue<T>(action: () => Promise<T>): Promise<T> {
-    const next = this.queueCommands.then(action, action);
-    this.queueCommands = next.catch(() => undefined);
-    return next;
-  }
-  private async holdQueue() {
-    if (this.heldMessages) return;
-    const originals = [...this.pendingMessages];
-    // The runtime returns only text from clear_queue. Verify that we own the
-    // payloads before taking messages out, so attachments remain recoverable.
-    for (const [key, behavior] of [["steering", "steer"], ["followUp", "followUp"]] as const) {
-      const texts = (this.queueSnapshot[key] as string[]) ?? [];
-      for (const text of new Set(texts)) if (originals.filter((item) => !item.retry && item.behavior === behavior && item.message === text).length < texts.filter((value) => value === text).length) throw new Error("Cannot preserve all queued attachments while pausing. Wait for messages sent outside this window to finish first.");
-    }
-    this.changingQueue = true;
-    try {
-      const cleared = await this.executeCommand<{ steering: string[]; followUp: string[] }>({ type: "clear_queue" });
-      this.heldMessages = (["steer", "followUp"] as const).flatMap((behavior) => {
-        const texts = cleared[behavior === "steer" ? "steering" : "followUp"];
-        const matches = new Map<string, PendingMessage[]>();
-        for (const text of new Set(texts)) {
-          const count = texts.filter((value) => value === text).length;
-          // Earlier identical messages may have been consumed before clear_queue.
-          matches.set(text, originals.filter((item) => !item.retry && item.behavior === behavior && item.message === text).slice(-count));
-        }
-        return texts.map((message) => matches.get(message)?.shift() ?? { id: crypto.randomUUID(), message, behavior, retry: true });
-      });
-    } finally { this.changingQueue = false; this.publishQueue(); }
-  }
-  private heldQueueFailed() {
-    const held = this.heldMessages ?? [];
-    held.forEach((item) => { item.retry = true; });
-    this.heldMessages = undefined;
-    this.pendingMessages = [...this.pendingMessages.filter((item) => !held.some((saved) => saved.id === item.id)), ...held];
-    this.publishQueue();
-  }
-  private async restoreHeldQueue() {
-    if (!this.heldMessages) return;
-    while (this.heldMessages.length) {
-      const item = this.heldMessages.shift()!;
-      if (item.retry) continue;
-      try { await this.deliverPending(item); }
-      catch (reason) { this.heldMessages.unshift(item); this.heldQueueFailed(); throw reason; }
-      this.publishQueue();
-    }
-    this.heldMessages = undefined;
-    this.publishQueue();
-  }
-  command<T>(command: RpcCommand): Promise<T> {
-    if (command.type === "abort") return this.serializeQueue(async () => { await this.holdQueue(); return this.stop<T>(command); });
-    if (command.type === "pause") return this.serializeQueue(async () => {
-      await this.holdQueue();
-      try { return await this.executeCommand<T>(command); }
-      catch (reason) { this.heldQueueFailed(); throw reason; }
-    });
-    if (command.type === "resume" || (command.type === "prompt" && this.heldMessages && typeof command.message === "string")) return this.serializeQueue(async () => {
-      const revision = this.inferenceRevision;
-      const result = await this.executeCommand<T>(command);
-      if (command.type === "resume" || !String(command.message).startsWith("/") || this.inferenceRevision !== revision) await this.restoreHeldQueue();
-      return result;
-    });
-    if (command.type !== "steer" && command.type !== "follow_up") {
-      if (["clear_queue", "new_session", "switch_session", "fork", "clone", "fork_and_forget"].includes(command.type)) return this.serializeQueue(() => this.executeCommand<T>(command));
-      return this.executeCommand<T>(command);
-    }
-    return this.serializeQueue(async () => {
-      const pending: PendingMessage = { id: crypto.randomUUID(), message: String(command.message), behavior: command.type === "steer" ? "steer" : "followUp", images: command.images as PendingMessage["images"] };
-      this.pendingMessages.push(pending);
-      if (this.heldMessages) { this.heldMessages.push(pending); this.heldMessages.sort((a, b) => Number(a.behavior === "followUp") - Number(b.behavior === "followUp")); this.publishQueue(); return undefined as T; }
-      this.sendingPending.add(pending.id);
-      try { return await this.deliverPending<T>(pending); }
-      catch (reason) { this.pendingMessages = this.pendingMessages.filter((item) => item !== pending); throw reason; }
-      finally { this.sendingPending.delete(pending.id); this.publishQueue(); }
-    });
-  }
-  private async stop<T>(command: RpcCommand): Promise<T> {
-    try { return await this.executeCommand<T>(command); }
-    catch (reason) {
-      if (!(reason instanceof Error) || reason.message !== "Pi command timed out") throw reason;
-      // Cancellation can wait forever for an unresponsive tool or extension.
-      // End this runtime before reconnecting to the saved conversation.
-      await this.disconnect();
-      this.pendingMessages = this.pendingMessages.map((item) => ({ ...item, retry: true }));
-      this.heldMessages = undefined;
-      this.queueSnapshot = { type: "queue_update", steering: [], followUp: [] };
-      this.awaitingSteering = [];
-      this.publishQueue();
-      this.emit({ type: "disconnected" });
-      return undefined as T;
-    }
-  }
-  private async deliverPending<T>(item: PendingMessage): Promise<T> {
-    // Let the runtime choose atomically: steer/queue during a run, start a new
-    // prompt if the run ended before the command arrived. Bare steer never wakes an idle agent.
-    this.sendingPending.add(item.id);
-    try { return await this.executeCommand<T>({ type: "prompt", message: item.message, streamingBehavior: item.behavior, ...(item.images?.length ? { images: item.images } : {}) }); }
-    finally { this.sendingPending.delete(item.id); }
-  }
+  command<T>(command: RpcCommand): Promise<T> { return this.executeCommand<T>(command); }
   changePendingMessage(id: string, action: import("../types").PendingMessageAction): Promise<void> {
-    return this.serializeQueue(async () => {
-      const target = this.pendingMessages.find((item) => item.id === id);
-      if (!target) return; // Already consumed by the runtime.
-      const behavior = typeof action === "string" ? action : "reorder";
-      const moving = behavior === "moveUp" || behavior === "moveDown" || behavior === "reorder";
-      const peers = this.pendingMessages.filter((item) => !item.retry && item.behavior === target.behavior);
-      const neighbor = typeof action === "object" ? peers.find((item) => item.id === action.targetId && item.id !== id) : moving ? peers[peers.findIndex((item) => item.id === id) + (behavior === "moveUp" ? -1 : 1)] : undefined;
-      if (moving && (target.retry || !neighbor)) return;
-      const send = (item: PendingMessage) => this.deliverPending(item);
-      if (this.heldMessages?.some((item) => item.id === id)) {
-        if (behavior === "remove") this.heldMessages = this.heldMessages.filter((item) => item.id !== id);
-        else if (behavior === "steer" || behavior === "followUp") { target.behavior = behavior; target.retry = false; }
-        else if (neighbor) {
-          const from = this.heldMessages.findIndex((item) => item.id === id);
-          const to = this.heldMessages.findIndex((item) => item.id === neighbor.id);
-          if (from >= 0 && to >= 0) {
-            if (typeof action === "object") { const [item] = this.heldMessages.splice(from, 1); const destination = this.heldMessages.findIndex((entry) => entry.id === neighbor.id); this.heldMessages.splice(destination + (action.edge === "after" ? 1 : 0), 0, item); }
-            else [this.heldMessages[from], this.heldMessages[to]] = [this.heldMessages[to], this.heldMessages[from]];
-          }
-        }
-        this.heldMessages.sort((a, b) => Number(a.behavior === "followUp") - Number(b.behavior === "followUp"));
-        this.publishQueue(); return;
-      }
-      if (target.retry) {
-        if (behavior === "remove") { this.pendingMessages = this.pendingMessages.filter((item) => item.id !== id); this.publishQueue(); return; }
-        target.retry = false; target.behavior = behavior === "steer" ? "steer" : "followUp";
-        try { await send(target); } catch (reason) { target.retry = true; this.publishQueue(); throw reason; }
-        return;
-      }
-      // clear_queue returns text only. Only rewrite queues whose complete payloads
-      // we own; duplicate text cannot be matched safely to distinct attachments.
-      const snapshot = [...((this.queueSnapshot.steering as string[]) ?? []), ...((this.queueSnapshot.followUp as string[]) ?? [])];
-      if (new Set(snapshot).size !== snapshot.length || snapshot.some((message) => !this.pendingMessages.some((item) => !item.retry && item.message === message))) throw new Error("This queue contains messages that cannot be safely switched. Use Ctrl+Enter to steer a new message.");
-      const originals = [...this.pendingMessages];
-      this.changingQueue = true;
-      try {
-        const cleared = await this.executeCommand<{ steering: string[]; followUp: string[] }>({ type: "clear_queue" });
-        const remaining = (["steer", "followUp"] as const).flatMap((mode) => (cleared[mode === "steer" ? "steering" : "followUp"] ?? []).map((text) => {
-          const original = originals.find((item) => !item.retry && item.behavior === mode && item.message === text);
-          return original ? { ...original, behavior: original.id === id && (behavior === "steer" || behavior === "followUp") ? behavior : mode } : { id: crypto.randomUUID(), message: text, behavior: mode, retry: true };
-        }));
-        if (neighbor) {
-          // Use the neighbor captured before clearing: consumption may have removed
-          // either row in the meantime. Never move a different message instead.
-          const from = remaining.findIndex((item) => item.id === id);
-          const to = remaining.findIndex((item) => item.id === neighbor.id);
-          if (from >= 0 && to >= 0) {
-            if (typeof action === "object") {
-              const [item] = remaining.splice(from, 1);
-              const destination = remaining.findIndex((entry) => entry.id === neighbor.id);
-              remaining.splice(destination + (action.edge === "after" ? 1 : 0), 0, item);
-            } else [remaining[from], remaining[to]] = [remaining[to], remaining[from]];
-          }
-        }
-        if (behavior === "remove") { const index = remaining.findIndex((item) => item.id === id); if (index >= 0) remaining.splice(index, 1); }
-        this.pendingMessages = [...originals.filter((item) => item.retry), ...remaining];
-        if (remaining.some((item) => item.retry)) {
-          remaining.forEach((item) => { item.retry = true; });
-          throw new Error("Another source changed the queue while switching. Pending text has been kept for retry; reattach any images from messages sent outside this window.");
-        }
-        for (let index = 0; index < remaining.length; index += 1) {
-          try { await send(remaining[index]); }
-          catch (reason) {
-            // Keep full payloads, including images, available for an explicit retry.
-            remaining.slice(index).forEach((item) => { item.retry = true; });
-            throw reason;
-          }
-        }
-      } finally { this.changingQueue = false; this.publishQueue(); }
-    });
+    return this.executeCommand({ type: "change_pending", id, action });
   }
   private async executeCommand<T>(command: RpcCommand): Promise<T> {
     if (this.applyingSettings) await this.applyingSettings;
@@ -467,25 +208,17 @@ export class NativeTransport {
   private async executeCommandNow<T>(command: RpcCommand) {
     const compact = command.type === "prompt" && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null;
     if (compact) command = { type: "compact", ...(compact[1]?.trim() ? { customInstructions: compact[1].trim() } : {}) };
-    if (command.type === "clear_queue") this.clearingQueue = true;
     try {
-      if (command.type === "prompt") { this.inputRejection = undefined; this.commandRejections.clear(); }
       const result = await call<T>("pi_command", { runtimeId: this.runtimeId, command });
-      const commandError = this.commandRejections.get(String(command.message).match(/^\/(\S+)/)?.[1] ?? "") ?? this.commandRejections.get("");
-      if (command.type === "prompt" && commandError) throw new Error(commandError);
-      const rejected = this.inputRejection as { text: string; error: string } | undefined;
-      if (command.type === "prompt" && rejected && rejected.text === command.message) throw new Error(rejected.error);
-      if (command.type === "get_state") { const state = result as { sessionFile?: string; sessionId?: string; pendingMessageCount?: number }; if (this.sessionId && this.sessionId !== state.sessionId) this.liveAssistant = undefined; this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; this.publishQueue(); state.pendingMessageCount = (state.pendingMessageCount ?? 0) + (this.heldMessages?.filter((item) => !item.retry).length ?? 0); }
+      if (command.type === "get_state" || command.type === "get_snapshot") { const state = (command.type === "get_snapshot" ? (result as { state: unknown }).state : result) as { sessionFile?: string; sessionId?: string }; if (this.sessionId && this.sessionId !== state.sessionId) this.liveAssistant = undefined; this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; }
       if (command.type === "get_entries") {
         const history = result as { entries: Array<{ message?: { role?: string; timestamp?: number; deliveryBehavior?: string } }> };
         const live = this.liveAssistant; const branch = result as { entries: PiEntry[]; leafId: string | null };
         if (live?.streaming && !history.entries.some((entry) => entry.message?.role === "assistant" && entry.message.timestamp === live.timestamp)) {
           branch.entries.push({ type: "message", id: live.id, parentId: branch.leafId, message: live } as PiEntry); branch.leafId = live.id;
         }
-        for (const entry of history.entries) if (entry.message?.role === "user" && this.steeringTimestamps.has(entry.message.timestamp!)) entry.message.deliveryBehavior = "steer";
       }
-      if (["new_session", "switch_session", "fork", "clone"].includes(command.type) && !(result as { cancelled?: boolean })?.cancelled) { this.liveAssistant = undefined; this.pendingMessages = []; this.heldMessages = undefined; this.queueSnapshot = { type: "queue_update", steering: [], followUp: [] }; this.sessionId = undefined; this.awaitingSteering = []; this.steeringTimestamps.clear(); this.publishQueue(); }
-      if (command.type === "clear_queue") this.awaitingSteering = [];
+      if (["new_session", "switch_session", "fork", "clone"].includes(command.type) && !(result as { cancelled?: boolean })?.cancelled) { this.liveAssistant = undefined; this.sessionId = undefined; }
       if (command.type === "get_commands") {
         const { commands } = result as { commands: Array<{ name: string; source: string; sourceInfo?: { source?: string; path?: string } }> };
         const fromPackage = (item: typeof commands[number], name: string) => item.sourceInfo?.source === `npm:${name}` || item.sourceInfo?.path?.split(/[\\/]/).includes(name);
@@ -506,7 +239,7 @@ export class NativeTransport {
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason); const diagnostics = this.stderrLines.join("\n");
       throw new Error(diagnostics && /disconnect|connect|start|running/i.test(message) ? `${message}\n${diagnostics}` : message);
-    } finally { if (command.type === "clear_queue") this.clearingQueue = false; }
+    }
   }
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); listener(this.queueView()); this.retainedStatuses.forEach((event) => listener(event)); this.retainedRequests.forEach((event) => listener(event)); return () => this.listeners.delete(listener); }
   listSessions() { return call<SessionSummary[]>("list_sessions"); }
@@ -532,16 +265,17 @@ export class NativeTransport {
   async gitBranch() { if (!this.cwd) return null; const branch = await call<unknown>("git_branch", { cwd: this.cwd, hostId: this.hostId }); return typeof branch === "string" ? branch : null; }
   loadSettings() { return call<AppSettings>("load_app_settings"); }
   loadCodexUsage() { return call<CodexUsage>("codex_usage"); }
-  saveSettings(settings: AppSettings, reconnect = true) {
+  saveSettings(settings: AppSettings, reconnect = true, agentHostId?: string) {
     const save = async () => {
       const previous = await this.loadSettings(); const connection = { cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId };
-      await call<void>("save_app_settings", { settings }); if (!reconnect) return;
+      const change = await call<SettingsChange>("save_app_settings", { settings, agentHostId }); if (!reconnect) return change;
       try { if (this.hostId !== "local" && !settings.hosts.some((host) => host.id === this.hostId)) { this.hostId = "local"; this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined; this.temporaryChat = false; this.temporaryChatUsed = false; } await this.disconnect(); await this.connect(); }
       catch (reason) {
         await call<void>("save_app_settings", { settings: previous }); this.cwd = connection.cwd; this.sessionPath = connection.sessionPath; this.sessionId = connection.sessionId; this.hostId = connection.hostId;
         try { await this.disconnect(); await this.connect(); } catch { /* Preserve the original failure; the persisted settings are already restored. */ }
         throw reason;
       }
+      return change;
     };
     const result = this.settingsLifecycle.then(save, save);
     this.settingsLifecycle = result.then(() => undefined, () => undefined);

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import type { SessionSummary } from "../types";
 import { changeSessionGroups, loadSessionGroups } from "./nativeTransport";
 
@@ -64,7 +65,8 @@ export function useSessionGroups(sessions: SessionSummary[]) {
     mounted.current = true;
     const listener = (value: SessionGroups) => { setState(value); setError(undefined); };
     listeners.add(listener);
-    return () => { mounted.current = false; listeners.delete(listener); };
+    const stop = listen<SessionGroups>("pi://groups-changed", ({ payload }) => listener(payload));
+    return () => { mounted.current = false; listeners.delete(listener); void stop.then((unlisten) => unlisten()); };
   }, []);
   const seedsJson = JSON.stringify(sessions.filter((session) => !isTemporaryChatCwd(session.cwd)).map((session): SessionGroupSeed => ({
     sessionKey: `${session.hostId ?? "local"}:${session.id}`,

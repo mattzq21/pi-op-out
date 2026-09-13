@@ -35,7 +35,6 @@ export class SessionRuntimePool {
   }
   private activeTransport?: NativeTransport;
   private errorHandler?: (message: string) => void;
-  private backgroundInputHandler?: (request: ExtensionUiRequest) => void;
 
   private notify() { for (const listener of this.listeners) listener(); }
 
@@ -134,19 +133,19 @@ export class SessionRuntimePool {
           } catch { /* Ignore malformed extension status payloads. */ }
         }
       }
-      if (event.type === "extension_ui_request" && transport !== this.activeTransport && !this.interactiveTransports.has(transport)) {
-        const request = event as unknown as ExtensionUiRequest;
-        if (["input", "editor", "select", "confirm"].includes(request.method)) {
-          void transport.command({ type: "extension_ui_response", id: request.id, cancelled: true }).catch(() => undefined);
-          this.backgroundInputHandler?.(request);
-        }
-      }
+      if (event.type === "runtime_presence") { if (event.isStreaming) this.runningTransports.add(transport); else this.runningTransports.delete(transport); }
       if (event.type === "message_start" && (event.message as { role?: string })?.role === "user") {
         const prompt = textOf((event.message as { content: import("../types").ChatMessage["content"] }).content);
         this.retainSession(transport, prompt);
       }
-      if (event.type === "agent_start") this.captureTurnStart(transport);
-      if (event.type === "agent_end" || event.type === "agent_settled") this.captureTurnEnd(transport);
+      if (this.diffState(transport).persistence === "memory") {
+        if (event.type === "agent_start") this.captureTurnStart(transport);
+        if (event.type === "agent_end" || event.type === "agent_settled") this.captureTurnEnd(transport);
+      }
+      if (event.type === "diffs_changed" && event.hostId === transport.currentHostId() && event.sessionPath === transport.currentSessionPath()) {
+        this.diffState(transport).load = undefined;
+        void this.loadSavedDiffs(transport, String(event.sessionPath));
+      }
       if (event.type === "agent_start" || event.type === "message_start") { this.runningTransports.add(transport); this.unseenTransports.delete(transport); }
       if (event.type === "agent_settled") { this.runningTransports.delete(transport); if (transport !== this.activeTransport) this.unseenTransports.add(transport); }
       if (event.type === "disconnected") { this.runningTransports.delete(transport); this.discardBaselines(transport, this.diffState(transport)); }
@@ -178,23 +177,16 @@ export class SessionRuntimePool {
     this.publishSessionStates();
   }
 
-  activate(transport?: NativeTransport) { this.activeTransport = transport; if (transport) this.unseenTransports.delete(transport); this.publishSessionStates(); }
+  activate(transport?: NativeTransport) { const previous = this.activeTransport; this.activeTransport = transport; if (previous && previous !== transport) previous.setVisible(this.interactiveTransports.has(previous)); if (transport) { transport.setVisible(true); this.unseenTransports.delete(transport); } this.publishSessionStates(); }
 
   setErrorHandler(handler?: (message: string) => void) { this.errorHandler = handler; }
-  setBackgroundInputHandler(handler?: (request: ExtensionUiRequest) => void) { this.backgroundInputHandler = handler; }
-  setInteractive(transport: NativeTransport, interactive: boolean) { if (interactive) this.interactiveTransports.add(transport); else this.interactiveTransports.delete(transport); }
+  setInteractive(transport: NativeTransport, interactive: boolean) { if (interactive) this.interactiveTransports.add(transport); else this.interactiveTransports.delete(transport); transport.setVisible(interactive || transport === this.activeTransport); }
   isRunning(transport: NativeTransport) { return this.runningTransports.has(transport); }
   isRetained(transport: NativeTransport) { return this.retainedTransports.has(transport); }
   isAnyRunning() { return this.runningTransports.size > 0; }
 
-  queueSettingsChange(previous: AppSettings, settings: AppSettings, agentHostId?: string) {
+  queueSettingsChange(previous: AppSettings, settings: AppSettings) {
     const changed = (before: unknown, after: unknown) => JSON.stringify(before) !== JSON.stringify(after);
-    const runtimeConfig = (value: AppSettings) => ({
-      tools: value.tools.map((tool) => ({ name: tool.name, enabled: tool.enabled })).sort((a, b) => a.name.localeCompare(b.name)),
-      skills: value.skills.filter((skill) => skill.enabled).map((skill) => skill.path).sort(),
-      mcpServers: value.mcpServers.filter((server) => server.enabled).map(({ status: _status, error: _error, ...server }) => server).sort((a, b) => a.id.localeCompare(b.id)),
-    });
-    const live = changed(runtimeConfig(previous), runtimeConfig(settings));
     const hostConnection = (value: AppSettings, hostId: string) => {
       const host = value.hosts.find((host) => host.id === hostId);
       return host ? { target: host.target, piPath: host.piPath } : undefined;
@@ -202,10 +194,7 @@ export class SessionRuntimePool {
     for (const transport of this.transports) {
       const hostId = transport.currentHostId();
       transport.queueSettings(settings, {
-        live,
-        reconnect: agentHostId === hostId || (hostId !== "local" && changed(hostConnection(previous, hostId), hostConnection(settings, hostId))),
-        autoCompaction: previous.autoCompaction !== settings.autoCompaction,
-        autoRetry: previous.autoRetry !== settings.autoRetry,
+        reconnect: hostId !== "local" && changed(hostConnection(previous, hostId), hostConnection(settings, hostId)),
       });
     }
   }

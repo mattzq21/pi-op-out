@@ -15,12 +15,13 @@ import { SplitChatPane } from "./components/SplitChatPane";
 import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
 
 import { updateSessionGroups, type SessionGroup } from "./lib/sessionGroups";
-import { NativeTransport } from "./lib/nativeTransport";
+import { listen } from "@tauri-apps/api/event";
+import { NativeTransport, initialWindowTarget, openSessionWindow } from "./lib/nativeTransport";
 import { SessionRuntimePool, useTurnDiffs } from "./lib/sessionRuntimePool";
 import { useChatSession } from "./lib/useChatSession";
 import { decodeAgentValue, encodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "./lib/agentProtocol";
 import { appendTerminalOutput as retainTerminalOutput, TERMINAL_OUTPUT_LIMIT } from "./lib/terminalOutput";
-import type { AgentState, AppSettings, ChatMessage, CodexUsage, ComposerUpload, ExtensionUiRequest, ImageAttachment, Model, DefinedAgentsCapability, AgentConfig, RpcEvent, SessionSummary } from "./types";
+import type { AgentState, AppSettings, ChatMessage, CodexUsage, ComposerUpload, ExtensionUiRequest, ImageAttachment, Model, DefinedAgentsCapability, AgentConfig, SettingsChange, RpcEvent, SessionSummary } from "./types";
 import { branchMessages, type PiEntry } from "./lib/messages";
 
 declare const __PIOP_DEVELOPMENT_BRANCH__: string;
@@ -39,7 +40,8 @@ const BTW_REQUEST_TITLE = "__pi_desktop_btw__";
 const PROMPT_CONTEXT_STATUS_KEY = "pi-desktop-prompt-context";
 const MCP_STATUS_KEY = "pi-desktop-mcp-status";
 const MAX_TERMINALS = 8;
-const initialTerminals = (sessionId: string): SessionTerminals => { const id = `terminal-${sessionId}-1`; return { activeId: id, tabs: [{ id, output: "", outputEnd: 0, started: false }] }; };
+const windowInstanceId = crypto.randomUUID();
+const initialTerminals = (sessionId: string): SessionTerminals => { const id = `terminal-${windowInstanceId}-${sessionId}-1`; return { activeId: id, tabs: [{ id, output: "", outputEnd: 0, started: false }] }; };
 
 function appendTerminalOutputs(current: Record<string, SessionTerminals>, chunks: Map<string, QueuedTerminalOutput>) {
   return Object.fromEntries(Object.entries(current).map(([sessionId, session]) => [sessionId, { ...session, tabs: session.tabs.map((terminal) => {
@@ -61,7 +63,7 @@ export function formatCodexReset(resetAt: number, now = Date.now()) {
 }
 
 export default function App() {
-  const runtimePool = useMemo(() => new SessionRuntimePool(), []); const [transport, setTransport] = useState(() => { const initial = runtimePool.create(); runtimePool.activate(initial); return initial; }); const [view, setView] = useState<"chat" | "settings">("chat");
+  const runtimePool = useMemo(() => new SessionRuntimePool(), []); const [transport, setTransport] = useState(() => { const initial = runtimePool.create(initialWindowTarget()); runtimePool.activate(initial); return initial; }); const [view, setView] = useState<"chat" | "settings">("chat");
   const activeTransportRef = useRef(transport); activeTransportRef.current = transport;
   const pendingSessionGroups = useRef(new WeakMap<NativeTransport, string>());
   const initialConversationKey = useRef(`local:draft-${crypto.randomUUID()}`);
@@ -75,17 +77,24 @@ export default function App() {
   const gitDiffs = useTurnDiffs(runtimePool, transport);
   const sessionRuntime = useChatSession(transport); const { state, setState, messages, setMessages, models, commands, thinkingLevels, refresh: refreshSession, handleEvent, discardPendingUpdates } = sessionRuntime;
   const [sessions, setSessions] = useState<SessionSummary[]>([]); const [settings, setSettings] = useState<AppSettings>();
+  const runtimeSettings = useRef<AppSettings | undefined>(undefined);
+  const applyRuntimeSettings = useCallback((next: AppSettings) => {
+    const previous = runtimeSettings.current;
+    runtimeSettings.current = next;
+    if (previous) runtimePool.queueSettingsChange(previous, next);
+  }, [runtimePool]);
   const [definedAgents, setDefinedAgents] = useState<DefinedAgentsCapability>();
   const settingsSavePending = useRef(false); const [settingsSaving, setSettingsSaving] = useState(false);
   const [debugModeSaving, setDebugModeSaving] = useState(false);
   const debugModePending = useRef(false);
   const [settingsDirty, setSettingsDirty] = useState(false);
+  const settingsDirtyRef = useRef(settingsDirty); settingsDirtyRef.current = settingsDirty;
   const sessionIndexRequest = useRef<Promise<void> | undefined>(undefined);
   const [panelOpen, setPanelOpen] = useState(true); const [query, setQuery] = useState(""); const [connected, setConnected] = useState(false); const connectionReadyRef = useRef(connected); connectionReadyRef.current = connected; const updateConnected = (value: boolean) => { connectionReadyRef.current = value; setConnected(value); }; const [error, setError] = useState<string>();
   const [createGroupRequest, setCreateGroupRequest] = useState(0);
   const handleCreateGroup = useCallback(() => setCreateGroupRequest(0), []);
-  const [activeHostId, setActiveHostId] = useState("local");
-  const [activeCwd, setActiveCwd] = useState<string>();
+  const [activeHostId, setActiveHostId] = useState(() => transport.currentHostId());
+  const [activeCwd, setActiveCwd] = useState<string | undefined>(() => transport.currentCwd());
   const [isGitRepository, setIsGitRepository] = useState<boolean>();
   const activeHostIdRef = useRef(activeHostId); activeHostIdRef.current = activeHostId;
   const [codexUsage, setCodexUsage] = useState<CodexUsage>();
@@ -94,11 +103,10 @@ export default function App() {
   const dialogsRef = useRef(dialogs); dialogsRef.current = dialogs;
   const mainDialogOwnerRef = useRef("Main conversation"); mainDialogOwnerRef.current = state.sessionName ? `Main: ${state.sessionName}` : "Main conversation";
   const addNotice = useCallback((notice: { title: string; message: string }) => setNotices((current) => [...current, { ...notice, id: crypto.randomUUID() }]), []);
-  const queueExtensionDialog = useCallback((request: ExtensionUiRequest, ownerTransport: NativeTransport, owner: string) => setDialogs((current) => [...current, { request, transport: ownerTransport, owner, queueId: crypto.randomUUID() }]), []);
+  const queueExtensionDialog = useCallback((request: ExtensionUiRequest, ownerTransport: NativeTransport, owner: string) => setDialogs((current) => current.some((dialog) => dialog.transport === ownerTransport && dialog.request.id === request.id) ? current : [...current, { request, transport: ownerTransport, owner, queueId: crypto.randomUUID() }]), []);
+  const resolveExtensionDialog = useCallback((owner: NativeTransport, id: string) => setDialogs((current) => current.filter((dialog) => dialog.transport !== owner || dialog.request.id !== id)), []);
   const closeTransportDialogs = useCallback(async (ownerTransport: NativeTransport) => {
-    const closing = dialogsRef.current.filter((dialog) => dialog.transport === ownerTransport);
     setDialogs((current) => current.filter((dialog) => dialog.transport !== ownerTransport));
-    await Promise.allSettled(closing.map((dialog) => ownerTransport.command({ type: "extension_ui_response", id: dialog.request.id, cancelled: true })));
   }, []);
   const releaseSplitTransport = useCallback(async (ownerTransport: NativeTransport) => {
     // Selecting a split conversation transfers its runtime to the main pane.
@@ -151,7 +159,7 @@ export default function App() {
   const activeTerminal = sessionTerminals.tabs.find((terminal) => terminal.id === sessionTerminals.activeId) ?? sessionTerminals.tabs[0];
   const terminalsBySessionRef = useRef(terminalsBySession); terminalsBySessionRef.current = terminalsBySession;
   const activateConversationKey = (key: string) => { activeConversationKeyRef.current = key; setActiveConversationKey(key); };
-  useEffect(() => { runtimePool.setErrorHandler((message) => addNotice({ title: "Project changes", message })); runtimePool.setBackgroundInputHandler((request) => addNotice({ title: "Background conversation requested input", message: `${request.title || "Input requested"} was cancelled. Open that conversation and try again.` })); return () => { runtimePool.setErrorHandler(); runtimePool.setBackgroundInputHandler(); }; }, [addNotice, runtimePool]);
+  useEffect(() => { runtimePool.setErrorHandler((message) => addNotice({ title: "Project changes", message })); return () => { runtimePool.setErrorHandler(); }; }, [addNotice, runtimePool]);
 
   const flushTerminalOutput = useCallback(() => {
     terminalOutputFrame.current = undefined; const chunks = queuedTerminalOutput.current; queuedTerminalOutput.current = new Map();
@@ -202,9 +210,25 @@ export default function App() {
     return sessionIndexRequest.current;
   }, [transport]);
 
+  useEffect(() => {
+    const unsubscribes = [
+      listen("pi://sessions-changed", () => { void syncSessionIndex(); }),
+      listen<{ hostId: string; line: string }>("pi://daemon-error", ({ payload }) => addNotice({ title: `Connection · ${payload.hostId}`, message: payload.line })),
+    ];
+    return () => { for (const pending of unsubscribes) void pending.then((unlisten) => unlisten()); };
+  }, [addNotice, syncSessionIndex]);
+
+  useEffect(() => {
+    const pending = listen<SettingsChange>("pi://settings-changed", ({ payload }) => {
+      applyRuntimeSettings(payload.settings);
+      if (!settingsSavePending.current && !settingsDirtyRef.current) setSettings(payload.settings);
+    });
+    return () => { void pending.then((unlisten) => unlisten()); };
+  }, [applyRuntimeSettings]);
+
   const refresh = useCallback(async (hostId?: string) => {
     void syncSessionIndex();
-    const settingsRequest = transport.loadSettings().then((nextSettings) => { setSettings(nextSettings); return nextSettings; });
+    const settingsRequest = transport.loadSettings().then((nextSettings) => { applyRuntimeSettings(nextSettings); setSettings(nextSettings); return nextSettings; });
     const [nextState, nextSettings] = await Promise.all([refreshSession(), settingsRequest]); runtimePool.bind(hostId ?? transport.currentHostId(), nextState.sessionId, transport);
     const group = pendingSessionGroups.current.get(transport);
     if (group && nextState.sessionId) {
@@ -214,7 +238,7 @@ export default function App() {
       } catch (reason) { addNotice({ title: "Could not add chat to group", message: String(reason) }); }
     }
     return nextSettings;
-  }, [addNotice, refreshSession, runtimePool, syncSessionIndex, transport]);
+  }, [addNotice, applyRuntimeSettings, refreshSession, runtimePool, syncSessionIndex, transport]);
 
   const configureRuntime = useCallback(async (value: AppSettings) => {
     const [modelResult] = await Promise.allSettled([
@@ -242,12 +266,13 @@ export default function App() {
     let cancelled = false; let reconnecting = false; const refreshTimers = new Set<number>();
     const unsubscribe = transport.subscribe((event: RpcEvent) => {
       handleEvent(event);
+      if (event.type === "extension_ui_resolved") setDialogs((current) => current.filter((dialog) => dialog.transport !== transport || dialog.request.id !== event.id));
       if (event.type === "message_end") { const timer = window.setTimeout(() => { refreshTimers.delete(timer); if (!cancelled) void refresh().catch(() => undefined); }, 30); refreshTimers.add(timer); }
       if (event.type === "terminal_output") queueTerminalOutput(String(event.terminalId ?? ""), String(event.data ?? ""));
       if (event.type === "terminal_exit") setTerminalsBySession((current) => Object.fromEntries(Object.entries(current).map(([sessionId, session]) => [sessionId, { ...session, tabs: session.tabs.map((terminal) => terminal.id === event.terminalId ? { ...terminal, exited: true } : terminal) }])));
       if (event.type === "extension_error") { const message = String(event.error ?? "An extension failed"); if (!message.startsWith(staleExtensionContext)) addNotice({ title: "Extension error", message }); }
       if (event.type === "extension_ui_request") { const request = event as unknown as ExtensionUiRequest;
-        if (transport !== activeTransportRef.current) { if (["input", "editor", "select", "confirm"].includes(request.method)) void transport.command({ type: "extension_ui_response", id: request.id, cancelled: true }).catch(() => undefined); return; }
+        if (transport !== activeTransportRef.current) return;
         if (request.method === "notify") { if (!event.inputRejected) addNotice({ title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "piop extension", message: request.message || "Notification" }); }
         else if (request.method === "input" && request.title === BTW_REQUEST_TITLE) {
           try {
@@ -561,10 +586,11 @@ export default function App() {
   const applySettings = async (value: AppSettings, nextConfig?: AgentConfig) => {
     if (!settings) throw new Error("Settings are still loading");
     const next = { ...value, debugMode: settings.debugMode, mcpServers: value.mcpServers.map(({ error: _error, ...server }) => ({ ...server, status: "stopped" as const })) };
+    const agentHostId = nextConfig ? transport.currentHostId() : undefined;
     // Use a separate, sessionless runtime to persist agent definitions without
     // reloading the extension inside a conversation that is still responding.
     const writeAgents = async (configuration: AgentConfig, defaultModel: string) => {
-      const writer = new NativeTransport({ cwd: transport.currentCwd(), hostId: transport.currentHostId() });
+      const writer = new NativeTransport({ cwd: transport.currentCwd(), hostId: agentHostId });
       try {
         await writer.connect(undefined, undefined, undefined, undefined, true);
         const [provider, ...modelId] = defaultModel.split("/");
@@ -573,9 +599,10 @@ export default function App() {
       } finally { await writer.dispose(); }
     };
     let agentsSaved = false;
+    let savedChange: SettingsChange;
     try {
       if (nextConfig) { await writeAgents(nextConfig, next.defaultModel); agentsSaved = true; }
-      await transport.saveSettings(next, false);
+      savedChange = await transport.saveSettings(next, false, agentHostId);
     } catch (reason) {
       if (agentsSaved && agentSettings) {
         try { await writeAgents(agentSettings, settings.defaultModel); }
@@ -583,8 +610,8 @@ export default function App() {
       }
       throw reason;
     }
-    setSettings(next);
-    runtimePool.queueSettingsChange(settings, next, nextConfig ? transport.currentHostId() : undefined);
+    setSettings(savedChange.settings);
+    applyRuntimeSettings(savedChange.settings);
   };
   const setAgent = async (name: string) => { try { await transport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(name)}` }); } catch (reason) { addNotice({ title: "Could not change agent", message: reason instanceof Error ? reason.message : String(reason) }); } };
   const openProject = async (cwd: string, hostId: string) => { if (!canLeaveSettings()) return; const request = projectOpenRequest.current; const validatedCwd = await transport.validateProjectDirectory(cwd.trim(), hostId); if (!projectOpenRef.current || request !== projectOpenRequest.current) return; const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setTerminalOpen(false); updateConnected(false); setDefinedAgents(undefined); discardPendingUpdates(); setMessages([]); activateConversationKey(conversationKey); setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, isPaused: false, isPausing: false, activity: undefined, contextUsage: undefined })); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); const nextTransport = runtimePool.create({ cwd: validatedCwd, hostId }); transportConversationKeys.current.set(nextTransport, conversationKey); setComposerDraft(conversationKey, composerDraft); setComposerUploads(nextTransport, composerUploads); activateTransport(nextTransport); };
@@ -593,6 +620,7 @@ export default function App() {
   const sessionAction = async (session: SessionSummary, action: SessionAction) => {
     if (session.cwdExists === false && (action === "split" || action === "rename")) { relocationActionRef.current = action; setRelocationError(undefined); setRelocatingSession(session); return; }
     if (action === "split") { openSplitPane(session); return; }
+    if (action === "new-window") { try { await openSessionWindow({ cwd: session.cwd, sessionPath: session.path, sessionId: session.id, hostId: session.hostId }); } catch (reason) { addNotice({ title: "Could not open window", message: String(reason) }); } return; }
     if (action === "open-directory") {
       const actionKey = `open-directory:${session.hostId ?? "local"}:${session.id}`; if (sessionActionPending.current.has(actionKey)) return; sessionActionPending.current.add(actionKey);
       try { await transport.openProjectDirectory(session.cwd, session.hostId); }
@@ -610,10 +638,10 @@ export default function App() {
       const isSplitSession = splitPane?.session.id === session.id && (splitPane.session.hostId ?? "local") === (session.hostId ?? "local");
       const terminalIds = terminalsBySession[archivedSessionKey]?.tabs.map((terminal) => terminal.id) ?? [];
       try {
-        if (runtimePool.isRunning(ownerTransport)) await ownerTransport.command({ type: "abort" });
+        if (runtimePool.isRunning(ownerTransport)) throw new Error("Stop or pause this conversation before archiving it");
         if (isSplitSession) closeSplitPane();
         if (!isActiveSession) await runtimePool.remove(session);
-        else updateConnected(false);
+        else { updateConnected(false); await ownerTransport.disconnect(); }
         await transport.archiveSession(session.path, session.hostId, terminalIds);
         archivedSessionKeys.current.add(archivedSessionKey);
         setSessions((current) => current.filter((item) => item.path !== session.path || (item.hostId ?? "local") !== (session.hostId ?? "local")));
@@ -637,7 +665,7 @@ export default function App() {
           }
         } else try { const replacement = runtimePool.create({ cwd: ownerTransport.currentCwd(), hostId }); transportConversationKeys.current.set(replacement, conversationKey); activateTransport(replacement); await runtimePool.release(ownerTransport); }
         catch (reason) { addNotice({ title: "Conversation archived, but a new conversation could not start", message: reason instanceof Error ? reason.message : String(reason) }); void syncSessionIndex(); }
-      } catch (reason) { if (isActiveSession && activeTransportRef.current === ownerTransport) updateConnected(true); addNotice({ title: "Could not archive conversation", message: reason instanceof Error ? reason.message : String(reason) }); }
+      } catch (reason) { if (isActiveSession && activeTransportRef.current === ownerTransport) { try { await ownerTransport.connect(); await refreshSession(); updateConnected(true); } catch { updateConnected(false); } } addNotice({ title: "Could not archive conversation", message: reason instanceof Error ? reason.message : String(reason) }); }
       finally { archivePending.current.delete(archivedSessionKey); }
       return;
     }
@@ -673,8 +701,8 @@ export default function App() {
   const toggleDebugMode = useCallback(() => {
     if (!settings || debugModePending.current || settingsSavePending.current) return; debugModePending.current = true; setDebugModeSaving(true);
     const next = { ...settings, debugMode: !settings.debugMode };
-    void transport.saveSettings(next, false).then(() => setSettings(next)).catch((reason) => addNotice({ title: "Could not change debug mode", message: reason instanceof Error ? reason.message : String(reason) })).finally(() => { debugModePending.current = false; setDebugModeSaving(false); });
-  }, [addNotice, settings, transport]);
+    void transport.saveSettings(next, false).then(() => { applyRuntimeSettings(next); setSettings(next); }).catch((reason) => addNotice({ title: "Could not change debug mode", message: reason instanceof Error ? reason.message : String(reason) })).finally(() => { debugModePending.current = false; setDebugModeSaving(false); });
+  }, [addNotice, applyRuntimeSettings, settings, transport]);
   const reconnectMain = () => {
     const ownerTransport = transport; const ownerKey = activeConversationKeyRef.current;
     if (reconnectPending.current.has(ownerTransport)) return; reconnectPending.current.add(ownerTransport); setError(undefined); updateConnected(false);
@@ -722,7 +750,7 @@ export default function App() {
     <div className="chat-workspace" hidden={view !== "chat"}>
       <div className={`chat-panes ${splitPane ? "split" : ""}`}>
         <ChatView key={activeConversationKey} state={state} messages={messages} gitDiffs={gitDiffs} debug={settings.debugMode} agents={extensionStateIsCurrent ? definedAgents?.config.agents ?? [] : []} activeAgent={extensionStateIsCurrent ? definedAgents?.active : undefined} dictionaries={settings.dictionaries.filter((item) => settings.activeDictionaryIds.includes(item.id))} models={models.filter((model) => !settings.hiddenModels.includes(`${model.provider}/${model.id}`))} commands={[{ name: "branch-off", description: "Branch conversation [number back, default 0]", source: "builtin" }, { name: "worktree", description: "Create worktree [number back, default 0] [name]", source: "builtin" }, ...commands.filter((command) => !["branch-off", "worktree"].includes(command.name))]} thinkingLevels={thinkingLevels} widgets={extensionStateIsCurrent ? Object.values(widgets).flat() : []} statuses={extensionStateIsCurrent ? statuses : {}} projectCwd={projectCwd} controlsDisabled={!connected} selectionBtw draft={composerDraft} onDraftChange={(value) => setComposerDraft(activeConversationKey, value)} focusRequest={mainComposerFocusRequest} onActivate={() => setActivePane("main")} uploads={composerUploads} onUploadsChange={(update) => setComposerUploads(transport, update)} onSend={send} onChangePending={(id, behavior) => transport.changePendingMessage(id, behavior)} onAbort={abortInteraction} onPause={pauseInteraction} onResume={resumeInteraction} onOpenTerminal={() => { terminalPanelRevision.current += 1; setActivePane("main"); setTerminalTarget({ sessionKey: activeConversationKey, cwd: projectCwd, hostId: activeHostId }); setTerminalOpen(true); }} onOpenProject={chooseChatProject} onClearProject={clearChatProject} onBranch={branch} onForkAndForget={isGitRepository === false && projectCwd ? forkAndForget : undefined} onCreateWorktree={isGitRepository && projectCwd ? (message) => setWorktreeTarget({ cwd: projectCwd, hostId: activeHostId, message, transport }) : undefined} onAgent={setAgent} onModel={setModel} onToggleFastMode={() => enqueueControl(transport, () => transport.toggleFastMode())} onThinking={setThinking} />
-        {splitPane && <SplitChatPane key={splitPane.key} runtimePool={runtimePool} session={splitPane.session} settings={settings} draft={splitComposerDraft} onDraftChange={setSplitComposerDraft} focusRequest={splitComposerFocusRequest} onActivate={() => setActivePane("split")} onOpenTerminal={() => { terminalPanelRevision.current += 1; setActivePane("split"); setTerminalTarget({ sessionKey: splitSessionId, cwd: splitPane.session.cwd, hostId: splitPane.session.hostId ?? "local" }); setTerminalOpen(true); }} onDialogRequest={queueExtensionDialog} onDialogTransportClosed={closeTransportDialogs} onReleaseTransport={releaseSplitTransport} onSessionChange={(next, owner) => { const nextKey = `${next.hostId ?? "local"}:${next.id}`; rekeyConversationUi(splitSessionId, nextKey, owner); setTerminalTarget((current) => current?.sessionKey === splitSessionId ? { ...current, sessionKey: nextKey } : current); setSplitPane((current) => current?.key === splitPane.key ? { ...current, session: next } : current); }} forkFrom={splitPane.btw?.forkFrom} initialPrompt={splitPane.btw?.task} onReady={splitPane.btw ? () => respondToBtw(splitPane.btw!.requestId, { value: "opened" }) : undefined} onFailed={splitPane.btw ? () => respondToBtw(splitPane.btw!.requestId, { cancelled: true }) : undefined} onClose={closeSplitPane} />}
+        {splitPane && <SplitChatPane key={splitPane.key} runtimePool={runtimePool} session={splitPane.session} settings={settings} draft={splitComposerDraft} onDraftChange={setSplitComposerDraft} focusRequest={splitComposerFocusRequest} onActivate={() => setActivePane("split")} onOpenTerminal={() => { terminalPanelRevision.current += 1; setActivePane("split"); setTerminalTarget({ sessionKey: splitSessionId, cwd: splitPane.session.cwd, hostId: splitPane.session.hostId ?? "local" }); setTerminalOpen(true); }} onDialogRequest={queueExtensionDialog} onDialogResolved={resolveExtensionDialog} onDialogTransportClosed={closeTransportDialogs} onReleaseTransport={releaseSplitTransport} onSessionChange={(next, owner) => { const nextKey = `${next.hostId ?? "local"}:${next.id}`; rekeyConversationUi(splitSessionId, nextKey, owner); setTerminalTarget((current) => current?.sessionKey === splitSessionId ? { ...current, sessionKey: nextKey } : current); setSplitPane((current) => current?.key === splitPane.key ? { ...current, session: next } : current); }} forkFrom={splitPane.btw?.forkFrom} initialPrompt={splitPane.btw?.task} onReady={splitPane.btw ? () => respondToBtw(splitPane.btw!.requestId, { value: "opened" }) : undefined} onFailed={splitPane.btw ? () => respondToBtw(splitPane.btw!.requestId, { cancelled: true }) : undefined} onClose={closeSplitPane} />}
       </div>
       {terminalOpen && <TerminalView key={`${terminalSessionId}:${activeTerminal.id}`} cwd={terminalCwd} terminals={sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={activeTerminal.id} output={activeTerminal.output} outputEnd={activeTerminal.outputEnd} snapshot={activeTerminal.snapshot} snapshotEnd={activeTerminal.snapshotEnd} started={activeTerminal.started} exited={activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { void transport.writeTerminal(activeTerminal.id, data).catch((reason) => queueTerminalOutput(activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { void transport.resizeTerminal(activeTerminal.id, cols, rows).catch(() => undefined); }} onSnapshot={(value, outputEnd) => saveTerminalSnapshot(terminalSessionId, activeTerminal.id, value, outputEnd)} onDelete={deleteTerminal} onClose={() => { terminalPanelRevision.current += 1; setTerminalOpen(false); }} />}
     </div>

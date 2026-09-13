@@ -124,6 +124,7 @@ export function ChatView(props: Props) {
     finally { setAskingSelection(false); }
   };
   return <main ref={shell} className="chat-shell" onFocusCapture={props.onActivate} onPointerDownCapture={props.onActivate}>
+    {(props.state.viewers ?? 0) > 1 && <div className="concurrent-view-status" role="status">Open in {props.state.viewers} views · Messages and controls are shared</div>}
     <div ref={messagesRef} className="messages" aria-live="polite"
       onWheel={(event) => { if (event.deltaY < 0 && event.currentTarget.scrollTop > 0) followLatest.current = false; }}
       onTouchStart={(event) => { touchY.current = event.touches[0]?.clientY; }}

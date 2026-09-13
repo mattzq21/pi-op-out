@@ -1,5 +1,6 @@
 use std::{collections::{HashMap, HashSet}, fs, path::PathBuf, sync::Mutex};
 use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter};
 
 static STORAGE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -102,7 +103,7 @@ pub fn load_session_groups(seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Re
 }
 
 #[tauri::command(async)]
-pub fn change_session_groups(change: GroupChange) -> Result<SessionGroups, String> {
+pub fn change_session_groups(app: AppHandle, change: GroupChange) -> Result<SessionGroups, String> {
     let _lock = STORAGE_LOCK.lock().map_err(|_| "Session groups lock was poisoned")?;
     let path = storage_path()?;
     let mut state = read(&path)?.ok_or("Session groups have not loaded yet")?;
@@ -141,5 +142,6 @@ pub fn change_session_groups(change: GroupChange) -> Result<SessionGroups, Strin
         }
     }
     write(&path, &state)?;
+    let _ = app.emit("pi://groups-changed", &state);
     Ok(state)
 }

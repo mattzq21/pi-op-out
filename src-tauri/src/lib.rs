@@ -1,4 +1,5 @@
 mod session_groups;
+mod daemon;
 use session_groups::{load_session_groups, change_session_groups};
 
 use serde::{de, Deserialize, Deserializer, Serialize};
@@ -10,7 +11,7 @@ use std::{
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, ExitStatus, Stdio},
-    sync::{mpsc, Arc, Mutex, atomic::{AtomicBool, Ordering}},
+    sync::{mpsc, Arc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering}},
     thread,
     time::{Duration, Instant, SystemTime},
 };
@@ -20,12 +21,9 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 
 struct PiProcess {
-    generation: Uuid,
-    claim: Option<BusyAgent>,
-    child: Child,
-    stdin: Arc<Mutex<ChildStdin>>,
+    daemon: Arc<daemon::Daemon>,
+    window_label: String,
     blank_cleanup: BlankSessionCleanup,
-    command_timeout: Duration,
 }
 
 struct BlankSessionCleanup { path: Option<String>, id: Option<String>, host: Option<RemoteHost>, submitted: bool }
@@ -54,6 +52,7 @@ struct TerminalProcess {
     session_key: String,
     cwd: String,
     host_id: String,
+    window_label: String,
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn PtyChild + Send + Sync>,
     writer: mpsc::SyncSender<String>,
@@ -95,12 +94,15 @@ struct PiRuntime {
     worktree_setups: Mutex<HashMap<String, Arc<AtomicBool>>>,
     ephemeral_sessions: Mutex<HashMap<String, EphemeralSession>>,
     processes: Arc<Mutex<HashMap<String, PiProcess>>>,
-    pending: Arc<Mutex<HashMap<(String, String), mpsc::Sender<Result<Value, String>>>>>,
+    daemons: Mutex<HashMap<String, Arc<daemon::Daemon>>>,
+    lifecycle: Mutex<()>,
+    agent_config_revision: AtomicU64,
+    agent_config_revisions: Mutex<HashMap<String, u64>>,
     active_agents: Arc<Mutex<HashMap<String, AgentAddress>>>,
 }
 
 #[derive(Clone)]
-struct AgentAddress { host_id: String, session_id: Option<String>, session_path: Option<String>, worktree: Option<String>, presence_id: Option<String>, working: bool }
+struct AgentAddress { host_id: String, session_id: Option<String>, session_path: Option<String>, worktree: Option<String>, presence_id: Option<String>, working: bool, messageable: bool }
 
 #[derive(Clone)]
 struct BrokerRuntime {
@@ -132,9 +134,13 @@ impl Drop for BusyAgent {
     fn drop(&mut self) { if let Ok(mut busy) = self.busy.lock() { busy.remove(&self.key); } }
 }
 
-fn fail_pending(pending: &Arc<Mutex<HashMap<(String, String), mpsc::Sender<Result<Value, String>>>>>, runtime_id: &str, error: &str) {
-    let senders: Vec<_> = pending.lock().map(|mut requests| { let keys: Vec<_> = requests.keys().filter(|(owner, _)| owner == runtime_id).cloned().collect(); keys.into_iter().filter_map(|key| requests.remove(&key)).collect() }).unwrap_or_default();
-    for sender in senders { let _ = sender.send(Err(error.into())); }
+struct BrokerWriter { child: Arc<Mutex<Child>>, _claim: BusyAgent }
+
+impl Drop for BrokerWriter {
+    fn drop(&mut self) {
+        let mut child = self.child.lock().unwrap_or_else(|error| error.into_inner());
+        if !matches!(child.try_wait(), Ok(Some(_))) { let _ = child.kill(); let _ = child.wait(); }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -886,7 +892,7 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
 }
 
 #[tauri::command(async)]
-fn save_app_settings(app: AppHandle, mut settings: AppSettings) -> Result<(), String> {
+fn save_app_settings(app: AppHandle, mut settings: AppSettings, agent_host_id: Option<String>) -> Result<Value, String> {
     migrate_keybindings(&mut settings);
     if settings.context_window_cap < 1000 { return Err("Context window cap must be a whole number of at least 1000".into()); }
     validate_dictionaries(&settings)?;
@@ -902,7 +908,19 @@ fn save_app_settings(app: AppHandle, mut settings: AppSettings) -> Result<(), St
         if !host_names.insert(name) { return Err(format!("Machine name '{}' is already in use", host.name.trim())); }
         validate_remote_host(host)?;
     }
-    atomic_write_private(&settings_path(&app)?, &serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?)
+    let runtime = app.state::<PiRuntime>();
+    let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
+    atomic_write_private(&settings_path(&app)?, &serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?)?;
+    daemon::invalidate_changed(&app, &runtime, &settings)?;
+    let mut change = json!({"settings":settings});
+    if let Some(host_id) = agent_host_id {
+        let revision = runtime.agent_config_revision.fetch_add(1, Ordering::SeqCst) + 1;
+        runtime.agent_config_revisions.lock().map_err(|_| "Agent configuration lock was poisoned")?.insert(host_id.clone(), revision);
+        change["agentConfigChange"] = json!({"hostId":host_id,"revision":revision});
+    }
+    daemon::update_settings(&app, &runtime, &settings)?;
+    let _ = app.emit("pi://settings-changed", &change);
+    Ok(change)
 }
 
 #[tauri::command]
@@ -1208,16 +1226,19 @@ fn local_git_diff(cwd: &str, base_token: &str) -> Result<Option<GitDiffSnapshot>
     let base = parse_local_snapshot(base_token)?;
     let Some(current_token) = local_git_tree(cwd)? else { let _ = fs::remove_dir_all(&base.root); return Ok(None) };
     let current = parse_local_snapshot(&current_token)?;
-    let result = (|| {
-        let Some((_, repository_objects)) = git_root_and_objects(cwd)? else { return Ok(None) };
-        let alternates = std::env::join_paths([Path::new(&base.root).join("objects"), repository_objects]).map_err(|error| error.to_string())?;
-        let mut command = Command::new("git"); command.args(["-C", &current.repository_root, "diff", "--no-relative", "--no-color", "--no-ext-diff", "--find-renames", &base.tree, &current.tree, "--"])
-            .env("GIT_OBJECT_DIRECTORY", Path::new(&current.root).join("objects")).env("GIT_ALTERNATE_OBJECT_DIRECTORIES", alternates);
-        let output = run_limited(&mut command, MAX_GIT_PATCH_BYTES, "Git patch is too large")?;
-        if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-        let patch = String::from_utf8_lossy(&output.stdout).into_owned(); Ok((!patch.trim().is_empty()).then_some(GitDiffSnapshot::Located { patch, repository_root: current.repository_root.clone(), tool_paths: Vec::new() }))
-    })();
+    let result = local_git_diff_between(cwd, &base, &current);
     let _ = fs::remove_dir_all(&base.root); let _ = fs::remove_dir_all(&current.root); result
+}
+
+fn local_git_diff_between(cwd: &str, base: &GitSnapshotToken, current: &GitSnapshotToken) -> Result<Option<GitDiffSnapshot>, String> {
+    let Some((_, repository_objects)) = git_root_and_objects(cwd)? else { return Ok(None) };
+    let alternates = std::env::join_paths([Path::new(&base.root).join("objects"), repository_objects]).map_err(|error| error.to_string())?;
+    let mut command = Command::new("git"); command.args(["-C", &current.repository_root, "diff", "--no-relative", "--no-color", "--no-ext-diff", "--find-renames", &base.tree, &current.tree, "--"])
+        .env("GIT_OBJECT_DIRECTORY", Path::new(&current.root).join("objects")).env("GIT_ALTERNATE_OBJECT_DIRECTORIES", alternates);
+    let output = run_limited(&mut command, MAX_GIT_PATCH_BYTES, "Git patch is too large")?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    let patch = String::from_utf8_lossy(&output.stdout).into_owned();
+    Ok((!patch.trim().is_empty()).then_some(GitDiffSnapshot::Located { patch, repository_root: current.repository_root.clone(), tool_paths: Vec::new() }))
 }
 
 #[tauri::command(async)]
@@ -1649,15 +1670,20 @@ fn remote_git_tree(host: &RemoteHost, cwd: &str) -> Result<Option<String>, Strin
 
 #[tauri::command(async)]
 fn capture_git_tree(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<Option<String>, String> {
-    let host_id = host_id.unwrap_or_else(|| "local".into()); if host_id == "local" { return local_git_tree(&cwd); }
-    let settings = load_app_settings(app)?; remote_git_tree(remote_host(&settings, &host_id)?, &cwd)
+    capture_git_tree_at_host(&cwd, saved_remote_host(app, host_id)?.as_ref())
+}
+
+fn capture_git_tree_at_host(cwd: &str, host: Option<&RemoteHost>) -> Result<Option<String>, String> {
+    match host { Some(host) => remote_git_tree(host, cwd), None => local_git_tree(cwd) }
 }
 
 #[tauri::command(async)]
 fn discard_git_tree(app: AppHandle, snapshot: String, host_id: Option<String>) -> Result<(), String> {
-    let host_id = host_id.unwrap_or_else(|| "local".into());
-    if host_id == "local" { let snapshot = parse_local_snapshot(&snapshot)?; return fs::remove_dir_all(snapshot.root).map_err(|error| format!("Could not discard Git snapshot: {error}")); }
-    let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+    discard_git_tree_at_host(&snapshot, saved_remote_host(app, host_id)?.as_ref())
+}
+
+fn discard_git_tree_at_host(snapshot: &str, host: Option<&RemoteHost>) -> Result<(), String> {
+    let Some(host) = host else { let snapshot = parse_local_snapshot(snapshot)?; return fs::remove_dir_all(snapshot.root).map_err(|error| format!("Could not discard Git snapshot: {error}")); };
     let snapshot: GitSnapshotToken = serde_json::from_str(&snapshot).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     if !valid_remote_snapshot(&snapshot) { return Err("Invalid remote Git snapshot location".into()); }
     let root = shell_quote(&snapshot.root);
@@ -1668,14 +1694,26 @@ fn discard_git_tree(app: AppHandle, snapshot: String, host_id: Option<String>) -
 
 #[tauri::command(async)]
 fn load_git_diff(app: AppHandle, cwd: String, base_tree: String, host_id: Option<String>) -> Result<Option<GitDiffSnapshot>, String> {
-    let host_id = host_id.unwrap_or_else(|| "local".into());
-    if host_id == "local" { return local_git_diff(&cwd, &base_tree); }
-    let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+    load_git_diff_at_host(&cwd, &base_tree, saved_remote_host(app, host_id)?.as_ref())
+}
+
+fn load_git_diff_at_host(cwd: &str, base_tree: &str, host: Option<&RemoteHost>) -> Result<Option<GitDiffSnapshot>, String> {
+    let Some(host) = host else { return local_git_diff(cwd, base_tree); };
     let base: GitSnapshotToken = serde_json::from_str(&base_tree).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     if !valid_remote_snapshot(&base) { return Err("Invalid remote Git snapshot location".into()); }
     let Some(current_token) = remote_git_tree(host, &cwd)? else { return Ok(None) };
+    let result = load_git_diff_between_at_host(cwd, base_tree, &current_token, Some(host));
+    let _ = discard_git_tree_at_host(base_tree, Some(host));
+    let _ = discard_git_tree_at_host(&current_token, Some(host));
+    result
+}
+
+fn load_git_diff_between_at_host(cwd: &str, base_tree: &str, current_token: &str, host: Option<&RemoteHost>) -> Result<Option<GitDiffSnapshot>, String> {
+    let Some(host) = host else { return local_git_diff_between(cwd, &parse_local_snapshot(base_tree)?, &parse_local_snapshot(current_token)?); };
+    let base: GitSnapshotToken = serde_json::from_str(base_tree).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     let current: GitSnapshotToken = serde_json::from_str(&current_token).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
-    let script = format!("cd {} || exit 2; parent=$(cd \"$HOME/.piop/git-snapshots\" && pwd -P) || exit 7; base=$(cd {} && pwd -P) || exit 7; [ \"$(dirname -- \"$base\")\" = \"$parent\" ] || exit 7; case \"$(basename -- \"$base\")\" in pi-desktop-diff-*) ;; *) exit 7;; esac; trap 'rm -rf -- \"$base\" {}' EXIT; repo_objects=$(git rev-parse --git-path objects) || exit 3; repo_objects=$(cd \"$repo_objects\" && pwd -P) || exit 3; GIT_OBJECT_DIRECTORY={} GIT_ALTERNATE_OBJECT_DIRECTORIES=\"$base/objects:$repo_objects\" git diff --no-relative --no-color --no-ext-diff --find-renames {} {} --", shell_quote(&current.repository_root), shell_quote(&base.root), shell_quote(&current.root), shell_quote(&format!("{}/objects", current.root)), shell_quote(&base.tree), shell_quote(&current.tree));
+    if !valid_remote_snapshot(&base) || !valid_remote_snapshot(&current) { return Err("Invalid remote Git snapshot location".into()); }
+    let script = format!("cd {} || exit 2; parent=$(cd \"$HOME/.piop/git-snapshots\" && pwd -P) || exit 7; base=$(cd {} && pwd -P) || exit 7; current=$(cd {} && pwd -P) || exit 7; for snapshot in \"$base\" \"$current\"; do [ \"$(dirname -- \"$snapshot\")\" = \"$parent\" ] || exit 7; case \"$(basename -- \"$snapshot\")\" in pi-desktop-diff-*) ;; *) exit 7;; esac; done; repo_objects=$(git rev-parse --git-path objects) || exit 3; repo_objects=$(cd \"$repo_objects\" && pwd -P) || exit 3; GIT_OBJECT_DIRECTORY=\"$current/objects\" GIT_ALTERNATE_OBJECT_DIRECTORIES=\"$base/objects:$repo_objects\" git diff --no-relative --no-color --no-ext-diff --find-renames {} {} --", shell_quote(&current.repository_root), shell_quote(&base.root), shell_quote(&current.root), shell_quote(&base.tree), shell_quote(&current.tree));
     let mut command = ssh(host); command.arg(script); let output = run_limited(&mut command, MAX_GIT_PATCH_BYTES, &format!("Git patch on {} is too large", host.name))?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let patch = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -1690,8 +1728,11 @@ fn remote_session_sidecar_script(session_path: &str, action: &str) -> String {
 
 #[tauri::command(async)]
 fn load_git_diffs(app: AppHandle, session_path: String, host_id: Option<String>) -> Result<GitDiffSnapshots, String> {
-    let host_id = host_id.unwrap_or_else(|| "local".into());
-    let content = if host_id == "local" {
+    load_git_diffs_at_host(&session_path, saved_remote_host(app, host_id)?.as_ref())
+}
+
+fn load_git_diffs_at_host(session_path: &str, host: Option<&RemoteHost>) -> Result<GitDiffSnapshots, String> {
+    let content = if host.is_none() {
         let candidate = PathBuf::from(&session_path);
         if !candidate.exists() {
             let root = ensure_desktop_sessions_dir(&home_dir()?)?.canonicalize().map_err(|error| format!("Could not locate piop sessions: {error}"))?;
@@ -1704,7 +1745,7 @@ fn load_git_diffs(app: AppHandle, session_path: String, host_id: Option<String>)
         if fs::metadata(&path).map_err(|error| format!("Could not inspect saved diffs: {error}"))?.len() > MAX_GIT_DIFFS_BYTES as u64 { return Err("Saved diffs exceed the 16 MiB limit".into()); }
         fs::read_to_string(&path).map_err(|error| format!("Could not read saved diffs: {error}"))?
     } else {
-        let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+        let host = host.unwrap();
         let mut command = ssh(host); command.arg(remote_session_sidecar_script(&session_path, "if [ -f \"$sidecar\" ]; then cat -- \"$sidecar\"; else printf '{}'; fi"));
         let output = run_limited(&mut command, MAX_GIT_DIFFS_BYTES, &format!("Saved diffs on {} exceed the limit", host.name))?;
         if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
@@ -1715,16 +1756,24 @@ fn load_git_diffs(app: AppHandle, session_path: String, host_id: Option<String>)
 
 #[tauri::command(async)]
 fn save_git_diffs(app: AppHandle, session_path: String, snapshots: GitDiffSnapshots, host_id: Option<String>) -> Result<(), String> {
-    let host_id = host_id.unwrap_or_else(|| "local".into());
+    save_git_diffs_at_host(&session_path, snapshots, saved_remote_host(app, host_id)?.as_ref())
+}
+
+fn save_git_diffs_at_host(session_path: &str, snapshots: GitDiffSnapshots, host: Option<&RemoteHost>) -> Result<(), String> {
     let body = serde_json::to_string(&snapshots).map_err(|error| format!("Could not serialize diffs: {error}"))?;
     if body.len() > MAX_GIT_DIFFS_BYTES { return Err("Diff history exceeds the 16 MiB limit".into()); }
-    if host_id == "local" { return atomic_write_private(&local_git_diffs_path(&session_path)?, body.as_bytes()).map_err(|error| format!("Could not save diffs: {error}")); }
-    let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+    let Some(host) = host else { return atomic_write_private(&local_git_diffs_path(session_path)?, body.as_bytes()).map_err(|error| format!("Could not save diffs: {error}")); };
     let action = "umask 077; temporary=$(mktemp \"$sidecar.XXXXXX\") || exit 1; trap 'rm -f -- \"$temporary\"' EXIT; cat > \"$temporary\" && chmod 600 -- \"$temporary\" && mv -f -- \"$temporary\" \"$sidecar\"";
     let mut child = ssh(host).arg(remote_session_sidecar_script(&session_path, action)).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
     let write = child.stdin.take().ok_or("SSH stdin unavailable")?.write_all(body.as_bytes());
     let output = child.wait_with_output().map_err(|e| e.to_string())?; write.map_err(|e| e.to_string())?;
     output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
+}
+
+fn saved_remote_host(app: AppHandle, host_id: Option<String>) -> Result<Option<RemoteHost>, String> {
+    let host_id = host_id.unwrap_or_else(|| "local".into());
+    if host_id == "local" { return Ok(None); }
+    Ok(Some(remote_host(&load_app_settings(app)?, &host_id)?.clone()))
 }
 
 fn validate_remote_host(host: &RemoteHost) -> Result<(), String> {
@@ -1808,6 +1857,19 @@ fn claim_agent(broker: &BrokerRuntime, host_id: &str, session_id: &str) -> Resul
     Ok(BusyAgent { key, busy: broker.busy.clone() })
 }
 
+fn session_identity(settings: &AppSettings, host_id: &str, path: &str) -> Result<String, String> {
+    let header = if host_id == "local" {
+        let mut line = String::new();
+        BufReader::new(fs::File::open(path).map_err(|error| error.to_string())?).take(64 * 1024).read_line(&mut line).map_err(|error| error.to_string())?;
+        line
+    } else {
+        let output = run_limited(ssh(remote_host(settings, host_id)?).arg(format!("head -n 1 -- {}", shell_quote(path))), 64 * 1024, "Could not read session identity")?;
+        if !output.status.success() { return Err("Could not read session identity".into()); }
+        String::from_utf8(output.stdout).map_err(|error| error.to_string())?
+    };
+    serde_json::from_str::<Value>(&header).map_err(|error| error.to_string())?.get("id").and_then(Value::as_str).filter(|id| !id.is_empty()).map(str::to_owned).ok_or("Missing session identity".into())
+}
+
 fn remote_broker_port() -> u16 {
     let bytes = Uuid::new_v4(); let bytes = bytes.as_bytes();
     20_000 + (u16::from_be_bytes([bytes[0], bytes[1]]) % 30_000)
@@ -1860,7 +1922,7 @@ enum PiLaunch<'a> {
     Print { cwd: &'a str, session_path: &'a str },
 }
 
-fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &str, launch: PiLaunch<'_>) -> Result<Command, String> {
+fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &str, launch: PiLaunch<'_>, daemon_port: Option<u16>) -> Result<Command, String> {
     let (broker_port, broker_token) = broker_environment(broker)?;
     let desktop_home = home_dir()?;
     let is_rpc = matches!(launch, PiLaunch::Rpc { .. });
@@ -1885,38 +1947,41 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
         if !settings.default_thinking.trim().is_empty() { command.arg("--thinking").arg(settings.default_thinking.trim()); }
         return Ok(command);
     }
-    let host = remote_host(settings, host_id)?; stage_remote_extensions(host, settings)?; let remote_port = remote_broker_port(); let remote_pi = remote_pi_path(&host.pi_path);
+    let host = remote_host(settings, host_id)?; stage_remote_extensions(host, settings)?; let remote_port = daemon_port.unwrap_or_else(remote_broker_port); let remote_pi = remote_pi_path(&host.pi_path);
     let mut arguments = vec![remote_pi.clone()]; if is_rpc { arguments.extend(["--mode".into(), "rpc".into()]); } else { arguments.push("--print".into()); }
     arguments.extend(["--extension".into(), "\"$HOME/.piop/runtime-settings.ts\"".into(), "--extension".into(), "\"$HOME/.piop/hook-loader.ts\"".into()]);
     arguments.extend(["--session-dir".into(), "\"$HOME/.piop/sessions\"".into(), "--approve".into(), "--no-skills".into(), "--extension".into(), "\"$HOME/.piop/pi-desktop-mcp-bridge.ts\"".into(), "--extension".into(), "\"$HOME/.piop/session-broker.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-desktop-trace-reader.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-context-window-cap/index.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-diff-watch/index.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-define-agents/index.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-desktop-codex-compaction.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-openai-cache-lineage.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-desktop-codex-web-search.ts\"".into()]);
     arguments.extend(["--extension".into(), "\"$HOME/.piop/pi-openai-fast-mode-piop/index.ts\"".into()]);
     if is_rpc { arguments.extend(["--extension".into(), "\"$HOME/.piop/pi-desktop-btw.ts\"".into()]); }
+    let mut session_arguments = Vec::new();
     let cwd = match launch {
-        PiLaunch::Rpc { cwd, session_path, session_id, fork_path, no_session } => { if let Some(path) = fork_path { arguments.extend(["--fork".into(), shell_quote(path)]); } else if let Some(path) = session_path { arguments.extend(["--session".into(), shell_quote(path)]); } else if let Some(id) = session_id { arguments.extend(["--session-id".into(), shell_quote(id)]); } if no_session { arguments.push("--no-session".into()); } cwd },
+        PiLaunch::Rpc { cwd, session_path, session_id, fork_path, no_session } => {
+            if let Some(path) = fork_path { session_arguments.extend(["--fork".to_string(), path.into()]); }
+            else if let Some(path) = session_path { session_arguments.extend(["--session".into(), path.into()]); }
+            else if let Some(id) = session_id { session_arguments.extend(["--session-id".into(), id.into()]); }
+            if no_session { session_arguments.push("--no-session".into()); } cwd
+        },
         PiLaunch::Print { cwd, session_path, .. } => { arguments.extend(["--session".into(), shell_quote(session_path)]); Some(cwd) },
     };
     if !is_rpc && !default_model.trim().is_empty() { arguments.extend(["--model".into(), shell_quote(default_model.trim())]); }
     if !settings.default_thinking.trim().is_empty() { arguments.extend(["--thinking".into(), shell_quote(settings.default_thinking.trim())]); }
     let rpc_environment = if is_rpc { format!(" PI_DESKTOP_BTW=1 PI_DESKTOP_PI_EXECUTABLE={remote_pi}") } else { String::new() };
     let remote = format!("cd {} && PI_DESKTOP_DEFINED_AGENTS_EXTENSION=\"$HOME/.piop/pi-define-agents/index.ts\" PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION=\"$HOME/.piop/pi-desktop-codex-web-search.ts\" PI_DESKTOP_CODEX_COMPACTION_EXTENSION=\"$HOME/.piop/pi-desktop-codex-compaction.ts\" PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION=\"$HOME/.piop/pi-context-window-cap/index.ts\" PI_DESKTOP_TRACE_READER_EXTENSION=\"$HOME/.piop/pi-desktop-trace-reader.ts\" PI_DESKTOP_MCP_CONFIG=\"$HOME/.piop/mcp-servers.json\" PI_DESKTOP_BROKER_URL={} PI_DESKTOP_BROKER_TOKEN={}{} exec {}", remote_directory_path(cwd), shell_quote(&format!("http://127.0.0.1:{remote_port}")), shell_quote(&broker_token), rpc_environment, arguments.join(" "));
+    if daemon_port.is_some() {
+        let mut command = Command::new("sh");
+        command.args(["-c", &format!("{remote} \"$@\""), "piop"]).args(session_arguments);
+        return Ok(command);
+    }
     let mut command = remote_broker_command(host, broker_port, remote_port); command.arg(remote_login_command(&remote)); Ok(command)
 }
 
 #[tauri::command(async)]
-fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, no_session: Option<bool>, host_id: Option<String>) -> Result<(), String> {
-    // Identify a fresh session before launch, even if its first state reply never arrives.
-    let session_id = session_id.or_else(|| (session_path.is_none() && fork_path.is_none()).then(|| Uuid::new_v4().to_string()));
-    let stale = {
-        let mut processes = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?;
-        match processes.get_mut(&runtime_id).map(|process| process.child.try_wait()) {
-            Some(Ok(None)) => return Ok(()),
-            Some(_) => processes.remove(&runtime_id),
-            None => None,
-        }
-    };
-    if let Some(mut process) = stale { let _ = process.child.wait(); }
+fn start_pi(app: AppHandle, window: tauri::WebviewWindow, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, no_session: Option<bool>, host_id: Option<String>, presence: Option<Value>) -> Result<Value, String> {
+    let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
     let settings = load_app_settings(app.clone())?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
+    if runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(&runtime_id).is_some_and(|process| process.daemon.alive.load(Ordering::SeqCst) && process.daemon.matches_connection(&settings, &host_id)) { return Ok(json!({"attached":true})); }
+    let session_id = session_id.or_else(|| (session_path.is_none() && fork_path.is_none()).then(|| Uuid::new_v4().to_string()));
     let saved_ephemeral = runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.get(&runtime_id).cloned();
     let ephemeral = no_session.unwrap_or(false) || saved_ephemeral.is_some();
     let session_path = if ephemeral { None } else { session_path.as_deref().map(|path| desktop_session_file(&settings, &host_id, path)).transpose()? };
@@ -1931,213 +1996,101 @@ fn start_pi(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRunti
     } else { (None, None) };
     if let Some(session) = ephemeral_session { runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.insert(runtime_id.clone(), session); }
     let claim_id = if ephemeral { None } else if let Some(id) = session_id.as_deref() { Some(id.to_string()) } else if let Some(path) = session_path.as_deref() {
-        let header = if host_id == "local" { let mut line = String::new(); BufReader::new(fs::File::open(path).map_err(|e| e.to_string())?).read_line(&mut line).map_err(|e| e.to_string())?; line }
-        else { { let output = run_limited(ssh(remote_host(&settings, &host_id)?).arg(format!("head -n 1 -- {}", shell_quote(path))), 64 * 1024, "Could not read session identity")?; if !output.status.success() { return Err("Could not read session identity".into()); } String::from_utf8(output.stdout).map_err(|e| e.to_string())? } };
-        Some(serde_json::from_str::<Value>(&header).map_err(|e| e.to_string())?.get("id").and_then(Value::as_str).ok_or("Missing session identity")?.to_string())
+        Some(session_identity(&settings, &host_id, path)?)
     } else { None };
-    let session_claim = claim_id.as_deref().map(|id| claim_agent(&broker, &host_id, id)).transpose()?;
+    let _claim = claim_id.as_deref().map(|id| claim_agent(&broker, &host_id, id)).transpose()?;
+    let daemon = daemon::connect(&app, &runtime, &broker, &settings, &host_id)?;
     let launch_session_path = ephemeral_path.as_deref().or(session_path.as_deref());
     let launch_fork_path = if ephemeral_path.is_some() { None } else { fork_path.as_deref() };
-    let mut command = match build_pi_command(&broker, &settings, &host_id, PiLaunch::Rpc { cwd: cwd.as_deref(), session_path: launch_session_path, session_id: session_id.as_deref(), fork_path: launch_fork_path, no_session: ephemeral && ephemeral_path.is_none() }) {
-        Ok(command) => command,
-        Err(error) => return Err(error),
-    };
-    command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) => return Err(format!("Could not start pi: {error}")),
-    };
-    let generation = Uuid::new_v4();
-    let stdin = Arc::new(Mutex::new(child.stdin.take().ok_or("Pi stdin was unavailable")?));
-    let stdout = child.stdout.take().ok_or("Pi stdout was unavailable")?;
-    let stderr = child.stderr.take().ok_or("Pi stderr was unavailable")?;
-    let blank_cleanup = BlankSessionCleanup { path: session_path.clone(), id: session_id.clone(), host: if host_id == "local" { None } else { Some(remote_host(&settings, &host_id)?.clone()) }, submitted: ephemeral };
-    // Commands queued behind extension startup must allow the selected MCP to boot.
-    let command_timeout = Duration::from_secs(settings.mcp_servers.iter()
+    let command = build_pi_command(&broker, &settings, &host_id, PiLaunch::Rpc { cwd: cwd.as_deref(), session_path: launch_session_path, session_id: session_id.as_deref(), fork_path: launch_fork_path, no_session: ephemeral && ephemeral_path.is_none() }, daemon.remote_port)?;
+    let command_timeout = settings.mcp_servers.iter()
         .filter(|server| server.get("enabled").and_then(Value::as_bool) == Some(true))
         .map(|server| server.get("startupTimeoutSec").and_then(Value::as_u64).unwrap_or(10).clamp(1, 600))
-        .max().unwrap_or(0) + 30);
-    runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { generation, claim: session_claim, child, stdin: stdin.clone(), blank_cleanup, command_timeout });
-    runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id.clone(), AgentAddress { host_id: host_id.clone(), session_id: session_id.clone(), session_path: session_path.clone(), worktree: None, presence_id: None, working: false });
-    let pending = runtime.pending.clone(); let processes = runtime.processes.clone(); let active_agents = runtime.active_agents.clone(); let event_app = app.clone(); let event_runtime_id = runtime_id.clone();
-    thread::spawn(move || {
-        for line in BufReader::new(stdout).split(b'\n') {
-            if !processes.lock().ok().is_some_and(|values| values.get(&event_runtime_id).is_some_and(|p| p.generation == generation)) { break; }
-            let Ok(bytes) = line else { break }; let Ok(mut value) = serde_json::from_slice::<Value>(&bytes) else { continue };
-            if value.get("type").and_then(Value::as_str) == Some("extension_ui_request") && value.get("method").and_then(Value::as_str) == Some("setStatus")
-                && matches!(value.get("statusKey").and_then(Value::as_str), Some("pi-desktop-control-response" | "pi-desktop-pause-state")) {
-                let Some(payload) = value.get("statusText").and_then(Value::as_str).and_then(|text| text.strip_prefix("json:")).and_then(|text| serde_json::from_str::<Value>(text).ok()) else { continue };
-                value = payload;
-            }
-            if let Ok(mut agents) = active_agents.lock() {
-                if let Some(agent) = agents.get_mut(&event_runtime_id) {
-                    match value.get("type").and_then(Value::as_str) {
-                        Some("agent_start") => agent.working = true,
-                        Some("agent_settled") => agent.working = false,
-                        Some("extension_ui_request") if value.get("statusKey").and_then(Value::as_str) == Some("pi-desktop-worktree-presence") => {
-                            if let Some(presence) = value.get("statusText").and_then(Value::as_str).and_then(|text| serde_json::from_str::<Value>(text).ok()) {
-                                agent.worktree = presence.get("worktree").and_then(Value::as_str).map(str::to_owned);
-                                agent.presence_id = presence.get("id").and_then(Value::as_str).map(str::to_owned);
-                            }
-                            continue;
-                        },
-                        _ => {},
-                    }
-                }
-            }
-            if value.get("type") == Some(&Value::String("response".into())) {
-                if let Some(id) = value.get("id").and_then(Value::as_str) {
-                    if let Some(control_id) = id.strip_suffix(":desktop-control") {
-                        if value.get("success").and_then(Value::as_bool) == Some(false) {
-                            if let Some(sender) = pending.lock().ok().and_then(|mut map| map.remove(&(event_runtime_id.clone(), control_id.to_string()))) {
-                                let _ = sender.send(Err(value.get("error").and_then(Value::as_str).unwrap_or("Pi control failed").to_string()));
-                            }
-                        }
-                        continue;
-                    }
-                    if let Some(sender) = pending.lock().ok().and_then(|mut map| map.remove(&(event_runtime_id.clone(), id.to_string()))) {
-                        let result = if value.get("success").and_then(Value::as_bool).unwrap_or(false) { Ok(value.get("data").cloned().unwrap_or(Value::Null)) } else { Err(value.get("error").and_then(Value::as_str).unwrap_or("Pi command failed").to_string()) };
-                        let _ = sender.send(result); continue;
-                    }
-                }
-            }
-            let _ = event_app.emit("pi://event", json!({"runtimeId":event_runtime_id,"event":value}));
-        }
-        let exited = processes.lock().ok().and_then(|mut values| {
-            if !values.get(&event_runtime_id).is_some_and(|p| p.generation == generation) { return None; }
-            if let Ok(mut agents) = active_agents.lock() { agents.remove(&event_runtime_id); }
-            fail_pending(&pending, &event_runtime_id, "Pi disconnected before responding");
-            let _ = event_app.emit("pi://event", json!({"runtimeId":event_runtime_id,"event":{"type":"disconnected"}}));
-            values.remove(&event_runtime_id)
-        });
-        if let Some(mut process) = exited { let _ = process.child.wait(); cleanup_blank_session(process.blank_cleanup); }
-
-    });
-    let error_app = app.clone(); let error_runtime_id = runtime_id.clone();
-    thread::spawn(move || for line in BufReader::new(stderr).lines().map_while(Result::ok) { let _ = error_app.emit("pi://stderr", json!({"runtimeId":error_runtime_id,"line":line})); });
-    Ok(())
-}
-
-#[tauri::command(async)]
-fn stop_pi(runtime: State<PiRuntime>, runtime_id: String, discard_blank: Option<bool>) -> Result<(), String> {
-    let process = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.remove(&runtime_id);
-    if let Some(mut process) = process { let _ = process.child.kill(); let _ = process.child.wait(); if discard_blank.unwrap_or(false) { cleanup_blank_session(process.blank_cleanup); } }
-    if discard_blank.unwrap_or(false) { if let Some(session) = runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.remove(&runtime_id) { remove_ephemeral_session(session); } }
-    runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.remove(&runtime_id);
-    fail_pending(&runtime.pending, &runtime_id, "Pi disconnected before responding");
-    Ok(())
-}
-
-fn execute_pi_command(runtime: &PiRuntime, runtime_id: &str, mut command: Value) -> Result<Value, String> {
-    let abort = command.get("type").and_then(Value::as_str) == Some("abort");
-    let resume = command.get("type").and_then(Value::as_str) == Some("resume");
-    let fire_and_forget = command.get("type").and_then(Value::as_str) == Some("extension_ui_response");
-    let id = command.get("id").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| Uuid::new_v4().to_string());
-    command.as_object_mut().ok_or("RPC command must be an object")?.insert("id".into(), Value::String(id.clone()));
-    let desktop_action = match command.get("type").and_then(Value::as_str) { Some("pause") => Some("pause"), Some("resume") => Some("resume"), Some("abort") => Some("stop"), Some("get_pause_state") => Some("state"), _ => None };
-    if let Some(action) = desktop_action {
-        let control = serde_json::to_string(&json!({"id":id,"action":action})).map_err(|error| error.to_string())?;
-        command = json!({"id":format!("{id}:desktop-control"),"type":"prompt","message":format!("/pi-desktop-control {control}")});
-    }
-    if command.get("type").and_then(Value::as_str) == Some("runtime_settings") {
-        let request = serde_json::to_string(&command).map_err(|error| error.to_string())?;
-        command = json!({"id":format!("{id}:desktop-control"),"type":"prompt","message":format!("/piop-runtime-settings {request}")});
-    }
-    if command.get("type").and_then(Value::as_str) == Some("branch_checkpoint") {
-        let request = serde_json::to_string(&command).map_err(|error| error.to_string())?;
-        command = json!({"id":format!("{id}:desktop-control"),"type":"prompt","message":format!("/pi-desktop-branch-checkpoint {request}")});
-    }
-    if command.get("type").and_then(Value::as_str) == Some("fork_and_forget") {
-        let request = serde_json::to_string(&command).map_err(|error| error.to_string())?;
-        command = json!({"id":format!("{id}:desktop-control"),"type":"prompt","message":format!("/pi-desktop-fork-and-forget {request}")});
-    }
-    let (sender, receiver) = mpsc::channel();
-    let started = Instant::now();
-    let (stdin, command_timeout, generation) = {
-        let processes = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?;
-        let process = processes.get(runtime_id).ok_or("Pi is not running")?;
-        (process.stdin.clone(), if abort { Duration::from_secs(5) } else { process.command_timeout }, process.generation)
-    };
-    runtime.pending.lock().map_err(|_| "Pending command lock was poisoned")?.insert((runtime_id.to_string(), id.clone()), sender);
-    let (write_sender, write_receiver) = mpsc::channel();
-    thread::spawn(move || {
-        let result = (|| {
-            let mut stdin = stdin.lock().map_err(|_| "Pi stdin lock was poisoned".to_string())?;
-            serde_json::to_writer(&mut *stdin, &command).map_err(|error| error.to_string())?;
-            stdin.write_all(b"\n").and_then(|_| stdin.flush()).map_err(|error| error.to_string())
-        })();
-        let _ = write_sender.send(result);
-    });
-    let result = (|| {
-        write_receiver.recv_timeout(command_timeout).map_err(|_| "Pi command timed out".to_string())??;
-        if fire_and_forget { return Ok(Value::Null); }
-        receiver.recv_timeout(command_timeout.saturating_sub(started.elapsed())).map_err(|_| "Pi command timed out".to_string())?
-    })();
-    runtime.pending.lock().ok().map(|mut map| map.remove(&(runtime_id.to_string(), id)));
-    if result.as_ref().err().is_some_and(|e| e == "Pi command timed out") {
-        if let Ok(mut processes) = runtime.processes.lock() { if let Some(process) = processes.get_mut(runtime_id).filter(|p| p.generation == generation) { let _ = process.child.kill(); } }
-    }
-    let result = result?;
-    if resume {
-        if let Some(message) = result.get("resumeMessage").and_then(Value::as_str) {
-            execute_pi_command(runtime, runtime_id, json!({"type":"prompt","message":message}))?;
-        }
-    }
+        .max().unwrap_or(0) * 1000 + 30_000;
+    let result = daemon.request(json!({"type":"attach","runtimeId":runtime_id,"sessionKey":claim_id.unwrap_or_else(|| runtime_id.clone()),"spec":daemon::spec(&command),"timeout":command_timeout,"ephemeral":ephemeral,"cwd":cwd,"presence":presence.unwrap_or_else(|| json!({}))}))?;
+    let blank_cleanup = BlankSessionCleanup { path: session_path.clone(), id: session_id.clone(), host: if host_id == "local" { None } else { Some(remote_host(&settings, &host_id)?.clone()) }, submitted: ephemeral };
+    runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { daemon, window_label: window.label().into(), blank_cleanup });
+    runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id, AgentAddress { host_id, session_id, session_path, worktree: None, presence_id: None, working: false, messageable: false });
     Ok(result)
 }
 
-fn update_active_agent(runtime: &PiRuntime, broker: &BrokerRuntime, runtime_id: &str, state: &Value) -> Result<(), String> {
-    if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(runtime_id) {
-        if let Some(path) = state.get("sessionFile").and_then(Value::as_str) { process.blank_cleanup.path = Some(path.to_owned()); }
-        if let Some(id) = state.get("sessionId").and_then(Value::as_str) {
-            let host_id = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.get(runtime_id).map(|agent| agent.host_id.clone()).unwrap_or_else(|| "local".into());
-            let key = format!("{host_id}\0{id}");
-            if process.claim.as_ref().map(|claim| &claim.key) != Some(&key) { process.claim = Some(claim_agent(broker, &host_id, id)?); }
-            process.blank_cleanup.id = Some(id.to_owned());
+fn detach_pi(runtime: &PiRuntime, runtime_id: &str, discard_blank: bool) -> Result<bool, String> {
+    let mut stopped = false;
+    let process = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.remove(runtime_id);
+    if let Some(mut process) = process {
+        let result = process.daemon.request(json!({"type":"detach","runtimeId":runtime_id,"discardBlank":discard_blank}))?;
+        if result["stopped"].as_bool() == Some(true) {
+            stopped = true;
+            process.blank_cleanup.submitted |= result["submitted"].as_bool().unwrap_or(false);
+            if discard_blank { cleanup_blank_session(process.blank_cleanup); }
+            if let Some(session) = runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.remove(runtime_id) { remove_ephemeral_session(session); }
         }
     }
-    let mut agents = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?;
-    let Some(agent) = agents.get_mut(runtime_id) else { return Ok(()); };
-    agent.session_id = state.get("sessionId").and_then(Value::as_str).map(str::to_owned);
-    agent.session_path = state.get("sessionFile").and_then(Value::as_str).map(str::to_owned);
+    runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.remove(runtime_id);
+    Ok(stopped)
+}
+
+#[tauri::command(async)]
+fn stop_pi(runtime: State<PiRuntime>, runtime_id: String, discard_blank: Option<bool>) -> Result<bool, String> {
+    detach_pi(&runtime, &runtime_id, discard_blank.unwrap_or(false))
+}
+
+#[tauri::command(async)]
+fn pi_presence(runtime: State<PiRuntime>, runtime_id: String, presence: Value) -> Result<(), String> {
+    let daemon = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(&runtime_id).map(|process| process.daemon.clone());
+    if let Some(daemon) = daemon { daemon.request(json!({"type":"presence","runtimeId":runtime_id,"presence":presence}))?; }
     Ok(())
+}
+
+fn execute_pi_command(runtime: &PiRuntime, runtime_id: &str, command: Value) -> Result<Value, String> {
+    let daemon = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(runtime_id).map(|process| process.daemon.clone()).ok_or("Pi is not running")?;
+    daemon.request(json!({"type":"command","runtimeId":runtime_id,"command":command}))
 }
 
 #[tauri::command(async)]
 fn pi_command(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, mut command: Value) -> Result<Value, String> {
-    let command_type = command.get("type").and_then(Value::as_str).unwrap_or_default().to_string();
-    let mut switch_claim = None;
+    let command_type = command["type"].as_str().unwrap_or_default().to_owned();
+    let _lifecycle = if command_type == "switch_session" { Some(runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?) } else { None };
+    let mut _claim = None;
     if command_type == "switch_session" {
-        let path = command.get("sessionPath").and_then(Value::as_str).ok_or("Session path is required")?;
-        let host_id = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?
-            .get(&runtime_id).map(|agent| agent.host_id.clone()).ok_or("Unknown Pi runtime")?;
-        let path = desktop_session_file(&load_app_settings(app.clone())?, &host_id, path)?;
-        let sessions = collect_sessions(&app, &app.state::<SessionIndexRuntime>())?;
-        let session = sessions.iter().find(|s| s.host_id == host_id && s.path == path).ok_or("Session identity is unavailable")?;
-        let already_owned = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(&runtime_id).and_then(|p| p.claim.as_ref()).is_some_and(|claim| claim.key == format!("{host_id}\0{}", session.id));
-        if !already_owned { switch_claim = Some(claim_agent(&broker, &host_id, &session.id)?); }
-        command["sessionPath"] = Value::String(path);
+        let path = command["sessionPath"].as_str().ok_or("Session path is required")?;
+        let host_id = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.get(&runtime_id).map(|agent| agent.host_id.clone()).ok_or("Unknown Pi runtime")?;
+        let settings = load_app_settings(app)?;
+        let path = desktop_session_file(&settings, &host_id, path)?;
+        _claim = Some(claim_agent(&broker, &host_id, &session_identity(&settings, &host_id, &path)?)?);
+        command["sessionPath"] = json!(path);
     }
-    let internal_status = command.get("message").and_then(Value::as_str).is_some_and(|message| message == "/pi-desktop-fast-status" || message == "/pi-desktop-fast-status refresh");
-    if matches!(command_type.as_str(), "prompt" | "steer" | "follow_up") && !internal_status {
-        if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(&runtime_id) { process.blank_cleanup.submitted = true; }
-    }
-    let mut result = execute_pi_command(&runtime, &runtime_id, command)?;
-    if result.get("cancelled").and_then(Value::as_bool) != Some(true) { if let Some(claim) = switch_claim { if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(&runtime_id) { process.claim = Some(claim); } } }
-    if command_type == "get_state" {
-        update_active_agent(&runtime, &broker, &runtime_id, &result)?;
-        let pause = execute_pi_command(&runtime, &runtime_id, json!({"type":"get_pause_state"}))?;
-        if let (Some(state), Some(fields)) = (result.as_object_mut(), pause.as_object()) { state.extend(fields.clone()); }
-        if result.get("isPaused").and_then(Value::as_bool) == Some(true) && result.get("isPausing").and_then(Value::as_bool) != Some(true) { result["isStreaming"] = Value::Bool(false); }
-    }
-    else if matches!(command_type.as_str(), "fork" | "clone" | "new_session" | "switch_session") {
-        if let Ok(state) = execute_pi_command(&runtime, &runtime_id, json!({"type":"get_state"})) { update_active_agent(&runtime, &broker, &runtime_id, &state)?; }
+    let result = execute_pi_command(&runtime, &runtime_id, command)?;
+    let state = if command_type == "get_snapshot" { Some(&result["state"]) } else if command_type == "get_state" { Some(&result) } else { None };
+    if let Some(state) = state {
+        if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(&runtime_id) {
+            if let Some(path) = state["sessionFile"].as_str() { process.blank_cleanup.path = Some(path.into()); }
+            if let Some(id) = state["sessionId"].as_str() { process.blank_cleanup.id = Some(id.into()); }
+        }
+        if let Some(agent) = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.get_mut(&runtime_id) {
+            agent.session_id = state["sessionId"].as_str().map(str::to_owned);
+            agent.session_path = state["sessionFile"].as_str().map(str::to_owned);
+            agent.working = state["isStreaming"].as_bool().unwrap_or(false);
+        }
     }
     Ok(result)
 }
 
 #[tauri::command]
-fn start_terminal(app: AppHandle, runtime: State<TerminalRuntime>, terminal_id: String, session_key: String, cwd: String, cols: u16, rows: u16, host_id: Option<String>) -> Result<(), String> {
+fn new_window(app: AppHandle, target: Value) -> Result<String, String> {
+    if !target["sessionId"].as_str().is_some_and(|id| !id.trim().is_empty()) { return Err("Select a conversation to open in another window".into()); }
+    let label = format!("chat-{}", Uuid::new_v4());
+    let mut url = tauri::Url::parse("https://piop.invalid/").map_err(|error| error.to_string())?;
+    url.query_pairs_mut().append_pair("target", &target.to_string());
+    let path = format!("index.html{}", url.query().map(|query| format!("?{query}")).unwrap_or_default());
+    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(path.into()))
+        .title("piop").inner_size(1280.0, 800.0).min_inner_size(900.0, 640.0)
+        .build().map_err(|error| error.to_string())?;
+    Ok(label)
+}
+
+#[tauri::command]
+fn start_terminal(app: AppHandle, window: tauri::WebviewWindow, runtime: State<TerminalRuntime>, terminal_id: String, session_key: String, cwd: String, cols: u16, rows: u16, host_id: Option<String>) -> Result<(), String> {
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
     if processes.contains_key(&terminal_id) { return Ok(()); }
     if processes.values().filter(|process| process.session_key == session_key).count() >= MAX_TERMINALS { return Err(format!("At most {MAX_TERMINALS} terminals may run for one conversation")); }
@@ -2180,7 +2133,7 @@ fn start_terminal(app: AppHandle, runtime: State<TerminalRuntime>, terminal_id: 
     });
     let (input, queued) = mpsc::sync_channel::<String>(32);
     thread::spawn(move || { while let Ok(data) = queued.recv() { if writer.write_all(data.as_bytes()).and_then(|_| writer.flush()).is_err() { break; } } });
-    processes.insert(terminal_id, TerminalProcess { session_key, cwd, host_id, master: pair.master, child, writer: input });
+    processes.insert(terminal_id, TerminalProcess { session_key, cwd, host_id, window_label: window.label().into(), master: pair.master, child, writer: input });
     Ok(())
 }
 
@@ -2597,8 +2550,20 @@ fn archived_session_file(settings: &AppSettings, host_id: &str, path: &str) -> R
 #[tauri::command(async)]
 fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path: String, host_id: Option<String>, terminal_ids: Vec<String>) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
+    let client = app.state::<PiRuntime>();
+    let _lifecycle = client.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
+    let daemon = client.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?.get(&host_id).cloned();
+    if let Some(daemon) = daemon {
+        let settings = load_app_settings(app.clone())?;
+        let path = desktop_session_file(&settings, &host_id, &session_path)?;
+        let key = session_identity(&settings, &host_id, &path)?;
+        if daemon.alive.load(Ordering::SeqCst) { daemon.request(json!({"type":"retire","sessionKey":key,"sessionPath":path}))?; }
+        // Retirement stops new captures; its response follows all previously queued capture packets.
+        daemon.drain_captures(Some(&key))?;
+    }
+
     if host_id != "local" {
-        let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+        let settings = load_app_settings(app.clone())?; let host = remote_host(&settings, &host_id)?;
         let file_name = Path::new(&session_path).file_name().and_then(|name| name.to_str()).ok_or("Session path has no file name")?;
         let destination = format!("{}-{file_name}", Uuid::new_v4());
         let diff_destination = Path::new(&destination).with_extension("diffs.json").to_string_lossy().into_owned();
@@ -2704,34 +2669,42 @@ fn relocate_session(app: AppHandle, session_path: String, cwd: String, host_id: 
     result
 }
 
-fn resolve_agent<'a>(sessions: &'a [SessionSummary], host_id: &str, session_id: &str, active: &[AgentAddress]) -> Result<&'a SessionSummary, String> {
-    let session = sessions.iter().find(|session| session.host_id == host_id && session.id == session_id).ok_or_else(|| format!("Agent {host_id}/{session_id} was not found"))?;
-    // ponytail: A resident per-session worker can replace this guard if measured startup latency warrants that extra lifecycle.
-    if active.iter().any(|agent| agent_is_active(session, agent)) {
-        return Err("Cannot message the session currently open in piop".into());
-    }
-    Ok(session)
+fn resolve_agent<'a>(sessions: &'a [SessionSummary], host_id: &str, session_id: &str) -> Result<&'a SessionSummary, String> {
+    sessions.iter().find(|session| session.host_id == host_id && session.id == session_id).ok_or_else(|| format!("Agent {host_id}/{session_id} was not found"))
 }
 
 fn agent_is_active(session: &SessionSummary, agent: &AgentAddress) -> bool {
-    agent.host_id == session.host_id && (agent.session_id.as_deref() == Some(session.id.as_str()) || agent.session_path.as_deref() == Some(session.path.as_str()))
+    !agent.messageable && agent.host_id == session.host_id && (agent.session_id.as_deref() == Some(session.id.as_str()) || agent.session_path.as_deref() == Some(session.path.as_str()))
 }
 
 fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &SessionSummary, message: &str, request_id: &str, deadline_ms: u64) -> Result<String, String> {
     let remaining = deadline_ms.saturating_sub(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis() as u64);
     if remaining == 0 || broker.closing.load(Ordering::SeqCst) { return Err("Agent message expired or app is closing".into()); }
     let deadline = Instant::now() + Duration::from_millis(remaining.min(120_000));
-    let settings = load_app_settings(app.clone())?;
-    let mut command = build_pi_command(broker, &settings, &session.host_id, PiLaunch::Print { cwd: &session.cwd, session_path: &session.path })?;
+    let runtime = app.state::<PiRuntime>();
+    let (settings, _claim) = {
+        let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
+        let settings = load_app_settings(app.clone())?;
+        let claim = claim_agent(broker, &session.host_id, &session.id)?;
+        let daemon = runtime.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?.get(&session.host_id).cloned();
+        if let Some(daemon) = daemon.filter(|daemon| daemon.alive.load(Ordering::SeqCst)) {
+            daemon.request(json!({"type":"retire","sessionKey":session.id,"sessionPath":session.path}))?;
+        }
+        (settings, claim)
+    };
+    if Instant::now() >= deadline { return Err("Agent message expired".into()); }
+    let mut command = build_pi_command(broker, &settings, &session.host_id, PiLaunch::Print { cwd: &session.cwd, session_path: &session.path }, None)?;
     let output_root = std::env::temp_dir().join(format!("pi-desktop-broker-{}", Uuid::new_v4()));
     ensure_private_dir(&output_root).map_err(|error| format!("Could not prepare agent message: {error}"))?;
     let stdout_path = output_root.join("stdout"); let stderr_path = output_root.join("stderr");
     let stdout = fs::File::create(&stdout_path).map_err(|error| format!("Could not capture agent output: {error}"))?;
     let stderr = fs::File::create(&stderr_path).map_err(|error| format!("Could not capture agent errors: {error}"))?;
     command.stdin(Stdio::piped()).stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr));
+    if Instant::now() >= deadline { let _ = fs::remove_dir_all(&output_root); return Err("Agent message expired".into()); }
     if broker.cancelled.lock().map_err(|_| "Broker cancellation lock was poisoned")?.remove(request_id) { let _ = fs::remove_dir_all(&output_root); return Err("Agent message was cancelled".into()); }
     let spawned = command.spawn();
     let child = match spawned { Ok(child) => Arc::new(Mutex::new(child)), Err(error) => { let _ = fs::remove_dir_all(&output_root); return Err(format!("Could not message agent: {error}")); } };
+    let _writer = BrokerWriter { child: child.clone(), _claim };
     match broker.jobs.lock() { Ok(mut jobs) => { if broker.closing.load(Ordering::SeqCst) { if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); } return Err("App is closing".into()); } jobs.insert(request_id.to_string(), child.clone()); }, Err(_) => { if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); } let _ = fs::remove_dir_all(&output_root); return Err("Broker job lock was poisoned".into()); } }
     let stdin = child.lock().map_err(|_| "Agent process lock was poisoned")?.stdin.take();
     let message = message.to_owned(); thread::spawn(move || { if let Some(mut stdin) = stdin { let _ = stdin.write_all(message.as_bytes()); } });
@@ -2809,9 +2782,7 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
             let session_id = value.get("sessionId").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("sessionId is required")?;
             let message = value.get("message").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("message is required")?;
             let sessions = collect_sessions(&app, &session_index)?;
-            let active: Vec<_> = app.state::<PiRuntime>().active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values().cloned().collect();
-            let session = resolve_agent(&sessions, host_id, session_id, &active)?;
-            let _claim = claim_agent(&broker, host_id, session_id)?;
+            let session = resolve_agent(&sessions, host_id, session_id)?;
             dispatch_agent_message(&app, &broker, session, message, request_id, value.get("deadline").and_then(Value::as_u64).unwrap_or_else(|| SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis() as u64 + 120_000)).map(|reply| json!({"reply":reply}))
         })();
             if let Ok(mut count) = broker.message_count.lock() { *count = count.saturating_sub(1); }
@@ -2823,7 +2794,8 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
     let result = match (method, path) {
         ("GET", "/agents") => {
             let active: Vec<_> = app.state::<PiRuntime>().active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values().cloned().collect();
-            collect_sessions(&app, &session_index).map(|sessions| json!(sessions.into_iter().map(|session| json!({"hostId":session.host_id,"sessionId":session.id,"name":session.name,"project":session.project,"cwd":session.cwd,"active":active.iter().any(|agent| agent_is_active(&session, agent))})).collect::<Vec<_>>()))
+            let busy = broker.busy.lock().map_err(|_| "Broker claim lock was poisoned")?.clone();
+            collect_sessions(&app, &session_index).map(|sessions| json!(sessions.into_iter().map(|session| json!({"hostId":session.host_id,"sessionId":session.id,"name":session.name,"project":session.project,"cwd":session.cwd,"active":busy.contains(&format!("{}\0{}", session.host_id, session.id)) || active.iter().any(|agent| agent_is_active(&session, agent))})).collect::<Vec<_>>()))
         },
         ("POST", "/worktree-agents") => (|| {
             let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid worktree request")?;
@@ -2947,20 +2919,25 @@ pub fn run() {
         }
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
-    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, storage_report, load_session_groups, change_session_groups, list_hooks, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, git_project_kind, git_worktree_roots, create_project_worktree, create_git_worktree, remove_git_worktree, prepare_worktree_setup, cancel_worktree_setup, run_worktree_setup, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, delete_archived_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).build(context).expect("error while building piop").run(|app, event| {
+    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, pi_presence, new_window, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, storage_report, load_session_groups, change_session_groups, list_hooks, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, git_project_kind, git_worktree_roots, create_project_worktree, create_git_worktree, remove_git_worktree, prepare_worktree_setup, cancel_worktree_setup, run_worktree_setup, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, delete_archived_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).build(context).expect("error while building piop").run(|app, event| {
+        if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } = &event {
+            let app = app.clone(); let label = label.clone();
+            thread::spawn(move || {
+                let runtime = app.state::<PiRuntime>();
+                let ids = runtime.processes.lock().map(|processes| processes.iter().filter(|(_, process)| process.window_label == label).map(|(id, _)| id.clone()).collect::<Vec<_>>()).unwrap_or_default();
+                for id in ids { let _ = detach_pi(&runtime, &id, true); }
+                let terminals = app.state::<TerminalRuntime>();
+                let ids = terminals.processes.lock().map(|processes| processes.iter().filter(|(_, process)| process.window_label == label).map(|(id, _)| id.clone()).collect::<Vec<_>>()).unwrap_or_default();
+                let _ = stop_terminals(&terminals, &ids);
+            });
+        }
         if matches!(event, tauri::RunEvent::Exit) {
             let broker = app.state::<BrokerRuntime>(); broker.closing.store(true, Ordering::SeqCst);
             let jobs = broker.jobs.lock().map(|mut jobs| jobs.drain().map(|(_, child)| child).collect::<Vec<_>>()).unwrap_or_default();
             for child in jobs { if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); } }
             // The webview cannot await cleanup during pagehide. Own shutdown here.
             let runtime = app.state::<PiRuntime>();
-            let processes = runtime.processes.lock().map(|mut processes| processes.drain().map(|(_, process)| process).collect::<Vec<_>>()).unwrap_or_default();
-            for mut process in processes {
-                let _ = process.child.kill();
-                let _ = process.child.wait();
-
-                cleanup_blank_session(process.blank_cleanup);
-            }
+            if let Ok(daemons) = runtime.daemons.lock() { for daemon in daemons.values() { daemon.shutdown(); } }
             let ephemeral = runtime.ephemeral_sessions.lock().map(|mut sessions| sessions.drain().map(|(_, session)| session).collect::<Vec<_>>()).unwrap_or_default();
             for session in ephemeral { remove_ephemeral_session(session); }
         }

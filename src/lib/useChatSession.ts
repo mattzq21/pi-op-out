@@ -4,6 +4,7 @@ import type { NativeTransport } from "./nativeTransport";
 import { appendFileChanges, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
 import { contextUsageAfterCompaction } from "./contextUsage";
 
+interface SessionSnapshot { state: AgentState; history: { entries: PiEntry[]; leafId: string | null }; sequence: number; epoch: string; liveTools: RpcEvent[]; queue: RpcEvent; }
 type MessageUpdate = (messages: ChatMessage[]) => ChatMessage[];
 const emptyState: AgentState = { model: null, thinkingLevel: "off", isStreaming: false, sessionId: "", messageCount: 0, pendingMessageCount: 0 };
 const rpcContent = (value: unknown): ChatMessage["content"] => (value as { content?: ChatMessage["content"] })?.content ?? "";
@@ -12,6 +13,9 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
   const [state, setState] = useState(initialState); const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [models, setModels] = useState<Model[]>([]); const [commands, setCommands] = useState<SlashCommand[]>([]); const [thinkingLevels, setThinkingLevels] = useState<string[]>(["off"]);
   const owner = useRef(transport); owner.current = transport;
+  const refreshOperation = useRef<{ transport: typeof transport; promise: Promise<AgentState>; buffer: RpcEvent[] } | undefined>(undefined);
+  const bufferedEvents = useRef<RpcEvent[] | undefined>(undefined);
+  const eventHandler = useRef<(event: RpcEvent) => void>(() => undefined);
   const resumeMarkers = useRef(new Set<string>());
   const liveRevision = useRef(0); const activeAssistantId = useRef<string | undefined>(undefined); const activeMessageIds = useRef(new Map<string, string>()); const liveMessageSequence = useRef(0); const pendingUpdates = useRef<MessageUpdate[]>([]); const frame = useRef<number | undefined>(undefined);
   const nextLiveMessageId = (role: unknown) => `live-${String(role)}-${Date.now()}-${++liveMessageSequence.current}`;
@@ -19,37 +23,57 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
   const queue = useCallback((update: MessageUpdate) => { pendingUpdates.current.push(update); if (frame.current === undefined) frame.current = requestAnimationFrame(flush); }, [flush]);
   const discardPendingUpdates = useCallback(() => { if (frame.current !== undefined) cancelAnimationFrame(frame.current); frame.current = undefined; pendingUpdates.current.length = 0; }, []);
   useEffect(() => discardPendingUpdates, [discardPendingUpdates]);
-  useEffect(() => { liveRevision.current += 1; activeAssistantId.current = undefined; activeMessageIds.current.clear(); resumeMarkers.current.clear(); discardPendingUpdates(); }, [discardPendingUpdates, transport]);
+  useEffect(() => { liveRevision.current += 1; activeAssistantId.current = undefined; activeMessageIds.current.clear(); resumeMarkers.current.clear(); bufferedEvents.current = undefined; discardPendingUpdates(); }, [discardPendingUpdates, transport]);
 
-  const refresh = useCallback(async () => {
-    if (owner.current !== transport) throw new Error("Conversation changed");
-    const revision = liveRevision.current;
-    const [stateResult, historyResult, modelResult, thinkingResult, commandResult, statsResult] = await Promise.allSettled([
-      transport.command<AgentState>({ type: "get_state" }), transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }), transport.command<{ models: Model[] }>({ type: "get_available_models" }), transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }), transport.command<{ commands: SlashCommand[] }>({ type: "get_commands" }), transport.command<{ contextUsage?: AgentState["contextUsage"] }>({ type: "get_session_stats" })
-    ] as const);
-    if (owner.current !== transport) throw new Error("Conversation changed");
-    if (stateResult.status === "rejected") throw stateResult.reason;
-    if (historyResult.status === "rejected") throw historyResult.reason;
-    const nextState = stateResult.value;
-    if (modelResult.status === "fulfilled") setModels(modelResult.value.models);
-    if (thinkingResult.status === "fulfilled") setThinkingLevels(thinkingResult.value.levels);
-    if (liveRevision.current !== revision) {
-      setState((current) => ({ ...nextState, ...current, model: nextState.model, thinkingLevel: nextState.thinkingLevel, sessionId: nextState.sessionId, sessionFile: nextState.sessionFile }));
-      setMessages((current) => current.length ? current : branchMessages(historyResult.value.entries, historyResult.value.leafId));
-    }
-    if (liveRevision.current === revision) {
-      discardPendingUpdates();
-      setState((current) => ({ ...nextState, pendingMessages: current.pendingMessages, ...(statsResult.status === "fulfilled" ? { contextUsage: statsResult.value.contextUsage } : {}) }));
-      if (historyResult.status === "fulfilled") { for (const entry of historyResult.value.entries) { const marker = resumeMarker(entry); if (marker) resumeMarkers.current.add(marker); } setMessages(branchMessages(historyResult.value.entries, historyResult.value.leafId)); }
-      if (modelResult.status === "fulfilled") setModels(modelResult.value.models);
-      if (thinkingResult.status === "fulfilled") setThinkingLevels(thinkingResult.value.levels);
-      if (commandResult.status === "fulfilled") { const visibleCommands = commandResult.value.commands.filter((command) => command.sourceInfo?.source !== "inline" && !["pi-desktop-control", "pi-desktop-fast-status", "pi-desktop-fork-and-forget"].includes(command.name)); setCommands(visibleCommands.some((command) => command.name === "compact") ? visibleCommands : [{ name: "compact", description: "Compact conversation context", source: "builtin" }, ...visibleCommands]); }
-    }
-    return nextState;
+  const refresh = useCallback((): Promise<AgentState> => {
+    if (owner.current !== transport) return Promise.reject(new Error("Conversation changed"));
+    if (refreshOperation.current?.transport === transport) return refreshOperation.current.promise;
+    const buffer: RpcEvent[] = []; bufferedEvents.current = buffer;
+    const promise = (async () => {
+      try {
+        const [snapshot, modelResult, thinkingResult, commandResult, statsResult] = await Promise.all([
+          transport.command<SessionSnapshot>({ type: "get_snapshot" }),
+          transport.command<{ models: Model[] }>({ type: "get_available_models" }).catch(() => undefined),
+          transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }).catch(() => undefined),
+          transport.command<{ commands: SlashCommand[] }>({ type: "get_commands" }).catch(() => undefined),
+          transport.command<{ contextUsage?: AgentState["contextUsage"] }>({ type: "get_session_stats" }).catch(() => undefined),
+        ]);
+        if (owner.current !== transport || bufferedEvents.current !== buffer) throw new Error("Conversation changed");
+        if (buffer.some((event) => (event.type === "session_switched" && event.epoch !== snapshot.epoch) || (event.type === "session_info_changed" && Number(event.sequence) > snapshot.sequence))) {
+          refreshOperation.current = undefined; bufferedEvents.current = undefined;
+          return refresh();
+        }
+        discardPendingUpdates();
+        for (const entry of snapshot.history.entries) { const marker = resumeMarker(entry); if (marker) resumeMarkers.current.add(marker); }
+        const nextMessages = branchMessages(snapshot.history.entries, snapshot.history.leafId);
+        activeAssistantId.current = [...nextMessages].reverse().find((message) => message.role === "assistant" && message.streaming)?.id;
+        activeMessageIds.current.clear();
+        for (const message of nextMessages.filter((message) => message.streaming)) activeMessageIds.current.set(message.role, message.id);
+        setMessages(nextMessages);
+        setState({ ...snapshot.state, pendingMessages: snapshot.queue.pendingMessages as AgentState["pendingMessages"], ...(statsResult ? { contextUsage: statsResult.contextUsage } : {}) });
+        if (modelResult) setModels(modelResult.models);
+        if (thinkingResult) setThinkingLevels(thinkingResult.levels);
+        if (commandResult) {
+          const visible = commandResult.commands.filter((command) => command.sourceInfo?.source !== "inline" && !command.name.startsWith("pi-orchestration-") && !["pi-desktop-control", "pi-desktop-fast-status", "pi-desktop-fork-and-forget"].includes(command.name));
+          setCommands(visible.some((command) => command.name === "compact") ? visible : [{ name: "compact", description: "Compact conversation context", source: "builtin" }, ...visible]);
+        }
+        bufferedEvents.current = undefined;
+        for (const event of snapshot.liveTools) { eventHandler.current(event); if (event.partialResult) eventHandler.current({ ...event, type: "tool_execution_update" }); }
+        for (const event of buffer) if (typeof event.sequence !== "number" || (event.epoch === snapshot.epoch && event.sequence > snapshot.sequence)) eventHandler.current(event);
+        return snapshot.state;
+      } finally {
+        if (bufferedEvents.current === buffer) { bufferedEvents.current = undefined; if (owner.current === transport) for (const event of buffer) eventHandler.current(event); }
+        if (refreshOperation.current?.buffer === buffer) refreshOperation.current = undefined;
+      }
+    })();
+    refreshOperation.current = { transport, promise, buffer };
+    return promise;
   }, [discardPendingUpdates, transport]);
 
   const handleEvent = useCallback((event: RpcEvent) => {
     if (owner.current !== transport) return;
+    if (bufferedEvents.current) { bufferedEvents.current.push(event); return; }
+    if (event.type === "runtime_presence") setState((current) => ({ ...current, viewers: Number(event.viewers), isStreaming: event.isStreaming === true }));
     if (event.type === "extension_ui_request" && event.method === "setStatus" && event.statusKey === "pi-desktop-prompt-context" && typeof event.statusText === "string" && event.statusText.startsWith("json:")) {
       try {
         const context = JSON.parse(event.statusText.slice(5)) as PromptContextInfo;
@@ -93,5 +117,6 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
     if (event.type === "thinking_level_changed" && typeof event.level === "string") setState((current) => ({ ...current, thinkingLevel: event.level as string }));
   }, [flush, queue, transport]);
 
+  eventHandler.current = handleEvent;
   return { state, setState, messages, setMessages, models, commands, thinkingLevels, refresh, handleEvent, discardPendingUpdates };
 }

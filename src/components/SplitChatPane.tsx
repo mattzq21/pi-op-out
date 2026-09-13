@@ -9,10 +9,10 @@ import { decodeAgentValue, encodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from ".
 import { branchMessages, type PiEntry } from "../lib/messages";
 import { ChatView } from "./ChatView";
 
-interface Props { runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: string) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; forkFrom?: string; initialPrompt?: string; onReady?: () => void; onFailed?: (reason: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
+interface Props { runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: string) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; forkFrom?: string; initialPrompt?: string; onReady?: () => void; onFailed?: (reason: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
 const initialState = (session: SessionSummary): AgentState => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, pendingMessageCount: 0 });
 
-export function SplitChatPane({ runtimePool, session, settings, draft, onDraftChange, focusRequest = 0, onActivate, onOpenTerminal, onDialogRequest, onDialogTransportClosed, onReleaseTransport, forkFrom, initialPrompt, onReady, onFailed, onSessionChange, onClose }: Props) {
+export function SplitChatPane({ runtimePool, session, settings, draft, onDraftChange, focusRequest = 0, onActivate, onOpenTerminal, onDialogRequest, onDialogResolved, onDialogTransportClosed, onReleaseTransport, forkFrom, initialPrompt, onReady, onFailed, onSessionChange, onClose }: Props) {
   const [transport] = useState(() => forkFrom ? runtimePool.createEphemeralFork({ cwd: session.cwd, hostId: session.hostId }, forkFrom) : runtimePool.forSession(session));
   const gitDiffs = useTurnDiffs(runtimePool, transport); const runtime = useChatSession(transport, initialState(session));
   const { state, setState, messages, models, commands, thinkingLevels, refresh, handleEvent } = runtime; const [error, setError] = useState<string>(); const [connected, setConnected] = useState(false);
@@ -56,6 +56,8 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
     reconnectRef.current = () => void connectRuntime(false);
     const unsubscribe = transport.subscribe((event: RpcEvent) => {
       handleEvent(event);
+      if (event.type === "extension_ui_resolved" && typeof event.id === "string") onDialogResolved(transport, event.id);
+      if (event.type === "session_info_changed" || event.type === "session_switched") void refresh().catch(reportControlError);
       if (event.type === "extension_ui_request") { const request = event as unknown as ExtensionUiRequest;
         if (request.method === "setStatus" && request.statusKey === DEFINED_AGENTS_STATUS_KEY) try { setDefinedAgents(request.statusText?.startsWith("json:") ? decodeAgentValue<DefinedAgentsCapability>(request.statusText.slice(5)) : undefined); } catch { setDefinedAgents(undefined); }
         else if (request.method === "setStatus" && request.statusKey && ! ["pi-desktop-prompt-context", "pi-desktop-mcp-status"].includes(request.statusKey)) setStatuses((current) => { const next = { ...current }; if (request.statusText) next[request.statusKey!] = request.statusText; else delete next[request.statusKey!]; return next; });

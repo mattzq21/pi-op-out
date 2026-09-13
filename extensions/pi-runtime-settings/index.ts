@@ -48,13 +48,13 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
   pi.registerCommand("piop-runtime-settings", {
     description: "Apply saved Piop runtime settings",
     handler: async (args, ctx) => {
-      const request = JSON.parse(args) as { id: string; settings: Pick<Settings, "tools" | "skills" | "mcpServers"> };
+      const request = JSON.parse(args) as { id: string; settings: Settings; reloadAgents?: boolean };
       const previous = current();
       try {
         if (ctx.mode !== "rpc" || !ctx.isIdle()) throw new Error("Runtime settings require an idle RPC session");
-        const next = validate({ ...previous, tools: request.settings.tools, skills: request.settings.skills, mcpServers: request.settings.mcpServers });
+        const next = validate({ ...previous, ...request.settings });
         processState[key] = next;
-        if (JSON.stringify(previous.skills) !== JSON.stringify(next.skills)) {
+        if (request.reloadAgents || JSON.stringify(previous.skills) !== JSON.stringify(next.skills)) {
           // Pi exposes skill registry updates through resource reload, without restarting the process.
           await ctx.reload();
         } else {
