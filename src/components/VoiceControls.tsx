@@ -16,10 +16,6 @@ function AudioButtons({ voice, busy, run }: { voice: VoiceSnapshot; busy: boolea
   </>;
 }
 
-function Captions({ transcripts }: { transcripts: VoiceSnapshot["transcripts"] }) {
-  return <div className="voice-captions" role="log" aria-label="Voice captions">{transcripts.slice(-4).map((entry, index) => <p key={`${entry.startMs}-${index}`}><strong>{entry.role === "user" ? "You" : "Voice"}: </strong>{entry.text}</p>)}</div>;
-}
-
 function CallToolbar({ voice, ownsCall, busy, run }: { voice: VoiceSnapshot; ownsCall: boolean; busy: boolean; run: (action: () => Promise<unknown>) => Promise<void> }) {
   return <>
     <span role="status">{ownsCall ? phaseLabel[voice.phase] : `Voice: ${voice.label}`}</span>
@@ -28,20 +24,11 @@ function CallToolbar({ voice, ownsCall, busy, run }: { voice: VoiceSnapshot; own
   </>;
 }
 
-function CallCaptions({ voice, ownsCall }: { voice: VoiceSnapshot; ownsCall: boolean }) {
-  const [open, setOpen] = useState(true);
-  if (!ownsCall || voice.transcripts.length === 0) return null;
-  return <>
-    <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}>Captions</button>
-    {open && <Captions transcripts={voice.transcripts} />}
-  </>;
-}
-
 export function VoiceControls({ transport, state, messages, disabled }: Props) {
   const voice = useSyncExternalStore(voiceSession.subscribe, voiceSession.getSnapshot);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
-  const ownsCall = voice.transport === transport;
+  const ownsCall = voice.transport === transport && voice.sessionId === state.sessionId;
   const active = voice.phase !== "idle";
   const report = (reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason));
   const run = async (action: () => Promise<unknown>) => {
@@ -60,10 +47,8 @@ export function VoiceControls({ transport, state, messages, disabled }: Props) {
     <div className="voice-toolbar">
       {active ? <CallToolbar voice={voice} ownsCall={ownsCall} busy={busy} run={run} /> : <>
         <button type="button" disabled={disabled || busy} onClick={() => void run(start)}><Mic size={14} />Voice</button>
-        <small>Uses your Codex login</small>
       </>}
     </div>
     {visibleError && <div className="voice-error" role="alert">{visibleError}</div>}
-    <CallCaptions voice={voice} ownsCall={ownsCall} />
   </div>;
 }

@@ -348,6 +348,7 @@ export function registerCatchUp(pi: ExtensionAPI) {
 
 export default function sessionBroker(pi: ExtensionAPI) {
   registerTurnCapture(pi);
+  registerVoiceHistory(pi);
   registerCatchUp(pi);
   registerPauseControl(pi);
   registerFastModeStatus(pi);
@@ -367,6 +368,31 @@ export default function sessionBroker(pi: ExtensionAPI) {
         const data = await request("/message", { ...params, requestId, deadline: Date.now() + MESSAGE_TIMEOUT_MS }, signal, MESSAGE_TIMEOUT_MS);
         return { content: [{ type: "text", text: String((data as { reply?: unknown })?.reply ?? "") }], details: data };
       } catch (error) { await cancelRequest(requestId); throw error; } finally { signal?.removeEventListener("abort", abort); }
+    },
+  });
+}
+
+function validSpokenTurn(turn: { id?: unknown; role?: unknown; text?: unknown; startMs?: unknown; endMs?: unknown } | undefined) {
+  return turn && typeof turn.id === "string" && /^[a-f0-9-]{36}$/.test(turn.id) && ["user", "assistant"].includes(String(turn.role)) && typeof turn.text === "string" && turn.text.length <= 8000 && Number.isFinite(turn.startMs) && Number.isFinite(turn.endMs);
+}
+
+function registerVoiceHistory(pi: ExtensionAPI) {
+  pi.registerCommand("pi-desktop-voice-history", {
+    description: "Save a spoken conversation turn",
+    async handler(args, ctx) {
+      let id: string | undefined;
+      try {
+        const request = JSON.parse(args); id = request.id;
+        const turn = request.turn;
+        if (!id || ctx.mode !== "rpc" || request.sessionId !== ctx.sessionManager.getSessionId()) throw new Error("Voice conversation changed");
+        if (!validSpokenTurn(turn)) throw new Error("Invalid spoken turn");
+        pi.appendEntry("piop-voice", { id: turn.id, role: turn.role, text: turn.text, startMs: turn.startMs, endMs: turn.endMs, completed: true });
+        const manager = ctx.sessionManager as unknown as { isPersisted(): boolean; flushed: boolean; _rewriteFile(): void };
+        if (manager.isPersisted() && !manager.flushed) { manager._rewriteFile(); manager.flushed = true; }
+        ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id, success: true, data: {} })}`);
+      } catch (error) {
+        if (id) ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id, success: false, error: error instanceof Error ? error.message : String(error) })}`);
+      }
     },
   });
 }

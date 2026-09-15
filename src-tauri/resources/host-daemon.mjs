@@ -297,7 +297,7 @@ class Session {
     if (requestType === 'prompt') { this.inputRejection = undefined; this.commandErrors.clear(); }
     let wire = { ...command, id };
     const action = { pause: 'pause', resume: 'resume', abort: 'stop', get_pause_state: 'state' }[command.type];
-    const extension = { runtime_settings: 'piop-runtime-settings', branch_checkpoint: 'pi-desktop-branch-checkpoint', fork_and_forget: 'pi-desktop-fork-and-forget' }[command.type];
+    const extension = { runtime_settings: 'piop-runtime-settings', branch_checkpoint: 'pi-desktop-branch-checkpoint', fork_and_forget: 'pi-desktop-fork-and-forget', voice_history: 'pi-desktop-voice-history' }[command.type];
     if (action || extension) wire = { type: 'prompt', id: `${id}:desktop-control`, message: `/${extension ?? 'pi-desktop-control'} ${JSON.stringify(action ? { id, action } : { ...command, id })}` };
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -329,7 +329,7 @@ class Session {
       const state = await this.raw(command); const pause = await this.raw({ type: 'get_pause_state' });
       return { ...state, ...pause, pendingMessages: this.queue.queueView().pendingMessages, pendingMessageCount: state.pendingMessageCount + (this.queue.heldMessages?.length ?? 0) };
     }
-    if (command.type === 'prompt' && !String(command.message).startsWith('/')) this.submitted = true;
+    if (command.type === 'voice_history' || command.type === 'prompt' && !String(command.message).startsWith('/')) this.submitted = true;
     const runtimeSettingsKey = command.type === 'runtime_settings' ? JSON.stringify(canonicalSettings({ settings: command.settings, agentRevision: command.agentRevision ?? this.agentRevision })) : undefined;
     if (runtimeSettingsKey !== undefined && this.appliedRuntimeSettings?.key === runtimeSettingsKey) return this.appliedRuntimeSettings.result;
     const result = await this.raw(command);

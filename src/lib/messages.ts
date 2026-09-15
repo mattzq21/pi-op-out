@@ -1,5 +1,7 @@
 import type { ChatMessage, ContentPart, FileChangeSnapshot, PromptContextInfo } from "../types";
 
+import { mergeSpokenMessages, parseVoicePrompt, voiceEntry } from "./voiceMessages";
+
 const visibleUserContent = (content: unknown) => content;
 const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "pi-desktop-catch-up"]);
 
@@ -49,7 +51,7 @@ export function normalizeMessage(message: Record<string, unknown>, entryId?: str
   const completionStamp = completedAt ? Date.parse(completedAt) : NaN;
   const isBtw = message.role === "custom" && message.customType === "pi-desktop-btw";
   const isSystemMessage = message.role === "custom" && SYSTEM_MESSAGES.has(String(message.customType));
-  return { ...(message as unknown as ChatMessage), ...(message.role === "user" ? { content: visibleUserContent(message.content) as ChatMessage["content"] } : {}), id: entryId || fallbackId || (typeof message.id === "string" ? message.id : undefined) || `live-${message.role}-${stamp}`, entryId, role: (message.role === "toolResult" ? "tool" : isBtw ? "assistant" : isSystemMessage ? "system" : message.role) as ChatMessage["role"], toolStatus: message.role === "toolResult" ? (message.isError ? "error" : "done") : undefined, timestamp: stamp, ...(Number.isFinite(completionStamp) ? { completedAt: completionStamp } : {}) };
+  return { ...(message as unknown as ChatMessage), ...(message.role === "user" ? { content: visibleUserContent(message.content) as ChatMessage["content"] } : {}), id: entryId || fallbackId || (typeof message.id === "string" ? message.id : undefined) || `live-${message.role}-${stamp}`, entryId, role: (message.role === "toolResult" ? "tool" : isBtw ? "assistant" : isSystemMessage ? "system" : message.role) as ChatMessage["role"], toolStatus: message.role === "toolResult" ? (message.isError ? "error" : "done") : undefined, timestamp: stamp, ...(Number.isFinite(completionStamp) ? { completedAt: completionStamp } : {}), ...parseVoicePrompt(message) };
 }
 
 export function applyAssistantMessageEvent(message: ChatMessage, value: unknown): ChatMessage {
@@ -76,7 +78,9 @@ export function branchMessages(entries: PiEntry[], leafId: string | null): ChatM
   const byId = new Map(entries.map((entry) => [entry.id, entry])); const branch: PiEntry[] = []; const visited = new Set<string>(); let cursor = leafId;
   while (cursor && !visited.has(cursor)) { visited.add(cursor); const entry = byId.get(cursor); if (!entry) break; branch.unshift(entry); cursor = entry.parentId; }
   let messages: ChatMessage[] = []; const resumeMarkers = new Set<string>();
+  const spoken: ChatMessage[] = [];
   for (const entry of branch) {
+    const voice = voiceEntry(entry); if (voice) { spoken.push(voice); continue; }
     if (entry.type === "custom" && entry.customType === "piop-file-changes") { messages = appendFileChanges(messages, entry); continue; }
     const marker = resumeMarker(entry); if (marker) { resumeMarkers.add(marker); messages = checkpointLatestUser(messages); continue; }
     if (entry.type === "custom" && entry.customType === "pi-desktop-pause-state" && (entry.data as { isPaused?: boolean } | undefined)?.isPaused) messages = checkpointLatestUser(messages);
@@ -96,6 +100,7 @@ export function branchMessages(entries: PiEntry[], leafId: string | null): ChatM
       messages.push(message);
     }
   }
+  messages = mergeSpokenMessages(messages, spoken);
   const toolInputs = new Map<string, unknown>();
   for (const message of messages) if (message.role === "assistant" && Array.isArray(message.content)) for (const part of message.content) {
     if (part.type === "toolCall") toolInputs.set(part.id, part.arguments);

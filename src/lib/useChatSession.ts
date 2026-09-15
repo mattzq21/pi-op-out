@@ -1,3 +1,4 @@
+import { mergeSpokenMessages, voiceEntry } from "./voiceMessages";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentState, ChatMessage, Model, PromptContextInfo, RpcEvent, SlashCommand } from "../types";
 import type { NativeTransport } from "./nativeTransport";
@@ -54,7 +55,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
         if (modelResult) setModels(modelResult.models);
         if (thinkingResult) setThinkingLevels(thinkingResult.levels);
         if (commandResult) {
-          const visible = commandResult.commands.filter((command) => command.sourceInfo?.source !== "inline" && !command.name.startsWith("pi-orchestration-") && !["pi-desktop-control", "pi-desktop-fast-status", "pi-desktop-fork-and-forget"].includes(command.name));
+          const visible = commandResult.commands.filter((command) => command.sourceInfo?.source !== "inline" && !command.name.startsWith("pi-orchestration-") && !["pi-desktop-control", "pi-desktop-fast-status", "pi-desktop-fork-and-forget", "pi-desktop-voice-history"].includes(command.name));
           setCommands(visible.some((command) => command.name === "compact") ? visible : [{ name: "compact", description: "Compact conversation context", source: "builtin" }, ...visible]);
         }
         bufferedEvents.current = undefined;
@@ -83,7 +84,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
         }
       } catch { /* Ignore malformed extension status data. */ }
     }
-    if (event.type === "entry_appended" && event.entry) { const entry = event.entry as PiEntry; const marker = resumeMarker(entry); if (marker) { resumeMarkers.current.add(marker); setMessages(checkpointLatestUser); } if (entry.customType === "piop-file-changes") { liveRevision.current += 1; setMessages((current) => appendFileChanges(current, entry)); } }
+    if (event.type === "entry_appended" && event.entry) { const entry = event.entry as PiEntry; const voice = voiceEntry(entry); if (voice) { liveRevision.current += 1; setMessages((current) => mergeSpokenMessages(current, [voice])); } const marker = resumeMarker(entry); if (marker) { resumeMarkers.current.add(marker); setMessages(checkpointLatestUser); } if (entry.customType === "piop-file-changes") { liveRevision.current += 1; setMessages((current) => appendFileChanges(current, entry)); } }
     if (["agent_start", "agent_end", "agent_settled", "pause_state", "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end"].includes(event.type)) liveRevision.current += 1;
     if (event.type === "agent_start") setState((current) => ({ ...current, isStreaming: true, isPaused: false }));
     if (event.type === "pause_state") setState((current) => ({ ...current, isPaused: event.isPaused === true, isPausing: event.isPausing === true, ...(event.isPaused === true && event.isPausing !== true ? { isStreaming: false, activity: undefined } : {}) }));

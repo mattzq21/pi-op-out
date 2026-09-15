@@ -2,13 +2,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AgentState, ChatMessage, RpcEvent } from "../types";
 import type { NativeTransport } from "./nativeTransport";
+import { voicePrompt, type SpokenMessage } from "./voiceMessages";
 import { textOf } from "./content";
 
 export type VoicePhase = "idle" | "connecting" | "connected" | "closing";
-export interface VoiceTranscript { role: "user" | "assistant"; text: string; startMs: number; endMs: number; completed?: boolean }
+export type VoiceTranscript = SpokenMessage;
 export interface VoiceSnapshot {
   phase: VoicePhase;
   transport?: NativeTransport;
+  sessionId?: string;
   label?: string;
   error?: string;
   muted: boolean;
@@ -43,7 +45,7 @@ function appendTranscript(previous: VoiceTranscript[], event: Record<string, unk
   const endMs = typeof event.end_ms === "number" ? event.end_ms : startMs;
   const index = openTranscriptIndex(previous, role);
   const last = previous[index];
-  const next = { role, text: event.delta, startMs, endMs };
+  const next = { id: crypto.randomUUID(), role, text: event.delta, startMs, endMs };
   if (last) return previous.map((entry, i) => i === index ? { ...last, text: (last.text + event.delta).slice(-8000), endMs } : entry);
   return [...previous.slice(-99), next];
 }
@@ -55,6 +57,10 @@ function finalAssistant(event: RpcEvent) {
   if (message.stopReason === "aborted" || message.stopReason === "error") return message.errorMessage || "The agent stopped before completing the request.";
   if (Array.isArray(message.content) && message.content.some((part) => part.type === "toolCall")) return;
   return textOf(message.content).trim();
+}
+
+function delegatedPrompt(transcript: string, spoken?: VoiceTranscript) {
+  return voicePrompt(spoken?.id ?? crypto.randomUUID(), spoken?.text || transcript);
 }
 
 export class VoiceSession {
@@ -70,6 +76,7 @@ export class VoiceSession {
   private lastAnswer?: string;
   private eventQueue: Promise<void> = Promise.resolve();
   private lastToolUpdate = 0;
+  private historyQueue: Promise<void> = Promise.resolve();
 
   getSnapshot = () => this.snapshot;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
@@ -82,7 +89,7 @@ export class VoiceSession {
     const id = crypto.randomUUID(); this.id = id; this.sessionId = state.sessionId;
     this.pending = []; this.seen.clear(); this.active = undefined; this.lastAnswer = undefined;
     this.eventQueue = Promise.resolve();
-    this.update({ ...initial, phase: "connecting", transport, label: state.sessionName || transport.connectionTarget().cwd || "This conversation" });
+    this.update({ ...initial, phase: "connecting", transport, sessionId: state.sessionId, label: state.sessionName || transport.connectionTarget().cwd || "This conversation" });
     try {
       this.unlisten = await listen<VoiceEnvelope>("pi://voice", ({ payload }) => {
         if (payload.callId === this.id) this.onVoiceEvent(payload.event);
@@ -110,6 +117,13 @@ export class VoiceSession {
   async suppress(suppressed: boolean) { await invoke("voice_suppress", { callId: this.id, suppressed }); }
 
   private cleanup() {
+    const transcripts = this.snapshot.transcripts.map((turn) => {
+      if (turn.completed) return turn;
+      const completed = { ...turn, completed: true, endMs: Date.now() };
+      this.persist(completed);
+      return completed;
+    });
+    this.update({ transcripts });
     this.id = undefined; this.active = undefined; this.pending = [];
     this.unlisten?.(); this.unlisten = undefined;
     this.unsubscribeAgent?.(); this.unsubscribeAgent = undefined;
@@ -146,8 +160,18 @@ export class VoiceSession {
     const role = turn.role as VoiceTranscript["role"];
     const entries = this.snapshot.transcripts;
     const index = openTranscriptIndex(entries, role);
-    const entry = { role, text: turn.transcript.slice(-8000), startMs: entries[index]?.startMs ?? Date.now(), endMs: Date.now(), completed: true };
+    const entry = { id: entries[index]?.id ?? crypto.randomUUID(), role, text: turn.transcript.slice(-8000), startMs: entries[index]?.startMs ?? Date.now(), endMs: Date.now(), completed: true };
     this.update({ transcripts: index >= 0 ? entries.map((previous, i) => i === index ? entry : previous) : [...entries.slice(-99), entry] });
+    this.persist(entry);
+  }
+
+  private persist(turn: VoiceTranscript) {
+    const { transport, sessionId } = this.snapshot;
+    const callId = this.id;
+    if (!transport || !sessionId || !turn.text.trim()) return;
+    this.historyQueue = this.historyQueue.then(async () => {
+      await transport.command({ type: "voice_history", sessionId, turn });
+    }).catch((error) => this.reportForCall(callId, error));
   }
 
   private enqueueDelegation(event: Record<string, unknown>) {
@@ -158,16 +182,17 @@ export class VoiceSession {
     if (this.seen.size > 512) { void this.stop().catch((error) => this.report(error)); this.report("Start a new voice call to continue this long conversation."); return; }
     const transcript = (delegation.content ?? []).filter((part) => part.type === "input_text" && typeof part.text === "string").map((part) => part.text).join("").slice(-12000);
     const callId = this.id;
-    this.eventQueue = this.eventQueue.then(() => this.delegate(callId, id, transcript)).catch((error) => this.reportForCall(callId, error));
+    const spoken = [...this.snapshot.transcripts].reverse().find((turn) => turn.role === "user");
+    this.eventQueue = this.eventQueue.then(() => this.delegate(callId, id, transcript, spoken)).catch((error) => this.reportForCall(callId, error));
   }
 
-  private async delegate(callId: string | undefined, id: string, transcript: string) {
+  private async delegate(callId: string | undefined, id: string, transcript: string, spoken?: VoiceTranscript) {
     if (this.id !== callId || this.snapshot.phase !== "connected") return;
     if (!transcript) { await this.context("The spoken request has not arrived yet. Please ask the user to repeat it.", id, true); return; }
     const transport = this.snapshot.transport!;
     const state = await transport.command<AgentState>({ type: "get_state" });
     if (this.id !== callId || this.isClosing() || state.sessionId !== this.sessionId) return;
-    const prompt = `Handle the latest user request in this spoken conversation. Use the earlier lines only as context, and do not repeat completed work. If the latest request corrects work in progress, incorporate the correction. Ask if the speech is ambiguous. Return a concise answer suitable for speaking.\n\n${transcript}`;
+    const prompt = delegatedPrompt(transcript, spoken);
     this.pending.push({ id, prompt });
     try { await transport.command({ type: "steer", message: prompt }); }
     catch (error) {

@@ -2073,6 +2073,9 @@ fn pi_command(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRun
         command["sessionPath"] = json!(path);
     }
     let result = execute_pi_command(&runtime, &runtime_id, command)?;
+    if command_type == "voice_history" {
+        if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(&runtime_id) { process.blank_cleanup.submitted = true; }
+    }
     let state = if command_type == "get_snapshot" { Some(&result["state"]) } else if command_type == "get_state" { Some(&result) } else { None };
     if let Some(state) = state {
         if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(&runtime_id) {

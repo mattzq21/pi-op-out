@@ -13,8 +13,9 @@ const fs = require('node:fs');
           if (!header) { if (entry.type !== 'session') throw Error('Invalid session header'); header = entry; continue; }
           if (entry.type === 'custom' && entry.customType === 'pi-desktop-resume' && typeof entry.data?.message === 'string') resumes.add(entry.data.message);
           if (entry.type === 'session_info' && entry.name?.trim()) name = entry.name.trim().slice(0, 2000);
-          if (entry.type !== 'message') continue;
-          const message = entry.message || {}, content = text(message);
+          const voice = entry.type === 'custom' && entry.customType === 'piop-voice' ? entry.data : undefined;
+          if (entry.type !== 'message' && !voice) continue;
+          const message = voice ? { role: voice.role, content: voice.text } : entry.message || {}, content = text(message).replace(/^\[Voice request [a-f0-9-]{36}; answer concisely\]\n/, '');
           if (message.role === 'user' && resumes.has(content)) continue;
           count++; if (content) { if (!first && message.role === 'user') first = content.slice(0, 2000); preview = [...content].slice(0, 100).join(''); }
           const amount = message.usage?.cost?.total; if (message.role === 'assistant' && Number.isFinite(amount) && amount >= 0) cost += amount;

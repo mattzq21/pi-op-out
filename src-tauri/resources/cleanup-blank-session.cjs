@@ -16,7 +16,7 @@ for (const candidate of candidates) {
   catch { continue; } // Incomplete or unrecognised data must be retained.
   const header = entries[0];
   if (header?.type !== "session" || !header.id || (target.id && header.id !== target.id)) continue;
-  if (entries.some(entry => entry.type === "message")) continue;
+  if (entries.some(entry => entry.type === "message" || entry.type === "custom" && entry.customType === "piop-voice")) continue;
   fs.unlinkSync(file);
   const sidecar = file.replace(/\.jsonl$/, ".diffs.json");
   if (fs.existsSync(sidecar)) fs.unlinkSync(sidecar);

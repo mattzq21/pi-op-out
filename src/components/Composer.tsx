@@ -3,7 +3,7 @@ import type { HookCounts } from "../lib/hookStats";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readDroppedFile } from "../lib/nativeTransport";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type SetStateAction } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type SetStateAction } from "react";
 import { ChevronUp, ChevronDown, CornerDownRight, MoveVertical, Trash2, ArrowUp, CircleStop, CircleX, FileText, ImagePlus, Pause, Play, TerminalSquare, X, Zap } from "lucide-react";
 import type { AgentProfile, ComposerUpload, ContextUsage, ImageAttachment, Model, PromptDictionary, SlashCommand } from "../types";
 import { applyDictionary, dictionaryMatches } from "../lib/dictionaries";
@@ -11,6 +11,7 @@ import { usePendingMessageDrag } from "../lib/usePendingMessageDrag";
 import { IconButton } from "./IconButton";
 
 interface Props {
+  voiceControls?: ReactNode;
   streaming: boolean;
   paused?: boolean;
   pausing?: boolean;
@@ -78,7 +79,7 @@ const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((
 });
 const escapeAttribute = (value: string) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]!);
 
-export function Composer({ streaming, paused = false, pausing = false, queued, pendingMessages = [], onChangePending, commands, agents, activeAgent, dictionaries = [], models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionHooks, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
+export function Composer({ voiceControls, streaming, paused = false, pausing = false, queued, pendingMessages = [], onChangePending, commands, agents, activeAgent, dictionaries = [], models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionHooks, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
   const [localValue, setLocalValue] = useState("");
   const value = draft ?? localValue;
   const fastModeEnabled = fastModeStatus === "Fast mode on";
@@ -374,7 +375,7 @@ export function Composer({ streaming, paused = false, pausing = false, queued, p
         {dictionaryHighlights.length > 0 && <div className="composer-highlight-viewport" aria-hidden="true"><div className="composer-highlight-layer" style={{ transform: `translateY(-${editorScrollTop}px)` }}>{dictionaryHighlights.map((match, index) => <span key={`${match.start}-${match.end}`}><span>{value.slice(index ? dictionaryHighlights[index - 1].end : 0, match.start)}</span><mark onPointerDown={(event) => { event.preventDefault(); ref.current?.focus(); ref.current?.setSelectionRange(match.start, match.end); }}>{value.slice(match.start, match.end)}</mark></span>)}<span>{value.slice(dictionaryHighlights.at(-1)?.end ?? 0)}</span></div></div>}
         <textarea ref={ref} aria-label="Message piop" disabled={controlsDisabled} placeholder={controlsDisabled ? "Connecting to piop…" : paused ? "Send a message to continue piop…" : streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value} rows={1} onScroll={(event) => setEditorScrollTop(event.currentTarget.scrollTop)} onChange={(event) => { setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape" && matches.length) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true); } else if (matches.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length); } else if ((event.key === "Tab" || event.key === "Enter") && !event.shiftKey && !event.ctrlKey && matches[selectedMatch]) { event.preventDefault(); chooseCommand(matches[selectedMatch]); } else if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.stopPropagation(); void submit(event.ctrlKey ? "steer" : "followUp"); } }} />
       </div>
-      <div className="composer-bar"><div className="composer-tools">{onOpenTerminal && <IconButton title="" label="Open terminal" disabled={controlsDisabled} onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton>}{contextUsage && <ContextWheel usage={contextUsage} />}<HookWheel counts={sessionHooks} label="Other session hooks" />{sessionCache && <span className={`session-cache-hit${sessionCache.low ? " low" : ""}`}>Cache {sessionCache.rate}%</span>}</div>
+      <div className="composer-bar"><div className="composer-tools">{voiceControls}{onOpenTerminal && <IconButton title="" label="Open terminal" disabled={controlsDisabled} onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton>}{contextUsage && <ContextWheel usage={contextUsage} />}<HookWheel counts={sessionHooks} label="Other session hooks" />{sessionCache && <span className={`session-cache-hit${sessionCache.low ? " low" : ""}`}>Cache {sessionCache.rate}%</span>}</div>
         <div className="composer-actions">
         <ContainedPicker label="Agent" value={activeAgent ?? "default"} disabled={streaming || inputDisabled} menuWidth={120} centered options={[...(agents.length ? agents : [{ name: "default" }]).map((agent) => ({ value: agent.name, label: agent.name, detail: "Agent" }))]} onChange={onAgent} />
         {fastModeSupported && <button type="button" className={`fast-mode-indicator${fastModeEnabled ? " active" : ""}`} aria-label="Fast mode" aria-description={fastModeStatus} aria-pressed={fastModeEnabled} aria-busy={togglingFastMode} disabled={inputDisabled || togglingFastMode} onClick={() => void toggleFastMode()}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled ? "currentColor" : "none"} aria-hidden="true" /></button>}
