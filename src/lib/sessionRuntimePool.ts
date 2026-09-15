@@ -105,7 +105,7 @@ export class SessionRuntimePool {
     this.runningSessionKeys = running; this.unseenSessionKeys = unseen; this.notify();
   }
 
-  private retainSession(transport: NativeTransport, prompt?: string) {
+  private retainSession(transport: NativeTransport, prompt?: string, lastMessageAt?: number) {
     // MCP setup precedes message_start. Protect the runtime synchronously so a
     // switch cannot dispose it while get_state is still in flight.
     this.retainedTransports.add(transport);
@@ -115,7 +115,7 @@ export class SessionRuntimePool {
       const cwd = transport.currentCwd() || "";
       const previous = this.liveSessions.get(transport);
       const projectDetails = previous?.cwd === cwd && previous.hostId === transport.currentHostId() ? { projectKind: previous.projectKind, projectRoot: previous.projectRoot, cwdExists: previous.cwdExists } : {};
-      this.liveSessions.set(transport, { ...projectDetails, id: state.sessionId, path: state.sessionFile || "", name: state.sessionName || prompt?.slice(0, 60) || previous?.name || "New session", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: prompt ?? previous?.preview ?? "", messageCount: Math.max(prompt ? 1 : 0, state.messageCount, previous?.messageCount ?? 0), apiCost: previous?.apiCost ?? 0, hostId: transport.currentHostId() });
+      this.liveSessions.set(transport, { ...projectDetails, id: state.sessionId, path: state.sessionFile || "", name: state.sessionName || prompt?.slice(0, 60) || previous?.name || "New session", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: prompt ?? previous?.preview ?? "", messageCount: Math.max(prompt ? 1 : 0, state.messageCount, previous?.messageCount ?? 0), lastMessageAt: lastMessageAt ?? previous?.lastMessageAt ?? 0, apiCost: previous?.apiCost ?? 0, hostId: transport.currentHostId() });
       this.liveRevision += 1; this.notify();
     }).catch((reason) => this.errorHandler?.(`Could not list the retained session: ${reason instanceof Error ? reason.message : String(reason)}`));
   }
@@ -135,8 +135,9 @@ export class SessionRuntimePool {
       }
       if (event.type === "runtime_presence") { if (event.isStreaming) this.runningTransports.add(transport); else this.runningTransports.delete(transport); }
       if (event.type === "message_start" && (event.message as { role?: string })?.role === "user") {
-        const prompt = textOf((event.message as { content: import("../types").ChatMessage["content"] }).content);
-        this.retainSession(transport, prompt);
+        const message = event.message as { content: import("../types").ChatMessage["content"]; timestamp?: unknown };
+        const prompt = textOf(message.content); const timestamp = Number(message.timestamp);
+        this.retainSession(transport, prompt, Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Date.now());
       }
       if (this.diffState(transport).persistence === "memory") {
         if (event.type === "agent_start") this.captureTurnStart(transport);

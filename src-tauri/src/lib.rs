@@ -175,6 +175,7 @@ struct SessionSummary {
     modified_at: u64,
     preview: String,
     message_count: usize,
+    last_message_at: u64,
     api_cost: f64,
     host_id: String,
     host_name: String,
@@ -2324,7 +2325,7 @@ fn read_session_summaries(candidates: &[(String, String, u64, u64)], host: Optio
             let Some((_, fingerprint, modified_at, _)) = batch.iter().find(|item| item.0 == path) else { continue };
             let string = |key| value.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
             let cwd = string("cwd"); let project = Path::new(&cwd).file_name().and_then(|name| name.to_str()).unwrap_or("Workspace").to_owned();
-            let summary = SessionSummary { group_id: None, id: string("id"), path: path.to_owned(), name: string("name"), project, cwd, cwd_exists: true, project_kind: None, project_root: None, modified_at: *modified_at, preview: string("preview"), message_count: value.get("messageCount").and_then(Value::as_u64).unwrap_or(0) as usize, api_cost: value.get("apiCost").and_then(Value::as_f64).unwrap_or(0.0), host_id: host.map(|host| host.id.clone()).unwrap_or_else(|| "local".into()), host_name: host.map(|host| host.name.clone()).unwrap_or_else(|| "Local".into()) };
+            let summary = SessionSummary { group_id: None, id: string("id"), path: path.to_owned(), name: string("name"), project, cwd, cwd_exists: true, project_kind: None, project_root: None, modified_at: *modified_at, preview: string("preview"), message_count: value.get("messageCount").and_then(Value::as_u64).unwrap_or(0) as usize, last_message_at: value.get("lastMessageAt").and_then(Value::as_u64).unwrap_or(0), api_cost: value.get("apiCost").and_then(Value::as_f64).unwrap_or(0.0), host_id: host.map(|host| host.id.clone()).unwrap_or_else(|| "local".into()), host_name: host.map(|host| host.name.clone()).unwrap_or_else(|| "Local".into()) };
             result.insert(path.to_owned(), CachedSession { fingerprint: fingerprint.clone(), summary });
         }
         cursor = end;

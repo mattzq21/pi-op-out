@@ -39,6 +39,10 @@ function stableSessionOrder(left: SessionSummary, right: SessionSummary) {
   return sidebarCollator.compare(left.name, right.name) || sidebarCollator.compare(left.id, right.id);
 }
 
+function recentSessionOrder(left: SessionSummary, right: SessionSummary) {
+  return right.lastMessageAt - left.lastMessageAt || stableSessionOrder(left, right);
+}
+
 function savedGroupKeys(storageKey: string) {
   try { const value = JSON.parse(localStorage.getItem(storageKey) || "[]"); return new Set<string>(Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : []); }
   catch { return new Set<string>(); }
@@ -247,7 +251,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   const groupedSessions = filtered.reduce<Record<string, SessionSummary[]>>((result, session) => {
     (result[visualProjectKey(session)] ??= []).push(session); return result;
   }, {});
-  const recentSessions = orderedSessions(RECENT_KEY, groupedSessions[RECENT_KEY] ?? [], sessionOrders);
+  const recentSessions = (groupedSessions[RECENT_KEY] ?? []).sort(recentSessionOrder);
   const physicalGroups = (storedGroups?.groups ?? []).filter((group) => group.cwd && !isTemporaryChatCwd(group.cwd)).map((group) => [group.id, group.name, group.hostId ?? "local", group.hostName ?? undefined, orderedSessions(group.id, groupedSessions[group.id] ?? [], sessionOrders)] as const);
   const customVisualGroups = customGroups.map((group) => [group.id, group.name, "", undefined, orderedSessions(group.id, groupedSessions[group.id] ?? [], sessionOrders)] as const);
   // Remember projects even while search or session placement hides them.

@@ -284,7 +284,7 @@ export default function App() {
             pendingBtwRequest.current = { id: request.id, transport };
             setSplitPane({
               key: crypto.randomUUID(),
-              session: { id: `btw-${request.id}`, path: "", name: "BTW", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task, messageCount: 0, apiCost: 0, hostId: activeHostIdRef.current },
+              session: { id: `btw-${request.id}`, path: "", name: "BTW", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task, messageCount: 0, lastMessageAt: Date.now(), apiCost: 0, hostId: activeHostIdRef.current },
               btw: { task: payload.task, forkFrom: payload.sessionFile, requestId: request.id },
             });
           } catch (reason) {
@@ -502,7 +502,7 @@ export default function App() {
     await addWorktreeGroup(result);
     await setup(result.path);
     setWorktreeTarget(undefined);
-    const session: SessionSummary = { id: result.sessionId, path: result.sessionPath, cwd: result.path, cwdExists: true, projectKind: "worktree", project: result.branch, name: result.branch, preview: "", messageCount: 0, apiCost: 0, hostId: target.hostId };
+    const session: SessionSummary = { id: result.sessionId, path: result.sessionPath, cwd: result.path, cwdExists: true, projectKind: "worktree", project: result.branch, name: result.branch, preview: "", messageCount: 0, lastMessageAt: 0, apiCost: 0, hostId: target.hostId };
     setSessions((current) => [...current, session]);
     setComposerDraft(`${target.hostId}:${result.sessionId}`, beforePrompt ? textOf(sourceMessage.content) : "");
     const branchTransport = runtimePool.forSession(session);
