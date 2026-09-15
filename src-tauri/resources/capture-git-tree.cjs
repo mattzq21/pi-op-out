@@ -11,7 +11,7 @@ try {
   for (const file of paths) { let stat; try { stat = fs.lstatSync(file); } catch (error) { if (error.code === 'ENOENT') continue; throw error; } total += stat.size; if (stat.size > 16 * 1024 * 1024 || total > 32 * 1024 * 1024) process.exit(6); }
   const seed = git(['write-tree']).toString().trim();
   const repositoryObjects = fs.realpathSync(git(['rev-parse', '--git-path', 'objects']).toString().trim());
-  const parent = path.join(os.homedir(), '.piop/git-snapshots'); fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
+  const parent = path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop', 'git-snapshots'); fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
   snapshot = fs.mkdtempSync(path.join(parent, 'pi-desktop-diff-')); fs.mkdirSync(path.join(snapshot, 'objects'));
   const env = { ...process.env, GIT_INDEX_FILE: path.join(snapshot, 'index'), GIT_OBJECT_DIRECTORY: path.join(snapshot, 'objects'), GIT_ALTERNATE_OBJECT_DIRECTORIES: repositoryObjects };
   git(['read-tree', seed], env); git(['add', '-A', '--', '.'], env);

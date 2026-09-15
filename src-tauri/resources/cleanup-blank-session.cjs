@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const home = require("node:os").homedir();
 const target = JSON.parse(process.argv[1]);
-const root = target.root || path.join(home, ".piop", "sessions");
+const root = target.root || path.join(home, process.env.PIOP_STORAGE_DIRECTORY || ".piop", "sessions");
 if (!fs.existsSync(root)) process.exit(0);
 const realRoot = fs.realpathSync(root);
 const candidates = target.path ? [target.path] : target.id

@@ -9,7 +9,7 @@ type Message = { role?: string; content?: unknown; stopReason?: string };
 type TraceFile = { path: string; modified: number };
 type CleanMessage = { role: "user" | "assistant"; text: string };
 
-const traceRoots = () => [join(homedir(), ".piop", "sessions"), join(homedir(), ".piop", "archived")];
+const traceRoots = () => [join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "sessions"), join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "archived")];
 
 async function piopTracePath(path: string): Promise<string> {
   const canonical = await realpath(path);
@@ -20,7 +20,7 @@ async function piopTracePath(path: string): Promise<string> {
     if (child && child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child)
       && extname(canonical).toLowerCase() === ".jsonl" && (await stat(canonical)).isFile()) return canonical;
   }
-  throw new Error("Only Piop traces in ~/.piop/sessions or ~/.piop/archived can be read");
+  throw new Error("Only Piop traces in the current Piop profile’s sessions or archives can be read");
 }
 
 async function traceFiles(root: string): Promise<TraceFile[]> {
@@ -98,7 +98,7 @@ export default function traceReader(pi: ExtensionAPI) {
   pi.registerTool({
     name: "read_trace",
     label: "Read trace",
-    description: "Find a Piop .jsonl trace in ~/.piop/sessions or ~/.piop/archived and return only original user prompts and completed assistant messages. Excludes tools, tool results, reasoning, skills, system/provider instructions, AGENTS.md, and intermediate assistant tool-call messages. Use a Piop trace path, session id, filename fragment, or latest. Traces outside Piop storage are not supported.",
+    description: "Find a Piop .jsonl trace in the current Piop profile’s sessions or archives and return only original user prompts and completed assistant messages. Excludes tools, tool results, reasoning, skills, system/provider instructions, AGENTS.md, and intermediate assistant tool-call messages. Use a Piop trace path, session id, filename fragment, or latest. Traces outside Piop storage are not supported.",
     promptSnippet: "Read a clean Piop trace by path, session id, filename fragment, or latest",
     parameters: Type.Object({ query: Type.String({ description: "Trace path, session id, filename fragment, or the word latest" }) }),
     async execute(_id, params, _signal, _onUpdate, ctx: ExtensionContext) {

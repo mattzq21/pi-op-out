@@ -31,12 +31,12 @@ async function runFork(pi: PiApi, sessionFile: string, cwd: string, task: string
   const args = executable
     ? ["--print", "--approve", "--fork", sessionFile]
     : [process.argv[1], "--print", "--approve", "--fork", sessionFile];
-  args.push("--session-dir", join(homedir(), ".piop", "sessions"));
-  args.push("--extension", join(homedir(), ".piop", "runtime-settings.ts"));
+  args.push("--session-dir", join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "sessions"));
+  args.push("--extension", join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "runtime-settings.ts"));
   const settings: { settings?: unknown } = {};
   pi.events.emit("piop:runtime-settings", settings);
   if (settings.settings) args.push("--piop-runtime-settings", JSON.stringify(settings.settings));
-  args.push("--extension", join(homedir(), ".piop", "hook-loader.ts"));
+  args.push("--extension", join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "hook-loader.ts"));
   const codexCompactionExtension = process.env.PI_DESKTOP_CODEX_COMPACTION_EXTENSION;
   if (codexCompactionExtension) args.push("--extension", codexCompactionExtension);
   const codexWebSearchExtension = process.env.PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION;

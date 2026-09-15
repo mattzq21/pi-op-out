@@ -15,7 +15,7 @@ const STATE_ENTRY = "pi-define-agents-state";
 const DEFAULTS_ENV = "PI_DEFINE_AGENTS_RUNTIME_DEFAULTS";
 const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
 const DEFAULT_PROMPT_PATH = "sysprompt/default.md";
-const DEFAULT_AGENT_PROMPT_PATH = "~/.piop/agents/default.md";
+const DEFAULT_AGENT_PROMPT_PATH = `~/${process.env.PIOP_STORAGE_DIRECTORY || ".piop"}/agents/default.md`;
 const DEFAULT_SYSTEM_PROMPT = `You are an expert coding assistant operating inside a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
 
 Available tools:

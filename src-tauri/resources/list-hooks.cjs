@@ -8,7 +8,7 @@ async function inspect(path) {
 }
 
 (async () => {
-  const directory = join(homedir(), ".piop", "hooks");
+  const directory = join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "hooks");
   const exists = Boolean(await inspect(directory));
   const hooks = [];
   if (exists) for (const name of (await readdir(directory)).sort()) {

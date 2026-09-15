@@ -159,7 +159,7 @@ async function snapshotRefs(entries, header) {
 async function main() {
   const target = JSON.parse(process.argv[1]);
   const area = target.area === "archived" ? "archived" : "sessions";
-  const root = await fs.realpath(target.root || path.join(os.homedir(), ".piop", area));
+  const root = await fs.realpath(target.root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", area));
   const source = await fs.realpath(target.path);
   const relative = path.relative(root, source);
   if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || path.extname(source) !== ".jsonl") {

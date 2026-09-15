@@ -5,7 +5,7 @@ const os = require("node:os");
 const readline = require("node:readline");
 const { execFile } = require("node:child_process");
 
-const piopRoot = path.join(os.homedir(), ".piop");
+const piopRoot = path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop");
 const sessionRoots = [path.join(piopRoot, "sessions"), path.join(piopRoot, "archived")];
 
 async function regularFileSize(file) {

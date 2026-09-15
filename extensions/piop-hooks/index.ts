@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import hookStats from "./hook-stats.ts";
 
-const hooksDirectory = join(homedir(), ".piop", "hooks");
+const hooksDirectory = join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "hooks");
 
 async function isFile(path: string): Promise<boolean> {
   try {

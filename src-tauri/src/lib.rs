@@ -20,6 +20,16 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
+const STORAGE_DIRECTORY: &str = env!("PIOP_STORAGE_DIRECTORY");
+const DEVELOPMENT: bool = env!("PIOP_DEVELOPMENT").as_bytes()[0] == b'1';
+const APP_TITLE: &str = if DEVELOPMENT { "Piop Dev" } else { "piop" };
+
+fn node_command() -> Command {
+    let mut command = Command::new("node");
+    command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY);
+    command
+}
+
 struct PiProcess {
     daemon: Arc<daemon::Daemon>,
     window_label: String,
@@ -31,10 +41,10 @@ struct BlankSessionCleanup { path: Option<String>, id: Option<String>, host: Opt
 fn cleanup_blank_session(target: BlankSessionCleanup) {
     if target.submitted { return; }
     let script = include_str!("../resources/cleanup-blank-session.cjs");
-    let arguments = json!({"path":target.path,"id":target.id,"root":if target.host.is_none() { home_dir().ok().map(|home| home.join(".piop/sessions")) } else { None }}).to_string();
+    let arguments = json!({"path":target.path,"id":target.id,"root":if target.host.is_none() { home_dir().ok().map(|home| home.join(STORAGE_DIRECTORY).join("sessions")) } else { None }}).to_string();
     let result = if let Some(host) = target.host {
-        ssh(&host).arg(remote_login_command(&format!("node -e {} {}", shell_quote(script), shell_quote(&arguments)))).output()
-    } else { Command::new("node").arg("-e").arg(script).arg(arguments).output() };
+        ssh(&host).arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), shell_quote(&arguments)))).output()
+    } else { node_command().arg("-e").arg(script).arg(arguments).output() };
     match result {
         Ok(output) if output.status.success() => {},
         Ok(output) => eprintln!("Could not clean up blank session: {}", String::from_utf8_lossy(&output.stderr)),
@@ -412,10 +422,10 @@ fn codex_usage() -> Result<CodexUsage, String> {
 }
 
 fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = home_dir()?.join(".piop");
+    let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let path = dir.join("settings.json");
-    if !path.exists() {
+    if !DEVELOPMENT && !path.exists() {
         let legacy = app.path().app_config_dir().map_err(|error| error.to_string())?.join("settings.json");
         match fs::read(&legacy) {
             Ok(body) => {
@@ -557,7 +567,7 @@ fn validate_mcp_servers(settings: &AppSettings) -> Result<(), String> {
 }
 
 fn prepare_mcp_bridge(settings: &AppSettings) -> Result<(PathBuf, PathBuf), String> {
-    let dir = home_dir()?.join(".piop");
+    let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let extension_path = dir.join("pi-desktop-mcp-bridge.ts");
     let config_path = dir.join("mcp-servers.json");
@@ -571,7 +581,7 @@ fn runtime_settings(settings: &AppSettings) -> Value {
 }
 
 fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf, String> {
-    let dir = home_dir()?.join(".piop");
+    let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let path = dir.join("runtime-settings.ts");
     atomic_write_private(&path, include_str!("../../extensions/pi-runtime-settings/index.ts").as_bytes())?;
@@ -580,7 +590,7 @@ fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf, String> {
 }
 
 fn prepare_session_broker() -> Result<PathBuf, String> {
-    let dir = home_dir()?.join(".piop");
+    let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let path = dir.join("session-broker.ts");
     atomic_write_private(&path, include_str!("../resources/session-broker.ts").as_bytes())?;
@@ -588,7 +598,7 @@ fn prepare_session_broker() -> Result<PathBuf, String> {
 }
 
 fn prepare_hooks_extension() -> Result<PathBuf, String> {
-    let dir = home_dir()?.join(".piop");
+    let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     ensure_private_dir(&dir.join("hooks"))?;
     let path = dir.join("hook-loader.ts");
@@ -601,14 +611,14 @@ fn prepare_hooks_extension() -> Result<PathBuf, String> {
 fn list_hooks(app: AppHandle, host_id: String) -> Result<Value, String> {
     let script = include_str!("../resources/list-hooks.cjs");
     let mut command = if host_id == "local" {
-        let mut command = Command::new("node");
+        let mut command = node_command();
         command.args(["-e", script]);
         command
     } else {
         let settings = load_app_settings(app)?;
         let host = remote_host(&settings, &host_id)?;
         let mut command = ssh(host);
-        command.arg(format!("node -e {}", shell_quote(script)));
+        command.arg(format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {}", shell_quote(script)));
         command
     };
     let output = run_limited(&mut command, 4 * 1024 * 1024, "Could not list hooks")?;
@@ -617,7 +627,7 @@ fn list_hooks(app: AppHandle, host_id: String) -> Result<Value, String> {
 }
 
 fn prepare_trace_reader() -> Result<PathBuf, String> {
-    let dir = home_dir()?.join(".piop");
+    let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let path = dir.join("pi-desktop-trace-reader.ts");
     atomic_write_private(&path, include_str!("../resources/trace-reader.ts").as_bytes())?;
@@ -625,7 +635,7 @@ fn prepare_trace_reader() -> Result<PathBuf, String> {
 }
 
 fn prepare_codex_compaction_extension() -> Result<PathBuf, String> {
-    let dir = home_dir()?.join(".piop");
+    let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let path = dir.join("pi-desktop-codex-compaction.ts");
     atomic_write_private(&path, include_str!("../resources/codex-compaction.bundle.mjs").as_bytes())?;
@@ -633,7 +643,7 @@ fn prepare_codex_compaction_extension() -> Result<PathBuf, String> {
 }
 
 fn prepare_openai_cache_lineage_extension() -> Result<PathBuf, String> {
-    let dir = home_dir()?.join(".piop");
+    let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let path = dir.join("pi-openai-cache-lineage.ts");
     atomic_write_private(&path, include_str!("../../extensions/pi-openai-cache-lineage/index.ts").as_bytes())?;
@@ -641,7 +651,7 @@ fn prepare_openai_cache_lineage_extension() -> Result<PathBuf, String> {
 }
 
 fn prepare_fast_mode_extension() -> Result<PathBuf, String> {
-    let dir = home_dir()?.join(".piop/pi-openai-fast-mode-piop");
+    let dir = home_dir()?.join(STORAGE_DIRECTORY).join("pi-openai-fast-mode-piop");
     ensure_private_dir(&dir)?;
     let path = dir.join("index.ts");
     atomic_write_private(&path, include_str!("../resources/fast-mode.bundle.mjs").as_bytes())?;
@@ -649,7 +659,7 @@ fn prepare_fast_mode_extension() -> Result<PathBuf, String> {
 }
 
 fn prepare_codex_web_search_extension() -> Result<PathBuf, String> {
-    let dir = home_dir()?.join(".piop");
+    let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let path = dir.join("pi-desktop-codex-web-search.ts");
     atomic_write_private(&path, include_str!("../../extensions/pi-codex-web-search/index.ts").as_bytes())?;
@@ -657,7 +667,7 @@ fn prepare_codex_web_search_extension() -> Result<PathBuf, String> {
 }
 
 fn prepare_context_window_cap_extension(settings: &AppSettings) -> Result<PathBuf, String> {
-    let dir = home_dir()?.join(".piop/pi-context-window-cap");
+    let dir = home_dir()?.join(STORAGE_DIRECTORY).join("pi-context-window-cap");
     ensure_private_dir(&dir)?;
     let extension_path = dir.join("index.ts");
     let config_path = dir.join("config.json");
@@ -673,7 +683,7 @@ const FILE_CHANGE_ASSETS: [(&str, &str); 3] = [
 ];
 
 fn prepare_diff_watch_extension() -> Result<PathBuf, String> {
-    let config_dir = home_dir()?.join(".piop");
+    let config_dir = home_dir()?.join(STORAGE_DIRECTORY);
     let legacy_dir = config_dir.join("pi-git-change-context");
     if legacy_dir.exists() { fs::remove_dir_all(&legacy_dir).map_err(|error| format!("Could not remove legacy diff watch extension: {error}"))?; }
     let dir = config_dir.join("pi-diff-watch");
@@ -685,26 +695,26 @@ fn prepare_diff_watch_extension() -> Result<PathBuf, String> {
 }
 
 fn prepare_defined_agents_extension() -> Result<PathBuf, String> {
-    let dir = home_dir()?.join(".piop/pi-define-agents");
+    let dir = home_dir()?.join(STORAGE_DIRECTORY).join("pi-define-agents");
     ensure_private_dir(&dir)?;
     let legacy_dir = home_dir()?.join(".pi/agent/extensions/pi-define-agents");
     let config = dir.join("config.json");
-    if !config.exists() && legacy_dir.join("config.json").exists() {
+    if !DEVELOPMENT && !config.exists() && legacy_dir.join("config.json").exists() {
         atomic_write_private(&config, &fs::read(legacy_dir.join("config.json")).map_err(|error| error.to_string())?)?;
     }
     let path = dir.join("index.ts");
     atomic_write_private(&path, include_str!("../../extensions/pi-define-agents/index.ts").as_bytes())?;
-    if legacy_dir.join("index.ts").exists() { fs::remove_file(legacy_dir.join("index.ts")).map_err(|error| error.to_string())?; }
+    if !DEVELOPMENT && legacy_dir.join("index.ts").exists() { fs::remove_file(legacy_dir.join("index.ts")).map_err(|error| error.to_string())?; }
     Ok(path)
 }
 
 fn prepare_btw_extension() -> Result<PathBuf, String> {
-    let dir = home_dir()?.join(".piop");
+    let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let path = dir.join("pi-desktop-btw.ts");
     atomic_write_private(&path, include_str!("../resources/btw.ts").as_bytes())?;
     let legacy = home_dir()?.join(".pi/agent/extensions/pi-desktop-btw.ts");
-    if legacy.exists() { fs::remove_file(legacy).map_err(|error| error.to_string())?; }
+    if !DEVELOPMENT && legacy.exists() { fs::remove_file(legacy).map_err(|error| error.to_string())?; }
     Ok(path)
 }
 
@@ -926,7 +936,7 @@ fn save_app_settings(app: AppHandle, mut settings: AppSettings, agent_host_id: O
 #[tauri::command]
 fn shell_quote(value: &str) -> String { format!("'{}'", value.replace('\'', "'\\''")) }
 
-fn desktop_sessions_dir(home: &Path) -> PathBuf { home.join(".piop/sessions") }
+fn desktop_sessions_dir(home: &Path) -> PathBuf { home.join(STORAGE_DIRECTORY).join("sessions") }
 
 fn ensure_desktop_sessions_dir(home: &Path) -> Result<PathBuf, String> {
     let root = desktop_sessions_dir(home);
@@ -1183,7 +1193,7 @@ fn local_git_input_is_bounded(cwd: &str, root: &Path) -> Result<bool, String> {
 }
 
 fn local_snapshot_parent() -> Result<PathBuf, String> {
-    let parent = home_dir()?.join(".piop/git-snapshots"); fs::create_dir_all(&parent).map_err(|error| error.to_string())?; Ok(parent)
+    let parent = home_dir()?.join(STORAGE_DIRECTORY).join("git-snapshots"); fs::create_dir_all(&parent).map_err(|error| error.to_string())?; Ok(parent)
 }
 
 
@@ -1659,7 +1669,7 @@ fn valid_remote_snapshot(snapshot: &GitSnapshotToken) -> bool {
 }
 
 fn remote_git_tree(host: &RemoteHost, cwd: &str) -> Result<Option<String>, String> {
-    let script = format!("cd {} && node -e {}", shell_quote(cwd), shell_quote(include_str!("../resources/capture-git-tree.cjs")));
+    let script = format!("cd {} && PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {}", shell_quote(cwd), shell_quote(include_str!("../resources/capture-git-tree.cjs")));
     let mut command = ssh(host); command.arg(remote_login_command(&script)); let output = run_limited(&mut command, 64 * 1024, &format!("Could not capture Git snapshot on {}", host.name))?;
     match output.status.code() { Some(3 | 4 | 6) => return Ok(None), _ => {} }
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
@@ -1687,7 +1697,7 @@ fn discard_git_tree_at_host(snapshot: &str, host: Option<&RemoteHost>) -> Result
     let snapshot: GitSnapshotToken = serde_json::from_str(&snapshot).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     if !valid_remote_snapshot(&snapshot) { return Err("Invalid remote Git snapshot location".into()); }
     let root = shell_quote(&snapshot.root);
-    let script = format!("parent=$(cd \"$HOME/.piop/git-snapshots\" && pwd -P) || exit 7; snap=$(cd {root} && pwd -P) || exit 7; [ \"$(dirname -- \"$snap\")\" = \"$parent\" ] || exit 7; case \"$(basename -- \"$snap\")\" in pi-desktop-diff-*) ;; *) exit 7;; esac; rm -rf -- \"$snap\"");
+    let script = format!("parent=$(cd \"$HOME/{STORAGE_DIRECTORY}/git-snapshots\" && pwd -P) || exit 7; snap=$(cd {root} && pwd -P) || exit 7; [ \"$(dirname -- \"$snap\")\" = \"$parent\" ] || exit 7; case \"$(basename -- \"$snap\")\" in pi-desktop-diff-*) ;; *) exit 7;; esac; rm -rf -- \"$snap\"");
     let output = ssh(host).arg(script).output().map_err(|error| format!("Could not discard Git snapshot on {}: {error}", host.name))?;
     output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
 }
@@ -1713,7 +1723,7 @@ fn load_git_diff_between_at_host(cwd: &str, base_tree: &str, current_token: &str
     let base: GitSnapshotToken = serde_json::from_str(base_tree).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     let current: GitSnapshotToken = serde_json::from_str(&current_token).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     if !valid_remote_snapshot(&base) || !valid_remote_snapshot(&current) { return Err("Invalid remote Git snapshot location".into()); }
-    let script = format!("cd {} || exit 2; parent=$(cd \"$HOME/.piop/git-snapshots\" && pwd -P) || exit 7; base=$(cd {} && pwd -P) || exit 7; current=$(cd {} && pwd -P) || exit 7; for snapshot in \"$base\" \"$current\"; do [ \"$(dirname -- \"$snapshot\")\" = \"$parent\" ] || exit 7; case \"$(basename -- \"$snapshot\")\" in pi-desktop-diff-*) ;; *) exit 7;; esac; done; repo_objects=$(git rev-parse --git-path objects) || exit 3; repo_objects=$(cd \"$repo_objects\" && pwd -P) || exit 3; GIT_OBJECT_DIRECTORY=\"$current/objects\" GIT_ALTERNATE_OBJECT_DIRECTORIES=\"$base/objects:$repo_objects\" git diff --no-relative --no-color --no-ext-diff --find-renames {} {} --", shell_quote(&current.repository_root), shell_quote(&base.root), shell_quote(&current.root), shell_quote(&base.tree), shell_quote(&current.tree));
+    let script = format!("cd {} || exit 2; parent=$(cd \"$HOME/{STORAGE_DIRECTORY}/git-snapshots\" && pwd -P) || exit 7; base=$(cd {} && pwd -P) || exit 7; current=$(cd {} && pwd -P) || exit 7; for snapshot in \"$base\" \"$current\"; do [ \"$(dirname -- \"$snapshot\")\" = \"$parent\" ] || exit 7; case \"$(basename -- \"$snapshot\")\" in pi-desktop-diff-*) ;; *) exit 7;; esac; done; repo_objects=$(git rev-parse --git-path objects) || exit 3; repo_objects=$(cd \"$repo_objects\" && pwd -P) || exit 3; GIT_OBJECT_DIRECTORY=\"$current/objects\" GIT_ALTERNATE_OBJECT_DIRECTORIES=\"$base/objects:$repo_objects\" git diff --no-relative --no-color --no-ext-diff --find-renames {} {} --", shell_quote(&current.repository_root), shell_quote(&base.root), shell_quote(&current.root), shell_quote(&base.tree), shell_quote(&current.tree));
     let mut command = ssh(host); command.arg(script); let output = run_limited(&mut command, MAX_GIT_PATCH_BYTES, &format!("Git patch on {} is too large", host.name))?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let patch = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -1723,7 +1733,7 @@ fn load_git_diff_between_at_host(cwd: &str, base_tree: &str, current_token: &str
 fn local_git_diffs_path(session_path: &str) -> Result<PathBuf, String> { Ok(local_desktop_session_file(session_path)?.with_extension("diffs.json")) }
 
 fn remote_session_sidecar_script(session_path: &str, action: &str) -> String {
-    format!("session=$(readlink -f -- {}) || exit 7; sessions=$(cd \"$HOME/.piop/sessions\" && pwd -P) || exit 7; case \"$session\" in \"$sessions\"/*.jsonl) ;; *) exit 7;; esac; sidecar=${{session%.jsonl}}.diffs.json; {action}", shell_quote(session_path))
+    format!("session=$(readlink -f -- {}) || exit 7; sessions=$(cd \"$HOME/{STORAGE_DIRECTORY}/sessions\" && pwd -P) || exit 7; case \"$session\" in \"$sessions\"/*.jsonl) ;; *) exit 7;; esac; sidecar=${{session%.jsonl}}.diffs.json; {action}", shell_quote(session_path))
 }
 
 #[tauri::command(async)]
@@ -1826,13 +1836,13 @@ fn create_ephemeral_fork(settings: &AppSettings, host_id: &str, source_path: &st
     if host_id == "local" {
         let source = local_desktop_session_file(source_path)?;
         let path = std::env::temp_dir().join(format!("pi-desktop-btw-{}.jsonl", Uuid::new_v4()));
-        let output = Command::new("node").args(["-e", include_str!("../resources/fork-session.cjs")]).arg(source).arg(&path).arg(Uuid::new_v4().to_string()).output().map_err(|e| e.to_string())?;
+        let output = node_command().args(["-e", include_str!("../resources/fork-session.cjs")]).arg(source).arg(&path).arg(Uuid::new_v4().to_string()).output().map_err(|e| e.to_string())?;
         if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).into_owned()); }
         return Ok((path.to_string_lossy().into_owned(), EphemeralSession::Local(path)));
     }
     let host = remote_host(settings, host_id)?.clone();
     let destination = format!("/tmp/pi-desktop-btw-{}.jsonl", Uuid::new_v4());
-    let remote = format!("node -e {} {} {} {} && printf %s {}", shell_quote(include_str!("../resources/fork-session.cjs")), shell_quote(source_path), shell_quote(&destination), shell_quote(&Uuid::new_v4().to_string()), shell_quote(&destination));
+    let remote = format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {} {} {} && printf %s {}", shell_quote(include_str!("../resources/fork-session.cjs")), shell_quote(source_path), shell_quote(&destination), shell_quote(&Uuid::new_v4().to_string()), shell_quote(&destination));
     let output = ssh(&host).arg(remote_login_command(&remote)).output().map_err(|error| format!("Could not create temporary side conversation on {}: {error}", host.name))?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -1899,13 +1909,13 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let context_window_config = shell_quote(&serde_json::to_string_pretty(&json!({ "contextWindowCap": settings.context_window_cap, "enabled": settings.context_window_cap_enabled })).map_err(|error| error.to_string())?);
     let mcp_bridge = shell_quote(include_str!("../resources/mcp-bridge.bundle.mjs"));
     let mcp_config = shell_quote(&serde_json::to_string_pretty(&settings.mcp_servers).map_err(|error| error.to_string())?);
-    let remote = format!("umask 077 && rm -rf -- \"$HOME/.piop/pi-git-change-context\" && mkdir -p -m 700 \"$HOME/.piop/sessions\" \"$HOME/.piop/pi-context-window-cap\" \"$HOME/.piop/pi-diff-watch\" \"$HOME/.piop/pi-define-agents\" && chmod 700 \"$HOME/.piop\" \"$HOME/.piop/sessions\" \"$HOME/.piop/pi-context-window-cap\" \"$HOME/.piop/pi-diff-watch\" \"$HOME/.piop/pi-define-agents\" && mkdir -p -m 700 \"$HOME/.piop/hooks\" && printf %s {hook_stats} > \"$HOME/.piop/hook-stats.ts\" && printf %s {hooks} > \"$HOME/.piop/hook-loader.ts\" && printf %s {broker} > \"$HOME/.piop/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/.piop/pi-desktop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/.piop/pi-desktop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/.piop/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/.piop/pi-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/.piop/pi-context-window-cap/config.json\" && printf %s {diff_watch} > \"$HOME/.piop/pi-diff-watch/index.ts\" && printf %s {codex_web_search} > \"$HOME/.piop/pi-desktop-codex-web-search.ts\" && printf %s {codex_compaction} > \"$HOME/.piop/pi-desktop-codex-compaction.ts\" && printf %s {openai_cache_lineage} > \"$HOME/.piop/pi-openai-cache-lineage.ts\" && printf %s {btw} > \"$HOME/.piop/pi-desktop-btw.ts\" && printf %s {defined_agents} > \"$HOME/.piop/pi-define-agents/index.ts\" && chmod 600 -- \"$HOME/.piop/pi-desktop-codex-web-search.ts\" \"$HOME/.piop/pi-desktop-codex-compaction.ts\" \"$HOME/.piop/pi-openai-cache-lineage.ts\" \"$HOME/.piop/session-broker.ts\" \"$HOME/.piop/pi-desktop-trace-reader.ts\" \"$HOME/.piop/pi-desktop-mcp-bridge.ts\" \"$HOME/.piop/mcp-servers.json\" \"$HOME/.piop/pi-context-window-cap/index.ts\" \"$HOME/.piop/pi-context-window-cap/config.json\" \"$HOME/.piop/pi-diff-watch/index.ts\" \"$HOME/.piop/pi-desktop-btw.ts\" \"$HOME/.piop/pi-define-agents/index.ts\"");
-    let remote = format!(r#"{remote} && if [ ! -f "$HOME/.piop/pi-define-agents/config.json" ] && [ -f "$HOME/.pi/agent/extensions/pi-define-agents/config.json" ]; then cp "$HOME/.pi/agent/extensions/pi-define-agents/config.json" "$HOME/.piop/pi-define-agents/config.json"; fi && rm -f -- "$HOME/.pi/agent/extensions/pi-define-agents/index.ts" "$HOME/.pi/agent/extensions/pi-desktop-btw.ts""#);
-    let remote = format!(r#"{remote} && mkdir -p -m 700 "$HOME/.piop/pi-openai-fast-mode-piop" && printf %s {fast_mode} > "$HOME/.piop/pi-openai-fast-mode-piop/index.ts" && chmod 600 "$HOME/.piop/pi-openai-fast-mode-piop/index.ts""#);
-    let remote = format!(r#"{remote} && printf %s {runtime_settings_extension} > "$HOME/.piop/runtime-settings.ts" && printf %s {runtime_settings_config} > "$HOME/.piop/runtime-settings.json" && chmod 600 "$HOME/.piop/runtime-settings.ts" "$HOME/.piop/runtime-settings.json""#);
+    let remote = format!("umask 077 && rm -rf -- \"$HOME/{STORAGE_DIRECTORY}/pi-git-change-context\" && mkdir -p -m 700 \"$HOME/{STORAGE_DIRECTORY}/sessions\" \"$HOME/{STORAGE_DIRECTORY}/pi-context-window-cap\" \"$HOME/{STORAGE_DIRECTORY}/pi-diff-watch\" \"$HOME/{STORAGE_DIRECTORY}/pi-define-agents\" && chmod 700 \"$HOME/{STORAGE_DIRECTORY}\" \"$HOME/{STORAGE_DIRECTORY}/sessions\" \"$HOME/{STORAGE_DIRECTORY}/pi-context-window-cap\" \"$HOME/{STORAGE_DIRECTORY}/pi-diff-watch\" \"$HOME/{STORAGE_DIRECTORY}/pi-define-agents\" && mkdir -p -m 700 \"$HOME/{STORAGE_DIRECTORY}/hooks\" && printf %s {hook_stats} > \"$HOME/{STORAGE_DIRECTORY}/hook-stats.ts\" && printf %s {hooks} > \"$HOME/{STORAGE_DIRECTORY}/hook-loader.ts\" && printf %s {broker} > \"$HOME/{STORAGE_DIRECTORY}/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/{STORAGE_DIRECTORY}/pi-desktop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/{STORAGE_DIRECTORY}/pi-desktop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/{STORAGE_DIRECTORY}/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/{STORAGE_DIRECTORY}/pi-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/{STORAGE_DIRECTORY}/pi-context-window-cap/config.json\" && printf %s {diff_watch} > \"$HOME/{STORAGE_DIRECTORY}/pi-diff-watch/index.ts\" && printf %s {codex_web_search} > \"$HOME/{STORAGE_DIRECTORY}/pi-desktop-codex-web-search.ts\" && printf %s {codex_compaction} > \"$HOME/{STORAGE_DIRECTORY}/pi-desktop-codex-compaction.ts\" && printf %s {openai_cache_lineage} > \"$HOME/{STORAGE_DIRECTORY}/pi-openai-cache-lineage.ts\" && printf %s {btw} > \"$HOME/{STORAGE_DIRECTORY}/pi-desktop-btw.ts\" && printf %s {defined_agents} > \"$HOME/{STORAGE_DIRECTORY}/pi-define-agents/index.ts\" && chmod 600 -- \"$HOME/{STORAGE_DIRECTORY}/pi-desktop-codex-web-search.ts\" \"$HOME/{STORAGE_DIRECTORY}/pi-desktop-codex-compaction.ts\" \"$HOME/{STORAGE_DIRECTORY}/pi-openai-cache-lineage.ts\" \"$HOME/{STORAGE_DIRECTORY}/session-broker.ts\" \"$HOME/{STORAGE_DIRECTORY}/pi-desktop-trace-reader.ts\" \"$HOME/{STORAGE_DIRECTORY}/pi-desktop-mcp-bridge.ts\" \"$HOME/{STORAGE_DIRECTORY}/mcp-servers.json\" \"$HOME/{STORAGE_DIRECTORY}/pi-context-window-cap/index.ts\" \"$HOME/{STORAGE_DIRECTORY}/pi-context-window-cap/config.json\" \"$HOME/{STORAGE_DIRECTORY}/pi-diff-watch/index.ts\" \"$HOME/{STORAGE_DIRECTORY}/pi-desktop-btw.ts\" \"$HOME/{STORAGE_DIRECTORY}/pi-define-agents/index.ts\"");
+    let remote = if DEVELOPMENT { remote } else { format!(r#"{remote} && if [ ! -f "$HOME/{STORAGE_DIRECTORY}/pi-define-agents/config.json" ] && [ -f "$HOME/.pi/agent/extensions/pi-define-agents/config.json" ]; then cp "$HOME/.pi/agent/extensions/pi-define-agents/config.json" "$HOME/{STORAGE_DIRECTORY}/pi-define-agents/config.json"; fi && rm -f -- "$HOME/.pi/agent/extensions/pi-define-agents/index.ts" "$HOME/.pi/agent/extensions/pi-desktop-btw.ts""#) };
+    let remote = format!(r#"{remote} && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/pi-openai-fast-mode-piop" && printf %s {fast_mode} > "$HOME/{STORAGE_DIRECTORY}/pi-openai-fast-mode-piop/index.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/pi-openai-fast-mode-piop/index.ts""#);
+    let remote = format!(r#"{remote} && printf %s {runtime_settings_extension} > "$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts" && printf %s {runtime_settings_config} > "$HOME/{STORAGE_DIRECTORY}/runtime-settings.json" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts" "$HOME/{STORAGE_DIRECTORY}/runtime-settings.json""#);
     let mut remote = remote;
     for (name, content) in FILE_CHANGE_ASSETS {
-        remote.push_str(&format!(" && printf %s {} > \"$HOME/.piop/pi-diff-watch/{}\" && chmod 600 \"$HOME/.piop/pi-diff-watch/{}\"", shell_quote(content), name, name));
+        remote.push_str(&format!(" && printf %s {} > \"$HOME/{STORAGE_DIRECTORY}/pi-diff-watch/{}\" && chmod 600 \"$HOME/{STORAGE_DIRECTORY}/pi-diff-watch/{}\"", shell_quote(content), name, name));
     }
     // Bundled extensions can exceed the OS limit for a single command argument.
     let mut child = ssh(host).arg("sh -s").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| format!("Could not install piop extensions on {}: {error}", host.name))?;
@@ -1930,7 +1940,7 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
     if host_id == "local" {
         let (mcp_extension, mcp_config) = prepare_mcp_bridge(settings)?; let context_window_cap_extension = prepare_context_window_cap_extension(settings)?; let diff_watch_extension = prepare_diff_watch_extension()?; let trace_reader_extension = prepare_trace_reader()?; let codex_compaction_extension = prepare_codex_compaction_extension()?; let openai_cache_lineage_extension = prepare_openai_cache_lineage_extension()?; let codex_web_search_extension = prepare_codex_web_search_extension()?; let defined_agents_extension = prepare_defined_agents_extension()?; let pi_path = pi_executable();
         let session_dir = ensure_desktop_sessions_dir(&desktop_home)?;
-        let mut command = Command::new(&pi_path); command.arg(if is_rpc { "--mode" } else { "--print" }); if is_rpc { command.arg("rpc"); }
+        let mut command = Command::new(&pi_path); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY); command.arg(if is_rpc { "--mode" } else { "--print" }); if is_rpc { command.arg("rpc"); }
         command.arg("--extension").arg(prepare_runtime_settings(settings)?).arg("--session-dir").arg(session_dir).arg("--approve").arg("--no-skills").arg("--extension").arg(prepare_hooks_extension()?).arg("--extension").arg(mcp_extension).arg("--extension").arg(prepare_session_broker()?).arg("--extension").arg(&trace_reader_extension).arg("--extension").arg(&context_window_cap_extension).arg("--extension").arg(&diff_watch_extension).arg("--extension").arg(prepare_fast_mode_extension()?).arg("--extension").arg(&codex_compaction_extension).arg("--extension").arg(&openai_cache_lineage_extension).arg("--extension").arg(&codex_web_search_extension).arg("--extension").arg(&defined_agents_extension)
             .env("PI_DESKTOP_DEFINED_AGENTS_EXTENSION", &defined_agents_extension).env("PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION", &codex_web_search_extension).env("PI_DESKTOP_CODEX_COMPACTION_EXTENSION", &codex_compaction_extension).env("PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION", &context_window_cap_extension).env("PI_DESKTOP_TRACE_READER_EXTENSION", &trace_reader_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config).env("PI_DESKTOP_BROKER_URL", format!("http://127.0.0.1:{broker_port}")).env("PI_DESKTOP_BROKER_TOKEN", &broker_token);
         match launch {
@@ -1949,10 +1959,10 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
     }
     let host = remote_host(settings, host_id)?; stage_remote_extensions(host, settings)?; let remote_port = daemon_port.unwrap_or_else(remote_broker_port); let remote_pi = remote_pi_path(&host.pi_path);
     let mut arguments = vec![remote_pi.clone()]; if is_rpc { arguments.extend(["--mode".into(), "rpc".into()]); } else { arguments.push("--print".into()); }
-    arguments.extend(["--extension".into(), "\"$HOME/.piop/runtime-settings.ts\"".into(), "--extension".into(), "\"$HOME/.piop/hook-loader.ts\"".into()]);
-    arguments.extend(["--session-dir".into(), "\"$HOME/.piop/sessions\"".into(), "--approve".into(), "--no-skills".into(), "--extension".into(), "\"$HOME/.piop/pi-desktop-mcp-bridge.ts\"".into(), "--extension".into(), "\"$HOME/.piop/session-broker.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-desktop-trace-reader.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-context-window-cap/index.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-diff-watch/index.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-define-agents/index.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-desktop-codex-compaction.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-openai-cache-lineage.ts\"".into(), "--extension".into(), "\"$HOME/.piop/pi-desktop-codex-web-search.ts\"".into()]);
-    arguments.extend(["--extension".into(), "\"$HOME/.piop/pi-openai-fast-mode-piop/index.ts\"".into()]);
-    if is_rpc { arguments.extend(["--extension".into(), "\"$HOME/.piop/pi-desktop-btw.ts\"".into()]); }
+    arguments.extend(["--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/hook-loader.ts\"")]);
+    arguments.extend(["--session-dir".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/sessions\""), "--approve".into(), "--no-skills".into(), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/pi-desktop-mcp-bridge.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/session-broker.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/pi-desktop-trace-reader.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/pi-context-window-cap/index.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/pi-diff-watch/index.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/pi-define-agents/index.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/pi-desktop-codex-compaction.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/pi-openai-cache-lineage.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/pi-desktop-codex-web-search.ts\"")]);
+    arguments.extend(["--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/pi-openai-fast-mode-piop/index.ts\"")]);
+    if is_rpc { arguments.extend(["--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/pi-desktop-btw.ts\"")]); }
     let mut session_arguments = Vec::new();
     let cwd = match launch {
         PiLaunch::Rpc { cwd, session_path, session_id, fork_path, no_session } => {
@@ -1966,7 +1976,7 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
     if !is_rpc && !default_model.trim().is_empty() { arguments.extend(["--model".into(), shell_quote(default_model.trim())]); }
     if !settings.default_thinking.trim().is_empty() { arguments.extend(["--thinking".into(), shell_quote(settings.default_thinking.trim())]); }
     let rpc_environment = if is_rpc { format!(" PI_DESKTOP_BTW=1 PI_DESKTOP_PI_EXECUTABLE={remote_pi}") } else { String::new() };
-    let remote = format!("cd {} && PI_DESKTOP_DEFINED_AGENTS_EXTENSION=\"$HOME/.piop/pi-define-agents/index.ts\" PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION=\"$HOME/.piop/pi-desktop-codex-web-search.ts\" PI_DESKTOP_CODEX_COMPACTION_EXTENSION=\"$HOME/.piop/pi-desktop-codex-compaction.ts\" PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION=\"$HOME/.piop/pi-context-window-cap/index.ts\" PI_DESKTOP_TRACE_READER_EXTENSION=\"$HOME/.piop/pi-desktop-trace-reader.ts\" PI_DESKTOP_MCP_CONFIG=\"$HOME/.piop/mcp-servers.json\" PI_DESKTOP_BROKER_URL={} PI_DESKTOP_BROKER_TOKEN={}{} exec {}", remote_directory_path(cwd), shell_quote(&format!("http://127.0.0.1:{remote_port}")), shell_quote(&broker_token), rpc_environment, arguments.join(" "));
+    let remote = format!("cd {} && PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} PI_DESKTOP_DEFINED_AGENTS_EXTENSION=\"$HOME/{STORAGE_DIRECTORY}/pi-define-agents/index.ts\" PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION=\"$HOME/{STORAGE_DIRECTORY}/pi-desktop-codex-web-search.ts\" PI_DESKTOP_CODEX_COMPACTION_EXTENSION=\"$HOME/{STORAGE_DIRECTORY}/pi-desktop-codex-compaction.ts\" PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION=\"$HOME/{STORAGE_DIRECTORY}/pi-context-window-cap/index.ts\" PI_DESKTOP_TRACE_READER_EXTENSION=\"$HOME/{STORAGE_DIRECTORY}/pi-desktop-trace-reader.ts\" PI_DESKTOP_MCP_CONFIG=\"$HOME/{STORAGE_DIRECTORY}/mcp-servers.json\" PI_DESKTOP_BROKER_URL={} PI_DESKTOP_BROKER_TOKEN={}{} exec {}", remote_directory_path(cwd), shell_quote(&format!("http://127.0.0.1:{remote_port}")), shell_quote(&broker_token), rpc_environment, arguments.join(" "));
     if daemon_port.is_some() {
         let mut command = Command::new("sh");
         command.args(["-c", &format!("{remote} \"$@\""), "piop"]).args(session_arguments);
@@ -2084,7 +2094,7 @@ fn new_window(app: AppHandle, target: Value) -> Result<String, String> {
     url.query_pairs_mut().append_pair("target", &target.to_string());
     let path = format!("index.html{}", url.query().map(|query| format!("?{query}")).unwrap_or_default());
     tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(path.into()))
-        .title("piop").inner_size(1280.0, 800.0).min_inner_size(900.0, 640.0)
+        .title(APP_TITLE).inner_size(1280.0, 800.0).min_inner_size(900.0, 640.0)
         .build().map_err(|error| error.to_string())?;
     Ok(label)
 }
@@ -2285,8 +2295,8 @@ fn read_session_summaries(candidates: &[(String, String, u64, u64)], host: Optio
         }
         let batch = &candidates[cursor..end];
         let mut command = if let Some(host) = host {
-            let mut command = ssh(host); command.arg(remote_login_command(&format!("node -e {} {}", shell_quote(script), batch.iter().map(|item| shell_quote(&item.0)).collect::<Vec<_>>().join(" ")))); command
-        } else { let mut command = Command::new("node"); command.args(["-e", script]).args(batch.iter().map(|item| &item.0)); command };
+            let mut command = ssh(host); command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), batch.iter().map(|item| shell_quote(&item.0)).collect::<Vec<_>>().join(" ")))); command
+        } else { let mut command = node_command(); command.args(["-e", script]).args(batch.iter().map(|item| &item.0)); command };
         let output = run_limited(&mut command, MAX_SESSION_INDEX_BATCH_BYTES, "Could not read session summaries")?;
         if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).into_owned()); }
         for line in output.stdout.split(|byte| *byte == b'\n') {
@@ -2319,7 +2329,7 @@ fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<S
 }
 
 fn list_remote_sessions(index: &SessionIndexRuntime, host: &RemoteHost) -> Result<Vec<SessionSummary>, String> {
-    let output = run_limited(ssh(host).arg(r#"mkdir -p "$HOME/.piop/sessions" && find "$HOME/.piop/sessions" -type f -name '*.jsonl' -printf '%p\000%T@\000%s\000' 2>/dev/null"#), MAX_SESSION_INDEX_BATCH_BYTES, "Could not list remote sessions")?;
+    let output = run_limited(ssh(host).arg(format!(r#"mkdir -p "$HOME/{STORAGE_DIRECTORY}/sessions" && find "$HOME/{STORAGE_DIRECTORY}/sessions" -type f -name '*.jsonl' -printf '%p\000%T@\000%s\000' 2>/dev/null"#)), MAX_SESSION_INDEX_BATCH_BYTES, "Could not list remote sessions")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).into_owned()); }
     let fields = output.stdout.split(|byte| *byte == 0).collect::<Vec<_>>();
     let metadata = fields.chunks_exact(3).filter_map(|frame| {
@@ -2350,7 +2360,7 @@ fn home_directory(app: AppHandle, host_id: String) -> Result<String, String> {
 }
 
 fn create_local_temporary_chat(home: &Path, session_id: &str) -> Result<PathBuf, String> {
-    let cwd = home.join(".piop/tmp").join(session_id);
+    let cwd = home.join(STORAGE_DIRECTORY).join("tmp").join(session_id);
     fs::create_dir_all(&cwd).map_err(|error| format!("Could not create temporary chat directory: {error}"))?;
     fs::write(cwd.join(".pi-desktop-temporary-chat"), b"").map_err(|error| format!("Could not mark temporary chat directory: {error}"))?;
     Ok(cwd)
@@ -2359,14 +2369,14 @@ fn create_local_temporary_chat(home: &Path, session_id: &str) -> Result<PathBuf,
 fn temporary_chat_id(path: &str) -> Option<&str> {
     let value = Path::new(path); let id = value.file_name()?.to_str()?;
     Uuid::parse_str(id).ok()?;
-    (value.parent()?.file_name()?.to_str()? == "tmp" && value.parent()?.parent()?.file_name()?.to_str()? == ".piop").then_some(id)
+    (value.parent()?.file_name()?.to_str()? == "tmp" && value.parent()?.parent()?.file_name()?.to_str()? == STORAGE_DIRECTORY).then_some(id)
 }
 
 #[tauri::command(async)]
 fn remove_temporary_chat(app: AppHandle, path: String, host_id: String) -> Result<(), String> {
     temporary_chat_id(&path).ok_or("Refusing to remove a directory not created as a temporary chat")?;
     if host_id == "local" {
-        let expected_root = home_dir()?.join(".piop/tmp");
+        let expected_root = home_dir()?.join(STORAGE_DIRECTORY).join("tmp");
         let candidate = PathBuf::from(&path);
         if candidate.parent() != Some(expected_root.as_path()) { return Err("Refusing to remove a directory outside the temporary chat root".into()); }
         if !candidate.join(".pi-desktop-temporary-chat").is_file() { return Err("Refusing to remove an unmarked directory".into()); }
@@ -2374,7 +2384,7 @@ fn remove_temporary_chat(app: AppHandle, path: String, host_id: String) -> Resul
         return Ok(());
     }
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
-    let script = format!("candidate={}; root=\"$HOME/.piop/tmp\"; [ \"$(dirname -- \"$candidate\")\" = \"$root\" ] && [ -f \"$candidate/.pi-desktop-temporary-chat\" ] && rm -rf -- \"$candidate\"", shell_quote(&path));
+    let script = format!("candidate={}; root=\"$HOME/{STORAGE_DIRECTORY}/tmp\"; [ \"$(dirname -- \"$candidate\")\" = \"$root\" ] && [ -f \"$candidate/.pi-desktop-temporary-chat\" ] && rm -rf -- \"$candidate\"", shell_quote(&path));
     let output = ssh(host).arg(script).output().map_err(|error| format!("Could not remove temporary chat directory on {}: {error}", host.name))?;
     if !output.status.success() { return Err(format!("Could not remove temporary chat directory on {}: {}", host.name, String::from_utf8_lossy(&output.stderr).trim())); }
     Ok(())
@@ -2403,7 +2413,7 @@ fn create_temporary_chat(app: AppHandle, host_id: String, e2e: Option<bool>) -> 
         cwd.to_string_lossy().into_owned()
     } else {
         let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
-        let remote = format!("mkdir -p \"$HOME/.piop/tmp/{session_id}\" && : > \"$HOME/.piop/tmp/{session_id}/.pi-desktop-temporary-chat\" && cd \"$HOME/.piop/tmp/{session_id}\" && pwd -P");
+        let remote = format!("mkdir -p \"$HOME/{STORAGE_DIRECTORY}/tmp/{session_id}\" && : > \"$HOME/{STORAGE_DIRECTORY}/tmp/{session_id}/.pi-desktop-temporary-chat\" && cd \"$HOME/{STORAGE_DIRECTORY}/tmp/{session_id}\" && pwd -P");
         let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not create temporary chat directory on {}: {error}", host.name))?;
         if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
         let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -2464,10 +2474,10 @@ fn inspect_storage(host: Option<&RemoteHost>) -> Result<HostStorage, String> {
     let script = include_str!("../resources/storage-inventory.cjs");
     let mut command = if let Some(host) = host {
         let mut command = ssh(host);
-        command.arg(remote_login_command(&format!("node -e {}", shell_quote(script))));
+        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {}", shell_quote(script))));
         command
     } else {
-        let mut command = Command::new("node");
+        let mut command = node_command();
         command.args(["-e", script]);
         command
     };
@@ -2523,7 +2533,7 @@ fn local_desktop_session_file(session_path: &str) -> Result<PathBuf, String> {
 }
 
 fn local_archived_session_file(session_path: &str) -> Result<PathBuf, String> {
-    let root = home_dir()?.join(".piop/archived").canonicalize().map_err(|error| format!("Could not locate piop archives: {error}"))?;
+    let root = home_dir()?.join(STORAGE_DIRECTORY).join("archived").canonicalize().map_err(|error| format!("Could not locate piop archives: {error}"))?;
     let source = PathBuf::from(session_path).canonicalize().map_err(|error| format!("Could not locate archived conversation: {error}"))?;
     if !source.starts_with(&root) || source.extension().and_then(|value| value.to_str()) != Some("jsonl") || !source.is_file() { return Err("Only archived piop conversations can be accessed".into()); }
     Ok(source)
@@ -2532,18 +2542,18 @@ fn local_archived_session_file(session_path: &str) -> Result<PathBuf, String> {
 fn desktop_session_file(settings: &AppSettings, host_id: &str, path: &str) -> Result<String, String> {
     if host_id == "local" { return Ok(local_desktop_session_file(path)?.to_string_lossy().into_owned()); }
     let host = remote_host(settings, host_id)?;
-    let script = format!(r#"root=$(cd "$HOME/.piop/sessions" && pwd -P) && session=$(realpath -- {}) && [ -f "$session" ] && case "$session" in "$root"/*.jsonl) printf '%s' "$session" ;; *) exit 1 ;; esac"#, shell_quote(path));
+    let script = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) && session=$(realpath -- {}) && [ -f "$session" ] && case "$session" in "$root"/*.jsonl) printf '%s' "$session" ;; *) exit 1 ;; esac"#, shell_quote(path));
     let output = run_limited(ssh(host).arg(script), MAX_GIT_PATH_LIST_BYTES, "Could not locate Piop session")?;
-    if !output.status.success() { return Err("Only Piop session files in ~/.piop/sessions can be opened".into()); }
+    if !output.status.success() { return Err("Only session files in this Piop profile can be opened".into()); }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn archived_session_file(settings: &AppSettings, host_id: &str, path: &str) -> Result<String, String> {
     if host_id == "local" { return Ok(local_archived_session_file(path)?.to_string_lossy().into_owned()); }
     let host = remote_host(settings, host_id)?;
-    let script = format!(r#"root=$(cd "$HOME/.piop/archived" && pwd -P) && session=$(realpath -- {}) && [ -f "$session" ] && case "$session" in "$root"/*.jsonl) printf '%s' "$session" ;; *) exit 1 ;; esac"#, shell_quote(path));
+    let script = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/archived" && pwd -P) && session=$(realpath -- {}) && [ -f "$session" ] && case "$session" in "$root"/*.jsonl) printf '%s' "$session" ;; *) exit 1 ;; esac"#, shell_quote(path));
     let output = run_limited(ssh(host).arg(script), MAX_GIT_PATH_LIST_BYTES, "Could not locate archived Piop conversation")?;
-    if !output.status.success() { return Err("Only Piop conversation files in ~/.piop/archived can be deleted".into()); }
+    if !output.status.success() { return Err("Only archived conversation files in this Piop profile can be deleted".into()); }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
@@ -2567,14 +2577,14 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
         let file_name = Path::new(&session_path).file_name().and_then(|name| name.to_str()).ok_or("Session path has no file name")?;
         let destination = format!("{}-{file_name}", Uuid::new_v4());
         let diff_destination = Path::new(&destination).with_extension("diffs.json").to_string_lossy().into_owned();
-        let remote = format!(r#"root=$(cd "$HOME/.piop/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) archive="$HOME/.piop/archived"; mkdir -p "$archive" || exit 1; diff=${{target%.jsonl}}.diffs.json; diff_target="$archive"/{}; moved_diff=0; if [ -f "$diff" ]; then mv -- "$diff" "$diff_target" || exit 1; moved_diff=1; fi; if ! mv -- "$target" "$archive"/{}; then if [ "$moved_diff" = 1 ]; then mv -- "$diff_target" "$diff" || true; fi; exit 1; fi ;; *) printf 'Refusing to archive a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(&session_path), shell_quote(&diff_destination), shell_quote(&destination));
+        let remote = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) archive="$HOME/{STORAGE_DIRECTORY}/archived"; mkdir -p "$archive" || exit 1; diff=${{target%.jsonl}}.diffs.json; diff_target="$archive"/{}; moved_diff=0; if [ -f "$diff" ]; then mv -- "$diff" "$diff_target" || exit 1; moved_diff=1; fi; if ! mv -- "$target" "$archive"/{}; then if [ "$moved_diff" = 1 ]; then mv -- "$diff_target" "$diff" || true; fi; exit 1; fi ;; *) printf 'Refusing to archive a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(&session_path), shell_quote(&diff_destination), shell_quote(&destination));
         let output = ssh(host).arg(remote).output().map_err(|error| error.to_string())?;
         if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
         let _ = stop_terminals(&runtime, &terminal_ids);
         return Ok(());
     }
     let source = local_desktop_session_file(&session_path)?;
-    let archive_dir = home_dir()?.join(".piop/archived");
+    let archive_dir = home_dir()?.join(STORAGE_DIRECTORY).join("archived");
     fs::create_dir_all(&archive_dir).map_err(|error| format!("Could not create archive directory: {error}"))?;
     let file_name = source.file_name().ok_or("Session path has no file name")?;
     let mut destination = archive_dir.join(file_name);
@@ -2606,17 +2616,17 @@ fn delete_stored_session(app: AppHandle, runtime: &PiRuntime, session_path: Stri
     }
     let active_session_ids: Vec<String> = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values()
         .filter(|agent| agent.host_id == host_id).filter_map(|agent| agent.session_id.clone()).collect();
-    let local_root = if archived { home_dir()?.join(".piop/archived") } else { desktop_sessions_dir(&home_dir()?) };
+    let local_root = if archived { home_dir()?.join(STORAGE_DIRECTORY).join("archived") } else { desktop_sessions_dir(&home_dir()?) };
     let arguments = json!({ "path": path, "activeSessionIds": active_session_ids, "area": if archived { "archived" } else { "sessions" }, "root": if host_id == "local" { Some(local_root) } else { None } }).to_string();
     let script = include_str!("../resources/delete-session.cjs");
     let mut command = if host_id == "local" {
-        let mut command = Command::new("node");
+        let mut command = node_command();
         command.args(["-e", script, &arguments]);
         command
     } else {
         let host = remote_host(&settings, &host_id)?;
         let mut command = ssh(host);
-        command.arg(remote_login_command(&format!("node -e {} {}", shell_quote(script), shell_quote(&arguments))));
+        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), shell_quote(&arguments))));
         command
     };
     let output = run_limited(&mut command, 256 * 1024, "Could not delete session")?;
@@ -2641,7 +2651,7 @@ fn relocate_session(app: AppHandle, session_path: String, cwd: String, host_id: 
     if host_id != "local" {
         let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
         let session = shell_quote(&session_path); let replacement = shell_quote(cwd.trim());
-        let script = format!(r#"root=$(cd "$HOME/.piop/sessions" && pwd -P) || exit 1; path=$(realpath -- {session}) || exit 1; case "$path" in "$root"/*.jsonl) ;; *) printf 'Refusing to relocate a non-desktop session file' >&2; exit 1 ;; esac; replacement={replacement}; [ -d "$replacement" ] || {{ printf 'Project directory does not exist: %s' "$replacement" >&2; exit 1; }}; node -e 'const fs=require("fs"); const [path,cwd]=process.argv.slice(1); const content=fs.readFileSync(path,"utf8"); const newline=content.indexOf("\n"); const first=newline<0?content:content.slice(0,newline); const rest=newline<0?"":content.slice(newline+1); const header=JSON.parse(first); if(header.type!=="session") throw new Error("Invalid session header"); header.cwd=cwd; const temporary=path+"."+process.pid+".tmp"; try {{ fs.writeFileSync(temporary,JSON.stringify(header)+(newline<0?"":"\n"+rest),{{mode:fs.statSync(path).mode}}); fs.renameSync(temporary,path); }} catch(error) {{ try {{ fs.unlinkSync(temporary); }} catch {{}} throw error; }}' "$path" "$replacement""#);
+        let script = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) || exit 1; path=$(realpath -- {session}) || exit 1; case "$path" in "$root"/*.jsonl) ;; *) printf 'Refusing to relocate a non-desktop session file' >&2; exit 1 ;; esac; replacement={replacement}; [ -d "$replacement" ] || {{ printf 'Project directory does not exist: %s' "$replacement" >&2; exit 1; }}; PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e 'const fs=require("fs"); const [path,cwd]=process.argv.slice(1); const content=fs.readFileSync(path,"utf8"); const newline=content.indexOf("\n"); const first=newline<0?content:content.slice(0,newline); const rest=newline<0?"":content.slice(newline+1); const header=JSON.parse(first); if(header.type!=="session") throw new Error("Invalid session header"); header.cwd=cwd; const temporary=path+"."+process.pid+".tmp"; try {{ fs.writeFileSync(temporary,JSON.stringify(header)+(newline<0?"":"\n"+rest),{{mode:fs.statSync(path).mode}}); fs.renameSync(temporary,path); }} catch(error) {{ try {{ fs.unlinkSync(temporary); }} catch {{}} throw error; }}' "$path" "$replacement""#);
         let output = run_limited(ssh(host).arg(remote_login_command(&script)), 64 * 1024, &format!("Could not relocate conversation on {}", host.name))?;
         if output.status.success() { return Ok(()); }
         let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -2877,7 +2887,13 @@ const LOAD_ERROR_HTML: &str = r#"<!doctype html>
 </html>"#;
 
 pub fn run() {
-    let context = tauri::generate_context!();
+    let mut context = tauri::generate_context!();
+    if DEVELOPMENT {
+        let config = context.config_mut();
+        config.identifier = "dev.pi.desktop.debug".into();
+        config.product_name = Some(APP_TITLE.into());
+        for window in &mut config.app.windows { window.title = APP_TITLE.into(); }
+    }
     #[cfg(target_os = "linux")]
     let (context, start_window) = {
         let mut context = context;
