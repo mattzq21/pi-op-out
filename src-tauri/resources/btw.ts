@@ -32,6 +32,7 @@ async function runFork(pi: PiApi, sessionFile: string, cwd: string, task: string
     ? ["--print", "--approve", "--fork", sessionFile]
     : [process.argv[1], "--print", "--approve", "--fork", sessionFile];
   args.push("--session-dir", join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "sessions"));
+  args.push("--extension", join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "rtk.ts"));
   args.push("--extension", join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "runtime-settings.ts"));
   const settings: { settings?: unknown } = {};
   pi.events.emit("piop:runtime-settings", settings);

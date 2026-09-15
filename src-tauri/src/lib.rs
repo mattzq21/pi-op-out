@@ -582,6 +582,15 @@ fn runtime_settings(settings: &AppSettings) -> Value {
     json!({ "tools": enabled_tool_names(settings), "skills": settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|skill| skill.get("path").and_then(Value::as_str)).collect::<Vec<_>>(), "mcpServers": settings.mcp_servers, "contextWindowCap": settings.context_window_cap, "contextWindowCapEnabled": settings.context_window_cap_enabled })
 }
 
+fn prepare_rtk_extension() -> Result<PathBuf, String> {
+    let dir = home_dir()?.join(STORAGE_DIRECTORY);
+    ensure_private_dir(&dir)?;
+    let path = dir.join("rtk.ts");
+    atomic_write_private(&path, include_str!("../../extensions/pi-rtk/rtk.ts").as_bytes())?;
+    atomic_write_private(&dir.join("rtk.LICENSE"), include_str!("../../extensions/pi-rtk/LICENSE").as_bytes())?;
+    Ok(path)
+}
+
 fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf, String> {
     let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
@@ -1894,6 +1903,8 @@ fn remote_broker_command(host: &RemoteHost, local_port: u16, remote_port: u16) -
 }
 
 fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<(), String> {
+    let rtk_extension = shell_quote(include_str!("../../extensions/pi-rtk/rtk.ts"));
+    let rtk_license = shell_quote(include_str!("../../extensions/pi-rtk/LICENSE"));
     let runtime_settings_extension = shell_quote(include_str!("../../extensions/pi-runtime-settings/index.ts"));
     let runtime_settings_config = shell_quote(&serde_json::to_string(&runtime_settings(settings)).map_err(|error| error.to_string())?);
     let hook_stats = shell_quote(include_str!("../../extensions/piop-hooks/hook-stats.ts"));
@@ -1915,6 +1926,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let remote = if DEVELOPMENT { remote } else { format!(r#"{remote} && if [ ! -f "$HOME/{STORAGE_DIRECTORY}/pi-define-agents/config.json" ] && [ -f "$HOME/.pi/agent/extensions/pi-define-agents/config.json" ]; then cp "$HOME/.pi/agent/extensions/pi-define-agents/config.json" "$HOME/{STORAGE_DIRECTORY}/pi-define-agents/config.json"; fi && rm -f -- "$HOME/.pi/agent/extensions/pi-define-agents/index.ts" "$HOME/.pi/agent/extensions/pi-desktop-btw.ts""#) };
     let remote = format!(r#"{remote} && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/pi-openai-fast-mode-piop" && printf %s {fast_mode} > "$HOME/{STORAGE_DIRECTORY}/pi-openai-fast-mode-piop/index.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/pi-openai-fast-mode-piop/index.ts""#);
     let remote = format!(r#"{remote} && printf %s {runtime_settings_extension} > "$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts" && printf %s {runtime_settings_config} > "$HOME/{STORAGE_DIRECTORY}/runtime-settings.json" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts" "$HOME/{STORAGE_DIRECTORY}/runtime-settings.json""#);
+    let remote = format!(r#"{remote} && printf %s {rtk_extension} > "$HOME/{STORAGE_DIRECTORY}/rtk.ts" && printf %s {rtk_license} > "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/rtk.ts" "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE""#);
     let mut remote = remote;
     for (name, content) in FILE_CHANGE_ASSETS {
         remote.push_str(&format!(" && printf %s {} > \"$HOME/{STORAGE_DIRECTORY}/pi-diff-watch/{}\" && chmod 600 \"$HOME/{STORAGE_DIRECTORY}/pi-diff-watch/{}\"", shell_quote(content), name, name));
@@ -1943,6 +1955,7 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
         let (mcp_extension, mcp_config) = prepare_mcp_bridge(settings)?; let context_window_cap_extension = prepare_context_window_cap_extension(settings)?; let diff_watch_extension = prepare_diff_watch_extension()?; let trace_reader_extension = prepare_trace_reader()?; let codex_compaction_extension = prepare_codex_compaction_extension()?; let openai_cache_lineage_extension = prepare_openai_cache_lineage_extension()?; let codex_web_search_extension = prepare_codex_web_search_extension()?; let defined_agents_extension = prepare_defined_agents_extension()?; let pi_path = pi_executable();
         let session_dir = ensure_desktop_sessions_dir(&desktop_home)?;
         let mut command = Command::new(&pi_path); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY); command.arg(if is_rpc { "--mode" } else { "--print" }); if is_rpc { command.arg("rpc"); }
+        command.arg("--extension").arg(prepare_rtk_extension()?);
         command.arg("--extension").arg(prepare_runtime_settings(settings)?).arg("--session-dir").arg(session_dir).arg("--approve").arg("--no-skills").arg("--extension").arg(prepare_hooks_extension()?).arg("--extension").arg(mcp_extension).arg("--extension").arg(prepare_session_broker()?).arg("--extension").arg(&trace_reader_extension).arg("--extension").arg(&context_window_cap_extension).arg("--extension").arg(&diff_watch_extension).arg("--extension").arg(prepare_fast_mode_extension()?).arg("--extension").arg(&codex_compaction_extension).arg("--extension").arg(&openai_cache_lineage_extension).arg("--extension").arg(&codex_web_search_extension).arg("--extension").arg(&defined_agents_extension)
             .env("PI_DESKTOP_DEFINED_AGENTS_EXTENSION", &defined_agents_extension).env("PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION", &codex_web_search_extension).env("PI_DESKTOP_CODEX_COMPACTION_EXTENSION", &codex_compaction_extension).env("PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION", &context_window_cap_extension).env("PI_DESKTOP_TRACE_READER_EXTENSION", &trace_reader_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config).env("PI_DESKTOP_BROKER_URL", format!("http://127.0.0.1:{broker_port}")).env("PI_DESKTOP_BROKER_TOKEN", &broker_token);
         match launch {
@@ -1961,6 +1974,7 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
     }
     let host = remote_host(settings, host_id)?; stage_remote_extensions(host, settings)?; let remote_port = daemon_port.unwrap_or_else(remote_broker_port); let remote_pi = remote_pi_path(&host.pi_path);
     let mut arguments = vec![remote_pi.clone()]; if is_rpc { arguments.extend(["--mode".into(), "rpc".into()]); } else { arguments.push("--print".into()); }
+    arguments.extend(["--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/rtk.ts\"")]);
     arguments.extend(["--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/hook-loader.ts\"")]);
     arguments.extend(["--session-dir".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/sessions\""), "--approve".into(), "--no-skills".into(), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/pi-desktop-mcp-bridge.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/session-broker.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/pi-desktop-trace-reader.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/pi-context-window-cap/index.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/pi-diff-watch/index.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/pi-define-agents/index.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/pi-desktop-codex-compaction.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/pi-openai-cache-lineage.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/pi-desktop-codex-web-search.ts\"")]);
     arguments.extend(["--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/pi-openai-fast-mode-piop/index.ts\"")]);
