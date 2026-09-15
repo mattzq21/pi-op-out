@@ -1,5 +1,7 @@
 mod session_groups;
 mod daemon;
+mod voice;
+use voice::{voice_configuration, voice_start, voice_stop, voice_mute, voice_suppress, voice_context};
 use session_groups::{load_session_groups, change_session_groups};
 
 use serde::{de, Deserialize, Deserializer, Serialize};
@@ -2918,7 +2920,7 @@ pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(feature = "webdriver")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
-    builder.plugin(tauri_plugin_dialog::init()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(SessionIndexRuntime::default()).manage(broker.clone()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
+    builder.plugin(tauri_plugin_dialog::init()).manage(voice::VoiceRuntime::default()).manage(PiRuntime::default()).manage(TerminalRuntime::default()).manage(SessionIndexRuntime::default()).manage(broker.clone()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(target_os = "linux")]
         if let Some((label, focus)) = start_window.as_ref() {
             use gtk::prelude::GtkWindowExt;
@@ -2935,7 +2937,7 @@ pub fn run() {
         }
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
-    }).invoke_handler(tauri::generate_handler![start_pi, stop_pi, pi_command, pi_presence, new_window, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, storage_report, load_session_groups, change_session_groups, list_hooks, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, git_project_kind, git_worktree_roots, create_project_worktree, create_git_worktree, remove_git_worktree, prepare_worktree_setup, cancel_worktree_setup, run_worktree_setup, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, delete_archived_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).build(context).expect("error while building piop").run(|app, event| {
+    }).invoke_handler(tauri::generate_handler![voice_configuration, voice_start, voice_stop, voice_mute, voice_suppress, voice_context, start_pi, stop_pi, pi_command, pi_presence, new_window, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, storage_report, load_session_groups, change_session_groups, list_hooks, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, git_project_kind, git_worktree_roots, create_project_worktree, create_git_worktree, remove_git_worktree, prepare_worktree_setup, cancel_worktree_setup, run_worktree_setup, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, delete_archived_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage]).build(context).expect("error while building piop").run(|app, event| {
         if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } = &event {
             let app = app.clone(); let label = label.clone();
             thread::spawn(move || {
@@ -2948,6 +2950,7 @@ pub fn run() {
             });
         }
         if matches!(event, tauri::RunEvent::Exit) {
+            app.state::<voice::VoiceRuntime>().shutdown();
             let broker = app.state::<BrokerRuntime>(); broker.closing.store(true, Ordering::SeqCst);
             let jobs = broker.jobs.lock().map(|mut jobs| jobs.drain().map(|(_, child)| child).collect::<Vec<_>>()).unwrap_or_default();
             for child in jobs { if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); } }

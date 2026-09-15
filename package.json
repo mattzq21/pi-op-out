@@ -8,6 +8,7 @@
     "lint": "eslint . --max-warnings 0",
     "lint:rust": "npm run build:extensions && vite build && cd src-tauri && cargo clippy --locked --all-targets --all-features -- -D warnings",
     "build": "npm run build:extensions && tsc -b && vite build",
+    "build:voice": "node scripts/build-voice.mjs",
     "build:extensions": "npm run build:mcp-bridge && npm run build:codex-compaction && npm run build:fast-mode",
     "build:fast-mode": "node scripts/build-fast-mode.mjs",
     "build:codex-compaction": "node scripts/build-codex-compaction.mjs",

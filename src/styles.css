@@ -441,3 +441,11 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .setup-script { display: grid; gap: 12px; padding: 16px 0; border-top: 1px solid var(--line); }
 .setup-script-code { min-height: 160px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; resize: vertical; }
 .concurrent-view-status { flex-shrink: 0; padding: 6px 16px; color: var(--text-muted, #a09c93); font-size: 12px; border-bottom: 1px solid var(--border, #34322d); }
+.voice-controls { font-size: 12px; color: var(--text-muted, #a4a4ac); padding: 4px 8px; }
+.voice-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.voice-toolbar button { display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 6px; background: transparent; color: inherit; padding: 5px 7px; }
+.voice-toolbar button:hover, .voice-toolbar button[aria-pressed="true"] { background: #ffffff12; color: #fff; }
+.voice-toolbar meter { width: 45px; height: 8px; }
+.voice-error { color: #f3a59e; padding: 6px 0; }
+.voice-captions { max-height: 110px; overflow: auto; margin-top: 6px; border-left: 2px solid #6f7dc4; padding: 0 10px; }
+.voice-captions p { margin: 4px 0; white-space: pre-wrap; overflow-wrap: anywhere; }

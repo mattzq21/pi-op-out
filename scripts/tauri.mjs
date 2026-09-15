@@ -22,7 +22,7 @@ if (args[0] === "dev") {
   });
   Object.assign(configOverrides, {
     build: {
-      beforeDevCommand: `npm run dev -- --host 127.0.0.1 --port ${port} --strictPort`,
+      beforeDevCommand: `npm run build:voice && npm run dev -- --host 127.0.0.1 --port ${port} --strictPort`,
       devUrl: `http://127.0.0.1:${port}`,
     },
     app: { windows: config.app.windows.map((window) => ({ ...window, focus: false })) },

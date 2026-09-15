@@ -25,6 +25,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 walkdir = "2"
+tokio = { version = "1", features = ["io-util", "macros", "process", "sync", "time", "net"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
+futures-util = "0.3"
+base64 = "0.22"
 portable-pty = "0.9"
 tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 
