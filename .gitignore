@@ -14,7 +14,7 @@ reports/mutation/
 mutants.out/
 mutants.out.old/
 extensions/pi-orchestration/config.json
-extensions/pi-define-agents/config.json
+extensions/piop-define-agents/config.json
 .DS_Store
 piop.png
 piop-settings.png

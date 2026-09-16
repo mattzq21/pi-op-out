@@ -8,10 +8,10 @@ A native Tauri interface for the Pi coding agent, with persistent local or SSH-h
 - Pause/resume, stop, retry, steering, and queued follow-ups
 - Project-grouped conversation history, search, split panes, and Git worktree branching
 - Model and thinking-level controls, slash commands, and a project terminal
-- Named [agent profiles](extensions/pi-define-agents/README.md) with models, instructions, and tool, skill, and MCP server selections
+- Named [agent profiles](extensions/piop-define-agents/README.md) with models, instructions, and tool, skill, and MCP server selections
 - Settings for tools, skills, remote hosts, MCP servers, and compaction
 - Pi extension dialogs, notifications, status lines, and widgets
-- Bundled [web search](extensions/pi-codex-web-search/README.md)
+- Bundled [web search](extensions/piop-codex-web-search/README.md)
 
 ## Android
 
@@ -52,7 +52,7 @@ Select an agent in the conversation and configure profiles in Settings → Agent
 
 The number counts backwards through completed responses: `0` (the default) is the latest, `1` is the previous response. Examples: `/worktree 2 experiment` or `/worktree experiment`. Stop or pause the agent before either command.
 
-**Branch before this prompt**, beside a user message, opens a new worktree with that prompt's starting files and conversation history. Piop retains the latest 10 checkpoints per conversation; the original conversation can keep running. See [checkpoint storage and limits](extensions/pi-project-files-watch/README.md#before-prompt-checkpoints).
+**Branch before this prompt**, beside a user message, opens a new worktree with that prompt's starting files and conversation history. Piop retains the latest 10 checkpoints per conversation; the original conversation can keep running. See [checkpoint storage and limits](extensions/piop-project-files-watch/README.md#before-prompt-checkpoints).
 
 `/catch-up` resets a secondary worktree's current branch to the main worktree's commit after confirmation. It discards tracked local changes and does not copy the main worktree's uncommitted changes or fetch from a remote. Stop or pause the agent first; the command is also blocked if another Piop agent is working in that worktree. In the main worktree, it does nothing.
 

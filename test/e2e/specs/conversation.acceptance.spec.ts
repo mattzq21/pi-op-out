@@ -6,7 +6,7 @@ import type { AppSettings, DefinedAgentsCapability, AgentConfig } from "../../..
 import { app } from "../pageobjects/app.page.js";
 
 type BackendCall = { command: string; args: Record<string, unknown>; mocked: boolean };
-const installedAgentConfigPath = join(process.env.PIOP_TEST_HOME || (() => { throw new Error("E2E requires an isolated home"); })(), ".piop", "pi-define-agents", "config.json");
+const installedAgentConfigPath = join(process.env.PIOP_TEST_HOME || (() => { throw new Error("E2E requires an isolated home"); })(), ".piop", "piop-define-agents", "config.json");
 const callBridge = () => $('textarea[aria-label="E2E calls"]');
 const responseBridge = () => $('textarea[aria-label="E2E responses"]');
 const mockBackend = async (responses: Record<string, unknown>) => {

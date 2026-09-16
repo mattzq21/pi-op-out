@@ -1,4 +1,4 @@
-export const PACKAGE_NAME = "pi-openai-fast-mode-piop";
+export const PACKAGE_NAME = "piop-openai-fast-mode";
 export const STATUS_KEY = PACKAGE_NAME;
 export const DEFAULT_SERVICE_TIER = "priority";
 

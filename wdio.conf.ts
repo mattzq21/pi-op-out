@@ -48,7 +48,7 @@ const getOsAssignedPort = () => new Promise<number>((resolve, reject) => {
 const webdriverPort = await getOsAssignedPort();
 const sessionsRoot = path.join(fixtureHome, ".piop", "sessions");
 const temporaryProjectsRoot = path.join(fixtureHome, ".piop", "tmp");
-const definedAgentsConfigPath = path.join(fixtureHome, ".piop", "pi-define-agents", "config.json");
+const definedAgentsConfigPath = path.join(fixtureHome, ".piop", "piop-define-agents", "config.json");
 const userConfigRoot = fixtureEnvironment.XDG_CONFIG_HOME;
 const desktopSettingsPath = path.join(userConfigRoot, "dev.pi.desktop", "settings.json");
 let baselineSessions = new Set<string>();

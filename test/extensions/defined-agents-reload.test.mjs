@@ -12,12 +12,16 @@ test('agent definitions survive reload while selected MCP tools are pending', as
   try {
     process.env.PI_DESKTOP_MCP_CONFIG = 'fixture';
     delete process.env.PI_DESKTOP_ALLOWED_TOOLS;
-    const agent = name => ({ name, model: '', effort: 'high', tools: [], skills: [], mcpServers: name === 'tester' ? ['cua-vm'] : [] });
+    const agent = name => ({ name, model: '', effort: 'high', tools: [], skills: name === 'tester' ? ['/fixture/skill'] : [], mcpServers: name === 'tester' ? ['cua-vm'] : [] });
     await writeFile(join(dir, 'config.json'), JSON.stringify({ agents: [agent('default'), agent('tester')], webSearchDefaultApplied: true }));
-    const source = (await readFile(new URL('../../extensions/pi-define-agents/index.ts', import.meta.url), 'utf8')).replace(/import \{ formatSkillsForPrompt, type BuildSystemPromptOptions \} from "@earendil-works\/pi-coding-agent";/, 'const formatSkillsForPrompt = () => "";');
-    await writeFile(join(dir, 'index.mjs'), (await transform(source, { loader: 'ts', format: 'esm' })).code);
+    const source = (await readFile(new URL('../../extensions/piop-define-agents/index.ts', import.meta.url), 'utf8')).replace(/import \{ formatSkillsForPrompt, type BuildSystemPromptOptions \} from "@earendil-works\/pi-coding-agent";/, 'const formatSkillsForPrompt = () => "";');
+    const loader = await readFile(new URL('../../extensions/piop-define-agents/extension-loader.ts', import.meta.url), 'utf8');
+    await writeFile(join(dir, 'extension-loader.mjs'), (await transform(loader, { loader: 'ts', format: 'esm' })).code);
+    await writeFile(join(dir, 'index.mjs'), (await transform(source.replace('./extension-loader.ts', './extension-loader.mjs'), { loader: 'ts', format: 'esm' })).code);
     const define = (await import(pathToFileURL(join(dir, 'index.mjs')).href)).default;
     let handlers, commands, status, activeTools, finishMcp, startup;
+    let mcpStarted;
+    const mcpReady = new Promise(resolve => { mcpStarted = resolve; });
     const entries = [];
     const statuses = [];
     const ctx = {
@@ -37,7 +41,7 @@ test('agent definitions survive reload while selected MCP tools are pending', as
         registerCommand: (name, command) => { commands[name] = command.handler; },
         getAllTools: () => [], getThinkingLevel: () => 'high', setActiveTools: tools => { activeTools = tools; },
         appendEntry: (customType, data) => entries.push({ type: 'custom', customType, data }),
-        events: { emit(_name, selection) { selection.ready = selection.serverIds.length ? new Promise(resolve => { finishMcp = resolve; }) : Promise.resolve([]); } },
+        events: { on() { return () => {}; }, emit(_name, selection) { if (!selection.serverIds) return; selection.ready = selection.serverIds.length ? new Promise(resolve => { finishMcp = resolve; mcpStarted(); }) : Promise.resolve([]); } },
       });
     }
     await load(); await handlers.session_start({}, ctx);
@@ -46,11 +50,12 @@ test('agent definitions survive reload while selected MCP tools are pending', as
     assert.ok(statuses.every(Boolean), 'reload cleared already-loaded agent definitions');
     const capability = JSON.parse(Buffer.from(status.slice(5), 'base64url').toString());
     assert.equal(capability.active, 'tester');
-    assert.deepEqual(capability.config.agents.map(a => a.name), ['default', 'tester']);
+    assert.deepEqual(capability.config.agents.map(a => a.name), ['general', 'tester']);
     await startup;
     assert.equal(finishMcp, undefined, 'selecting an agent must not start MCP');
     const input = handlers.input({ text: 'Check the app' }, ctx);
     assert.deepEqual(activeTools, [], 'MCP tools must remain unavailable until ready');
+    await mcpReady;
     finishMcp(['mcp_cua_vm_example']);
     assert.deepEqual(await input, { action: 'continue' });
     assert.deepEqual(activeTools, ['mcp_cua_vm_example']);

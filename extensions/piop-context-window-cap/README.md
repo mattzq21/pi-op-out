@@ -19,15 +19,15 @@ it. Set `enabled` to `false` to use the model’s full context window; omitting 
 Run the extension directly:
 
 ```bash
-pi --extension ./extensions/pi-context-window-cap/index.ts
+pi --extension ./extensions/piop-context-window-cap/index.ts
 ```
 
 To install it as an automatically discovered user extension:
 
 ```bash
-mkdir -p ~/.pi/agent/extensions/pi-context-window-cap
-cp extensions/pi-context-window-cap/{index.ts,config.json} \
-  ~/.pi/agent/extensions/pi-context-window-cap/
+mkdir -p ~/.pi/agent/extensions/piop-context-window-cap
+cp extensions/piop-context-window-cap/{index.ts,config.json} \
+  ~/.pi/agent/extensions/piop-context-window-cap/
 ```
 
 Once installed globally, start Pi normally. Edit the installed `config.json` to

@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-  "mutate": ["extensions/pi-define-agents/index.ts"],
+  "mutate": ["extensions/piop-define-agents/index.ts"],
   "testRunner": "command",
   "commandRunner": {
     "command": "npm run test:extensions"
