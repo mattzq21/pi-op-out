@@ -15,7 +15,7 @@ import { SplitChatPane } from "./components/SplitChatPane";
 import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
 
 import { updateSessionGroups, type SessionGroup } from "./lib/sessionGroups";
-import { listen } from "@tauri-apps/api/event";
+import { listen, isMobile } from "./lib/platform";
 import { NativeTransport, initialWindowTarget, openSessionWindow } from "./lib/nativeTransport";
 import { SessionRuntimePool, useTurnDiffs } from "./lib/sessionRuntimePool";
 import { useChatSession } from "./lib/useChatSession";
@@ -90,7 +90,7 @@ export default function App() {
   const [settingsDirty, setSettingsDirty] = useState(false);
   const settingsDirtyRef = useRef(settingsDirty); settingsDirtyRef.current = settingsDirty;
   const sessionIndexRequest = useRef<Promise<void> | undefined>(undefined);
-  const [panelOpen, setPanelOpen] = useState(true); const [query, setQuery] = useState(""); const [connected, setConnected] = useState(false); const connectionReadyRef = useRef(connected); connectionReadyRef.current = connected; const updateConnected = (value: boolean) => { connectionReadyRef.current = value; setConnected(value); }; const [error, setError] = useState<string>();
+  const [panelOpen, setPanelOpen] = useState(() => !window.matchMedia("(max-width: 700px)").matches); const [query, setQuery] = useState(""); const [connected, setConnected] = useState(false); const connectionReadyRef = useRef(connected); connectionReadyRef.current = connected; const updateConnected = (value: boolean) => { connectionReadyRef.current = value; setConnected(value); }; const [error, setError] = useState<string>();
   const [createGroupRequest, setCreateGroupRequest] = useState(0);
   const handleCreateGroup = useCallback(() => setCreateGroupRequest(0), []);
   const [activeHostId, setActiveHostId] = useState(() => transport.currentHostId());
@@ -543,6 +543,7 @@ export default function App() {
   const newSession = () => startNewSession();
   const clearChatProject = () => startNewSession(true);
   const selectSession = (session: SessionSummary) => {
+    if (window.matchMedia("(max-width: 700px)").matches) setPanelOpen(false);
     const selectedKey = `${session.hostId ?? "local"}:${session.id}`; if (archivePending.current.has(selectedKey)) return undefined;
     const hostId = session.hostId ?? "local"; if (session.id === state.sessionId && hostId === activeHostId) { if (!connected) void transport.connect().then(() => refresh()).then((value) => configureRuntime(value)).then(() => refreshSession()).then(() => { setError(undefined); updateConnected(true); }).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason))); return transport; }
     if (splitPane?.session.id === session.id && (splitPane.session.hostId ?? "local") === hostId) closeSplitPane();
@@ -620,6 +621,7 @@ export default function App() {
   const sessionAction = async (session: SessionSummary, action: SessionAction) => {
     if (session.cwdExists === false && (action === "split" || action === "rename")) { relocationActionRef.current = action; setRelocationError(undefined); setRelocatingSession(session); return; }
     if (action === "split") { openSplitPane(session); return; }
+    if (action === "new-window" && isMobile) { selectSession(session); return; }
     if (action === "new-window") { try { await openSessionWindow({ cwd: session.cwd, sessionPath: session.path, sessionId: session.id, hostId: session.hostId }); } catch (reason) { addNotice({ title: "Could not open window", message: String(reason) }); } return; }
     if (action === "open-directory") {
       const actionKey = `open-directory:${session.hostId ?? "local"}:${session.id}`; if (sessionActionPending.current.has(actionKey)) return; sessionActionPending.current.add(actionKey);
@@ -734,6 +736,13 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKeybind);
   }, [settings, toggleDebugMode, settingsDirty, view, activePane, splitPane]);
 
+  useEffect(() => {
+    if (!isMobile) return;
+    const back = () => { if (view === "settings") { if (canLeaveSettings()) setView("chat"); } else if (terminalOpen) setTerminalOpen(false); else setPanelOpen((value) => !value); };
+    window.addEventListener("piop-mobile-back", back);
+    return () => window.removeEventListener("piop-mobile-back", back);
+  });
+
   if (!settings) return <main className="app app-loading dark" role={error ? "alert" : "status"}>
     <p className="eyebrow">piop</p>
     <h1>{error ? "Could not load settings" : "Loading settings…"}</h1>
@@ -744,7 +753,9 @@ export default function App() {
   const settingsWithMcpStatuses = { ...settings, mcpServers: settings.mcpServers.map((server) => ({ ...server, ...(extensionStateIsCurrent ? mcpStatuses[server.id] : undefined) })) };
   const activeDialog = dialogs[0];
   const projectCwd = selectedProjectCwd(activeCwd, transport.isTemporaryChat());
-  return <div className="app dark">
+  return <div className={`app dark ${panelOpen && view === "chat" ? "mobile-panel-open" : ""}`}>
+    <div className="mobile-navigation"><button aria-label="Toggle conversations" onClick={() => { if (canLeaveSettings()) { setView("chat"); setPanelOpen((value) => !value); } }}>☰</button><span>piop</span>{isMobile && <button onClick={() => { if (canLeaveSettings()) window.dispatchEvent(new Event("piop-mobile-disconnect")); }}>Host</button>}<button onClick={() => { if (canLeaveSettings()) { setPanelOpen(false); void newSession(); } }}>New chat</button><button onClick={() => { if (view === "chat") setView("settings"); else if (canLeaveSettings()) setView("chat"); }}>{view === "settings" ? "Chat" : "Settings"}</button></div>
+    {panelOpen && view === "chat" && <button className="mobile-sidebar-backdrop" aria-label="Close conversations" onClick={() => setPanelOpen(false)} />}
     {import.meta.env.MODE === "e2e" && <div className="e2e-bridge"><textarea id="pi-e2e-responses" aria-label="E2E responses" placeholder="E2E responses" /><textarea id="pi-e2e-calls" aria-label="E2E calls" placeholder="E2E calls" /></div>}
     <ResizableSidebar compact={view === "settings" || !panelOpen}><div className="rail-branch" title={`piop development branch: ${__PIOP_DEVELOPMENT_BRANCH__}`}><GitBranch size={13} /><span>{__PIOP_DEVELOPMENT_BRANCH__}</span></div><nav><IconButton label="New conversation" onClick={newSession}><MessageSquare size={18} /></IconButton><IconButton label="New session group" onClick={() => { if (!canLeaveSettings()) return; setView("chat"); setPanelOpen(true); setQuery(""); setCreateGroupRequest((request) => request + 1); }}><FolderPlus size={18} /></IconButton><IconButton label={settings.debugMode ? "Disable debug mode" : "Enable debug mode"} className={settings.debugMode ? "active" : ""} disabled={debugModeSaving || settingsSaving} onClick={toggleDebugMode}><Bug size={18} /></IconButton><IconButton label={view === "settings" ? "Go back" : "Settings"} className={view === "settings" ? "active" : ""} onClick={() => { if (view !== "settings") { setView("settings"); return; } if (canLeaveSettings()) setView("chat"); }}>{view === "settings" ? <ArrowLeft size={19} /> : <Settings size={19} />}</IconButton></nav>{view === "chat" && panelOpen && <SessionPanel sessions={[...sessions, ...runtimePool.liveSessionSummaries().filter((live) => !archivedSessionKeys.current.has(`${live.hostId ?? "local"}:${live.id}`) && !sessions.some((saved) => saved.id === live.id && saved.hostId === live.hostId))]} activeId={state.sessionId} activeHostId={activeHostId} runningSessions={runningSessions} unseenSessions={unseenSessions} query={query} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} onNewChat={(group) => void startNewSession(false, group)} onCreateWorktree={(cwd, hostId) => setWorktreeTarget({ cwd, hostId, transport })} onDeleteWorktree={deleteWorktree} createGroupRequest={createGroupRequest} onCreateGroupHandled={handleCreateGroup} />}<div className="rail-bottom">{codexUsage !== undefined && <span className="codex-usage" role="status" aria-label={`Codex usage remaining: ${codexUsage.remainingPercent}%${codexUsage.resetAt ? `, resets ${formatCodexReset(codexUsage.resetAt)}` : ""}`} title="Codex usage remaining"><span>{codexUsage.remainingPercent}%<span className="codex-usage-left"> left</span></span>{codexUsage.resetAt && <span className="codex-usage-reset"><span className="codex-usage-separator"> · </span>{formatCodexReset(codexUsage.resetAt)}</span>}</span>}</div></ResizableSidebar>
     <div className="chat-workspace" hidden={view !== "chat"}>

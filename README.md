@@ -13,6 +13,14 @@ A native Tauri interface for the Pi coding agent, with persistent local or SSH-h
 - Pi extension dialogs, notifications, status lines, and widgets
 - Bundled [Codex compaction](extensions/pi-codex-compaction/README.md) and [web search](extensions/pi-codex-web-search/README.md)
 
+## Android
+
+Piop includes an Android companion that connects to your computer over an authenticated TLS connection. It reuses the desktop interface with mobile navigation, touch controls, remote terminals, and phone microphone/speaker support. See [Android build and host setup](docs/android.md).
+
+```sh
+npm run android:build
+```
+
 ## Run
 
 Install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) and Pi, then run:

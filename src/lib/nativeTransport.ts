@@ -1,8 +1,7 @@
 /// <reference types="vite/client" />
 import { applyAssistantMessageEvent, normalizeMessage, type PiEntry } from "./messages";
 import type { ChatMessage } from "../types";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke, listen, type UnlistenFn } from "./platform";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { GroupChange, SessionGroups, SessionGroupSeed } from "./sessionGroups";
 import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, PendingMessage, RpcCommand, RpcEvent, SessionSummary, SettingsChange, StorageReport } from "../types";

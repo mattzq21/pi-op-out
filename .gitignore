@@ -18,3 +18,12 @@ extensions/pi-define-agents/config.json
 .DS_Store
 piop.png
 piop-settings.png
+
+dist-mobile/
+android/.gradle/
+android/**/build/
+android/local.properties
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor*.json
+android/*.jks
+android/*.keystore

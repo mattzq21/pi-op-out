@@ -1,5 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke, listen, isMobile, type UnlistenFn } from "./platform";
 import type { AgentState, ChatMessage, RpcEvent } from "../types";
 import type { NativeTransport } from "./nativeTransport";
 import { voicePrompt, type SpokenMessage } from "./voiceMessages";
@@ -78,6 +77,8 @@ export class VoiceSession {
   private lastToolUpdate = 0;
   private historyQueue: Promise<void> = Promise.resolve();
 
+  connectionLost() { if (this.id) { this.cleanup(); this.report("Host connection ended. Start a new voice call after reconnecting."); } }
+
   getSnapshot = () => this.snapshot;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private update(update: Partial<VoiceSnapshot>) { this.snapshot = { ...this.snapshot, ...update }; this.listeners.forEach((listener) => listener()); }
@@ -111,7 +112,8 @@ export class VoiceSession {
   async stop() {
     if (!this.id) return;
     this.update({ phase: "closing" });
-    await invoke("voice_stop", { callId: this.id });
+    const callId = this.id;
+    try { await invoke("voice_stop", { callId }); } finally { if (isMobile && this.id === callId) this.cleanup(); }
   }
   async mute(muted: boolean) { await invoke("voice_mute", { callId: this.id, muted }); }
   async suppress(suppressed: boolean) { await invoke("voice_suppress", { callId: this.id, suppressed }); }

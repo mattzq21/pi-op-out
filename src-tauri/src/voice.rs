@@ -219,6 +219,15 @@ type Socket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStre
 
 async fn connect_session(helper: &mut Helper, auth: &CodexAuth, context: String) -> Result<Socket, String> {
     let offer = helper.offer().await?;
+    let (mut socket, answer) = connect_offer(auth, context, offer).await?;
+    if let Err(error) = helper.connect(answer).await {
+        let _ = socket.send(WsMessage::Text(json!({"type":"session.close"}).to_string().into())).await;
+        return Err(error);
+    }
+    Ok(socket)
+}
+
+async fn connect_offer(auth: &CodexAuth, context: String, offer: String) -> Result<(Socket, String), String> {
     let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build().map_err(|e| e.to_string())?;
     let response = client.post(API).bearer_auth(&auth.token)
         .header("ChatGPT-Account-ID", &auth.account_id).header("OpenAI-Alpha", "quicksilver=v2").header("originator", "piop")
@@ -236,12 +245,48 @@ async fn connect_session(helper: &mut Helper, auth: &CodexAuth, context: String)
     request.headers_mut().insert("ChatGPT-Account-ID", auth.account_id.parse().map_err(|_| "Invalid Codex account")?);
     request.headers_mut().insert("OpenAI-Alpha", "quicksilver=v2".parse().unwrap());
     request.headers_mut().insert("originator", "piop".parse().unwrap());
-    let (mut socket, _) = timeout(Duration::from_secs(20), connect_async(request)).await.map_err(|_| "Voice event connection timed out")?.map_err(|_| "Could not attach to the voice session")?;
-    if let Err(error) = helper.connect(answer.to_owned()).await {
-        let _ = socket.send(WsMessage::Text(json!({"type":"session.close"}).to_string().into())).await;
-        return Err(error);
+    let (socket, _) = timeout(Duration::from_secs(20), connect_async(request)).await.map_err(|_| "Voice event connection timed out")?.map_err(|_| "Could not attach to the voice session")?;
+    Ok((socket, answer))
+}
+
+/// Use the phone's WebRTC transport while credentials and delegation stay on the host.
+pub async fn mobile_start(app: AppHandle, call_id: String, context: String, offer: String) -> Result<String, String> {
+    uuid::Uuid::parse_str(&call_id).map_err(|_| "Invalid voice call identifier")?;
+    if context.len() > 24_000 || offer.len() > 128 * 1024 { return Err("Voice request is too large".into()); }
+    let runtime = app.state::<VoiceRuntime>();
+    let (commands, receiver) = mpsc::channel(64);
+    let (close, closing) = watch::channel(false);
+    let (answer_tx, answer_rx) = tokio::sync::oneshot::channel();
+    {
+        let mut active = runtime.0.lock().map_err(|_| "Voice state unavailable")?;
+        if active.is_some() { return Err("End the current voice call before starting another.".into()); }
+        let owner = runtime.inner().clone(); let app = app.clone(); let id = call_id.clone();
+        let task = tokio::spawn(async move {
+            let result: Result<bool, String> = async {
+                let auth = tokio::task::spawn_blocking(|| codex_auth(true)).await.map_err(|_| "Cannot read Codex login")??;
+                let connection = connect_offer(&auth, context, offer).await;
+                let (mut socket, answer) = match connection {
+                    Ok(value) => value,
+                    Err(error) => { let _ = answer_tx.send(Err(error.clone())); return Err(error); },
+                };
+                let _ = answer_tx.send(Ok(answer));
+                let result = conversation_loop(&app, &id, None, &mut socket, receiver, closing).await;
+                let _ = timeout(Duration::from_secs(2), socket.close(None)).await;
+                result
+            }.await;
+            if let Err(error) = &result { emit(&app, &id, json!({"type":"error","message":error})); }
+            if let Ok(mut active) = owner.0.lock() { if active.as_ref().is_some_and(|call| call.id == id) { *active = None; } }
+            emit(&app, &id, json!({"type":"ended","finalized":result.unwrap_or(false)}));
+        });
+        *active = Some(ActiveCall { id: call_id, close, commands, task });
     }
-    Ok(socket)
+    answer_rx.await.map_err(|_| "Could not start mobile voice")?
+}
+
+pub async fn mobile_configuration() -> Value {
+    let result = tokio::task::spawn_blocking(|| codex_auth(false)).await;
+    let error = match result { Ok(Ok(_)) => None, Ok(Err(error)) => Some(error), Err(_) => Some("Codex login unavailable".into()) };
+    json!({"authenticated":error.is_none(),"helperAvailable":true,"error":error})
 }
 
 async fn run_call(app: &AppHandle, id: &str, path: PathBuf, context: String, commands: mpsc::Receiver<Control>, mut closing: watch::Receiver<bool>) -> Result<bool, String> {
@@ -258,7 +303,7 @@ async fn run_call(app: &AppHandle, id: &str, path: PathBuf, context: String, com
     };
     let result = match connection {
         Some(Ok(mut socket)) => {
-            let result = conversation_loop(app, id, &mut helper, &mut socket, commands, closing).await;
+            let result = conversation_loop(app, id, Some(&mut helper), &mut socket, commands, closing).await;
             let _ = timeout(Duration::from_secs(2), socket.close(None)).await;
             result
         }
@@ -274,14 +319,14 @@ async fn send(socket: &mut Socket, event: Value) -> Result<(), String> {
         .map_err(|_| "Voice command timed out")?.map_err(|_| "Voice connection lost".into())
 }
 
-async fn apply_control(app: &AppHandle, id: &str, helper: &mut Helper, socket: &mut Socket, controls: &mut AudioControls, command: Control) -> Result<(), String> {
+async fn apply_control(app: &AppHandle, id: &str, helper: Option<&mut Helper>, socket: &mut Socket, controls: &mut AudioControls, command: Control) -> Result<(), String> {
     match command {
         Control::Mute(muted) => {
-            controls.microphone_muted = muted; helper.controls(*controls).await?;
+            controls.microphone_muted = muted; if let Some(helper) = helper { helper.controls(*controls).await?; }
             emit(app, id, json!({"type":"muted", "muted":muted}));
         }
         Control::Suppress(suppressed) => {
-            controls.speaker_suppressed = suppressed; helper.controls(*controls).await?;
+            controls.speaker_suppressed = suppressed; if let Some(helper) = helper { helper.controls(*controls).await?; }
             emit(app, id, json!({"type":"suppressed", "suppressed":suppressed}));
         }
         Control::Context { text, delegation_id, speak } => {
@@ -307,20 +352,20 @@ fn forward_event(app: &AppHandle, id: &str, event: &Value) {
     }
 }
 
-async fn conversation_loop(app: &AppHandle, id: &str, helper: &mut Helper, socket: &mut Socket, mut commands: mpsc::Receiver<Control>, mut closing: watch::Receiver<bool>) -> Result<bool, String> {
-    if *closing.borrow() { return finish_call(app, id, helper, socket).await; }
+async fn conversation_loop(app: &AppHandle, id: &str, mut helper: Option<&mut Helper>, socket: &mut Socket, mut commands: mpsc::Receiver<Control>, mut closing: watch::Receiver<bool>) -> Result<bool, String> {
+    if *closing.borrow() { return finish_call(app, id, helper.as_deref_mut(), socket).await; }
     let mut controls = AudioControls { microphone_muted: false, speaker_suppressed: false };
-    helper.controls(controls).await?;
+    if let Some(helper) = helper.as_deref_mut() { helper.controls(controls).await?; }
     emit(app, id, json!({"type":"connected"}));
     let mut poll = tokio::time::interval(Duration::from_millis(100));
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
             biased;
-            _ = closing.changed() => return finish_call(app, id, helper, socket).await,
+            _ = closing.changed() => return finish_call(app, id, helper.as_deref_mut(), socket).await,
             control = commands.recv() => match control {
-                Some(control) => apply_control(app, id, helper, socket, &mut controls, control).await?,
-                None => return finish_call(app, id, helper, socket).await,
+                Some(control) => apply_control(app, id, helper.as_deref_mut(), socket, &mut controls, control).await?,
+                None => return finish_call(app, id, helper.as_deref_mut(), socket).await,
             },
             message = socket.next() => {
                 match message {
@@ -334,8 +379,8 @@ async fn conversation_loop(app: &AppHandle, id: &str, helper: &mut Helper, socke
                     _ => {}
                 }
             },
-            _ = poll.tick() => {
-                if let Message::AudioState { state } = helper.exchange(Message::InspectAudio {}).await? {
+            _ = poll.tick(), if helper.is_some() => {
+                if let Message::AudioState { state } = helper.as_deref_mut().expect("Guarded helper").exchange(Message::InspectAudio {}).await? {
                     emit(app, id, json!({"type":"levels", "microphone":state.microphone_peak, "speaker":state.speaker_peak}));
                 }
             }
@@ -343,9 +388,9 @@ async fn conversation_loop(app: &AppHandle, id: &str, helper: &mut Helper, socke
     }
 }
 
-async fn finish_call(app: &AppHandle, id: &str, helper: &mut Helper, socket: &mut Socket) -> Result<bool, String> {
+async fn finish_call(app: &AppHandle, id: &str, helper: Option<&mut Helper>, socket: &mut Socket) -> Result<bool, String> {
     emit(app, id, json!({"type":"closing"}));
-    helper.controls(AudioControls { microphone_muted: true, speaker_suppressed: true }).await?;
+    if let Some(helper) = helper { helper.controls(AudioControls { microphone_muted: true, speaker_suppressed: true }).await?; }
     send(socket, json!({"type":"session.close"})).await?;
     timeout(Duration::from_secs(3), socket.close(None)).await.map_err(|_| "Voice shutdown timed out")?.map_err(|_| "Voice connection closed unexpectedly")?;
     Ok(true)

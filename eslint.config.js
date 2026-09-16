@@ -5,6 +5,8 @@ export default [
     ignores: [
       '**/node_modules/**',
       '**/dist/**',
+      '**/dist-mobile/**',
+      'android/**',
       'src-tauri/target/**',
       'src-tauri/gen/**',
       'src-tauri/resources/*.bundle.mjs',
