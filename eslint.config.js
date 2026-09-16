@@ -24,6 +24,7 @@ export default [
     },
     rules: {
       complexity: ['error', { max: 10, variant: 'classic' }],
+      "max-lines": ['error', { max: 750, skipComments: true }]
     },
   },
   {
