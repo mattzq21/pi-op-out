@@ -221,11 +221,12 @@ export class NativeTransport {
       if (command.type === "get_commands") {
         const { commands } = result as { commands: Array<{ name: string; source: string; sourceInfo?: { source?: string; path?: string } }> };
         const fromPackage = (item: typeof commands[number], name: string) => item.sourceInfo?.source === `npm:${name}` || item.sourceInfo?.path?.split(/[\\/]/).includes(name);
-        const fastCommands = commands.filter((item) => item.source === "extension" && /^fast(?::\d+)?$/.test(item.name) && ["pi-openai-fast-mode-piop", "pi-openai-fast-mode"].some((name) => fromPackage(item, name)));
+        const localFastPackages = ["piop-openai-fast-mode", "pi-openai-fast-mode-piop"];
+        const fastCommands = commands.filter((item) => item.source === "extension" && /^fast(?::\d+)?$/.test(item.name) && [...localFastPackages, "pi-openai-fast-mode"].some((name) => fromPackage(item, name)));
         this.fastCommands = new Set(fastCommands.map((item) => item.name));
         // The local fork publishes its live state directly. Only the original
         // TUI-only package needs the compatibility query after each command.
-        this.fastStatusCommand = fastCommands.some((item) => fromPackage(item, "pi-openai-fast-mode-piop")) ? undefined : commands.find((item) => item.source === "extension" && item.name === "pi-desktop-fast-status")?.name;
+        this.fastStatusCommand = fastCommands.some((item) => localFastPackages.some((name) => fromPackage(item, name))) ? undefined : commands.find((item) => item.source === "extension" && item.name === "pi-desktop-fast-status")?.name;
         await this.refreshFastStatus(false);
       }
       if (command.type === "prompt") {
