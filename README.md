@@ -11,7 +11,7 @@ A native Tauri interface for the Pi coding agent, with persistent local or SSH-h
 - Named [agent profiles](extensions/pi-define-agents/README.md) with models, instructions, and tool, skill, and MCP server selections
 - Settings for tools, skills, remote hosts, MCP servers, and compaction
 - Pi extension dialogs, notifications, status lines, and widgets
-- Bundled [Codex compaction](extensions/pi-codex-compaction/README.md) and [web search](extensions/pi-codex-web-search/README.md)
+- Bundled [web search](extensions/pi-codex-web-search/README.md)
 
 ## Android
 
@@ -62,7 +62,7 @@ Saved conversations live in `~/.piop/sessions` on each host; archived conversati
 
 `/btw` side conversations use temporary session files. Closing their pane removes those files; they do not appear in saved history.
 
-Codex compaction uses the auto-compaction setting, context cap, and `/compact` command. Pi 0.84.4 or newer is recommended. Native checkpoints require the Codex model that created them; other providers use Pi's standard compaction.
+Compaction is handled by Pi's standard lifecycle: the auto-compaction setting, context cap, and `/compact` command.
 
 MCP servers can use stdio commands or HTTP endpoints. Stdio arguments support shell-style quoting, but commands run without a shell. Tools appear in Pi as `mcp_<server>_<tool>`.
 
