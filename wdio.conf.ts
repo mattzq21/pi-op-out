@@ -3,7 +3,6 @@ import { createServer } from "node:net";
 import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { mkdtempSync, mkdirSync, copyFileSync, chmodSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { selectWindowBounds } from "./scripts/window-placement.mjs";
 
 if (process.platform === "linux") process.env.GDK_BACKEND = "x11";
@@ -28,10 +27,9 @@ const fixtureEnvironment = {
   PIOP_TEST_HOME: fixtureHome,
   PI_CODING_AGENT_DIR: fixtureAgent,
   XDG_CONFIG_HOME: path.join(fixtureHome, "config"), XDG_DATA_HOME: path.join(fixtureHome, "data"), XDG_CACHE_HOME: path.join(fixtureHome, "cache"),
-  PIOP_PI_PATH: process.env.PIOP_PI_PATH || execFileSync("which", ["pi"], { encoding: "utf8" }).trim(),
 };
 const defaultActualCallModel = "openai-codex/gpt-5.6-luna";
-const actualCallModel = process.env.PI_E2E_ACTUAL_MODEL?.trim() || defaultActualCallModel;
+const actualCallModel = defaultActualCallModel;
 const driverProvider = "embedded";
 const getOsAssignedPort = () => new Promise<number>((resolve, reject) => {
   const server = createServer();
@@ -75,7 +73,6 @@ const verifyActualCallModel = () => {
   if (!(provider in auth)) {
     throw new Error(`ACCEPTANCE TEST MODEL IS NOT AVAILABLE: Pi has no authentication for ${provider}`);
   }
-  process.env.PI_DESKTOP_E2E_MODEL = actualCallModel;
 };
 
 const sessionFiles = (directory = sessionsRoot): string[] => !existsSync(directory) ? [] : readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {

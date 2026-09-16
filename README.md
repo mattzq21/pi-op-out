@@ -29,7 +29,7 @@ Install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) and
 npm run tauri dev
 ```
 
-The launcher checks `~/.local/bin/pi`, `~/.npm-global/bin/pi`, and `~/.bun/bin/pi` before falling back to `PATH`. Set `PIOP_PI_PATH` to use another executable.
+The launcher checks `~/.local/bin/pi`, `~/.npm-global/bin/pi`, and `~/.bun/bin/pi` before falling back to `PATH`.
 
 Authenticate Pi with its `/login` flow or provider environment variables before starting Piop. Credentials stay in Pi's auth store.
 

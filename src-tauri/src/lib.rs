@@ -24,8 +24,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
-const STORAGE_DIRECTORY: &str = env!("PIOP_STORAGE_DIRECTORY");
-const DEVELOPMENT: bool = env!("PIOP_DEVELOPMENT").as_bytes()[0] == b'1';
+const STORAGE_DIRECTORY: &str = if cfg!(debug_assertions) { ".piop-dev" } else { ".piop" };
+const DEVELOPMENT: bool = cfg!(debug_assertions);
 const APP_TITLE: &str = if DEVELOPMENT { "Piop Dev" } else { "piop" };
 
 fn node_command() -> Command {
@@ -372,7 +372,6 @@ fn home_dir() -> Result<PathBuf, String> {
 }
 
 fn pi_executable() -> PathBuf {
-    if let Some(path) = std::env::var_os("PIOP_PI_PATH").or_else(|| std::env::var_os("PI_DESKTOP_PI_PATH")) { return PathBuf::from(path); }
     if let Ok(home) = home_dir() {
         for candidate in [home.join(".local/bin/pi"), home.join(".npm-global/bin/pi"), home.join(".bun/bin/pi")] { if candidate.is_file() { return candidate; } }
     }
@@ -1953,7 +1952,7 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
     let (broker_port, broker_token) = broker_environment(broker)?;
     let desktop_home = home_dir()?;
     let is_rpc = matches!(launch, PiLaunch::Rpc { .. });
-    let default_model = std::env::var("PI_DESKTOP_E2E_MODEL").ok().filter(|model| !model.trim().is_empty()).unwrap_or_else(|| settings.default_model.clone());
+    let default_model = settings.default_model.clone();
     if host_id == "local" {
         let (mcp_extension, mcp_config) = prepare_mcp_bridge(settings)?; let context_window_cap_extension = prepare_context_window_cap_extension(settings)?; let diff_watch_extension = prepare_diff_watch_extension()?; let trace_reader_extension = prepare_trace_reader()?; let codex_compaction_extension = prepare_codex_compaction_extension()?; let openai_cache_lineage_extension = prepare_openai_cache_lineage_extension()?; let codex_web_search_extension = prepare_codex_web_search_extension()?; let defined_agents_extension = prepare_defined_agents_extension()?; let pi_path = pi_executable();
         let session_dir = ensure_desktop_sessions_dir(&desktop_home)?;
@@ -2131,8 +2130,7 @@ fn start_terminal(app: AppHandle, window: tauri::WebviewWindow, runtime: State<T
     let mut command = if host_id == "local" {
         let working_dir = PathBuf::from(&cwd);
         if !working_dir.is_dir() { return Err(format!("Terminal working directory does not exist: {}", working_dir.display())); }
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
-        let mut command = CommandBuilder::new(shell); command.cwd(working_dir); command
+        let mut command = CommandBuilder::new("/bin/bash"); command.cwd(working_dir); command
     } else {
         let settings = load_app_settings(app.clone())?; let host = remote_host(&settings, &host_id)?;
         let mut command = CommandBuilder::new("ssh");
