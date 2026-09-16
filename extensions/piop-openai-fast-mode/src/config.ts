@@ -189,11 +189,11 @@ export function parseConfigJson(
 }
 
 export function getUserConfigPath(agentDir: string = getAgentDir()): string {
-  return join(agentDir, "extensions", "pi-openai-fast-mode-piop", "config.json");
+  return join(agentDir, "extensions", "piop-openai-fast-mode", "config.json");
 }
 
 export function getProjectConfigPath(cwd: string): string {
-  return join(resolve(cwd), ".pi", "pi-openai-fast-mode-piop", "config.json");
+  return join(resolve(cwd), ".pi", "piop-openai-fast-mode", "config.json");
 }
 
 export function isProjectLocalExtension(
@@ -258,9 +258,23 @@ export async function loadConfigFromPath(
   }
 }
 
+async function migrateConfigPath(path: string): Promise<void> {
+  if (existsSync(path)) return;
+  const legacy = join(dirname(dirname(path)), "pi-openai-fast-mode-piop", "config.json");
+  try {
+    const contents = await fs.readFile(legacy, "utf8");
+    await fs.mkdir(dirname(path), { recursive: true });
+    await fs.writeFile(path, contents, { flag: "wx", mode: 0o600 });
+  } catch (error) {
+    if (!["ENOENT", "EEXIST"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+  }
+}
+
 export async function loadConfigForScope(
   options: LoadConfigOptions,
 ): Promise<LoadedConfig> {
+  await migrateConfigPath(getProjectConfigPath(options.cwd));
+  await migrateConfigPath(getUserConfigPath(options.agentDir));
   const selected = selectConfigPath(options);
   const config = await loadConfigFromPath(
     selected.path,

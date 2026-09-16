@@ -55,15 +55,15 @@ not appear in normal branch history and are not pushed by ordinary branch pushes
 Run it directly:
 
 ```bash
-pi --extension ./extensions/pi-project-files-watch/index.ts
+pi --extension ./extensions/piop-project-files-watch/index.ts
 ```
 
 To install it as an automatically discovered user extension:
 
 ```bash
-mkdir -p ~/.pi/agent/extensions/pi-project-files-watch
-cp extensions/pi-project-files-watch/index.ts \
-  ~/.pi/agent/extensions/pi-project-files-watch/index.ts
+mkdir -p ~/.pi/agent/extensions/piop-project-files-watch
+cp extensions/piop-project-files-watch/index.ts \
+  ~/.pi/agent/extensions/piop-project-files-watch/index.ts
 ```
 
 Restart Pi or run `/reload` after installing it.

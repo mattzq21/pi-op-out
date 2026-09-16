@@ -1,5 +1,5 @@
 {
-  "name": "@ogulcancelik/pi-codex-compaction",
+  "name": "@ogulcancelik/piop-codex-compaction",
   "version": "0.1.5",
   "description": "OpenAI Codex native remote compaction for Pi's existing compaction lifecycle.",
   "type": "module",
@@ -15,7 +15,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ogulcancelik/pi-extensions.git",
-    "directory": "packages/pi-codex-compaction"
+    "directory": "packages/piop-codex-compaction"
   },
   "bugs": {
     "url": "https://github.com/ogulcancelik/pi-extensions/issues"

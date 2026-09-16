@@ -10,7 +10,7 @@ export default [
       'src-tauri/target/**',
       'src-tauri/gen/**',
       'src-tauri/resources/*.bundle.mjs',
-      'extensions/pi-codex-compaction/upstream/**',
+      'extensions/piop-codex-compaction/upstream/**',
       '.stryker-tmp/**',
       'reports/**',
       '**/mutants.out/**',

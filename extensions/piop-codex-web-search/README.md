@@ -7,7 +7,7 @@ Piop embeds the source and automatically loads it in local and SSH sessions, inc
 For standalone Pi, from this repository:
 
 ```bash
-pi --extension ./extensions/pi-codex-web-search/index.ts
+pi --extension ./extensions/piop-codex-web-search/index.ts
 ```
 
 Example tool arguments:

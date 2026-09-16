@@ -1,9 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { build } from "esbuild";
 
-const license = await readFile("extensions/pi-codex-compaction/upstream/LICENSE", "utf8");
+const license = await readFile("extensions/piop-codex-compaction/upstream/LICENSE", "utf8");
 await build({
-  entryPoints: ["extensions/pi-codex-compaction/index.ts"],
+  entryPoints: ["extensions/piop-codex-compaction/index.ts"],
   outfile: "src-tauri/resources/codex-compaction.bundle.mjs",
   bundle: true,
   platform: "node",

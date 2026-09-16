@@ -1,12 +1,12 @@
-# Pi define-agents extension
+# piop define-agents extension
 
 Defines named agents and lets you select and use them independently in Pi CLI and piop. Owns each agent's model, effort, prompts, AGENTS.md text, tools, skills, and MCP selection.
 
-piop installs and explicitly loads its private copy from `~/.piop/pi-define-agents` locally and on SSH hosts. Existing agent configuration is copied from the former global installation, and its global entry point is removed so standalone Pi does not load it. For standalone Pi CLI use, install from this repository:
+piop installs and explicitly loads its private copy from `~/.piop/piop-define-agents` locally and on SSH hosts. Existing agent configuration is copied from the former global installation, and its global entry point is removed so standalone Pi does not load it. For standalone Pi CLI use, install from this repository:
 
 ```bash
-mkdir -p ~/.pi/agent/extensions/pi-define-agents
-cp extensions/pi-define-agents/index.ts ~/.pi/agent/extensions/pi-define-agents/index.ts
+mkdir -p ~/.pi/agent/extensions/piop-define-agents
+cp extensions/piop-define-agents/{index.ts,extension-loader.ts} ~/.pi/agent/extensions/piop-define-agents/
 ```
 
 Reload Pi, then select an agent with `/pi-define-agents-use reviewer`. piop discovers the extension through the `pi-define-agents` status and exposes agent selection and the Agents settings page.
@@ -46,3 +46,25 @@ Selecting the tester does not start MCP or a VM. When a user submits a message, 
 Pass the tester the absolute path to a production binary and the requested checks. The caller builds with `./node_modules/.bin/tauri build --no-bundle -- --locked`; raw Cargo builds can leave the app pointing at the development URL. The tester uses `broker_exec` to inspect the guest launcher and `broker_upload` to transfer the build through its existing MCP lease, then tests through CUA. The guest expires after 60 seconds without MCP activity, including with its viewer open. The tester captures evidence as it works and redeploys after an expired VM is recreated. Existing tester profiles can replace `systemPrompt` with `"path_systemprompt": "sysprompt/tester.example.md"` after copying the prompt file. See [the integration contract](../../docs/cua-vm-broker.md).
 
 `/pi-define-agents-config <base64url-json>` updates `{ "agents": [...] }` and reloads resources. piop uses this command to save definitions. Writes use temporary files and atomic publication. Older installations can import their existing agent profiles from the legacy configuration without modifying that file.
+
+## Agent piop extensions
+
+Add `"extensions": ["/path/to/extension.ts", "./extensions/reviewer"]` to an agent, or enter one path per line in Settings → Agents → piop extensions. Paths resolve on the host running the agent. Relative agent paths resolve beside `config.json`; `~/` and absolute paths work too. Directories need `index.ts`, `index.js`, `index.mjs`, or `index.cjs`.
+
+A piop extension can declare dependencies with a named `extensions` export. These paths resolve relative to the declaring module:
+
+```ts
+export const extensions = ["./shared.ts"];
+
+export default function reviewer(pi) {
+  pi.on("session_start", (_event, ctx) => {
+    ctx.ui.notify(`Reviewer loaded in ${ctx.cwd}`, "info");
+  });
+}
+```
+
+Dependencies initialize before their parent, once per activation group, including when shared by several parents. Missing files, invalid exports, cycles, duplicate registrations, and thrown initialization errors reject the entire group. No staged handlers, commands, tools, or event-bus subscriptions become active on a factory failure. If startup fails, the group is deactivated and the previous agent remains selected. RPC selection reports the error; an invalid restored agent blocks input before inference.
+
+Factories register tools, commands, shortcuts, flags, renderers, and handlers through the supplied API. Keep initialization free of external side effects; use `session_start` for runtime API calls and `session_shutdown` for cleanup. Resource registrations must happen in the factory. The loader stages API registrations, but cannot undo arbitrary filesystem writes or other side effects made directly by extension code. Extensions share the same session context and conversation history. Their registered tools are enabled with the agent; switching agents deactivates their handlers, commands, and tools without clearing history. Global piop extensions remain active.
+
+The dependency export is interpreted by piop's agent loader, not by Pi's ordinary extension loader. Existing `pi-define-agents` command/status identifiers remain compatible; repository and installed extension paths use `piop-`. Existing private agent and fast-mode directories migrate on local and SSH hosts.

@@ -1,3 +1,4 @@
+import { agentExtensions, extensionPaths } from "./extension-loader.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { link, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -6,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { formatSkillsForPrompt, type BuildSystemPromptOptions } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: string[] };
+export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; extensions?: string[]; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: string[] };
 type RuntimeDefaults = { model: string; effort: string };
 
 
@@ -128,7 +129,7 @@ function normalize(value: Partial<Config>, pi: ExtensionAPI): Config {
   for (const agent of Array.isArray(value.agents) ? value.agents : []) if (agent && agent.fastMode !== undefined && typeof agent.fastMode !== "boolean") throw new Error(`Agent "${agent.name}" fastMode must be a boolean`);
   const supplied = Array.isArray(value.agents) ? value.agents.filter((agent) => agent && typeof agent.name === "string" && agent.name.length > 0).map((agent) => ({
     name: agent.name, model: typeof agent.model === "string" ? agent.model : "", effort: typeof agent.effort === "string" ? agent.effort : fallbackConfig.agents[0].effort,
-    fastMode: agent.fastMode,
+    fastMode: agent.fastMode, extensions: extensionPaths(agent.extensions),
     path_systemprompt: promptPath(agent), path_agentprompt: typeof agent.path_agentprompt === "string" ? agent.path_agentprompt.trim() : ["default", "general"].includes(agent.name) ? DEFAULT_AGENT_PROMPT_PATH : "",
     tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => typeof item === "string") : defaultAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => typeof item === "string") : [], mcpServers: Array.isArray(agent.mcpServers) ? agent.mcpServers.filter((item): item is string => typeof item === "string" && item !== "filesystem") : [],
   })) : [];
@@ -178,9 +179,9 @@ function safeName(value: string) { return value.toLowerCase().replace(/[^a-z0-9_
 function desktopList(pi: ExtensionAPI, name: "tools" | "skills") { const request: { settings?: { tools: string[]; skills: string[] } } = {}; pi.events.emit("piop:runtime-settings", request); return request.settings?.[name]; }
 function normalizedPath(value: string) { return resolve(value.startsWith("~/") ? join(homedir(), value.slice(2)) : value); }
 function agentSkills(pi: ExtensionAPI, agent: Agent) { const global = desktopList(pi, "skills"); if (!global) return agent.skills; const allowed = new Set(global.map(normalizedPath)); return agent.skills.filter((skill) => allowed.has(normalizedPath(skill))); }
-function agentToolError(pi: ExtensionAPI, agent: Agent) {
+function agentToolError(pi: ExtensionAPI, agent: Agent, extensionTools: string[] = []) {
   const globallyAllowed = desktopList(pi, "tools"); const available = new Set(pi.getAllTools().map((tool) => tool.name));
-  const denied = [...new Set(agent.tools.filter((tool) => (globallyAllowed && !globallyAllowed.includes(tool)) || !available.has(tool)))];
+  const denied = [...new Set(agent.tools.filter((tool) => (globallyAllowed && !globallyAllowed.includes(tool) && !extensionTools.includes(tool)) || !available.has(tool)))];
   return denied.length ? `Agent "${agent.name}" cannot run because Pi does not allow its configured tool${denied.length === 1 ? "" : "s"}: ${denied.join(", ")}` : undefined;
 }
 
@@ -193,6 +194,7 @@ function buildAgentSystemPrompt(prompt: string, options: BuildSystemPromptOption
 }
 
 export default async function defineAgents(pi: ExtensionAPI) {
+  const extensions = agentExtensions(pi, dirname(configPath));
   let config = await loadConfig(pi);
   let active = "general";
   let runtimeDefaults: RuntimeDefaults | undefined;
@@ -238,7 +240,9 @@ export default async function defineAgents(pi: ExtensionAPI) {
       try { activeAgentPrompt = await readFile(path, "utf8"); }
       catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" cannot read agent prompt ${path}: ${error instanceof Error ? error.message : String(error)}`; }
     }
-    const toolError = agentToolError(pi, agent); if (toolError) { pi.setActiveTools([]); return toolError; }
+    try { await extensions.activate(await extensions.prepare(extensionPaths(agent.extensions)), ctx); }
+    catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" could not load its piop extensions:\n${error instanceof Error ? error.message : String(error)}`; }
+    const toolError = agentToolError(pi, agent, extensions.tools()); if (toolError) { pi.setActiveTools([]); return toolError; }
     const modelName = modelOverride || agent.model.trim() || runtimeDefaults?.model; const currentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
     const fastError = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model || currentModel) || fastModeError(agent, modelName || currentModel);
     if (fastError) { pi.setActiveTools([]); return fastError; }
@@ -250,7 +254,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const effort = effortOverride || agent.effort.trim() || runtimeDefaults?.effort; if (effort && effort !== pi.getThinkingLevel()) { applyingAgentEffort = effort; pi.setThinkingLevel(effort as any); }
     pi.events.emit("piop:fast-mode", { apply: true, enabled: agent.fastMode, ctx });
     pi.setActiveTools([]);
-    const tools = new Set(agent.tools);
+    const tools = new Set([...agent.tools, ...extensions.tools()]);
     if (connectMcp && process.env.PI_DESKTOP_MCP_CONFIG) {
       const selection: { serverIds: string[]; agentName: string; sessionId: string; ready?: Promise<string[]> } = { serverIds: agent.mcpServers, agentName: agent.name, sessionId: ctx.sessionManager.getSessionId() };
       pi.events.emit("piop:mcp:select", selection);
@@ -275,13 +279,13 @@ export default async function defineAgents(pi: ExtensionAPI) {
     request.ready = Promise.resolve().then(() => {
       const agent = currentAgent();
       if (!agent) throw new Error(`Unknown defined agent: ${active}`);
-      activeToolError = agentToolError(pi, agent);
+      activeToolError = agentToolError(pi, agent, extensions.tools());
       const mcpTools = pi.getActiveTools().filter((name) => name.startsWith("mcp_"));
-      pi.setActiveTools(activeToolError ? [] : [...new Set([...agent.tools, ...mcpTools])]);
+      pi.setActiveTools(activeToolError ? [] : [...new Set([...agent.tools, ...extensions.tools(), ...mcpTools])]);
       publish(request.ctx);
     });
   });
-  pi.on("session_shutdown", () => { stopRefresh(); });
+  pi.on("session_shutdown", () => { stopRefresh(); extensions.stop(); });
   pi.on("model_select", (event) => { const model = `${event.model.provider}/${event.model.id}`; if (applyingAgentModel === model) { applyingAgentModel = undefined; return; } modelOverride = model; saveRuntimeDefaults({ model, effort: runtimeDefaults?.effort || pi.getThinkingLevel() }); });
   pi.on("thinking_level_select", (event) => { if (applyingAgentEffort === event.level) { applyingAgentEffort = undefined; return; } effortOverride = event.level; saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); });
   pi.on("session_start", async (_event, ctx) => {
@@ -294,7 +298,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
     }
     // Selection applies the agent's configuration; MCP startup waits for input.
     publish(ctx);
-    await useAgent(active, ctx, false);
+    const error = await useAgent(active, ctx, false);
+    if (error) throw new Error(error);
     publish(ctx);
   });
   pi.on("session_shutdown", (_event, ctx) => { delete process.env.PI_DEFINE_AGENTS_ACTIVE; if (!reloading) ctx.ui.setStatus(STATUS_KEY, undefined); });
@@ -317,27 +322,37 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const agent = findAgent(name)!;
     const error = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model);
     if (error) throw new Error(error);
+    await extensions.prepare(extensionPaths(agent.extensions));
+    const previousActive = active;
     const previousSkills = currentSkillPaths();
     active = name; modelOverride = undefined; effortOverride = undefined;
-    pi.appendEntry(STATE_ENTRY, { active });
-    if (JSON.stringify(previousSkills) !== JSON.stringify(currentSkillPaths())) return reload(ctx);
+    if (JSON.stringify(previousSkills) !== JSON.stringify(currentSkillPaths())) {
+      const error = await useAgent(active, ctx, false);
+      if (error) { active = previousActive; await useAgent(active, ctx, false); throw new Error(error); }
+      pi.appendEntry(STATE_ENTRY, { active });
+      return reload(ctx);
+    }
     const activationError = await useAgent(active, ctx, false);
-    if (activationError) throw new Error(activationError);
+    if (activationError) { active = previousActive; await useAgent(active, ctx, false); throw new Error(activationError); }
+    pi.appendEntry(STATE_ENTRY, { active });
   }});
   pi.registerCommand("pi-define-agents-config", { description: "Update agent definitions", handler: async (args, ctx) => {
     const previous = config;
+    const previousActive = active;
     const previousSkills = currentSkillPaths();
     const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied }, pi);
     restore(ctx);
     for (const agent of next.agents) { const error = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model); if (error) throw new Error(error); }
+    const nextActive = next.agents.find(agent => agent.name === active) ?? next.agents.find(agent => agent.name === "general")!;
+    await extensions.prepare(extensionPaths(nextActive.extensions));
     await writeConfig(next); config = next;
     try {
       if (!findAgent(active)) active = "general";
-      pi.appendEntry(STATE_ENTRY, { active });
-      if (JSON.stringify(previousSkills) !== JSON.stringify(currentSkillPaths())) { await reload(ctx); return; }
       const activationError = await useAgent(active, ctx, false);
       if (activationError) throw new Error(activationError);
+      pi.appendEntry(STATE_ENTRY, { active });
+      if (JSON.stringify(previousSkills) !== JSON.stringify(currentSkillPaths())) { await reload(ctx); return; }
     }
-    catch (error) { await writeConfig(previous); config = previous; throw error; }
+    catch (error) { await writeConfig(previous); config = previous; active = previousActive; await useAgent(active, ctx, false); throw error; }
   }});
 }
