@@ -52,6 +52,15 @@ Select an agent in the conversation and configure profiles in Settings → Agent
 
 The number counts backwards through completed responses: `0` (the default) is the latest, `1` is the previous response. Examples: `/worktree 2 experiment` or `/worktree experiment`. Stop or pause the agent before either command.
 
+Agents can also use `fork_session`, `create_worktree`, and `remove_worktree`. These tools are enabled by default and can be configured per agent in Settings. Their slash commands are:
+
+- `/fork-session [directory]` saves a separate conversation in the current directory or another existing directory. Works in Git and non-Git projects; it does not copy files.
+- `/fork-session --worktree name` saves the fork in a new Git worktree, copying current tracked changes and nonignored untracked files.
+- `/create-worktree name` creates a Git worktree with current files and runs configured setup scripts, without creating a conversation.
+- `/remove-worktree path` removes an unused, clean Git worktree after cleanup scripts, keeping its branch. The agent tool optionally deletes the branch with `deleteBranch: true`, without forcing deletion.
+
+`fork_session` leaves the original agent running and returns a new `hostId` and `sessionId`; use `send_message` to start work in that conversation. It retains history through the latest completed assistant response (or a specified `entryId` on the current branch), excluding the active unfinished turn. If no completed response exists, the fork starts with empty history. A worktree fork uses **current files**, while `/worktree` uses the selected response's saved checkpoint. Worktree operations require Git, run on the session's machine, and preserve piop's checks for dirty worktrees, active conversations, and terminals. Setup failures keep the created worktree and return its path with `setupError`.
+
 **Branch before this prompt**, beside a user message, opens a new worktree with that prompt's starting files and conversation history. Piop retains the latest 10 checkpoints per conversation; the original conversation can keep running. See [checkpoint storage and limits](extensions/piop-project-files-watch/README.md#before-prompt-checkpoints).
 
 `/catch-up` resets a secondary worktree's current branch to the main worktree's commit after confirmation. It discards tracked local changes and does not copy the main worktree's uncommitted changes or fetch from a remote. Stop or pause the agent first; the command is also blocked if another Piop agent is working in that worktree. In the main worktree, it does nothing.

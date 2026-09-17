@@ -40,11 +40,13 @@ Guidelines:
 - Be concise in your responses
 - Show file paths clearly when working with files`;
 
-type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean };
+const sessionTools = ["fork_session", "create_worktree", "remove_worktree"];
+type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean };
 const fallbackConfig: Config = { agents: [{ name: "general", model: "", effort: "high", path_systemprompt: DEFAULT_PROMPT_PATH, path_agentprompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
 function defaultAgent(pi: ExtensionAPI): Agent {
   const agent = structuredClone(fallbackConfig.agents[0]);
   if (desktopList(pi, "tools")?.includes("web_search")) agent.tools.push("web_search");
+  agent.tools.push(...sessionTools.filter((tool) => desktopList(pi, "tools")?.includes(tool)));
   return agent;
 }
 
@@ -85,7 +87,7 @@ async function ensureDefaultAgentPrompt() {
 }
 
 type StoredAgent = Omit<Agent, "path_systemprompt" | "path_agentprompt"> & { path_systemprompt?: string; path_agentprompt?: string; agentsMd?: string; systemPrompt?: string; developerPrompt?: string };
-type StoredConfig = { agents?: StoredAgent[]; webSearchDefaultApplied?: boolean };
+type StoredConfig = { agents?: StoredAgent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean };
 async function migratePrompts(stored: StoredConfig, pi: ExtensionAPI): Promise<Config> {
   const agents = [];
   for (const agent of Array.isArray(stored.agents) ? stored.agents : []) {
@@ -139,7 +141,7 @@ function normalize(value: Partial<Config>, pi: ExtensionAPI): Config {
   }
   const unique = supplied.filter((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) === index);
   const agents = unique.some((agent) => agent.name === "general") ? unique : [defaultAgent(pi), ...unique];
-  return { agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true };
+  return { agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true };
 }
 
 async function readConfig(pi: ExtensionAPI): Promise<Config> {
@@ -155,9 +157,16 @@ async function readConfig(pi: ExtensionAPI): Promise<Config> {
   await writeConfig(normalize({}, pi), true);
   return readConfig(pi);
 }
+function migrateSessionTools(config: Config, pi: ExtensionAPI) {
+  const available = sessionTools.filter((tool) => desktopList(pi, "tools")?.includes(tool));
+  if (config.sessionToolsDefaultApplied || !available.length) return false;
+  for (const agent of config.agents) agent.tools = [...new Set([...agent.tools, ...available])];
+  config.sessionToolsDefaultApplied = true;
+  return true;
+}
 async function loadConfig(pi: ExtensionAPI): Promise<Config> {
   const config = await readConfig(pi);
-  let changed = false;
+  let changed = migrateSessionTools(config, pi);
   for (const agent of config.agents) {
     if (!agent.tools.some((tool) => tool === "exec_command" || tool === "apply_patch")) continue;
     agent.tools = [...new Set(agent.tools.flatMap((tool) => tool === "exec_command"
@@ -340,7 +349,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const previous = config;
     const previousActive = active;
     const previousSkills = currentSkillPaths();
-    const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied }, pi);
+    const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied }, pi);
     restore(ctx);
     for (const agent of next.agents) { const error = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model); if (error) throw new Error(error); }
     const nextActive = next.agents.find(agent => agent.name === active) ?? next.agents.find(agent => agent.name === "general")!;

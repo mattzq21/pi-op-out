@@ -1,6 +1,7 @@
 import { Type, type AssistantMessage } from "@earendil-works/pi-ai";
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile, realpath } from "node:fs/promises";
+import { readFile, realpath, stat, open, rm } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { dirname, join, resolve, sep } from "node:path";
@@ -45,6 +46,7 @@ async function cancelRequest(requestId: string) {
 }
 
 async function request(path: string, body?: unknown, signal?: AbortSignal, timeoutMs = 10_000) {
+  signal?.throwIfAborted();
   if (!url || !token) throw new Error("piop session broker is unavailable");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(new Error("Session broker request timed out")), timeoutMs);
@@ -353,6 +355,7 @@ export default function sessionBroker(pi: ExtensionAPI) {
   registerPauseControl(pi);
   registerFastModeStatus(pi);
   registerForkAndForget(pi);
+  registerSessionOperations(pi);
   pi.registerTool({
     name: "list_agents", label: "List agents", description: "List Pi agents addressable through piop", promptSnippet: "List agents by hostId and sessionId",
     parameters: Type.Object({}),
@@ -395,4 +398,89 @@ function registerVoiceHistory(pi: ExtensionAPI) {
       }
     },
   });
+}
+
+
+type ForkOptions = { cwd?: string; worktree?: string; entryId?: string };
+type CreatedWorktree = { path: string; branch: string; setupError?: string | null };
+const currentHost = () => process.env.PI_DESKTOP_HOST_ID || "local";
+
+// Both slash commands and model tools use these operations. Forking never changes
+// the running agent's session, and never copies an unfinished tool-call turn.
+export async function forkConversation(ctx: ExtensionContext, options: ForkOptions, createWorktree: (name: string) => Promise<CreatedWorktree>) {
+  const retained = forkHistory(ctx, options.entryId);
+  const header = ctx.sessionManager.getHeader();
+  if (!header || !ctx.sessionManager.getSessionFile()) throw new Error("Save this conversation before forking it");
+  let cwd = await forkDirectory(ctx.cwd, options);
+  const worktree = options.worktree ? await createWorktree(options.worktree) : undefined;
+  if (worktree) cwd = worktree.path;
+  const sessionId = randomUUID();
+  const timestamp = new Date().toISOString();
+  const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
+  try {
+    await writeFork(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: ctx.sessionManager.getSessionFile() }, ...retained]);
+  } catch (error) {
+    if (worktree) throw new Error(`Worktree kept at ${cwd}, but conversation fork failed: ${String(error)}`);
+    throw error;
+  }
+  return { hostId: currentHost(), sessionId, sessionPath, cwd, ...worktree };
+}
+
+async function forkDirectory(cwd: string, options: ForkOptions) {
+  if (options.cwd && options.worktree) throw new Error("Choose cwd or worktree, not both");
+  const path = await realpath(resolve(cwd, options.cwd ?? "."));
+  if (!(await stat(path)).isDirectory()) throw new Error("Fork destination must be an existing directory");
+  return path;
+}
+
+function forkHistory(ctx: ExtensionContext, entryId?: string) {
+  const branch = ctx.sessionManager.getBranch();
+  const complete = (entry: typeof branch[number]) => entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason !== "toolUse" && !entry.message.content.some((part) => part.type === "toolCall");
+  const entry = entryId ? branch.find((entry) => entry.id === entryId) : [...branch].reverse().find(complete);
+  if (entryId && (!entry || !complete(entry))) throw new Error("entryId must identify a completed assistant response on the current branch");
+  return entry ? branch.slice(0, branch.indexOf(entry) + 1) : [];
+}
+
+async function writeFork(path: string, entries: unknown[]) {
+  const file = await open(path, "wx", 0o600);
+  try { await file.writeFile(entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n"); }
+  catch (error) { await rm(path, { force: true }); throw error; }
+  finally { await file.close(); }
+}
+
+export function registerSessionOperations(pi: ExtensionAPI) {
+  const create = (ctx: ExtensionContext, name: string, signal?: AbortSignal) => request("/worktrees/create", { hostId: currentHost(), cwd: ctx.cwd, name }, signal, MESSAGE_TIMEOUT_MS) as Promise<CreatedWorktree>;
+  const fork = (ctx: ExtensionContext, options: ForkOptions, signal?: AbortSignal) => { signal?.throwIfAborted(); return forkConversation(ctx, options, (name) => create(ctx, name, signal)); };
+  const remove = (cwd: string, deleteBranch = false, signal?: AbortSignal) => request("/worktrees/remove", { hostId: currentHost(), cwd, deleteBranch }, signal, MESSAGE_TIMEOUT_MS);
+  const result = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }], details: data });
+  pi.registerTool({
+    name: "fork_session", label: "Fork conversation",
+    description: "Create a separate saved conversation through a completed assistant response. Works with or without Git. Defaults to the latest completed response (empty history if none). Keeps the current agent running. Optionally use another existing directory or create a Git worktree with current files. Returns hostId/sessionId for send_message; does not start the child.",
+    parameters: Type.Object({ cwd: Type.Optional(Type.String({ description: "Existing destination directory; defaults to current directory. Files are not copied." })), worktree: Type.Optional(Type.String({ description: "New Git worktree name; mutually exclusive with cwd" })), entryId: Type.Optional(Type.String({ description: "Completed assistant entry on the current branch" })) }),
+    async execute(_id, params, signal, _update, ctx) { return result(await fork(ctx, params, signal)); },
+  });
+  pi.registerTool({
+    name: "create_worktree", label: "Create Git worktree", description: "Create a Git branch and worktree from current files, including uncommitted and nonignored untracked files, then run configured setup scripts. Does not create a conversation. Requires a Git project. Setup failures return the kept path and setupError.",
+    parameters: Type.Object({ name: Type.String() }),
+    async execute(_id, params, signal, _update, ctx) { return result(await create(ctx, params.name, signal)); },
+  });
+  pi.registerTool({
+    name: "remove_worktree", label: "Remove Git worktree", description: "Remove an unused clean Git worktree after configured cleanup scripts. Refuses the main checkout, dirty worktrees, and worktrees used by conversations or terminals. Branch deletion is optional and never forced.",
+    parameters: Type.Object({ cwd: Type.String(), deleteBranch: Type.Optional(Type.Boolean()) }),
+    async execute(_id, params, signal, _update, ctx) { return result(await remove(resolve(ctx.cwd, params.cwd), params.deleteBranch, signal)); },
+  });
+  const report = async (ctx: ExtensionContext, operation: () => Promise<unknown>) => {
+    try { pi.sendMessage({ customType: "piop-session-operation", content: JSON.stringify(await operation(), null, 2), display: true }, { triggerTurn: false }); }
+    catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
+  };
+  pi.registerCommand("fork-session", { description: 'Fork conversation: /fork-session [directory] or /fork-session --worktree name', handler: async (args, ctx) => report(ctx, () => {
+    const value = args.trim();
+    if (value === "--worktree") throw new Error("Usage: /fork-session --worktree name");
+    return fork(ctx, value.startsWith("--worktree ") ? { worktree: value.slice(11).trim() } : { cwd: value || undefined });
+  }) });
+  pi.registerCommand("create-worktree", { description: "Create worktree with current files: /create-worktree name", handler: async (args, ctx) => report(ctx, () => create(ctx, args.trim())) });
+  pi.registerCommand("remove-worktree", { description: "Remove unused clean worktree, keeping its branch: /remove-worktree path", handler: async (args, ctx) => report(ctx, () => {
+    if (!args.trim()) throw new Error("Usage: /remove-worktree path");
+    return remove(resolve(ctx.cwd, args.trim()));
+  }) });
 }

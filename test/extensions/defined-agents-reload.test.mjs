@@ -67,3 +67,29 @@ test('agent definitions survive reload while selected MCP tools are pending', as
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('session tools migrate once and later per-agent exclusions survive reload', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'piop-agent-session-tools-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const names = ['fork_session', 'create_worktree', 'remove_worktree'];
+  const source = (await readFile(new URL('../../extensions/piop-define-agents/index.ts', import.meta.url), 'utf8'))
+    .replace(/import \{ formatSkillsForPrompt, type BuildSystemPromptOptions \} from "@earendil-works\/pi-coding-agent";/, 'const formatSkillsForPrompt = () => "";')
+    .replace('./extension-loader.ts', './extension-loader.mjs');
+  await writeFile(join(dir, 'index.mjs'), (await transform(source, { loader: 'ts', format: 'esm' })).code);
+  const loader = await readFile(new URL('../../extensions/piop-define-agents/extension-loader.ts', import.meta.url), 'utf8');
+  await writeFile(join(dir, 'extension-loader.mjs'), (await transform(loader, { loader: 'ts', format: 'esm' })).code);
+  await writeFile(join(dir, 'config.json'), JSON.stringify({ agents: [{ name: 'general', model: '', effort: 'high', tools: [], skills: [], mcpServers: [] }] }));
+  const define = (await import(pathToFileURL(join(dir, 'index.mjs')))).default;
+  const pi = {
+    on() {}, registerCommand() {},
+    events: { on() { return () => {}; }, emit(name, request) { if (name === 'piop:runtime-settings') request.settings = { tools: names, skills: [] }; } },
+  };
+  await define(pi);
+  const config = JSON.parse(await readFile(join(dir, 'config.json'), 'utf8'));
+  assert.deepEqual(config.agents[0].tools, names);
+  assert.equal(config.sessionToolsDefaultApplied, true);
+  config.agents[0].tools = ['fork_session'];
+  await writeFile(join(dir, 'config.json'), JSON.stringify(config));
+  await define(pi);
+  assert.deepEqual(JSON.parse(await readFile(join(dir, 'config.json'), 'utf8')).agents[0].tools, ['fork_session']);
+});
