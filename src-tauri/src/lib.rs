@@ -756,6 +756,10 @@ fn default_settings() -> AppSettings {
     }
 }
 
+fn session_operation_tools() -> Vec<Value> {
+    [("fork_session", "Fork a conversation in any project"), ("create_worktree", "Create a Git worktree"), ("remove_worktree", "Remove an unused Git worktree")].into_iter().map(|(name, description)| json!({"name":name,"description":description,"enabled":true,"builtin":false})).collect()
+}
+
 fn codex_web_search_tool() -> Value {
     json!({"name":"web_search","description":"Search the web with Pi's Codex login and return cited answers","enabled":true,"builtin":false})
 }
@@ -913,6 +917,9 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     if !settings.tools.iter().any(|tool| tool.get("name").and_then(Value::as_str) == Some("web_search")) {
         settings.tools.push(codex_web_search_tool());
     }
+    for tool in session_operation_tools() {
+        if !settings.tools.iter().any(|existing| existing["name"] == tool["name"]) { settings.tools.push(tool); }
+    }
     migrate_keybindings(&mut settings);
     if settings.hosts.len() > MAX_REMOTE_HOSTS { return Err(format!("Settings contain more than {MAX_REMOTE_HOSTS} remote machines")); }
     if settings.mcp_servers.len() > MAX_MCP_SERVERS { return Err(format!("Settings contain more than {MAX_MCP_SERVERS} MCP servers")); }
@@ -923,6 +930,9 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
 
 #[tauri::command(async)]
 fn save_app_settings(app: AppHandle, mut settings: AppSettings, agent_host_id: Option<String>) -> Result<Value, String> {
+    for tool in session_operation_tools() {
+        if !settings.tools.iter().any(|existing| existing["name"] == tool["name"]) { settings.tools.push(tool); }
+    }
     migrate_keybindings(&mut settings);
     if settings.context_window_cap < 1000 { return Err("Context window cap must be a whole number of at least 1000".into()); }
     validate_dictionaries(&settings)?;
@@ -1968,7 +1978,7 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
         let mut command = Command::new(&pi_path); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY); command.arg(if is_rpc { "--mode" } else { "--print" }); if is_rpc { command.arg("rpc"); }
         command.arg("--extension").arg(prepare_rtk_extension()?);
         command.arg("--extension").arg(prepare_runtime_settings(settings)?).arg("--session-dir").arg(session_dir).arg("--approve").arg("--no-skills").arg("--extension").arg(prepare_hooks_extension()?).arg("--extension").arg(mcp_extension).arg("--extension").arg(prepare_session_broker()?).arg("--extension").arg(&trace_reader_extension).arg("--extension").arg(&context_window_cap_extension).arg("--extension").arg(&diff_watch_extension).arg("--extension").arg(prepare_fast_mode_extension()?).arg("--extension").arg(&openai_cache_lineage_extension).arg("--extension").arg(&codex_web_search_extension).arg("--extension").arg(&defined_agents_extension)
-            .env("PI_DESKTOP_DEFINED_AGENTS_EXTENSION", &defined_agents_extension).env("PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION", &codex_web_search_extension).env("PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION", &context_window_cap_extension).env("PI_DESKTOP_TRACE_READER_EXTENSION", &trace_reader_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config).env("PI_DESKTOP_BROKER_URL", format!("http://127.0.0.1:{broker_port}")).env("PI_DESKTOP_BROKER_TOKEN", &broker_token);
+            .env("PI_DESKTOP_DEFINED_AGENTS_EXTENSION", &defined_agents_extension).env("PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION", &codex_web_search_extension).env("PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION", &context_window_cap_extension).env("PI_DESKTOP_TRACE_READER_EXTENSION", &trace_reader_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config).env("PI_DESKTOP_BROKER_URL", format!("http://127.0.0.1:{broker_port}")).env("PI_DESKTOP_BROKER_TOKEN", &broker_token).env("PI_DESKTOP_HOST_ID", host_id);
         match launch {
             PiLaunch::Rpc { cwd, session_path, session_id, fork_path, no_session } => {
                 let working_dir = match cwd { Some("~") => home_dir()?, Some(path) => PathBuf::from(path), None => std::env::current_dir().map_err(|error| error.to_string())? };
@@ -2002,7 +2012,7 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
     };
     if !is_rpc && !default_model.trim().is_empty() { arguments.extend(["--model".into(), shell_quote(default_model.trim())]); }
     if !settings.default_thinking.trim().is_empty() { arguments.extend(["--thinking".into(), shell_quote(settings.default_thinking.trim())]); }
-    let rpc_environment = if is_rpc { format!(" PI_DESKTOP_BTW=1 PI_DESKTOP_PI_EXECUTABLE={remote_pi}") } else { String::new() };
+    let rpc_environment = format!(" PI_DESKTOP_HOST_ID={}{}", shell_quote(host_id), if is_rpc { format!(" PI_DESKTOP_BTW=1 PI_DESKTOP_PI_EXECUTABLE={remote_pi}") } else { String::new() });
     let remote = format!("cd {} && PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} PI_DESKTOP_DEFINED_AGENTS_EXTENSION=\"$HOME/{STORAGE_DIRECTORY}/piop-define-agents/index.ts\" PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION=\"$HOME/{STORAGE_DIRECTORY}/piop-codex-web-search.ts\" PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION=\"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/index.ts\" PI_DESKTOP_TRACE_READER_EXTENSION=\"$HOME/{STORAGE_DIRECTORY}/piop-trace-reader.ts\" PI_DESKTOP_MCP_CONFIG=\"$HOME/{STORAGE_DIRECTORY}/mcp-servers.json\" PI_DESKTOP_BROKER_URL={} PI_DESKTOP_BROKER_TOKEN={}{} exec {}", remote_directory_path(cwd), shell_quote(&format!("http://127.0.0.1:{remote_port}")), shell_quote(&broker_token), rpc_environment, arguments.join(" "));
     if daemon_port.is_some() {
         let mut command = Command::new("sh");
@@ -2836,6 +2846,25 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
             let busy = broker.busy.lock().map_err(|_| "Broker claim lock was poisoned")?.clone();
             collect_sessions(&app, &session_index).map(|sessions| json!(sessions.into_iter().map(|session| json!({"hostId":session.host_id,"sessionId":session.id,"name":session.name,"project":session.project,"cwd":session.cwd,"active":busy.contains(&format!("{}\0{}", session.host_id, session.id)) || active.iter().any(|agent| agent_is_active(&session, agent))})).collect::<Vec<_>>()))
         },
+        ("POST", "/worktrees/create") => (|| {
+            let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid worktree request")?;
+            let host_id = value["hostId"].as_str().ok_or("hostId is required")?;
+            let cwd = value["cwd"].as_str().ok_or("cwd is required")?;
+            let name = value["name"].as_str().ok_or("name is required")?;
+            let settings = load_app_settings(app.clone())?;
+            let created = create_git_worktree(app.clone(), cwd.into(), name.into(), Some(host_id.into()))?;
+            let group = session_groups::SessionGroup { id: format!("{host_id}:{}", created.path), name: created.branch.clone(), cwd: Some(created.path.clone()), host_id: Some(host_id.into()), host_name: Some(settings.hosts.iter().find(|host| host.id == host_id).map(|host| host.name.clone()).unwrap_or_else(|| host_id.into())), project_kind: Some(ProjectKind::Worktree) };
+            let group_error = change_session_groups(app.clone(), session_groups::GroupChange::Project { project: group, key: None }).err();
+            let setup = run_worktree_scripts(&settings, cwd, &created.path, host_id, &AtomicBool::new(false), WorktreeScriptPhase::Setup);
+            Ok(json!({"path":created.path,"branch":created.branch,"setupError":setup.err(),"groupError":group_error}))
+        })(),
+        ("POST", "/worktrees/remove") => (|| {
+            let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid worktree request")?;
+            let host_id = value["hostId"].as_str().ok_or("hostId is required")?;
+            let cwd = value["cwd"].as_str().ok_or("cwd is required")?;
+            let removed = remove_git_worktree_blocking(app.clone(), cwd.into(), Some(host_id.into()), value["deleteBranch"].as_bool().unwrap_or(false))?;
+            serde_json::to_value(removed).map_err(|error| error.to_string())
+        })(),
         ("POST", "/worktree-agents") => (|| {
             let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid worktree request")?;
             let id = value.get("id").and_then(Value::as_str).ok_or("Agent identity is required")?;
