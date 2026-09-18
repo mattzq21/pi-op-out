@@ -2548,6 +2548,95 @@ fn git_snapshot_workflow_skips_non_repositories_and_discards_baseline_when_captu
 }
 
 #[test]
+fn git_snapshots_capture_working_changes_without_modifying_the_real_index() {
+    let repository = TestDirectory::new(); let snapshots = TestDirectory::new();
+    test_git(&repository.0, &["init", "--initial-branch=main"]);
+    fs::write(repository.0.join("tracked.txt"), "original\n").unwrap();
+    test_git(&repository.0, &["add", "tracked.txt"]); test_git(&repository.0, &["commit", "-m", "Initial"]);
+    let (root, objects) = git_root_and_objects(repository.0.to_str().unwrap()).unwrap().unwrap();
+    let capture = || serde_json::from_str::<GitSnapshotToken>(&capture_local_git_tree(&root, &objects, &snapshots.0).unwrap()).unwrap();
+    let base = capture();
+    fs::write(repository.0.join("tracked.txt"), "staged\n").unwrap(); test_git(&repository.0, &["add", "tracked.txt"]);
+    fs::write(repository.0.join("tracked.txt"), "working\n").unwrap(); fs::write(repository.0.join("new.txt"), "untracked\n").unwrap();
+    let index_entries = || {
+        let output = Command::new("git").arg("-C").arg(&repository.0).args(["ls-files", "--stage", "-z"]).output().unwrap();
+        assert!(output.status.success()); output.stdout
+    };
+    let index_before = index_entries();
+    let current = capture();
+    assert_eq!(index_entries(), index_before);
+    assert_eq!(fs::read_to_string(repository.0.join("tracked.txt")).unwrap(), "working\n");
+    let diff = local_git_diff_between(root.to_str().unwrap(), &base, &current).unwrap().unwrap();
+    let GitDiffSnapshot::Located { patch, repository_root, tool_paths } = diff else { panic!("snapshot diff must carry its repository root") };
+    assert!(patch.contains("-original")); assert!(patch.contains("+working")); assert!(patch.contains("+untracked"));
+    assert!(!patch.contains("+staged")); assert_eq!(repository_root, root.to_string_lossy()); assert!(tool_paths.is_empty());
+    let unchanged = capture();
+    assert!(local_git_diff_between(root.to_str().unwrap(), &current, &unchanged).unwrap().is_none());
+    let plain = TestDirectory::new();
+    assert!(local_git_diff_between(plain.0.to_str().unwrap(), &base, &current).unwrap().is_none());
+}
+
+#[test]
+fn failed_snapshot_capture_removes_temporary_objects_and_preserves_staged_content() {
+    let repository = TestDirectory::new(); let snapshots = TestDirectory::new();
+    test_git(&repository.0, &["init", "--initial-branch=main"]);
+    fs::write(repository.0.join("staged.txt"), "staged content").unwrap(); test_git(&repository.0, &["add", "staged.txt"]);
+    test_git(&repository.0, &["config", "filter.reject.clean", "false"]);
+    test_git(&repository.0, &["config", "filter.reject.required", "true"]);
+    fs::write(repository.0.join(".gitattributes"), "rejected.txt filter=reject\n").unwrap();
+    fs::write(repository.0.join("rejected.txt"), "working content").unwrap();
+    let (root, objects) = git_root_and_objects(repository.0.to_str().unwrap()).unwrap().unwrap();
+    let error = capture_local_git_tree(&root, &objects, &snapshots.0).unwrap_err();
+    assert!(error.contains("clean filter 'reject' failed"));
+    assert_eq!(fs::read_dir(&snapshots.0).unwrap().count(), 0);
+    let staged = Command::new("git").arg("-C").arg(&root).args(["show", ":staged.txt"]).output().unwrap();
+    assert!(staged.status.success()); assert_eq!(staged.stdout, b"staged content");
+    assert_eq!(fs::read_to_string(root.join("rejected.txt")).unwrap(), "working content");
+}
+
+#[test]
+fn snapshot_creation_reports_unavailable_storage_and_invalid_repositories() {
+    let repository = TestDirectory::new(); let storage = TestDirectory::new();
+    test_git(&repository.0, &["init", "--initial-branch=main"]);
+    let (root, objects) = git_root_and_objects(repository.0.to_str().unwrap()).unwrap().unwrap();
+    let blocked = storage.0.join("blocked"); fs::write(&blocked, "retain").unwrap();
+    assert!(capture_local_git_tree(&root, &objects, &blocked).unwrap_err().contains("Could not create Git snapshot"));
+    assert_eq!(fs::read_to_string(&blocked).unwrap(), "retain");
+    assert!(capture_local_git_tree(&storage.0, &objects, &storage.0).is_err());
+    assert_eq!(fs::read_dir(&storage.0).unwrap().count(), 1);
+}
+
+#[test]
+fn snapshot_locations_require_direct_children_with_the_expected_name() {
+    let storage = TestDirectory::new(); let parent = storage.0.canonicalize().unwrap();
+    let valid = parent.join("pi-desktop-diff-valid"); fs::create_dir(&valid).unwrap();
+    let token = |path: &Path| GitSnapshotToken { root: path.to_string_lossy().into_owned(), tree: "a".repeat(40), repository_root: "/original/repository".into() };
+    let parsed = validate_snapshot_location(token(&valid), &parent).unwrap();
+    assert_eq!(parsed.root, valid.to_string_lossy()); assert_eq!(parsed.repository_root, "/original/repository"); assert_eq!(parsed.tree, "a".repeat(40));
+    let wrong_name = parent.join("unrelated"); fs::create_dir(&wrong_name).unwrap();
+    let nested = valid.join("pi-desktop-diff-nested"); fs::create_dir(&nested).unwrap();
+    for path in [&wrong_name, &nested, &parent] {
+        assert_eq!(validate_snapshot_location(token(path), &parent).err().unwrap(), "Invalid Git snapshot location");
+    }
+    assert_eq!(validate_snapshot_location(token(&parent.join("pi-desktop-diff-expired")), &parent).err().unwrap(), "Git snapshot expired");
+}
+
+#[cfg(unix)]
+#[test]
+fn snapshot_location_validation_checks_the_symlink_destination() {
+    use std::os::unix::fs::symlink;
+    let storage = TestDirectory::new(); let outside = TestDirectory::new();
+    let parent = storage.0.canonicalize().unwrap();
+    let valid = parent.join("pi-desktop-diff-valid"); fs::create_dir(&valid).unwrap();
+    let alias = parent.join("alias"); symlink(&valid, &alias).unwrap();
+    let make_token = |path: &Path| GitSnapshotToken { root: path.to_string_lossy().into_owned(), tree: "b".repeat(40), repository_root: String::new() };
+    assert_eq!(validate_snapshot_location(make_token(&alias), &parent).unwrap().root, valid.to_string_lossy());
+    let escape = parent.join("pi-desktop-diff-escape"); symlink(&outside.0, &escape).unwrap();
+    assert_eq!(validate_snapshot_location(make_token(&escape), &parent).err().unwrap(), "Invalid Git snapshot location");
+    assert!(outside.0.is_dir());
+}
+
+#[test]
 fn project_inspection_batches_distinct_directories_and_updates_all_matching_sessions() {
     let root = TestDirectory::new();
     let repository = root.0.join("repo ' 日本語"); fs::create_dir(&repository).unwrap();

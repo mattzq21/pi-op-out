@@ -1427,6 +1427,11 @@ fn local_git_tree_with(cwd: &str, parent: impl FnOnce() -> Result<PathBuf, Strin
     let cwd = root.to_str().ok_or("Git root is not valid UTF-8")?;
     if !local_git_input_is_bounded(cwd, &root)? { return Ok(None); }
     let snapshot_parent = parent()?;
+    capture_local_git_tree(&root, &repository_objects, &snapshot_parent).map(Some)
+}
+
+fn capture_local_git_tree(root: &Path, repository_objects: &Path, snapshot_parent: &Path) -> Result<String, String> {
+    let cwd = root.to_str().ok_or("Git root is not valid UTF-8")?;
     let snapshot_root = snapshot_parent.join(format!("pi-desktop-diff-{}", Uuid::new_v4()));
     let objects = snapshot_root.join("objects"); let index = snapshot_root.join("index");
     let seed = run_limited(Command::new("git").args(["-C", cwd, "write-tree"]), 64 * 1024, "Could not read project index")?;
@@ -1445,7 +1450,7 @@ fn local_git_tree_with(cwd: &str, parent: impl FnOnce() -> Result<PathBuf, Strin
         serde_json::to_string(&GitSnapshotToken { root: snapshot_root.to_string_lossy().into_owned(), tree, repository_root: cwd.to_owned() }).map_err(|error| error.to_string())
     })();
     if result.is_err() { let _ = fs::remove_dir_all(&snapshot_root); }
-    result.map(Some)
+    result
 }
 
 fn local_git_diff(cwd: &str, base_token: &str) -> Result<Option<GitDiffSnapshot>, String> {
