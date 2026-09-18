@@ -2,16 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import { Blocks, BookOpen, Bot, Check, CircleGauge, CirclePlus, Cpu, HardDrive, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Sparkles, Trash2, Wrench, Zap } from "lucide-react";
 import { HooksSettings, HookIcon } from "./HooksSettings";
 import { StorageSettings } from "./StorageSettings";
+import { ProviderSettings } from "./ProviderSettings";
 import type { AgentProfile, AppSettings, McpServer, Model, AgentConfig, RemoteHost, SessionSummary } from "../types";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutFromEvent, shortcutsConflict, type KeybindAction } from "../lib/keybindings";
 import { IconButton } from "./IconButton";
 import { Toggle } from "./Toggle";
 
-type Section = "general" | "models" | "storage" | "environment" | "dictionaries" | "agents" | "machines" | "keybinds" | "tools" | "skills" | "hooks" | "mcp";
+type Section = "providers" | "general" | "models" | "storage" | "environment" | "dictionaries" | "agents" | "machines" | "keybinds" | "tools" | "skills" | "hooks" | "mcp";
 const sections = [
   { id: "general" as const, label: "General", icon: Settings2 },
   { id: "models" as const, label: "Models", icon: Cpu },
+  { id: "providers" as const, label: "Providers", icon: ShieldCheck },
   { id: "storage" as const, label: "Storage", icon: HardDrive },
   { id: "environment" as const, label: "Worktree scripts", icon: Wrench },
   { id: "keybinds" as const, label: "Keybinds", icon: Keyboard },
@@ -50,7 +52,7 @@ function mcpServerError(server: McpServer) {
   return undefined;
 }
 
-export function SettingsView({ settings, pendingSettingsCount = 0, agentConfig: incomingConfiguration, sessions = [], models = [], thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"], onSave, onDirtyChange }: { settings: AppSettings; pendingSettingsCount?: number; agentConfig?: AgentConfig; sessions?: SessionSummary[]; models?: Model[]; thinkingLevels?: string[]; onSave: (settings: AppSettings, agentConfig?: AgentConfig) => Promise<void>; onDirtyChange?: (dirty: boolean) => void }) {
+export function SettingsView({ providerHostId = "local", settings, pendingSettingsCount = 0, agentConfig: incomingConfiguration, sessions = [], models = [], thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"], onSave, onDirtyChange }: { providerHostId?: string; settings: AppSettings; pendingSettingsCount?: number; agentConfig?: AgentConfig; sessions?: SessionSummary[]; models?: Model[]; thinkingLevels?: string[]; onSave: (settings: AppSettings, agentConfig?: AgentConfig) => Promise<void>; onDirtyChange?: (dirty: boolean) => void }) {
   const [saving, setSaving] = useState(false);
   // Saving reloads extensions. Keep the last discovered capabilities until the
   // save finishes, then reconcile actual removals against the fresh discovery.
@@ -170,6 +172,7 @@ export function SettingsView({ settings, pendingSettingsCount = 0, agentConfig: 
     <div className="settings-layout"><nav className="settings-nav"><label className="search settings-search"><Search size={15} /><input autoFocus type="search" aria-label="Search settings" placeholder="Search settings" value={settingsQuery} onChange={(event) => setSettingsQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setSettingsQuery(""); } }} /></label>{matchingSections.map((item) => <button key={item.id} className={visibleSection === item.id ? "active" : ""} aria-current={visibleSection === item.id ? "page" : undefined} onClick={() => setSection(item.id)}><item.icon size={16} /><span>{item.label}</span></button>)}</nav>
       <section className="settings-content">
         {!matchingSections.length && <div className="empty-small" role="status">No settings match your search.</div>}
+        {visibleSection === "providers" && <ProviderSettings hosts={settings.hosts} initialHostId={providerHostId} />}
         {visibleSection === "hooks" && <HooksSettings hosts={settings.hosts} />}
         {visibleSection === "environment" && <SettingsSection title="Worktree scripts" description="Assign setup and cleanup scripts to a project and machine. Setup runs in order after creation; cleanup runs in reverse order before deletion. A failure stops the operation and keeps the worktree." headerAction={<button className="secondary-button" onClick={() => patch({ worktreeSetupScripts: [...(draft.worktreeSetupScripts ?? []), { id: uid("setup"), name: "Worktree script", script: "", cleanupScript: "", enabled: true, projectPath: "", hostId: "local" }] })}><CirclePlus size={15} />Add script</button>}>
           <p>Source workspace: <code>PIOP_SOURCE_TREE_PATH</code><br />Worktree: <code>PIOP_WORKTREE_PATH</code><br />Branch: <code>PIOP_WORKTREE_BRANCH</code></p>

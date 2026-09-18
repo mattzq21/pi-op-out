@@ -69,5 +69,18 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
       }
     },
   });
+  pi.registerCommand("piop-provider-auth-refresh", {
+    description: "Refresh models after a host provider login changes",
+    handler: async (args, ctx) => {
+      const request = JSON.parse(args) as { id: string };
+      if (ctx.mode !== "rpc") return;
+      try {
+        await ctx.modelRegistry.refresh({ allowNetwork: false });
+        ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id: request.id, command: "provider_auth_refresh", success: true })}`);
+      } catch {
+        ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id: request.id, command: "provider_auth_refresh", success: false, error: "Could not refresh provider models. Reopen the conversation to retry." })}`);
+      }
+    },
+  });
   pi.on("session_shutdown", () => { unsubscribe(); });
 }

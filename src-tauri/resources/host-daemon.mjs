@@ -13,6 +13,11 @@ const interactiveMethods = new Set(['input', 'editor', 'select', 'confirm']);
 const stateChanges = new Set(['session_info_changed', 'session_switched', 'model_select', 'thinking_level_changed', 'agent_start', 'agent_end', 'agent_settled', 'message_start', 'message_end', 'entry_appended', 'pause_state', 'compaction_start', 'compaction_end', 'auto_compaction_start', 'auto_compaction_end']);
 const output = (packet) => process.stdout.write(JSON.stringify(packet) + '\n');
 const errorText = (error) => error instanceof Error ? error.message : String(error);
+let providerAuthRevision = 0;
+const providerAuth = typeof ProviderAuthService === 'undefined' ? undefined : new ProviderAuthService(piAuthExecutable, () => {
+  providerAuthRevision++;
+  for (const session of sessions.values()) session.publish({ type: 'session_info_changed' });
+});
 const canonicalSettings = (value) => Array.isArray(value) ? value.map(canonicalSettings) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalSettings(value[key])])) : value;
 
 function applyAssistantMessageDelta(message, event) {
@@ -297,7 +302,7 @@ class Session {
     if (requestType === 'prompt') { this.inputRejection = undefined; this.commandErrors.clear(); }
     let wire = { ...command, id };
     const action = { pause: 'pause', resume: 'resume', abort: 'stop', get_pause_state: 'state' }[command.type];
-    const extension = { runtime_settings: 'piop-runtime-settings', branch_checkpoint: 'pi-desktop-branch-checkpoint', fork_and_forget: 'pi-desktop-fork-and-forget', voice_history: 'pi-desktop-voice-history' }[command.type];
+    const extension = { provider_auth_refresh: 'piop-provider-auth-refresh', runtime_settings: 'piop-runtime-settings', branch_checkpoint: 'pi-desktop-branch-checkpoint', fork_and_forget: 'pi-desktop-fork-and-forget', voice_history: 'pi-desktop-voice-history' }[command.type];
     if (action || extension) wire = { type: 'prompt', id: `${id}:desktop-control`, message: `/${extension ?? 'pi-desktop-control'} ${JSON.stringify(action ? { id, action } : { ...command, id })}` };
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -314,6 +319,11 @@ class Session {
 
   async execute(command) {
     if (command.type === 'force_stop') return this.stop();
+    if (command.type === 'get_available_models' && this.providerAuthRevision !== providerAuthRevision && providerAuthRevision > 0) {
+      const revision = providerAuthRevision;
+      await this.raw({ type: 'provider_auth_refresh' });
+      this.providerAuthRevision = revision;
+    }
     if (command.type === 'get_snapshot') {
       const deadline = Date.now() + this.timeout;
       for (;;) {
@@ -413,6 +423,11 @@ async function forkSession(session, runtimeId, command, state) {
 
 async function handle(packet) {
   const { runtimeId, type } = packet;
+  if (type === 'provider_auth') {
+    if (!providerAuth) throw new Error('Provider authentication is unavailable. Restart Piop.');
+    return providerAuth.handle(packet.owner, packet.request);
+  }
+  if (type === 'provider_auth_cancel_owner') { providerAuth?.cancelOwner(packet.owner); return; }
   if (type === 'configure') {
     const configuration = packet.configuration;
     if (!configuration || !Number.isSafeInteger(configuration.agentRevision) || configuration.agentRevision < 0 || !configuration.settings || typeof configuration.autoCompaction !== 'boolean' || typeof configuration.autoRetry !== 'boolean') throw new Error('Invalid daemon configuration');
@@ -438,7 +453,7 @@ async function handle(packet) {
     void session.reconcileConfiguration(true);
     return { attached: session.views.size > 1 || session.submitted };
   }
-  if (type === 'shutdown') { await Promise.all([...sessions.values()].map((session) => session.stop())); process.exit(0); }
+  if (type === 'shutdown') { providerAuth?.shutdown(); await Promise.all([...sessions.values()].map((session) => session.stop())); process.exit(0); }
   if (type === 'retire') {
     const session = sessions.get(packet.sessionKey) ?? [...sessions.values()].find((session) => session.state?.sessionFile === packet.sessionPath || session.reservedPath === packet.sessionPath);
     if (!session) return;
@@ -511,6 +526,6 @@ input.on('line', (line) => {
     (error) => output({ type: 'response', id: packet.id, error: errorText(error) }),
   );
 });
-input.on('close', () => { for (const session of sessions.values()) session.child.kill(); });
-process.on('SIGTERM', () => { for (const session of sessions.values()) session.child.kill(); });
+input.on('close', () => { providerAuth?.shutdown(); for (const session of sessions.values()) session.child.kill(); });
+process.on('SIGTERM', () => { providerAuth?.shutdown(); for (const session of sessions.values()) session.child.kill(); });
 process.on('exit', () => { for (const session of sessions.values()) session.child.kill(); });

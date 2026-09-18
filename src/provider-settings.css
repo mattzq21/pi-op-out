@@ -1,0 +1,20 @@
+.provider-host-label, .provider-login-help { color: var(--text-muted, #a09c93); font-size: 13px; line-height: 1.5; }
+.provider-host-label strong { color: var(--text, #e8e5dd); }
+.provider-account { display: flex; justify-content: space-between; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--border, #34322d); }
+.provider-account small { display: block; color: var(--text-muted, #a09c93); margin-top: 5px; overflow-wrap: anywhere; }
+.provider-account-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.provider-account-actions button, .provider-login-panel button { padding: 8px 12px; border: 1px solid var(--border, #34322d); border-radius: 6px; }
+.provider-login-panel { padding: 18px; margin: 16px 0; border: 1px solid var(--border, #34322d); border-radius: 8px; }
+.provider-login-panel p { line-height: 1.5; }
+.provider-login-link { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 10px 0; }
+.provider-login-link button { display: inline-flex; align-items: center; gap: 6px; }
+.provider-login-link input { min-width: 120px; flex: 1; font-size: 12px; }
+.provider-login-notice { overflow-wrap: anywhere; }
+.provider-device-code { font-family: monospace; letter-spacing: .08em; user-select: all; }
+.provider-login-prompt { display: grid; gap: 12px; margin: 16px 0; }
+.provider-login-prompt .primary-button { justify-self: start; }
+@media (max-width: 720px) {
+  .provider-account { flex-direction: column; }
+  .provider-account-actions { justify-content: flex-start; }
+  .provider-login-link { align-items: stretch; flex-direction: column; }
+}

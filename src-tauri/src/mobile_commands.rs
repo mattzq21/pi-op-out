@@ -13,6 +13,7 @@ pub(super) async fn dispatch(app: AppHandle, owner: String, command: String, arg
         if app.state::<TerminalRuntime>().processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.get(id).is_some_and(|process| process.window_label != owner) { return Err("Terminal belongs to another connection".into()); }
     }
     match command.as_str() {
+        "provider_auth" => tokio::task::spawn_blocking(move || provider_auth::for_owner(app, owner, argument(&args, "hostId")?, argument(&args, "request")?)).await.map_err(|error| error.to_string())?,
         "open_project_directory" => tokio::task::spawn_blocking(move || open_project_directory(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?).map(|_| Value::Null)).await.map_err(|error| error.to_string())?,
         "voice_configuration" => Ok(voice::mobile_configuration().await),
         "mobile_voice_start" => voice::mobile_start(app.clone(), argument(&args, "callId")?, argument(&args, "context")?, argument(&args, "offer")?).await.map(|answer| json!(answer)),

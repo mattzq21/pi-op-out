@@ -126,7 +126,8 @@ pub(crate) fn connect(app: &AppHandle, runtime: &PiRuntime, broker: &BrokerRunti
     if let Some(daemon) = daemons.get(host_id).filter(|daemon| daemon.alive.load(Ordering::SeqCst) && daemon.connection_config == connection_config) { daemon.configure(runtime, settings, host_id)?; return Ok(daemon.clone()); }
     if let Some(daemon) = daemons.get(host_id) { daemon.disconnect(app, runtime); daemon.shutdown(); daemon.drain_captures(None)?; }
     daemons.remove(host_id);
-    let script = format!("const gitCaptureScript = {};\n{}\n{}", serde_json::to_string(include_str!("../resources/capture-git-tree.cjs")).map_err(|error| error.to_string())?, include_str!("../resources/daemon-queue.mjs"), include_str!("../resources/host-daemon.mjs"));
+    let auth_executable = host.as_ref().map(|host| host.pi_path.clone()).unwrap_or_else(|| pi_executable().to_string_lossy().into_owned());
+    let script = format!("const gitCaptureScript = {};\nconst piAuthExecutable = {};\n{}\n{}\n{}", serde_json::to_string(include_str!("../resources/capture-git-tree.cjs")).map_err(|error| error.to_string())?, serde_json::to_string(&auth_executable).map_err(|error| error.to_string())?, include_str!("../resources/daemon-queue.mjs"), include_str!("../resources/provider-auth.mjs"), include_str!("../resources/host-daemon.mjs"));
     let remote_port = (host_id != "local").then(remote_broker_port);
     let mut command = if let Some(remote_port) = remote_port {
         let (port, _) = broker_environment(broker)?;
