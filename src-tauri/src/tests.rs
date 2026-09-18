@@ -95,6 +95,86 @@ fn usage_chooses_the_most_consumed_window_and_prefers_the_codex_bucket() {
     }
 }
 #[test]
+fn storage_inventory_query_counts_real_files_and_marks_malformed_archives_undeletable() {
+    let home = TestDirectory::new(); let root = home.0.join(".piop");
+    for directory in ["sessions", "archived", "git-snapshots/pi-desktop-diff-one", "tmp/chat"] {
+        fs::create_dir_all(root.join(directory)).unwrap();
+    }
+    let active = "{\"type\":\"session\",\"id\":\"active\"}\n";
+    fs::write(root.join("sessions/active.jsonl"), active).unwrap();
+    fs::write(root.join("sessions/active.diffs.json"), "{}").unwrap();
+    fs::write(root.join("sessions/ignored.txt"), "not counted").unwrap();
+    fs::write(root.join("archived/broken.jsonl"), "broken").unwrap();
+    fs::write(root.join("archived/broken.diffs.json"), "{}").unwrap();
+    fs::write(root.join("git-snapshots/pi-desktop-diff-one/object"), "object").unwrap();
+    fs::write(root.join("tmp/chat/file"), "temporary").unwrap();
+    let script = format!("require('node:os').homedir = () => {};\n{}", serde_json::to_string(home.0.to_str().unwrap()).unwrap(), include_str!("../resources/storage-inventory.cjs"));
+    let mut command = Command::new("node"); command.args(["-e", &script]);
+    let report = query_storage_inventory(&mut command, None).unwrap();
+    assert_eq!(report.host_id, "local"); assert!(report.error.is_none());
+    let category = |id: &str| report.categories.iter().find(|category| category.id == id).unwrap();
+    assert_eq!(category("active-conversations").byte_size, active.len() as u64 + 2);
+    assert_eq!(category("active-conversations").item_count, 1);
+    assert_eq!(category("archived-conversations").byte_size, 8);
+    assert_eq!(category("git-diff-snapshots").byte_size, 6);
+    assert_eq!(category("git-diff-snapshots").item_count, 1);
+    assert_eq!(category("temporary-chats").byte_size, 9);
+    assert_eq!(category("temporary-chats").item_count, 1);
+    assert!(category("project-checkpoints").estimated);
+    assert_eq!(report.archives.len(), 1);
+    assert_eq!(report.archives[0].id, "broken");
+    assert!(!report.archives[0].deletable);
+    assert!(report.archives[0].delete_error.as_deref().unwrap().contains("malformed"));
+}
+
+#[test]
+fn storage_inventory_query_propagates_scanner_failure_and_invalid_response() {
+    let host = RemoteHost { id:"remote".into(), name:"Server".into(), target:"unused.invalid".into(), pi_path:"pi".into() };
+    for (script, expected) in [
+        ("process.exitCode=3", "Could not inspect storage on Server"),
+        ("process.stderr.write('disk failed');process.exitCode=4", "disk failed"),
+        ("process.stdout.write('{}')", "Could not read storage inventory from Server:"),
+    ] {
+        let mut command = Command::new("node"); command.args(["-e", script]);
+        let error = query_storage_inventory(&mut command, Some(&host)).unwrap_err();
+        assert!(error.starts_with(expected), "{error}");
+    }
+}
+#[cfg(unix)]
+#[test]
+fn storage_inventory_preserves_categories_archives_warnings_and_host_identity() {
+    use std::os::unix::process::ExitStatusExt;
+    let host = RemoteHost { id: "remote".into(), name: "Remote server".into(), target: "unused".into(), pi_path: "pi".into() };
+    let value = json!({"categories":[{"id":"sessions","byteSize":123,"itemCount":2}],"archives":[{"id":"archived","path":"/archive.jsonl","name":"Old chat","cwd":"/repo","modifiedAt":100,"byteSize":42,"deletable":false,"deleteError":"In use"}],"warnings":["Partial scan"]});
+    for remote in [None, Some(&host)] {
+        let output = LimitedOutput { status: ExitStatus::from_raw(0), stdout: serde_json::to_vec(&value).unwrap(), stderr: vec![] };
+        let report = parse_storage_inventory(output, remote).unwrap();
+        assert_eq!(report.host_id, remote.map(|host| host.id.as_str()).unwrap_or("local"));
+        assert_eq!(report.host_name, remote.map(|host| host.name.as_str()).unwrap_or("Local"));
+        assert_eq!(report.categories[0].byte_size, 123); assert_eq!(report.categories[0].item_count, 2); assert!(!report.categories[0].estimated);
+        assert_eq!(report.archives[0].delete_error.as_deref(), Some("In use")); assert!(!report.archives[0].deletable);
+        assert_eq!(report.warnings, ["Partial scan"]); assert!(report.error.is_none());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn storage_inventory_failures_include_context_and_do_not_look_like_empty_successes() {
+    use std::os::unix::process::ExitStatusExt;
+    for (status, stdout, stderr, expected) in [
+        (1, "{}", " denied \n", "denied"),
+        (1, "{}", "", "Could not inspect storage on Local"),
+        (0, "not json", "", "Could not read storage inventory from Local"),
+        (0, "{}", "", "Could not read storage inventory from Local"),
+    ] {
+        let output = LimitedOutput { status: ExitStatus::from_raw(status << 8), stdout: stdout.as_bytes().to_vec(), stderr: stderr.as_bytes().to_vec() };
+        assert!(parse_storage_inventory(output, None).unwrap_err().starts_with(expected));
+    }
+    let failure = failed_storage("remote".into(), "Remote server".into(), "offline".into());
+    assert_eq!(failure.host_id, "remote"); assert_eq!(failure.error.as_deref(), Some("offline"));
+    assert!(failure.categories.is_empty()); assert!(failure.archives.is_empty()); assert!(failure.warnings.is_empty());
+}
+#[test]
 fn session_summary_batches_preserve_metadata_and_host_identity() {
     let root = TestDirectory::new();
     let mut candidates = Vec::new();

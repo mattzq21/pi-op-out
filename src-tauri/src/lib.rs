@@ -2713,8 +2713,17 @@ fn inspect_storage(host: Option<&RemoteHost>) -> Result<HostStorage, String> {
         command.args(["-e", script]);
         command
     };
+    query_storage_inventory(&mut command, host)
+}
+
+fn query_storage_inventory(command: &mut Command, host: Option<&RemoteHost>) -> Result<HostStorage, String> {
     let label = host.map(|value| value.name.as_str()).unwrap_or("Local");
-    let output = run_limited(&mut command, MAX_SESSION_INDEX_BATCH_BYTES, &format!("Could not inspect storage on {label}"))?;
+    let output = run_limited(command, MAX_SESSION_INDEX_BATCH_BYTES, &format!("Could not inspect storage on {label}"))?;
+    parse_storage_inventory(output, host)
+}
+
+fn parse_storage_inventory(output: LimitedOutput, host: Option<&RemoteHost>) -> Result<HostStorage, String> {
+    let label = host.map(|value| value.name.as_str()).unwrap_or("Local");
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(if error.is_empty() { format!("Could not inspect storage on {label}") } else { error });
