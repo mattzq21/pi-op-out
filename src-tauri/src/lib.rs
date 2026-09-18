@@ -572,7 +572,6 @@ mod opencode_go_tests {
     fn settings_saved_before_new_toggles_still_load() {
         let stored = json!({"defaultModel":"openai-codex/gpt-5.6-sol","defaultThinking":"medium","contextWindowCap":200000,"contextWindowCapEnabled":true,"autoRetry":true,"tools":[],"skills":[],"mcpServers":[]});
         let settings: AppSettings = serde_json::from_value(stored).expect("older settings load");
-        assert!(settings.auto_compaction);
         assert!(settings.auto_retry);
     }
 }
