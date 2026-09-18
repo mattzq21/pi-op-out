@@ -13,6 +13,8 @@
     "build:fast-mode": "node scripts/build-fast-mode.mjs",
     "build:mcp-bridge": "node scripts/build-mcp-bridge.mjs",
     "pretauri": "npm install --no-audit --no-fund && npm run build:extensions",
+    "test": "npm run test:unit && npm run test:extensions && npm run test:mobile && npm run test:rust && npm run test:mobile:ui && npm run test:e2e",
+    "test:rust": "npm run build && cargo test --locked --manifest-path src-tauri/Cargo.toml",
     "test:extensions": "node --test test/extensions/*.test.mjs",
     "test:unit": "node --enable-source-maps --import ./test/register-typescript.mjs --test --test-isolation=none test/unit/*.test.mjs",
     "test:mutation": "stryker run",
