@@ -1918,12 +1918,23 @@ fn load_git_diff(app: AppHandle, cwd: String, base_tree: String, host_id: Option
 
 fn load_git_diff_at_host(cwd: &str, base_tree: &str, host: Option<&RemoteHost>) -> Result<Option<GitDiffSnapshot>, String> {
     let Some(host) = host else { return local_git_diff(cwd, base_tree); };
-    let base: GitSnapshotToken = serde_json::from_str(&base_tree).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
+    load_remote_git_diff_with(base_tree,
+        || remote_git_tree(host, cwd),
+        |base_tree, current_token| load_git_diff_between_at_host(cwd, base_tree, current_token, Some(host)),
+        |token| discard_git_tree_at_host(token, Some(host)))
+}
+
+fn load_remote_git_diff_with(base_tree: &str,
+    capture: impl FnOnce() -> Result<Option<String>, String>,
+    diff: impl FnOnce(&str, &str) -> Result<Option<GitDiffSnapshot>, String>,
+    mut discard: impl FnMut(&str) -> Result<(), String>,
+) -> Result<Option<GitDiffSnapshot>, String> {
+    let base: GitSnapshotToken = serde_json::from_str(base_tree).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     if !valid_remote_snapshot(&base) { return Err("Invalid remote Git snapshot location".into()); }
-    let Some(current_token) = remote_git_tree(host, &cwd)? else { return Ok(None) };
-    let result = load_git_diff_between_at_host(cwd, base_tree, &current_token, Some(host));
-    let _ = discard_git_tree_at_host(base_tree, Some(host));
-    let _ = discard_git_tree_at_host(&current_token, Some(host));
+    let Some(current_token) = capture()? else { return Ok(None) };
+    let result = diff(base_tree, &current_token);
+    let _ = discard(base_tree);
+    let _ = discard(&current_token);
     result
 }
 
@@ -2665,19 +2676,28 @@ fn temporary_chat_id(path: &str) -> Option<&str> {
 
 #[tauri::command(async)]
 fn remove_temporary_chat(app: AppHandle, path: String, host_id: String) -> Result<(), String> {
-    temporary_chat_id(&path).ok_or("Refusing to remove a directory not created as a temporary chat")?;
     if host_id == "local" {
-        let expected_root = home_dir()?.join(STORAGE_DIRECTORY).join("tmp");
-        let candidate = PathBuf::from(&path);
-        if candidate.parent() != Some(expected_root.as_path()) { return Err("Refusing to remove a directory outside the temporary chat root".into()); }
-        if !candidate.join(".pi-desktop-temporary-chat").is_file() { return Err("Refusing to remove an unmarked directory".into()); }
-        if candidate.exists() { fs::remove_dir_all(candidate).map_err(|error| format!("Could not remove temporary chat directory: {error}"))?; }
-        return Ok(());
+        return remove_local_temporary_chat(&home_dir()?, &path);
     }
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
-    let script = format!("candidate={}; root=\"$HOME/{STORAGE_DIRECTORY}/tmp\"; [ \"$(dirname -- \"$candidate\")\" = \"$root\" ] && [ -f \"$candidate/.pi-desktop-temporary-chat\" ] && rm -rf -- \"$candidate\"", shell_quote(&path));
-    let output = ssh(host).arg(script).output().map_err(|error| format!("Could not remove temporary chat directory on {}: {error}", host.name))?;
-    if !output.status.success() { return Err(format!("Could not remove temporary chat directory on {}: {}", host.name, String::from_utf8_lossy(&output.stderr).trim())); }
+    remove_remote_temporary_chat(&path, &host.name, |script| { let mut command = ssh(host); command.arg(script); command })
+}
+
+fn remove_remote_temporary_chat(path: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
+    temporary_chat_id(path).ok_or("Refusing to remove a directory not created as a temporary chat")?;
+    let script = format!("candidate={}; root=\"$HOME/{STORAGE_DIRECTORY}/tmp\"; [ \"$(dirname -- \"$candidate\")\" = \"$root\" ] && [ -f \"$candidate/.pi-desktop-temporary-chat\" ] && rm -rf -- \"$candidate\"", shell_quote(path));
+    let output = command(script).output().map_err(|error| format!("Could not remove temporary chat directory on {host_name}: {error}"))?;
+    if !output.status.success() { return Err(format!("Could not remove temporary chat directory on {host_name}: {}", String::from_utf8_lossy(&output.stderr).trim())); }
+    Ok(())
+}
+
+fn remove_local_temporary_chat(home: &Path, path: &str) -> Result<(), String> {
+    temporary_chat_id(path).ok_or("Refusing to remove a directory not created as a temporary chat")?;
+    let expected_root = home.join(STORAGE_DIRECTORY).join("tmp");
+    let candidate = PathBuf::from(path);
+    if candidate.parent() != Some(expected_root.as_path()) { return Err("Refusing to remove a directory outside the temporary chat root".into()); }
+    if !candidate.join(".pi-desktop-temporary-chat").is_file() { return Err("Refusing to remove an unmarked directory".into()); }
+    if candidate.exists() { fs::remove_dir_all(candidate).map_err(|error| format!("Could not remove temporary chat directory: {error}"))?; }
     Ok(())
 }
 
@@ -2704,14 +2724,18 @@ fn create_temporary_chat(app: AppHandle, host_id: String, e2e: Option<bool>) -> 
         cwd.to_string_lossy().into_owned()
     } else {
         let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
-        let remote = format!("mkdir -p \"$HOME/{STORAGE_DIRECTORY}/tmp/{session_id}\" && : > \"$HOME/{STORAGE_DIRECTORY}/tmp/{session_id}/.pi-desktop-temporary-chat\" && cd \"$HOME/{STORAGE_DIRECTORY}/tmp/{session_id}\" && pwd -P");
-        let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not create temporary chat directory on {}: {error}", host.name))?;
-        if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if path.is_empty() { return Err("Remote temporary chat directory was unavailable".into()); }
-        path
+        create_remote_temporary_chat(&session_id, &host.name, |script| { let mut command = ssh(host); command.arg(script); command })?
     };
     Ok(TemporaryChat { cwd, session_id })
+}
+
+fn create_remote_temporary_chat(session_id: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<String, String> {
+    let remote = format!("mkdir -p \"$HOME/{STORAGE_DIRECTORY}/tmp/{session_id}\" && : > \"$HOME/{STORAGE_DIRECTORY}/tmp/{session_id}/.pi-desktop-temporary-chat\" && cd \"$HOME/{STORAGE_DIRECTORY}/tmp/{session_id}\" && pwd -P");
+    let output = command(remote).output().map_err(|error| format!("Could not create temporary chat directory on {host_name}: {error}"))?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() { return Err("Remote temporary chat directory was unavailable".into()); }
+    Ok(path)
 }
 
 #[tauri::command(async)]

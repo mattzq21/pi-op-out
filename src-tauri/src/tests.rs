@@ -1994,6 +1994,170 @@ fn remote_ephemeral_fork_reports_failures_without_leaving_partial_files() {
 }
 
 #[test]
+fn remote_diff_lifecycle_discards_both_snapshots_after_success_or_patch_failure() {
+    use std::cell::RefCell;
+    let base = json!({"root":"/tmp/pi-desktop-diff-base", "tree":"a".repeat(40), "repository_root":"/project"}).to_string();
+    let current = json!({"root":"/tmp/pi-desktop-diff-current", "tree":"b".repeat(40), "repository_root":"/project"}).to_string();
+    for failure in [false, true] {
+        for cleanup_failure in [false, true] {
+            let events = RefCell::new(Vec::new());
+            let result = load_remote_git_diff_with(&base,
+                || { events.borrow_mut().push("capture"); Ok(Some(current.clone())) },
+                |actual_base, actual_current| {
+                    assert_eq!(actual_base, base); assert_eq!(actual_current, current);
+                    events.borrow_mut().push("diff");
+                    if failure { Err("patch failed".into()) } else { Ok(Some(GitDiffSnapshot::Located { patch: "change".into(), repository_root: "/project".into(), tool_paths: Vec::new() })) }
+                },
+                |token| {
+                    if token == base { events.borrow_mut().push("discard base"); }
+                    else { assert_eq!(token, current); events.borrow_mut().push("discard current"); }
+                    if cleanup_failure { Err("cleanup failed".into()) } else { Ok(()) }
+                });
+            assert_eq!(*events.borrow(), ["capture", "diff", "discard base", "discard current"]);
+            if failure { assert_eq!(result.err().unwrap(), "patch failed"); }
+            else { assert_eq!(serde_json::to_value(result.unwrap().unwrap()).unwrap(), json!({"patch":"change","repositoryRoot":"/project"})); }
+        }
+    }
+    let mut discarded = Vec::new();
+    assert!(load_remote_git_diff_with(&base, || Ok(Some(current.clone())), |_, _| Ok(None), |token| { discarded.push(token.to_owned()); Ok(()) }).unwrap().is_none());
+    assert_eq!(discarded, [base, current]);
+}
+
+#[test]
+fn remote_diff_lifecycle_preserves_base_when_capture_cannot_produce_a_snapshot() {
+    let base = json!({"root":"/tmp/pi-desktop-diff-base", "tree":"a".repeat(40), "repository_root":"/project"}).to_string();
+    let unsupported = load_remote_git_diff_with(&base, || Ok(None), |_, _| panic!("missing snapshot diffed"), |_| panic!("retryable baseline discarded"));
+    assert!(unsupported.unwrap().is_none());
+    let error = load_remote_git_diff_with(&base, || Err("connection failed".into()), |_, _| panic!("failed capture diffed"), |_| panic!("retryable baseline discarded"));
+    assert_eq!(error.err().unwrap(), "connection failed");
+    for invalid in ["not JSON", "{}", "{\"root\":\"relative\",\"tree\":\"bad\"}"] {
+        assert!(load_remote_git_diff_with(invalid, || panic!("invalid token captured"), |_, _| panic!("invalid token diffed"), |_| panic!("invalid token discarded")).is_err());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn remote_session_scan_creates_storage_and_reports_only_real_session_files() {
+    use std::os::unix::fs::symlink;
+    let home = TestDirectory::new();
+    let scan = || query_remote_session_metadata(|script| {
+        let mut command = Command::new("sh"); command.args(["-c", script]).env("HOME", &home.0); command
+    });
+    assert!(scan().unwrap().is_empty());
+    let root = home.0.join(STORAGE_DIRECTORY).join("sessions"); assert!(root.is_dir());
+    let nested = root.join("project ' λ"); fs::create_dir(&nested).unwrap();
+    let first = root.join("empty.jsonl"); let second = nested.join("line\nbreak.jsonl");
+    fs::write(&first, "").unwrap(); fs::write(&second, "hello λ\n").unwrap();
+    fs::write(nested.join("not-session.json"), "ignored").unwrap();
+    fs::create_dir(nested.join("directory.jsonl")).unwrap();
+    let outside = home.0.join("outside.jsonl"); fs::write(&outside, "outside").unwrap();
+    symlink(&outside, nested.join("linked.jsonl")).unwrap();
+    symlink(&nested, root.join("linked-directory")).unwrap();
+    let mut metadata = parse_remote_session_metadata(&scan().unwrap()); metadata.sort_by(|left, right| left.0.cmp(&right.0));
+    assert_eq!(metadata.len(), 2);
+    for (path, fingerprint, modified, size) in metadata {
+        let expected = fs::metadata(&path).unwrap();
+        assert!([first.to_str().unwrap(), second.to_str().unwrap()].contains(&path.as_str()));
+        assert_eq!(size, expected.len());
+        assert_eq!(modified, expected.modified().unwrap().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs());
+        assert!(fingerprint.ends_with(&format!(":{size}")));
+    }
+    fs::remove_file(&first).unwrap();
+    let metadata = parse_remote_session_metadata(&scan().unwrap());
+    assert_eq!(metadata.len(), 1); assert_eq!(metadata[0].0, second.to_str().unwrap());
+}
+
+#[test]
+fn remote_session_scan_propagates_launch_exit_and_output_limit_errors() {
+    let directory = TestDirectory::new();
+    assert!(query_remote_session_metadata(|_| Command::new(directory.0.join("missing"))).is_err());
+    let query = |script: &str| query_remote_session_metadata(|_| { let mut command = Command::new("sh"); command.args(["-c", script]); command });
+    assert_eq!(query("printf 'permission denied\\n' >&2; exit 7").unwrap_err(), "permission denied\n");
+    assert!(query(&format!("head -c {} /dev/zero", MAX_SESSION_INDEX_BATCH_BYTES + 1)).unwrap_err().contains("Could not list remote sessions"));
+    fs::write(directory.0.join(STORAGE_DIRECTORY), "preserve").unwrap();
+    assert!(query_remote_session_metadata(|script| {
+        let mut command = Command::new("sh"); command.args(["-c", script]).env("HOME", &directory.0); command
+    }).is_err());
+    assert_eq!(fs::read_to_string(directory.0.join(STORAGE_DIRECTORY)).unwrap(), "preserve");
+}
+
+#[cfg(unix)]
+#[test]
+fn remote_temporary_chat_removal_requires_the_expected_root_and_marker() {
+    use std::os::unix::fs::symlink;
+    let directory = TestDirectory::new(); let home = directory.0.join("home ' $(false)");
+    let marked = create_local_temporary_chat(&home, &Uuid::new_v4().to_string()).unwrap();
+    fs::write(marked.join("content"), "remove").unwrap();
+    let sibling = create_local_temporary_chat(&home, &Uuid::new_v4().to_string()).unwrap();
+    fs::write(sibling.join("keep"), "preserve").unwrap();
+    let unmarked = home.join(STORAGE_DIRECTORY).join("tmp").join(Uuid::new_v4().to_string()); fs::create_dir(&unmarked).unwrap();
+    let outside = create_local_temporary_chat(&directory.0.join("outside"), &Uuid::new_v4().to_string()).unwrap();
+    fs::write(outside.join("keep"), "outside").unwrap();
+    let remove = |path: &Path| remove_remote_temporary_chat(path.to_str().unwrap(), "Server", |script| {
+        let mut command = Command::new("sh"); command.args(["-c", &script]).env("HOME", &home); command
+    });
+    assert!(remove(&unmarked).is_err()); assert!(unmarked.is_dir());
+    assert!(remove(&outside).is_err()); assert!(outside.is_dir());
+    remove(&marked).unwrap(); assert!(!marked.exists());
+    assert_eq!(fs::read_to_string(sibling.join("keep")).unwrap(), "preserve");
+    assert!(remove(&marked).is_err());
+    let link = home.join(STORAGE_DIRECTORY).join("tmp").join(Uuid::new_v4().to_string()); symlink(&outside, &link).unwrap();
+    remove(&link).unwrap(); assert!(fs::symlink_metadata(&link).is_err());
+    assert_eq!(fs::read_to_string(outside.join("keep")).unwrap(), "outside", "removing a symlink must not traverse its target");
+}
+
+#[test]
+fn remote_temporary_chat_removal_rejects_bad_ids_before_launch_and_reports_command_failures() {
+    for path in ["", "/tmp", "/home/.piop/tmp/not-a-uuid", "/home/other/123e4567-e89b-12d3-a456-426614174000"] {
+        assert_eq!(remove_remote_temporary_chat(path, "Server", |_| panic!("invalid path launched deletion")).unwrap_err(), "Refusing to remove a directory not created as a temporary chat");
+    }
+    let directory = TestDirectory::new();
+    let path = directory.0.join(STORAGE_DIRECTORY).join("tmp").join(Uuid::new_v4().to_string());
+    let error = remove_remote_temporary_chat(path.to_str().unwrap(), "Server", |_| Command::new(directory.0.join("missing"))).unwrap_err();
+    assert!(error.starts_with("Could not remove temporary chat directory on Server:"));
+    let error = remove_remote_temporary_chat(path.to_str().unwrap(), "Server", |_| {
+        let mut command = Command::new("sh"); command.args(["-c", "printf ' access denied\\n' >&2; exit 7"]); command
+    }).unwrap_err();
+    assert_eq!(error, "Could not remove temporary chat directory on Server: access denied");
+}
+
+#[test]
+fn remote_temporary_chat_creates_marked_isolated_directories_and_preserves_existing_contents() {
+    let directory = TestDirectory::new(); let home = directory.0.join("home ' λ $(false)"); fs::create_dir(&home).unwrap();
+    let create = |id: &str| create_remote_temporary_chat(id, "Server", |script| {
+        let mut command = Command::new("sh"); command.args(["-c", &script]).env("HOME", &home); command
+    });
+    let first_id = Uuid::new_v4().to_string(); let second_id = Uuid::new_v4().to_string();
+    let first = PathBuf::from(create(&first_id).unwrap()); let second = PathBuf::from(create(&second_id).unwrap());
+    assert_eq!(first, home.join(STORAGE_DIRECTORY).join("tmp").join(&first_id));
+    assert_eq!(second, home.join(STORAGE_DIRECTORY).join("tmp").join(&second_id));
+    for path in [&first, &second] {
+        assert_eq!(fs::read(path.join(".pi-desktop-temporary-chat")).unwrap(), b"");
+        assert_eq!(fs::read_dir(path).unwrap().count(), 1);
+    }
+    fs::write(first.join("user-file"), "keep").unwrap();
+    assert_eq!(create(&first_id).unwrap(), first.to_str().unwrap());
+    assert_eq!(fs::read_to_string(first.join("user-file")).unwrap(), "keep");
+    assert_eq!(fs::read_dir(&second).unwrap().count(), 1);
+}
+
+#[test]
+fn remote_temporary_chat_reports_launch_setup_and_missing_path_failures() {
+    let directory = TestDirectory::new(); let id = Uuid::new_v4().to_string();
+    let error = create_remote_temporary_chat(&id, "Server", |_| Command::new(directory.0.join("missing"))).unwrap_err();
+    assert!(error.starts_with("Could not create temporary chat directory on Server:"), "{error}");
+    for (script, expected) in [("printf ' disk full\\n' >&2; exit 7", "disk full"), ("printf '  \\n'", "Remote temporary chat directory was unavailable")] {
+        let error = create_remote_temporary_chat(&id, "Server", |_| { let mut command = Command::new("sh"); command.args(["-c", script]); command }).unwrap_err();
+        assert_eq!(error, expected);
+    }
+    fs::write(directory.0.join(STORAGE_DIRECTORY), "existing file").unwrap();
+    assert!(create_remote_temporary_chat(&id, "Server", |script| {
+        let mut command = Command::new("sh"); command.args(["-c", &script]).env("HOME", &directory.0); command
+    }).is_err());
+    assert_eq!(fs::read_to_string(directory.0.join(STORAGE_DIRECTORY)).unwrap(), "existing file");
+}
+
+#[test]
 fn ephemeral_forks_copy_history_with_new_identity_and_private_permissions() {
     let home = TestDirectory::new(); let temporary = TestDirectory::new();
     let sessions = home.0.join(STORAGE_DIRECTORY).join("sessions"); fs::create_dir_all(&sessions).unwrap();
