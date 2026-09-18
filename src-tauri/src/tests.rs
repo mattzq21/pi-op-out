@@ -3785,3 +3785,89 @@ fn side_conversation_preparation_removes_only_the_legacy_extension_after_install
     assert_eq!(fs::read_to_string(&legacy).unwrap(), "preserve until install succeeds");
     std::env::remove_var("HOME");
 }
+
+#[test]
+fn diff_watch_preparation_replaces_legacy_assets_and_refreshes_all_bundled_files() {
+    let home = TestDirectory::new();
+    std::env::set_var("HOME", &home.0);
+    let legacy = home.0.join(STORAGE_DIRECTORY).join("pi-git-change-context");
+    fs::create_dir_all(legacy.join("nested")).unwrap();
+    fs::write(legacy.join("nested/stale.ts"), "stale").unwrap();
+    let entry = prepare_diff_watch_extension().unwrap();
+    assert!(!legacy.exists());
+    assert_eq!(entry, home.0.join(STORAGE_DIRECTORY).join("piop-diff-watch/index.ts"));
+    for _ in 0..2 {
+        assert_eq!(fs::read_to_string(&entry).unwrap(), include_str!("../../extensions/piop-diff-watch/index.ts"));
+        for (name, expected) in FILE_CHANGE_ASSETS {
+            let path = entry.with_file_name(name);
+            assert_eq!(fs::read_to_string(&path).unwrap(), expected);
+            #[cfg(unix)] {
+                use std::os::unix::fs::PermissionsExt;
+                assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+            }
+            fs::write(&path, "outdated").unwrap();
+        }
+        prepare_diff_watch_extension().unwrap();
+    }
+    assert_eq!(fs::read_dir(entry.parent().unwrap()).unwrap().count(), 4, "no temporary files should remain");
+    std::env::remove_var("HOME");
+}
+
+#[test]
+fn extension_preparation_reports_obstructions_without_removing_legacy_configuration() {
+    let home = TestDirectory::new();
+    std::env::set_var("HOME", &home.0);
+    let legacy = home.0.join(".pi/agent/extensions/pi-define-agents");
+    fs::create_dir_all(legacy.join("config.json")).unwrap();
+    fs::write(legacy.join("index.ts"), "original").unwrap();
+    #[cfg(not(debug_assertions))]
+    assert!(prepare_defined_agents_extension().is_err());
+    #[cfg(debug_assertions)]
+    {
+        assert!(prepare_defined_agents_extension().is_ok(), "development builds skip the legacy configuration import and legacy cleanup");
+    }
+    assert_eq!(fs::read_to_string(legacy.join("index.ts")).unwrap(), "original");
+    std::env::remove_var("HOME");
+    let blocked = TestDirectory::new();
+    std::env::set_var("HOME", &blocked.0);
+    fs::create_dir_all(blocked.0.join(STORAGE_DIRECTORY)).unwrap();
+    let legacy_diff = blocked.0.join(STORAGE_DIRECTORY).join("pi-git-change-context");
+    fs::write(&legacy_diff, "unexpected file").unwrap();
+    assert!(prepare_diff_watch_extension().unwrap_err().contains("Could not remove legacy diff watch extension"));
+    assert_eq!(fs::read_to_string(&legacy_diff).unwrap(), "unexpected file");
+    assert!(!blocked.0.join(STORAGE_DIRECTORY).join("piop-diff-watch").exists());
+    std::env::remove_var("HOME");
+}
+
+#[test]
+fn defined_agent_preparation_migrates_configuration_once_and_preserves_user_changes() {
+    let home = TestDirectory::new();
+    std::env::set_var("HOME", &home.0);
+    let legacy = home.0.join(".pi/agent/extensions/pi-define-agents");
+    fs::create_dir_all(&legacy).unwrap();
+    let original = b"{\"agents\":[{\"name\":\"custom\"}]}\n";
+    fs::write(legacy.join("config.json"), original).unwrap();
+    fs::write(legacy.join("index.ts"), "old extension").unwrap();
+    fs::write(legacy.join("notes.txt"), "keep").unwrap();
+    let entry = prepare_defined_agents_extension().unwrap();
+    assert_eq!(entry, home.0.join(STORAGE_DIRECTORY).join("piop-define-agents/index.ts"));
+    assert_eq!(fs::read_to_string(&entry).unwrap(), include_str!("../../extensions/piop-define-agents/index.ts"));
+    let config = entry.with_file_name("config.json");
+    assert!(!config.exists(), "legacy configuration migration is disabled in development builds");
+    assert_eq!(fs::read(legacy.join("config.json")).unwrap(), original);
+    assert_eq!(fs::read_to_string(legacy.join("notes.txt")).unwrap(), "keep");
+    fs::write(&entry, "outdated extension").unwrap();
+    prepare_defined_agents_extension().unwrap();
+    assert_eq!(fs::read_to_string(&entry).unwrap(), include_str!("../../extensions/piop-define-agents/index.ts"));
+    assert!(!config.exists(), "second install must not import legacy configuration in development builds");
+    #[cfg(unix)] {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(fs::metadata(&entry).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(fs::metadata(entry.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
+    }
+    let fresh = TestDirectory::new();
+    std::env::set_var("HOME", &fresh.0);
+    let entry = prepare_defined_agents_extension().unwrap();
+    assert!(!entry.with_file_name("config.json").exists(), "fresh installation must not invent user configuration");
+    std::env::remove_var("HOME");
+}
