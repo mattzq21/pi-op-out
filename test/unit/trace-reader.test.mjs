@@ -35,6 +35,7 @@ test('trace cleaning follows the active branch and removes synthetic and interme
   assert.deepEqual(cleanTrace(lines([message('cycle', 'cycle', 'user', 'once')])), [{ role: 'user', text: 'once' }]);
   assert.deepEqual(cleanTrace(lines([message('orphan', 'missing', 'assistant', 'orphan')])), [{ role: 'assistant', text: 'orphan' }]);
   assert.deepEqual(cleanTrace(lines([null, true, 7, {}, { type: 'session' }])), []);
+  assert.deepEqual(cleanTrace(lines([{ type: 'message', id: 'empty', parentId: null }, { type: 'message', id: 'null-body', parentId: 'empty', message: null }])), []);
 });
 
 async function fixture(run) {

@@ -36,6 +36,7 @@ test('transport shares concurrent connects, publishes presence and cleans up lis
   assert.equal(client.needsDefaults(), true);
   await Promise.all([client.connect(), client.connect()]);
   assert.equal(commands('start_pi').length, 1);
+  assert.equal(client.needsDefaults(), true);
   assert.equal(commands('start_pi')[0].args.cwd, '/repo');
   client.setVisible(true);
   assert.deepEqual(commands('pi_presence').at(-1).args.presence, { visible: true, focused: true });
