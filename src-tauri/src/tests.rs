@@ -94,6 +94,50 @@ fn usage_chooses_the_most_consumed_window_and_prefers_the_codex_bucket() {
         assert!(codex_usage_values(&value).is_none());
     }
 }
+#[test]
+fn terminal_input_queue_handles_short_writes_and_flushes_each_message_in_order() {
+    #[derive(Default)]
+    struct ShortWriter { bytes: Vec<u8>, flushes: Vec<Vec<u8>> }
+    impl Write for ShortWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            let length = bytes.len().min(2); self.bytes.extend_from_slice(&bytes[..length]); Ok(length)
+        }
+        fn flush(&mut self) -> std::io::Result<()> { self.flushes.push(self.bytes.clone()); Ok(()) }
+    }
+    let (sender, receiver) = mpsc::channel();
+    for message in ["hello λ", "\n", "", "exit\r"] { sender.send(message.into()).unwrap(); }
+    drop(sender);
+    let mut writer = ShortWriter::default();
+    write_terminal_queue(&mut writer, receiver);
+    assert_eq!(writer.bytes, "hello λ\nexit\r".as_bytes());
+    assert_eq!(writer.flushes, vec![
+        "hello λ".as_bytes().to_vec(), "hello λ\n".as_bytes().to_vec(),
+        "hello λ\n".as_bytes().to_vec(), "hello λ\nexit\r".as_bytes().to_vec(),
+    ]);
+}
+
+#[test]
+fn terminal_input_queue_stops_on_write_or_flush_failure_and_closes_the_receiver() {
+    struct FailingWriter { fail_flush: bool, writes: usize, flushes: usize }
+    impl Write for FailingWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.writes += 1;
+            if self.fail_flush { Ok(bytes.len()) } else { Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "closed")) }
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.flushes += 1; Err(std::io::Error::other("flush failed"))
+        }
+    }
+    for fail_flush in [false, true] {
+        let (sender, receiver) = mpsc::channel();
+        sender.send("first".into()).unwrap(); sender.send("must not write".into()).unwrap();
+        let mut writer = FailingWriter { fail_flush, writes:0, flushes:0 };
+        write_terminal_queue(&mut writer, receiver);
+        assert_eq!(writer.writes, 1);
+        assert_eq!(writer.flushes, usize::from(fail_flush));
+        assert!(sender.send("later".into()).is_err());
+    }
+}
 
 #[test]
 fn git_branch_reporting_handles_unborn_detached_and_linked_worktrees() {

@@ -2366,9 +2366,15 @@ fn start_terminal(app: AppHandle, window: tauri::WebviewWindow, runtime: State<T
         let _ = event_app.emit("pi://event", json!({ "type": "terminal_exit", "terminalId": event_id }));
     });
     let (input, queued) = mpsc::sync_channel::<String>(32);
-    thread::spawn(move || { while let Ok(data) = queued.recv() { if writer.write_all(data.as_bytes()).and_then(|_| writer.flush()).is_err() { break; } } });
+    thread::spawn(move || write_terminal_queue(&mut writer, queued));
     processes.insert(terminal_id, TerminalProcess { session_key, cwd, host_id, window_label: window.label().into(), master: pair.master, child, writer: input });
     Ok(())
+}
+
+fn write_terminal_queue(writer: &mut impl Write, queued: mpsc::Receiver<String>) {
+    while let Ok(data) = queued.recv() {
+        if writer.write_all(data.as_bytes()).and_then(|_| writer.flush()).is_err() { break; }
+    }
 }
 
 fn decode_terminal_bytes(pending: &mut Vec<u8>, bytes: &[u8], eof: bool) -> String {
