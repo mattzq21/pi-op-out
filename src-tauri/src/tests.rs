@@ -993,3 +993,100 @@ fn summary_ingestion_obeys_count_and_quoted_argument_limits_and_propagates_scann
     assert!(read_session_summaries_with(&candidates, None, |_, _| Command::new("/missing/piop-scanner-test")).is_err());
     assert!(read_session_summaries_with(&[], None, |_, _| panic!("empty scan launched")).unwrap().is_empty());
 }
+#[test]
+fn session_aggregation_keeps_healthy_hosts_and_assigns_groups_before_sorting_by_recency() {
+    let mut local = test_session("local", "shared", "/local"); local.modified_at = 20;
+    let hosts = ["remote", "offline", "empty"].into_iter().map(|id| RemoteHost {
+        id:id.into(), name:id.into(), target:"unused.invalid".into(), pi_path:"pi".into(),
+    }).collect();
+    let visited = Mutex::new(Vec::new());
+    let sessions = collect_host_sessions(vec![local], hosts, |host| {
+        visited.lock().unwrap().push(host.id.clone());
+        match host.id.as_str() {
+            "offline" => Err("host unavailable".into()),
+            "empty" => Ok(Vec::new()),
+            _ => {
+                let mut recent = test_session("remote", "shared", "/remote"); recent.modified_at = 30;
+                let mut old = test_session("remote", "older", "/older"); old.modified_at = 10;
+                Ok(vec![old, recent])
+            },
+        }
+    }, |sessions| {
+        assert_eq!(sessions.len(), 3, "assignment must see sessions from every successful host");
+        for session in sessions { session.group_id = Some(format!("group-{}", session.host_id)); }
+        Ok(())
+    }).unwrap();
+    let mut visited = visited.into_inner().unwrap(); visited.sort();
+    assert_eq!(visited, vec!["empty", "offline", "remote"]);
+    assert_eq!(sessions.iter().map(|session| (session.host_id.as_str(), session.id.as_str(), session.modified_at)).collect::<Vec<_>>(),
+        vec![("remote", "shared", 30), ("local", "shared", 20), ("remote", "older", 10)]);
+    assert_eq!(sessions[0].group_id.as_deref(), Some("group-remote"));
+    assert_eq!(sessions[1].group_id.as_deref(), Some("group-local"));
+}
+
+#[test]
+fn session_aggregation_handles_no_hosts_and_propagates_assignment_failures() {
+    let sessions = collect_host_sessions(Vec::new(), Vec::new(), |_| panic!("unexpected host lookup"), |sessions| {
+        assert!(sessions.is_empty()); Ok(())
+    }).unwrap();
+    assert!(sessions.is_empty());
+    let error = collect_host_sessions(vec![test_session("local", "id", "/session")], Vec::new(),
+        |_| panic!("unexpected host lookup"),
+        |sessions| { assert_eq!(sessions.len(), 1); Err("group storage unavailable".into()) }).err().unwrap();
+    assert_eq!(error, "group storage unavailable");
+}
+
+#[test]
+fn storage_reports_keep_local_first_sort_remotes_and_retain_partial_failures() {
+    let remotes = [("z", "Zulu"), ("a", "alpha"), ("b", "Bravo")].into_iter().map(|(id, name)| RemoteHost {
+        id:id.into(), name:name.into(), target:format!("{id}.invalid"), pi_path:"pi".into(),
+    }).collect();
+    let report = collect_storage_report(Err("local disk unavailable".into()), remotes, |host| {
+        if host.id == "b" { return Err("SSH unavailable".into()); }
+        Ok(HostStorage { host_id:host.id.clone(), host_name:host.name.clone(), categories:Vec::new(), archives:Vec::new(), warnings:vec!["partial scan".into()], error:None })
+    });
+    assert_eq!(report.hosts.iter().map(|host| host.host_id.as_str()).collect::<Vec<_>>(), vec!["local", "a", "b", "z"]);
+    assert_eq!(report.hosts[0].host_name, "Local");
+    assert_eq!(report.hosts[0].error.as_deref(), Some("local disk unavailable"));
+    assert_eq!(report.hosts[2].error.as_deref(), Some("SSH unavailable"));
+    assert!(report.hosts[2].categories.is_empty()); assert!(report.hosts[2].archives.is_empty());
+    for index in [1, 3] {
+        assert!(report.hosts[index].error.is_none());
+        assert_eq!(report.hosts[index].warnings, vec!["partial scan"]);
+    }
+    let local = HostStorage { host_id:"local".into(), host_name:"Local".into(), categories:Vec::new(), archives:Vec::new(), warnings:vec!["local warning".into()], error:None };
+    let only_local = collect_storage_report(Ok(local), Vec::new(), |_| panic!("no remote hosts"));
+    assert_eq!(only_local.hosts.len(), 1);
+    assert_eq!(only_local.hosts[0].warnings, vec!["local warning"]);
+}
+
+#[test]
+fn storage_report_limits_parallel_inspections_and_processes_every_host_once() {
+    let remotes = (0..9).map(|id| RemoteHost { id:id.to_string(), name:format!("Host {id}"), target:"unused.invalid".into(), pi_path:"pi".into() }).collect();
+    let (started, starts) = mpsc::channel();
+    let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+    let gate = release.clone();
+    let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let maximum = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = maximum.clone();
+    let worker = thread::spawn(move || collect_storage_report(Err("local error".into()), remotes, |host| {
+        let count = active.fetch_add(1, Ordering::SeqCst) + 1;
+        observed.fetch_max(count, Ordering::SeqCst);
+        started.send(host.id.clone()).unwrap();
+        let (lock, condition) = &*gate;
+        let ready = lock.lock().unwrap();
+        let (_ready, _) = condition.wait_timeout_while(ready, Duration::from_secs(3), |ready| !*ready).unwrap();
+        active.fetch_sub(1, Ordering::SeqCst);
+        Err(format!("unavailable:{}", host.id))
+    }));
+    let mut inspected = Vec::new();
+    for _ in 0..4 { inspected.push(starts.recv_timeout(Duration::from_secs(2)).unwrap()); }
+    assert!(matches!(starts.recv_timeout(Duration::from_millis(50)), Err(mpsc::RecvTimeoutError::Timeout)));
+    { let (lock, condition) = &*release; *lock.lock().unwrap() = true; condition.notify_all(); }
+    let report = worker.join().unwrap();
+    inspected.extend(starts.try_iter()); inspected.sort();
+    assert_eq!(inspected, (0..9).map(|id| id.to_string()).collect::<Vec<_>>());
+    assert_eq!(maximum.load(Ordering::SeqCst), 4);
+    assert_eq!(report.hosts.len(), 10);
+    for host in &report.hosts[1..] { assert_eq!(host.error.as_deref(), Some(format!("unavailable:{}", host.host_id).as_str())); }
+}

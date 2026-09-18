@@ -2670,9 +2670,18 @@ fn list_directories(app: AppHandle, host_id: String, path: Option<String>) -> Re
 
 fn collect_sessions(app: &AppHandle, index: &SessionIndexRuntime) -> Result<Vec<SessionSummary>, String> {
     let home = home_dir()?; let root = ensure_desktop_sessions_dir(&home)?;
-    let mut sessions = list_local_sessions(index, &root)?;
+    let sessions = list_local_sessions(index, &root)?;
     let hosts = load_app_settings(app.clone())?.hosts;
+    collect_host_sessions(sessions, hosts, |host| list_remote_sessions(index, host), session_groups::attach_assignments)
+}
+
+fn collect_host_sessions(
+    mut sessions: Vec<SessionSummary>, hosts: Vec<RemoteHost>,
+    list: impl Fn(&RemoteHost) -> Result<Vec<SessionSummary>, String> + Sync,
+    assign: impl FnOnce(&mut [SessionSummary]) -> Result<(), String>,
+) -> Result<Vec<SessionSummary>, String> {
     thread::scope(|scope| {
+        let list = &list;
         let queue = Arc::new(Mutex::new(hosts));
         let (sender, receiver) = mpsc::channel();
         for _ in 0..MAX_REMOTE_HOSTS.min(4).min(queue.lock().map(|items| items.len()).unwrap_or(0)) {
@@ -2680,13 +2689,13 @@ fn collect_sessions(app: &AppHandle, index: &SessionIndexRuntime) -> Result<Vec<
             scope.spawn(move || loop {
                 let host = queue.lock().ok().and_then(|mut items| items.pop());
                 let Some(host) = host else { break };
-                let _ = sender.send(list_remote_sessions(index, &host));
+                let _ = sender.send(list(&host));
             });
         }
         drop(sender);
         for result in receiver { if let Ok(mut remote) = result { sessions.append(&mut remote); } }
     });
-    session_groups::attach_assignments(&mut sessions)?;
+    assign(&mut sessions)?;
     sessions.sort_by(|left, right| right.modified_at.cmp(&left.modified_at)); Ok(sessions)
 }
 
@@ -2727,9 +2736,15 @@ fn failed_storage(host_id: String, host_name: String, error: String) -> HostStor
 
 #[tauri::command(async)]
 fn storage_report(app: AppHandle) -> Result<StorageReport, String> {
-    let mut hosts = vec![inspect_storage(None).unwrap_or_else(|error| failed_storage("local".into(), "Local".into(), error))];
+    let local = inspect_storage(None);
     let remote_hosts = load_app_settings(app)?.hosts;
+    Ok(collect_storage_report(local, remote_hosts, |host| inspect_storage(Some(host))))
+}
+
+fn collect_storage_report(local: Result<HostStorage, String>, remote_hosts: Vec<RemoteHost>, inspect: impl Fn(&RemoteHost) -> Result<HostStorage, String> + Sync) -> StorageReport {
+    let mut hosts = vec![local.unwrap_or_else(|error| failed_storage("local".into(), "Local".into(), error))];
     thread::scope(|scope| {
+        let inspect = &inspect;
         let queue = Arc::new(Mutex::new(remote_hosts));
         let (sender, receiver) = mpsc::channel();
         for _ in 0..MAX_REMOTE_HOSTS.min(4).min(queue.lock().map(|items| items.len()).unwrap_or(0)) {
@@ -2737,7 +2752,7 @@ fn storage_report(app: AppHandle) -> Result<StorageReport, String> {
             scope.spawn(move || loop {
                 let host = queue.lock().ok().and_then(|mut items| items.pop());
                 let Some(host) = host else { break };
-                let result = inspect_storage(Some(&host)).unwrap_or_else(|error| failed_storage(host.id.clone(), host.name.clone(), error));
+                let result = inspect(&host).unwrap_or_else(|error| failed_storage(host.id.clone(), host.name.clone(), error));
                 let _ = sender.send(result);
             });
         }
@@ -2745,7 +2760,7 @@ fn storage_report(app: AppHandle) -> Result<StorageReport, String> {
         hosts.extend(receiver);
     });
     hosts[1..].sort_by(|left, right| left.host_name.to_lowercase().cmp(&right.host_name.to_lowercase()));
-    Ok(StorageReport { hosts })
+    StorageReport { hosts }
 }
 
 fn local_desktop_session_file(session_path: &str) -> Result<PathBuf, String> {
