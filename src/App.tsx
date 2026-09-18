@@ -395,14 +395,6 @@ export default function App() {
       await createWorktree(target, args.join(" "));
       return true;
     }
-    if (/^\/catch-up(?:\s|$)/i.test(text)) {
-      if (behavior) {
-        await ownerTransport.command({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...(images.length ? { images } : {}) });
-        return;
-      }
-      await transport.command({ type: "prompt", message: text, ...(images.length ? { images } : {}) });
-      return true;
-    }
     if (behavior) { await ownerTransport.command({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...(images.length ? { images } : {}) }); return; }
 
     await transport.command({ type: "prompt", message: text, ...(images.length ? { images } : {}) });
