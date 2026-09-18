@@ -2856,13 +2856,18 @@ fn delete_stored_session(app: AppHandle, runtime: &PiRuntime, session_path: Stri
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let settings = load_app_settings(app)?;
     let path = if archived { archived_session_file(&settings, &host_id, &session_path)? } else { desktop_session_file(&settings, &host_id, &session_path)? };
+    let local_root = if archived { home_dir()?.join(STORAGE_DIRECTORY).join("archived") } else { desktop_sessions_dir(&home_dir()?) };
+    let host = if host_id == "local" { None } else { Some(remote_host(&settings, &host_id)?.clone()) };
+    delete_session_files(runtime, &path, &host_id, host.as_ref(), &local_root, archived)
+}
+
+fn delete_session_files(runtime: &PiRuntime, path: &str, host_id: &str, host: Option<&RemoteHost>, local_root: &Path, archived: bool) -> Result<(), String> {
     if runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values()
-        .any(|agent| agent.host_id == host_id && agent.session_path.as_deref() == Some(path.as_str())) {
+        .any(|agent| agent.host_id == host_id && agent.session_path.as_deref() == Some(path)) {
         return Err("Close the session before deleting it".into());
     }
     let active_session_ids: Vec<String> = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values()
         .filter(|agent| agent.host_id == host_id).filter_map(|agent| agent.session_id.clone()).collect();
-    let local_root = if archived { home_dir()?.join(STORAGE_DIRECTORY).join("archived") } else { desktop_sessions_dir(&home_dir()?) };
     let arguments = json!({ "path": path, "activeSessionIds": active_session_ids, "area": if archived { "archived" } else { "sessions" }, "root": if host_id == "local" { Some(local_root) } else { None } }).to_string();
     let script = include_str!("../resources/delete-session.cjs");
     let mut command = if host_id == "local" {
@@ -2870,7 +2875,7 @@ fn delete_stored_session(app: AppHandle, runtime: &PiRuntime, session_path: Stri
         command.args(["-e", script, &arguments]);
         command
     } else {
-        let host = remote_host(&settings, &host_id)?;
+        let host = host.ok_or("Remote host is required")?;
         let mut command = ssh(host);
         command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), shell_quote(&arguments))));
         command

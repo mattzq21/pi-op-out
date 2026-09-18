@@ -96,6 +96,46 @@ fn usage_chooses_the_most_consumed_window_and_prefers_the_codex_bucket() {
 }
 
 #[test]
+fn session_deletion_removes_trace_and_sidecar_in_both_storage_areas() {
+    let home = TestDirectory::new(); let runtime = PiRuntime::default();
+    for archived in [false, true] {
+        let root = home.0.join(if archived { ".piop/archived" } else { ".piop/sessions" }); fs::create_dir_all(&root).unwrap();
+        let path = root.join("conversation.jsonl");
+        fs::write(&path, json!({"type":"session","id":"one","cwd":home.0.join("missing-project")}).to_string()).unwrap();
+        fs::write(path.with_extension("diffs.json"), "{}").unwrap();
+        let other = root.join("other.jsonl"); fs::write(&other, "keep").unwrap();
+        delete_session_files(&runtime, path.to_str().unwrap(), "local", None, &root, archived).unwrap();
+        assert!(!path.exists()); assert!(!path.with_extension("diffs.json").exists());
+        assert_eq!(fs::read_to_string(&other).unwrap(), "keep");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+    }
+}
+
+#[test]
+fn session_deletion_checks_active_path_and_identity_and_preserves_invalid_traces() {
+    let home = TestDirectory::new(); let root = home.0.join(".piop/sessions"); fs::create_dir_all(&root).unwrap();
+    let path = root.join("conversation.jsonl");
+    let content = json!({"type":"session","id":"one","cwd":home.0.join("missing-project")}).to_string(); fs::write(&path, &content).unwrap();
+    let runtime = PiRuntime::default();
+    for use_path in [true, false] {
+        runtime.active_agents.lock().unwrap().insert("active".into(), AgentAddress {
+            host_id: "local".into(), session_id: Some(if use_path { "different" } else { "one" }.into()),
+            session_path: use_path.then(|| path.to_string_lossy().into_owned()), worktree: None, presence_id: None, working: false, messageable: true,
+        });
+        assert_eq!(delete_session_files(&runtime, path.to_str().unwrap(), "local", None, &root, false).unwrap_err(), "Close the session before deleting it");
+        assert_eq!(fs::read_to_string(&path).unwrap(), content);
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+    }
+    runtime.active_agents.lock().unwrap().get_mut("active").unwrap().host_id = "remote".into();
+    fs::write(&path, "invalid json").unwrap();
+    assert!(delete_session_files(&runtime, path.to_str().unwrap(), "local", None, &root, false).is_err());
+    assert_eq!(fs::read_to_string(&path).unwrap(), "invalid json");
+    fs::write(&path, &content).unwrap();
+    delete_session_files(&runtime, path.to_str().unwrap(), "local", None, &root, false).unwrap();
+    assert!(!path.exists());
+}
+
+#[test]
 fn rpc_responses_skip_notifications_and_other_ids_and_surface_errors() {
     let (sender, receiver) = mpsc::channel();
     for line in ["not json", "{\"method\":\"notification\"}", "{\"id\":2,\"result\":false}", "{\"id\":1,\"result\":{\"ok\":true}}"] {
@@ -1089,4 +1129,47 @@ fn storage_report_limits_parallel_inspections_and_processes_every_host_once() {
     assert_eq!(maximum.load(Ordering::SeqCst), 4);
     assert_eq!(report.hosts.len(), 10);
     for host in &report.hosts[1..] { assert_eq!(host.error.as_deref(), Some(format!("unavailable:{}", host.host_id).as_str())); }
+}
+
+#[test]
+fn deletion_removes_recorded_git_checkpoints_but_preserves_unrelated_refs_and_files() {
+    for mismatched_ref in [false, true] {
+        let home = TestDirectory::new(); let repository = TestDirectory::new();
+        test_git(&repository.0, &["init", "--initial-branch=main"]);
+        fs::write(repository.0.join("tracked.txt"), "original\n").unwrap();
+        test_git(&repository.0, &["add", "."]); test_git(&repository.0, &["commit", "-m", "Initial"]);
+        let output = Command::new("git").arg("-C").arg(&repository.0).args(["rev-parse", "HEAD"]).output().unwrap();
+        assert!(output.status.success()); let commit = String::from_utf8(output.stdout).unwrap().trim().to_owned();
+        let owned_ref = "refs/pi-session-snapshots/chats/one/checkpoint";
+        let unrelated_ref = "refs/pi-session-snapshots/chats/other/checkpoint";
+        test_git(&repository.0, &["update-ref", owned_ref, &commit]);
+        test_git(&repository.0, &["update-ref", unrelated_ref, &commit]);
+        if mismatched_ref {
+            test_git(&repository.0, &["commit", "--allow-empty", "-m", "Different checkpoint"]);
+            test_git(&repository.0, &["update-ref", owned_ref, "HEAD"]);
+        }
+        fs::write(repository.0.join("tracked.txt"), "uncommitted work\n").unwrap();
+        let root = home.0.join(".piop/sessions"); fs::create_dir_all(&root).unwrap();
+        let session = root.join("one.jsonl");
+        let header = json!({"type":"session","id":"one","cwd":repository.0});
+        let checkpoint = json!({"type":"custom","customType":"pi-project-files-watch-snapshot","data":{"repositoryRoot":repository.0,"ref":owned_ref,"commit":commit}});
+        let content = format!("{header}\n{checkpoint}\n"); fs::write(&session, &content).unwrap();
+        let sidecar = session.with_extension("diffs.json"); fs::write(&sidecar, "{}").unwrap();
+        let result = delete_session_files(&PiRuntime::default(), session.to_str().unwrap(), "local", None, &root, false);
+        let owned = Command::new("git").arg("-C").arg(&repository.0).args(["show-ref", "--verify", owned_ref]).output().unwrap();
+        if mismatched_ref {
+            assert!(result.unwrap_err().contains("no longer points to its recorded commit"));
+            assert!(owned.status.success());
+            assert_eq!(fs::read_to_string(&session).unwrap(), content);
+            assert_eq!(fs::read_to_string(&sidecar).unwrap(), "{}");
+            assert_eq!(fs::read_dir(&root).unwrap().count(), 2);
+        } else {
+            result.unwrap(); assert!(!owned.status.success());
+            assert!(!session.exists()); assert!(!sidecar.exists());
+            assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        }
+        let other = Command::new("git").arg("-C").arg(&repository.0).args(["rev-parse", unrelated_ref]).output().unwrap();
+        assert!(other.status.success()); assert_eq!(String::from_utf8(other.stdout).unwrap().trim(), commit);
+        assert_eq!(fs::read_to_string(repository.0.join("tracked.txt")).unwrap(), "uncommitted work\n");
+    }
 }
