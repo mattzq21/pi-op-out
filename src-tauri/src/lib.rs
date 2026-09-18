@@ -1271,19 +1271,27 @@ exit "$status""#, source = shell_quote(cwd), project = shell_quote(project_path)
 
 #[tauri::command]
 async fn run_worktree_setup(app: AppHandle, setup_id: String, cwd: String, worktree_path: String, host_id: Option<String>) -> Result<(), String> {
-    let cancelled = app.state::<PiRuntime>().worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.get(&setup_id).cloned().ok_or("Unknown setup")?;
     let worker_app = app.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
+    execute_worktree_setup(&app.state::<PiRuntime>(), &setup_id, move |cancelled| {
         let settings = load_app_settings(worker_app)?;
         let host_id = host_id.as_deref().unwrap_or("local");
         run_worktree_scripts(&settings, &cwd, &worktree_path, host_id, &cancelled, WorktreeScriptPhase::Setup)
-    }).await.map_err(|error| error.to_string());
-    app.state::<PiRuntime>().worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.remove(&setup_id);
+    }).await
+}
+
+async fn execute_worktree_setup(runtime: &PiRuntime, setup_id: &str, work: impl FnOnce(Arc<AtomicBool>) -> Result<(), String> + Send + 'static) -> Result<(), String> {
+    let cancelled = runtime.worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.get(setup_id).cloned().ok_or("Unknown setup")?;
+    let result = tauri::async_runtime::spawn_blocking(move || work(cancelled)).await.map_err(|error| error.to_string());
+    runtime.worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.remove(setup_id);
     result?
 }
 
 #[tauri::command]
 fn prepare_worktree_setup(runtime: State<PiRuntime>) -> Result<String, String> {
+    register_worktree_setup(&runtime)
+}
+
+fn register_worktree_setup(runtime: &PiRuntime) -> Result<String, String> {
     let id = Uuid::new_v4().to_string();
     runtime.worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.insert(id.clone(), Arc::new(AtomicBool::new(false)));
     Ok(id)
@@ -1291,7 +1299,11 @@ fn prepare_worktree_setup(runtime: State<PiRuntime>) -> Result<String, String> {
 
 #[tauri::command]
 fn cancel_worktree_setup(runtime: State<PiRuntime>, setup_id: String) -> Result<(), String> {
-    if let Some(cancelled) = runtime.worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.get(&setup_id) { cancelled.store(true, Ordering::SeqCst); }
+    signal_worktree_setup_cancellation(&runtime, &setup_id)
+}
+
+fn signal_worktree_setup_cancellation(runtime: &PiRuntime, setup_id: &str) -> Result<(), String> {
+    if let Some(cancelled) = runtime.worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.get(setup_id) { cancelled.store(true, Ordering::SeqCst); }
     Ok(())
 }
 
@@ -2249,13 +2261,18 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
         remote.push_str(&format!(" && printf %s {} > \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/{}\" && chmod 600 \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/{}\"", shell_quote(content), name, name));
     }
     // Bundled extensions can exceed the OS limit for a single command argument.
-    let mut child = ssh(host).arg("sh -s").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| format!("Could not install piop extensions on {}: {error}", host.name))?;
+    stage_extension_script(ssh(host).arg("sh -s"), &host.name, remote)
+}
+
+fn stage_extension_script(command: &mut Command, host_name: &str, remote: String) -> Result<(), String> {
+    // Bundled extensions can exceed the OS limit for a single command argument.
+    let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| format!("Could not install piop extensions on {host_name}: {error}"))?;
     let mut stdin = child.stdin.take().ok_or("Remote extension staging stdin was unavailable")?;
     let writer = thread::spawn(move || stdin.write_all(remote.as_bytes()));
-    let output = child.wait_with_output().map_err(|error| format!("Could not install piop extensions on {}: {error}", host.name))?;
+    let output = child.wait_with_output().map_err(|error| format!("Could not install piop extensions on {host_name}: {error}"))?;
     let written = writer.join().map_err(|_| "Remote extension staging writer failed")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-    written.map_err(|error| format!("Could not send piop extensions to {}: {error}", host.name))
+    written.map_err(|error| format!("Could not send piop extensions to {host_name}: {error}"))
 }
 
 enum PiLaunch<'a> {

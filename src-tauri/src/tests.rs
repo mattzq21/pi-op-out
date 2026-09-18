@@ -3300,6 +3300,88 @@ fn project_directory_opening_rejects_files_missing_directories_and_remote_hosts(
 }
 
 #[test]
+fn extension_staging_transport_delivers_large_scripts_and_drains_output() {
+    let temporary = TestDirectory::new(); let destination = temporary.0.join("received");
+    let payload = "\u{3bb} payload\n".repeat(100_000);
+    let script = format!("cat > {} <<\u{27}PIOP_PAYLOAD\u{27}\n{}PIOP_PAYLOAD\nhead -c 100000 /dev/zero\nhead -c 100000 /dev/zero >&2\n", shell_quote(destination.to_str().unwrap()), payload);
+    stage_extension_script(Command::new("sh").arg("-s"), "Test server", script).unwrap();
+    assert_eq!(fs::read_to_string(destination).unwrap(), payload);
+}
+
+#[test]
+fn extension_staging_transport_reports_launch_exit_and_stdin_failures() {
+    let temporary = TestDirectory::new();
+    let error = stage_extension_script(&mut Command::new(temporary.0.join("missing")), "Test server", "script".into()).unwrap_err();
+    assert!(error.starts_with("Could not install piop extensions on Test server:"));
+    let payload = "x".repeat(2 * 1024 * 1024);
+    let error = stage_extension_script(Command::new("sh").args(["-c", "printf \u{27} install rejected \\n\u{27} >&2; exit 7"]), "Test server", payload.clone()).unwrap_err();
+    assert_eq!(error, "install rejected", "process diagnostics must take precedence over a broken stdin pipe");
+    let error = stage_extension_script(Command::new("sh").args(["-c", "exit 0"]), "Test server", payload).unwrap_err();
+    assert!(error.starts_with("Could not send piop extensions to Test server:"), "{error}");
+}
+
+#[test]
+fn worktree_setup_execution_removes_finished_failed_and_panicked_jobs_only() {
+    for outcome in ["success", "failure", "panic"] {
+        let runtime = PiRuntime::default();
+        let id = register_worktree_setup(&runtime).unwrap();
+        let other = register_worktree_setup(&runtime).unwrap();
+        let result = tauri::async_runtime::block_on(execute_worktree_setup(&runtime, &id, move |cancelled| {
+            assert!(!cancelled.load(Ordering::SeqCst));
+            match outcome { "success" => Ok(()), "failure" => Err("setup failed".into()), _ => panic!("setup worker panicked") }
+        }));
+        match outcome {
+            "success" => result.unwrap(),
+            "failure" => assert_eq!(result.unwrap_err(), "setup failed"),
+            _ => assert!(result.unwrap_err().contains("panicked")),
+        }
+        let pending = runtime.worktree_setups.lock().unwrap();
+        assert!(!pending.contains_key(&id)); assert!(pending.contains_key(&other)); assert_eq!(pending.len(), 1);
+    }
+}
+
+#[test]
+fn worktree_setup_execution_observes_cancellation_and_rejects_unknown_jobs() {
+    let runtime = Arc::new(PiRuntime::default());
+    assert_eq!(tauri::async_runtime::block_on(execute_worktree_setup(&runtime, "unknown",
+        |_| panic!("unknown job executed"))).unwrap_err(), "Unknown setup");
+    let id = register_worktree_setup(&runtime).unwrap();
+    let (started, ready) = mpsc::channel(); let (release, proceed) = mpsc::channel();
+    let worker_runtime = runtime.clone(); let worker_id = id.clone();
+    let worker = thread::spawn(move || tauri::async_runtime::block_on(execute_worktree_setup(&worker_runtime, &worker_id, move |cancelled| {
+        started.send(()).unwrap();
+        proceed.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert!(cancelled.load(Ordering::SeqCst));
+        Err("Environment setup cancelled".into())
+    })));
+    ready.recv_timeout(Duration::from_secs(3)).unwrap();
+    signal_worktree_setup_cancellation(&runtime, &id).unwrap();
+    release.send(()).unwrap();
+    assert_eq!(worker.join().unwrap().unwrap_err(), "Environment setup cancelled");
+    assert!(runtime.worktree_setups.lock().unwrap().is_empty());
+}
+
+#[test]
+fn worktree_setup_registration_and_cancellation_are_isolated_and_repeatable() {
+    let runtime = PiRuntime::default();
+    let first = register_worktree_setup(&runtime).unwrap();
+    let second = register_worktree_setup(&runtime).unwrap();
+    assert_ne!(first, second); assert!(Uuid::parse_str(&first).is_ok()); assert!(Uuid::parse_str(&second).is_ok());
+    let (first_signal, second_signal) = {
+        let setups = runtime.worktree_setups.lock().unwrap();
+        (setups[&first].clone(), setups[&second].clone())
+    };
+    assert!(!first_signal.load(Ordering::SeqCst)); assert!(!second_signal.load(Ordering::SeqCst));
+    signal_worktree_setup_cancellation(&runtime, "missing").unwrap();
+    for _ in 0..2 { signal_worktree_setup_cancellation(&runtime, &first).unwrap(); }
+    assert!(first_signal.load(Ordering::SeqCst)); assert!(!second_signal.load(Ordering::SeqCst));
+    assert_eq!(runtime.worktree_setups.lock().unwrap().len(), 2, "running setup owns registry removal");
+    runtime.worktree_setups.lock().unwrap().remove(&first);
+    signal_worktree_setup_cancellation(&runtime, &first).unwrap();
+    assert_eq!(runtime.worktree_setups.lock().unwrap().len(), 1);
+}
+
+#[test]
 fn usage_query_initializes_the_server_before_reading_rate_limits() {
     let directory = TestDirectory::new(); let transcript = directory.0.join("packets.jsonl");
     let script = r#"const fs=require('fs'); const readline=require('readline');
