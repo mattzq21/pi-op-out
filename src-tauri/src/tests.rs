@@ -853,3 +853,33 @@ fn explicit_invocation_skills_remain_available_and_pi_root_markdown_is_discovere
     assert_eq!(explicit["userInvokedOnly"], true); assert_eq!(explicit["enabled"], true);
     assert!(settings.skills.iter().any(|skill| skill["name"] == "quick"));
 }
+#[test]
+fn blank_session_cleanup_removes_only_matching_unused_sessions_and_sidecars() {
+    let root = TestDirectory::new(); let path = root.0.join("date_chat.jsonl");
+    let body = format!("{}\n", json!({"type":"session","id":"chat","cwd":"/repo"}));
+    fs::write(&path, &body).unwrap(); fs::write(path.with_extension("diffs.json"), "{}").unwrap();
+    cleanup_blank_session_at(BlankSessionCleanup { path: None, id: Some("chat".into()), host: None, submitted: false }, Some(&root.0));
+    assert!(!path.exists()); assert!(!path.with_extension("diffs.json").exists());
+    for (content, id, submitted) in [
+        (body.clone(), "other", false),
+        (body.clone(), "chat", true),
+        (format!("{body}{}\n", json!({"type":"message","message":{"role":"user","content":"Keep"}})), "chat", false),
+        (format!("{body}incomplete json"), "chat", false),
+    ] {
+        fs::write(&path, &content).unwrap();
+        cleanup_blank_session_at(BlankSessionCleanup { path: Some(path.to_string_lossy().into_owned()), id: Some(id.into()), host: None, submitted }, Some(&root.0));
+        assert_eq!(fs::read_to_string(&path).unwrap(), content);
+    }
+}
+
+#[test]
+fn blank_session_cleanup_does_not_delete_files_outside_the_store() {
+    let root = TestDirectory::new(); let outside = TestDirectory::new();
+    let path = outside.0.join("chat.jsonl"); fs::write(&path, "{\"type\":\"session\",\"id\":\"chat\"}\n").unwrap();
+    cleanup_blank_session_at(BlankSessionCleanup { path: Some(path.to_string_lossy().into_owned()), id: Some("chat".into()), host: None, submitted: false }, Some(&root.0));
+    assert!(path.exists());
+    let ephemeral = root.0.join("ephemeral.jsonl"); fs::write(&ephemeral, "temporary").unwrap();
+    remove_ephemeral_session(EphemeralSession::Local(ephemeral.clone()));
+    assert!(!ephemeral.exists()); assert!(path.exists());
+    remove_ephemeral_session(EphemeralSession::Local(ephemeral));
+}

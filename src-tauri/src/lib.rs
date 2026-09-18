@@ -44,8 +44,14 @@ struct BlankSessionCleanup { path: Option<String>, id: Option<String>, host: Opt
 
 fn cleanup_blank_session(target: BlankSessionCleanup) {
     if target.submitted { return; }
+    let root = if target.host.is_none() { home_dir().ok().map(|home| home.join(STORAGE_DIRECTORY).join("sessions")) } else { None };
+    cleanup_blank_session_at(target, root.as_deref());
+}
+
+fn cleanup_blank_session_at(target: BlankSessionCleanup, root: Option<&Path>) {
+    if target.submitted { return; }
     let script = include_str!("../resources/cleanup-blank-session.cjs");
-    let arguments = json!({"path":target.path,"id":target.id,"root":if target.host.is_none() { home_dir().ok().map(|home| home.join(STORAGE_DIRECTORY).join("sessions")) } else { None }}).to_string();
+    let arguments = json!({"path":target.path,"id":target.id,"root":root}).to_string();
     let result = if let Some(host) = target.host {
         ssh(&host).arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), shell_quote(&arguments)))).output()
     } else { node_command().arg("-e").arg(script).arg(arguments).output() };
