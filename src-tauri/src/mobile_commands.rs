@@ -54,6 +54,7 @@ pub(super) async fn dispatch(app: AppHandle, command: String, args: Value) -> Re
         "load_app_settings" => tokio::task::spawn_blocking(move || serde_json::to_value(load_app_settings(app.clone())?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
         "save_app_settings" => tokio::task::spawn_blocking(move || serde_json::to_value(save_app_settings(app.clone(), argument(&args, "settings")?, argument(&args, "agentHostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
         "codex_usage" => tokio::task::spawn_blocking(move || serde_json::to_value(codex_usage()?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
+        "opencode_go_usage" => opencode_go_usage().await.and_then(|usage| serde_json::to_value(usage).map_err(|error| error.to_string())),
         _ => Err(format!("Command is not available on mobile: {command}")),
     }
 }

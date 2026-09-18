@@ -33,6 +33,8 @@ The launcher checks `~/.local/bin/pi`, `~/.npm-global/bin/pi`, and `~/.bun/bin/p
 
 Authenticate Pi with its `/login` flow or provider environment variables before starting Piop. Credentials stay in Pi's auth store.
 
+Pi's built-in `opencode-go` provider surfaces OpenCode Go subscription models the same way: store an OpenCode API key through Pi's login flow or set `OPENCODE_API_KEY` in the environment, and models such as `opencode-go/kimi-k2.7-code` appear in the model picker. When the subscription is active, OpenCode Go usage limits appear in the sidebar above the Codex usage limits.
+
 `npm run dev` starts only the frontend server; use `tauri dev` to run the desktop app.
 
 ## Conversations

@@ -67,3 +67,41 @@ test('agent definitions survive reload while selected MCP tools are pending', as
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('retired piop session tools are migrated out of stored agents', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'piop-agent-migrate-'));
+  const previous = { ...process.env };
+  try {
+    delete process.env.PI_DESKTOP_MCP_CONFIG;
+    await writeFile(join(dir, 'config.json'), JSON.stringify({ agents: [{ name: 'general', model: '', effort: 'high', tools: ['read', 'bash', 'fork_session', 'create_worktree', 'remove_worktree'], skills: [], mcpServers: [] }], sessionToolsDefaultApplied: true }));
+    const source = (await readFile(new URL('../../extensions/piop-define-agents/index.ts', import.meta.url), 'utf8')).replace(/import \{ formatSkillsForPrompt, type BuildSystemPromptOptions \} from "@earendil-works\/pi-coding-agent";/, 'const formatSkillsForPrompt = () => "";');
+    const loader = await readFile(new URL('../../extensions/piop-define-agents/extension-loader.ts', import.meta.url), 'utf8');
+    await writeFile(join(dir, 'extension-loader.mjs'), (await transform(loader, { loader: 'ts', format: 'esm' })).code);
+    await writeFile(join(dir, 'index.mjs'), (await transform(source.replace('./extension-loader.ts', './extension-loader.mjs'), { loader: 'ts', format: 'esm' })).code);
+    const define = (await import(pathToFileURL(join(dir, 'index.mjs')).href)).default;
+    const handlers = {};
+    let status;
+    const builtin = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'];
+    const ctx = {
+      model: undefined, modelRegistry: { find() {} },
+      sessionManager: { getSessionFile: () => '/fixture/session', getSessionId: () => 'fixture', getBranch: () => [] },
+      ui: { setStatus(key, text) { if (key === 'pi-define-agents') status = text; } },
+    };
+    await define({
+      on: (event, handler) => { handlers[event] = handler; },
+      registerCommand: () => {},
+      getAllTools: () => builtin.map(name => ({ name })), getThinkingLevel: () => 'high', setActiveTools: () => {},
+      appendEntry: () => {}, getActiveTools: () => [],
+      events: { on() { return () => {}; }, emit() {} },
+    });
+    await handlers.session_start({}, ctx);
+    const stored = JSON.parse(await readFile(join(dir, 'config.json'), 'utf8'));
+    assert.deepEqual(stored.agents[0].tools, ['read', 'bash'], 'stale session tools are stripped and persisted');
+    const capability = JSON.parse(Buffer.from(status.slice(5), 'base64url').toString());
+    assert.deepEqual(capability.config.agents.find(a => a.name === 'general').tools, ['read', 'bash']);
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key];
+    Object.assign(process.env, previous);
+    await rm(dir, { recursive: true, force: true });
+  }
+});

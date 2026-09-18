@@ -158,6 +158,15 @@ async function readConfig(pi: ExtensionAPI): Promise<Config> {
 async function loadConfig(pi: ExtensionAPI): Promise<Config> {
   const config = await readConfig(pi);
   let changed = false;
+  // Earlier builds injected piop-managed session tools into stored agents.
+  // Those tools no longer exist (superseded by the /branch-off and /worktree
+  // commands), so drop them instead of blocking every session.
+  const retiredSessionTools = ["fork_session", "create_worktree", "remove_worktree"];
+  for (const agent of config.agents) {
+    if (!agent.tools.some((tool) => retiredSessionTools.includes(tool))) continue;
+    agent.tools = agent.tools.filter((tool) => !retiredSessionTools.includes(tool));
+    changed = true;
+  }
   for (const agent of config.agents) {
     if (!agent.tools.some((tool) => tool === "exec_command" || tool === "apply_patch")) continue;
     agent.tools = [...new Set(agent.tools.flatMap((tool) => tool === "exec_command"
