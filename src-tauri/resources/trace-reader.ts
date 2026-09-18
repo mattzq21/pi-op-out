@@ -70,7 +70,12 @@ function syntheticUserMessage(text: string) {
 }
 
 export function cleanTrace(content: string): CleanMessage[] {
-  const entries = content.split(/\r?\n/).flatMap((line) => { try { return [JSON.parse(line) as Entry]; } catch { return []; } });
+  const entries = content.split(/\r?\n/).flatMap((line) => {
+    try {
+      const entry: unknown = JSON.parse(line);
+      return entry && typeof entry === "object" && !Array.isArray(entry) ? [entry as Entry] : [];
+    } catch { return []; }
+  });
   const indexed = new Map(entries.flatMap((entry) => typeof entry.id === "string" ? [[entry.id, entry] as const] : []));
   const branch: Entry[] = [];
   let cursor = [...entries].reverse().find((entry) => typeof entry.id === "string")?.id;
