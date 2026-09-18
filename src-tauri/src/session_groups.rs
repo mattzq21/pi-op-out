@@ -4,6 +4,10 @@ use tauri::{AppHandle, Emitter};
 
 static STORAGE_LOCK: Mutex<()> = Mutex::new(());
 
+#[cfg(test)]
+#[path = "session_groups_tests.rs"]
+mod tests;
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionGroup {
@@ -60,7 +64,11 @@ fn write(path: &PathBuf, groups: &SessionGroups) -> Result<(), String> {
 
 pub fn attach_assignments(sessions: &mut [super::SessionSummary]) -> Result<(), String> {
     let _lock = STORAGE_LOCK.lock().map_err(|_| "Session groups lock was poisoned")?;
-    if let Some(state) = read(&storage_path()?)? {
+    attach_assignments_at(sessions, &storage_path()?)
+}
+
+fn attach_assignments_at(sessions: &mut [super::SessionSummary], path: &PathBuf) -> Result<(), String> {
+    if let Some(state) = read(path)? {
         for session in sessions {
             session.group_id = state.assignments.get(&format!("{}:{}", session.host_id, session.id)).cloned().flatten();
         }
@@ -72,7 +80,11 @@ pub fn attach_assignments(sessions: &mut [super::SessionSummary]) -> Result<(), 
 pub fn load_session_groups(seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Result<SessionGroups, String> {
     let _lock = STORAGE_LOCK.lock().map_err(|_| "Session groups lock was poisoned")?;
     let path = storage_path()?;
-    let stored = read(&path)?;
+    load_at(&path, seeds, legacy)
+}
+
+fn load_at(path: &PathBuf, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Result<SessionGroups, String> {
+    let stored = read(path)?;
     let mut dirty = stored.is_none();
     let mut state = stored.unwrap_or(legacy);
     for group in &mut state.groups {
@@ -98,15 +110,25 @@ pub fn load_session_groups(seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Re
     for destination in state.assignments.values_mut() {
         if destination.as_ref().is_some_and(|id| !ids.contains(id)) { *destination = None; dirty = true; }
     }
-    if dirty { write(&path, &state)?; }
+    if dirty { write(path, &state)?; }
     Ok(state)
 }
 
 #[tauri::command(async)]
 pub fn change_session_groups(app: AppHandle, change: GroupChange) -> Result<SessionGroups, String> {
+    change_with(change, storage_path, |state| { let _ = app.emit("pi://groups-changed", state); })
+}
+
+fn change_with(change: GroupChange, path: impl FnOnce() -> Result<PathBuf, String>, emit: impl FnOnce(&SessionGroups)) -> Result<SessionGroups, String> {
     let _lock = STORAGE_LOCK.lock().map_err(|_| "Session groups lock was poisoned")?;
-    let path = storage_path()?;
-    let mut state = read(&path)?.ok_or("Session groups have not loaded yet")?;
+    let path = path()?;
+    let state = change_at(&path, change)?;
+    emit(&state);
+    Ok(state)
+}
+
+fn change_at(path: &PathBuf, change: GroupChange) -> Result<SessionGroups, String> {
+    let mut state = read(path)?.ok_or("Session groups have not loaded yet")?;
     match change {
         GroupChange::Project { project, key } => {
             if project.cwd.as_ref().is_none_or(|cwd| cwd.trim().is_empty()) { return Err("Enter a project directory".into()); }
@@ -141,7 +163,6 @@ pub fn change_session_groups(app: AppHandle, change: GroupChange) -> Result<Sess
             state.assignments.insert(key, group);
         }
     }
-    write(&path, &state)?;
-    let _ = app.emit("pi://groups-changed", &state);
+    write(path, &state)?;
     Ok(state)
 }

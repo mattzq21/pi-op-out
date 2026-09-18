@@ -1,5 +1,9 @@
 use super::*;
 
+#[cfg(all(test, unix))]
+#[path = "daemon_tests.rs"]
+mod tests;
+
 enum CaptureWork {
     Packet(Value),
     Drain(mpsc::Sender<()>),
