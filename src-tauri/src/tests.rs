@@ -3200,3 +3200,38 @@ fn parallel_short_lived_worktree_scripts_retain_failure_diagnostics() {
         for worker in workers { worker.join().unwrap(); }
     });
 }
+
+#[test]
+fn usage_query_propagates_server_errors_and_missing_usage_data() {
+    for (stage, response, expected) in [
+        (1, json!({"id":1,"error":{"message":"initialize denied"}}), "initialize denied"),
+        (2, json!({"id":2,"error":{"message":"not signed in"}}), "not signed in"),
+        (2, json!({"id":2,"result":{}}), "Codex usage is unavailable"),
+        (2, json!({"id":2}), "Codex returned no usage data"),
+    ] {
+        let script = format!("const r=require(\u{27}readline\u{27}).createInterface({{input:process.stdin}});r.on(\u{27}line\u{27},line=>{{const p=JSON.parse(line);if(p.id===1) console.log(JSON.stringify({}));else if(p.id===2) console.log(JSON.stringify({}));}});", if stage == 1 { response.clone() } else { json!({"id":1,"result":{}}) }, response);
+        let error = query_codex_usage(Command::new("node").args(["-e", &script])).err().unwrap();
+        assert!(error.contains(expected), "{error}");
+    }
+    let directory = TestDirectory::new();
+    assert!(query_codex_usage(&mut Command::new(directory.0.join("missing"))).err().unwrap().starts_with("Could not start Codex:"));
+}
+
+#[test]
+fn usage_query_initializes_the_server_before_reading_rate_limits() {
+    let directory = TestDirectory::new(); let transcript = directory.0.join("packets.jsonl");
+    let script = r#"const fs=require('fs'); const readline=require('readline');
+if(process.argv[2]!=='app-server') process.exit(9);
+readline.createInterface({input:process.stdin}).on('line',line=>{
+ fs.appendFileSync(process.argv[1],line+'\n'); const packet=JSON.parse(line);
+ if(packet.method==='initialize') { console.log('startup noise'); console.log(JSON.stringify({id:1,result:{}})); }
+ if(packet.method==='account/rateLimits/read') console.log(JSON.stringify({id:2,result:{rateLimits:{primary:{usedPercent:20,resetsAt:100},secondary:{usedPercent:75,resetsAt:200}}}}));
+});"#;
+    let usage = query_codex_usage(Command::new("node").args(["-e", script, transcript.to_str().unwrap()])).unwrap();
+    assert_eq!(usage.remaining_percent, 25); assert_eq!(usage.reset_at, Some(200));
+    let packets: Vec<Value> = fs::read_to_string(&transcript).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert_eq!(packets.len(), 3);
+    assert_eq!(packets[0], json!({"method":"initialize","id":1,"params":{"clientInfo":{"name":"piop","title":"piop","version":env!("CARGO_PKG_VERSION")},"capabilities":null}}));
+    assert_eq!(packets[1], json!({"method":"initialized"}));
+    assert_eq!(packets[2], json!({"method":"account/rateLimits/read","id":2}));
+}

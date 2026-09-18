@@ -439,7 +439,11 @@ fn codex_usage_values(response: &Value) -> Option<CodexUsage> {
 
 #[tauri::command(async)]
 fn codex_usage() -> Result<CodexUsage, String> {
-    let mut child = Command::new(codex_executable()).arg("app-server").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|error| format!("Could not start Codex: {error}"))?;
+    query_codex_usage(&mut Command::new(codex_executable()))
+}
+
+fn query_codex_usage(command: &mut Command) -> Result<CodexUsage, String> {
+    let mut child = command.arg("app-server").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|error| format!("Could not start Codex: {error}"))?;
     let result = (|| {
         let mut stdin = child.stdin.take().ok_or("Codex stdin was unavailable")?;
         let stdout = child.stdout.take().ok_or("Codex stdout was unavailable")?;
