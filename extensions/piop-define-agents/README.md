@@ -9,6 +9,8 @@ mkdir -p ~/.pi/agent/extensions/piop-define-agents
 cp extensions/piop-define-agents/{index.ts,extension-loader.ts} ~/.pi/agent/extensions/piop-define-agents/
 ```
 
+Each session uses one agent. Choose the agent before sending the first message; after that, selection is locked, including after reopening the session. Model and effort can still be changed. Start a new session to use a different agent.
+
 Reload Pi, then select an agent with `/pi-define-agents-use reviewer`. piop discovers the extension through the `pi-define-agents` status and exposes agent selection and the Agents settings page.
 
 The extension creates `config.json` beside itself on first load. `config.example.json` documents the format. Agent names are unique; a `default` agent is always present. Missing model or effort values inherit the session's runtime defaults. Tool declarations are strict: unavailable tools or tools denied by piop's global settings stop the run before inference. Agent skills are intersected with piop's enabled skills when running in piop. MCP tools are selected from the agent's configured servers; piop supplies the MCP bridge.
@@ -65,6 +67,6 @@ export default function reviewer(pi) {
 
 Dependencies initialize before their parent, once per activation group, including when shared by several parents. Missing files, invalid exports, cycles, duplicate registrations, and thrown initialization errors reject the entire group. No staged handlers, commands, tools, or event-bus subscriptions become active on a factory failure. If startup fails, the group is deactivated and the previous agent remains selected. RPC selection reports the error; an invalid restored agent blocks input before inference.
 
-Factories register tools, commands, shortcuts, flags, renderers, and handlers through the supplied API. Keep initialization free of external side effects; use `session_start` for runtime API calls and `session_shutdown` for cleanup. Resource registrations must happen in the factory. The loader stages API registrations, but cannot undo arbitrary filesystem writes or other side effects made directly by extension code. Extensions share the same session context and conversation history. Their registered tools are enabled with the agent; switching agents deactivates their handlers, commands, and tools without clearing history. Global piop extensions remain active.
+Factories register tools, commands, shortcuts, flags, renderers, and handlers through the supplied API. Keep initialization free of external side effects; use `session_start` for runtime API calls and `session_shutdown` for cleanup. Resource registrations must happen in the factory. The loader stages API registrations, but cannot undo arbitrary filesystem writes or other side effects made directly by extension code. Extensions share the same session context and conversation history. Their registered tools are enabled with the agent; changing the selection before the first message deactivates the previous agent’s handlers, commands, and tools. Global piop extensions remain active.
 
 The dependency export is interpreted by piop's agent loader, not by Pi's ordinary extension loader. Existing `pi-define-agents` command/status identifiers remain compatible; repository and installed extension paths use `piop-`. Existing private agent and fast-mode directories migrate on local and SSH hosts.

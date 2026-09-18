@@ -257,3 +257,91 @@ for (const position of ['parent', 'child', 'single']) {
     }
   });
 }
+
+async function sessionAgentFixture(t) {
+  const f = await fixture(t);
+  const previous = { ...process.env };
+  t.after(() => { for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key]; Object.assign(process.env, previous); });
+  delete process.env.PI_DESKTOP_MCP_CONFIG;
+  await f.file('prompt.md', 'Prompt');
+  const agent = name => ({ name, path_systemprompt: 'prompt.md', path_agentprompt: '', model: '', effort: 'high', tools: [], skills: [], mcpServers: [] });
+  await f.file('config.json', JSON.stringify({ agents: [agent('general'), agent('reviewer')], webSearchDefaultApplied: true }));
+  let effort = 'high';
+  f.pi.getThinkingLevel = () => effort;
+  f.pi.setThinkingLevel = level => { effort = level; };
+  f.ctx.modelRegistry.find = (provider, id) => ({ provider, id });
+  f.pi.setModel = async model => { f.ctx.model = model; await f.emit('model_select', { model }); return true; };
+  await (await import(pathToFileURL(join(f.dir, 'index.mjs')))).default(f.pi);
+  f.select = name => f.commands.get('pi-define-agents-use').handler(name, f.ctx);
+  f.capability = () => JSON.parse(Buffer.from(f.statuses.get('pi-define-agents').slice(5), 'base64url'));
+  return f;
+}
+
+test('first input locks the selected agent while model and effort remain editable across restore', async t => {
+  const f = await sessionAgentFixture(t);
+  await f.emit('session_start');
+  assert.equal(f.capability().locked, false);
+  await f.select('reviewer');
+  await f.select('general');
+  await f.select('reviewer');
+  assert.deepEqual(await f.emit('input', { text: 'Review this' }), { action: 'continue' });
+  assert.equal(f.capability().locked, true);
+  const entries = structuredClone(f.entries);
+  await assert.rejects(f.select('general'), /Start a new session/);
+  await f.select('reviewer');
+  assert.deepEqual(f.entries, entries, 'same-agent selection must not reset overrides or history');
+  await f.pi.setModel({ provider: 'test', id: 'another-model' });
+  f.pi.setThinkingLevel('low');
+  await f.emit('thinking_level_select', { level: 'low' });
+  await f.emit('input', { text: 'Continue' });
+  assert.equal(f.ctx.model.id, 'another-model');
+  assert.equal(f.pi.getThinkingLevel(), 'low');
+
+  // Restore in a fresh extension instance, as on reconnect or resource reload.
+  const restored = await sessionAgentFixture(t);
+  restored.entries.push(...structuredClone(f.entries));
+  await restored.emit('session_start');
+  assert.equal(restored.capability().active, 'reviewer');
+  assert.equal(restored.capability().locked, true);
+  assert.equal(restored.ctx.model.id, 'another-model');
+  assert.equal(restored.pi.getThinkingLevel(), 'low');
+  await assert.rejects(restored.select('general'), /Start a new session/);
+});
+
+test('legacy conversations retain their latest agent and cannot switch it', async t => {
+  const f = await sessionAgentFixture(t);
+  f.entries.push(
+    { type: 'message', message: { role: 'user', content: 'Existing conversation' } },
+    { type: 'custom', customType: 'pi-define-agents-state', data: { active: 'reviewer' } },
+  );
+  await f.emit('session_start');
+  assert.equal(f.capability().active, 'reviewer');
+  assert.equal(f.capability().locked, true);
+  await assert.rejects(f.select('general'), /Start a new session/);
+  const config = JSON.parse(await readFile(join(f.dir, 'config.json'), 'utf8'));
+  config.agents = config.agents.filter(agent => agent.name !== 'reviewer');
+  await assert.rejects(f.commands.get('pi-define-agents-config').handler(Buffer.from(JSON.stringify(config)).toString('base64url'), f.ctx), /cannot be removed or renamed/);
+  assert.equal(f.capability().active, 'reviewer');
+});
+
+test('a missing restored agent blocks startup instead of silently switching agents', async t => {
+  const f = await sessionAgentFixture(t);
+  f.entries.push({ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'removed', locked: true } });
+  await assert.rejects(f.emit('session_start'), /Unknown defined agent: removed/);
+  await assert.rejects(f.select('general'), /Start a new session/);
+});
+
+
+test('compacted history stays locked and a new empty session allows agent selection', async t => {
+  const f = await sessionAgentFixture(t);
+  f.entries.push({ type: 'compaction' });
+  await f.emit('session_start');
+  assert.equal(f.capability().locked, true);
+  await assert.rejects(f.select('reviewer'), /Start a new session/);
+  f.entries.length = 0;
+  f.ctx.sessionManager.getSessionFile = () => join(f.dir, 'new-session');
+  await f.emit('session_start');
+  assert.equal(f.capability().locked, false);
+  await f.select('reviewer');
+  assert.equal(f.capability().active, 'reviewer');
+});
