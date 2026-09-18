@@ -38,8 +38,10 @@ export interface SlashCommand { name: string; description?: string; source: "bui
 export interface ImageAttachment { type: "image"; data: string; mimeType: string; name?: string; }
 export interface ComposerUpload { id: string; name: string; kind: "image" | "text"; byteSize: number; image?: ImageAttachment; text?: string; }
 export interface WorktreeSetupScript { id: string; name: string; script: string; cleanupScript?: string; enabled: boolean; projectPath?: string; hostId?: string; }
-export interface AppSettings { worktreeSetupScripts: WorktreeSetupScript[]; defaultAgent?: string; defaultModel: string; hiddenModels: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; autoCompaction: boolean; autoRetry: boolean; debugMode: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; mcpServers: McpServer[]; hosts: RemoteHost[]; dictionaries: PromptDictionary[]; activeDictionaryIds: string[]; }
+export interface AppSettings { worktreeSetupScripts: WorktreeSetupScript[]; defaultAgent?: string; defaultModel: string; hiddenModels: string[]; knownModels?: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; autoCompaction: boolean; autoRetry: boolean; debugMode: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; mcpServers: McpServer[]; hosts: RemoteHost[]; dictionaries: PromptDictionary[]; activeDictionaryIds: string[]; }
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
+export interface UsageWindow { status: string; remainingPercent: number; resetAt?: number; }
+export interface OpencodeGoUsage { rolling: UsageWindow; weekly: UsageWindow; monthly: UsageWindow; }
 export interface ToolPathMapping { toolCallId: string; path: string; absolutePath: string; canonicalPath: string; }
 export type GitDiffSnapshot = string | { patch: string; repositoryRoot: string; toolPaths?: ToolPathMapping[] };
 export type GitDiffSnapshots = Record<string, GitDiffSnapshot>;

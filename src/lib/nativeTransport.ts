@@ -4,7 +4,7 @@ import type { ChatMessage } from "../types";
 import { invoke, listen, type UnlistenFn } from "./platform";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { GroupChange, SessionGroups, SessionGroupSeed } from "./sessionGroups";
-import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, PendingMessage, RpcCommand, RpcEvent, SessionSummary, SettingsChange, StorageReport } from "../types";
+import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, OpencodeGoUsage, PendingMessage, RpcCommand, RpcEvent, SessionSummary, SettingsChange, StorageReport } from "../types";
 
 const call = <T>(command: string, args?: Record<string, unknown>) => {
   if (import.meta.env.MODE !== "e2e") return invoke<T>(command, args);
@@ -265,6 +265,7 @@ export class NativeTransport {
   async gitBranch() { if (!this.cwd) return null; const branch = await call<unknown>("git_branch", { cwd: this.cwd, hostId: this.hostId }); return typeof branch === "string" ? branch : null; }
   loadSettings() { return call<AppSettings>("load_app_settings"); }
   loadCodexUsage() { return call<CodexUsage>("codex_usage"); }
+  loadOpencodeGoUsage() { return call<OpencodeGoUsage>("opencode_go_usage"); }
   saveSettings(settings: AppSettings, reconnect = true, agentHostId?: string) {
     const save = async () => {
       const previous = await this.loadSettings(); const connection = { cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId };

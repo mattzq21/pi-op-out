@@ -21,8 +21,9 @@ import { SessionRuntimePool, useTurnDiffs } from "./lib/sessionRuntimePool";
 import { useChatSession } from "./lib/useChatSession";
 import { decodeAgentValue, encodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "./lib/agentProtocol";
 import { appendTerminalOutput as retainTerminalOutput, TERMINAL_OUTPUT_LIMIT } from "./lib/terminalOutput";
-import type { AgentState, AppSettings, ChatMessage, CodexUsage, ComposerUpload, ExtensionUiRequest, ImageAttachment, Model, DefinedAgentsCapability, AgentConfig, SettingsChange, RpcEvent, SessionSummary } from "./types";
+import type { AgentState, AppSettings, ChatMessage, CodexUsage, ComposerUpload, ExtensionUiRequest, ImageAttachment, Model, OpencodeGoUsage, DefinedAgentsCapability, AgentConfig, SettingsChange, RpcEvent, SessionSummary } from "./types";
 import { branchMessages, type PiEntry } from "./lib/messages";
+import { recordSeenModels } from "./lib/modelVisibility";
 
 declare const __PIOP_DEVELOPMENT_BRANCH__: string;
 
@@ -62,6 +63,14 @@ export function formatCodexReset(resetAt: number, now = Date.now()) {
   return hours ? `${hours}h${minutes ? ` ${minutes}m` : ""}` : `${Math.max(1, minutes)}m`;
 }
 
+export function usageWindowsDescription(usage: OpencodeGoUsage): string {
+  return `rolling ${usage.rolling.remainingPercent}% left, weekly ${usage.weekly.remainingPercent}% left, monthly ${usage.monthly.remainingPercent}% left`;
+}
+
+function LimitBadge({ label, prefix, go, detail, remainingPercent, resetAt }: { label: string; prefix?: string; go?: boolean; detail?: string; remainingPercent: number; resetAt?: number }) {
+  return <span className={go ? "codex-usage opencode-go-usage" : "codex-usage"} role="status" aria-label={`${label} usage remaining: ${remainingPercent}%${resetAt ? `, resets ${formatCodexReset(resetAt)}` : ""}${detail ? ` (${detail})` : ""}`} title={`${label} usage remaining`}><span>{prefix}{remainingPercent}%<span className="codex-usage-left"> left</span></span>{resetAt && <span className="codex-usage-reset"><span className="codex-usage-separator"> · </span>{formatCodexReset(resetAt)}</span>}</span>;
+}
+
 export default function App() {
   const runtimePool = useMemo(() => new SessionRuntimePool(), []); const [transport, setTransport] = useState(() => { const initial = runtimePool.create(initialWindowTarget()); runtimePool.activate(initial); return initial; }); const [view, setView] = useState<"chat" | "settings">("chat");
   const activeTransportRef = useRef(transport); activeTransportRef.current = transport;
@@ -98,6 +107,8 @@ export default function App() {
   const [isGitRepository, setIsGitRepository] = useState<boolean>();
   const activeHostIdRef = useRef(activeHostId); activeHostIdRef.current = activeHostId;
   const [codexUsage, setCodexUsage] = useState<CodexUsage>();
+  const [opencodeGoUsage, setOpencodeGoUsage] = useState<OpencodeGoUsage>();
+  const opencodeGoBadge = opencodeGoUsage === undefined ? undefined : { window: opencodeGoUsage.rolling, detail: usageWindowsDescription(opencodeGoUsage) };
   const [, setUsageClock] = useState(0);
   const [dialogs, setDialogs] = useState<OwnedExtensionDialog[]>([]); const [notices, setNotices] = useState<Array<{ id: string; title: string; message: string }>>([]);
   const dialogsRef = useRef(dialogs); dialogsRef.current = dialogs;
@@ -171,7 +182,7 @@ export default function App() {
     if (terminalOutputFrame.current === undefined) terminalOutputFrame.current = window.setTimeout(flushTerminalOutput, 0);
   }, [flushTerminalOutput]);
 
-  useEffect(() => { let cancelled = false; const load = () => void transport.loadCodexUsage().then((usage) => { if (!cancelled) setCodexUsage(usage); }).catch(() => undefined); load(); const interval = window.setInterval(load, 60_000); window.addEventListener("focus", load); return () => { cancelled = true; window.clearInterval(interval); window.removeEventListener("focus", load); }; }, [transport]);
+  useEffect(() => { let cancelled = false; const load = () => { void transport.loadCodexUsage().then((usage) => { if (!cancelled) setCodexUsage(usage); }).catch(() => undefined); void transport.loadOpencodeGoUsage().then((usage) => { if (!cancelled) setOpencodeGoUsage(usage); }).catch(() => undefined); }; load(); const interval = window.setInterval(load, 60_000); window.addEventListener("focus", load); return () => { cancelled = true; window.clearInterval(interval); window.removeEventListener("focus", load); }; }, [transport]);
   useEffect(() => { newSessionPending.current = false; }, [transport]);
   useEffect(() => {
     const previousKey = activeConversationKeyRef.current;
@@ -193,10 +204,17 @@ export default function App() {
     return () => { cancelled = true; };
   }, [transport]);
   useEffect(() => {
-    if (!codexUsage?.resetAt) return;
+    if (!codexUsage?.resetAt && !opencodeGoUsage?.rolling.resetAt && !opencodeGoUsage?.weekly.resetAt && !opencodeGoUsage?.monthly.resetAt) return;
     const timer = window.setInterval(() => setUsageClock((value) => value + 1), 60_000);
     return () => window.clearInterval(timer);
-  }, [codexUsage?.resetAt]);
+  }, [codexUsage?.resetAt, opencodeGoUsage?.rolling.resetAt, opencodeGoUsage?.weekly.resetAt, opencodeGoUsage?.monthly.resetAt]);
+
+  useEffect(() => {
+    if (!settings || models.length === 0 || settingsSavePending.current) return;
+    const next = recordSeenModels(settings, models.map((model) => `${model.provider}/${model.id}`));
+    if (!next) return;
+    void transport.saveSettings(next, false).then((change) => { if (change?.settings) setSettings(change.settings); }).catch(() => undefined);
+  }, [models, settings, transport]);
 
 
   const syncSessionIndex = useCallback(() => {
@@ -757,7 +775,7 @@ export default function App() {
     <div className="mobile-navigation"><button aria-label="Toggle conversations" onClick={() => { if (canLeaveSettings()) { setView("chat"); setPanelOpen((value) => !value); } }}>☰</button><span>piop</span>{isMobile && <button onClick={() => { if (canLeaveSettings()) window.dispatchEvent(new Event("piop-mobile-disconnect")); }}>Host</button>}<button onClick={() => { if (canLeaveSettings()) { setPanelOpen(false); void newSession(); } }}>New chat</button><button onClick={() => { if (view === "chat") setView("settings"); else if (canLeaveSettings()) setView("chat"); }}>{view === "settings" ? "Chat" : "Settings"}</button></div>
     {panelOpen && view === "chat" && <button className="mobile-sidebar-backdrop" aria-label="Close conversations" onClick={() => setPanelOpen(false)} />}
     {import.meta.env.MODE === "e2e" && <div className="e2e-bridge"><textarea id="pi-e2e-responses" aria-label="E2E responses" placeholder="E2E responses" /><textarea id="pi-e2e-calls" aria-label="E2E calls" placeholder="E2E calls" /></div>}
-    <ResizableSidebar compact={view === "settings" || !panelOpen}><div className="rail-branch" title={`piop development branch: ${__PIOP_DEVELOPMENT_BRANCH__}`}><GitBranch size={13} /><span>{__PIOP_DEVELOPMENT_BRANCH__}</span></div><nav><IconButton label="New conversation" onClick={newSession}><MessageSquare size={18} /></IconButton><IconButton label="New session group" onClick={() => { if (!canLeaveSettings()) return; setView("chat"); setPanelOpen(true); setQuery(""); setCreateGroupRequest((request) => request + 1); }}><FolderPlus size={18} /></IconButton><IconButton label={settings.debugMode ? "Disable debug mode" : "Enable debug mode"} className={settings.debugMode ? "active" : ""} disabled={debugModeSaving || settingsSaving} onClick={toggleDebugMode}><Bug size={18} /></IconButton><IconButton label={view === "settings" ? "Go back" : "Settings"} className={view === "settings" ? "active" : ""} onClick={() => { if (view !== "settings") { setView("settings"); return; } if (canLeaveSettings()) setView("chat"); }}>{view === "settings" ? <ArrowLeft size={19} /> : <Settings size={19} />}</IconButton></nav>{view === "chat" && panelOpen && <SessionPanel sessions={[...sessions, ...runtimePool.liveSessionSummaries().filter((live) => !archivedSessionKeys.current.has(`${live.hostId ?? "local"}:${live.id}`) && !sessions.some((saved) => saved.id === live.id && saved.hostId === live.hostId))]} activeId={state.sessionId} activeHostId={activeHostId} runningSessions={runningSessions} unseenSessions={unseenSessions} query={query} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} onNewChat={(group) => void startNewSession(false, group)} onCreateWorktree={(cwd, hostId) => setWorktreeTarget({ cwd, hostId, transport })} onDeleteWorktree={deleteWorktree} createGroupRequest={createGroupRequest} onCreateGroupHandled={handleCreateGroup} />}<div className="rail-bottom">{codexUsage !== undefined && <span className="codex-usage" role="status" aria-label={`Codex usage remaining: ${codexUsage.remainingPercent}%${codexUsage.resetAt ? `, resets ${formatCodexReset(codexUsage.resetAt)}` : ""}`} title="Codex usage remaining"><span>{codexUsage.remainingPercent}%<span className="codex-usage-left"> left</span></span>{codexUsage.resetAt && <span className="codex-usage-reset"><span className="codex-usage-separator"> · </span>{formatCodexReset(codexUsage.resetAt)}</span>}</span>}</div></ResizableSidebar>
+    <ResizableSidebar compact={view === "settings" || !panelOpen}><div className="rail-branch" title={`piop development branch: ${__PIOP_DEVELOPMENT_BRANCH__}`}><GitBranch size={13} /><span>{__PIOP_DEVELOPMENT_BRANCH__}</span></div><nav><IconButton label="New conversation" onClick={newSession}><MessageSquare size={18} /></IconButton><IconButton label="New session group" onClick={() => { if (!canLeaveSettings()) return; setView("chat"); setPanelOpen(true); setQuery(""); setCreateGroupRequest((request) => request + 1); }}><FolderPlus size={18} /></IconButton><IconButton label={settings.debugMode ? "Disable debug mode" : "Enable debug mode"} className={settings.debugMode ? "active" : ""} disabled={debugModeSaving || settingsSaving} onClick={toggleDebugMode}><Bug size={18} /></IconButton><IconButton label={view === "settings" ? "Go back" : "Settings"} className={view === "settings" ? "active" : ""} onClick={() => { if (view !== "settings") { setView("settings"); return; } if (canLeaveSettings()) setView("chat"); }}>{view === "settings" ? <ArrowLeft size={19} /> : <Settings size={19} />}</IconButton></nav>{view === "chat" && panelOpen && <SessionPanel sessions={[...sessions, ...runtimePool.liveSessionSummaries().filter((live) => !archivedSessionKeys.current.has(`${live.hostId ?? "local"}:${live.id}`) && !sessions.some((saved) => saved.id === live.id && saved.hostId === live.hostId))]} activeId={state.sessionId} activeHostId={activeHostId} runningSessions={runningSessions} unseenSessions={unseenSessions} query={query} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} onNewChat={(group) => void startNewSession(false, group)} onCreateWorktree={(cwd, hostId) => setWorktreeTarget({ cwd, hostId, transport })} onDeleteWorktree={deleteWorktree} createGroupRequest={createGroupRequest} onCreateGroupHandled={handleCreateGroup} />}<div className="rail-bottom">{opencodeGoBadge && <LimitBadge label="OpenCode Go" prefix="Go " go detail={opencodeGoBadge.detail} remainingPercent={opencodeGoBadge.window.remainingPercent} resetAt={opencodeGoBadge.window.resetAt} />}{codexUsage !== undefined && <LimitBadge label="Codex" remainingPercent={codexUsage.remainingPercent} resetAt={codexUsage.resetAt} />}</div></ResizableSidebar>
     <div className="chat-workspace" hidden={view !== "chat"}>
       <div className={`chat-panes ${splitPane ? "split" : ""}`}>
         <ChatView voiceTransport={transport} key={activeConversationKey} state={state} messages={messages} gitDiffs={gitDiffs} debug={settings.debugMode} agents={extensionStateIsCurrent ? definedAgents?.config.agents ?? [] : []} activeAgent={extensionStateIsCurrent ? definedAgents?.active : undefined} agentLocked={extensionStateIsCurrent && definedAgents?.locked} dictionaries={settings.dictionaries.filter((item) => settings.activeDictionaryIds.includes(item.id))} models={models.filter((model) => !settings.hiddenModels.includes(`${model.provider}/${model.id}`))} commands={[{ name: "branch-off", description: "Branch conversation [number back, default 0]", source: "builtin" }, { name: "worktree", description: "Create worktree [number back, default 0] [name]", source: "builtin" }, ...commands.filter((command) => !["branch-off", "worktree"].includes(command.name))]} thinkingLevels={thinkingLevels} widgets={extensionStateIsCurrent ? Object.values(widgets).flat() : []} statuses={extensionStateIsCurrent ? statuses : {}} projectCwd={projectCwd} controlsDisabled={!connected} selectionBtw draft={composerDraft} onDraftChange={(value) => setComposerDraft(activeConversationKey, value)} focusRequest={mainComposerFocusRequest} onActivate={() => setActivePane("main")} uploads={composerUploads} onUploadsChange={(update) => setComposerUploads(transport, update)} onSend={send} onChangePending={(id, behavior) => transport.changePendingMessage(id, behavior)} onAbort={abortInteraction} onPause={pauseInteraction} onResume={resumeInteraction} onOpenTerminal={() => { terminalPanelRevision.current += 1; setActivePane("main"); setTerminalTarget({ sessionKey: activeConversationKey, cwd: projectCwd, hostId: activeHostId }); setTerminalOpen(true); }} onOpenProject={chooseChatProject} onClearProject={clearChatProject} onBranch={branch} onForkAndForget={isGitRepository === false && projectCwd ? forkAndForget : undefined} onCreateWorktree={isGitRepository && projectCwd ? (message) => setWorktreeTarget({ cwd: projectCwd, hostId: activeHostId, message, transport }) : undefined} onAgent={setAgent} onModel={setModel} onToggleFastMode={() => enqueueControl(transport, () => transport.toggleFastMode())} onThinking={setThinking} />
