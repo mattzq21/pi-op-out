@@ -1959,7 +1959,12 @@ fn valid_remote_snapshot(snapshot: &GitSnapshotToken) -> bool {
 
 fn remote_git_tree(host: &RemoteHost, cwd: &str) -> Result<Option<String>, String> {
     let script = format!("cd {} && PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {}", shell_quote(cwd), shell_quote(include_str!("../resources/capture-git-tree.cjs")));
-    let mut command = ssh(host); command.arg(remote_login_command(&script)); let output = run_limited(&mut command, 64 * 1024, &format!("Could not capture Git snapshot on {}", host.name))?;
+    let mut command = ssh(host); command.arg(remote_login_command(&script));
+    query_remote_git_tree(&mut command, &host.name)
+}
+
+fn query_remote_git_tree(command: &mut Command, host_name: &str) -> Result<Option<String>, String> {
+    let output = run_limited(command, 64 * 1024, &format!("Could not capture Git snapshot on {host_name}"))?;
     match output.status.code() { Some(3 | 4 | 6) => return Ok(None), _ => {} }
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let snapshot: GitSnapshotToken = serde_json::from_slice(&output.stdout).map_err(|error| format!("Remote Git snapshot was invalid: {error}"))?;
@@ -1983,11 +1988,15 @@ fn discard_git_tree(app: AppHandle, snapshot: String, host_id: Option<String>) -
 
 fn discard_git_tree_at_host(snapshot: &str, host: Option<&RemoteHost>) -> Result<(), String> {
     let Some(host) = host else { let snapshot = parse_local_snapshot(snapshot)?; return fs::remove_dir_all(snapshot.root).map_err(|error| format!("Could not discard Git snapshot: {error}")); };
+    discard_remote_git_tree(snapshot, &host.name, |script| { let mut command = ssh(host); command.arg(script); command })
+}
+
+fn discard_remote_git_tree(snapshot: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
     let snapshot: GitSnapshotToken = serde_json::from_str(&snapshot).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     if !valid_remote_snapshot(&snapshot) { return Err("Invalid remote Git snapshot location".into()); }
     let root = shell_quote(&snapshot.root);
     let script = format!("parent=$(cd \"$HOME/{STORAGE_DIRECTORY}/git-snapshots\" && pwd -P) || exit 7; snap=$(cd {root} && pwd -P) || exit 7; [ \"$(dirname -- \"$snap\")\" = \"$parent\" ] || exit 7; case \"$(basename -- \"$snap\")\" in pi-desktop-diff-*) ;; *) exit 7;; esac; rm -rf -- \"$snap\"");
-    let output = ssh(host).arg(script).output().map_err(|error| format!("Could not discard Git snapshot on {}: {error}", host.name))?;
+    let output = command(script).output().map_err(|error| format!("Could not discard Git snapshot on {host_name}: {error}"))?;
     output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
 }
 
@@ -2020,11 +2029,15 @@ fn load_remote_git_diff_with(base_tree: &str,
 
 fn load_git_diff_between_at_host(cwd: &str, base_tree: &str, current_token: &str, host: Option<&RemoteHost>) -> Result<Option<GitDiffSnapshot>, String> {
     let Some(host) = host else { return local_git_diff_between(cwd, &parse_local_snapshot(base_tree)?, &parse_local_snapshot(current_token)?); };
+    load_remote_git_diff_between(base_tree, current_token, &host.name, |script| { let mut command = ssh(host); command.arg(script); command })
+}
+
+fn load_remote_git_diff_between(base_tree: &str, current_token: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<Option<GitDiffSnapshot>, String> {
     let base: GitSnapshotToken = serde_json::from_str(base_tree).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     let current: GitSnapshotToken = serde_json::from_str(&current_token).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     if !valid_remote_snapshot(&base) || !valid_remote_snapshot(&current) { return Err("Invalid remote Git snapshot location".into()); }
     let script = format!("cd {} || exit 2; parent=$(cd \"$HOME/{STORAGE_DIRECTORY}/git-snapshots\" && pwd -P) || exit 7; base=$(cd {} && pwd -P) || exit 7; current=$(cd {} && pwd -P) || exit 7; for snapshot in \"$base\" \"$current\"; do [ \"$(dirname -- \"$snapshot\")\" = \"$parent\" ] || exit 7; case \"$(basename -- \"$snapshot\")\" in pi-desktop-diff-*) ;; *) exit 7;; esac; done; repo_objects=$(git rev-parse --git-path objects) || exit 3; repo_objects=$(cd \"$repo_objects\" && pwd -P) || exit 3; GIT_OBJECT_DIRECTORY=\"$current/objects\" GIT_ALTERNATE_OBJECT_DIRECTORIES=\"$base/objects:$repo_objects\" git diff --no-relative --no-color --no-ext-diff --find-renames {} {} --", shell_quote(&current.repository_root), shell_quote(&base.root), shell_quote(&current.root), shell_quote(&base.tree), shell_quote(&current.tree));
-    let mut command = ssh(host); command.arg(script); let output = run_limited(&mut command, MAX_GIT_PATCH_BYTES, &format!("Git patch on {} is too large", host.name))?;
+    let output = run_limited(&mut command(script), MAX_GIT_PATCH_BYTES, &format!("Git patch on {host_name} is too large"))?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let patch = String::from_utf8_lossy(&output.stdout).into_owned();
     Ok((!patch.trim().is_empty()).then_some(GitDiffSnapshot::Located { patch, repository_root: current.repository_root, tool_paths: Vec::new() }))
@@ -3351,17 +3364,7 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
             let removed = remove_git_worktree_blocking(app.clone(), cwd.into(), Some(host_id.into()), value["deleteBranch"].as_bool().unwrap_or(false))?;
             serde_json::to_value(removed).map_err(|error| error.to_string())
         })(),
-        ("POST", "/worktree-agents") => (|| {
-            let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid worktree request")?;
-            let id = value.get("id").and_then(Value::as_str).ok_or("Agent identity is required")?;
-            let runtime = app.state::<PiRuntime>();
-            let agents = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?;
-            let caller = agents.values().find(|agent| agent.presence_id.as_deref() == Some(id)).ok_or("Could not identify this agent; try again")?;
-            let root = caller.worktree.as_deref().ok_or("Could not identify this worktree")?;
-            let others: Vec<_> = agents.values().filter(|agent| agent.presence_id.as_deref() != Some(id) && agent.host_id == caller.host_id && agent.working && agent.worktree.as_deref() == Some(root))
-                .map(|agent| json!({"sessionId":agent.session_id})).collect();
-            Ok(json!(others))
-        })(),
+        ("POST", "/worktree-agents") => worktree_agents(&app.state::<PiRuntime>(), &body),
         ("POST", "/cancel") => (|| {
             let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid cancellation request".to_string())?;
             let request_id = value.get("requestId").and_then(Value::as_str).filter(|value| Uuid::parse_str(value).is_ok()).ok_or("requestId is required")?;
@@ -3375,6 +3378,17 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
     };
     match result { Ok(data) => broker_response(stream, "200 OK", json!({"data":data})), Err(error) => broker_response(stream, "400 Bad Request", json!({"error":error})) }
     Ok(())
+}
+
+fn worktree_agents(runtime: &PiRuntime, body: &[u8]) -> Result<Value, String> {
+    let value: Value = serde_json::from_slice(body).map_err(|_| "Invalid worktree request")?;
+    let id = value.get("id").and_then(Value::as_str).ok_or("Agent identity is required")?;
+    let agents = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?;
+    let caller = agents.values().find(|agent| agent.presence_id.as_deref() == Some(id)).ok_or("Could not identify this agent; try again")?;
+    let root = caller.worktree.as_deref().ok_or("Could not identify this worktree")?;
+    let others: Vec<_> = agents.values().filter(|agent| agent.presence_id.as_deref() != Some(id) && agent.host_id == caller.host_id && agent.working && agent.worktree.as_deref() == Some(root))
+        .map(|agent| json!({"sessionId":agent.session_id})).collect();
+    Ok(json!(others))
 }
 
 fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), String> {
