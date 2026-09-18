@@ -2196,6 +2196,19 @@ fn create_local_ephemeral_fork(home: &Path, temporary_dir: &Path, source_path: &
     Ok((path.to_string_lossy().into_owned(), EphemeralSession::Local(path)))
 }
 
+fn prepare_ephemeral_path(runtime: &PiRuntime, runtime_id: &str, ephemeral: bool, saved: Option<EphemeralSession>, source: Option<&str>, fork: impl FnOnce(&str) -> Result<(String, EphemeralSession), String>) -> Result<Option<String>, String> {
+    let resolved = if let Some(saved) = saved {
+        let path = match &saved { EphemeralSession::Local(path) => path.to_string_lossy().into_owned(), EphemeralSession::Remote { path, .. } => path.clone() };
+        Some((path, saved))
+    } else if ephemeral {
+        match source { Some(source_path) => Some(fork(source_path)?), None => None }
+    } else { None };
+    match resolved {
+        Some((path, session)) => { runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.insert(runtime_id.to_string(), session); Ok(Some(path)) }
+        None => Ok(None),
+    }
+}
+
 fn enabled_tool_names(settings: &AppSettings) -> Vec<&str> {
     settings.tools.iter().filter(|tool| tool.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|tool| tool.get("name").and_then(Value::as_str)).collect()
 }
@@ -2359,15 +2372,7 @@ fn start_pi(app: AppHandle, window: tauri::WebviewWindow, runtime: State<PiRunti
     let ephemeral = no_session.unwrap_or(false) || saved_ephemeral.is_some();
     let session_path = if ephemeral { None } else { session_path.as_deref().map(|path| desktop_session_file(&settings, &host_id, path)).transpose()? };
     let fork_path = fork_path.as_deref().map(|path| desktop_session_file(&settings, &host_id, path)).transpose()?;
-    let (ephemeral_path, ephemeral_session) = if let Some(saved) = saved_ephemeral {
-        let path = match &saved { EphemeralSession::Local(path) => path.to_string_lossy().into_owned(), EphemeralSession::Remote { path, .. } => path.clone() }; (Some(path), Some(saved))
-    } else if ephemeral {
-        match fork_path.as_deref() {
-            Some(source_path) => { let (path, cleanup) = create_ephemeral_fork(&settings, &host_id, source_path)?; (Some(path), Some(cleanup)) }
-            None => (None, None),
-        }
-    } else { (None, None) };
-    if let Some(session) = ephemeral_session { runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.insert(runtime_id.clone(), session); }
+    let ephemeral_path = prepare_ephemeral_path(&runtime, &runtime_id, ephemeral, saved_ephemeral, fork_path.as_deref(), |source_path| create_ephemeral_fork(&settings, &host_id, source_path))?;
     let claim_id = if ephemeral { None } else if let Some(id) = session_id.as_deref() { Some(id.to_string()) } else if let Some(path) = session_path.as_deref() {
         Some(session_identity(&settings, &host_id, path)?)
     } else { None };
