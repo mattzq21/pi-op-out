@@ -1982,8 +1982,15 @@ fn load_git_diffs_at_host(session_path: &str, host: Option<&RemoteHost>) -> Resu
         serde_json::to_string(&snapshots).map_err(|error| format!("Could not serialize diffs: {error}"))?
     } else {
         let host = host.unwrap();
-        let mut command = ssh(host); command.arg(remote_session_sidecar_script(&session_path, "if [ -f \"$sidecar\" ]; then cat -- \"$sidecar\"; else printf '{}'; fi"));
-        let output = run_limited(&mut command, MAX_GIT_DIFFS_BYTES, &format!("Saved diffs on {} exceed the limit", host.name))?;
+        let mut command = ssh(host); command.arg(remote_session_sidecar_script(session_path, "if [ -f \"$sidecar\" ]; then cat -- \"$sidecar\"; else printf '{}'; fi"));
+        return query_remote_git_diffs(&mut command, &host.name);
+    };
+    serde_json::from_str(&content).map_err(|error| format!("Could not parse saved diffs: {error}"))
+}
+
+fn query_remote_git_diffs(command: &mut Command, host_name: &str) -> Result<GitDiffSnapshots, String> {
+    let content = {
+        let output = run_limited(command, MAX_GIT_DIFFS_BYTES, &format!("Saved diffs on {host_name} exceed the limit"))?;
         if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
         String::from_utf8(output.stdout).map_err(|_| "Saved remote diffs were not valid UTF-8".to_string())?
     };
@@ -1999,8 +2006,16 @@ fn save_git_diffs_at_host(session_path: &str, snapshots: GitDiffSnapshots, host:
     let body = serde_json::to_string(&snapshots).map_err(|error| format!("Could not serialize diffs: {error}"))?;
     if body.len() > MAX_GIT_DIFFS_BYTES { return Err("Diff history exceeds the 16 MiB limit".into()); }
     let Some(host) = host else { return atomic_write_private(&local_git_diffs_path(session_path)?, body.as_bytes()).map_err(|error| format!("Could not save diffs: {error}")); };
-    let action = "umask 077; temporary=$(mktemp \"$sidecar.XXXXXX\") || exit 1; trap 'rm -f -- \"$temporary\"' EXIT; cat > \"$temporary\" && chmod 600 -- \"$temporary\" && mv -f -- \"$temporary\" \"$sidecar\"";
-    let mut child = ssh(host).arg(remote_session_sidecar_script(&session_path, action)).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
+    let mut command = ssh(host); command.arg(remote_save_git_diffs_script(session_path));
+    write_remote_git_diffs(&mut command, &body)
+}
+
+fn remote_save_git_diffs_script(session_path: &str) -> String {
+    remote_session_sidecar_script(session_path, "umask 077; temporary=$(mktemp \"$sidecar.XXXXXX\") || exit 1; trap 'rm -f -- \"$temporary\"' EXIT; cat > \"$temporary\" && chmod 600 -- \"$temporary\" && mv -f -- \"$temporary\" \"$sidecar\"")
+}
+
+fn write_remote_git_diffs(command: &mut Command, body: &str) -> Result<(), String> {
+    let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
     let write = child.stdin.take().ok_or("SSH stdin unavailable")?.write_all(body.as_bytes());
     let output = child.wait_with_output().map_err(|e| e.to_string())?; write.map_err(|e| e.to_string())?;
     output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
@@ -2705,13 +2720,24 @@ fn remove_local_temporary_chat(home: &Path, path: &str) -> Result<(), String> {
 fn validate_project_directory(app: AppHandle, path: String, host_id: String) -> Result<String, String> {
     if path.trim().is_empty() { return Err("Path can't be empty".into()); }
     if host_id == "local" {
-        let metadata = fs::metadata(&path).map_err(|error| format!("Could not open project directory: {error}"))?;
-        if !metadata.is_dir() { return Err("Project path is not a directory".into()); }
-        return Ok(path);
+        return validate_local_project_directory(path);
     }
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
-    let output = ssh(host).arg(format!("test -d {0} && cd {0} && pwd -P", shell_quote(&path))).output().map_err(|error| format!("Could not validate project directory on {}: {error}", host.name))?;
-    if !output.status.success() { return Err(format!("Could not open project directory on {}: {}", host.name, String::from_utf8_lossy(&output.stderr).trim())); }
+    validate_remote_project_directory(path, &host.name, |script| { let mut command = ssh(host); command.arg(script); command })
+}
+
+fn validate_local_project_directory(path: String) -> Result<String, String> {
+    if path.trim().is_empty() { return Err("Path can't be empty".into()); }
+    let metadata = fs::metadata(&path).map_err(|error| format!("Could not open project directory: {error}"))?;
+    if !metadata.is_dir() { return Err("Project path is not a directory".into()); }
+    Ok(path)
+}
+
+fn validate_remote_project_directory(path: String, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<String, String> {
+    if path.trim().is_empty() { return Err("Path can't be empty".into()); }
+    let script = format!("test -d {0} && cd {0} && pwd -P", shell_quote(&path));
+    let output = command(script).output().map_err(|error| format!("Could not validate project directory on {host_name}: {error}"))?;
+    if !output.status.success() { return Err(format!("Could not open project directory on {host_name}: {}", String::from_utf8_lossy(&output.stderr).trim())); }
     Ok(path)
 }
 
@@ -2750,10 +2776,22 @@ fn list_directories(app: AppHandle, host_id: String, path: Option<String>) -> Re
         return Ok(DirectoryListing { path: current.to_string_lossy().into_owned(), parent: current.parent().map(|parent| parent.to_string_lossy().into_owned()), directories });
     }
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
-    let remote = format!("cd {} && printf '%s\\000' \"$PWD\" && find . -mindepth 1 -maxdepth 1 -type d -printf '%f\\000'", remote_directory_path(path.as_deref()));
-    let output = ssh(host).arg(remote).output().map_err(|error| format!("Could not browse {}: {error}", host.name))?;
+    let mut command = ssh(host); command.arg(remote_directory_listing_script(path.as_deref()));
+    query_remote_directories(&mut command, &host.name)
+}
+
+fn remote_directory_listing_script(path: Option<&str>) -> String {
+    format!("cd {} && printf '%s\\000' \"$PWD\" && find . -mindepth 1 -maxdepth 1 -type d -printf '%f\\000'", remote_directory_path(path))
+}
+
+fn query_remote_directories(command: &mut Command, host_name: &str) -> Result<DirectoryListing, String> {
+    let output = command.output().map_err(|error| format!("Could not browse {host_name}: {error}"))?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-    let mut parts = output.stdout.split(|byte| *byte == 0).filter(|part| !part.is_empty());
+    parse_remote_directories(&output.stdout)
+}
+
+fn parse_remote_directories(output: &[u8]) -> Result<DirectoryListing, String> {
+    let mut parts = output.split(|byte| *byte == 0).filter(|part| !part.is_empty());
     let current = PathBuf::from(String::from_utf8_lossy(parts.next().ok_or("Remote directory was unavailable")?).into_owned());
     let mut directories: Vec<String> = parts.map(|name| current.join(String::from_utf8_lossy(name).as_ref()).to_string_lossy().into_owned()).collect();
     directories.sort_by_key(|directory| directory.to_lowercase());

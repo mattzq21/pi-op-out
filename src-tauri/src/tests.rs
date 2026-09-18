@@ -2157,6 +2157,157 @@ fn remote_temporary_chat_reports_launch_setup_and_missing_path_failures() {
     assert_eq!(fs::read_to_string(directory.0.join(STORAGE_DIRECTORY)).unwrap(), "existing file");
 }
 
+#[cfg(unix)]
+#[test]
+fn remote_project_validation_preserves_paths_and_accepts_directory_symlinks_only() {
+    use std::os::unix::fs::symlink;
+    let directory = TestDirectory::new();
+    let project = directory.0.join("project '\n λ $(false)"); fs::create_dir(&project).unwrap();
+    let link = directory.0.join("linked-project"); symlink(&project, &link).unwrap();
+    let file = directory.0.join("file"); fs::write(&file, "untouched").unwrap();
+    let dangling = directory.0.join("dangling"); symlink(directory.0.join("absent"), &dangling).unwrap();
+    let validate = |path: &Path| validate_remote_project_directory(path.to_string_lossy().into_owned(), "Server", |script| {
+        let mut command = Command::new("bash"); command.args(["-c", &script]); command
+    });
+    for path in [&project, &link] { assert_eq!(validate(path).unwrap(), path.to_str().unwrap()); }
+    for path in [&file, &dangling, &directory.0.join("missing")] {
+        assert!(validate(path).unwrap_err().starts_with("Could not open project directory on Server:"));
+    }
+    assert_eq!(fs::read_to_string(&file).unwrap(), "untouched");
+}
+
+#[test]
+fn remote_project_validation_rejects_blank_input_before_launch_and_propagates_host_errors() {
+    for path in ["", " \n\t"] {
+        assert_eq!(validate_remote_project_directory(path.into(), "Server", |_| panic!("blank path launched process")).unwrap_err(), "Path can't be empty");
+    }
+    let directory = TestDirectory::new();
+    let error = validate_remote_project_directory("/project".into(), "Server", |_| Command::new(directory.0.join("missing"))).unwrap_err();
+    assert!(error.starts_with("Could not validate project directory on Server:"), "{error}");
+    let error = validate_remote_project_directory("/project".into(), "Server", |_| {
+        let mut command = Command::new("sh"); command.args(["-c", "printf ' permission denied\\n' >&2; exit 13"]); command
+    }).unwrap_err();
+    assert_eq!(error, "Could not open project directory on Server: permission denied");
+}
+
+#[cfg(unix)]
+#[test]
+fn remote_directory_listing_preserves_unusual_names_and_limits_results_to_direct_children() {
+    use std::os::unix::fs::symlink;
+    let directory = TestDirectory::new(); let root = directory.0.join("project ' ; $(false)");
+    fs::create_dir_all(&root).unwrap();
+    let names = ["zebra", "Alpha", ".hidden", "line\nbreak", "λ space"];
+    for name in names { fs::create_dir(root.join(name)).unwrap(); }
+    fs::create_dir(root.join("Alpha/nested")).unwrap();
+    fs::write(root.join("regular-file"), "data").unwrap();
+    symlink(root.join("Alpha"), root.join("linked-dir")).unwrap();
+    let missing = root.join("missing"); let file = root.join("regular-file");
+    let query = |path| {
+        let mut command = Command::new("bash");
+        command.args(["-c", &remote_directory_listing_script(path)]).env("HOME", &root);
+        query_remote_directories(&mut command, "Remote")
+    };
+    let mut expected = names.map(|name| root.join(name).to_string_lossy().into_owned()).to_vec();
+    expected.sort_by_key(|path| path.to_lowercase());
+    for path in [None, Some(""), Some("  "), Some(root.to_str().unwrap())] {
+        let listing = query(path).unwrap();
+        assert_eq!(listing.path, root.to_str().unwrap());
+        assert_eq!(listing.parent.as_deref(), Some(directory.0.to_str().unwrap()));
+        assert_eq!(listing.directories, expected);
+    }
+    assert!(query(Some(missing.to_str().unwrap())).is_err());
+    assert!(query(Some(file.to_str().unwrap())).is_err());
+    assert_eq!(fs::read_to_string(root.join("regular-file")).unwrap(), "data");
+}
+
+#[test]
+fn remote_directory_query_reports_launch_command_and_empty_response_failures() {
+    let directory = TestDirectory::new();
+    let error = query_remote_directories(&mut Command::new(directory.0.join("missing")), "Remote").err().unwrap();
+    assert!(error.starts_with("Could not browse Remote:"), "{error}");
+    let mut command = Command::new("sh"); command.args(["-c", "printf ' access denied ' >&2; exit 7"]);
+    assert_eq!(query_remote_directories(&mut command, "Remote").err().unwrap(), "access denied");
+    let mut command = Command::new("sh"); command.args(["-c", "exit 0"]);
+    assert_eq!(query_remote_directories(&mut command, "Remote").err().unwrap(), "Remote directory was unavailable");
+}
+
+#[test]
+fn local_project_validation_preserves_valid_paths_and_rejects_non_directories() {
+    let directory = TestDirectory::new();
+    let project = directory.0.join(" project 日本語 "); fs::create_dir(&project).unwrap();
+    let requested = project.to_string_lossy().into_owned();
+    assert_eq!(validate_local_project_directory(requested.clone()).unwrap(), requested);
+    let dotted = project.join(".").to_string_lossy().into_owned();
+    assert_eq!(validate_local_project_directory(dotted.clone()).unwrap(), dotted);
+    for blank in ["", " ", "\t\n"] { assert_eq!(validate_local_project_directory(blank.into()).unwrap_err(), "Path can't be empty"); }
+    let file = directory.0.join("file"); fs::write(&file, "keep").unwrap();
+    assert_eq!(validate_local_project_directory(file.to_string_lossy().into_owned()).unwrap_err(), "Project path is not a directory");
+    assert!(validate_local_project_directory(directory.0.join("missing").to_string_lossy().into_owned()).unwrap_err().starts_with("Could not open project directory:"));
+    assert_eq!(fs::read_to_string(&file).unwrap(), "keep");
+}
+
+#[cfg(unix)]
+#[test]
+fn local_project_validation_follows_directory_links_but_rejects_broken_or_file_links() {
+    use std::os::unix::fs::symlink;
+    let directory = TestDirectory::new();
+    let project = directory.0.join("project"); fs::create_dir(&project).unwrap();
+    let alias = directory.0.join("alias"); symlink(&project, &alias).unwrap();
+    let requested = alias.to_string_lossy().into_owned();
+    assert_eq!(validate_local_project_directory(requested.clone()).unwrap(), requested);
+    fs::remove_dir(&project).unwrap();
+    assert!(validate_local_project_directory(requested.clone()).unwrap_err().starts_with("Could not open project directory:"));
+    fs::write(&project, "now a file").unwrap();
+    assert_eq!(validate_local_project_directory(requested).unwrap_err(), "Project path is not a directory");
+    assert_eq!(fs::read_to_string(&project).unwrap(), "now a file");
+}
+
+#[cfg(unix)]
+#[test]
+fn remote_diff_scripts_round_trip_private_sidecars_and_reject_outside_sessions() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let directory = TestDirectory::new();
+    let sessions = directory.0.join(STORAGE_DIRECTORY).join("sessions/project 'quoted'"); fs::create_dir_all(&sessions).unwrap();
+    let session = sessions.join("conversation ' λ.jsonl"); fs::write(&session, "session data").unwrap();
+    let command = |script: String| { let mut command = Command::new("bash"); command.args(["-c", &script]).env("HOME", &directory.0); command };
+    let read = |path: &Path| query_remote_git_diffs(&mut command(remote_session_sidecar_script(path.to_str().unwrap(), "if [ -f \"$sidecar\" ]; then cat -- \"$sidecar\"; else printf '{}'; fi")), "Server");
+    assert!(read(&session).unwrap().is_empty());
+    let body = r#"{"first":"patch λ","second":{"patch":"diff","repositoryRoot":"/project","toolPaths":[]}}"#;
+    write_remote_git_diffs(&mut command(remote_save_git_diffs_script(session.to_str().unwrap())), body).unwrap();
+    assert_eq!(serde_json::to_value(read(&session).unwrap()).unwrap(), json!({"first":"patch λ","second":{"patch":"diff","repositoryRoot":"/project"}}));
+    let sidecar = session.with_extension("diffs.json");
+    assert_eq!(fs::metadata(&sidecar).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(fs::read_to_string(&session).unwrap(), "session data");
+    write_remote_git_diffs(&mut command(remote_save_git_diffs_script(session.to_str().unwrap())), "{}").unwrap();
+    assert!(read(&session).unwrap().is_empty());
+    assert_eq!(fs::read_dir(&sessions).unwrap().count(), 2, "temporary sidecars must be removed");
+    let outside = directory.0.join("outside.jsonl"); fs::write(&outside, "outside").unwrap();
+    let link = sessions.join("escape.jsonl"); symlink(&outside, &link).unwrap();
+    let wrong_extension = sessions.join("not-a-session.txt"); fs::write(&wrong_extension, "text").unwrap();
+    for rejected in [&outside, &link, &wrong_extension] {
+        assert!(read(rejected).is_err());
+        assert!(write_remote_git_diffs(&mut command(remote_save_git_diffs_script(rejected.to_str().unwrap())), "{}").is_err());
+        assert!(!rejected.with_extension("diffs.json").exists());
+    }
+    assert_eq!(fs::read_to_string(&outside).unwrap(), "outside");
+}
+
+#[cfg(unix)]
+#[test]
+fn remote_diff_queries_propagate_process_encoding_json_and_size_errors() {
+    let query = |script: &str| { let mut command = Command::new("bash"); command.args(["-c", script]); query_remote_git_diffs(&mut command, "Server") };
+    assert_eq!(query("printf ' remote failure ' >&2; exit 7").err().unwrap(), "remote failure");
+    assert_eq!(query("printf '\\377'").err().unwrap(), "Saved remote diffs were not valid UTF-8");
+    assert!(query("printf 'not JSON'").err().unwrap().starts_with("Could not parse saved diffs:"));
+    assert!(query("printf '[]'").is_err());
+    assert!(query(&format!("head -c {} /dev/zero", MAX_GIT_DIFFS_BYTES + 1)).err().unwrap().contains("Saved diffs on Server exceed the limit"));
+    let directory = TestDirectory::new();
+    assert!(query_remote_git_diffs(&mut Command::new(directory.0.join("missing")), "Server").is_err());
+    assert!(write_remote_git_diffs(&mut Command::new(directory.0.join("missing")), "{}").is_err());
+    let mut rejected = Command::new("bash"); rejected.args(["-c", "cat >/dev/null; printf 'write rejected' >&2; exit 9"]);
+    assert_eq!(write_remote_git_diffs(&mut rejected, "{}").unwrap_err(), "write rejected");
+}
+
 #[test]
 fn ephemeral_forks_copy_history_with_new_identity_and_private_permissions() {
     let home = TestDirectory::new(); let temporary = TestDirectory::new();
