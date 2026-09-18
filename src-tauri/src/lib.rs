@@ -2049,20 +2049,29 @@ fn remove_ephemeral_session(session: EphemeralSession) {
 
 fn create_ephemeral_fork(settings: &AppSettings, host_id: &str, source_path: &str) -> Result<(String, EphemeralSession), String> {
     if host_id == "local" {
-        let source = local_desktop_session_file(source_path)?;
-        let path = std::env::temp_dir().join(format!("pi-desktop-btw-{}.jsonl", Uuid::new_v4()));
-        let output = node_command().args(["-e", include_str!("../resources/fork-session.cjs")]).arg(source).arg(&path).arg(Uuid::new_v4().to_string()).output().map_err(|e| e.to_string())?;
-        if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).into_owned()); }
-        return Ok((path.to_string_lossy().into_owned(), EphemeralSession::Local(path)));
+        return create_local_ephemeral_fork(&home_dir()?, &std::env::temp_dir(), source_path);
     }
     let host = remote_host(settings, host_id)?.clone();
     let destination = format!("/tmp/pi-desktop-btw-{}.jsonl", Uuid::new_v4());
-    let remote = format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {} {} {} && printf %s {}", shell_quote(include_str!("../resources/fork-session.cjs")), shell_quote(source_path), shell_quote(&destination), shell_quote(&Uuid::new_v4().to_string()), shell_quote(&destination));
-    let output = ssh(&host).arg(remote_login_command(&remote)).output().map_err(|error| format!("Could not create temporary side conversation on {}: {error}", host.name))?;
+    let path = create_remote_ephemeral_fork(source_path, &destination, &host.name, |script| { let mut command = ssh(&host); command.arg(remote_login_command(&script)); command })?;
+    Ok((path.clone(), EphemeralSession::Remote { host, path }))
+}
+
+fn create_remote_ephemeral_fork(source_path: &str, destination: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<String, String> {
+    let remote = format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {} {} {} && printf %s {}", shell_quote(include_str!("../resources/fork-session.cjs")), shell_quote(source_path), shell_quote(destination), shell_quote(&Uuid::new_v4().to_string()), shell_quote(destination));
+    let output = command(remote).output().map_err(|error| format!("Could not create temporary side conversation on {host_name}: {error}"))?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if path.is_empty() { return Err("Temporary side conversation path was unavailable".into()); }
-    Ok((path.clone(), EphemeralSession::Remote { host, path }))
+    Ok(path)
+}
+
+fn create_local_ephemeral_fork(home: &Path, temporary_dir: &Path, source_path: &str) -> Result<(String, EphemeralSession), String> {
+    let source = local_desktop_session_file_at(home, source_path)?;
+    let path = temporary_dir.join(format!("pi-desktop-btw-{}.jsonl", Uuid::new_v4()));
+    let output = node_command().args(["-e", include_str!("../resources/fork-session.cjs")]).arg(source).arg(&path).arg(Uuid::new_v4().to_string()).output().map_err(|e| e.to_string())?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).into_owned()); }
+    Ok((path.to_string_lossy().into_owned(), EphemeralSession::Local(path)))
 }
 
 fn enabled_tool_names(settings: &AppSettings) -> Vec<&str> {
@@ -2088,11 +2097,16 @@ fn session_identity(settings: &AppSettings, host_id: &str, path: &str) -> Result
         BufReader::new(fs::File::open(path).map_err(|error| error.to_string())?).take(64 * 1024).read_line(&mut line).map_err(|error| error.to_string())?;
         line
     } else {
-        let output = run_limited(ssh(remote_host(settings, host_id)?).arg(format!("head -n 1 -- {}", shell_quote(path))), 64 * 1024, "Could not read session identity")?;
-        if !output.status.success() { return Err("Could not read session identity".into()); }
-        String::from_utf8(output.stdout).map_err(|error| error.to_string())?
+        let host = remote_host(settings, host_id)?;
+        read_remote_session_header(path, |script| { let mut command = ssh(host); command.arg(script); command })?
     };
     serde_json::from_str::<Value>(&header).map_err(|error| error.to_string())?.get("id").and_then(Value::as_str).filter(|id| !id.is_empty()).map(str::to_owned).ok_or("Missing session identity".into())
+}
+
+fn read_remote_session_header(path: &str, command: impl FnOnce(String) -> Command) -> Result<String, String> {
+    let output = run_limited(&mut command(format!("head -n 1 -- {}", shell_quote(path))), 64 * 1024, "Could not read session identity")?;
+    if !output.status.success() { return Err("Could not read session identity".into()); }
+    String::from_utf8(output.stdout).map_err(|error| error.to_string())
 }
 
 fn remote_broker_port() -> u16 {
@@ -2851,18 +2865,24 @@ fn local_archived_session_file_at(home: &Path, session_path: &str) -> Result<Pat
 fn desktop_session_file(settings: &AppSettings, host_id: &str, path: &str) -> Result<String, String> {
     if host_id == "local" { return Ok(local_desktop_session_file(path)?.to_string_lossy().into_owned()); }
     let host = remote_host(settings, host_id)?;
-    let script = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) && session=$(realpath -- {}) && [ -f "$session" ] && case "$session" in "$root"/*.jsonl) printf '%s' "$session" ;; *) exit 1 ;; esac"#, shell_quote(path));
-    let output = run_limited(ssh(host).arg(script), MAX_GIT_PATH_LIST_BYTES, "Could not locate Piop session")?;
-    if !output.status.success() { return Err("Only session files in this Piop profile can be opened".into()); }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    remote_session_file(path, false, |script| { let mut command = ssh(host); command.arg(script); command })
 }
 
 fn archived_session_file(settings: &AppSettings, host_id: &str, path: &str) -> Result<String, String> {
     if host_id == "local" { return Ok(local_archived_session_file(path)?.to_string_lossy().into_owned()); }
     let host = remote_host(settings, host_id)?;
-    let script = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/archived" && pwd -P) && session=$(realpath -- {}) && [ -f "$session" ] && case "$session" in "$root"/*.jsonl) printf '%s' "$session" ;; *) exit 1 ;; esac"#, shell_quote(path));
-    let output = run_limited(ssh(host).arg(script), MAX_GIT_PATH_LIST_BYTES, "Could not locate archived Piop conversation")?;
-    if !output.status.success() { return Err("Only archived conversation files in this Piop profile can be deleted".into()); }
+    remote_session_file(path, true, |script| { let mut command = ssh(host); command.arg(script); command })
+}
+
+fn remote_session_file(path: &str, archived: bool, command: impl FnOnce(String) -> Command) -> Result<String, String> {
+    let (area, context, rejected) = if archived {
+        ("archived", "Could not locate archived Piop conversation", "Only archived conversation files in this Piop profile can be deleted")
+    } else {
+        ("sessions", "Could not locate Piop session", "Only session files in this Piop profile can be opened")
+    };
+    let script = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/{area}" && pwd -P) && session=$(realpath -- {}) && [ -f "$session" ] && case "$session" in "$root"/*.jsonl) printf '%s' "$session" ;; *) exit 1 ;; esac"#, shell_quote(path));
+    let output = run_limited(&mut command(script), MAX_GIT_PATH_LIST_BYTES, context)?;
+    if !output.status.success() { return Err(rejected.into()); }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
@@ -2883,17 +2903,28 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
 
     if host_id != "local" {
         let settings = load_app_settings(app.clone())?; let host = remote_host(&settings, &host_id)?;
-        let file_name = Path::new(&session_path).file_name().and_then(|name| name.to_str()).ok_or("Session path has no file name")?;
-        let destination = format!("{}-{file_name}", Uuid::new_v4());
-        let diff_destination = Path::new(&destination).with_extension("diffs.json").to_string_lossy().into_owned();
-        let remote = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) archive="$HOME/{STORAGE_DIRECTORY}/archived"; mkdir -p "$archive" || exit 1; diff=${{target%.jsonl}}.diffs.json; diff_target="$archive"/{}; moved_diff=0; if [ -f "$diff" ]; then mv -- "$diff" "$diff_target" || exit 1; moved_diff=1; fi; if ! mv -- "$target" "$archive"/{}; then if [ "$moved_diff" = 1 ]; then mv -- "$diff_target" "$diff" || true; fi; exit 1; fi ;; *) printf 'Refusing to archive a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(&session_path), shell_quote(&diff_destination), shell_quote(&destination));
-        let output = ssh(host).arg(remote).output().map_err(|error| error.to_string())?;
-        if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+        archive_remote_session(&session_path, |script| { let mut command = ssh(host); command.arg(script); command })?;
         let _ = stop_terminals(&runtime, &terminal_ids);
         return Ok(());
     }
-    let source = local_desktop_session_file(&session_path)?;
-    let archive_dir = home_dir()?.join(STORAGE_DIRECTORY).join("archived");
+    archive_local_session(&home_dir()?, &session_path)?;
+    let _ = stop_terminals(&runtime, &terminal_ids);
+    Ok(())
+}
+
+fn archive_remote_session(session_path: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
+    let file_name = Path::new(session_path).file_name().and_then(|name| name.to_str()).ok_or("Session path has no file name")?;
+    let destination = format!("{}-{file_name}", Uuid::new_v4());
+    let diff_destination = Path::new(&destination).with_extension("diffs.json").to_string_lossy().into_owned();
+    let remote = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) archive="$HOME/{STORAGE_DIRECTORY}/archived"; mkdir -p "$archive" || exit 1; diff=${{target%.jsonl}}.diffs.json; diff_target="$archive"/{}; moved_diff=0; if [ -f "$diff" ]; then mv -- "$diff" "$diff_target" || exit 1; moved_diff=1; fi; if ! mv -- "$target" "$archive"/{}; then if [ "$moved_diff" = 1 ]; then mv -- "$diff_target" "$diff" || true; fi; exit 1; fi ;; *) printf 'Refusing to archive a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(session_path), shell_quote(&diff_destination), shell_quote(&destination));
+    let output = command(remote).output().map_err(|error| error.to_string())?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    Ok(())
+}
+
+fn archive_local_session(home: &Path, session_path: &str) -> Result<(), String> {
+    let source = local_desktop_session_file_at(home, session_path)?;
+    let archive_dir = home.join(STORAGE_DIRECTORY).join("archived");
     fs::create_dir_all(&archive_dir).map_err(|error| format!("Could not create archive directory: {error}"))?;
     let file_name = source.file_name().ok_or("Session path has no file name")?;
     let mut destination = archive_dir.join(file_name);
@@ -2911,7 +2942,6 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
         if moved_diff { let _ = fs::rename(&diff_destination, &diff_source); }
         return Err(format!("Could not archive session: {error}"));
     }
-    let _ = stop_terminals(&runtime, &terminal_ids);
     Ok(())
 }
 
@@ -2964,16 +2994,24 @@ fn relocate_session(app: AppHandle, session_path: String, cwd: String, host_id: 
     let host_id = host_id.unwrap_or_else(|| "local".into());
     if host_id != "local" {
         let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
-        let session = shell_quote(&session_path); let replacement = shell_quote(cwd.trim());
-        let script = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) || exit 1; path=$(realpath -- {session}) || exit 1; case "$path" in "$root"/*.jsonl) ;; *) printf 'Refusing to relocate a non-desktop session file' >&2; exit 1 ;; esac; replacement={replacement}; [ -d "$replacement" ] || {{ printf 'Project directory does not exist: %s' "$replacement" >&2; exit 1; }}; PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e 'const fs=require("fs"); const [path,cwd]=process.argv.slice(1); const content=fs.readFileSync(path,"utf8"); const newline=content.indexOf("\n"); const first=newline<0?content:content.slice(0,newline); const rest=newline<0?"":content.slice(newline+1); const header=JSON.parse(first); if(header.type!=="session") throw new Error("Invalid session header"); header.cwd=cwd; const temporary=path+"."+process.pid+".tmp"; try {{ fs.writeFileSync(temporary,JSON.stringify(header)+(newline<0?"":"\n"+rest),{{mode:fs.statSync(path).mode}}); fs.renameSync(temporary,path); }} catch(error) {{ try {{ fs.unlinkSync(temporary); }} catch {{}} throw error; }}' "$path" "$replacement""#);
-        let output = run_limited(ssh(host).arg(remote_login_command(&script)), 64 * 1024, &format!("Could not relocate conversation on {}", host.name))?;
-        if output.status.success() { return Ok(()); }
-        let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if error.is_empty() { format!("Could not relocate conversation on {}", host.name) } else { error });
+        return relocate_remote_session(&session_path, &cwd, &host.name, |script| { let mut command = ssh(host); command.arg(remote_login_command(&script)); command });
     }
+    relocate_local_session(&home_dir()?, &session_path, &cwd)
+}
+
+fn relocate_remote_session(session_path: &str, cwd: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
+    let session = shell_quote(session_path); let replacement = shell_quote(cwd.trim());
+    let script = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) || exit 1; path=$(realpath -- {session}) || exit 1; case "$path" in "$root"/*.jsonl) ;; *) printf 'Refusing to relocate a non-desktop session file' >&2; exit 1 ;; esac; replacement={replacement}; [ -d "$replacement" ] || {{ printf 'Project directory does not exist: %s' "$replacement" >&2; exit 1; }}; PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e 'const fs=require("fs"); const [path,cwd]=process.argv.slice(1); const content=fs.readFileSync(path,"utf8"); const newline=content.indexOf("\n"); const first=newline<0?content:content.slice(0,newline); const rest=newline<0?"":content.slice(newline+1); const header=JSON.parse(first); if(header.type!=="session") throw new Error("Invalid session header"); header.cwd=cwd; const temporary=path+"."+process.pid+".tmp"; try {{ fs.writeFileSync(temporary,JSON.stringify(header)+(newline<0?"":"\n"+rest),{{mode:fs.statSync(path).mode}}); fs.renameSync(temporary,path); }} catch(error) {{ try {{ fs.unlinkSync(temporary); }} catch {{}} throw error; }}' "$path" "$replacement""#);
+    let output = run_limited(&mut command(script), 64 * 1024, &format!("Could not relocate conversation on {host_name}"))?;
+    if output.status.success() { return Ok(()); }
+    let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(if error.is_empty() { format!("Could not relocate conversation on {host_name}") } else { error })
+}
+
+fn relocate_local_session(home: &Path, session_path: &str, cwd: &str) -> Result<(), String> {
     let replacement = PathBuf::from(cwd.trim());
     if !replacement.is_dir() { return Err(format!("Project directory does not exist: {}", replacement.display())); }
-    let path = local_desktop_session_file(&session_path)?;
+    let path = local_desktop_session_file_at(home, session_path)?;
     let content = fs::read_to_string(&path).map_err(|error| format!("Could not read session: {error}"))?;
     let (first, rest) = content.split_once('\n').unwrap_or((&content, ""));
     let mut header: Value = serde_json::from_str(first).map_err(|error| format!("Invalid session header: {error}"))?;
