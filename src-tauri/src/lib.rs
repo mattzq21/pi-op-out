@@ -1015,6 +1015,10 @@ fn discover_skills_in(root: &Path, include_root_markdown: bool) -> Vec<Value> {
 
 fn merge_discovered_skills(settings: &mut AppSettings) {
     let Ok(home) = home_dir() else { return };
+    merge_discovered_skills_at(settings, &home);
+}
+
+fn merge_discovered_skills_at(settings: &mut AppSettings, home: &Path) {
     let roots = [
         (home.join(".pi/agent/skills"), true),
         (home.join(".agents/skills"), false),

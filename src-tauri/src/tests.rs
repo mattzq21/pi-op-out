@@ -819,3 +819,37 @@ fn saved_diff_loading_rejects_corruption_invalid_utf8_and_oversized_sidecars() {
     let file = fs::OpenOptions::new().write(true).open(&sidecar).unwrap(); file.set_len(MAX_GIT_DIFFS_BYTES as u64 + 1).unwrap();
     assert_eq!(load_local_git_diffs(&home.0, path).err().unwrap(), "Saved diffs exceed the 16 MiB limit");
 }
+#[test]
+fn skill_rediscovery_preserves_preferences_manual_entries_and_refreshes_metadata() {
+    let home = TestDirectory::new(); let root = home.0.join(".agents/skills");
+    fs::create_dir_all(root.join("existing")).unwrap(); fs::create_dir_all(root.join("new")).unwrap();
+    fs::write(root.join("existing/SKILL.md"), "---\nname: Alpha\ndescription: Updated metadata\n---\n").unwrap();
+    fs::write(root.join("new/SKILL.md"), "---\nname: beta\n---\n").unwrap();
+    let manual = json!({"name":"Manual","path":"/custom/skill","enabled":false});
+    let mut settings = default_settings();
+    settings.skills = vec![
+        json!({"name":"Old metadata","path":"~/.agents/skills/existing","enabled":false}),
+        json!({"name":"Deleted","path":"~/.agents/skills/deleted","enabled":true}),
+        manual.clone(), json!({"name":"No path"}),
+    ];
+    merge_discovered_skills_at(&mut settings, &home.0);
+    assert_eq!(settings.skills.len(), 4);
+    assert_eq!(settings.skills.iter().map(|skill| skill["name"].as_str().unwrap()).collect::<Vec<_>>(), ["Alpha", "beta", "Manual", "No path"]);
+    assert_eq!(settings.skills[0]["enabled"], false); assert_eq!(settings.skills[0]["description"], "Updated metadata");
+    assert_eq!(settings.skills[1]["enabled"], true); assert_eq!(settings.skills[2], manual);
+    let once = settings.skills.clone(); merge_discovered_skills_at(&mut settings, &home.0); assert_eq!(settings.skills, once);
+    fs::remove_dir_all(root.join("existing")).unwrap(); merge_discovered_skills_at(&mut settings, &home.0);
+    assert_eq!(settings.skills.len(), 3); assert!(!settings.skills.iter().any(|skill| skill["name"] == "Alpha"));
+}
+
+#[test]
+fn explicit_invocation_skills_remain_available_and_pi_root_markdown_is_discovered() {
+    let home = TestDirectory::new(); let root = home.0.join(".pi/agent/skills"); fs::create_dir_all(root.join("explicit")).unwrap();
+    fs::write(root.join("explicit/SKILL.md"), "---\nname: Explicit\ndisable-model-invocation: true\n---\n").unwrap();
+    fs::write(root.join("quick.md"), "Quick skill").unwrap();
+    let mut settings = default_settings(); settings.skills = vec![json!({"path":"~/.pi/agent/skills/explicit","enabled":false})];
+    merge_discovered_skills_at(&mut settings, &home.0);
+    let explicit = settings.skills.iter().find(|skill| skill["name"] == "Explicit").unwrap();
+    assert_eq!(explicit["userInvokedOnly"], true); assert_eq!(explicit["enabled"], true);
+    assert!(settings.skills.iter().any(|skill| skill["name"] == "quick"));
+}
