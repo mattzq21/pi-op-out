@@ -406,8 +406,12 @@ fn pi_executable_in(home: Option<PathBuf>) -> PathBuf {
     if let Some(home) = home {
         for candidate in [home.join(".local/bin/pi"), home.join(".npm-global/bin/pi"), home.join(".bun/bin/pi")] { if candidate.is_file() { return candidate; } }
     }
-    for candidate in ["/opt/homebrew/bin/pi", "/usr/local/bin/pi", "/usr/bin/pi"] { let path = PathBuf::from(candidate); if path.is_file() { return path; } }
-    PathBuf::from("pi")
+    pi_on_path().unwrap_or_else(|| PathBuf::from("pi"))
+}
+
+fn pi_on_path() -> Option<PathBuf> {
+    let paths = std::env::var_os("PATH")?;
+    std::env::split_paths(&paths).map(|directory| directory.join("pi")).find(|candidate| candidate.is_file())
 }
 
 fn codex_executable() -> PathBuf {
