@@ -2424,15 +2424,20 @@ fn pi_command(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRun
 
 #[tauri::command]
 fn new_window(app: AppHandle, target: Value) -> Result<String, String> {
+    let (label, path) = conversation_window_target(&target)?;
+    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(path.into()))
+        .title(APP_TITLE).inner_size(1280.0, 800.0).min_inner_size(900.0, 640.0)
+        .build().map_err(|error| error.to_string())?;
+    Ok(label)
+}
+
+fn conversation_window_target(target: &Value) -> Result<(String, String), String> {
     if !target["sessionId"].as_str().is_some_and(|id| !id.trim().is_empty()) { return Err("Select a conversation to open in another window".into()); }
     let label = format!("chat-{}", Uuid::new_v4());
     let mut url = tauri::Url::parse("https://piop.invalid/").map_err(|error| error.to_string())?;
     url.query_pairs_mut().append_pair("target", &target.to_string());
     let path = format!("index.html{}", url.query().map(|query| format!("?{query}")).unwrap_or_default());
-    tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(path.into()))
-        .title(APP_TITLE).inner_size(1280.0, 800.0).min_inner_size(900.0, 640.0)
-        .build().map_err(|error| error.to_string())?;
-    Ok(label)
+    Ok((label, path))
 }
 
 #[tauri::command]
@@ -2584,9 +2589,13 @@ fn read_dropped_file(path: String) -> Result<Value, String> {
 
 #[tauri::command(async)]
 fn open_external_url(url: String) -> Result<(), String> {
-    let parsed = tauri::Url::parse(&url).map_err(|_| "Enter a valid HTTP or HTTPS URL")?;
+    open_external_url_with(&url, open_system_resource)
+}
+
+fn open_external_url_with(url: &str, open: impl FnOnce(&std::ffi::OsStr) -> Result<(), String>) -> Result<(), String> {
+    let parsed = tauri::Url::parse(url).map_err(|_| "Enter a valid HTTP or HTTPS URL")?;
     if !matches!(parsed.scheme(), "http" | "https") || !parsed.has_host() { return Err("Only HTTP and HTTPS links can be opened in the browser".into()); }
-    open_system_resource(std::ffi::OsStr::new(parsed.as_str()))
+    open(std::ffi::OsStr::new(parsed.as_str()))
 }
 
 #[tauri::command(async)]
@@ -2594,11 +2603,16 @@ fn open_project_directory(app: AppHandle, cwd: String, host_id: Option<String>) 
     if host_id.as_deref().unwrap_or("local") != "local" {
         let settings = load_app_settings(app)?;
         let host = remote_host(&settings, host_id.as_deref().unwrap_or_default())?;
-        return Err(format!("Opening project directories on {} is not supported by the local file manager", host.name));
+        return open_project_directory_with(&cwd, Some(host), open_system_resource);
     }
+    open_project_directory_with(&cwd, None, open_system_resource)
+}
+
+fn open_project_directory_with(cwd: &str, host: Option<&RemoteHost>, open: impl FnOnce(&std::ffi::OsStr) -> Result<(), String>) -> Result<(), String> {
+    if let Some(host) = host { return Err(format!("Opening project directories on {} is not supported by the local file manager", host.name)); }
     let path = PathBuf::from(cwd);
     if !path.is_dir() { return Err(format!("Project directory does not exist: {}", path.display())); }
-    open_system_resource(path.as_os_str())
+    open(path.as_os_str())
 }
 
 

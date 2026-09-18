@@ -3218,6 +3218,88 @@ fn usage_query_propagates_server_errors_and_missing_usage_data() {
 }
 
 #[test]
+fn conversation_window_targets_require_a_nonblank_string_session_id() {
+    for target in [Value::Null, json!({}), json!({"sessionId":null}), json!({"sessionId":7}), json!({"sessionId":""}), json!({"sessionId":" \n\t"})] {
+        assert_eq!(conversation_window_target(&target).unwrap_err(), "Select a conversation to open in another window");
+    }
+}
+
+#[test]
+fn conversation_window_targets_round_trip_special_characters_without_extra_query_fields() {
+    let target = json!({
+        "sessionId":"session & # ? = + / \u{3bb}",
+        "sessionPath":"/project\u{27}s files/a?b#c.jsonl",
+        "hostId":"remote",
+        "name":"hello\n\u{4e16}\u{754c}",
+        "nested":{"value":"%26target=other"}
+    });
+    let (first, path) = conversation_window_target(&target).unwrap();
+    let (second, _) = conversation_window_target(&target).unwrap();
+    assert_ne!(first, second);
+    assert!(Uuid::parse_str(first.strip_prefix("chat-").unwrap()).is_ok());
+    assert!(Uuid::parse_str(second.strip_prefix("chat-").unwrap()).is_ok());
+    let url = tauri::Url::parse("https://piop.invalid/").unwrap().join(&path).unwrap();
+    assert_eq!(url.path(), "/index.html");
+    assert!(url.fragment().is_none());
+    let parameters = url.query_pairs().collect::<Vec<_>>();
+    assert_eq!(parameters.len(), 1);
+    assert_eq!(parameters[0].0, "target");
+    assert_eq!(serde_json::from_str::<Value>(&parameters[0].1).unwrap(), target);
+}
+
+#[test]
+fn external_url_opening_rejects_non_web_schemes_before_invoking_the_system_opener() {
+    for url in ["", "relative/path", "https://", "http://[invalid"] {
+        assert_eq!(open_external_url_with(url, |_| panic!("invalid URL opened")).unwrap_err(), "Enter a valid HTTP or HTTPS URL");
+    }
+    for url in ["file:///tmp/file", "javascript:alert(1)", "data:text/html,hello", "mailto:user@example.com", "ftp://example.com/file"] {
+        assert_eq!(open_external_url_with(url, |_| panic!("non-web URL opened")).unwrap_err(), "Only HTTP and HTTPS links can be opened in the browser");
+    }
+}
+
+#[test]
+fn external_url_opening_preserves_encoded_targets_and_propagates_launcher_failures() {
+    for (url, expected) in [
+        ("HTTPS://Example.COM:443/a b?x=1&y=2#section", "https://example.com/a%20b?x=1&y=2#section"),
+        ("http://localhost:8080/path", "http://localhost:8080/path"),
+        ("https://example.com/?q=%26%3D%23", "https://example.com/?q=%26%3D%23"),
+    ] {
+        open_external_url_with(url, |target| {
+            assert_eq!(target, std::ffi::OsStr::new(expected)); Ok(())
+        }).unwrap();
+    }
+    assert_eq!(open_external_url_with("https://example.com", |_| Err("launcher unavailable".into())).unwrap_err(), "launcher unavailable");
+}
+
+#[test]
+fn project_directory_opening_passes_literal_paths_and_propagates_launcher_errors() {
+    let temporary = TestDirectory::new();
+    let directory = temporary.0.join("project\u{27}s $files; \u{3bb}"); fs::create_dir(&directory).unwrap();
+    open_project_directory_with(directory.to_str().unwrap(), None, |path| {
+        assert_eq!(path, directory.as_os_str()); Ok(())
+    }).unwrap();
+    assert_eq!(open_project_directory_with(directory.to_str().unwrap(), None, |_| Err("file manager unavailable".into())).unwrap_err(), "file manager unavailable");
+    #[cfg(unix)]
+    {
+        let alias = temporary.0.join("alias");
+        std::os::unix::fs::symlink(&directory, &alias).unwrap();
+        open_project_directory_with(alias.to_str().unwrap(), None, |path| { assert_eq!(path, alias.as_os_str()); Ok(()) }).unwrap();
+    }
+}
+
+#[test]
+fn project_directory_opening_rejects_files_missing_directories_and_remote_hosts() {
+    let temporary = TestDirectory::new(); let file = temporary.0.join("file"); fs::write(&file, "contents").unwrap();
+    for path in [file, temporary.0.join("missing")] {
+        let error = open_project_directory_with(path.to_str().unwrap(), None, |_| panic!("invalid directory opened")).unwrap_err();
+        assert_eq!(error, format!("Project directory does not exist: {}", path.display()));
+    }
+    let host = RemoteHost { id:"remote".into(), name:"Build server".into(), target:"unused.invalid".into(), pi_path:"pi".into() };
+    assert_eq!(open_project_directory_with(temporary.0.to_str().unwrap(), Some(&host), |_| panic!("remote directory opened locally")).unwrap_err(),
+        "Opening project directories on Build server is not supported by the local file manager");
+}
+
+#[test]
 fn usage_query_initializes_the_server_before_reading_rate_limits() {
     let directory = TestDirectory::new(); let transcript = directory.0.join("packets.jsonl");
     let script = r#"const fs=require('fs'); const readline=require('readline');
