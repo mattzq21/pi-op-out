@@ -586,11 +586,15 @@ mod opencode_go_tests {
 }
 
 fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = home_dir()?.join(STORAGE_DIRECTORY);
+    settings_path_at(&home_dir()?, DEVELOPMENT, || app.path().app_config_dir().map_err(|error| error.to_string()).map(|dir| dir.join("settings.json")))
+}
+
+fn settings_path_at(home: &Path, development: bool, legacy_path: impl FnOnce() -> Result<PathBuf, String>) -> Result<PathBuf, String> {
+    let dir = home.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let path = dir.join("settings.json");
-    if !DEVELOPMENT && !path.exists() {
-        let legacy = app.path().app_config_dir().map_err(|error| error.to_string())?.join("settings.json");
+    if !development && !path.exists() {
+        let legacy = legacy_path()?;
         match fs::read(&legacy) {
             Ok(body) => {
                 atomic_write_private(&path, &body)?;
@@ -606,6 +610,7 @@ fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn set_private_file_permissions(path: &Path) -> Result<(), String> {
     if !path.exists() { return Ok(()); }
+    if path.is_dir() { return Err(format!("Configuration path is a directory: {}", path.display())); }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

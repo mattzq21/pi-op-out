@@ -2759,6 +2759,53 @@ fn settings_save_validation_enforces_context_and_delegates_other_configuration_c
 }
 
 #[test]
+fn settings_migration_moves_exact_legacy_bytes_and_preserves_existing_settings() {
+    let home = TestDirectory::new(); let legacy_dir = TestDirectory::new();
+    let legacy = legacy_dir.0.join("settings.json");
+    let content = b"{\n  \"custom\": \"value\", \"version\": 1\n}\n"; fs::write(&legacy, content).unwrap();
+    let path = settings_path_at(&home.0, false, || Ok(legacy.clone())).unwrap();
+    assert_eq!(path, home.0.join(STORAGE_DIRECTORY).join("settings.json"));
+    assert_eq!(fs::read(&path).unwrap(), content); assert!(!legacy.exists());
+    fs::write(&legacy, "old configuration").unwrap();
+    assert_eq!(settings_path_at(&home.0, false, || panic!("existing settings must not need legacy path lookup")).unwrap(), path);
+    assert_eq!(fs::read_to_string(&legacy).unwrap(), "old configuration");
+    assert_eq!(fs::read(&path).unwrap(), content);
+    #[cfg(unix)] {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(fs::metadata(path.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
+    }
+}
+
+#[test]
+fn settings_migration_handles_absent_legacy_and_reports_unreadable_sources() {
+    let home = TestDirectory::new(); let legacy_dir = TestDirectory::new();
+    let legacy = legacy_dir.0.join("settings.json");
+    let path = settings_path_at(&home.0, false, || Ok(legacy.clone())).unwrap();
+    assert!(!path.exists()); assert!(path.parent().unwrap().is_dir());
+    assert_eq!(settings_path_at(&home.0, false, || Err("path unavailable".into())).unwrap_err(), "path unavailable");
+    fs::create_dir(&legacy).unwrap(); fs::write(legacy.join("keep"), "original").unwrap();
+    assert!(settings_path_at(&home.0, false, || Ok(legacy.clone())).unwrap_err().starts_with("Could not migrate settings:"));
+    assert!(!path.exists()); assert_eq!(fs::read_to_string(legacy.join("keep")).unwrap(), "original");
+}
+
+#[cfg(unix)]
+#[test]
+fn settings_path_rejects_directory_obstructions_without_changing_their_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = TestDirectory::new(); let path = home.0.join(STORAGE_DIRECTORY).join("settings.json");
+    fs::create_dir_all(&path).unwrap(); fs::write(path.join("keep"), "original").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o750)).unwrap();
+    let result = settings_path_at(&home.0, false, || panic!("existing path must not trigger migration"));
+    let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    // Restore fixture traversal before assertions so a regression does not prevent cleanup.
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o750)).unwrap();
+    assert!(result.is_err(), "a directory cannot be used as settings.json");
+    assert_eq!(mode, 0o750);
+    assert_eq!(fs::read_to_string(path.join("keep")).unwrap(), "original");
+}
+
+#[test]
 fn project_inspection_batches_distinct_directories_and_updates_all_matching_sessions() {
     let root = TestDirectory::new();
     let repository = root.0.join("repo ' 日本語"); fs::create_dir(&repository).unwrap();
