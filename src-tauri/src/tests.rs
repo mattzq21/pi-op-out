@@ -773,6 +773,31 @@ impl TestDirectory {
 impl Drop for TestDirectory {
     fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
 }
+
+// Tests exercising installers that read HOME must serialize the process-wide
+// override and restore the original value: the test harness runs tests in
+// parallel threads within one process.
+struct HomeOverride(std::sync::MutexGuard<'static, ()>, Option<std::ffi::OsString>);
+
+impl HomeOverride {
+    fn take(home: &Path) -> Self {
+        static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let guard = HOME_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let previous = std::env::var_os("HOME");
+        std::env::set_var("HOME", home);
+        HomeOverride(guard, previous)
+    }
+}
+
+impl Drop for HomeOverride {
+    fn drop(&mut self) {
+        match self.1.take() {
+            Some(original) => std::env::set_var("HOME", original),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+}
+
 #[test]
 fn dropped_files_preserve_binary_data_and_enforce_file_type_and_size_limits() {
     let root = TestDirectory::new();
@@ -3707,7 +3732,7 @@ fn bundled_extension_installers_refresh_private_files_at_the_expected_paths() {
     ];
     for (install, relative, expected) in installers {
         let home = TestDirectory::new();
-        std::env::set_var("HOME", &home.0);
+        let _home = HomeOverride::take(&home.0);
         let target = home.0.join(STORAGE_DIRECTORY).join(relative);
         let path = install().unwrap();
         assert_eq!(path, target);
@@ -3728,13 +3753,12 @@ fn bundled_extension_installers_refresh_private_files_at_the_expected_paths() {
         assert!(install().is_err());
         assert_eq!(fs::read_to_string(target.join("keep")).unwrap(), "original directory");
     }
-    std::env::remove_var("HOME");
 }
 
 #[test]
 fn hook_preparation_updates_bundles_without_changing_user_hooks() {
     let home = TestDirectory::new();
-    std::env::set_var("HOME", &home.0);
+    let _home = HomeOverride::take(&home.0);
     let hooks = home.0.join(STORAGE_DIRECTORY).join("hooks");
     fs::create_dir_all(hooks.join("custom")).unwrap();
     fs::write(hooks.join("custom/index.ts"), "user hook").unwrap();
@@ -3754,19 +3778,19 @@ fn hook_preparation_updates_bundles_without_changing_user_hooks() {
         fs::write(&stats, "old stats").unwrap();
     }
     let blocked = TestDirectory::new();
-    std::env::set_var("HOME", &blocked.0);
+    drop(_home);
+    let _blocked = HomeOverride::take(&blocked.0);
     fs::create_dir_all(blocked.0.join(STORAGE_DIRECTORY)).unwrap();
     fs::write(blocked.0.join(STORAGE_DIRECTORY).join("hooks"), "keep").unwrap();
     assert!(prepare_hooks_extension().is_err());
     assert_eq!(fs::read_to_string(blocked.0.join(STORAGE_DIRECTORY).join("hooks")).unwrap(), "keep");
     assert!(!blocked.0.join(STORAGE_DIRECTORY).join("hook-loader.ts").exists());
-    std::env::remove_var("HOME");
 }
 
 #[test]
 fn side_conversation_preparation_removes_only_the_legacy_extension_after_installing() {
     let home = TestDirectory::new();
-    std::env::set_var("HOME", &home.0);
+    let _home = HomeOverride::take(&home.0);
     let entry = home.0.join(STORAGE_DIRECTORY).join("piop-btw.ts");
     let legacy = home.0.join(".pi/agent/extensions/pi-desktop-btw.ts");
     fs::create_dir_all(legacy.parent().unwrap()).unwrap();
@@ -3783,13 +3807,12 @@ fn side_conversation_preparation_removes_only_the_legacy_extension_after_install
     fs::write(&legacy, "preserve until install succeeds").unwrap();
     assert!(prepare_btw_extension().is_err());
     assert_eq!(fs::read_to_string(&legacy).unwrap(), "preserve until install succeeds");
-    std::env::remove_var("HOME");
 }
 
 #[test]
 fn diff_watch_preparation_replaces_legacy_assets_and_refreshes_all_bundled_files() {
     let home = TestDirectory::new();
-    std::env::set_var("HOME", &home.0);
+    let _home = HomeOverride::take(&home.0);
     let legacy = home.0.join(STORAGE_DIRECTORY).join("pi-git-change-context");
     fs::create_dir_all(legacy.join("nested")).unwrap();
     fs::write(legacy.join("nested/stale.ts"), "stale").unwrap();
@@ -3810,13 +3833,12 @@ fn diff_watch_preparation_replaces_legacy_assets_and_refreshes_all_bundled_files
         prepare_diff_watch_extension().unwrap();
     }
     assert_eq!(fs::read_dir(entry.parent().unwrap()).unwrap().count(), 4, "no temporary files should remain");
-    std::env::remove_var("HOME");
 }
 
 #[test]
 fn extension_preparation_reports_obstructions_without_removing_legacy_configuration() {
     let home = TestDirectory::new();
-    std::env::set_var("HOME", &home.0);
+    let _home = HomeOverride::take(&home.0);
     let legacy = home.0.join(".pi/agent/extensions/pi-define-agents");
     fs::create_dir_all(legacy.join("config.json")).unwrap();
     fs::write(legacy.join("index.ts"), "original").unwrap();
@@ -3827,22 +3849,21 @@ fn extension_preparation_reports_obstructions_without_removing_legacy_configurat
         assert!(prepare_defined_agents_extension().is_ok(), "development builds skip the legacy configuration import and legacy cleanup");
     }
     assert_eq!(fs::read_to_string(legacy.join("index.ts")).unwrap(), "original");
-    std::env::remove_var("HOME");
+    drop(_home);
     let blocked = TestDirectory::new();
-    std::env::set_var("HOME", &blocked.0);
+    let _blocked = HomeOverride::take(&blocked.0);
     fs::create_dir_all(blocked.0.join(STORAGE_DIRECTORY)).unwrap();
     let legacy_diff = blocked.0.join(STORAGE_DIRECTORY).join("pi-git-change-context");
     fs::write(&legacy_diff, "unexpected file").unwrap();
     assert!(prepare_diff_watch_extension().unwrap_err().contains("Could not remove legacy diff watch extension"));
     assert_eq!(fs::read_to_string(&legacy_diff).unwrap(), "unexpected file");
     assert!(!blocked.0.join(STORAGE_DIRECTORY).join("piop-diff-watch").exists());
-    std::env::remove_var("HOME");
 }
 
 #[test]
 fn defined_agent_preparation_migrates_configuration_once_and_preserves_user_changes() {
     let home = TestDirectory::new();
-    std::env::set_var("HOME", &home.0);
+    let _home = HomeOverride::take(&home.0);
     let legacy = home.0.join(".pi/agent/extensions/pi-define-agents");
     fs::create_dir_all(&legacy).unwrap();
     let original = b"{\"agents\":[{\"name\":\"custom\"}]}\n";
@@ -3866,8 +3887,8 @@ fn defined_agent_preparation_migrates_configuration_once_and_preserves_user_chan
         assert_eq!(fs::metadata(entry.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
     }
     let fresh = TestDirectory::new();
-    std::env::set_var("HOME", &fresh.0);
+    drop(_home);
+    let _fresh = HomeOverride::take(&fresh.0);
     let entry = prepare_defined_agents_extension().unwrap();
     assert!(!entry.with_file_name("config.json").exists(), "fresh installation must not invent user configuration");
-    std::env::remove_var("HOME");
 }
