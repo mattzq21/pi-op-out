@@ -792,7 +792,11 @@ fn list_hooks(app: AppHandle, host_id: String) -> Result<Value, String> {
         command.arg(format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {}", shell_quote(script)));
         command
     };
-    let output = run_limited(&mut command, 4 * 1024 * 1024, "Could not list hooks")?;
+    query_hook_list(&mut command)
+}
+
+fn query_hook_list(command: &mut Command) -> Result<Value, String> {
+    let output = run_limited(command, 4 * 1024 * 1024, "Could not list hooks")?;
     if !output.status.success() { return Err(format!("Could not list hooks: {}", String::from_utf8_lossy(&output.stderr).trim())); }
     serde_json::from_slice(&output.stdout).map_err(|error| format!("Could not read hook list: {error}"))
 }

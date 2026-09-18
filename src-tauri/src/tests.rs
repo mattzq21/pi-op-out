@@ -94,6 +94,38 @@ fn usage_chooses_the_most_consumed_window_and_prefers_the_codex_bucket() {
         assert!(codex_usage_values(&value).is_none());
     }
 }
+
+#[test]
+fn hook_list_query_runs_the_bundled_scanner_and_preserves_hook_entry_paths() {
+    let home = TestDirectory::new(); let hooks = home.0.join(".piop/hooks");
+    let script = format!("require('node:os').homedir = () => {};\n{}", serde_json::to_string(home.0.to_str().unwrap()).unwrap(), include_str!("../resources/list-hooks.cjs"));
+    let run = || { let mut command = Command::new("node"); command.args(["-e", &script]); query_hook_list(&mut command) };
+    assert_eq!(run().unwrap(), json!({"directory":hooks,"exists":false,"hooks":[]}));
+    fs::create_dir_all(hooks.join("bundle")).unwrap();
+    for name in ["z.ts", "a.mjs", ".hidden.ts", "types.d.ts", "notes.txt", "bundle/index.js", "bundle/index.ts"] {
+        fs::write(hooks.join(name), "throw new Error('must not execute hooks');").unwrap();
+    }
+    assert_eq!(run().unwrap(), json!({"directory":hooks,"exists":true,"hooks":[
+        {"name":"a.mjs","path":hooks.join("a.mjs"),"entry":"a.mjs"},
+        {"name":"bundle","path":hooks.join("bundle/index.ts"),"entry":"bundle/index.ts"},
+        {"name":"z.ts","path":hooks.join("z.ts"),"entry":"z.ts"},
+    ]}));
+}
+
+#[test]
+fn hook_list_query_rejects_failed_malformed_and_oversized_responses() {
+    for (script, expected) in [
+        ("process.stderr.write(' scanner failed \\n'); process.exitCode=7", "Could not list hooks: scanner failed"),
+        ("process.stdout.write('not JSON')", "Could not read hook list:"),
+        ("process.stdout.write('x'.repeat(4*1024*1024+1))", "Could not list hooks"),
+    ] {
+        let mut command = Command::new("node"); command.args(["-e", script]);
+        let error = query_hook_list(&mut command).unwrap_err();
+        assert!(error.starts_with(expected), "{error}");
+    }
+    let temporary = TestDirectory::new();
+    assert!(query_hook_list(&mut Command::new(temporary.0.join("missing"))).is_err());
+}
 #[test]
 fn storage_inventory_query_counts_real_files_and_marks_malformed_archives_undeletable() {
     let home = TestDirectory::new(); let root = home.0.join(".piop");
