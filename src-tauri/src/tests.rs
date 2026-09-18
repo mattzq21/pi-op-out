@@ -3604,3 +3604,94 @@ fn snapshot_comparison_detects_renames_and_reports_unavailable_objects() {
     assert!(local_git_diff_between(root.to_str().unwrap(), &base, &current).is_err());
     assert_eq!(fs::read_to_string(repository.0.join("after.txt")).unwrap(), "unchanged content\n");
 }
+
+#[cfg(unix)]
+#[test]
+fn unchanged_private_writes_preserve_the_file_and_repair_permissions() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let directory = TestDirectory::new();
+    let path = directory.0.join("nested/config.json");
+    atomic_write_private(&path, b"original\0bytes").unwrap();
+    let original_inode = fs::metadata(&path).unwrap().ino();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+    fs::set_permissions(path.parent().unwrap(), fs::Permissions::from_mode(0o755)).unwrap();
+    atomic_write_private(&path, b"original\0bytes").unwrap();
+    assert_eq!(fs::metadata(&path).unwrap().ino(), original_inode, "unchanged configuration must not be replaced");
+    assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(fs::metadata(path.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
+    atomic_write_private(&path, b"replacement").unwrap();
+    assert_eq!(fs::read(&path).unwrap(), b"replacement");
+    assert_ne!(fs::metadata(&path).unwrap().ino(), original_inode, "changed configuration should be atomically replaced");
+    assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+}
+
+#[test]
+fn concurrent_private_writes_never_expose_partial_configuration() {
+    let directory = TestDirectory::new();
+    let path = directory.0.join("config.json");
+    let payloads: Vec<Vec<u8>> = (0..8).map(|index| vec![65u8 + index; 64 * 1024 + usize::from(index)]).collect();
+    atomic_write_private(&path, &payloads[0]).unwrap();
+    let barrier = std::sync::Barrier::new(9);
+    let completed = std::sync::atomic::AtomicUsize::new(0);
+    thread::scope(|scope| {
+        for payload in &payloads {
+            let path = &path; let barrier = &barrier; let completed = &completed;
+            scope.spawn(move || {
+                barrier.wait();
+                let result = (0..4).try_for_each(|_| atomic_write_private(path, payload));
+                completed.fetch_add(1, Ordering::SeqCst);
+                result.unwrap();
+            });
+        }
+        barrier.wait();
+        while completed.load(Ordering::SeqCst) != payloads.len() {
+            let observed = fs::read(&path).unwrap();
+            assert!(payloads.contains(&observed), "reader observed a partial or mixed configuration");
+            thread::yield_now();
+        }
+    });
+    assert!(payloads.contains(&fs::read(&path).unwrap()));
+    assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1, "concurrent writes must leave no temporary files");
+}
+
+#[test]
+fn invalid_private_write_destinations_leave_existing_contents_intact() {
+    let directory = TestDirectory::new();
+    let parent_file = directory.0.join("file");
+    fs::write(&parent_file, "keep").unwrap();
+    assert!(atomic_write_private(&parent_file.join("child"), b"new").is_err());
+    assert_eq!(fs::read_to_string(&parent_file).unwrap(), "keep");
+    assert_eq!(atomic_write_private(Path::new("/"), b"new").unwrap_err(), "Configuration file has no parent directory");
+    let existing_dir = directory.0.join("existing");
+    fs::create_dir(&existing_dir).unwrap();
+    fs::write(existing_dir.join("child"), "keep child").unwrap();
+    #[cfg(unix)] let original_mode = {
+        use std::os::unix::fs::PermissionsExt;
+        fs::metadata(&existing_dir).unwrap().permissions().mode()
+    };
+    assert!(atomic_write_private(&existing_dir, b"new").unwrap_err().contains("Configuration path is a directory"));
+    assert_eq!(fs::read_to_string(existing_dir.join("child")).unwrap(), "keep child");
+    #[cfg(unix)] {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(fs::metadata(&existing_dir).unwrap().permissions().mode(), original_mode);
+    }
+}
+
+#[test]
+fn registered_cancellation_reaches_a_running_setup_process() {
+    let runtime = PiRuntime::default(); let directory = TestDirectory::new();
+    let id = register_worktree_setup(&runtime).unwrap();
+    let signal = runtime.worktree_setups.lock().unwrap()[&id].clone();
+    let ready = directory.0.join("ready"); let received = directory.0.join("received");
+    let worker_ready = ready.clone(); let worker_received = received.clone();
+    let worker = thread::spawn(move || {
+        run_setup_process(Command::new("node").args(["-e", "const fs=require(\u{27}fs\u{27});fs.writeFileSync(process.argv[1],\u{27}ready\u{27});process.stdin.once(\u{27}data\u{27},data=>{fs.writeFileSync(process.argv[2],data);process.exit(0)});", worker_ready.to_str().unwrap(), worker_received.to_str().unwrap()]), &signal, "Setup", "DONE".into(), "User cancelled setup", Some(Duration::from_secs(10)))
+    });
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !ready.exists() && Instant::now() < deadline { thread::sleep(Duration::from_millis(10)); }
+    signal_worktree_setup_cancellation(&runtime, &id).unwrap();
+    let result = worker.join().unwrap();
+    assert!(ready.exists(), "setup process did not become ready");
+    assert_eq!(result.unwrap_err(), "User cancelled setup");
+    assert_eq!(fs::read_to_string(&received).unwrap(), "cancel\n");
+}
