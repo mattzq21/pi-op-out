@@ -94,6 +94,168 @@ fn usage_chooses_the_most_consumed_window_and_prefers_the_codex_bucket() {
         assert!(codex_usage_values(&value).is_none());
     }
 }
+#[cfg(unix)]
+#[test]
+fn terminal_lifecycle_delivers_queued_input_and_resized_dimensions_to_the_shell() {
+    let runtime = TestTerminals(TerminalRuntime::default());
+    let (sender, events) = mpsc::channel();
+    start_terminal_with(&runtime.0, "interactive".into(), "session".into(), "/tmp".into(), 0, 0, "local".into(), "window".into(),
+        || {
+            let mut command = CommandBuilder::new("sh");
+            command.args(["-c", "stty -echo; printf 'READY'; IFS= read -r line; printf 'received:%s\\n' \"$line\"; stty size"]);
+            Ok(command)
+        }, move |packet| { let _ = sender.send(packet); }).unwrap();
+    let mut output = String::new();
+    while !output.contains("READY") {
+        let packet = events.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_eq!(packet["type"], "terminal_output");
+        output.push_str(packet["data"].as_str().unwrap());
+    }
+    {
+        let processes = runtime.0.processes.lock().unwrap();
+        let process = &processes["interactive"];
+        let size = process.master.get_size().unwrap();
+        assert_eq!((size.cols, size.rows), (1, 1));
+        assert_eq!(process.window_label, "window"); assert_eq!(process.session_key, "session");
+    }
+    resize_terminal_pty(&runtime.0, "interactive", 100, 40).unwrap();
+    write_terminal_input(&runtime.0, "interactive", "hello λ\n".into()).unwrap();
+    loop {
+        let packet = events.recv_timeout(Duration::from_secs(3)).unwrap();
+        if packet["type"] == "terminal_exit" { break; }
+        output.push_str(packet["data"].as_str().unwrap());
+    }
+    assert!(output.contains("received:hello λ"), "{output}");
+    assert!(output.contains("40 100"), "{output}");
+    assert!(runtime.0.processes.lock().unwrap().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn stopping_a_started_terminal_emits_exit_and_preserves_other_processes() {
+    let runtime = TestTerminals(TerminalRuntime::default());
+    let _other_input = runtime.add("other");
+    let (sender, events) = mpsc::channel();
+    start_terminal_with(&runtime.0, "stop-me".into(), "another-session".into(), "/tmp".into(), 80, 24, "local".into(), "window".into(),
+        || { let mut command = CommandBuilder::new("sh"); command.args(["-c", "printf READY; exec sleep 60"]); Ok(command) },
+        move |packet| { let _ = sender.send(packet); }).unwrap();
+    let packet = events.recv_timeout(Duration::from_secs(3)).unwrap();
+    assert_eq!(packet["type"], "terminal_output");
+    stop_terminals(&runtime.0, &["stop-me".into()]).unwrap();
+    loop {
+        let packet = events.recv_timeout(Duration::from_secs(3)).unwrap();
+        if packet["type"] == "terminal_exit" { assert_eq!(packet["terminalId"], "stop-me"); break; }
+    }
+    let processes = runtime.0.processes.lock().unwrap();
+    assert_eq!(processes.len(), 1); assert!(processes.contains_key("other"));
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_startup_streams_shell_output_and_removes_finished_process() {
+    let runtime = TestTerminals(TerminalRuntime::default());
+    let (sender, events) = mpsc::channel();
+    start_terminal_with(&runtime.0, "terminal".into(), "session".into(), "/tmp".into(), 0, 0, "local".into(), "window".into(),
+        || { let mut command = CommandBuilder::new("sh"); command.args(["-c", "printf 'hello λ'; exit 0"]); Ok(command) },
+        move |packet| { let _ = sender.send(packet); }).unwrap();
+    let mut output = String::new();
+    loop {
+        let packet = events.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_eq!(packet["terminalId"], "terminal");
+        if packet["type"] == "terminal_exit" { break; }
+        assert_eq!(packet["type"], "terminal_output");
+        output.push_str(packet["data"].as_str().unwrap());
+    }
+    assert_eq!(output, "hello λ");
+    assert!(runtime.0.processes.lock().unwrap().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_startup_rejects_limits_and_launch_failures_without_registering_new_processes() {
+    let runtime = TestTerminals(TerminalRuntime::default());
+    for id in 0..MAX_TERMINALS { runtime.add(&format!("terminal-{id}")); }
+    start_terminal_with(&runtime.0, "terminal-0".into(), "session".into(), "/tmp".into(), 80, 24, "local".into(), "window".into(),
+        || panic!("duplicate must not launch"), |_| panic!("duplicate emitted")).unwrap();
+    let error = start_terminal_with(&runtime.0, "extra".into(), "session".into(), "/tmp".into(), 80, 24, "local".into(), "window".into(),
+        || panic!("limit must prevent launch"), |_| panic!("limit emitted")).unwrap_err();
+    assert!(error.contains("At most"));
+    for failure in ["build", "spawn"] {
+        let temporary = TestDirectory::new();
+        let error = start_terminal_with(&runtime.0, "other".into(), "other-session".into(), "/tmp".into(), 80, 24, "local".into(), "window".into(),
+            || if failure == "build" { Err("invalid directory".into()) } else { Ok(CommandBuilder::new(temporary.0.join("missing"))) },
+            |_| panic!("failed launch emitted")).unwrap_err();
+        assert!(error.contains(if failure == "build" { "invalid directory" } else { "Could not start terminal shell" }));
+        assert!(!runtime.0.processes.lock().unwrap().contains_key("other"));
+    }
+    assert_eq!(runtime.0.processes.lock().unwrap().len(), MAX_TERMINALS);
+}
+#[cfg(unix)]
+struct TestTerminals(TerminalRuntime);
+
+#[cfg(unix)]
+impl TestTerminals {
+    fn add(&self, id: &str) -> mpsc::Receiver<String> {
+        let pair = native_pty_system().openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 }).unwrap();
+        let mut command = CommandBuilder::new("sh");
+        command.args(["-c", "exec sleep 60"]);
+        let child = pair.slave.spawn_command(command).unwrap();
+        let (writer, receiver) = mpsc::sync_channel(1);
+        self.0.processes.lock().unwrap().insert(id.into(), TerminalProcess {
+            session_key: "session".into(), cwd: "/tmp".into(), host_id: "local".into(), window_label: "main".into(),
+            master: pair.master, child, writer,
+        });
+        receiver
+    }
+}
+
+#[cfg(unix)]
+impl Drop for TestTerminals {
+    fn drop(&mut self) {
+        let ids = self.0.processes.lock().unwrap().keys().cloned().collect::<Vec<_>>();
+        let _ = stop_terminals(&self.0, &ids);
+    }
+}
+#[cfg(unix)]
+#[test]
+fn terminal_input_enforces_byte_limits_and_reports_full_or_closed_queues() {
+    let terminals = TestTerminals(TerminalRuntime::default());
+    let receiver = terminals.add("one");
+    let data = "🌍".repeat(256 * 1024);
+    write_terminal_input(&terminals.0, "one", data.clone()).unwrap();
+    assert!(write_terminal_input(&terminals.0, "one", "next".into()).unwrap_err().contains("Terminal input is busy"));
+    assert_eq!(receiver.recv_timeout(Duration::from_secs(2)).unwrap(), data);
+    assert!(write_terminal_input(&terminals.0, "one", format!("{data}x")).unwrap_err().contains("exceeds 1 MiB"));
+    assert!(receiver.try_recv().is_err());
+    write_terminal_input(&terminals.0, "one", "line\n\u{3}".into()).unwrap();
+    assert_eq!(receiver.recv_timeout(Duration::from_secs(2)).unwrap(), "line\n\u{3}");
+    drop(receiver);
+    assert!(write_terminal_input(&terminals.0, "one", "next".into()).unwrap_err().contains("Terminal input is busy"));
+    assert_eq!(write_terminal_input(&terminals.0, "missing", "text".into()).unwrap_err(), "Terminal is not running");
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_resize_clamps_dimensions_and_cleanup_targets_only_requested_processes() {
+    let terminals = TestTerminals(TerminalRuntime::default());
+    let first = terminals.add("first");
+    let second = terminals.add("second");
+    for (cols, rows, expected_cols, expected_rows) in [(0, 0, 1, 1), (132, 43, 132, 43)] {
+        resize_terminal_pty(&terminals.0, "first", cols, rows).unwrap();
+        let processes = terminals.0.processes.lock().unwrap();
+        let size = processes["first"].master.get_size().unwrap();
+        assert_eq!((size.cols, size.rows), (expected_cols, expected_rows));
+        assert_eq!(processes["second"].master.get_size().unwrap().cols, 80);
+    }
+    assert_eq!(resize_terminal_pty(&terminals.0, "missing", 80, 24).unwrap_err(), "Terminal is not running");
+    stop_terminals(&terminals.0, &["missing".into(), "first".into(), "first".into()]).unwrap();
+    assert!(matches!(first.try_recv(), Err(mpsc::TryRecvError::Disconnected)));
+    assert_eq!(terminals.0.processes.lock().unwrap().len(), 1);
+    write_terminal_input(&terminals.0, "second", "still available".into()).unwrap();
+    assert_eq!(second.recv_timeout(Duration::from_secs(2)).unwrap(), "still available");
+    stop_terminals(&terminals.0, &["second".into()]).unwrap();
+    assert!(terminals.0.processes.lock().unwrap().is_empty());
+}
 #[test]
 fn terminal_output_stream_preserves_split_unicode_and_flushes_incomplete_bytes_on_eof_or_error() {
     struct Chunks { chunks: std::collections::VecDeque<Vec<u8>>, fail: bool }
