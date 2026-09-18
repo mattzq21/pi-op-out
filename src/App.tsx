@@ -67,6 +67,20 @@ export function usageWindowsDescription(usage: OpencodeGoUsage): string {
   return `rolling ${usage.rolling.remainingPercent}% left, weekly ${usage.weekly.remainingPercent}% left, monthly ${usage.monthly.remainingPercent}% left`;
 }
 
+export function normalizeOpencodeGoUsage(value: unknown): OpencodeGoUsage | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const usage = value as Record<string, { remainingPercent?: unknown }>;
+  for (const window of ["rolling", "weekly", "monthly"] as const) {
+    if (typeof usage[window]?.remainingPercent !== "number") return undefined;
+  }
+  return value as OpencodeGoUsage;
+}
+
+export function normalizeCodexUsage(value: unknown): CodexUsage | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  return typeof (value as { remainingPercent?: unknown }).remainingPercent === "number" ? (value as CodexUsage) : undefined;
+}
+
 function LimitBadge({ label, prefix, go, detail, remainingPercent, resetAt }: { label: string; prefix?: string; go?: boolean; detail?: string; remainingPercent: number; resetAt?: number }) {
   return <span className={go ? "codex-usage opencode-go-usage" : "codex-usage"} role="status" aria-label={`${label} usage remaining: ${remainingPercent}%${resetAt ? `, resets ${formatCodexReset(resetAt)}` : ""}${detail ? ` (${detail})` : ""}`} title={`${label} usage remaining`}><span>{prefix}{remainingPercent}%<span className="codex-usage-left"> left</span></span>{resetAt && <span className="codex-usage-reset"><span className="codex-usage-separator"> · </span>{formatCodexReset(resetAt)}</span>}</span>;
 }
@@ -182,7 +196,7 @@ export default function App() {
     if (terminalOutputFrame.current === undefined) terminalOutputFrame.current = window.setTimeout(flushTerminalOutput, 0);
   }, [flushTerminalOutput]);
 
-  useEffect(() => { let cancelled = false; const load = () => { void transport.loadCodexUsage().then((usage) => { if (!cancelled) setCodexUsage(usage); }).catch(() => undefined); void transport.loadOpencodeGoUsage().then((usage) => { if (!cancelled) setOpencodeGoUsage(usage); }).catch(() => undefined); }; load(); const interval = window.setInterval(load, 60_000); window.addEventListener("focus", load); return () => { cancelled = true; window.clearInterval(interval); window.removeEventListener("focus", load); }; }, [transport]);
+  useEffect(() => { let cancelled = false; const load = () => { void transport.loadCodexUsage().then((usage) => { if (!cancelled) setCodexUsage(normalizeCodexUsage(usage)); }).catch(() => undefined); void transport.loadOpencodeGoUsage().then((usage) => { if (!cancelled) setOpencodeGoUsage(normalizeOpencodeGoUsage(usage)); }).catch(() => undefined); }; load(); const interval = window.setInterval(load, 60_000); window.addEventListener("focus", load); return () => { cancelled = true; window.clearInterval(interval); window.removeEventListener("focus", load); }; }, [transport]);
   useEffect(() => { newSessionPending.current = false; }, [transport]);
   useEffect(() => {
     const previousKey = activeConversationKeyRef.current;
