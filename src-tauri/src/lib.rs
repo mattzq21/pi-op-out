@@ -1107,11 +1107,20 @@ fn save_app_settings(app: AppHandle, mut settings: AppSettings, agent_host_id: O
     for tool in session_operation_tools() {
         if !settings.tools.iter().any(|existing| existing["name"] == tool["name"]) { settings.tools.push(tool); }
     }
-    migrate_keybindings(&mut settings);
+    let runtime = app.state::<PiRuntime>();
+    let change = save_settings_with(&runtime, settings, agent_host_id,
+        || settings_path(&app),
+        |settings| daemon::invalidate_changed(&app, &runtime, settings),
+        |settings| daemon::update_settings(&app, &runtime, settings))?;
+    let _ = app.emit("pi://settings-changed", &change);
+    Ok(change)
+}
+
+fn validate_settings_for_save(settings: &AppSettings) -> Result<(), String> {
     if settings.context_window_cap < 1000 { return Err("Context window cap must be a whole number of at least 1000".into()); }
-    validate_dictionaries(&settings)?;
-    validate_keybindings(&settings)?;
-    validate_mcp_servers(&settings)?;
+    validate_dictionaries(settings)?;
+    validate_keybindings(settings)?;
+    validate_mcp_servers(settings)?;
     if settings.hosts.len() > MAX_REMOTE_HOSTS { return Err(format!("At most {MAX_REMOTE_HOSTS} remote machines can be configured")); }
     let mut host_ids = HashSet::new();
     let mut host_names = HashSet::from(["local".to_string()]);
@@ -1122,18 +1131,27 @@ fn save_app_settings(app: AppHandle, mut settings: AppSettings, agent_host_id: O
         if !host_names.insert(name) { return Err(format!("Machine name '{}' is already in use", host.name.trim())); }
         validate_remote_host(host)?;
     }
-    let runtime = app.state::<PiRuntime>();
+    Ok(())
+}
+
+fn save_settings_with(
+    runtime: &PiRuntime, mut settings: AppSettings, agent_host_id: Option<String>,
+    path: impl FnOnce() -> Result<PathBuf, String>,
+    invalidate: impl FnOnce(&AppSettings) -> Result<(), String>,
+    synchronize: impl FnOnce(&AppSettings) -> Result<(), String>,
+) -> Result<Value, String> {
+    migrate_keybindings(&mut settings);
+    validate_settings_for_save(&settings)?;
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
-    atomic_write_private(&settings_path(&app)?, &serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?)?;
-    daemon::invalidate_changed(&app, &runtime, &settings)?;
+    atomic_write_private(&path()?, &serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?)?;
+    invalidate(&settings)?;
     let mut change = json!({"settings":settings});
     if let Some(host_id) = agent_host_id {
         let revision = runtime.agent_config_revision.fetch_add(1, Ordering::SeqCst) + 1;
         runtime.agent_config_revisions.lock().map_err(|_| "Agent configuration lock was poisoned")?.insert(host_id.clone(), revision);
         change["agentConfigChange"] = json!({"hostId":host_id,"revision":revision});
     }
-    daemon::update_settings(&app, &runtime, &settings)?;
-    let _ = app.emit("pi://settings-changed", &change);
+    synchronize(&settings)?;
     Ok(change)
 }
 
