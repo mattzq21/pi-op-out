@@ -709,3 +709,46 @@ fn saved_diff_schema_preserves_tool_path_mappings_and_rejects_incomplete_records
         json!({"message":{"patch":"diff","repositoryRoot":"/repo","toolPaths":null}}),
     ] { assert!(serde_json::from_value::<GitDiffSnapshots>(invalid).is_err()); }
 }
+
+fn setup_script(name: &str, path: &Path, code: &str, cleanup: &str) -> WorktreeSetupScript {
+    WorktreeSetupScript { id: name.into(), name: name.into(), script: code.into(), enabled: true, cleanup_script: Some(cleanup.into()), project_path: Some(path.to_string_lossy().into_owned()), host_id: None }
+}
+
+#[test]
+fn worktree_scripts_run_in_order_with_context_and_cleanup_in_reverse() {
+    let root = TestDirectory::new(); let source = root.0.join("source"); fs::create_dir(&source).unwrap();
+    test_git(&source, &["init", "--initial-branch=main"]); test_git(&source, &["commit", "--allow-empty", "-m", "Initial"]);
+    let target = root.0.join("target"); test_git(&source, &["worktree", "add", "-b", "feature", target.to_str().unwrap()]);
+    let mut settings = default_settings();
+    settings.worktree_setup_scripts = vec![
+        setup_script("first", &source, "printf 'first\\n' >> order; printf '%s\\n' \"$PIOP_SOURCE_TREE_PATH\" \"$PIOP_WORKTREE_PATH\" \"$PIOP_WORKTREE_BRANCH\" > context", "printf 'undo-first\\n' >> order"),
+        setup_script("second", &source, "printf 'second\\n' >> order", "printf 'undo-second\\n' >> order"),
+    ];
+    let mut disabled = setup_script("disabled", &source, "exit 99", "exit 99"); disabled.enabled = false;
+    let mut remote = setup_script("remote", &source, "exit 99", "exit 99"); remote.host_id = Some("remote".into());
+    let mut unassigned = setup_script("unassigned", &source, "exit 99", "exit 99"); unassigned.project_path = None;
+    settings.worktree_setup_scripts.extend([disabled, remote, unassigned, setup_script("empty", &source, " ", " ")]);
+    for phase in [WorktreeScriptPhase::Setup, WorktreeScriptPhase::Cleanup] {
+        run_worktree_scripts(&settings, source.to_str().unwrap(), target.to_str().unwrap(), "local", &AtomicBool::new(false), phase).unwrap();
+    }
+    assert_eq!(fs::read_to_string(target.join("order")).unwrap(), "first\nsecond\nundo-second\nundo-first\n");
+    assert_eq!(fs::read_to_string(target.join("context")).unwrap(), format!("{}\n{}\nfeature\n", source.canonicalize().unwrap().display(), target.canonicalize().unwrap().display()));
+}
+
+#[test]
+fn worktree_script_failure_stops_later_scripts_and_includes_diagnostics() {
+    let root = TestDirectory::new(); test_git(&root.0, &["init", "--initial-branch=main"]);
+    let mut settings = default_settings();
+    settings.worktree_setup_scripts = vec![
+        setup_script("dependencies", &root.0, "echo 'installation refused' >&2; exit 7", ""),
+        setup_script("later", &root.0, "touch should-not-exist", ""),
+    ];
+    let error = run_worktree_scripts(&settings, root.0.to_str().unwrap(), root.0.to_str().unwrap(), "local", &AtomicBool::new(false), WorktreeScriptPhase::Setup).unwrap_err();
+    assert!(error.contains("Setup script 'dependencies' failed (exit status 7)"), "{error}"); assert!(error.contains("installation refused"), "{error}");
+    assert!(!root.0.join("should-not-exist").exists());
+    settings.worktree_setup_scripts[0].script = "x".repeat(32 * 1024 + 1);
+    assert!(run_worktree_scripts(&settings, "unused", "unused", "local", &AtomicBool::new(false), WorktreeScriptPhase::Setup).unwrap_err().contains("script exceeds 32 KiB"));
+    assert_eq!(run_worktree_scripts(&settings, "unused", "unused", "local", &AtomicBool::new(true), WorktreeScriptPhase::Setup).unwrap_err(), "Environment setup cancelled");
+    settings.worktree_setup_scripts[0].cleanup_script = Some("echo cleanup".into());
+    assert_eq!(run_worktree_scripts(&settings, "unused", "unused", "local", &AtomicBool::new(true), WorktreeScriptPhase::Cleanup).unwrap_err(), "Worktree cleanup cancelled");
+}
