@@ -8,9 +8,10 @@ import { defaultKeybindings, keybindDefinitions, shortcutFromEvent, shortcutsCon
 import { IconButton } from "./IconButton";
 import { Toggle } from "./Toggle";
 
-type Section = "general" | "storage" | "environment" | "dictionaries" | "agents" | "machines" | "keybinds" | "tools" | "skills" | "hooks" | "mcp";
+type Section = "general" | "models" | "storage" | "environment" | "dictionaries" | "agents" | "machines" | "keybinds" | "tools" | "skills" | "hooks" | "mcp";
 const sections = [
   { id: "general" as const, label: "General", icon: Settings2 },
+  { id: "models" as const, label: "Models", icon: Cpu },
   { id: "storage" as const, label: "Storage", icon: HardDrive },
   { id: "environment" as const, label: "Worktree scripts", icon: Wrench },
   { id: "keybinds" as const, label: "Keybinds", icon: Keyboard },
@@ -194,7 +195,7 @@ export function SettingsView({ settings, pendingSettingsCount = 0, agentConfig: 
           <label className="field"><span>Default agent</span><select aria-label="Default agent" disabled={!agentConfig} value={draft.defaultAgent ?? "general"} onChange={(event) => patch({ defaultAgent: event.target.value })}>{!defaultAgentAvailable && <option value={draft.defaultAgent} disabled>Unavailable: {draft.defaultAgent}</option>}{!agentConfig && <option value={draft.defaultAgent ?? "general"}>{draft.defaultAgent ?? "general"}</option>}{agentDrafts.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select><small>Used for new conversations. Configure model, effort, and fast mode in Agents.</small></label>
           </div>
         </SettingsSection>}
-  {visibleSection === "general" && <SettingsSection title="Models" description="Choose which models appear in chat pickers. Existing conversations and default models are unchanged. Newly arrived models start hidden." headerAction={<div className="section-actions"><label className="section-filter"><Search size={14} /><input aria-label="Filter models" placeholder="Filter by name or provider" value={modelFilter} onChange={(event) => setModelFilter(event.target.value)} /></label><button className="section-toggle-all" disabled={hiddenModels.size === 0} onClick={() => patch({ hiddenModels: [] })}>Show all</button></div>}>
+  {visibleSection === "models" && <SettingsSection title="Models" description="Choose which models appear in chat pickers. Existing conversations and default models are unchanged. Newly arrived models start hidden." headerAction={<div className="section-actions"><label className="section-filter"><Search size={14} /><input aria-label="Filter models" placeholder="Filter by name or provider" value={modelFilter} onChange={(event) => setModelFilter(event.target.value)} /></label><button className="section-toggle-all" disabled={hiddenModels.size === 0} onClick={() => patch({ hiddenModels: [] })}>Show all</button></div>}>
           <div className="config-list">{filteredModelChoices.map((model) => <div className="config-row model-row" key={model.id}><span className="config-icon"><Cpu size={16} /></span><span><strong>{model.name}</strong><small>{model.id}{!availableModelIds.has(model.id) ? " · Currently unavailable" : ""}</small></span><Toggle label={`Show ${model.id}`} checked={!hiddenModels.has(model.id)} onChange={(visible) => setDraft((current) => ({ ...current, hiddenModels: visible ? current.hiddenModels.filter((id) => id !== model.id) : [...current.hiddenModels, model.id] }))} /></div>)}</div>
           {!filteredModelChoices.length && <div className="empty-small">{modelChoices.length ? "No models match your search." : "No models discovered. Connect to a session to manage model visibility."}</div>}
         </SettingsSection>}
