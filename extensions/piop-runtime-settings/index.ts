@@ -9,6 +9,8 @@ type Settings = {
   mcpServers: unknown[];
   contextWindowCap: number;
   contextWindowCapEnabled: boolean;
+  sessionCostLimit: number;
+  sessionCostLimitEnabled: boolean;
 };
 type Update = { ctx: ExtensionContext; ready?: Promise<void> };
 const key = Symbol.for("piop.runtime-settings");
@@ -17,7 +19,7 @@ const bootKey = Symbol.for("piop.runtime-settings.boot");
 const processState = globalThis as typeof globalThis & { [key]?: Settings; [replyKey]?: (value: string) => void; [bootKey]?: boolean };
 
 function validate(value: Settings): Settings {
-  if (!value || !Array.isArray(value.tools) || !value.tools.every((item) => typeof item === "string") || !Array.isArray(value.skills) || !value.skills.every((item) => typeof item === "string") || !Array.isArray(value.mcpServers) || !Number.isSafeInteger(value.contextWindowCap) || value.contextWindowCap < 1000 || typeof value.contextWindowCapEnabled !== "boolean") throw new Error("Invalid runtime settings");
+  if (!value || !Array.isArray(value.tools) || !value.tools.every((item) => typeof item === "string") || !Array.isArray(value.skills) || !value.skills.every((item) => typeof item === "string") || !Array.isArray(value.mcpServers) || !Number.isSafeInteger(value.contextWindowCap) || value.contextWindowCap < 1000 || typeof value.contextWindowCapEnabled !== "boolean" || typeof value.sessionCostLimit !== "number" || !Number.isFinite(value.sessionCostLimit) || value.sessionCostLimit < 0.01 || value.sessionCostLimit > 100000 || typeof value.sessionCostLimitEnabled !== "boolean") throw new Error("Invalid runtime settings");
   return structuredClone(value);
 }
 
