@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "./platform";
+import { invoke, listen, type UnlistenFn } from "./platform";
 
 export interface ProviderAccount {
   id: string;
@@ -28,6 +28,7 @@ interface Listing { providers: ProviderAccount[] }
 const call = <T>(hostId: string, request: Record<string, unknown>) => invoke<T>("provider_auth", { hostId, request });
 const message = (reason: unknown) => reason instanceof Error ? reason.message : String(reason);
 const cancelFlow = (hostId: string, flowId: string) => call<AuthFlow>(hostId, { action: "cancel", flowId });
+const INTERRUPTED = "Provider login was interrupted on the host. Start again.";
 
 export function useProviderAuth(hostId: string) {
   const [providers, setProviders] = useState<ProviderAccount[]>([]);
@@ -36,6 +37,7 @@ export function useProviderAuth(hostId: string) {
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string>();
   const [revision, setRevision] = useState(0);
+  const [tick, setTick] = useState(0);
   const generation = useRef(0);
   const active = useRef<{ hostId: string; flowId: string } | undefined>(undefined);
   const requestPending = useRef(false);
@@ -61,6 +63,15 @@ export function useProviderAuth(hostId: string) {
     return () => { cancelled = true; };
   }, [hostId, revision]);
 
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    let cancelled = false;
+    void listen("pi://provider-auth-changed", () => setTick((value) => value + 1)).then((stop) => {
+      if (cancelled) void stop(); else unlisten = stop;
+    }).catch(() => undefined);
+    return () => { cancelled = true; unlisten?.(); };
+  }, []);
+
   const receive = (next: AuthFlow) => {
     setFlow(next);
     if (next.status === "pending") active.current = { hostId, flowId: next.flowId };
@@ -70,21 +81,32 @@ export function useProviderAuth(hostId: string) {
   useEffect(() => {
     if (!flow || flow.status !== "pending" || working) return;
     let cancelled = false;
+    let failures = 0;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       try {
         const next = await call<AuthFlow>(hostId, { action: "poll", flowId: flow.flowId });
         if (cancelled) return;
         setError(undefined); setFlow(next);
-        if (next.status === "pending") timer = setTimeout(() => void poll(), 800);
+        if (next.status === "pending") timer = setTimeout(() => void poll(), 5000);
         else { active.current = undefined; setRevision((value) => value + 1); }
       } catch (reason) {
-        if (!cancelled) { setError(message(reason)); timer = setTimeout(() => void poll(), 3000); }
+        if (cancelled) return;
+        failures += 1;
+        if (failures >= 2) {
+          active.current = undefined;
+          setFlow(undefined);
+          setRevision((value) => value + 1);
+          setError(INTERRUPTED);
+          return;
+        }
+        setError(message(reason));
+        timer = setTimeout(() => void poll(), 1500);
       }
     };
     timer = setTimeout(() => void poll(), 400);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [hostId, flow?.flowId, flow?.status, working]);
+  }, [hostId, flow?.flowId, flow?.status, working, tick]);
 
   const perform = async (request: Record<string, unknown>, begin = false) => {
     if (requestPending.current) return;

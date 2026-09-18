@@ -173,6 +173,7 @@ pub(crate) fn connect(app: &AppHandle, runtime: &PiRuntime, broker: &BrokerRunti
                     let _ = app.emit("pi://event", json!({"runtimeId":packet["runtimeId"],"event":packet["event"]}));
                 },
                 Some("stderr") => { let _ = app.emit("pi://stderr", packet.clone()); },
+                Some("provider_auth_changed") => { let _ = app.emit("pi://provider-auth-changed", json!({"hostId":host_id})); },
                 Some("diagnostic") => { let _ = app.emit("pi://daemon-error", json!({"hostId":host_id,"line":packet["line"]})); },
                 Some("session_state") => {
                     let state = &packet["state"];

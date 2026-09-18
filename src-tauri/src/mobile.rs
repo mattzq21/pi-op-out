@@ -13,7 +13,7 @@ pub(super) fn start(app: AppHandle) -> Result<(), String> {
     let listener = TcpListener::bind(&bind).map_err(|error| format!("Mobile endpoint: {error}"))?;
     listener.set_nonblocking(true).map_err(|error| error.to_string())?;
     let (events, _) = broadcast::channel::<Value>(1024);
-    for name in ["pi://event", "pi://stderr", "pi://settings-changed", "pi://groups-changed", "pi://voice", "pi://sessions-changed", "pi://daemon-error"] {
+    for name in ["pi://event", "pi://stderr", "pi://settings-changed", "pi://groups-changed", "pi://voice", "pi://sessions-changed", "pi://daemon-error", "pi://provider-auth-changed"] {
         let events = events.clone();
         app.listen_any(name, move |event| {
             if let Ok(payload) = serde_json::from_str::<Value>(event.payload()) {

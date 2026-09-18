@@ -17,6 +17,7 @@ let providerAuthRevision = 0;
 const providerAuth = typeof ProviderAuthService === 'undefined' ? undefined : new ProviderAuthService(piAuthExecutable, () => {
   providerAuthRevision++;
   for (const session of sessions.values()) session.publish({ type: 'session_info_changed' });
+  output({ type: 'provider_auth_changed' });
 });
 const canonicalSettings = (value) => Array.isArray(value) ? value.map(canonicalSettings) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalSettings(value[key])])) : value;
 
