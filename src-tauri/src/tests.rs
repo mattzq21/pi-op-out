@@ -2864,6 +2864,127 @@ fn project_worktree_creation_preserves_existing_branch_and_target_on_collisions(
 }
 
 #[test]
+fn copied_worktree_supports_unborn_repositories_with_staged_and_untracked_files() {
+    let temporary = TestDirectory::new(); let repository = temporary.0.join("project");
+    fs::create_dir(&repository).unwrap(); test_git(&repository, &["init", "--initial-branch=main"]);
+    fs::write(repository.join("staged"), "staged content").unwrap();
+    test_git(&repository, &["add", "staged"]);
+    fs::write(repository.join("untracked"), "untracked content").unwrap();
+    let index = fs::read(repository.join(".git/index")).unwrap();
+    let result = create_local_git_worktree(repository.to_str().unwrap(), "first").unwrap();
+    let target = Path::new(&result.path);
+    assert_eq!(fs::read_to_string(target.join("staged")).unwrap(), "staged content");
+    assert_eq!(fs::read_to_string(target.join("untracked")).unwrap(), "untracked content");
+    assert_eq!(fs::read(repository.join(".git/index")).unwrap(), index);
+    assert!(local_worktree_is_registered(&repository, target).unwrap());
+    let head = Command::new("git").arg("-C").arg(target).args(["rev-parse", "--verify", "HEAD"]).output().unwrap();
+    assert!(!head.status.success(), "creation must not invent an initial commit");
+    let staged = Command::new("git").arg("-C").arg(target).args(["ls-files"]).output().unwrap();
+    assert!(staged.status.success()); assert!(staged.stdout.is_empty());
+}
+
+#[test]
+fn copied_worktree_rejects_missing_but_registered_targets_without_removing_the_registration() {
+    let temporary = TestDirectory::new(); let repository = temporary.0.join("project");
+    fs::create_dir(&repository).unwrap(); test_git(&repository, &["init", "--initial-branch=main"]);
+    test_git(&repository, &["commit", "--allow-empty", "-m", "Initial"]);
+    let target = temporary.0.join("project-copy");
+    test_git(&repository, &["worktree", "add", "--detach", target.to_str().unwrap()]);
+    fs::remove_dir_all(&target).unwrap();
+    assert!(local_worktree_is_registered(&repository, &target).unwrap());
+    let error = create_local_git_worktree(repository.to_str().unwrap(), "copy").err().unwrap();
+    assert!(error.contains("Git worktree is already registered"), "{error}");
+    assert!(local_worktree_is_registered(&repository, &target).unwrap());
+    assert!(!local_branch_exists(&repository, "project-copy").unwrap());
+    assert!(!target.exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn copied_worktree_preserves_broken_symlink_destinations_and_copies_relative_file_links() {
+    let temporary = TestDirectory::new(); let repository = temporary.0.join("project");
+    fs::create_dir(&repository).unwrap(); test_git(&repository, &["init", "--initial-branch=main"]);
+    test_git(&repository, &["commit", "--allow-empty", "-m", "Initial"]);
+    let occupied = temporary.0.join("project-occupied");
+    std::os::unix::fs::symlink("missing-target", &occupied).unwrap();
+    assert!(create_local_git_worktree(repository.to_str().unwrap(), "occupied").err().unwrap().contains("Worktree directory already exists"));
+    assert_eq!(fs::read_link(&occupied).unwrap(), PathBuf::from("missing-target"));
+    fs::write(repository.join("file"), "contents").unwrap();
+    std::os::unix::fs::symlink("file", repository.join("link")).unwrap();
+    std::os::unix::fs::symlink("missing", repository.join("broken")).unwrap();
+    let copied = create_local_git_worktree(repository.to_str().unwrap(), "copy").unwrap();
+    let target = Path::new(&copied.path);
+    assert_eq!(fs::read_link(target.join("link")).unwrap(), PathBuf::from("file"));
+    assert_eq!(fs::read_link(target.join("broken")).unwrap(), PathBuf::from("missing"));
+    assert_eq!(fs::read_to_string(target.join("link")).unwrap(), "contents");
+}
+
+#[test]
+fn copied_worktree_combines_staged_unstaged_binary_and_untracked_changes() {
+    let temporary = TestDirectory::new(); let repository = temporary.0.join("project");
+    fs::create_dir(&repository).unwrap(); test_git(&repository, &["init", "--initial-branch=main"]);
+    fs::write(repository.join("tracked"), "original\n").unwrap();
+    fs::write(repository.join("binary"), [0, 1, 2]).unwrap();
+    test_git(&repository, &["add", "."]); test_git(&repository, &["commit", "-m", "Initial"]);
+    fs::write(repository.join("tracked"), "staged\n").unwrap(); test_git(&repository, &["add", "tracked"]);
+    fs::write(repository.join("tracked"), "unstaged final\n").unwrap();
+    fs::write(repository.join("binary"), [0, 255, 17, 0]).unwrap();
+    fs::create_dir(repository.join("nested")).unwrap();
+    fs::write(repository.join("nested/new file"), "new content").unwrap();
+    fs::write(repository.join(".gitignore"), "ignored\n").unwrap();
+    fs::write(repository.join("ignored"), "not copied").unwrap();
+    let index_before = fs::read(repository.join(".git/index")).unwrap();
+    let result = create_local_git_worktree(repository.join("nested").to_str().unwrap(), "copy").unwrap();
+    let target = Path::new(&result.path);
+    assert_eq!(result.branch, "project-copy");
+    assert_eq!(fs::read_to_string(target.join("tracked")).unwrap(), "unstaged final\n");
+    assert_eq!(fs::read(target.join("binary")).unwrap(), vec![0, 255, 17, 0]);
+    assert_eq!(fs::read_to_string(target.join("nested/new file")).unwrap(), "new content");
+    assert!(!target.join("ignored").exists());
+    assert_eq!(fs::read(repository.join(".git/index")).unwrap(), index_before);
+    assert_eq!(fs::read_to_string(repository.join("tracked")).unwrap(), "unstaged final\n");
+    let staged = Command::new("git").arg("-C").arg(target).args(["diff", "--cached", "--quiet"]).status().unwrap();
+    assert!(staged.success(), "copied edits should be unstaged in the new checkout");
+}
+
+#[test]
+fn copied_worktree_rejects_invalid_refs_and_existing_destinations_before_mutation() {
+    let temporary = TestDirectory::new(); let repository = temporary.0.join("project");
+    fs::create_dir(&repository).unwrap();
+    assert_eq!(create_local_git_worktree(repository.to_str().unwrap(), "copy").err().unwrap(), "Project is not a Git repository");
+    test_git(&repository, &["init", "--initial-branch=main"]);
+    test_git(&repository, &["commit", "--allow-empty", "-m", "Initial"]);
+    assert!(create_local_git_worktree(repository.to_str().unwrap(), "bad..ref").err().unwrap().contains("Invalid Git branch"));
+    test_git(&repository, &["branch", "project-existing"]);
+    assert!(create_local_git_worktree(repository.to_str().unwrap(), "existing").err().unwrap().contains("Git branch already exists"));
+    let target = temporary.0.join("project-occupied"); fs::create_dir(&target).unwrap();
+    fs::write(target.join("keep"), "untouched").unwrap();
+    assert!(create_local_git_worktree(repository.to_str().unwrap(), "occupied").err().unwrap().contains("Worktree directory already exists"));
+    assert_eq!(fs::read_to_string(target.join("keep")).unwrap(), "untouched");
+    assert!(!local_branch_exists(&repository, "project-occupied").unwrap());
+}
+
+#[cfg(unix)]
+#[test]
+fn copied_worktree_rolls_back_branch_and_registration_when_nested_file_copy_fails() {
+    let temporary = TestDirectory::new(); let repository = temporary.0.join("project");
+    fs::create_dir(&repository).unwrap(); test_git(&repository, &["init", "--initial-branch=main"]);
+    test_git(&repository, &["commit", "--allow-empty", "-m", "Initial"]);
+    let nested = repository.join("nested"); fs::create_dir(&nested).unwrap();
+    test_git(&nested, &["init", "--initial-branch=main"]);
+    test_git(&nested, &["commit", "--allow-empty", "-m", "Nested"]);
+    let socket_path = nested.join("socket");
+    let _socket = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+    let error = create_local_git_worktree(repository.to_str().unwrap(), "copy").err().unwrap();
+    assert!(error.contains("Unsupported untracked filesystem entry"), "{error}");
+    assert!(!temporary.0.join("project-copy").exists());
+    assert!(!local_branch_exists(&repository, "project-copy").unwrap());
+    assert!(!local_worktree_is_registered(&repository, &temporary.0.join("project-copy")).unwrap());
+    assert!(nested.join(".git").is_dir());
+    assert!(socket_path.exists());
+}
+
+#[test]
 fn project_inspection_batches_distinct_directories_and_updates_all_matching_sessions() {
     let root = TestDirectory::new();
     let repository = root.0.join("repo ' 日本語"); fs::create_dir(&repository).unwrap();

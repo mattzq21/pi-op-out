@@ -1706,7 +1706,12 @@ fn create_git_worktree(app: AppHandle, cwd: String, name: String, host_id: Optio
         return parse_worktree_output(output, "Could not create Git worktree");
     }
 
-    let root_output = run_limited(Command::new("git").args(["-C", &cwd, "rev-parse", "--show-toplevel"]), 64 * 1024, "Could not locate Git repository")?;
+    create_local_git_worktree(&cwd, name)
+}
+
+fn create_local_git_worktree(cwd: &str, name: &str) -> Result<GitWorktree, String> {
+    let name = worktree_suffix(name)?;
+    let root_output = run_limited(Command::new("git").args(["-C", cwd, "rev-parse", "--show-toplevel"]), 64 * 1024, "Could not locate Git repository")?;
     if !root_output.status.success() { return Err("Project is not a Git repository".into()); }
     let root = PathBuf::from(String::from_utf8_lossy(&root_output.stdout).trim()).canonicalize().map_err(|error| format!("Could not resolve Git repository: {error}"))?;
     let project = root.file_name().ok_or("Git repository directory has no name")?.to_string_lossy();
