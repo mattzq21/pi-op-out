@@ -264,7 +264,7 @@ export default function App() {
       transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }),
     ]);
     await Promise.all([
-      transport.command({ type: "set_auto_compaction", enabled: value.autoCompaction }),
+       transport.command({ type: "set_auto_compaction", enabled: true }),
       transport.command({ type: "set_auto_retry", enabled: value.autoRetry }),
     ]);
     const availableModels = modelResult.status === "fulfilled" ? modelResult.value.models : [];

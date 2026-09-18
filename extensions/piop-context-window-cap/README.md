@@ -9,7 +9,7 @@ Set the limit in `config.json`, which is read when Pi loads the extension:
 ```json
 {
   "enabled": true,
-  "contextWindowCap": 200000
+   "contextWindowCap": 300000
 }
 ```
 

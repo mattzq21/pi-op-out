@@ -73,7 +73,7 @@ Saved conversations live in `~/.piop/sessions` on each host; archived conversati
 
 `/btw` side conversations use temporary session files. Closing their pane removes those files; they do not appear in saved history.
 
-Compaction is handled by Pi's standard lifecycle: the auto-compaction setting, context cap, and `/compact` command.
+ Compaction is handled by Pi's standard lifecycle: automatic compaction, context cap, and `/compact` command.
 
 MCP servers can use stdio commands or HTTP endpoints. Stdio arguments support shell-style quoting, but commands run without a shell. Tools appear in Pi as `mcp_<server>_<tool>`.
 

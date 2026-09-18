@@ -336,8 +336,6 @@ struct AppSettings {
     #[serde(default = "default_context_window_cap_enabled")]
     context_window_cap_enabled: bool,
     #[serde(default = "default_true")]
-    auto_compaction: bool,
-    #[serde(default = "default_true")]
     auto_retry: bool,
     #[serde(default)]
     debug_mode: bool,
@@ -367,7 +365,7 @@ struct WorktreeSetupScript {
 }
 
 fn default_pi_path() -> String { "pi".into() }
-fn default_context_window_cap() -> u64 { 200_000 }
+ fn default_context_window_cap() -> u64 { 300_000 }
 fn default_context_window_cap_enabled() -> bool { true }
 fn default_true() -> bool { true }
 fn deserialize_context_window_cap<'de, D>(deserializer: D) -> Result<u64, D::Error> where D: Deserializer<'de> {
@@ -896,7 +894,7 @@ fn default_settings() -> AppSettings {
         worktree_setup_scripts: vec![],
         default_agent: default_agent(),
         default_fast_mode: false,
-        default_model: DEFAULT_MODEL.into(), hidden_models: vec![], known_models: None, default_thinking: "medium".into(), context_window_cap: default_context_window_cap(), context_window_cap_enabled: default_context_window_cap_enabled(), auto_compaction: true, auto_retry: true, debug_mode: false, keybindings: default_keybindings(),
+         default_model: DEFAULT_MODEL.into(), hidden_models: vec![], known_models: None, default_thinking: "medium".into(), context_window_cap: default_context_window_cap(), context_window_cap_enabled: default_context_window_cap_enabled(), auto_retry: true, debug_mode: false, keybindings: default_keybindings(),
         tools: ["read", "bash", "edit", "write", "grep", "find", "ls"].iter().map(|name| json!({"name": name, "description": "Pi built-in tool", "enabled": true, "builtin": true})).chain([
             json!({"name":"list_agents","description":"List agents by machine and session","enabled":true,"builtin":false}),
             json!({"name":"send_message","description":"Send a message to another agent","enabled":true,"builtin":false}),

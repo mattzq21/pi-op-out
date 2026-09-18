@@ -1,0 +1,221 @@
+# Manual wdio MCP testing - findings log
+
+Goal: manually test with wdio MCP, try to break things, record findings. Keep going until stopped.
+Started: 2026-09-16 Europe/Warsaw
+App: piop (Tauri + React + Vite), e2e via WebdriverIO (wdio.conf.ts, scripts/wdio-manual.mjs, test/e2e/).
+
+## Provenance - READ FIRST (2026-09-17 ~20:35)
+- The original log (F-001..F-073, ~328 lines) was lost 2026-09-17: an interrupted turn deleted the untracked file mid-update and a machine reboot wiped the /tmp backup. This file is a REBUILD from session context.
+- F-056 and later: bodies preserved near-verbatim from context. F-070..F-074 reproduced verbatim (authored this session; F-074 probes finished, only its write was interrupted).
+- F-001..F-055: condensed to title + essence from working notes. Treat these as POINTERS - re-verify live before citing specifics.
+- Process fix going forward: stage replacement content first, verify, then atomic-rename. Never delete-first. Backups live next to the repo state, not only /tmp.
+
+## Environment
+- Test binary at src-tauri/target/release/piop (built 2026-09-17, 24MB, release, zero errors); launcher scripts/wdio-manual.mjs run detached (setsid, log /tmp/piop-wdio-manual.log). MCP attach_session needs provider:'external' + sessionId + platform:'browser' + webdriverConfig (default provider 'local' fails; attach without sessionId fails validation).
+- REBUILT 2026-09-17 ~20:31 after reboot: app up, attached (tauri://localhost, title piop), e2e bridge present, root healthy.
+- Fake-session rig recipe (reused many times): set #pi-e2e-responses JSON (temp-chat mocks + get_snapshot as FULL SessionSnapshot {state, history:{entries,leafId}, sequence, epoch, liveTools, queue} + an extension fast command in get_commands or connect sticks on Connecting...), set #pi-e2e-calls to [], click New conversation. Reload + reconnect stable. Reload WIPES mocks. Rig lesson: get_snapshot must be the full snapshot shape or connect fails with `undefined is not an object (evaluating 're.history.entries')`.
+- execute_script needs top-level `return ...` (bare IIFE value returns nothing). No `tools` inside browser scripts. React synthetic inputs need the native value setter + input/change events. TerminalView remounts per active tab (key includes activeId) - re-query tab elements after every switch. Group-draft commit is blur-driven (Enter does nothing; focus() before blur()). Groups effect only re-fires when the session seed list changes.
+- Baselines (2026-09-17): test:extensions 32 pass, test/mobile 9 pass, test/mobile-ui.mjs PASS.
+- NOTE: worktree has user edits in progress; only FINDINGS.md is mine.
+
+## Findings
+### F-001 - wdio MCP transport died on launch_chrome({}), recovered next day
+### F-002 - web frontend without Tauri is dead-end (MCP re-verified 2026-09-17 on :5173)
+### F-003/F-006 - ZWSP bypasses composer guard and sends (RE-VERIFIED live 2026-09-17 post-rebuild, safety-mocked send)
+- Battery on fresh boot (pi_command:prompt mocked {error}, so sends are counted with zero backend effect): U+200B x1/x5/padded-with-spaces, U+200C, space+U+200D+space -> Send ENABLED and Enter dispatches pi_command (6/6 sent, draft restore only because the mock errors). U+FEFF alone -> Send DISABLED, nothing sent (String.trim strips FEFF but not ZWSP/ZWNJ/ZWJ).
+- So invisible-only input reaches the backend as a real turn on the unmocked app. Same shared-helper fix as F-017/F-032/F-041/F-066/F-072/F-075.
+### F-004 - formatCodexReset NaN/Infinity => NaNm/Infinityd (RE-VERIFIED live 2026-09-17, exact-code copy)
+- Exact copy in-page: formatCodexReset(NaN,0) -> `NaNm` (Math.max(0,NaN)=NaN propagates through hours/minutes into `Math.max(1,NaN)`); Infinity -> `Infinityd` (ceil(Infinity)); -5 -> `now` (clamped, sound). Backend-shaped resetAt hits the UI verbatim.
+### F-005 - cacheHitStats NaN rate on incomplete usage (RE-VERIFIED live 2026-09-17, exact-code copy)
+- Exact copy: cacheHitStats({}) -> {rate:NaN} (promptTokens NaN slips past the <=0 guard); {input:NaN,cacheRead:5} -> rate NaN; {input:0,cacheRead:0} -> undefined (guarded, sound). NaN rate renders into the Cache badge.
+### F-007 - ProjectDialog path edges (minor)
+### F-008 CRITICAL - applyAssistantMessageEvent unbounded contentIndex DoS (RE-VERIFIED live 2026-09-17, exact-code copy of current messages.ts, isolated)
+- Measured: contentIndex 1,000,000 -> 1,000,001-element content array in 167ms; 100k -> 7ms. No cap anywhere in the `while (content.length <= index)` fill - one malicious event with a 100M+ index hangs/OOMs the tab before any render. Integer/negative/float guards all hold (neg/1.5 -> length unchanged). Fix: clamp index (e.g. reject > len+8) + drop/warn.
+### F-009 - matchesShortcut cannot bind Ctrl++ (RE-VERIFIED live 2026-09-17, exact-code copy of current keybindings.ts, isolated)
+- `Ctrl++`.split(`+`).filter(Boolean) -> [`Ctrl`]: the `+` key itself is eaten by the parser, so no key remains and the binding can never match (verified false for every event). Same parser shape also drops empty segments silently. Fix: split on a regex that keeps `+` as a key, or document the limitation.
+### F-010 - normalizeMessage null-MESSAGE crash; null ROLES are allowlisted (RE-VERIFIED + CORRECTED live 2026-09-17, exact-code copies, isolated)
+- Correction to the old title: current branchMessages has a role allowlist (`user/assistant/tool`, else skip) - a null ROLE is safely skipped (verified `skipped`). The crash is a null/undefined MESSAGE passed straight into normalizeMessage (`message.timestamp` throws; verified) - i.e. the transport/session-pool pre-work call sites (F-050/F-057), not the role value. Missing timestamp safely falls back to Date.now().
+### F-011 - branchMessages 100k chain ~1389ms (perf note)
+### F-012 - mobile invalid host: native validation blocks most (RE-VERIFIED live 2026-09-18 on fresh :1425 mobile server)
+- `javascript:alert(1)` and `https://...` -> `Use a secure wss:// address for your Piop host.`; `wss://.../?q=1` -> `must not contain credentials, a query, or a fragment` (all verified inline, specific, zero connection attempt). The allowlist-shape gate holds.
+### F-013 - /worktree digit-name misparse + ZWSP name
+### F-014 - null PiEntry crashes history (RE-VERIFIED live 2026-09-17, exact-code copy, isolated)
+- Current branchMessages line 78 (`entries.map(entry => [entry.id, entry])`) throws on a null entry (`null is not an object (evaluating 'entry.id')`, verified); non-array entries dies on .map the same way. No guard before the Map build.
+### F-015 - ExtensionDialog select options uncapped, duplicate keys (low, 10k in ~12ms)
+### F-016 - hung extension_ui_response sticks dialog with no escape
+### F-017 - rename/relocate/MCP names/commands accept ZWSP-only (trim family; group variant confirmed live in F-072)
+### F-018 - voice spoof CONFIRMED (grouping proof + MCP screenshot demo)
+### F-019 - attached text file content can break out of <file> wrapper
+### F-020 - /catch-up silently drops attached images (+ case quirk; confirmed live in F-056)
+### F-021 - pending-drag self-move-after-self math gap (UI prevents, latent)
+### F-022 - duplicate pending-message ids confuse controls (rendered live in F-071: two rows share one data-pending-id)
+### F-023 - 200-item pending queue renders fine, no virtualization (measured)
+### F-024 - clicking another session bypasses dirty-settings guard
+### F-025 - Mod+X vs Ctrl+X functional duplicate not flagged
+### F-026 - README Ctrl+click vs code plain-click mismatch (low)
+### F-027 - storage report trusted blindly: bad category/date crashes Settings (confirmed live F-059/F-061)
+### F-028 - only first $skill expands; leftovers go literal (RE-VERIFIED live 2026-09-17, exact-code copy of current expandSkillReference, isolated)
+- Current code returns INSIDE the matchAll loop: `run $linter and $linter` -> `/skill:linter run and $linter` (verified) - the second reference survives literally inside the message. Related: values starting with `/` skip expansion entirely (`/do $linter` unchanged, verified) - which also means slash commands queued while streaming (F-074) never expand skills.
+### F-029 - duplicate PiEntry ids silently drop history (RE-VERIFIED live 2026-09-17, exact-code copy, isolated)
+- `new Map(entries.map(e => [e.id, e]))` with [{id:'a',n:1},{id:'a',n:2}] keeps n=2 at size 1 (verified): first entry vanishes with all its messages. Same last-wins shape as F-022.
+### F-030 - textOf/thinkingOf null crash breaks aborted-turn restore (RE-VERIFIED live 2026-09-17, exact-code copies of current content.ts, isolated)
+- textOf(null/undefined/42) and thinkingOf(null) all throw on .filter with the exact historical messages (verified); current code is unchanged (string fast-path, unguarded array path). This is the throw behind white-screen kills #1-3 (F-057). App untouched by the isolated probes (root intact).
+### F-031 - turnDiff trusts file-change snapshots while appendFileChanges validates (RE-VERIFIED live 2026-09-17, exact-code copies of current turnDiff.ts, isolated)
+- Verified throws: null `snapshot.patch.split` (mergeDiffSnapshots); undefined `toolCallIds.includes` (canonicalToolPath lookup); undefined `snapshot.paths.map` (the `?.` guards only the snapshot, not paths). Undefined `warnings` does NOT throw - flatMap boxes it to [null], silently propagating null into DiffViewer warnings (key + render). Partial hardening since the original note: `toolPaths` now has `?? []` in both merge and turn paths - patch/paths/ids never got the same treatment.
+### F-032 - mobile pairing ZWSP-only token bypasses 32-char check (RE-VERIFIED live 2026-09-18 on fresh :1425 server)
+- 32x U+200B (input length 32 confirmed) with fast-fail host: NO length error, connection attempted (button left Connect, ended in generic failure) - verified bypass. Control `short` correctly shows the 32-char error. Current MobileApp still trim()s (keeps ZWSP) before the length check. Same shared-helper fix as the desktop trim family.
+### F-033 - connect-failure error overwritten by generic onDisconnect (RE-VERIFIED live 2026-09-18 on fresh :1425 server)
+- Valid 32-char token + `wss://127.0.0.1:1/` ends on the generic `Connection lost. Reconnect to reload saved conversations...` (verified) - the specific `Could not connect...`/`Host rejected...` rejection never survives: current remoteClient onclose unconditionally calls onDisconnect after the specific reject, and the generic setError wins the race. Fix stands: skip onDisconnect while never-connected / preserve first error.
+### F-034 - turnDiff absolutePath '..' escapes repo base (RE-VERIFIED live 2026-09-17, exact-code copy of current absolutePath, isolated)
+- Current code still pops `..` with a no-op on empty stack: `../../etc/passwd` @ `/base/project` -> `/etc/passwd`; `/a/../../etc` @ `/base` -> `/etc` (both verified). Tool-provided relative patch paths with `..` still reference outside the repo and merge into the turn diff.
+### F-035 (minor) - ZWSP in hostname silently stripped, stored unnormalized (stored value diverges from connected href)
+### F-036 (minor) - DiffViewer trusts numeric additions/deletions (RE-VERIFIED live 2026-09-17, exact-code copy)
+- Exact reduce: [{additions:'5'},{additions:3}] -> `053` (string concat from 0 seed, renders `+053`); [{additions:NaN}] -> NaN. Same Number()+finite-guard fix as F-004/F-005.
+### F-037 - session-group backend trust: null group name REFINED in F-072 (no render crash; bricks creation silently instead)
+### F-038 - Android back button cannot dismiss dialogs (synthetic cancel never closes; needs .close())
+### F-039 (minor) - initialWindowTarget accepts arrays as targets
+### F-040 - extension widget/status paths uncapped; object widget line crashes ChatView (100k lines flatten ~89ms; object entry throws React object-child)
+### F-041 - ZWSP-only draft triggers discard-confirm (trim family)
+### F-042 - keybinding matcher looseness + frontend/backend validation mismatch (RE-VERIFIED live 2026-09-17, exact-code copy of current matchesShortcut, isolated; hijack demonstrated live in F-067)
+- Verified against current code: `Ctrl+N+XYZ` matches a Ctrl+N press (only the FIRST non-modifier part is compared, extras ignored); `Ctrl+Control` matches a lone Control tap (modifier satisfies the key position); bare `Space` matches a no-modifier space press (the F-067 typing-hijack primitive - backend canonical_shortcut accepts it while the frontend record UI demands a modifier). Fix: share one canonicalizer frontend+backend + target check when typing.
+### F-043 - aborted-turn restore silently dropped when composer non-empty (consumed-before-check)
+### F-044 - prompt-context backend trust: crash + silently wrong wheel in debug view
+### F-045 - HooksSettings trusts HookListing shape (null hooks / bad entry crash)
+### F-046 - skill-block parser case-sensitive but its literal detector is not (RE-VERIFIED live 2026-09-17, exact-code copy of current userMessageParts, isolated)
+- Current Message.tsx:112 invocation regex still has no `i` flag while the line-113 fallback literalSkill test still has it. Uppercase `<SKILL name="Foo" ...>` block -> skills [], literalSkill true, whole 78-char block as text (verified); empty `name=""` -> same (`[^"]+` needs 1+ chars, verified). Worst of both paths, unchanged.
+### F-047 (minor) - array toolInput debracing strips brackets, misreads args
+### F-048 - extensionless text files rejected as attachments (Makefile/Dockerfile/LICENSE all reject; gate on content not suffix)
+### F-049 (low) - dictionary replacements re-interpreted as skill syntax (RE-VERIFIED live 2026-09-17, current pipeline order + expansion half, isolated)
+- Current Composer line 268 still runs `expandSkillReference(applyDictionary(...))` (dictionary FIRST, skill expansion SECOND), and the expansion half is live: dict output `run $linter` -> `/skill:linter run` (verified). So a dollar-sign in dictionary replacement text is still hijacked into a skill call. Fix stands: expand skills first, then dictionary (dict output literal).
+### F-050 - transport event pump has no isolation: one poison event starves all listeners (made visible in F-057: user-role null dies in pool, app lives; assistant-role null kills app)
+### F-051 (low) - pending rows embed full message text in aria-labels and titles (~5x per row)
+### F-052 (low) - live-message id registry grows on backend-controlled role strings
+### F-053 (low) - FindInPage: pasted multi-line / tab queries never match (RE-VERIFIED live 2026-09-17, rigged history + .find-count)
+- Rig: mocked snapshot history (user `alpha beta gamma`, assistant `delta epsilon zeta`), Ctrl+F from composer, read `.find-count`. Control `beta` -> `1 / 1`; `delta` -> `1 / 1`. Query with real newline (`alpha<NL>beta`), literal tab (`alpha<TAB>beta`), double-space (`beta  gamma`) -> all `No matches` although the words sit visibly adjacent. Text side collapses whitespace runs, query side compiles verbatim. Same collapse-the-query fix as proposed.
+### F-054 (low) - FindInPage: matches spanning block boundaries never found (RE-VERIFIED live 2026-09-17, same rig)
+- Query `gamma delta` (spanning the two .message-body blocks) -> `No matches`; flush() on closest() change confirmed in code. Coverage gap confirmed: a phrase split across two paragraphs of ONE long message still misses.
+### F-055 (low) - context-cap input has no max; backend overflow error misleads (`must be a whole number` for all-digit overflow)
+
+### F-056 - F-020 CONFIRMED live: /catch-up silently drops images; case variant keeps them (2026-09-17, MCP-verified end-to-end on desktop binary)
+- Fake-session rig with real pasted 8x8 PNGs. `/catch-up summarize this` + 2 PNGs -> pi_command prompt with NO images key; chips cleared, composer cleared, zero error. Normal `hello with image` -> images:[1].
+- `/CATCH-UP loud version` + image -> images:[1]: the App.tsx intercept regex is case-sensitive, so the case variant bypasses the strip. Payload shape depends on caps-lock.
+- Killed candidate: mixed-case File.type can never reach the misrouted text branch (File constructor lowercases type). Fix: throw loudly like /worktree or forward images; align case handling with the backend.
+
+### F-057 CRITICAL - one malformed backend event white-screens the whole app (2026-09-17, MCP-verified live 3x on desktop binary)
+- Assistant-role message_start with content:null (or any non-array, e.g. 42) deterministically unmounts the entire React tree: #root emptied, white screenshot, no error UI/toast, reload required. Errors: minified textOf/thinkingOf (F-030) via normalizeMessage.
+- Asymmetry: user-role null content throws in the POOL listener first (textOf) and the app LIVES (F-050 starvation made visible); assistant-role passes the pool untouched and the SAME throw one listener later is fatal. Whether one bad event kills the app depends on listener order, not validation.
+- Recovery: reload + rig reconnect works every time (~250ms); no persisted corruption. Fix: F-030 guard + F-050 emit-boundary validation + a root error boundary. White-screen kills total after this turn: #1-3.
+
+### F-058 (low) - file-drop follows `..` out of scope, message hides the real path (2026-09-17, MCP-verified on desktop binary)
+- onDrop parses text/uri-list file:// URLs but resolves `..` freely: dropping file:///tmp/piop-drop/../piop-drop2/b.txt attached b.txt with no warning. Same unclamped-`..` shape as F-034.
+- Sent message embeds only <file name=b.txt> (basename), hiding origin. Low exploitability (real OS drops carry genuine paths); F-048 accidentally sandboxes extensionless system files. Fix: normalize + confirm/clamp out-of-scope paths.
+
+### F-059 CRITICAL - F-027 confirmed live: one unknown storage category white-screens Settings (2026-09-17, MCP-verified, 4th F-057-class kill)
+- Mocked storage_report with a single bogus category id, opened Settings -> Storage: TypeError on categoryDetails[id].icon -> #root emptied, no error UI. Plain navigation + slightly-off backend data is enough.
+- Fix: validate at trust boundary, fallback icon/row, root boundary. App reloaded healthy on fresh boot (no mocks).
+
+### F-060 CRITICAL - stored pre-toggleDebugMode keybindings white-screen Keybinds on real backend (2026-09-17, MCP-verified, 5th kill, zero mocks)
+- Opening Settings -> Keybinds with REAL stored settings: undefined.trim throw on the missing toggleDebugMode key -> #root emptied. No mocks, plain navigation on the release binary. Worst of the family: every upgrader with old settings hits it.
+- Chain: keybindDefinitions has 6 actions but stored config predates toggleDebugMode and the backend serves it verbatim with no backfill. Fix: backfill missing defaults at the trust boundary (backend on load, or frontend ?? default + trim-guard).
+
+### F-061 - F-027 archive half confirmed live: bad date/name white-screen Storage, bad size prints NaN (2026-09-17, MCP-verified, kills #6-7)
+- modifiedAt:'yesterday-ish' -> RangeError in DateTimeFormat -> white screen; name:{evil:'object'} -> React error #31 -> white screen. Both via plain Settings -> Storage navigation.
+- byteSize:'not-a-number' SURVIVES but renders `NaN KiB` (formatBytes has no finite-guard; F-004/F-005/F-036 family). Fix: validate archives at boundary + finite-guard formatBytes + root boundary.
+
+### F-062 (low) - pool retain failures surface under a misleading `Project changes` notice (2026-09-17, MCP-verified live)
+- Mocked pi_command:get_state as {error} then emitted user message_start: retainSession .catch fired errorHandler and a `Project changes` notice appeared - wired end to end, app alive. Title shared with diff save/load failures. Fix: distinct title (e.g. `Conversation list`).
+
+### F-063 (low) - mobile reconnect loop: wrong-situational message, no throttling, reload wipes form (2026-09-17, MCP-verified on :1424)
+- Fast-fail endpoint lands on generic `Connection lost...` (F-033 re-confirmed). 5 rapid retries: no stacking, token+host retained in DOM, but no backoff/counting; nothing persisted; reload wipes host+token. Fix: preserve first connect error, consider attempt spacing.
+
+### F-064 (low) - session list has no virtualization: 5k sessions render 5k nodes, clear-search janks ~5s (2026-09-17, MCP-verified)
+- Mocked list_sessions with 5000 entries: all 5001 .session-item nodes mounted. Search filters in ~1s; CLEARING re-mounts at ~4.6s jank. Same shape as F-023 but sessions scale worse. Fix: virtualize or windowed render.
+
+### F-065 (low) - project picker silently opens home for nonexistent input (2026-09-17, MCP-verified live, real backend)
+- Home-rooted folder browser with zero inline validation for ANY typed input (ZWSP, nonexistent, absolute, ../../etc, empty). Nonexistent filter closes the dialog and selects ~ with no error. ../../etc does NOT escape (clamped) - the silent-fallback is the finding. Fix: error on unresolvable input instead of silent home.
+
+### F-066 (low) - dictionary accepts ZWSP-only words: valid-looking dead entries (2026-09-17, MCP-verified live, zero writes)
+- Add word with 3x U+200B + normal replacement: NO validation alerts, Save ENABLED. Exact-code copy proves it dead (0 matches on plain text). Draft discarded, dictionaries verified [] after. Fix: shared invisible-char-aware blank check.
+
+### F-067 - F-042 live end-to-end: bare-Space binding saved via backend, every spacebar press toggles UI and eats the space (2026-09-17, MCP-verified, restored)
+- Saved toggleConversations=`Space` via backend directly (bypassed F-060-crashed Keybinds view): ACCEPTED and persisted. Typing `hi there` preventDefaulted the space (`hithere`) AND closed the conversations panel. Every spacebar press = lost space + panel toggle.
+- Restored to exact 5 stock bindings, space confirmed un-hijacked, composer cleared. Fix: share one canonicalizer frontend+backend + skip global shortcuts when typing in inputs.
+
+### F-068 (low) - extension event surface: title spoof + unbounded never-expiring toasts (2026-09-17, MCP-verified live, cleaned)
+- setTitle accepts arbitrary text: set window title to `piop - 3 updates available, click here` (restored after). Spoof family with F-018.
+- 60 notify events -> 60 stacked toasts, no cap/dedup/expiry (still present after 30s+), ~1/sec manual dismissal each. Fix: cap stack, dedup, auto-expire info.
+- Resilient alongside: 500 distinct setStatus keys absorbed; 15-deep input-dialog queue shows one at a time, every Cancel advanced cleanly (F-016 stickiness NOT reproduced). Cleaned via reload.
+
+### F-069 (low) - worktree name validation is backend-only; picker mangles absolute paths, passes symlinks raw (2026-09-17, MCP-verified live + code)
+- WorktreeDialog.create checks ONLY emptiness; /worktree <name> has zero client-side checks (`probe-wt-2` chain ran checkpoint + group add + setup, all mocked, no crash). ../, existing-branch, absolute names are the backend's problem alone.
+- Picker live edges (real backend): absolute /tmp/... input gets ~/-concatenated into `Could not browse /home/matt//tmp/` (raw OS error, home-jail by accident); symlinked dirs selectable, backend receives UNCANONICALIZED link path. Ordering note: with no messages /worktree reports `No response exists` before the no-git gate - environment problems hide behind history problems.
+### F-070 - /catch-up while streaming bypasses the queue AND drops images (2026-09-17, MCP-verified live)
+- While streaming (banner `piop is working`, placeholder `Queue a follow-up...`), Enter sends `follow_up` and Ctrl+Enter sends `steer` (both MCP-verified against wt-probe mocks, composer cleared, zero pending without queue_update), Shift+Enter sends nothing with draft preserved (correct), `/worktree probe-name` correctly blocked inline (`Stop or pause the agent before branching`, composer preserved, zero pi_command).
+- `/catch-up summarize while streaming` + Enter while streaming -> `pi_command` type `prompt` (NOT steer/follow_up), composer cleared, no pending row, no warning. App.tsx send() checks `/^\/catch-up/` BEFORE the behavior branch and calls `transport.command({type:"prompt"})` directly, jumping the streaming queue. Daemon handle() re-queues NON-slash prompts while working as steer/follow_up, but slash prompts fall through as prompt - concurrent-turn collision risk.
+- Double fault with image: pasted real PNG + `/catch-up with image while streaming` -> prompt with NO images key, chips cleared silently (F-056 reproduced in streaming state). Positive controls with the same paste path: normal text + PNG -> follow_up with images:[1]; Ctrl+Enter `steer with image` -> steer with images:[1]. Images survive the streaming queue; only catch-up drops them.
+- Streaming ended cleanly via agent_end + agent_settled (banner gone, placeholder normal, #root intact, zero errors). Fix: route /catch-up through the streaming behavior while working (or reject inline like /worktree), and forward images or throw loudly instead of silent drop.
+
+### F-071 - pending-queue actions healthy, but one object message white-screens the app (2026-09-17, MCP-verified live, kill #8)
+- Actions verified on a rebuilt temp-chat rig (pi_command:change_pending mocked): Steer<->Queue toggle, same-behavior moveUp, and remove all send the correct `pi_command:change_pending` with the right id/action; backend `{error}` surfaces inline as `.upload-error` with rows preserved; cross-behavior move buttons are disabled by design (peers are same-behavior only, so only drag reorders across steer/followUp).
+- Duplicate ids (F-022 live): two rows with id `pq-dup` render side by side sharing one `data-pending-id` (React key clash) - every control addresses the bare id, so the backend cannot tell `first copy` from `second copy`.
+- CRITICAL, F-057 family kill #8: `queue_update` with `pendingMessages:[{id:`pq-obj-only`, message:{evil:`object`}, behavior:`steer`}]` empties #root (0 children, 0 rows, minified React error #31 `object with keys {evil}`) - Composer renders `{message.message}` plus the full text into aria-labels/titles (F-051) with no type guard. Isolation: `{message:null}` renders one empty-text row and clears fine; missing `behavior` renders followUp-like (toggle `Steer`, moveUp disabled) and sends `change_pending/steer` fine. Only non-string message kills.
+- Rig lesson: after a reload the get_snapshot mock must be a full SessionSnapshot (`{state, history:{entries,leafId}, sequence, epoch, liveTools, queue}`) or connect sticks on `Connecting to piop...` with toast `undefined is not an object (evaluating 're.history.entries')`. Fix: validate pendingMessages at the trust boundary (string message, allowlisted behavior, drop + warn) + the ever-needed root error boundary.
+
+### F-072 - session-group validation holes + poisoned null-name group bricks creation silently (2026-09-17, MCP-verified live)
+- Healthy: empty create -> `Enter a group name.` (draft kept, 0 backend calls); exact-duplicate `Alpha` -> `A project or group already uses that name.`; rename -> `Recent` blocked the same way; backend `{error}` on rename surfaces inline as `Error: backend exploded` with the draft kept. Rename errors have no alert role/describedby (create uses `#new-group-error`) - screen-reader gap.
+- Holes: ZWSP-only name passes and calls backend `create` with an invisible name (F-017 trim family); case-variant `alpha` alongside `Alpha` is ALLOWED (measured `Intl.Collator(base).compare('Alpha','alpha') === -1`, so the dup check is case-sensitive in practice - near-identical headings coexist); 5000-char name accepted with zero caps (same uncapped shape as F-040).
+- Poisoned group via mocked `load_session_groups` (`[{id:'evil-1', name:null}]`): renders as an EMPTY heading with NO crash (refines F-037 - the render path never trims; sort `compare` coerces null). But it BRICKS every later create/rename: `groupNameTaken` throws on `evil.name.trim()` inside async `finishGroup` -> unhandled rejection, draft stuck open with ZERO feedback (empty sibling, `aria-invalid=false`, 0 backend calls), plus a `Rename group null` aria-label. Availability kill, no white-screen.
+- Rig lessons: the groups effect only re-fires when the session seed list CHANGES (static mocks never reload groups - had to add a session); group-draft commit is blur-driven (Enter does nothing; `blur()` on an unfocused input fires nothing - `focus()` first). Fix: invisible-aware blank check + true case-insensitive dup check + length cap + trust-boundary group validation (string non-blank names) + surface async errors.
+
+### F-073 (low, mostly healthy) - terminal multi-tab edges: cap communicated, routing isolated, errors recover (2026-09-17, MCP-verified live)
+- Cap: 8 tabs reached, the Add button is REPLACED by a disabled `Terminal limit reached` indicator (plus Delete/Close) - no silent no-op reachable via UI; the `tabs.length >= 8` guard in `addTerminal` is defense-in-depth only. Clean.
+- Input routing isolation live-proven: typed `TABFIVE` on tab 5 and `TABTWO` on tab 2 went out as `write_terminal` with two DISTINCT terminalIds matching the active tab each time. Close-middle lands focus on the slid-in neighbor (index clamp), exactly 1 `close_terminal`; closing all 8 one by one auto-closes the panel with zero notices and #root intact.
+- Error paths sound: `close_terminal` failure keeps the tab with a `Could not close terminal / <msg>` notice; `start_terminal` failure parks the tab exited with a `Restart terminal` button that fails gracefully while the backend is down and recovers (button disappears) once healthy.
+- Malformed `terminal_output`/`terminal_exit` (unknown id, null id, object data, missing fields) all absorbed - `String(event.terminalId ?? '')`/`String(event.data ?? '')` coercion plus id-match guards are the good pattern.
+- Methodology gotcha: TerminalView is keyed by active terminal id, so switching tabs REMOUNTS the view - cached element handles go stale and click detached nodes silently. Re-query tabs after every switch. Untested: reopen-after-close-all (a reload raced the check).
+
+### F-074 - slash commands have three different streaming behaviors, no UI hint (2026-09-17, MCP-verified live, extends F-070)
+- Matrix while streaming (banner `piop is working`, all Enter/Ctrl+Enter sends mocked): `/worktree x` -> blocked inline (`Stop or pause the agent before branching`, draft kept - the good pattern); `/catch-up x` + Enter AND +Ctrl+Enter -> `prompt` both times (queue bypass per F-070, steer modifier silently ignored); `/compact some notes` + Enter -> `follow_up` and +Ctrl+Enter -> `steer`, both with the LITERAL text `/compact ...` - compaction does NOT run, zero indication.
+- So the three slash families diverge silently: block vs bypass vs queue-as-text. Queued `/compact ...` is the most surprising: the user asked for compaction and instead a chat message containing the slash text is queued behind the turn (what the backend does with a queued slash on dequeue is unobserved - mock absorbs - but both outcomes, late-compact or literal slash text to the model, are surprising). Idle Ctrl+Enter degrades to `prompt` (steer silently dropped, same visible outcome, harmless).
+- Stream started/ended cleanly around the battery (agent_start/end + settled, banner gone, #root intact). Fix: treat all slash commands like /worktree while streaming (inline `Stop or pause...`), or route explicitly per command; at minimum hint it in the `Queue a follow-up...` placeholder.
+- NOTE: probes finished 2026-09-17 ~20:2x; only this finding's write was interrupted by the session break (log rebuild). Evidence stands as observed.
+
+
+### F-075 - relocate dialog: sound errors and cancel, but ZWSP-only path reaches the backend (2026-09-17, MCP-verified live)
+- Trigger: session with `cwdExists:false` -> click opens the `Locate conversation project` input dialog (ExtensionDialog method input; prefill from another healthy session cwd, else empty). Battery on the relaunched rig with `relocate_session` mocked.
+- Healthy: empty submit -> `Path can't be empty`, 0 backend calls, dialog kept; backend `{error:'destination gone'}` on a visible path -> verbatim inline `.dialog-error`, dialog preserved; Cancel -> dialog closes, no calls. Specific errors throughout (no F-033 generic overwrite here). Success path with a valid dir NOT driven end-to-end (needs restoreConnection + full session mocks behind it).
+- Hole: ZWSP-only input passes the `response.value.trim()` empty check (trim family: F-017/F-032/F-066/F-072) -> `relocate_session` called with an invisible cwd. The real backend then failed a stage later with `Could not locate session file: No such file or directory (os error 2)` - specific and dialog-preserving, but a confusing OS error for an invisible typo. Fix: shared invisible-char-aware blank check before the backend call.
+
+## Resilience notes (condensed in rebuild; full prose was in lost original)
+- appendFileChanges validation is the good pattern (type-checks cwd/patch/ids/paths, filters toolPaths/warnings); turnDiff/session-groups/voice-context should copy it.
+- Uploads are the good cap pattern (count + 24MB total, per-kind caps, fatal-UTF8 + NUL checks, image decode verification, double-checked inside the state updater); the gap is only the suffix gate (F-048).
+- Keybinding backend validation solid (canonical dup detection, Ctrl+G reserved, single-char needs modifier); gaps only the modifier-less multi-char hole + matcher looseness (F-042). Terminal output has a sound 1MB cap.
+- MCP add-form is the gold pattern (required-name inline error, timeout bounded BOTH sides 1..600, duplicate-name detection, Save disabled until valid).
+- terminal_output String() coercion + id-match guards are the good pattern for event payloads.
+- Settings section walk clean (Hooks/Tools/Agents/Skills/Machines/Dictionaries/MCP/Worktree scripts, zero errors). Voice degrades gracefully (HTTP 429 surfaced inline; account rate-limiting voice at the time).
+- Daemon spawn reviewed (daemon.rs): local path execs node directly, no shell; remote wraps broker script with shell_quote over ssh; poisoned-mutex handling disconnects cleanly.
+- White-screen kill count: 8 (F-057 x3, F-059, F-060, F-061 x2, F-071). Silent-brick count: 1 (F-072 null-name group). No error boundary exists at root (main.tsx).
+
+## In progress
+- 2026-09-17 ~20:35 REBUILT log after loss (see Provenance). Rig relaunched post-reboot: launcher detached, app pid alive, MCP attached external (tauri://localhost, e2e bridge present, #root healthy). Binary is the Sep-17 e2e release build; no rebuild needed.
+- Next: relocate_session flow, or voice edge if quota recovered, or re-verify condensed F-001..F-055 bodies one family at a time.
+- 2026-09-17 relocate-dialog DONE (F-075: empty/backend-error/cancel sound, ZWSP hole). Parked HEALTHY after reload (see below). Next: voice edge if quota recovered, or re-verify condensed F-001..F-055 bodies.
+
+- 2026-09-17 voice recheck: still HTTP 429 (~8h after first 429), same graceful inline .voice-error, call UI auto-closed, root intact. Selector lesson: Voice button has NO aria-label (accessible name comes from inner text) - button[aria-label="Voice"] never matches; query .voice-toolbar button instead. Parked HEALTHY on fresh boot (root intact, zero mocks). Next: re-verify condensed F-001..F-055 bodies, or attachment-in-queue streaming edges.
+- 2026-09-17 attachment-in-queue battery (all healthy, no new finding): text file + steer -> <file> wrapper preserved in queued message; image-only + Enter while streaming -> follow_up "Describe the attached image." + images:[1]; image pasted for image-incapable model -> inline image-input toast, nothing sent, text chip kept. Rig lesson: session_switched refresh replaces event-driven streaming state with the snapshot (mock said idle, banner cleared) - rig artifact, not product behavior. Parked HEALTHY on fresh boot (root intact, zero mocks). Next: re-verify condensed F-001..F-055 bodies, or /btw + split-pane streaming edges.
+- 2026-09-17 F-003/F-006 RE-VERIFIED live (first condensed entry promoted back to verified; method: safety-mocked send counting). Parked HEALTHY on fresh boot. Next: numeric display-trust family (F-004/F-005/F-036) exact-code re-probes.
+
+- 2026-09-17 numeric display-trust RE-VERIFIED (F-004/F-005/F-036 exact-code copies all match). Three condensed entries promoted. Parked HEALTHY (no rig needed, fresh boot). Next: backend-trust family re-probes (F-010/F-014/F-030 pattern level) or FindInPage whitespace pair.
+
+- 2026-09-17 FindInPage pair RE-VERIFIED (F-053 newline/tab/double-space + F-054 cross-block, all via .find-count). Rig note: reload races an in-flight execute_script (script timeout = navigation happened, harmless). Parked HEALTHY on fresh boot. Next: backend-trust crash family (needs white-screen reloads) or keybinding/dictionary validation edges.
+
+- 2026-09-17 backend-trust patterns RE-VERIFIED (F-010 corrected: roles allowlisted, null-MESSAGE is the crash; F-014/F-029/F-030 exact-code isolated). 10 condensed entries promoted total. Parked HEALTHY (isolated probes, no rig). Next: F-031 turnDiff guards, or keybinding/dictionary validation edges.
+
+- 2026-09-17 turnDiff pair RE-VERIFIED (F-031 all four snapshot-shape throws/non-throw + F-034 escape, exact-code isolated). 12 condensed entries promoted total. Parked HEALTHY (no rig). Next: keybinding/dictionary validation edges, or F-008 contentIndex DoS pattern probe.
+
+- 2026-09-17 DoS+matcher RE-VERIFIED (F-008 scaling measured, F-009 parser eaten-plus, F-042 all three loosenesses). 15 condensed entries promoted total. Parked HEALTHY (isolated probes, no rig). Next: mobile pairing/validation edges (F-012/F-032/F-033) or skill/dictionary expansion pair.
+
+- 2026-09-17 skill/dictionary trio RE-VERIFIED (F-028 first-only + slash-skip, F-046 case/empty-name, F-049 order + expansion half). 18 condensed entries promoted total. Parked HEALTHY (isolated probes, no rig). Next: mobile pairing edges (needs mobile server) or F-011/F-023/F-064 perf-note confirmations.
+
+- 2026-09-18 mobile pairing trio RE-VERIFIED (F-012 specific rejections, F-032 ZWSP bypass, F-033 generic overwrite) on a fresh :1425 server from this worktree. Side notes: port 1424 is held by another worktree's vite (used 1425); launch_chrome transport is broken again (F-001 pattern) but start_session platform browser works. 21 condensed entries promoted total. Desktop app currently DOWN (needs relaunch for desktop probes). Next: relaunch desktop rig, then F-011/F-023/F-064 perf confirmations.
+

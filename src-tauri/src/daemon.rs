@@ -23,7 +23,7 @@ impl Daemon {
         let agent_revision = runtime.agent_config_revisions.lock().map_err(|_| "Agent configuration lock was poisoned")?.get(host_id).copied().unwrap_or(0);
         let mut settings_value = runtime_settings(settings);
         if let Some(servers) = settings_value["mcpServers"].as_array_mut() { for server in servers { if let Some(server) = server.as_object_mut() { server.remove("status"); server.remove("error"); } } }
-        self.request(json!({"type":"configure","configuration":{"settings":settings_value,"autoCompaction":settings.auto_compaction,"autoRetry":settings.auto_retry,"agentRevision":agent_revision}})).map(|_| ())
+         self.request(json!({"type":"configure","configuration":{"settings":settings_value,"autoCompaction":true,"autoRetry":settings.auto_retry,"agentRevision":agent_revision}})).map(|_| ())
     }
 
     pub(crate) fn matches_connection(&self, settings: &AppSettings, host_id: &str) -> bool {

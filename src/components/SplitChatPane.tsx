@@ -34,7 +34,7 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
     const lifecycle = ++lifecycleRef.current; let closing = false; let reconnecting = false; let connectedOnce = false;
     runtimePool.setInteractive(transport, true);
     const configure = () => Promise.all([
-      transport.command({ type: "set_auto_compaction", enabled: settings.autoCompaction }), transport.command({ type: "set_auto_retry", enabled: settings.autoRetry })
+       transport.command({ type: "set_auto_compaction", enabled: true }), transport.command({ type: "set_auto_retry", enabled: settings.autoRetry })
     ]);
     const connectRuntime = async (initial: boolean) => {
       if (reconnecting || closing) return;
@@ -75,7 +75,7 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
     void connectRuntime(true);
     return () => { closing = true; runtimePool.setInteractive(transport, false); document.title = "piop"; reconnectRef.current = () => undefined; unsubscribe(); queueMicrotask(() => { if (lifecycleRef.current === lifecycle) void onReleaseTransport(transport); }); };
   }, [transport, forkFrom, initialPrompt, handleEvent, refresh, onDialogRequest, onDialogTransportClosed, onReleaseTransport]);
-  useEffect(() => { if (!connected) return; void Promise.all([transport.command({ type: "set_auto_compaction", enabled: settings.autoCompaction }), transport.command({ type: "set_auto_retry", enabled: settings.autoRetry })]).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))); }, [connected, settings.autoCompaction, settings.autoRetry, transport]);
+   useEffect(() => { if (!connected) return; void Promise.all([transport.command({ type: "set_auto_compaction", enabled: true }), transport.command({ type: "set_auto_retry", enabled: settings.autoRetry })]).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))); }, [connected, settings.autoRetry, transport]);
   const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => {
     if (!connectedRef.current) return Promise.reject(new Error("piop is still connecting"));
     if (/^\/catch-up(?:\s|$)/.test(text)) { await transport.command({ type: "prompt", message: text }); return true; }

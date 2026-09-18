@@ -114,6 +114,16 @@ function userMessageParts(content: string) {
   return { skills: [invocation[1]], text: (invocation[2] ?? "").trim(), literalSkill: false };
 }
 
+function formatMessageTime(timestamp?: number) {
+  if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) return undefined;
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return {
+    short: date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
+    full: date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }),
+  };
+}
+
 export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = false, showActions = true, toolCount = 1, debug = false, paused = false, onBranch, onForkAndForget, onCreateWorktree, onRetry, retrying = false }: Props) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [branching, setBranching] = useState(false);
@@ -143,10 +153,12 @@ export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = 
   }
   if (message.role === "user") {
     const { skills, text, literalSkill } = userMessageParts(textOf(message.content));
-    return <article className={`message user-message${message.deliveryBehavior === "steer" ? " steering-message" : ""}`}>
+    const sentTime = formatMessageTime(message.timestamp);
+    return <article className={`message user-message${message.deliveryBehavior === "steer" ? " steering-message" : ""}`} title={sentTime ? `Sent ${sentTime.full}` : undefined}>
       <div className="message-body">{skills.map((skill) => <span className="skill-reference" key={skill}>${skill}</span>)}{text && (literalSkill ? <span className="literal-skill-content">{text}</span> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>)}</div>
       {Array.isArray(message.content) && message.content.map((part, index) => part.type === "image" && part.data && part.mimeType && /^image\/(png|jpeg|gif|webp)$/.test(part.mimeType) ? <img key={index} src={`data:${part.mimeType};base64,${part.data}`} alt="Sent attachment" style={{ maxWidth: "100%", maxHeight: 320, objectFit: "contain" }} /> : null)}
       <div className="message-actions">
+        {sentTime && <span className="message-time" title={sentTime.full}>{sentTime.short}</span>}
         <IconButton label={copyState === "copied" ? "Message copied" : copyState === "error" ? "Copy failed" : "Copy message"} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>
         {copyState === "error" && <span className="copy-feedback" role="status">Could not copy message</span>}
       </div>
@@ -156,6 +168,7 @@ export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = 
   const thinking = thinkingOf(message.content);
   const cache = cacheHitStats(turnCacheUsage ?? message.usage);
   const responseLabel = `Assistant response${message.timestamp ? ` from ${new Date(message.timestamp).toLocaleString()}` : ` ${message.id.slice(0, 8)}`}`;
+  const responseTime = formatMessageTime(message.completedAt ?? message.timestamp);
   const pausedResponse = message.stopReason === "aborted" && (paused || message.errorMessage === "Response paused");
   const failure = message.stopReason === "aborted" ? (pausedResponse ? undefined : message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
   const branch = async () => {
@@ -168,7 +181,7 @@ export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = 
     forgettingRef.current = true; setForgetting(true);
     try { await onForkAndForget(message); } finally { forgettingRef.current = false; setForgetting(false); }
   };
-  return <article className={`message assistant-message ${thinking ? "reasoning-message" : ""}`} aria-label={responseLabel}>
+  return <article className={`message assistant-message ${thinking ? "reasoning-message" : ""}`} aria-label={responseLabel} title={responseTime ? `Responded ${responseTime.full}` : undefined}>
     <div className="message-body">
       {thinking && <div className="reasoning-text"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{thinking}</ReactMarkdown></div>}
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{output}</ReactMarkdown>
@@ -177,6 +190,7 @@ export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = 
       {message.streaming && <span className="stream-caret" />}
       {diff && <DiffViewer {...diff} />}
       {showActions && !message.streaming && (output.trim().length > 0 || onCreateWorktree) && <div className="message-actions">
+        {responseTime && <span className="message-time" title={responseTime.full}>{responseTime.short}</span>}
         <IconButton label={copyState === "copied" ? `${responseLabel} copied` : copyState === "error" ? `Copy failed for ${responseLabel.toLowerCase()}` : `Copy ${responseLabel.toLowerCase()}`} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>
         {copyState === "error" && <span className="copy-feedback" role="status">Could not copy response</span>}
         {onBranch && <button className="branch-button" aria-label={`Branch from ${responseLabel.toLowerCase()}`} title="Branch from here" disabled={branching || forgetting} onClick={() => void branch()}><GitBranch size={14} /></button>}
