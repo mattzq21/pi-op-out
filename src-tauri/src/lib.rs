@@ -335,10 +335,6 @@ struct AppSettings {
     context_window_cap: u64,
     #[serde(default = "default_context_window_cap_enabled")]
     context_window_cap_enabled: bool,
-    #[serde(default = "default_session_cost_limit", deserialize_with = "deserialize_session_cost_limit")]
-    session_cost_limit: f64,
-    #[serde(default = "default_session_cost_limit_enabled")]
-    session_cost_limit_enabled: bool,
     #[serde(default = "default_true")]
     auto_retry: bool,
     #[serde(default)]
@@ -371,12 +367,6 @@ struct WorktreeSetupScript {
 fn default_pi_path() -> String { "pi".into() }
  fn default_context_window_cap() -> u64 { 300_000 }
 fn default_context_window_cap_enabled() -> bool { true }
-fn default_session_cost_limit() -> f64 { 5.0 }
-fn default_session_cost_limit_enabled() -> bool { false }
-fn deserialize_session_cost_limit<'de, D>(deserializer: D) -> Result<f64, D::Error> where D: Deserializer<'de> {
-    let value = Value::deserialize(deserializer)?;
-    value.as_f64().filter(|limit| limit.is_finite() && *limit > 0.0).ok_or_else(|| de::Error::custom("Session cost limit must be a positive number"))
-}
 fn default_true() -> bool { true }
 fn deserialize_context_window_cap<'de, D>(deserializer: D) -> Result<u64, D::Error> where D: Deserializer<'de> {
     let value = Value::deserialize(deserializer)?;
@@ -740,7 +730,7 @@ fn prepare_mcp_bridge(settings: &AppSettings) -> Result<(PathBuf, PathBuf), Stri
 }
 
 fn runtime_settings(settings: &AppSettings) -> Value {
-     json!({ "tools": enabled_tool_names(settings), "skills": settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|skill| skill.get("path").and_then(Value::as_str)).collect::<Vec<_>>(), "mcpServers": settings.mcp_servers, "contextWindowCap": settings.context_window_cap, "contextWindowCapEnabled": settings.context_window_cap_enabled, "sessionCostLimit": settings.session_cost_limit, "sessionCostLimitEnabled": settings.session_cost_limit_enabled })
+    json!({ "tools": enabled_tool_names(settings), "skills": settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|skill| skill.get("path").and_then(Value::as_str)).collect::<Vec<_>>(), "mcpServers": settings.mcp_servers, "contextWindowCap": settings.context_window_cap, "contextWindowCapEnabled": settings.context_window_cap_enabled })
 }
 
 fn prepare_rtk_extension() -> Result<PathBuf, String> {
@@ -852,14 +842,12 @@ fn prepare_context_window_cap_extension(settings: &AppSettings) -> Result<PathBu
     Ok(extension_path)
 }
 
-fn prepare_session_cost_limit_extension(settings: &AppSettings) -> Result<PathBuf, String> {
+fn prepare_session_cost_limit_extension(_settings: &AppSettings) -> Result<PathBuf, String> {
     migrate_extension_directory("pi-session-cost-limit", "piop-session-cost-limit")?;
     let dir = home_dir()?.join(STORAGE_DIRECTORY).join("piop-session-cost-limit");
     ensure_private_dir(&dir)?;
     let extension_path = dir.join("index.ts");
-    let config_path = dir.join("config.json");
     atomic_write_private(&extension_path, include_str!("../../extensions/piop-session-cost-limit/index.ts").as_bytes())?;
-    atomic_write_private(&config_path, &serde_json::to_vec_pretty(&json!({ "sessionCostLimit": settings.session_cost_limit, "enabled": settings.session_cost_limit_enabled })).map_err(|error| error.to_string())?)?;
     Ok(extension_path)
 }
 
@@ -915,7 +903,7 @@ fn default_settings() -> AppSettings {
         worktree_setup_scripts: vec![],
         default_agent: default_agent(),
         default_fast_mode: false,
-          default_model: DEFAULT_MODEL.into(), hidden_models: vec![], known_models: None, default_thinking: "medium".into(), context_window_cap: default_context_window_cap(), context_window_cap_enabled: default_context_window_cap_enabled(), session_cost_limit: default_session_cost_limit(), session_cost_limit_enabled: default_session_cost_limit_enabled(), auto_retry: true, debug_mode: false, keybindings: default_keybindings(),
+         default_model: DEFAULT_MODEL.into(), hidden_models: vec![], known_models: None, default_thinking: "medium".into(), context_window_cap: default_context_window_cap(), context_window_cap_enabled: default_context_window_cap_enabled(), auto_retry: true, debug_mode: false, keybindings: default_keybindings(),
         tools: ["read", "bash", "edit", "write", "grep", "find", "ls"].iter().map(|name| json!({"name": name, "description": "Pi built-in tool", "enabled": true, "builtin": true})).chain([
             json!({"name":"list_agents","description":"List agents by machine and session","enabled":true,"builtin":false}),
             json!({"name":"send_message","description":"Send a message to another agent","enabled":true,"builtin":false}),
@@ -1105,7 +1093,6 @@ fn save_app_settings(app: AppHandle, mut settings: AppSettings, agent_host_id: O
     }
     migrate_keybindings(&mut settings);
     if settings.context_window_cap < 1000 { return Err("Context window cap must be a whole number of at least 1000".into()); }
-    if !settings.session_cost_limit.is_finite() || settings.session_cost_limit < 0.01 || settings.session_cost_limit > 100_000.0 { return Err("Session cost limit must be between $0.01 and $100,000".into()); }
     validate_dictionaries(&settings)?;
     validate_keybindings(&settings)?;
     validate_mcp_servers(&settings)?;
@@ -2110,8 +2097,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let openai_cache_lineage = shell_quote(include_str!("../../extensions/piop-openai-cache-lineage/index.ts"));
     let fast_mode = shell_quote(include_str!("../resources/fast-mode.bundle.mjs"));
     let diff_watch = shell_quote(include_str!("../../extensions/piop-diff-watch/index.ts"));
-     let context_window_config = shell_quote(&serde_json::to_string_pretty(&json!({ "contextWindowCap": settings.context_window_cap, "enabled": settings.context_window_cap_enabled })).map_err(|error| error.to_string())?);
-     let session_cost_limit_config = shell_quote(&serde_json::to_string_pretty(&json!({ "sessionCostLimit": settings.session_cost_limit, "enabled": settings.session_cost_limit_enabled })).map_err(|error| error.to_string())?);
+    let context_window_config = shell_quote(&serde_json::to_string_pretty(&json!({ "contextWindowCap": settings.context_window_cap, "enabled": settings.context_window_cap_enabled })).map_err(|error| error.to_string())?);
     let mcp_bridge = shell_quote(include_str!("../resources/mcp-bridge.bundle.mjs"));
     let mcp_config = shell_quote(&serde_json::to_string_pretty(&settings.mcp_servers).map_err(|error| error.to_string())?);
      let migration = [("pi-define-agents", "piop-define-agents"), ("pi-openai-fast-mode-piop", "piop-openai-fast-mode"), ("pi-context-window-cap", "piop-context-window-cap"), ("pi-session-cost-limit", "piop-session-cost-limit"), ("pi-diff-watch", "piop-diff-watch")].iter().map(|(old, new)| format!(r#"if [ -d "$HOME/{STORAGE_DIRECTORY}/{old}" ] && [ ! -e "$HOME/{STORAGE_DIRECTORY}/{new}" ]; then mv "$HOME/{STORAGE_DIRECTORY}/{old}" "$HOME/{STORAGE_DIRECTORY}/{new}"; fi"#)).collect::<Vec<_>>().join(" && ");
@@ -2119,7 +2105,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let remote = format!(r#"{remote} && printf %s {agent_extension_loader} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/extension-loader.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/extension-loader.ts""#);
     let remote = if DEVELOPMENT { remote } else { format!(r#"{remote} && if [ ! -f "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/config.json" ] && [ -f "$HOME/.pi/agent/extensions/pi-define-agents/config.json" ]; then cp "$HOME/.pi/agent/extensions/pi-define-agents/config.json" "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/config.json"; fi && rm -f -- "$HOME/.pi/agent/extensions/pi-define-agents/index.ts" "$HOME/.pi/agent/extensions/pi-desktop-btw.ts""#) };
      let remote = format!(r#"{remote} && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/piop-openai-fast-mode" && printf %s {fast_mode} > "$HOME/{STORAGE_DIRECTORY}/piop-openai-fast-mode/index.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-openai-fast-mode/index.ts""#);
-     let remote = format!(r#"{remote} && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit" && printf %s {session_cost_limit} > "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit/index.ts" && printf %s {session_cost_limit_config} > "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit/config.json" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit/index.ts" "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit/config.json""#);
+     let remote = format!(r#"{remote} && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit" && printf %s {session_cost_limit} > "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit/index.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit/index.ts""#);
     let remote = format!(r#"{remote} && printf %s {runtime_settings_extension} > "$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts" && printf %s {runtime_settings_config} > "$HOME/{STORAGE_DIRECTORY}/runtime-settings.json" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts" "$HOME/{STORAGE_DIRECTORY}/runtime-settings.json""#);
     let remote = format!(r#"{remote} && printf %s {rtk_extension} > "$HOME/{STORAGE_DIRECTORY}/rtk.ts" && printf %s {rtk_license} > "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/rtk.ts" "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE""#);
     let mut remote = remote;

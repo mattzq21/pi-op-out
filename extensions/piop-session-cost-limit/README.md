@@ -1,20 +1,17 @@
 # Pi session-cost-limit extension
 
-Stops a session once its spend reaches a configured amount in API prices
-(the same `usage.cost.total` totals piop shows per conversation).
+Stops a conversation once its spend reaches a per-conversation amount in API
+prices (the same `usage.cost.total` totals piop shows per conversation).
 
-Set the limit in `config.json`, which is read when Pi loads the extension:
+There is no global setting. Manage the limit for the current conversation
+with the `/cost` command:
 
-```json
-{
-  "sessionCostLimit": 5,
-  "enabled": false
-}
-```
+- `/cost 5` (or `/cost $5`) caps this conversation at $5.00
+- `/cost clear` removes the cap for this conversation
 
-`sessionCostLimit` is US dollars between 0.01 and 100000. Set `enabled` to
-`false` to spend without a cap; omitting it keeps the limit enabled.
-Restart Pi or run `/reload` after changing it.
+The amount is US dollars between 0.01 and 100000. New conversations start
+without a limit. The limit is stored in the conversation and travels with
+forks and branches; conversations that already have a saved limit keep it.
 
 Run the extension directly:
 
@@ -28,7 +25,4 @@ calls are blocked, so the agent winds down instead of spending more. The
 live `Session $cost / $limit` status is published through
 `ctx.ui.setStatus`, which piop renders above the composer.
 
-piop stages its own copy of this extension and generates its `config.json`
-from **Settings \u2192 General \u2192 Session cost limit** for local and remote sessions.
-Each conversation keeps the limit it started with, including whether it is
-enabled. Saving settings applies the change to new conversations.
+piop stages this extension for local and remote sessions.

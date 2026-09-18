@@ -1,36 +1,27 @@
-import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
 const STATUS_KEY = "piop-session-cost";
 const LIMIT_ENTRY = "piop-session-cost-limit";
+const MIN_LIMIT = 0.01;
+const MAX_LIMIT = 100000;
+const USAGE = "Usage: /cost <amount in USD> or /cost clear";
+
+type CostContext = Pick<ExtensionContext, "sessionManager" | "ui">;
 
 function validAmount(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0.01 && value <= 100000;
+  return typeof value === "number" && Number.isFinite(value) && value >= MIN_LIMIT && value <= MAX_LIMIT;
 }
 
-async function loadLimit(): Promise<number | undefined> {
-  let config: unknown;
-
-  try {
-    config = JSON.parse(await readFile(configPath, "utf8")) as unknown;
-  } catch (error) {
-    throw new Error(`Could not read ${configPath}: ${error instanceof Error ? error.message : String(error)}`);
+function parseAmount(raw: string): number {
+  const normalized = raw.trim().replace(/^\$/, "").replaceAll(",", "");
+  const amount = Number(normalized);
+  if (normalized === "" || !validAmount(amount)) {
+    throw new Error(`Invalid amount "${raw.trim()}". ${USAGE} (between $0.01 and $100,000)`);
   }
-
-  if (config && typeof config === "object" && (config as Record<string, unknown>).enabled === false) return undefined;
-
-  const amount = config && typeof config === "object" ? (config as Record<string, unknown>).sessionCostLimit : undefined;
-  if (!validAmount(amount)) {
-    throw new Error(`${configPath}: sessionCostLimit must be between 0.01 and 100000`);
-  }
-
   return amount;
 }
 
-function sessionCost(ctx: ExtensionContext): number {
+function sessionCost(ctx: CostContext): number {
   let total = 0;
   for (const entry of ctx.sessionManager.getBranch()) {
     if (!entry || typeof entry !== "object" || (entry as { type?: unknown }).type !== "message") continue;
@@ -43,26 +34,22 @@ function sessionCost(ctx: ExtensionContext): number {
 const formatCost = (value: number) => `$${value.toFixed(2)}`;
 
 export default async function sessionCostLimit(pi: ExtensionAPI) {
-  const settings = () => { const request: { settings?: { sessionCostLimit: number; sessionCostLimitEnabled: boolean } } = {}; pi.events.emit("piop:runtime-settings", request); return request.settings; };
-  const initial = settings();
-  let limit = initial ? (initial.sessionCostLimitEnabled ? initial.sessionCostLimit : undefined) : await loadLimit();
+  let limit: number | undefined;
 
-  const restoreLimit = (ctx: ExtensionContext) => {
+  const restoreLimit = (ctx: CostContext) => {
     const entry = ctx.sessionManager.getEntries().find((entry) => entry.type === "custom" && entry.customType === LIMIT_ENTRY);
     if (entry?.type === "custom") {
       const saved = (entry.data as { limit?: unknown } | undefined)?.limit;
-      if (saved !== null && !validAmount(saved)) throw new Error("Invalid saved session cost limit");
-      limit = saved === null ? undefined : (saved as number);
+      if (saved !== null && saved !== undefined && !validAmount(saved)) throw new Error("Invalid saved session cost limit");
+      limit = typeof saved === "number" ? saved : undefined;
     } else {
-      const defaults = settings();
-      if (defaults) limit = defaults.sessionCostLimitEnabled ? defaults.sessionCostLimit : undefined;
-      pi.appendEntry(LIMIT_ENTRY, { limit: limit ?? null });
+      limit = undefined;
     }
   };
 
-  const overLimit = (ctx: ExtensionContext) => limit !== undefined && sessionCost(ctx) >= limit;
+  const overLimit = (ctx: CostContext) => limit !== undefined && sessionCost(ctx) >= limit;
 
-  const publish = (ctx: ExtensionContext) => {
+  const publish = (ctx: CostContext) => {
     if (limit === undefined) {
       ctx.ui.setStatus(STATUS_KEY, undefined);
       return;
@@ -91,7 +78,7 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
   pi.on("input", (event, ctx) => {
     if (event.text.startsWith("/")) return;
     if (!overLimit(ctx)) return;
-    ctx.ui.notify(`Session cost limit of ${formatCost(limit!)} reached (API prices). Start a new conversation or raise the limit in Settings \u2192 General.`, "warning");
+    ctx.ui.notify(`Session cost limit of ${formatCost(limit!)} reached (API prices). Raise it with /cost <amount> or remove it with /cost clear.`, "warning");
     return { action: "handled" };
   });
 
@@ -99,5 +86,29 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
     if (!overLimit(ctx)) return;
     publish(ctx);
     return { block: true, terminate: true, reason: `Session cost limit of ${formatCost(limit!)} reached (API prices). Tool execution blocked.` };
+  });
+
+  pi.registerCommand("cost", {
+    description: "Set or clear this conversation's API cost limit. Usage: /cost <amount in USD> or /cost clear",
+    getArgumentCompletions: (prefix: string) => ("clear".startsWith(prefix.trim().toLowerCase()) ? [{ value: "clear", label: "clear" }] : []),
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      try {
+        const raw = args.trim();
+        if (/^clear$/i.test(raw)) {
+          limit = undefined;
+          pi.appendEntry(LIMIT_ENTRY, { limit: null });
+          publish(ctx);
+          ctx.ui.notify("Session cost limit cleared.", "info");
+          return;
+        }
+        const amount = parseAmount(raw);
+        limit = amount;
+        pi.appendEntry(LIMIT_ENTRY, { limit: amount });
+        publish(ctx);
+        ctx.ui.notify(`Session cost limit set to ${formatCost(amount)} (API prices). Spent so far: ${formatCost(sessionCost(ctx))}.`, "info");
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+      }
+    },
   });
 }
