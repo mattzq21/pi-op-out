@@ -2985,6 +2985,96 @@ fn copied_worktree_rolls_back_branch_and_registration_when_nested_file_copy_fail
 }
 
 #[test]
+fn worktree_removal_honors_branch_retention_and_reports_unmerged_branches() {
+    for scenario in ["keep", "delete", "unmerged", "detached"] {
+        let temporary = TestDirectory::new(); let repository = temporary.0.join("project");
+        fs::create_dir(&repository).unwrap(); test_git(&repository, &["init", "--initial-branch=main"]);
+        test_git(&repository, &["commit", "--allow-empty", "-m", "Initial"]);
+        let worktree = temporary.0.join("checkout");
+        if scenario == "detached" {
+            test_git(&repository, &["worktree", "add", "--detach", worktree.to_str().unwrap()]);
+        } else {
+            test_git(&repository, &["worktree", "add", "-b", "feature", worktree.to_str().unwrap()]);
+        }
+        if scenario == "unmerged" { test_git(&worktree, &["commit", "--allow-empty", "-m", "Unmerged work"]); }
+        let settings = default_settings();
+        let target = inspect_worktree_removal(&settings, worktree.to_str().unwrap(), "local").unwrap();
+        let result = remove_worktree_target(&settings, "local", target, scenario != "keep").unwrap();
+        assert!(!worktree.exists());
+        assert!(!local_worktree_is_registered(&repository, &worktree).unwrap());
+        assert_eq!(result.branch.as_deref(), if scenario == "detached" { None } else { Some("feature") });
+        assert_eq!(result.branch_deleted, scenario == "delete");
+        assert_eq!(local_branch_exists(&repository, "feature").unwrap(), matches!(scenario, "keep" | "unmerged"));
+        match scenario {
+            "keep" | "delete" => assert!(result.warning.is_none()),
+            "detached" => assert_eq!(result.warning.as_deref(), Some("The detached worktree was removed; there was no branch to delete")),
+            _ => assert!(result.warning.unwrap().contains("branch 'feature' was kept")),
+        }
+        assert!(repository.join(".git").is_dir());
+    }
+}
+
+#[test]
+fn worktree_removal_rechecks_git_safety_when_files_change_after_inspection() {
+    for change in ["dirty", "locked"] {
+        let temporary = TestDirectory::new(); let repository = temporary.0.join("project");
+        fs::create_dir(&repository).unwrap(); test_git(&repository, &["init", "--initial-branch=main"]);
+        test_git(&repository, &["commit", "--allow-empty", "-m", "Initial"]);
+        let worktree = temporary.0.join("checkout");
+        test_git(&repository, &["worktree", "add", "-b", "feature", worktree.to_str().unwrap()]);
+        let settings = default_settings();
+        let target = inspect_worktree_removal(&settings, worktree.to_str().unwrap(), "local").unwrap();
+        if change == "dirty" { fs::write(worktree.join("new-work"), "preserve").unwrap(); }
+        else { test_git(&repository, &["worktree", "lock", worktree.to_str().unwrap()]); }
+        assert!(remove_worktree_target(&settings, "local", target, true).is_err());
+        assert!(worktree.exists());
+        assert!(local_worktree_is_registered(&repository, &worktree).unwrap());
+        assert!(local_branch_exists(&repository, "feature").unwrap());
+        if change == "dirty" { assert_eq!(fs::read_to_string(worktree.join("new-work")).unwrap(), "preserve"); }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn worktree_usage_guards_resolve_nested_paths_and_isolate_hosts_and_resource_types() {
+    let temporary = TestDirectory::new(); let repository = temporary.0.join("project");
+    fs::create_dir(&repository).unwrap(); test_git(&repository, &["init", "--initial-branch=main"]);
+    test_git(&repository, &["commit", "--allow-empty", "-m", "Initial"]);
+    let worktree = temporary.0.join("checkout");
+    test_git(&repository, &["worktree", "add", "-b", "feature", worktree.to_str().unwrap()]);
+    let nested = worktree.join("nested"); fs::create_dir(&nested).unwrap();
+    let settings = default_settings(); let runtime = PiRuntime::default();
+    let terminals = TestTerminals(TerminalRuntime::default());
+    let target = worktree.to_str().unwrap();
+    for count in [1, 2] {
+        let sessions = vec![nested.to_string_lossy().into_owned(); count];
+        assert_eq!(validate_worktree_unused(&settings, "local", target, &sessions, &runtime, &terminals.0).unwrap_err(),
+            format!("Archive or relocate the {count} conversation{} using this worktree before deleting it", if count == 1 { "" } else { "s" }));
+    }
+    let unrelated = vec![repository.to_string_lossy().into_owned(), temporary.0.join("missing").to_string_lossy().into_owned()];
+    assert!(validate_worktree_unused(&settings, "local", target, &unrelated, &runtime, &terminals.0).is_ok());
+    runtime.active_agents.lock().unwrap().insert("agent".into(), AgentAddress {
+        host_id:"remote".into(), session_id:Some("session".into()), session_path:None,
+        worktree:Some(nested.to_string_lossy().into_owned()), presence_id:None, working:false, messageable:true,
+    });
+    assert!(validate_worktree_unused(&settings, "local", target, &[], &runtime, &terminals.0).is_ok());
+    runtime.active_agents.lock().unwrap().get_mut("agent").unwrap().host_id = "local".into();
+    assert_eq!(validate_worktree_unused(&settings, "local", target, &[], &runtime, &terminals.0).unwrap_err(), "Close every conversation using this worktree before deleting it");
+    runtime.active_agents.lock().unwrap().clear();
+    let _receiver = terminals.add("terminal");
+    {
+        let mut processes = terminals.0.processes.lock().unwrap();
+        let terminal = processes.get_mut("terminal").unwrap();
+        terminal.cwd = nested.to_string_lossy().into_owned(); terminal.host_id = "remote".into();
+    }
+    assert!(validate_worktree_unused(&settings, "local", target, &[], &runtime, &terminals.0).is_ok());
+    terminals.0.processes.lock().unwrap().get_mut("terminal").unwrap().host_id = "local".into();
+    assert_eq!(validate_worktree_unused(&settings, "local", target, &[], &runtime, &terminals.0).unwrap_err(), "Close every terminal using this worktree before deleting it");
+    assert!(worktree.exists());
+    assert!(local_branch_exists(&repository, "feature").unwrap());
+}
+
+#[test]
 fn project_inspection_batches_distinct_directories_and_updates_all_matching_sessions() {
     let root = TestDirectory::new();
     let repository = root.0.join("repo ' 日本語"); fs::create_dir(&repository).unwrap();

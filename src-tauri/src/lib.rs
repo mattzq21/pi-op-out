@@ -1879,19 +1879,28 @@ fn remove_git_worktree_blocking(app: AppHandle, cwd: String, host_id: Option<Str
     let session_index = app.state::<SessionIndexRuntime>();
     let target = inspect_worktree_removal(&settings, &cwd, &host_id)?;
     let session_paths = sessions_on_host(&settings, &session_index, &host_id)?.into_iter().map(|session| session.cwd).collect::<Vec<_>>();
-    let conversations = canonical_worktree_roots(&settings, &host_id, &session_paths)?.into_iter().filter(|root| root.as_deref() == Some(target.path.as_str())).count();
+    validate_worktree_unused(&settings, &host_id, &target.path, &session_paths, &runtime, &terminals)?;
+    run_worktree_scripts(&settings, &target.source, &target.path, &host_id, &AtomicBool::new(false), WorktreeScriptPhase::Cleanup)?;
+    remove_worktree_target(&settings, &host_id, target, delete_branch)
+}
+
+fn validate_worktree_unused(settings: &AppSettings, host_id: &str, target: &str, session_paths: &[String], runtime: &PiRuntime, terminals: &TerminalRuntime) -> Result<(), String> {
+    let conversations = canonical_worktree_roots(settings, host_id, session_paths)?.into_iter().filter(|root| root.as_deref() == Some(target)).count();
     if conversations > 0 {
         return Err(format!("Archive or relocate the {conversations} conversation{} using this worktree before deleting it", if conversations == 1 { "" } else { "s" }));
     }
     let agent_paths = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values().filter(|agent| agent.host_id == host_id).filter_map(|agent| agent.worktree.clone()).collect::<Vec<_>>();
-    if canonical_worktree_roots(&settings, &host_id, &agent_paths)?.into_iter().any(|root| root.as_deref() == Some(target.path.as_str())) {
+    if canonical_worktree_roots(settings, host_id, &agent_paths)?.into_iter().any(|root| root.as_deref() == Some(target)) {
         return Err("Close every conversation using this worktree before deleting it".into());
     }
     let terminal_paths = terminals.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.values().filter(|terminal| terminal.host_id == host_id).map(|terminal| terminal.cwd.clone()).collect::<Vec<_>>();
-    if canonical_worktree_roots(&settings, &host_id, &terminal_paths)?.into_iter().any(|root| root.as_deref() == Some(target.path.as_str())) {
+    if canonical_worktree_roots(settings, host_id, &terminal_paths)?.into_iter().any(|root| root.as_deref() == Some(target)) {
         return Err("Close every terminal using this worktree before deleting it".into());
     }
-    run_worktree_scripts(&settings, &target.source, &target.path, &host_id, &AtomicBool::new(false), WorktreeScriptPhase::Cleanup)?;
+    Ok(())
+}
+
+fn remove_worktree_target(settings: &AppSettings, host_id: &str, target: WorktreeRemovalTarget, delete_branch: bool) -> Result<GitWorktreeRemoval, String> {
     let removed = if host_id == "local" {
         run_limited(Command::new("git").arg("-C").arg(&target.source).args(["worktree", "remove"]).arg(&target.path), 64 * 1024, "Could not remove Git worktree")?
     } else {
