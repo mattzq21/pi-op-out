@@ -13,7 +13,7 @@ registerHooks({
       return { format: 'module', source: result.outputText, shortCircuit: true };
     }
     const result = nextLoad(url, context);
-    if (url.endsWith('/src/lib/nativeTransport.ts')) {
+    if (url.endsWith('/src/lib/nativeTransport.ts') || url.endsWith('/src/lib/platform.ts')) {
       return { ...result, source: String(result.source).replaceAll('import.meta.env.MODE', '(globalThis.__PIOP_TEST_MODE__ ?? "test")') };
     }
     return result;
