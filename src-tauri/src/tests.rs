@@ -752,3 +752,70 @@ fn worktree_script_failure_stops_later_scripts_and_includes_diagnostics() {
     settings.worktree_setup_scripts[0].cleanup_script = Some("echo cleanup".into());
     assert_eq!(run_worktree_scripts(&settings, "unused", "unused", "local", &AtomicBool::new(true), WorktreeScriptPhase::Cleanup).unwrap_err(), "Worktree cleanup cancelled");
 }
+
+#[test]
+fn session_file_validation_restricts_access_to_the_correct_store() {
+    let home = TestDirectory::new();
+    for (store, validate) in [
+        ("sessions", local_desktop_session_file_at as fn(&Path, &str) -> Result<PathBuf, String>),
+        ("archived", local_archived_session_file_at as fn(&Path, &str) -> Result<PathBuf, String>),
+    ] {
+        assert!(validate(&home.0, "missing").unwrap_err().contains("Could not locate piop"));
+        let root = home.0.join(STORAGE_DIRECTORY).join(store); fs::create_dir_all(root.join("nested")).unwrap();
+        let valid = root.join("nested/chat.jsonl"); fs::write(&valid, "session").unwrap();
+        assert_eq!(validate(&home.0, valid.to_str().unwrap()).unwrap(), valid.canonicalize().unwrap());
+        let wrong_type = root.join("chat.json"); fs::write(&wrong_type, "{}").unwrap();
+        let directory = root.join("directory.jsonl"); fs::create_dir(&directory).unwrap();
+        let outside = home.0.join("outside.jsonl"); fs::write(&outside, "outside").unwrap();
+        for path in [&wrong_type, &directory, &outside] {
+            assert!(validate(&home.0, path.to_str().unwrap()).unwrap_err().starts_with("Only "));
+        }
+        assert!(validate(&home.0, root.join("missing.jsonl").to_str().unwrap()).unwrap_err().starts_with("Could not locate"));
+    }
+    let active = home.0.join(STORAGE_DIRECTORY).join("sessions/nested/chat.jsonl");
+    let archived = home.0.join(".piop/archived/nested/chat.jsonl");
+    assert!(local_desktop_session_file_at(&home.0, archived.to_str().unwrap()).is_err());
+    assert!(local_archived_session_file_at(&home.0, active.to_str().unwrap()).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn session_file_validation_resolves_symlinks_before_checking_store_boundaries() {
+    use std::os::unix::fs::symlink;
+    let home = TestDirectory::new(); let root = home.0.join(STORAGE_DIRECTORY).join("sessions"); fs::create_dir_all(&root).unwrap();
+    let valid = root.join("chat.jsonl"); fs::write(&valid, "session").unwrap();
+    let alias = root.join("alias.jsonl"); symlink(&valid, &alias).unwrap();
+    assert_eq!(local_desktop_session_file_at(&home.0, alias.to_str().unwrap()).unwrap(), valid.canonicalize().unwrap());
+    let outside = home.0.join("outside.jsonl"); fs::write(&outside, "outside").unwrap();
+    let escape = root.join("escape.jsonl"); symlink(&outside, &escape).unwrap();
+    assert_eq!(local_desktop_session_file_at(&home.0, escape.to_str().unwrap()).unwrap_err(), "Only piop session files can be accessed");
+    assert_eq!(fs::read_to_string(outside).unwrap(), "outside");
+}
+
+#[test]
+fn saved_diffs_load_legacy_and_located_snapshots_and_allow_unsaved_sessions() {
+    let home = TestDirectory::new(); let root = home.0.join(STORAGE_DIRECTORY).join("sessions"); fs::create_dir_all(&root).unwrap();
+    let session = root.join("chat.jsonl"); let path = session.to_str().unwrap();
+    assert!(load_local_git_diffs(&home.0, path).unwrap().is_empty());
+    fs::write(&session, "session").unwrap();
+    assert!(load_local_git_diffs(&home.0, path).unwrap().is_empty());
+    let value = json!({"old":"legacy patch","new":{"patch":"located patch","repositoryRoot":"/repo"}});
+    atomic_write_private(&session.with_extension("diffs.json"), value.to_string().as_bytes()).unwrap();
+    let snapshots = load_local_git_diffs(&home.0, path).unwrap();
+    assert_eq!(serde_json::to_value(snapshots).unwrap(), value);
+    assert!(load_local_git_diffs(&home.0, home.0.join("outside.jsonl").to_str().unwrap()).is_err());
+    assert!(load_local_git_diffs(&home.0, root.join("wrong.txt").to_str().unwrap()).is_err());
+}
+
+#[test]
+fn saved_diff_loading_rejects_corruption_invalid_utf8_and_oversized_sidecars() {
+    let home = TestDirectory::new(); let root = home.0.join(STORAGE_DIRECTORY).join("sessions"); fs::create_dir_all(&root).unwrap();
+    let session = root.join("chat.jsonl"); fs::write(&session, "session").unwrap();
+    let sidecar = session.with_extension("diffs.json"); let path = session.to_str().unwrap();
+    fs::write(&sidecar, "not json").unwrap();
+    assert!(load_local_git_diffs(&home.0, path).err().unwrap().contains("Could not parse saved diffs"));
+    fs::write(&sidecar, [255]).unwrap();
+    assert!(load_local_git_diffs(&home.0, path).err().unwrap().contains("Could not read saved diffs"));
+    let file = fs::OpenOptions::new().write(true).open(&sidecar).unwrap(); file.set_len(MAX_GIT_DIFFS_BYTES as u64 + 1).unwrap();
+    assert_eq!(load_local_git_diffs(&home.0, path).err().unwrap(), "Saved diffs exceed the 16 MiB limit");
+}

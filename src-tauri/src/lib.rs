@@ -1923,19 +1923,25 @@ fn load_git_diffs(app: AppHandle, session_path: String, host_id: Option<String>)
     load_git_diffs_at_host(&session_path, saved_remote_host(app, host_id)?.as_ref())
 }
 
+fn load_local_git_diffs(home: &Path, session_path: &str) -> Result<GitDiffSnapshots, String> {
+    let candidate = PathBuf::from(&session_path);
+    if !candidate.exists() {
+        let root = ensure_desktop_sessions_dir(home)?.canonicalize().map_err(|error| format!("Could not locate piop sessions: {error}"))?;
+        let parent = candidate.parent().ok_or("Session path has no parent directory")?.canonicalize().map_err(|error| format!("Could not locate session directory: {error}"))?;
+        if !candidate.is_absolute() || !parent.starts_with(&root) || candidate.extension().and_then(|value| value.to_str()) != Some("jsonl") { return Err("Only piop session files can be accessed".into()); }
+        return Ok(HashMap::new());
+    }
+    let path = local_desktop_session_file_at(home, session_path)?.with_extension("diffs.json");
+    if !path.exists() { return Ok(HashMap::new()); }
+    if fs::metadata(&path).map_err(|error| format!("Could not inspect saved diffs: {error}"))?.len() > MAX_GIT_DIFFS_BYTES as u64 { return Err("Saved diffs exceed the 16 MiB limit".into()); }
+    let content = fs::read_to_string(&path).map_err(|error| format!("Could not read saved diffs: {error}"))?;
+    serde_json::from_str(&content).map_err(|error| format!("Could not parse saved diffs: {error}"))
+}
+
 fn load_git_diffs_at_host(session_path: &str, host: Option<&RemoteHost>) -> Result<GitDiffSnapshots, String> {
     let content = if host.is_none() {
-        let candidate = PathBuf::from(&session_path);
-        if !candidate.exists() {
-            let root = ensure_desktop_sessions_dir(&home_dir()?)?.canonicalize().map_err(|error| format!("Could not locate piop sessions: {error}"))?;
-            let parent = candidate.parent().ok_or("Session path has no parent directory")?.canonicalize().map_err(|error| format!("Could not locate session directory: {error}"))?;
-            if !candidate.is_absolute() || !parent.starts_with(&root) || candidate.extension().and_then(|value| value.to_str()) != Some("jsonl") { return Err("Only piop session files can be accessed".into()); }
-            return Ok(HashMap::new());
-        }
-        let path = local_git_diffs_path(&session_path)?;
-        if !path.exists() { return Ok(HashMap::new()); }
-        if fs::metadata(&path).map_err(|error| format!("Could not inspect saved diffs: {error}"))?.len() > MAX_GIT_DIFFS_BYTES as u64 { return Err("Saved diffs exceed the 16 MiB limit".into()); }
-        fs::read_to_string(&path).map_err(|error| format!("Could not read saved diffs: {error}"))?
+        let snapshots = load_local_git_diffs(&home_dir()?, &session_path)?;
+        serde_json::to_string(&snapshots).map_err(|error| format!("Could not serialize diffs: {error}"))?
     } else {
         let host = host.unwrap();
         let mut command = ssh(host); command.arg(remote_session_sidecar_script(&session_path, "if [ -f \"$sidecar\" ]; then cat -- \"$sidecar\"; else printf '{}'; fi"));
@@ -2717,14 +2723,22 @@ fn storage_report(app: AppHandle) -> Result<StorageReport, String> {
 }
 
 fn local_desktop_session_file(session_path: &str) -> Result<PathBuf, String> {
-    let root = desktop_sessions_dir(&home_dir()?).canonicalize().map_err(|error| format!("Could not locate piop sessions: {error}"))?;
+    local_desktop_session_file_at(&home_dir()?, session_path)
+}
+
+fn local_desktop_session_file_at(home: &Path, session_path: &str) -> Result<PathBuf, String> {
+    let root = desktop_sessions_dir(home).canonicalize().map_err(|error| format!("Could not locate piop sessions: {error}"))?;
     let source = PathBuf::from(session_path).canonicalize().map_err(|error| format!("Could not locate session file: {error}"))?;
     if !source.starts_with(&root) || source.extension().and_then(|value| value.to_str()) != Some("jsonl") || !source.is_file() { return Err("Only piop session files can be accessed".into()); }
     Ok(source)
 }
 
 fn local_archived_session_file(session_path: &str) -> Result<PathBuf, String> {
-    let root = home_dir()?.join(STORAGE_DIRECTORY).join("archived").canonicalize().map_err(|error| format!("Could not locate piop archives: {error}"))?;
+    local_archived_session_file_at(&home_dir()?, session_path)
+}
+
+fn local_archived_session_file_at(home: &Path, session_path: &str) -> Result<PathBuf, String> {
+    let root = home.join(STORAGE_DIRECTORY).join("archived").canonicalize().map_err(|error| format!("Could not locate piop archives: {error}"))?;
     let source = PathBuf::from(session_path).canonicalize().map_err(|error| format!("Could not locate archived conversation: {error}"))?;
     if !source.starts_with(&root) || source.extension().and_then(|value| value.to_str()) != Some("jsonl") || !source.is_file() { return Err("Only archived piop conversations can be accessed".into()); }
     Ok(source)
