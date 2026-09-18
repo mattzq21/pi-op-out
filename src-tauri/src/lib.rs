@@ -1225,7 +1225,8 @@ PIOP_WORKTREE_PATH=$(pwd -P) || exit 1
 export PIOP_SOURCE_TREE_PATH PIOP_WORKTREE_PATH PIOP_WORKTREE_BRANCH
 exec 3<&0
 setup_output=$(mktemp "${{TMPDIR:-/tmp}}/piop-worktree-script.XXXXXX") || exit 1
-trap 'rm -f -- "$setup_output"' EXIT
+setup_owner=$BASHPID
+trap '[ "$BASHPID" != "$setup_owner" ] || rm -f -- "$setup_output"' EXIT
 exec 6>"$setup_output" || exit 1
 # The drain inherits no SSH streams or cancellation descriptors. It can outlive
 # the script while background jobs write, retaining at most 64 KiB.
@@ -1238,11 +1239,11 @@ setup_pid=$!
 exec 5>&-
 set +m
 # Keep cancellation separate from script input. EOF also stops the script if SSH disconnects.
-( trap - EXIT; IFS= read -r cancel; kill -KILL -- "-$setup_pid" 2>/dev/null ) <&3 4>&- &
+bash -c 'IFS= read -r cancel; kill -KILL -- "-$1" 2>/dev/null' bash "$setup_pid" <&3 4>&- &
 watcher=$!
 wait "$setup_pid"
 status=$?
-kill "$watcher" 2>/dev/null
+kill -KILL "$watcher" 2>/dev/null
 wait "$watcher" 2>/dev/null
 for attempt in 1 2 3 4 5 6 7 8 9 10; do
     kill -0 "$output_pid" 2>/dev/null || break

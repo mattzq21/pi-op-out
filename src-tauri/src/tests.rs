@@ -3167,3 +3167,36 @@ fn failed_ephemeral_forks_leave_no_partial_files_and_preserve_the_source() {
     assert!(create_local_ephemeral_fork(&home.0, &temporary.0, outside.to_str().unwrap()).is_err());
     assert_eq!(fs::read_dir(&temporary.0).unwrap().count(), 0);
 }
+
+#[test]
+fn project_inspection_updates_directory_existence_without_reindexing_the_session() {
+    let root = TestDirectory::new(); let index = SessionIndexRuntime::default();
+    let sessions_dir = root.0.join("sessions"); fs::create_dir(&sessions_dir).unwrap();
+    let project = root.0.join("missing project"); let path = sessions_dir.join("chat.jsonl");
+    fs::write(&path, format!("{}\n", json!({"type":"session","id":"chat","cwd":project}))).unwrap();
+    let missing = list_local_sessions(&index, &sessions_dir).unwrap();
+    assert!(!missing[0].cwd_exists); assert!(missing[0].project_kind.is_none());
+    let fingerprint = index.local.lock().unwrap()[&path].fingerprint.clone();
+    fs::create_dir(&project).unwrap();
+    let restored = list_local_sessions(&index, &sessions_dir).unwrap();
+    assert!(restored[0].cwd_exists); assert!(matches!(restored[0].project_kind, Some(ProjectKind::NoRepo)));
+    assert_eq!(index.local.lock().unwrap()[&path].fingerprint, fingerprint);
+    fs::remove_dir(&project).unwrap();
+    assert!(!list_local_sessions(&index, &sessions_dir).unwrap()[0].cwd_exists);
+}
+
+#[test]
+fn parallel_short_lived_worktree_scripts_retain_failure_diagnostics() {
+    thread::scope(|scope| {
+        let workers = (0..8).map(|_| scope.spawn(|| {
+            let root = TestDirectory::new(); test_git(&root.0, &["init", "--initial-branch=main"]);
+            let mut settings = default_settings();
+            settings.worktree_setup_scripts = vec![setup_script("diagnostic", &root.0, "printf 'expected diagnostic' >&2; exit 7", "")];
+            for _ in 0..25 {
+                let error = run_worktree_scripts(&settings, root.0.to_str().unwrap(), root.0.to_str().unwrap(), "local", &AtomicBool::new(false), WorktreeScriptPhase::Setup).unwrap_err();
+                assert!(error.contains("expected diagnostic"), "{error}");
+            }
+        })).collect::<Vec<_>>();
+        for worker in workers { worker.join().unwrap(); }
+    });
+}
