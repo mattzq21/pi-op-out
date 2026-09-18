@@ -1390,9 +1390,13 @@ fn local_snapshot_parent() -> Result<PathBuf, String> {
 
 
 fn parse_local_snapshot(token: &str) -> Result<GitSnapshotToken, String> {
+    parse_local_snapshot_with(token, local_snapshot_parent)
+}
+
+fn parse_local_snapshot_with(token: &str, parent: impl FnOnce() -> Result<PathBuf, String>) -> Result<GitSnapshotToken, String> {
     let snapshot: GitSnapshotToken = serde_json::from_str(token).map_err(|_| "Invalid Git snapshot token".to_string())?;
     if snapshot.tree.len() < 40 || snapshot.tree.len() > 64 || !snapshot.tree.chars().all(|character| character.is_ascii_hexdigit()) { return Err("Invalid Git snapshot tree".into()); }
-    let parent = local_snapshot_parent()?.canonicalize().map_err(|error| error.to_string())?;
+    let parent = parent()?.canonicalize().map_err(|error| error.to_string())?;
     let root = PathBuf::from(&snapshot.root).canonicalize().map_err(|_| "Git snapshot expired".to_string())?;
     if root.parent() != Some(parent.as_path()) || !root.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.starts_with("pi-desktop-diff-")) { return Err("Invalid Git snapshot location".into()); }
     Ok(GitSnapshotToken { root: root.to_string_lossy().into_owned(), ..snapshot })

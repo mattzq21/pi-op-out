@@ -883,3 +883,35 @@ fn blank_session_cleanup_does_not_delete_files_outside_the_store() {
     assert!(!ephemeral.exists()); assert!(path.exists());
     remove_ephemeral_session(EphemeralSession::Local(ephemeral));
 }
+#[test]
+fn snapshot_token_validation_rejects_malformed_tokens_before_accessing_storage() {
+    for token in ["", "null", "{}", r#"{"root":42,"tree":"abc","repositoryRoot":"/repo"}"#] {
+        assert_eq!(parse_local_snapshot_with(token, || panic!("invalid token accessed storage")).err().unwrap(), "Invalid Git snapshot token");
+    }
+    for tree in ["a".repeat(39), "a".repeat(65), "g".repeat(40), format!("{};", "a".repeat(39))] {
+        let token = json!({"root":"/unused","tree":tree,"repositoryRoot":"/repo"}).to_string();
+        assert_eq!(parse_local_snapshot_with(&token, || panic!("invalid tree accessed storage")).err().unwrap(), "Invalid Git snapshot tree");
+    }
+}
+
+#[test]
+fn snapshot_token_validation_checks_storage_errors_expiry_and_canonical_location() {
+    let temporary = TestDirectory::new();
+    let parent = temporary.0.join("snapshots"); fs::create_dir(&parent).unwrap();
+    let root = parent.join("pi-desktop-diff-test"); fs::create_dir(&root).unwrap();
+    for length in [40, 64] {
+        let token = json!({"root":root,"tree":"A".repeat(length),"repository_root":"/repo"}).to_string();
+        let parsed = parse_local_snapshot_with(&token, || Ok(parent.clone())).unwrap();
+        assert_eq!(parsed.root, root.canonicalize().unwrap().to_string_lossy());
+        assert_eq!(parsed.tree, "A".repeat(length)); assert_eq!(parsed.repository_root, "/repo");
+        assert_eq!(parse_local_snapshot_with(&token, || Err("storage failed".into())).err().unwrap(), "storage failed");
+        assert!(parse_local_snapshot_with(&token, || Ok(temporary.0.join("missing"))).is_err());
+    }
+    let token = json!({"root":root,"tree":"a".repeat(40),"repositoryRoot":"/repo"}).to_string();
+    fs::remove_dir(&root).unwrap();
+    assert_eq!(parse_local_snapshot_with(&token, || Ok(parent.clone())).err().unwrap(), "Git snapshot expired");
+    let outside = temporary.0.join("pi-desktop-diff-outside"); fs::create_dir(&outside).unwrap();
+    let token = json!({"root":outside,"tree":"a".repeat(40),"repositoryRoot":"/repo"}).to_string();
+    assert_eq!(parse_local_snapshot_with(&token, || Ok(parent)).err().unwrap(), "Invalid Git snapshot location");
+    assert!(outside.exists());
+}
