@@ -1,6 +1,8 @@
 use std::{collections::{HashMap, HashSet}, fs, path::PathBuf, sync::Mutex};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use crate::platform::AppHandle;
+#[cfg(feature = "desktop")]
+use tauri::Emitter;
 
 static STORAGE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -76,7 +78,7 @@ fn attach_assignments_at(sessions: &mut [super::SessionSummary], path: &PathBuf)
     Ok(())
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 pub fn load_session_groups(seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Result<SessionGroups, String> {
     let _lock = STORAGE_LOCK.lock().map_err(|_| "Session groups lock was poisoned")?;
     let path = storage_path()?;
@@ -114,7 +116,7 @@ fn load_at(path: &PathBuf, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Re
     Ok(state)
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 pub fn change_session_groups(app: AppHandle, change: GroupChange) -> Result<SessionGroups, String> {
     change_with(change, storage_path, |state| { let _ = app.emit("pi://groups-changed", state); })
 }

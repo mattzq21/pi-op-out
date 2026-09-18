@@ -35,6 +35,10 @@ export class RemoteClient {
         let message: Record<string, unknown>;
         try { message = JSON.parse(String(data)); } catch { socket.close(); return; }
         if (message.type === "ready" && message.protocol === 1) {
+          if (message.backend !== "daemon") {
+            settleReject(new Error("Connect to a Piop daemon. This address belongs to an older desktop endpoint."));
+            socket.close(); return;
+          }
           ready = true; this.ready = true; clearTimeout(timer);
           this.heartbeat = setInterval(() => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" })); }, 20000);
           settleResolve(); return;

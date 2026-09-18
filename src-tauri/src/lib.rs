@@ -1,9 +1,14 @@
+#[cfg(not(feature = "desktop"))]
 mod mobile;
+#[cfg(not(feature = "desktop"))]
 mod mobile_commands;
+mod platform;
 mod session_groups;
 mod daemon;
 mod voice;
-use voice::{voice_configuration, voice_start, voice_stop, voice_mute, voice_suppress, voice_context};
+#[cfg(feature = "desktop")]
+use voice::{voice_configuration, voice_start};
+use voice::{voice_stop, voice_mute, voice_suppress, voice_context};
 use session_groups::{load_session_groups, change_session_groups};
 
 use serde::{de, Deserialize, Deserializer, Serialize};
@@ -20,12 +25,15 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 use portable_pty::{native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtySize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use crate::platform::{AppHandle, State};
+#[cfg(feature = "desktop")]
+use tauri::{Emitter, Manager};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
 const STORAGE_DIRECTORY: &str = if cfg!(debug_assertions) { ".piop-dev" } else { ".piop" };
 const DEVELOPMENT: bool = cfg!(debug_assertions);
+#[cfg(feature = "desktop")]
 const APP_TITLE: &str = if DEVELOPMENT { "Piop Dev" } else { "piop" };
 
 fn node_command() -> Command {
@@ -441,7 +449,7 @@ fn codex_usage_values(response: &Value) -> Option<CodexUsage> {
     Some(CodexUsage { remaining_percent: (100.0 - used.clamp(0.0, 100.0)).round() as u8, reset_at })
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn codex_usage() -> Result<CodexUsage, String> {
     query_codex_usage(&mut Command::new(codex_executable()))
 }
@@ -537,7 +545,7 @@ fn opencode_go_usage_values(response: &Value) -> Option<OpencodeGoUsage> {
     })
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 async fn opencode_go_usage() -> Result<OpencodeGoUsage, String> {
     let api_key = opencode_go_api_key().ok_or("OpenCode Go API key is not configured")?;
     let client = reqwest::Client::builder().timeout(Duration::from_secs(8)).build().map_err(|error| format!("Could not create HTTP client: {error}"))?;
@@ -742,7 +750,7 @@ fn validate_mcp_servers(settings: &AppSettings) -> Result<(), String> {
         match server.get("transport").and_then(Value::as_str).unwrap_or("stdio") {
             "stdio" => if server.get("command").and_then(Value::as_str).unwrap_or("").trim().is_empty() { return Err(format!("{name}: command can't be empty")); },
             "http" => {
-                let raw_url = server.get("url").and_then(Value::as_str).unwrap_or("").trim(); let parsed = tauri::Url::parse(raw_url).map_err(|_| format!("{name}: enter a valid HTTP URL"))?;
+                let raw_url = server.get("url").and_then(Value::as_str).unwrap_or("").trim(); let parsed = reqwest::Url::parse(raw_url).map_err(|_| format!("{name}: enter a valid HTTP URL"))?;
                 if !matches!(parsed.scheme(), "http" | "https") { return Err(format!("{name}: URL must use HTTP or HTTPS")); }
                 if let Some(headers) = server.get("headers") {
                     let parsed = match headers { Value::Null => None, Value::String(value) if value.trim().is_empty() => None, Value::String(value) => Some(serde_json::from_str::<Value>(value).map_err(|_| format!("{name}: headers must be valid JSON"))?), Value::Object(_) => Some(headers.clone()), _ => return Err(format!("{name}: headers must be a JSON object containing string values")) };
@@ -805,7 +813,7 @@ fn prepare_hooks_extension() -> Result<PathBuf, String> {
     Ok(path)
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn list_hooks(app: AppHandle, host_id: String) -> Result<Value, String> {
     let script = include_str!("../resources/list-hooks.cjs");
     let mut command = if host_id == "local" {
@@ -1099,7 +1107,7 @@ fn merge_discovered_skills_at(settings: &mut AppSettings, home: &Path) {
     });
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     let path = settings_path(&app)?;
     let mut settings = read_settings_at(&path)?;
@@ -1135,7 +1143,7 @@ fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
     Ok(settings)
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn save_app_settings(app: AppHandle, mut settings: AppSettings, agent_host_id: Option<String>) -> Result<Value, String> {
     for tool in session_operation_tools() {
         if !settings.tools.iter().any(|existing| existing["name"] == tool["name"]) { settings.tools.push(tool); }
@@ -1188,7 +1196,7 @@ fn save_settings_with(
     Ok(change)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 fn shell_quote(value: &str) -> String { format!("'{}'", value.replace('\'', "'\\''")) }
 
 fn desktop_sessions_dir(home: &Path) -> PathBuf { home.join(STORAGE_DIRECTORY).join("sessions") }
@@ -1293,7 +1301,7 @@ exit "$status""#, source = shell_quote(cwd), project = shell_quote(project_path)
     Ok(())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 async fn run_worktree_setup(app: AppHandle, setup_id: String, cwd: String, worktree_path: String, host_id: Option<String>) -> Result<(), String> {
     let worker_app = app.clone();
     execute_worktree_setup(&app.state::<PiRuntime>(), &setup_id, move |cancelled| {
@@ -1305,12 +1313,12 @@ async fn run_worktree_setup(app: AppHandle, setup_id: String, cwd: String, workt
 
 async fn execute_worktree_setup(runtime: &PiRuntime, setup_id: &str, work: impl FnOnce(Arc<AtomicBool>) -> Result<(), String> + Send + 'static) -> Result<(), String> {
     let cancelled = runtime.worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.get(setup_id).cloned().ok_or("Unknown setup")?;
-    let result = tauri::async_runtime::spawn_blocking(move || work(cancelled)).await.map_err(|error| error.to_string());
+    let result = crate::platform::async_runtime::spawn_blocking(move || work(cancelled)).await.map_err(|error| error.to_string());
     runtime.worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.remove(setup_id);
     result?
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 fn prepare_worktree_setup(runtime: State<PiRuntime>) -> Result<String, String> {
     register_worktree_setup(&runtime)
 }
@@ -1321,7 +1329,7 @@ fn register_worktree_setup(runtime: &PiRuntime) -> Result<String, String> {
     Ok(id)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 fn cancel_worktree_setup(runtime: State<PiRuntime>, setup_id: String) -> Result<(), String> {
     signal_worktree_setup_cancellation(&runtime, &setup_id)
 }
@@ -1542,7 +1550,7 @@ fn local_git_diff_between(cwd: &str, base: &GitSnapshotToken, current: &GitSnaps
     Ok((!patch.trim().is_empty()).then_some(GitDiffSnapshot::Located { patch, repository_root: current.repository_root.clone(), tool_paths: Vec::new() }))
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn is_git_repository(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<bool, String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let output = if host_id == "local" {
@@ -1554,7 +1562,7 @@ fn is_git_repository(app: AppHandle, cwd: String, host_id: Option<String>) -> Re
     Ok(output.status.success())
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn git_branch(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<Option<String>, String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let host = if host_id == "local" { None } else { Some(remote_host(&load_app_settings(app)?, &host_id)?.clone()) };
@@ -1598,7 +1606,7 @@ if [ "$git_dir" = "$common_dir" ]; then printf 'main'; else printf 'worktree'; f
     }
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn git_project_kind(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<ProjectKind, String> {
     let settings = load_app_settings(app)?;
     inspect_git_project_kind(&settings, &cwd, host_id.as_deref().unwrap_or("local"))
@@ -1692,7 +1700,7 @@ fn local_worktree_is_registered(root: &Path, target: &Path) -> Result<bool, Stri
     Ok(output.stdout.split(|byte| *byte == 0).any(|field| String::from_utf8_lossy(field).strip_prefix(prefix).is_some_and(|path| path == target)))
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn create_project_worktree(app: AppHandle, cwd: String, name: String, host_id: Option<String>) -> Result<GitWorktree, String> {
     let settings = load_app_settings(app)?;
     let host_id = host_id.as_deref().unwrap_or("local");
@@ -1724,7 +1732,7 @@ fn create_project_worktree_at(cwd: &str, name: &str, host: Option<&RemoteHost>) 
     Ok(GitWorktree { branch, path: target.to_string_lossy().into_owned() })
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn create_git_worktree(app: AppHandle, cwd: String, name: String, host_id: Option<String>) -> Result<GitWorktree, String> {
     let name = worktree_suffix(&name)?;
     let host_id = host_id.as_deref().unwrap_or("local");
@@ -1835,9 +1843,9 @@ done"#;
     Ok(roots)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 async fn git_worktree_roots(app: AppHandle, paths: Vec<String>, host_id: Option<String>) -> Result<Vec<Option<String>>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::platform::async_runtime::spawn_blocking(move || {
         let settings = load_app_settings(app)?;
         canonical_worktree_roots(&settings, host_id.as_deref().unwrap_or("local"), &paths)
     }).await.map_err(|error| error.to_string())?
@@ -1968,9 +1976,9 @@ fn remove_worktree_target(settings: &AppSettings, host_id: &str, target: Worktre
     Ok(GitWorktreeRemoval { branch: target.branch, branch_deleted: false, warning: Some(warning) })
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 async fn remove_git_worktree(app: AppHandle, cwd: String, host_id: Option<String>, delete_branch: bool) -> Result<GitWorktreeRemoval, String> {
-    tauri::async_runtime::spawn_blocking(move || remove_git_worktree_blocking(app, cwd, host_id, delete_branch)).await.map_err(|error| error.to_string())?
+    crate::platform::async_runtime::spawn_blocking(move || remove_git_worktree_blocking(app, cwd, host_id, delete_branch)).await.map_err(|error| error.to_string())?
 }
 
 fn valid_remote_snapshot(snapshot: &GitSnapshotToken) -> bool {
@@ -1996,7 +2004,7 @@ fn query_remote_git_tree(command: &mut Command, host_name: &str) -> Result<Optio
     serde_json::to_string(&snapshot).map(Some).map_err(|error| error.to_string())
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn capture_git_tree(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<Option<String>, String> {
     capture_git_tree_at_host(&cwd, saved_remote_host(app, host_id)?.as_ref())
 }
@@ -2005,7 +2013,7 @@ fn capture_git_tree_at_host(cwd: &str, host: Option<&RemoteHost>) -> Result<Opti
     match host { Some(host) => remote_git_tree(host, cwd), None => local_git_tree(cwd) }
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn discard_git_tree(app: AppHandle, snapshot: String, host_id: Option<String>) -> Result<(), String> {
     discard_git_tree_at_host(&snapshot, saved_remote_host(app, host_id)?.as_ref())
 }
@@ -2024,7 +2032,7 @@ fn discard_remote_git_tree(snapshot: &str, host_name: &str, command: impl FnOnce
     output.status.success().then_some(()).ok_or_else(|| String::from_utf8_lossy(&output.stderr).trim().to_string())
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn load_git_diff(app: AppHandle, cwd: String, base_tree: String, host_id: Option<String>) -> Result<Option<GitDiffSnapshot>, String> {
     load_git_diff_at_host(&cwd, &base_tree, saved_remote_host(app, host_id)?.as_ref())
 }
@@ -2071,7 +2079,7 @@ fn remote_session_sidecar_script(session_path: &str, action: &str) -> String {
     format!("session=$(readlink -f -- {}) || exit 7; sessions=$(cd \"$HOME/{STORAGE_DIRECTORY}/sessions\" && pwd -P) || exit 7; case \"$session\" in \"$sessions\"/*.jsonl) ;; *) exit 7;; esac; sidecar=${{session%.jsonl}}.diffs.json; {action}", shell_quote(session_path))
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn load_git_diffs(app: AppHandle, session_path: String, host_id: Option<String>) -> Result<GitDiffSnapshots, String> {
     load_git_diffs_at_host(&session_path, saved_remote_host(app, host_id)?.as_ref())
 }
@@ -2112,7 +2120,7 @@ fn query_remote_git_diffs(command: &mut Command, host_name: &str) -> Result<GitD
     serde_json::from_str(&content).map_err(|error| format!("Could not parse saved diffs: {error}"))
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn save_git_diffs(app: AppHandle, session_path: String, snapshots: GitDiffSnapshots, host_id: Option<String>) -> Result<(), String> {
     save_git_diffs_at_host(&session_path, snapshots, saved_remote_host(app, host_id)?.as_ref())
 }
@@ -2387,9 +2395,15 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
     let mut command = remote_broker_command(host, broker_port, remote_port); command.arg(remote_login_command(&remote)); Ok(command)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command(async)]
 fn start_pi(app: AppHandle, window: tauri::WebviewWindow, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, no_session: Option<bool>, host_id: Option<String>, presence: Option<Value>) -> Result<Value, String> {
+    start_pi_for_owner(app, window.label().into(), runtime, broker, runtime_id, cwd, session_path, session_id, fork_path, no_session, host_id, presence)
+}
+
+fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, no_session: Option<bool>, host_id: Option<String>, presence: Option<Value>) -> Result<Value, String> {
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
+    if runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(&runtime_id).is_some_and(|process| process.window_label != owner) { return Err("Runtime belongs to another connection".into()); }
     let settings = load_app_settings(app.clone())?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
     if runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(&runtime_id).is_some_and(|process| process.daemon.alive.load(Ordering::SeqCst) && process.daemon.matches_connection(&settings, &host_id)) { return Ok(json!({"attached":true})); }
@@ -2413,7 +2427,7 @@ fn start_pi(app: AppHandle, window: tauri::WebviewWindow, runtime: State<PiRunti
         .max().unwrap_or(0) * 1000 + 30_000;
     let result = daemon.request(json!({"type":"attach","runtimeId":runtime_id,"sessionKey":claim_id.unwrap_or_else(|| runtime_id.clone()),"spec":daemon::spec(&command),"timeout":command_timeout,"ephemeral":ephemeral,"cwd":cwd,"presence":presence.unwrap_or_else(|| json!({}))}))?;
     let blank_cleanup = BlankSessionCleanup { path: session_path.clone(), id: session_id.clone(), host: if host_id == "local" { None } else { Some(remote_host(&settings, &host_id)?.clone()) }, submitted: ephemeral };
-    runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { daemon, window_label: window.label().into(), blank_cleanup });
+    runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { daemon, window_label: owner, blank_cleanup });
     runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id, AgentAddress { host_id, session_id, session_path, worktree: None, presence_id: None, working: false, messageable: false });
     Ok(result)
 }
@@ -2434,12 +2448,12 @@ fn detach_pi(runtime: &PiRuntime, runtime_id: &str, discard_blank: bool) -> Resu
     Ok(stopped)
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn stop_pi(runtime: State<PiRuntime>, runtime_id: String, discard_blank: Option<bool>) -> Result<bool, String> {
     detach_pi(&runtime, &runtime_id, discard_blank.unwrap_or(false))
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn pi_presence(runtime: State<PiRuntime>, runtime_id: String, presence: Value) -> Result<(), String> {
     let daemon = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(&runtime_id).map(|process| process.daemon.clone());
     if let Some(daemon) = daemon { daemon.request(json!({"type":"presence","runtimeId":runtime_id,"presence":presence}))?; }
@@ -2451,7 +2465,7 @@ fn execute_pi_command(runtime: &PiRuntime, runtime_id: &str, command: Value) -> 
     daemon.request(json!({"type":"command","runtimeId":runtime_id,"command":command}))
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn pi_command(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, mut command: Value) -> Result<Value, String> {
     let command_type = command["type"].as_str().unwrap_or_default().to_owned();
     let _lifecycle = if command_type == "switch_session" { Some(runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?) } else { None };
@@ -2483,6 +2497,7 @@ fn pi_command(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRun
     Ok(result)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn new_window(app: AppHandle, target: Value) -> Result<String, String> {
     let (label, path) = conversation_window_target(&target)?;
@@ -2492,20 +2507,26 @@ fn new_window(app: AppHandle, target: Value) -> Result<String, String> {
     Ok(label)
 }
 
+#[cfg(feature = "desktop")]
 fn conversation_window_target(target: &Value) -> Result<(String, String), String> {
     if !target["sessionId"].as_str().is_some_and(|id| !id.trim().is_empty()) { return Err("Select a conversation to open in another window".into()); }
     let label = format!("chat-{}", Uuid::new_v4());
-    let mut url = tauri::Url::parse("https://piop.invalid/").map_err(|error| error.to_string())?;
+    let mut url = reqwest::Url::parse("https://piop.invalid/").map_err(|error| error.to_string())?;
     url.query_pairs_mut().append_pair("target", &target.to_string());
     let path = format!("index.html{}", url.query().map(|query| format!("?{query}")).unwrap_or_default());
     Ok((label, path))
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn start_terminal(app: AppHandle, window: tauri::WebviewWindow, runtime: State<TerminalRuntime>, terminal_id: String, session_key: String, cwd: String, cols: u16, rows: u16, host_id: Option<String>) -> Result<(), String> {
+    start_terminal_for_owner(app, window.label().into(), runtime, terminal_id, session_key, cwd, cols, rows, host_id)
+}
+
+fn start_terminal_for_owner(app: AppHandle, owner: String, runtime: State<TerminalRuntime>, terminal_id: String, session_key: String, cwd: String, cols: u16, rows: u16, host_id: Option<String>) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let event_app = app.clone();
-    start_terminal_with(&runtime, terminal_id, session_key, cwd.clone(), cols, rows, host_id.clone(), window.label().into(),
+    start_terminal_with(&runtime, terminal_id, session_key, cwd.clone(), cols, rows, host_id.clone(), owner,
         || if host_id == "local" {
             let working_dir = PathBuf::from(&cwd);
             if !working_dir.is_dir() { return Err(format!("Terminal working directory does not exist: {}", working_dir.display())); }
@@ -2522,7 +2543,9 @@ fn start_terminal(app: AppHandle, window: tauri::WebviewWindow, runtime: State<T
 fn start_terminal_with(runtime: &TerminalRuntime, terminal_id: String, session_key: String, cwd: String, cols: u16, rows: u16, host_id: String, window_label: String,
     command: impl FnOnce() -> Result<CommandBuilder, String>, mut emit: impl FnMut(Value) + Send + 'static) -> Result<(), String> {
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
-    if processes.contains_key(&terminal_id) { return Ok(()); }
+    if let Some(process) = processes.get(&terminal_id) {
+        return if process.window_label == window_label { Ok(()) } else { Err("Terminal belongs to another connection".into()) };
+    }
     if processes.values().filter(|process| process.session_key == session_key).count() >= MAX_TERMINALS { return Err(format!("At most {MAX_TERMINALS} terminals may run for one conversation")); }
     let pair = native_pty_system().openpty(PtySize { rows: rows.max(1), cols: cols.max(1), pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())?;
     let mut command = command()?;
@@ -2589,7 +2612,7 @@ fn decode_terminal_bytes(pending: &mut Vec<u8>, bytes: &[u8], eof: bool) -> Stri
     output
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 fn write_terminal(runtime: State<TerminalRuntime>, terminal_id: String, data: String) -> Result<(), String> {
     write_terminal_input(&runtime, &terminal_id, data)
 }
@@ -2601,7 +2624,7 @@ fn write_terminal_input(runtime: &TerminalRuntime, terminal_id: &str, data: Stri
     process.writer.try_send(data).map_err(|_| "Terminal input is busy; wait or close the terminal".to_string())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 fn resize_terminal(runtime: State<TerminalRuntime>, terminal_id: String, cols: u16, rows: u16) -> Result<(), String> {
     resize_terminal_pty(&runtime, &terminal_id, cols, rows)
 }
@@ -2612,7 +2635,7 @@ fn resize_terminal_pty(runtime: &TerminalRuntime, terminal_id: &str, cols: u16, 
     process.master.resize(PtySize { rows: rows.max(1), cols: cols.max(1), pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn close_terminal(runtime: State<TerminalRuntime>, terminal_id: String) -> Result<(), String> {
     if let Some(mut process) = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.remove(&terminal_id) { let _ = process.child.kill(); let _ = process.child.wait(); }
     Ok(())
@@ -2633,7 +2656,8 @@ fn open_system_resource(target: &std::ffi::OsStr) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
+#[cfg(feature = "desktop")]
 fn read_dropped_file(path: String) -> Result<Value, String> {
     let path = Path::new(&path);
     let file = fs::File::open(path).map_err(|error| error.to_string())?;
@@ -2648,18 +2672,20 @@ fn read_dropped_file(path: String) -> Result<Value, String> {
     Ok(json!({ "name": name, "data": data }))
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
+#[cfg(feature = "desktop")]
 fn open_external_url(url: String) -> Result<(), String> {
     open_external_url_with(&url, open_system_resource)
 }
 
+#[cfg(feature = "desktop")]
 fn open_external_url_with(url: &str, open: impl FnOnce(&std::ffi::OsStr) -> Result<(), String>) -> Result<(), String> {
-    let parsed = tauri::Url::parse(url).map_err(|_| "Enter a valid HTTP or HTTPS URL")?;
+    let parsed = reqwest::Url::parse(url).map_err(|_| "Enter a valid HTTP or HTTPS URL")?;
     if !matches!(parsed.scheme(), "http" | "https") || !parsed.has_host() { return Err("Only HTTP and HTTPS links can be opened in the browser".into()); }
     open(std::ffi::OsStr::new(parsed.as_str()))
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn open_project_directory(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<(), String> {
     if host_id.as_deref().unwrap_or("local") != "local" {
         let settings = load_app_settings(app)?;
@@ -2817,7 +2843,7 @@ fn parse_remote_session_metadata(output: &[u8]) -> Vec<(String, String, u64, u64
     }).collect()
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn home_directory(app: AppHandle, host_id: String) -> Result<String, String> {
     if host_id == "local" { let home = home_dir()?; return Ok(home.canonicalize().unwrap_or(home).to_string_lossy().into_owned()); }
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
@@ -2840,7 +2866,7 @@ fn temporary_chat_id(path: &str) -> Option<&str> {
     (value.parent()?.file_name()?.to_str()? == "tmp" && value.parent()?.parent()?.file_name()?.to_str()? == STORAGE_DIRECTORY).then_some(id)
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn remove_temporary_chat(app: AppHandle, path: String, host_id: String) -> Result<(), String> {
     if host_id == "local" {
         return remove_local_temporary_chat(&home_dir()?, &path);
@@ -2867,7 +2893,7 @@ fn remove_local_temporary_chat(home: &Path, path: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn validate_project_directory(app: AppHandle, path: String, host_id: String) -> Result<String, String> {
     if path.trim().is_empty() { return Err("Path can't be empty".into()); }
     if host_id == "local" {
@@ -2892,7 +2918,7 @@ fn validate_remote_project_directory(path: String, host_name: &str, command: imp
     Ok(path)
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn create_temporary_chat(app: AppHandle, host_id: String, e2e: Option<bool>) -> Result<TemporaryChat, String> {
     let session_id = Uuid::new_v4().to_string();
     let cwd = if host_id == "local" {
@@ -2915,7 +2941,7 @@ fn create_remote_temporary_chat(session_id: &str, host_name: &str, command: impl
     Ok(path)
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn list_directories(app: AppHandle, host_id: String, path: Option<String>) -> Result<DirectoryListing, String> {
     if host_id == "local" {
         return list_local_directories(&home_dir()?, path.as_deref());
@@ -2984,7 +3010,7 @@ fn collect_host_sessions(
     sessions.sort_by(|left, right| right.modified_at.cmp(&left.modified_at)); Ok(sessions)
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn list_sessions(app: AppHandle, index: State<SessionIndexRuntime>) -> Result<Vec<SessionSummary>, String> { collect_sessions(&app, &index) }
 
 fn inspect_storage(host: Option<&RemoteHost>) -> Result<HostStorage, String> {
@@ -3028,7 +3054,7 @@ fn failed_storage(host_id: String, host_name: String, error: String) -> HostStor
     HostStorage { host_id, host_name, categories: Vec::new(), archives: Vec::new(), warnings: Vec::new(), error: Some(error) }
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn storage_report(app: AppHandle) -> Result<StorageReport, String> {
     let local = inspect_storage(None);
     let remote_hosts = load_app_settings(app)?.hosts;
@@ -3103,7 +3129,7 @@ fn remote_session_file(path: &str, archived: bool, command: impl FnOnce(String) 
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path: String, host_id: Option<String>, terminal_ids: Vec<String>) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let client = app.state::<PiRuntime>();
@@ -3196,17 +3222,17 @@ fn delete_session_files(runtime: &PiRuntime, path: &str, host_id: &str, host: Op
     Err(if error.is_empty() { "Could not delete session".into() } else { error })
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn delete_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, host_id: Option<String>) -> Result<(), String> {
     delete_stored_session(app, &runtime, session_path, host_id, false)
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn delete_archived_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, host_id: Option<String>) -> Result<(), String> {
     delete_stored_session(app, &runtime, session_path, host_id, true)
 }
 
-#[tauri::command(async)]
+#[cfg_attr(feature = "desktop", tauri::command(async))]
 fn relocate_session(app: AppHandle, session_path: String, cwd: String, host_id: Option<String>) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     if host_id != "local" {
@@ -3445,7 +3471,7 @@ fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), Str
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(feature = "desktop", target_os = "linux"))]
 const LOAD_ERROR_HTML: &str = r#"<!doctype html>
 <html lang="en">
 <head>
@@ -3475,6 +3501,7 @@ const LOAD_ERROR_HTML: &str = r#"<!doctype html>
 </body>
 </html>"#;
 
+#[cfg(feature = "desktop")]
 pub fn run() {
     let mut context = tauri::generate_context!();
     if DEVELOPMENT {
@@ -3522,31 +3549,62 @@ pub fn run() {
             window.gtk_window()?.set_focus_on_map(*focus);
             window.show()?;
         }
-        mobile::start(app.handle().clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         start_session_broker(app.handle().clone(), broker.clone()).map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
         Ok(())
     }).invoke_handler(tauri::generate_handler![voice_configuration, voice_start, voice_stop, voice_mute, voice_suppress, voice_context, start_pi, stop_pi, pi_command, pi_presence, new_window, start_terminal, write_terminal, resize_terminal, close_terminal, list_sessions, storage_report, load_session_groups, change_session_groups, list_hooks, home_directory, create_temporary_chat, remove_temporary_chat, validate_project_directory, list_directories, is_git_repository, git_branch, git_project_kind, git_worktree_roots, create_project_worktree, create_git_worktree, remove_git_worktree, prepare_worktree_setup, cancel_worktree_setup, run_worktree_setup, capture_git_tree, discard_git_tree, load_git_diff, load_git_diffs, save_git_diffs, archive_session, delete_session, delete_archived_session, relocate_session, open_project_directory, open_external_url, read_dropped_file, load_app_settings, save_app_settings, codex_usage, opencode_go_usage]).build(context).expect("error while building piop").run(|app, event| {
         if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } = &event {
             let app = app.clone(); let label = label.clone();
-            thread::spawn(move || {
-                let runtime = app.state::<PiRuntime>();
-                let ids = runtime.processes.lock().map(|processes| processes.iter().filter(|(_, process)| process.window_label == label).map(|(id, _)| id.clone()).collect::<Vec<_>>()).unwrap_or_default();
-                for id in ids { let _ = detach_pi(&runtime, &id, true); }
-                let terminals = app.state::<TerminalRuntime>();
-                let ids = terminals.processes.lock().map(|processes| processes.iter().filter(|(_, process)| process.window_label == label).map(|(id, _)| id.clone()).collect::<Vec<_>>()).unwrap_or_default();
-                let _ = stop_terminals(&terminals, &ids);
-            });
+            thread::spawn(move || detach_owner(&app, &label, true));
         }
         if matches!(event, tauri::RunEvent::Exit) {
-            app.state::<voice::VoiceRuntime>().shutdown();
-            let broker = app.state::<BrokerRuntime>(); broker.closing.store(true, Ordering::SeqCst);
-            let jobs = broker.jobs.lock().map(|mut jobs| jobs.drain().map(|(_, child)| child).collect::<Vec<_>>()).unwrap_or_default();
-            for child in jobs { if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); } }
-            // The webview cannot await cleanup during pagehide. Own shutdown here.
-            let runtime = app.state::<PiRuntime>();
-            if let Ok(daemons) = runtime.daemons.lock() { for daemon in daemons.values() { daemon.shutdown(); } }
-            let ephemeral = runtime.ephemeral_sessions.lock().map(|mut sessions| sessions.drain().map(|(_, session)| session).collect::<Vec<_>>()).unwrap_or_default();
-            for session in ephemeral { remove_ephemeral_session(session); }
+            shutdown_backend(app);
         }
     });
+}
+
+#[cfg(not(feature = "desktop"))]
+pub fn run_daemon() -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().map_err(|error| error.to_string())?;
+    runtime.block_on(async {
+        let app = AppHandle::new();
+        start_session_broker(app.clone(), app.state::<BrokerRuntime>().inner().clone())?;
+        mobile::start(app.clone())?;
+        #[cfg(unix)]
+        {
+            let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).map_err(|error| error.to_string())?;
+            tokio::select! {
+                result = tokio::signal::ctrl_c() => result.map_err(|error| error.to_string())?,
+                _ = terminate.recv() => {},
+            }
+        }
+        #[cfg(not(unix))]
+        tokio::signal::ctrl_c().await.map_err(|error| error.to_string())?;
+        tokio::task::spawn_blocking(move || shutdown_backend(&app)).await.map_err(|error| error.to_string())?;
+        Ok(())
+    })
+}
+
+fn detach_owner(app: &AppHandle, owner: &str, discard_blank: bool) {
+    let runtime = app.state::<PiRuntime>();
+    let ids = runtime.processes.lock().map(|processes| processes.iter().filter(|(_, process)| process.window_label == owner).map(|(id, _)| id.clone()).collect::<Vec<_>>()).unwrap_or_default();
+    for id in ids { let _ = detach_pi(&runtime, &id, discard_blank); }
+    let terminals = app.state::<TerminalRuntime>();
+    let ids = terminals.processes.lock().map(|processes| processes.iter().filter(|(_, process)| process.window_label == owner).map(|(id, _)| id.clone()).collect::<Vec<_>>()).unwrap_or_default();
+    let _ = stop_terminals(&terminals, &ids);
+}
+
+fn shutdown_backend(app: &AppHandle) {
+    app.state::<voice::VoiceRuntime>().shutdown();
+    let broker = app.state::<BrokerRuntime>();
+    broker.closing.store(true, Ordering::SeqCst);
+    let jobs = broker.jobs.lock().map(|mut jobs| jobs.drain().map(|(_, child)| child).collect::<Vec<_>>()).unwrap_or_default();
+    for child in jobs { if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); } }
+    let terminals = app.state::<TerminalRuntime>();
+    let ids = terminals.processes.lock().map(|processes| processes.keys().cloned().collect::<Vec<_>>()).unwrap_or_default();
+    let _ = stop_terminals(&terminals, &ids);
+    let runtime = app.state::<PiRuntime>();
+    if let Ok(setups) = runtime.worktree_setups.lock() { for cancelled in setups.values() { cancelled.store(true, Ordering::SeqCst); } }
+    if let Ok(daemons) = runtime.daemons.lock() { for daemon in daemons.values() { daemon.shutdown(); } }
+    let ephemeral = runtime.ephemeral_sessions.lock().map(|mut sessions| sessions.drain().map(|(_, session)| session).collect::<Vec<_>>()).unwrap_or_default();
+    for session in ephemeral { remove_ephemeral_session(session); }
 }

@@ -5,7 +5,13 @@ fn argument<T: serde::de::DeserializeOwned>(args: &Value, key: &str) -> Result<T
     serde_json::from_value(args.get(key).cloned().unwrap_or(Value::Null)).map_err(|error| format!("Invalid {key}: {error}"))
 }
 
-pub(super) async fn dispatch(app: AppHandle, command: String, args: Value) -> Result<Value, String> {
+pub(super) async fn dispatch(app: AppHandle, owner: String, command: String, args: Value) -> Result<Value, String> {
+    if let Some(id) = args.get("runtimeId").and_then(Value::as_str) {
+        if app.state::<PiRuntime>().processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(id).is_some_and(|process| process.window_label != owner) { return Err("Runtime belongs to another connection".into()); }
+    }
+    if let Some(id) = args.get("terminalId").and_then(Value::as_str) {
+        if app.state::<TerminalRuntime>().processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.get(id).is_some_and(|process| process.window_label != owner) { return Err("Terminal belongs to another connection".into()); }
+    }
     match command.as_str() {
         "open_project_directory" => tokio::task::spawn_blocking(move || open_project_directory(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?).map(|_| Value::Null)).await.map_err(|error| error.to_string())?,
         "voice_configuration" => Ok(voice::mobile_configuration().await),
@@ -14,11 +20,11 @@ pub(super) async fn dispatch(app: AppHandle, command: String, args: Value) -> Re
         "voice_mute" => voice_mute(app.state(), argument(&args, "callId")?, argument(&args, "muted")?).map(|_| Value::Null),
         "voice_suppress" => voice_suppress(app.state(), argument(&args, "callId")?, argument(&args, "suppressed")?).map(|_| Value::Null),
         "voice_context" => voice_context(app.state(), argument(&args, "callId")?, argument(&args, "text")?, argument(&args, "delegationId")?, argument(&args, "speak")?).map(|_| Value::Null),
-        "start_pi" => tokio::task::spawn_blocking(move || serde_json::to_value(start_pi(app.clone(), app.get_webview_window("main").ok_or("Desktop window is unavailable")?, app.state(), app.state(), argument(&args, "runtimeId")?, argument(&args, "cwd")?, argument(&args, "sessionPath")?, argument(&args, "sessionId")?, argument(&args, "forkPath")?, argument(&args, "noSession")?, argument(&args, "hostId")?, argument(&args, "presence")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
+        "start_pi" => tokio::task::spawn_blocking(move || serde_json::to_value(start_pi_for_owner(app.clone(), owner, app.state(), app.state(), argument(&args, "runtimeId")?, argument(&args, "cwd")?, argument(&args, "sessionPath")?, argument(&args, "sessionId")?, argument(&args, "forkPath")?, argument(&args, "noSession")?, argument(&args, "hostId")?, argument(&args, "presence")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
         "stop_pi" => tokio::task::spawn_blocking(move || serde_json::to_value(stop_pi(app.state(), argument(&args, "runtimeId")?, argument(&args, "discardBlank")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
         "pi_command" => tokio::task::spawn_blocking(move || serde_json::to_value(pi_command(app.clone(), app.state(), app.state(), argument(&args, "runtimeId")?, argument(&args, "command")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
         "pi_presence" => tokio::task::spawn_blocking(move || serde_json::to_value(pi_presence(app.state(), argument(&args, "runtimeId")?, argument(&args, "presence")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "start_terminal" => tokio::task::spawn_blocking(move || serde_json::to_value(start_terminal(app.clone(), app.get_webview_window("main").ok_or("Desktop window is unavailable")?, app.state(), argument(&args, "terminalId")?, argument(&args, "sessionKey")?, argument(&args, "cwd")?, argument(&args, "cols")?, argument(&args, "rows")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
+        "start_terminal" => tokio::task::spawn_blocking(move || serde_json::to_value(start_terminal_for_owner(app.clone(), owner, app.state(), argument(&args, "terminalId")?, argument(&args, "sessionKey")?, argument(&args, "cwd")?, argument(&args, "cols")?, argument(&args, "rows")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
         "write_terminal" => tokio::task::spawn_blocking(move || serde_json::to_value(write_terminal(app.state(), argument(&args, "terminalId")?, argument(&args, "data")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
         "resize_terminal" => tokio::task::spawn_blocking(move || serde_json::to_value(resize_terminal(app.state(), argument(&args, "terminalId")?, argument(&args, "cols")?, argument(&args, "rows")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
         "close_terminal" => tokio::task::spawn_blocking(move || serde_json::to_value(close_terminal(app.state(), argument(&args, "terminalId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,

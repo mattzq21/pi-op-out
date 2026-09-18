@@ -39,10 +39,10 @@ export function MobileApp() {
   if (connected) return <><App /><button className="mobile-host-button" aria-label="Disconnect from host" onClick={() => { remoteClient.close(); setConnected(false); }}>Host</button></>;
   return <main className="mobile-connect dark"><form onSubmit={(event) => { event.preventDefault(); void connect(); }}>
     <p className="eyebrow">piop · Android</p><h1>Your workspace,<br />wherever you are.</h1>
-    <p>Connect to Piop on your computer. Your projects, agents, and tools stay on that host.</p>
+    <p>Connect to your Piop daemon. Your projects, agents, and tools stay on that host, even when the desktop app is closed.</p>
     <label>Host address<input type="url" required placeholder="wss://piop.example.com" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={url} onChange={(event) => setUrl(event.target.value)} /></label>
     <label>Pairing token<input type="password" required minLength={32} autoComplete="off" value={token} onChange={(event) => setToken(event.target.value)} /></label>
-    <p className="mobile-connect-hint">Use the token configured as PIOP_MOBILE_TOKEN on your host. The token is kept only until you close the app.</p>
+    <p className="mobile-connect-hint">Use the token configured as PIOP_MOBILE_TOKEN for your daemon. The token is kept only until you close the app.</p>
     {error && <p role="alert">{error}</p>}
     <button className="primary-button" disabled={connecting}>{connecting ? "Connecting…" : "Connect to workspace"}</button>
   </form></main>;

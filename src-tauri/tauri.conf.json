@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "identifier": "dev.pi.desktop",
   "build": {
+    "features": ["desktop"],
     "beforeDevCommand": "npm run build:voice && npm run dev",
     "devUrl": "http://localhost:1423",
     "beforeBuildCommand": "npm run build && npm run build:voice",

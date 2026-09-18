@@ -1,14 +1,13 @@
 //! Opt-in authenticated companion endpoint. Terminate TLS at a trusted reverse proxy.
 use super::*;
 use futures_util::{SinkExt, StreamExt};
-use tauri::Listener;
 use tokio::sync::{broadcast, Semaphore};
 use tokio_tungstenite::tungstenite::{Message, protocol::WebSocketConfig};
 
 const MAX_MESSAGE: usize = 32 * 1024 * 1024;
 
 pub(super) fn start(app: AppHandle) -> Result<(), String> {
-    let Ok(token) = std::env::var("PIOP_MOBILE_TOKEN") else { return Ok(()); };
+    let token = std::env::var("PIOP_MOBILE_TOKEN").map_err(|_| "Set PIOP_MOBILE_TOKEN to a pairing token of at least 32 characters")?;
     if token.len() < 32 { return Err("PIOP_MOBILE_TOKEN must contain at least 32 characters".into()); }
     let bind = std::env::var("PIOP_MOBILE_BIND").unwrap_or_else(|_| "127.0.0.1:9847".into());
     let listener = TcpListener::bind(&bind).map_err(|error| format!("Mobile endpoint: {error}"))?;
@@ -22,7 +21,7 @@ pub(super) fn start(app: AppHandle) -> Result<(), String> {
             }
         });
     }
-    tauri::async_runtime::spawn(async move {
+    crate::platform::async_runtime::spawn(async move {
         let Ok(listener) = tokio::net::TcpListener::from_std(listener) else { return; };
         let connections = Arc::new(Semaphore::new(8));
         let jobs = Arc::new(Semaphore::new(16));
@@ -35,7 +34,7 @@ pub(super) fn start(app: AppHandle) -> Result<(), String> {
             });
         }
     });
-    eprintln!("Piop mobile endpoint listening on {bind} (TLS proxy required)");
+    eprintln!("Piop daemon listening on {bind} (TLS proxy required)");
     Ok(())
 }
 
@@ -59,10 +58,11 @@ async fn authenticate_socket(stream: tokio::net::TcpStream, token: &str) -> Resu
 async fn connection(app: AppHandle, stream: tokio::net::TcpStream, token: String, events: broadcast::Sender<Value>, jobs: Arc<Semaphore>) -> Result<(), String> {
     let mut socket = authenticate_socket(stream, &token).await?;
     let mut events = events.subscribe();
-    socket.send(Message::Text(json!({"type":"ready", "protocol":1}).to_string().into())).await.map_err(|error| error.to_string())?;
+    socket.send(Message::Text(json!({"type":"ready", "protocol":1, "backend":"daemon"}).to_string().into())).await.map_err(|error| error.to_string())?;
     let (responses, mut receiver) = tokio::sync::mpsc::channel::<Value>(32);
     let mut pending = tokio::task::JoinSet::new();
-    let mut runtimes = HashSet::new(); let mut terminals = HashSet::new(); let mut calls = HashSet::new();
+    let mut calls = HashSet::new();
+    let owner = format!("mobile:{}", Uuid::new_v4());
     let mut heartbeat = tokio::time::interval(Duration::from_secs(20));
     let mut last_seen = Instant::now();
     loop {
@@ -80,14 +80,12 @@ async fn connection(app: AppHandle, stream: tokio::net::TcpStream, token: String
                         let Some(command) = request.get("command").and_then(Value::as_str) else { break; };
                         let args = request.get("args").cloned().unwrap_or(json!({}));
                         if command == "mobile_voice_start" { if let Some(id) = args.get("callId").and_then(Value::as_str) { calls.insert(id.to_owned()); } }
-                        if command == "start_pi" { if let Some(id) = args.get("runtimeId").and_then(Value::as_str) { runtimes.insert(id.to_owned()); } }
-                        if command == "start_terminal" { if let Some(id) = args.get("terminalId").and_then(Value::as_str) { terminals.insert(id.to_owned()); } }
                         match jobs.clone().try_acquire_owned() {
                             Ok(permit) => {
-                                let app = app.clone(); let responses = responses.clone(); let command = command.to_owned();
+                                let app = app.clone(); let responses = responses.clone(); let command = command.to_owned(); let owner = owner.clone();
                                 pending.spawn(async move {
                                     let _permit = permit;
-                                    let result = super::mobile_commands::dispatch(app, command, args).await;
+                                    let result = super::mobile_commands::dispatch(app, owner, command, args).await;
                                     let response = match result { Ok(data) => json!({"id":id,"result":data}), Err(error) => json!({"id":id,"error":error}) };
                                     let _ = responses.send(response).await;
                                 });
@@ -117,9 +115,7 @@ async fn connection(app: AppHandle, stream: tokio::net::TcpStream, token: String
     while pending.join_next().await.is_some() {}
     tokio::task::spawn_blocking(move || {
         for id in calls { let _ = voice_stop(app.state(), id); }
-        let runtime = app.state::<PiRuntime>();
-        for id in runtimes { let _ = detach_pi(&runtime, &id, false); }
-        let _ = stop_terminals(&app.state::<TerminalRuntime>(), &terminals.into_iter().collect::<Vec<_>>());
+        detach_owner(&app, &owner, false);
     }).await.map_err(|error| error.to_string())?;
     Ok(())
 }

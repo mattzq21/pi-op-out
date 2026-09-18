@@ -1,10 +1,17 @@
 use futures_util::{SinkExt, StreamExt};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+#[cfg(feature = "desktop")]
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::{io::{BufRead, BufReader, Write}, path::PathBuf, process::Stdio, sync::{Arc, Mutex}, time::{Duration, Instant}};
-use tauri::{AppHandle, Emitter, Manager, State};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, process::{Child, ChildStdin, ChildStdout, Command}, sync::{mpsc, watch}, time::timeout};
+use std::{io::{BufRead, BufReader, Write}, process::Stdio, sync::{Arc, Mutex}, time::{Duration, Instant}};
+#[cfg(feature = "desktop")]
+use std::path::PathBuf;
+use crate::platform::{AppHandle, State};
+#[cfg(feature = "desktop")]
+use tauri::{Emitter, Manager};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, process::{Child, ChildStdin, ChildStdout}, sync::{mpsc, watch}, time::timeout};
+#[cfg(feature = "desktop")]
+use tokio::process::Command;
 use tokio_tungstenite::{connect_async, tungstenite::{client::IntoClientRequest, Message as WsMessage}};
 
 #[allow(dead_code)]
@@ -37,6 +44,7 @@ impl VoiceRuntime {
     }
 }
 
+#[cfg(feature = "desktop")]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VoiceConfiguration { authenticated: bool, helper_available: bool, error: Option<String> }
@@ -80,6 +88,7 @@ fn codex_auth(refresh: bool) -> Result<CodexAuth, String> {
     result
 }
 
+#[cfg(feature = "desktop")]
 fn helper_path(app: &AppHandle) -> Result<PathBuf, String> {
     let name = format!("piop-voice-host{}", std::env::consts::EXE_SUFFIX);
     let executable = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -95,7 +104,8 @@ fn helper_path(app: &AppHandle) -> Result<PathBuf, String> {
     Err("The native voice helper is missing. Build Piop with npm run build:voice.".into())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(feature = "desktop")]
 pub async fn voice_configuration(app: AppHandle) -> VoiceConfiguration {
     let result = tokio::task::spawn_blocking(|| codex_auth(false)).await;
     let error = match result { Ok(Ok(_)) => None, Ok(Err(error)) => Some(error), Err(_) => Some("Codex login unavailable".into()) };
@@ -106,7 +116,8 @@ fn emit(app: &AppHandle, id: &str, event: Value) {
     let _ = app.emit("pi://voice", json!({"callId": id, "event": event}));
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
+#[cfg(feature = "desktop")]
 pub async fn voice_start(app: AppHandle, runtime: State<'_, VoiceRuntime>, call_id: String, context: String) -> Result<(), String> {
     uuid::Uuid::parse_str(&call_id).map_err(|_| "Invalid voice call identifier")?;
     if context.len() > 24_000 { return Err("Voice startup context is too large".into()); }
@@ -129,7 +140,7 @@ pub async fn voice_start(app: AppHandle, runtime: State<'_, VoiceRuntime>, call_
     Ok(())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn voice_stop(runtime: State<VoiceRuntime>, call_id: String) -> Result<(), String> {
     let active = runtime.0.lock().map_err(|_| "Voice state unavailable")?;
     if let Some(call) = active.as_ref().filter(|call| call.id == call_id) { let _ = call.close.send(true); }
@@ -142,21 +153,26 @@ fn command(runtime: &VoiceRuntime, id: &str, control: Control) -> Result<(), Str
     call.commands.try_send(control).map_err(|_| "Voice is busy; try again".to_string())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn voice_mute(runtime: State<VoiceRuntime>, call_id: String, muted: bool) -> Result<(), String> { command(&runtime, &call_id, Control::Mute(muted)) }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn voice_suppress(runtime: State<VoiceRuntime>, call_id: String, suppressed: bool) -> Result<(), String> { command(&runtime, &call_id, Control::Suppress(suppressed)) }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn voice_context(runtime: State<VoiceRuntime>, call_id: String, text: String, delegation_id: Option<String>, speak: bool) -> Result<(), String> {
     if text.is_empty() || text.len() > 16_000 { return Err("Invalid voice context length".into()); }
     if delegation_id.as_ref().is_some_and(|id| id.len() > 256) { return Err("Invalid delegation identifier".into()); }
     command(&runtime, &call_id, Control::Context { text, delegation_id, speak })
 }
 
-struct Helper { child: Child, input: ChildStdin, output: ChildStdout }
+struct Helper {
+    child: Child,
+    input: ChildStdin,
+    output: ChildStdout,
+}
 impl Helper {
+    #[cfg(feature = "desktop")]
     fn spawn(path: PathBuf) -> Result<Self, String> {
         let mut child = Command::new(path).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
             .env_remove("OPENAI_API_KEY").env_remove("GST_PLUGIN_PATH").env_remove("GST_PLUGIN_PATH_1_0")
@@ -193,6 +209,7 @@ impl Helper {
         if self.exchange(request).await? != expected { return Err("Unexpected voice helper reply".into()); }
         Ok(())
     }
+    #[cfg(feature = "desktop")]
     async fn offer(&mut self) -> Result<String, String> {
         self.expect(Message::Hello { protocol: 1, build_commit: "piop-voice-1".into() }, Message::Ready {}).await?;
         self.expect(Message::InitializeRuntime {}, Message::RuntimeReady {}).await?;
@@ -201,6 +218,7 @@ impl Helper {
             _ => Err("Native voice did not produce a connection offer".into()),
         }
     }
+    #[cfg(feature = "desktop")]
     async fn connect(&mut self, answer: String) -> Result<(), String> {
         self.expect(Message::ApplyAnswer { sdp: answer.try_into().map_err(str::to_owned)? }, Message::TransportReady {}).await?;
         self.expect(Message::OpenDevices {}, Message::DevicesOpened {}).await
@@ -208,6 +226,7 @@ impl Helper {
     async fn controls(&mut self, controls: AudioControls) -> Result<(), String> {
         self.expect(Message::SetAudioControls { controls }, Message::AudioControlsApplied {}).await
     }
+    #[cfg(feature = "desktop")]
     async fn close(&mut self) {
         let _ = timeout(Duration::from_secs(2), self.expect(Message::Close {}, Message::Closed {})).await;
         let _ = self.child.start_kill();
@@ -217,6 +236,7 @@ impl Helper {
 
 type Socket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
+#[cfg(feature = "desktop")]
 async fn connect_session(helper: &mut Helper, auth: &CodexAuth, context: String) -> Result<Socket, String> {
     let offer = helper.offer().await?;
     let (mut socket, answer) = connect_offer(auth, context, offer).await?;
@@ -250,6 +270,7 @@ async fn connect_offer(auth: &CodexAuth, context: String, offer: String) -> Resu
 }
 
 /// Use the phone's WebRTC transport while credentials and delegation stay on the host.
+#[cfg(not(feature = "desktop"))]
 pub async fn mobile_start(app: AppHandle, call_id: String, context: String, offer: String) -> Result<String, String> {
     uuid::Uuid::parse_str(&call_id).map_err(|_| "Invalid voice call identifier")?;
     if context.len() > 24_000 || offer.len() > 128 * 1024 { return Err("Voice request is too large".into()); }
@@ -283,12 +304,14 @@ pub async fn mobile_start(app: AppHandle, call_id: String, context: String, offe
     answer_rx.await.map_err(|_| "Could not start mobile voice")?
 }
 
+#[cfg(not(feature = "desktop"))]
 pub async fn mobile_configuration() -> Value {
     let result = tokio::task::spawn_blocking(|| codex_auth(false)).await;
     let error = match result { Ok(Ok(_)) => None, Ok(Err(error)) => Some(error), Err(_) => Some("Codex login unavailable".into()) };
     json!({"authenticated":error.is_none(),"helperAvailable":true,"error":error})
 }
 
+#[cfg(feature = "desktop")]
 async fn run_call(app: &AppHandle, id: &str, path: PathBuf, context: String, commands: mpsc::Receiver<Control>, mut closing: watch::Receiver<bool>) -> Result<bool, String> {
     let auth = tokio::select! {
         biased;
