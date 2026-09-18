@@ -3695,3 +3695,93 @@ fn registered_cancellation_reaches_a_running_setup_process() {
     assert_eq!(result.unwrap_err(), "User cancelled setup");
     assert_eq!(fs::read_to_string(&received).unwrap(), "cancel\n");
 }
+
+#[test]
+fn bundled_extension_installers_refresh_private_files_at_the_expected_paths() {
+    type Installer = fn() -> Result<PathBuf, String>;
+    let installers: [(Installer, &str, &str); 4] = [
+        (prepare_session_broker, "session-broker.ts", include_str!("../resources/session-broker.ts")),
+        (prepare_trace_reader, "piop-trace-reader.ts", include_str!("../resources/trace-reader.ts")),
+        (prepare_openai_cache_lineage_extension, "piop-openai-cache-lineage.ts", include_str!("../../extensions/piop-openai-cache-lineage/index.ts")),
+        (prepare_codex_web_search_extension, "piop-codex-web-search.ts", include_str!("../../extensions/piop-codex-web-search/index.ts")),
+    ];
+    for (install, relative, expected) in installers {
+        let home = TestDirectory::new();
+        std::env::set_var("HOME", &home.0);
+        let target = home.0.join(STORAGE_DIRECTORY).join(relative);
+        let path = install().unwrap();
+        assert_eq!(path, target);
+        assert_eq!(fs::read_to_string(&target).unwrap(), expected);
+        let other = target.with_file_name("user-file"); fs::write(&other, "keep").unwrap();
+        fs::write(&target, "stale bundle").unwrap();
+        assert_eq!(install().unwrap(), target);
+        assert_eq!(fs::read_to_string(&target).unwrap(), expected);
+        assert_eq!(fs::read_to_string(&other).unwrap(), "keep");
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&target).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(fs::metadata(target.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
+        }
+        assert_eq!(fs::read_dir(target.parent().unwrap()).unwrap().count(), 2);
+        fs::remove_file(&target).unwrap(); fs::create_dir(&target).unwrap();
+        fs::write(target.join("keep"), "original directory").unwrap();
+        assert!(install().is_err());
+        assert_eq!(fs::read_to_string(target.join("keep")).unwrap(), "original directory");
+    }
+    std::env::remove_var("HOME");
+}
+
+#[test]
+fn hook_preparation_updates_bundles_without_changing_user_hooks() {
+    let home = TestDirectory::new();
+    std::env::set_var("HOME", &home.0);
+    let hooks = home.0.join(STORAGE_DIRECTORY).join("hooks");
+    fs::create_dir_all(hooks.join("custom")).unwrap();
+    fs::write(hooks.join("custom/index.ts"), "user hook").unwrap();
+    for _ in 0..2 {
+        let entry = prepare_hooks_extension().unwrap();
+        assert_eq!(entry, home.0.join(STORAGE_DIRECTORY).join("hook-loader.ts"));
+        assert_eq!(fs::read_to_string(&entry).unwrap(), include_str!("../../extensions/piop-hooks/index.ts"));
+        let stats = entry.with_file_name("hook-stats.ts");
+        assert_eq!(fs::read_to_string(&stats).unwrap(), include_str!("../../extensions/piop-hooks/hook-stats.ts"));
+        assert_eq!(fs::read_to_string(hooks.join("custom/index.ts")).unwrap(), "user hook");
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(&hooks).unwrap().permissions().mode() & 0o777, 0o700);
+            for path in [&entry, &stats] { assert_eq!(fs::metadata(path).unwrap().permissions().mode() & 0o777, 0o600); }
+        }
+        fs::write(&entry, "old loader").unwrap();
+        fs::write(&stats, "old stats").unwrap();
+    }
+    let blocked = TestDirectory::new();
+    std::env::set_var("HOME", &blocked.0);
+    fs::create_dir_all(blocked.0.join(STORAGE_DIRECTORY)).unwrap();
+    fs::write(blocked.0.join(STORAGE_DIRECTORY).join("hooks"), "keep").unwrap();
+    assert!(prepare_hooks_extension().is_err());
+    assert_eq!(fs::read_to_string(blocked.0.join(STORAGE_DIRECTORY).join("hooks")).unwrap(), "keep");
+    assert!(!blocked.0.join(STORAGE_DIRECTORY).join("hook-loader.ts").exists());
+    std::env::remove_var("HOME");
+}
+
+#[test]
+fn side_conversation_preparation_removes_only_the_legacy_extension_after_installing() {
+    let home = TestDirectory::new();
+    std::env::set_var("HOME", &home.0);
+    let entry = home.0.join(STORAGE_DIRECTORY).join("piop-btw.ts");
+    let legacy = home.0.join(".pi/agent/extensions/pi-desktop-btw.ts");
+    fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    fs::write(&legacy, "old btw").unwrap();
+    let other = legacy.with_file_name("user-extension.ts");
+    fs::write(&other, "keep").unwrap();
+    assert_eq!(prepare_btw_extension().unwrap(), entry);
+    assert_eq!(fs::read_to_string(&entry).unwrap(), include_str!("../resources/btw.ts"));
+    assert_eq!(legacy.exists(), DEVELOPMENT, "legacy cleanup is disabled in development builds");
+    assert_eq!(fs::read_to_string(&other).unwrap(), "keep");
+    assert_eq!(prepare_btw_extension().unwrap(), entry);
+    fs::remove_file(&entry).unwrap();
+    fs::create_dir(&entry).unwrap();
+    fs::write(&legacy, "preserve until install succeeds").unwrap();
+    assert!(prepare_btw_extension().is_err());
+    assert_eq!(fs::read_to_string(&legacy).unwrap(), "preserve until install succeeds");
+    std::env::remove_var("HOME");
+}
