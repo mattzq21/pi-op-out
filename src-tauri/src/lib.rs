@@ -2500,6 +2500,16 @@ fn inspect_session_projects(sessions: &mut [SessionSummary], host: Option<&Remot
 }
 
 fn read_session_summaries(candidates: &[(String, String, u64, u64)], host: Option<&RemoteHost>) -> Result<HashMap<String, CachedSession>, String> {
+    read_session_summaries_with(candidates, host, |script, batch| {
+        if let Some(host) = host {
+            let mut command = ssh(host); command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), batch.iter().map(|item| shell_quote(&item.0)).collect::<Vec<_>>().join(" ")))); command
+        } else { let mut command = node_command(); command.args(["-e", script]).args(batch.iter().map(|item| &item.0)); command }
+    })
+}
+
+fn read_session_summaries_with(candidates: &[(String, String, u64, u64)], host: Option<&RemoteHost>,
+    mut command: impl FnMut(&str, &[(String, String, u64, u64)]) -> Command,
+) -> Result<HashMap<String, CachedSession>, String> {
     let script = include_str!("../resources/index-sessions.cjs");
     let mut result = HashMap::new(); let mut cursor = 0;
     while cursor < candidates.len() {
@@ -2510,10 +2520,7 @@ fn read_session_summaries(candidates: &[(String, String, u64, u64)], host: Optio
             argument_bytes += size; end += 1;
         }
         let batch = &candidates[cursor..end];
-        let mut command = if let Some(host) = host {
-            let mut command = ssh(host); command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), batch.iter().map(|item| shell_quote(&item.0)).collect::<Vec<_>>().join(" ")))); command
-        } else { let mut command = node_command(); command.args(["-e", script]).args(batch.iter().map(|item| &item.0)); command };
-        let output = run_limited(&mut command, MAX_SESSION_INDEX_BATCH_BYTES, "Could not read session summaries")?;
+        let output = run_limited(&mut command(script, batch), MAX_SESSION_INDEX_BATCH_BYTES, "Could not read session summaries")?;
         if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).into_owned()); }
         for line in output.stdout.split(|byte| *byte == b'\n') {
             let Ok(value) = serde_json::from_slice::<Value>(line) else { continue };

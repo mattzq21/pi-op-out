@@ -946,3 +946,50 @@ fn settings_loading_defaults_only_when_absent_and_rejects_corrupt_or_excessive_c
     fs::write(&path, serde_json::to_vec(&settings).unwrap()).unwrap();
     assert!(read_settings_at(&path).err().unwrap().contains("MCP servers"));
 }
+#[test]
+fn summary_ingestion_ignores_unrequested_paths_and_preserves_trusted_file_metadata() {
+    let candidates = vec![("/requested.jsonl".into(), "trusted-fingerprint".into(), 123, 456), ("/defaults.jsonl".into(), "defaults".into(), 789, 12)];
+    let host = RemoteHost { id: "remote".into(), name: "Server".into(), target: "unused.invalid".into(), pi_path: "pi".into() };
+    let lines = [
+        "invalid JSON".to_string(), "null".into(), "{}".into(), json!({"path":17}).to_string(),
+        json!({"path":"/injected.jsonl","id":"injected"}).to_string(),
+        json!({"path":"/requested.jsonl","id":"session","name":"Name","cwd":"/project/repo","preview":"hello","messageCount":3,"apiCost":0.25,"modifiedAt":999,"hostId":"untrusted","fingerprint":"untrusted"}).to_string(),
+        json!({"path":"/defaults.jsonl","id":false,"cwd":null,"name":[],"preview":42,"messageCount":-1,"apiCost":"invalid"}).to_string(),
+    ].join("\n");
+    let results = read_session_summaries_with(&candidates, Some(&host), |_, batch| {
+        assert_eq!(batch.len(), 2);
+        let mut command = Command::new("node"); command.args(["-e", "process.stdout.write(process.argv[1])", &lines]); command
+    }).unwrap();
+    assert_eq!(results.len(), 2); assert!(!results.contains_key("/injected.jsonl"));
+    let cached = &results["/requested.jsonl"]; let session = &cached.summary;
+    assert_eq!(cached.fingerprint, "trusted-fingerprint"); assert_eq!(session.modified_at, 123);
+    assert_eq!(session.host_id, "remote"); assert_eq!(session.host_name, "Server");
+    assert_eq!(session.id, "session"); assert_eq!(session.name, "Name"); assert_eq!(session.preview, "hello");
+    assert_eq!(session.project, "repo"); assert_eq!(session.message_count, 3); assert_eq!(session.api_cost, 0.25);
+    let defaults = &results["/defaults.jsonl"].summary;
+    assert_eq!(defaults.id, ""); assert_eq!(defaults.name, ""); assert_eq!(defaults.preview, ""); assert_eq!(defaults.project, "Workspace");
+    assert_eq!(defaults.message_count, 0); assert_eq!(defaults.api_cost, 0.0); assert_eq!(defaults.modified_at, 789);
+}
+
+#[test]
+fn summary_ingestion_obeys_count_and_quoted_argument_limits_and_propagates_scanner_failure() {
+    for (candidates, expected) in [
+        ((0..130).map(|index| (format!("/session-{index}.jsonl"), String::new(), 0, 0)).collect::<Vec<_>>(), vec![128, 2]),
+        ((0..3).map(|index| (format!("/{}-{index}.jsonl", "'".repeat(2500)), String::new(), 0, 0)).collect::<Vec<_>>(), vec![1, 1, 1]),
+    ] {
+        let mut batches = Vec::new();
+        let results = read_session_summaries_with(&candidates, None, |_, batch| {
+            batches.push(batch.len());
+            let body = batch.iter().map(|item| json!({"path":item.0,"id":item.0}).to_string()).collect::<Vec<_>>().join("\n");
+            let mut command = Command::new("node"); command.args(["-e", "process.stdout.write(process.argv[1])", &body]); command
+        }).unwrap();
+        assert_eq!(batches, expected); assert_eq!(results.len(), candidates.len());
+        assert!(results.values().all(|cached| cached.summary.host_id == "local" && cached.summary.host_name == "Local"));
+    }
+    let candidates = vec![("/session.jsonl".into(), String::new(), 0, 0)];
+    assert_eq!(read_session_summaries_with(&candidates, None, |_, _| {
+        let mut command = Command::new("sh"); command.args(["-c", "printf 'scanner failed' >&2; exit 2"]); command
+    }).err().unwrap(), "scanner failed");
+    assert!(read_session_summaries_with(&candidates, None, |_, _| Command::new("/missing/piop-scanner-test")).is_err());
+    assert!(read_session_summaries_with(&[], None, |_, _| panic!("empty scan launched")).unwrap().is_empty());
+}
