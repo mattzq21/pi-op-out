@@ -2309,6 +2309,114 @@ fn remote_diff_queries_propagate_process_encoding_json_and_size_errors() {
 }
 
 #[test]
+fn executable_discovery_searches_home_installations_in_order_and_ignores_directories() {
+    let home = TestDirectory::new();
+    for directory in [".local/bin", ".npm-global/bin", ".bun/bin"] {
+        fs::create_dir_all(home.0.join(directory)).unwrap();
+        fs::write(home.0.join(directory).join("pi"), "").unwrap();
+    }
+    assert_eq!(pi_executable_in(Some(home.0.clone())), home.0.join(".local/bin/pi"));
+    fs::remove_file(home.0.join(".local/bin/pi")).unwrap();
+    fs::create_dir(home.0.join(".local/bin/pi")).unwrap();
+    assert_eq!(pi_executable_in(Some(home.0.clone())), home.0.join(".npm-global/bin/pi"));
+    fs::remove_file(home.0.join(".npm-global/bin/pi")).unwrap();
+    fs::remove_file(home.0.join(".bun/bin/pi")).unwrap();
+    let empty = TestDirectory::new();
+    assert_eq!(pi_executable_in(Some(empty.0.clone())), pi_executable_in(None));
+}
+
+#[test]
+fn temporary_chat_removal_deletes_marked_contents_and_preserves_other_chats() {
+    let home = TestDirectory::new();
+    let first = create_local_temporary_chat(&home.0, &Uuid::new_v4().to_string()).unwrap();
+    let second = create_local_temporary_chat(&home.0, &Uuid::new_v4().to_string()).unwrap();
+    fs::create_dir(first.join("nested")).unwrap(); fs::write(first.join("nested/file"), "temporary content").unwrap();
+    fs::write(second.join("keep"), "other chat").unwrap();
+    remove_local_temporary_chat(&home.0, first.to_str().unwrap()).unwrap();
+    assert!(!first.exists());
+    assert_eq!(fs::read_to_string(second.join("keep")).unwrap(), "other chat");
+    assert!(second.join(".pi-desktop-temporary-chat").is_file());
+    assert!(remove_local_temporary_chat(&home.0, first.to_str().unwrap()).is_err());
+}
+
+#[test]
+fn temporary_chat_removal_rejects_unmarked_wrong_root_and_non_uuid_directories() {
+    let home = TestDirectory::new(); let other_home = TestDirectory::new();
+    let outside = create_local_temporary_chat(&other_home.0, &Uuid::new_v4().to_string()).unwrap();
+    assert_eq!(remove_local_temporary_chat(&home.0, outside.to_str().unwrap()).unwrap_err(), "Refusing to remove a directory outside the temporary chat root");
+    assert!(outside.is_dir());
+    let unmarked = home.0.join(STORAGE_DIRECTORY).join("tmp").join(Uuid::new_v4().to_string());
+    fs::create_dir_all(&unmarked).unwrap(); fs::write(unmarked.join("keep"), "keep").unwrap();
+    assert_eq!(remove_local_temporary_chat(&home.0, unmarked.to_str().unwrap()).unwrap_err(), "Refusing to remove an unmarked directory");
+    fs::create_dir(unmarked.join(".pi-desktop-temporary-chat")).unwrap();
+    assert!(remove_local_temporary_chat(&home.0, unmarked.to_str().unwrap()).is_err());
+    assert_eq!(fs::read_to_string(unmarked.join("keep")).unwrap(), "keep");
+    let named = home.0.join(STORAGE_DIRECTORY).join("tmp/project"); fs::create_dir(&named).unwrap();
+    fs::write(named.join(".pi-desktop-temporary-chat"), "").unwrap();
+    assert_eq!(remove_local_temporary_chat(&home.0, named.to_str().unwrap()).unwrap_err(), "Refusing to remove a directory not created as a temporary chat");
+    assert!(named.is_dir());
+}
+
+#[test]
+fn temporary_chats_create_marked_directories_and_validate_their_location() {
+    let root = TestDirectory::new();
+    let id = "12345678-1234-4123-8123-123456789abc";
+    let path = create_local_temporary_chat(&root.0, id).unwrap();
+    assert_eq!(path, root.0.join(STORAGE_DIRECTORY).join("tmp").join(id));
+    assert!(path.join(".pi-desktop-temporary-chat").is_file());
+    assert_eq!(temporary_chat_id(path.to_str().unwrap()), Some(id));
+    assert_eq!(create_local_temporary_chat(&root.0, id).unwrap(), path);
+    for invalid in [format!("/home/tmp/{id}"), format!("/home/.piop/other/{id}"), "/home/.piop/tmp/not-a-uuid".into(), "/".into()] {
+        assert_eq!(temporary_chat_id(&invalid), None);
+    }
+    let blocked = root.0.join("blocked"); fs::write(&blocked, b"file").unwrap();
+    assert!(create_local_temporary_chat(&blocked, id).unwrap_err().contains("Could not create temporary chat directory"));
+}
+
+#[test]
+fn directory_listing_defaults_to_home_filters_files_and_sorts_names() {
+    let home = TestDirectory::new();
+    for name in ["zebra", "Apple", "beta", ".hidden"] { fs::create_dir(home.0.join(name)).unwrap(); }
+    fs::write(home.0.join("not-a-directory"), "file").unwrap();
+    let canonical = home.0.canonicalize().unwrap();
+    let expected: Vec<_> = [".hidden", "Apple", "beta", "zebra"].iter().map(|name| canonical.join(name).to_string_lossy().into_owned()).collect();
+    for path in [None, Some(""), Some(" \t"), home.0.to_str()] {
+        let listing = list_local_directories(&home.0, path).unwrap();
+        assert_eq!(listing.path, canonical.to_string_lossy());
+        assert_eq!(listing.parent, Some(canonical.parent().unwrap().to_string_lossy().into_owned()));
+        assert_eq!(listing.directories, expected);
+    }
+    let empty = list_local_directories(&home.0, home.0.join("beta").to_str()).unwrap();
+    assert!(empty.directories.is_empty());
+    assert_eq!(empty.parent.as_deref(), canonical.to_str());
+    assert!(list_local_directories(&home.0, home.0.join("missing").to_str()).err().unwrap().starts_with("Could not browse"));
+    assert!(list_local_directories(&home.0, home.0.join("not-a-directory").to_str()).err().unwrap().ends_with("is not a directory"));
+}
+
+#[cfg(unix)]
+#[test]
+fn directory_listing_resolves_requested_symlinks_and_omits_broken_links() {
+    use std::os::unix::fs::symlink;
+    let home = TestDirectory::new();
+    let target = home.0.join("target"); fs::create_dir(&target).unwrap();
+    symlink(&target, home.0.join("alias")).unwrap();
+    symlink(home.0.join("missing"), home.0.join("broken")).unwrap();
+    let listing = list_local_directories(&home.0, home.0.join("alias").to_str()).unwrap();
+    assert_eq!(listing.path, target.canonicalize().unwrap().to_string_lossy());
+    let root = list_local_directories(&home.0, None).unwrap();
+    assert_eq!(root.directories.len(), 2);
+    assert!(root.directories.iter().any(|path| path.ends_with("/alias")));
+    assert!(!root.directories.iter().any(|path| path.ends_with("/broken")));
+}
+
+#[test]
+fn remote_directory_output_preserves_names_and_root_parent_semantics() {
+    let listing = parse_remote_directories(b"/project\0zebra\0Apple\0a b\nname\0\0").unwrap();
+    assert_eq!(listing.path, "/project"); assert_eq!(listing.parent.as_deref(), Some("/"));
+    assert_eq!(listing.directories, vec!["/project/a b\nname", "/project/Apple", "/project/zebra"]);
+}
+
+#[test]
 fn ephemeral_forks_copy_history_with_new_identity_and_private_permissions() {
     let home = TestDirectory::new(); let temporary = TestDirectory::new();
     let sessions = home.0.join(STORAGE_DIRECTORY).join("sessions"); fs::create_dir_all(&sessions).unwrap();
