@@ -16,7 +16,8 @@ export function mergeDiffSnapshots(gitPatch: GitDiffSnapshot | null, snapshots: 
   const source = gitDiffSource(gitPatch, snapshots.at(-1)?.cwd ?? cwd);
   const covered = new Set(parseDiff(source.patch).flatMap((file) => [file.path, ...(file.oldPath ? [file.oldPath] : [])].map((path) => absolutePath(path, source.repositoryRoot))));
   const patches = source.patch ? [source.patch] : [];
-  for (const snapshot of snapshots) for (const patch of snapshot.patch.split(/(?=^diff --git )/m)) {
+  const validSnapshots = Array.isArray(snapshots) ? snapshots.filter((snapshot) => snapshot && typeof snapshot.patch === "string" && typeof snapshot.cwd === "string") : [];
+  for (const snapshot of validSnapshots) for (const patch of snapshot.patch.split(/(?=^diff --git )/m)) {
     const file = parseDiff(patch)[0];
     if (file && !covered.has(absolutePath(file.path, snapshot.cwd))) patches.push(patch);
   }
@@ -28,10 +29,10 @@ export function mergeDiffSnapshots(gitPatch: GitDiffSnapshot | null, snapshots: 
 export function turnDiff(messages: ChatMessage[], gitPatch?: GitDiffSnapshot, cwd = "") {
   const files = new Map<string, DiffFile>();
   const covered = new Set<string>();
-  const snapshots = messages.flatMap((message) => message.fileChanges ?? []);
+  const snapshots = (Array.isArray(messages) ? messages : []).flatMap((message) => Array.isArray(message?.fileChanges) ? message.fileChanges.filter((snapshot) => snapshot && typeof snapshot.patch === "string" && Array.isArray(snapshot.toolCallIds) && Array.isArray(snapshot.paths)) : []);
   const base = snapshots.at(-1)?.cwd ?? cwd;
   const source = gitDiffSource(gitPatch, base);
-  const warnings = [...new Set(snapshots.flatMap((snapshot) => snapshot.warnings))];
+  const warnings = [...new Set(snapshots.flatMap((snapshot) => Array.isArray(snapshot.warnings) ? snapshot.warnings.filter((warning): warning is string => typeof warning === "string") : []))];
   const add = (file: DiffFile, sourceCwd: string) => {
     const key = absolutePath(file.path, sourceCwd);
     const previous = files.get(key);
@@ -43,7 +44,7 @@ export function turnDiff(messages: ChatMessage[], gitPatch?: GitDiffSnapshot, cw
     add(file, source.repositoryRoot); covered.add(absolutePath(file.path, source.repositoryRoot));
     if (file.oldPath) covered.add(absolutePath(file.oldPath, source.repositoryRoot));
   }
-  for (const snapshot of snapshots) for (const file of parseDiff(snapshot.patch)) {
+  for (const snapshot of snapshots) for (const file of parseDiff(typeof snapshot.patch === "string" ? snapshot.patch : "")) {
     if (!covered.has(absolutePath(file.path, snapshot.cwd))) add(file, snapshot.cwd);
   }
   for (const message of messages) {
@@ -53,14 +54,14 @@ export function turnDiff(messages: ChatMessage[], gitPatch?: GitDiffSnapshot, cw
     const details = message.details as { patch?: unknown; diff?: unknown } | undefined;
     const path = typeof input?.path === "string" ? input.path : undefined;
     const toolCallId = message.toolCallId ?? message.id;
-    const snapshot = snapshots.find((candidate) => candidate.toolCallIds.includes(toolCallId));
+    const snapshot = snapshots.find((candidate) => Array.isArray(candidate.toolCallIds) && candidate.toolCallIds.includes(toolCallId));
     const toolCwd = snapshot?.cwd ?? base;
     const mappings = [...(snapshot?.toolPaths ?? []), ...(source.toolPaths ?? [])].filter((mapping) => mapping.toolCallId === toolCallId);
     const canonicalToolPath = (path: string) => {
       const exact = mappings.find((mapping) => mapping.path === path || mapping.absolutePath === path || mapping.canonicalPath === path);
       return (exact ?? mappings.find((mapping) => absolutePath(mapping.absolutePath, toolCwd) === absolutePath(path, toolCwd)))?.canonicalPath ?? path;
     };
-    const snapshotPaths = new Set(snapshot?.paths.map((path) => absolutePath(path, toolCwd)));
+    const snapshotPaths = new Set(Array.isArray(snapshot?.paths) ? snapshot.paths.filter((path): path is string => typeof path === "string").map((path) => absolutePath(path, toolCwd)) : []);
     const patch = typeof details?.patch === "string" ? details.patch : name === "edit" && typeof details?.diff === "string" ? details.diff : name === "apply_patch" ? input?.patch ?? input?.input : undefined;
     if (typeof patch !== "string") continue;
     for (const file of parseDiff(patch, path)) {

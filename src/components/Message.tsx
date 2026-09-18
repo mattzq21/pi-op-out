@@ -109,7 +109,7 @@ const markdownComponents: Components = {
 };
 
 function userMessageParts(content: string) {
-  const invocation = content.match(/^<skill\s+name="([^"]+)"\s+location="[^"]+">\nReferences are relative to [^\n]+\.\n\n[\s\S]*?<\/skill>(?:\n\n([\s\S]*))?$/);
+  const invocation = content.match(/^<skill\s+name="([^"]+)"\s+location="[^"]+">\nReferences are relative to [^\n]+\.\n\n[\s\S]*?<\/skill>(?:\n\n([\s\S]*))?$/i);
   if (!invocation) return { skills: [] as string[], text: content, literalSkill: /<\/?skill\b/i.test(content) };
   return { skills: [invocation[1]], text: (invocation[2] ?? "").trim(), literalSkill: false };
 }
@@ -148,7 +148,8 @@ export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = 
     const label = <><Wrench size={14} /><span><strong>{message.toolName || "tool"}{toolCount > 1 ? ` x${toolCount}` : ""}</strong><small>{status === "running" ? "Running…" : status === "error" ? "Failed" : "Completed"}</small></span></>;
     if (!debug) return <div className={`tool-event ${status}`}><div className="tool-summary">{label}</div></div>;
     const input = message.toolInput === undefined ? undefined : JSON.stringify(message.toolInput, null, 2);
-    const inputLines = input && message.toolInput !== null && typeof message.toolInput === "object" ? input.slice(1, -1).replace(/^\n|\n$/g, "").replace(/^  /gm, "") : input;
+    const debraced = input && message.toolInput !== null && typeof message.toolInput === "object" && !Array.isArray(message.toolInput) ? input.slice(1, -1).replace(/^\n|\n$/g, "").replace(/^  /gm, "") : input;
+    const inputLines = debraced;
     return <details className={`tool-event ${status}`} open={status === "running" || (expanded && status !== "done")}><summary className="tool-summary">{label}<ChevronRight size={12} className="tool-chevron" aria-hidden="true" /></summary>{inputLines !== undefined && <div className="tool-payload"><div className="tool-payload-label">In</div><div className="tool-input" aria-label="Tool arguments"><pre>{inputLines}</pre></div></div>}{output && <div className="tool-payload"><div className="tool-payload-label">Out</div><div className="tool-output" aria-label="Tool output"><pre>{output}</pre></div></div>}</details>;
   }
   if (message.role === "user") {

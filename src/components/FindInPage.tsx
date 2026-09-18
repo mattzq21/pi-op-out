@@ -6,7 +6,10 @@ type Box = { left: number; top: number; width: number; height: number; active: b
 
 function findMatches(root: HTMLElement, query: string): Match[] {
   if (!query) return [];
-  const pattern = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu");
+  // Collapse query whitespace the same way document text is collapsed, so
+  // pasted newlines/tabs/double-spaces match visibly adjacent words.
+  const collapsedQuery = query.replace(/\s+/g, " ");
+  const pattern = new RegExp(collapsedQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "\\s+"), "giu");
   const matches: Match[] = [];
   let block: Element | null = null;
   let text = "";

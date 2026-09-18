@@ -1,4 +1,4 @@
-import { textOf } from "./lib/content";
+import { hasVisibleText, textOf } from "./lib/content";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
 import { ArrowLeft, Bug, FolderPlus, GitBranch, MessageSquare, Settings } from "lucide-react";
 import { ResizableSidebar } from "./components/ResizableSidebar";
@@ -54,7 +54,9 @@ function appendTerminalOutputs(current: Record<string, SessionTerminals>, chunks
 function selectedProjectCwd(cwd: string | undefined, temporary: boolean) { return !cwd || temporary ? undefined : cwd; }
 
 export function formatCodexReset(resetAt: number, now = Date.now()) {
+  if (!Number.isFinite(resetAt)) return "—";
   const remaining = Math.max(0, resetAt * 1000 - now);
+  if (!Number.isFinite(remaining)) return "—";
   if (remaining === 0) return "now";
   const day = 24 * 60 * 60 * 1000;
   if (remaining > day) return `${Math.ceil(remaining / day)}d`;
@@ -127,7 +129,7 @@ export default function App() {
   const [dialogs, setDialogs] = useState<OwnedExtensionDialog[]>([]); const [notices, setNotices] = useState<Array<{ id: string; title: string; message: string }>>([]);
   const dialogsRef = useRef(dialogs); dialogsRef.current = dialogs;
   const mainDialogOwnerRef = useRef("Main conversation"); mainDialogOwnerRef.current = state.sessionName ? `Main: ${state.sessionName}` : "Main conversation";
-  const addNotice = useCallback((notice: { title: string; message: string }) => setNotices((current) => [...current, { ...notice, id: crypto.randomUUID() }]), []);
+  const addNotice = useCallback((notice: { title: string; message: string }) => setNotices((current) => [...current.slice(-9), { ...notice, id: crypto.randomUUID() }]), []);
   const queueExtensionDialog = useCallback((request: ExtensionUiRequest, ownerTransport: NativeTransport, owner: string) => setDialogs((current) => current.some((dialog) => dialog.transport === ownerTransport && dialog.request.id === request.id) ? current : [...current, { request, transport: ownerTransport, owner, queueId: crypto.randomUUID() }]), []);
   const resolveExtensionDialog = useCallback((owner: NativeTransport, id: string) => setDialogs((current) => current.filter((dialog) => dialog.transport !== owner || dialog.request.id !== id)), []);
   const closeTransportDialogs = useCallback(async (ownerTransport: NativeTransport) => {
@@ -184,7 +186,7 @@ export default function App() {
   const activeTerminal = sessionTerminals.tabs.find((terminal) => terminal.id === sessionTerminals.activeId) ?? sessionTerminals.tabs[0];
   const terminalsBySessionRef = useRef(terminalsBySession); terminalsBySessionRef.current = terminalsBySession;
   const activateConversationKey = (key: string) => { activeConversationKeyRef.current = key; setActiveConversationKey(key); };
-  useEffect(() => { runtimePool.setErrorHandler((message) => addNotice({ title: "Project changes", message })); return () => { runtimePool.setErrorHandler(); }; }, [addNotice, runtimePool]);
+  useEffect(() => { runtimePool.setErrorHandler((message) => addNotice({ title: message.startsWith("Could not load saved project changes") || message.startsWith("Could not save project changes") ? "Project changes" : "Session", message })); return () => { runtimePool.setErrorHandler(); }; }, [addNotice, runtimePool]);
 
   const flushTerminalOutput = useCallback(() => {
     terminalOutputFrame.current = undefined; const chunks = queuedTerminalOutput.current; queuedTerminalOutput.current = new Map();
@@ -331,7 +333,7 @@ export default function App() {
         } catch { setDefinedAgents(undefined); } }
         else if (request.method === "setStatus" && request.statusKey === MCP_STATUS_KEY) { setExtensionOwner(transport); try { const values = request.statusText?.startsWith("json:") ? JSON.parse(request.statusText.slice(5)) as Array<{ id: string; status: "starting" | "connected" | "stopped" | "error"; error?: string }> : []; setMcpStatuses(Object.fromEntries(values.map((value) => [value.id, { status: value.status, error: value.error }]))); } catch { setMcpStatuses({}); } }
         else if (request.method === "setStatus" && request.statusKey && request.statusKey !== PROMPT_CONTEXT_STATUS_KEY) { setExtensionOwner(transport); setStatuses((current) => { const next = { ...current }; if (request.statusText) next[request.statusKey!] = request.statusText; else delete next[request.statusKey!]; return next; }); }
-        else if (request.method === "setWidget" && request.widgetKey) { setExtensionOwner(transport); setWidgets((current) => { const next = { ...current }; if (request.widgetLines) next[request.widgetKey!] = request.widgetLines; else delete next[request.widgetKey!]; return next; }); }
+        else if (request.method === "setWidget" && request.widgetKey) { setExtensionOwner(transport); setWidgets((current) => { const next = { ...current }; if (request.widgetLines) next[request.widgetKey!] = (Array.isArray(request.widgetLines) ? request.widgetLines : []).filter((line): line is string => typeof line === "string").map((line) => line.slice(0, 500)).slice(0, 50); else delete next[request.widgetKey!]; return next; }); }
         else if (request.method === "setTitle") document.title = request.title || "piop";
         else if (request.method === "set_editor_text") { setComposerDrafts((current) => { const key = transportConversationKeys.current.get(transport) ?? terminalSessionIdRef.current; const next = { ...current }; if (request.text && !next[key]) next[key] = request.text; return next; }); setActivePane("main"); setMainComposerFocusRequest((value) => value + 1); }
         else if (["input", "editor", "select", "confirm"].includes(request.method)) queueExtensionDialog(request, transport, mainDialogOwnerRef.current);
@@ -393,7 +395,14 @@ export default function App() {
       await createWorktree(target, args.join(" "));
       return true;
     }
-    if (/^\/catch-up(?:\s|$)/.test(text)) { await transport.command({ type: "prompt", message: text }); return true; }
+    if (/^\/catch-up(?:\s|$)/i.test(text)) {
+      if (behavior) {
+        await ownerTransport.command({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...(images.length ? { images } : {}) });
+        return;
+      }
+      await transport.command({ type: "prompt", message: text, ...(images.length ? { images } : {}) });
+      return true;
+    }
     if (behavior) { await ownerTransport.command({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...(images.length ? { images } : {}) }); return; }
 
     await transport.command({ type: "prompt", message: text, ...(images.length ? { images } : {}) });
@@ -571,10 +580,11 @@ export default function App() {
     } catch (reason) { addNotice({ title: "Could not fork and forget", message: reason instanceof Error ? reason.message : String(reason) }); }
     finally { branchPending.current.delete(pendingKey); }
   };
-  const startNewSession = async (clearProject = false, group?: SessionGroup) => { if (newSessionPending.current || !canLeaveSettings()) return; if (!clearProject && (composerDraft.trim() || composerUploads.length) && !window.confirm("Start a new conversation and discard the unsent draft?")) return; newSessionPending.current = true; const hostId = group ? group.hostId ?? "local" : activeHostIdRef.current; const projectCwd = group ? group.cwd ?? undefined : clearProject ? undefined : selectedProjectCwd(activeCwd, transport.isTemporaryChat()); const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; activateConversationKey(conversationKey); setView("chat"); closeSplitPane(); setTerminalOpen(false); setTerminalTarget(undefined); updateConnected(false); setDefinedAgents(undefined); discardPendingUpdates(); setMessages([]); setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, isPaused: false, isPausing: false, activity: undefined, contextUsage: undefined })); const nextTransport = runtimePool.create(projectCwd ? { cwd: projectCwd, hostId } : { hostId }); transportConversationKeys.current.set(nextTransport, conversationKey); if (group) pendingSessionGroups.current.set(nextTransport, group.id); try { const cwd = projectCwd ?? await nextTransport.prepareTemporaryChat(hostId); if (activeConversationKeyRef.current !== conversationKey) { transportConversationKeys.current.delete(nextTransport); void runtimePool.release(nextTransport); return; } if (clearProject) { setComposerDraft(conversationKey, composerDraft); setComposerUploads(nextTransport, composerUploads); } setActiveCwd(cwd); setActiveHostId(hostId); activateTransport(nextTransport); } catch (reason) { transportConversationKeys.current.delete(nextTransport); void runtimePool.release(nextTransport); if (activeConversationKeyRef.current === conversationKey) { updateConnected(false); setError(reason instanceof Error ? reason.message : String(reason)); } } finally { newSessionPending.current = false; } };
+  const startNewSession = async (clearProject = false, group?: SessionGroup) => { if (newSessionPending.current || !canLeaveSettings()) return; if (!clearProject && (hasVisibleText(composerDraft) || composerUploads.length) && !window.confirm("Start a new conversation and discard the unsent draft?")) return; newSessionPending.current = true; const hostId = group ? group.hostId ?? "local" : activeHostIdRef.current; const projectCwd = group ? group.cwd ?? undefined : clearProject ? undefined : selectedProjectCwd(activeCwd, transport.isTemporaryChat()); const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; activateConversationKey(conversationKey); setView("chat"); closeSplitPane(); setTerminalOpen(false); setTerminalTarget(undefined); updateConnected(false); setDefinedAgents(undefined); discardPendingUpdates(); setMessages([]); setState((value) => ({ ...value, sessionId: "", sessionName: undefined, sessionFile: undefined, messageCount: 0, pendingMessageCount: 0, isStreaming: false, isPaused: false, isPausing: false, activity: undefined, contextUsage: undefined })); const nextTransport = runtimePool.create(projectCwd ? { cwd: projectCwd, hostId } : { hostId }); transportConversationKeys.current.set(nextTransport, conversationKey); if (group) pendingSessionGroups.current.set(nextTransport, group.id); try { const cwd = projectCwd ?? await nextTransport.prepareTemporaryChat(hostId); if (activeConversationKeyRef.current !== conversationKey) { transportConversationKeys.current.delete(nextTransport); void runtimePool.release(nextTransport); return; } if (clearProject) { setComposerDraft(conversationKey, composerDraft); setComposerUploads(nextTransport, composerUploads); } setActiveCwd(cwd); setActiveHostId(hostId); activateTransport(nextTransport); } catch (reason) { transportConversationKeys.current.delete(nextTransport); void runtimePool.release(nextTransport); if (activeConversationKeyRef.current === conversationKey) { updateConnected(false); setError(reason instanceof Error ? reason.message : String(reason)); } } finally { newSessionPending.current = false; } };
   const newSession = () => startNewSession();
   const clearChatProject = () => startNewSession(true);
   const selectSession = (session: SessionSummary) => {
+    if (!canLeaveSettings()) return undefined;
     if (window.matchMedia("(max-width: 700px)").matches) setPanelOpen(false);
     const selectedKey = `${session.hostId ?? "local"}:${session.id}`; if (archivePending.current.has(selectedKey)) return undefined;
     const hostId = session.hostId ?? "local"; if (session.id === state.sessionId && hostId === activeHostId) { if (!connected) void transport.connect().then(() => refresh()).then((value) => configureRuntime(value)).then(() => refreshSession()).then(() => { setError(undefined); updateConnected(true); }).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason))); return transport; }
@@ -747,6 +757,9 @@ export default function App() {
     if (!settings) return;
     const handleKeybind = (event: KeyboardEvent) => {
       if (event.repeat || document.querySelector("dialog[open]")) return;
+      const target = event.target instanceof HTMLElement ? event.target : undefined;
+      // Never hijack typing: bare (non-Ctrl/Meta) shortcuts must not fire from editable fields.
+      if (target?.closest("input, textarea, select, [contenteditable='true'], .keybind-input") && !event.ctrlKey && !event.metaKey) return;
       if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "g") {
         event.preventDefault();
         if (!canLeaveSettings()) return;
@@ -807,8 +820,8 @@ export default function App() {
     </div>}
     {activeDialog && !projectOpen && !renameSession && !relocatingSession && !worktreeTarget && <ExtensionDialog key={activeDialog.queueId} request={activeDialog.request} owner={activeDialog.owner} onRespond={async (response) => { await activeDialog.transport.command({ type: "extension_ui_response", id: activeDialog.request.id, ...response }); setDialogs((current) => current.filter((item) => item !== activeDialog)); }} />}
     {projectOpen && <ProjectDialog initialPath={projectCwd ?? ""} hosts={settings.hosts} initialHostId={activeHostId} onHomeDirectory={resolveHomeDirectory} onChooseDirectory={(currentPath, hostId) => transport.listDirectories(hostId, currentPath || undefined)} onOpen={openProject} onCancel={() => { projectOpenRef.current = false; setProjectOpen(false); }} />}
-    {renameSession && <ExtensionDialog request={{ type: "extension_ui_request", id: "rename-session", method: "input", title: "Rename conversation", prefill: renameSession.session.name }} onRespond={async (response) => { if (response.cancelled) { setRenameSession(undefined); return; } if (typeof response.value !== "string" || !response.value.trim()) throw new Error("Conversation name can't be empty"); const name = response.value.trim(); await renameSession.transport.connect(); await renameSession.transport.command({ type: "set_session_name", name }); if (renameSession.session.id === state.sessionId && (renameSession.session.hostId ?? "local") === activeHostId) setState((current) => ({ ...current, sessionName: name })); await syncSessionIndex(); setRenameSession(undefined); }} />}
-    {relocatingSession && <ExtensionDialog request={{ type: "extension_ui_request", id: `relocate-${relocatingSession.id}`, method: "input", title: "Locate conversation project", message: `The original project directory no longer exists: ${relocatingSession.cwd}. Enter its new location to open this conversation.`, error: relocationError, placeholder: "Replacement project directory", prefill: sessions.find((session) => session.id === state.sessionId && (session.hostId ?? "local") === activeHostId && session.cwdExists !== false)?.cwd || "" }} onRespond={async (response) => { if (response.cancelled) { setRelocationError(undefined); setRelocatingSession(undefined); return; } const cwd = typeof response.value === "string" ? response.value.trim() : ""; if (!cwd) { setRelocationError("Path can't be empty"); return; } const session = relocatingSession; const action = relocationActionRef.current; const relocated = { ...session, cwd, cwdExists: true }; setRelocationError(undefined); try { await transport.relocateSession(session.path, cwd, session.hostId); const owner = runtimePool.forSession(session); await owner.restoreConnection({ cwd, sessionPath: session.path, hostId: session.hostId }); setRelocatingSession(undefined); if (action === "split") openSplitPane(relocated); else if (action === "rename") setRenameSession({ session: relocated, transport: runtimePool.forSession(relocated) }); else selectSession(relocated); } catch (reason) { setRelocationError(reason instanceof Error ? reason.message : String(reason)); } }} />}
+    {renameSession && <ExtensionDialog request={{ type: "extension_ui_request", id: "rename-session", method: "input", title: "Rename conversation", prefill: renameSession.session.name }} onRespond={async (response) => { if (response.cancelled) { setRenameSession(undefined); return; } if (typeof response.value !== "string" || !hasVisibleText(response.value)) throw new Error("Conversation name can't be empty"); const name = response.value.trim(); await renameSession.transport.connect(); await renameSession.transport.command({ type: "set_session_name", name }); if (renameSession.session.id === state.sessionId && (renameSession.session.hostId ?? "local") === activeHostId) setState((current) => ({ ...current, sessionName: name })); await syncSessionIndex(); setRenameSession(undefined); }} />}
+    {relocatingSession && <ExtensionDialog request={{ type: "extension_ui_request", id: `relocate-${relocatingSession.id}`, method: "input", title: "Locate conversation project", message: `The original project directory no longer exists: ${relocatingSession.cwd}. Enter its new location to open this conversation.`, error: relocationError, placeholder: "Replacement project directory", prefill: sessions.find((session) => session.id === state.sessionId && (session.hostId ?? "local") === activeHostId && session.cwdExists !== false)?.cwd || "" }} onRespond={async (response) => { if (response.cancelled) { setRelocationError(undefined); setRelocatingSession(undefined); return; } const cwd = typeof response.value === "string" ? response.value.trim() : ""; if (!hasVisibleText(cwd)) { setRelocationError("Path can't be empty"); return; } const session = relocatingSession; const action = relocationActionRef.current; const relocated = { ...session, cwd, cwdExists: true }; setRelocationError(undefined); try { await transport.relocateSession(session.path, cwd, session.hostId); const owner = runtimePool.forSession(session); await owner.restoreConnection({ cwd, sessionPath: session.path, hostId: session.hostId }); setRelocatingSession(undefined); if (action === "split") openSplitPane(relocated); else if (action === "rename") setRenameSession({ session: relocated, transport: runtimePool.forSession(relocated) }); else selectSession(relocated); } catch (reason) { setRelocationError(reason instanceof Error ? reason.message : String(reason)); } }} />}
     {worktreeTarget && <WorktreeDialog projectPath={worktreeTarget.cwd} fromProject={!worktreeTarget.message} beforePrompt={worktreeTarget.message?.role === "user"} onCancel={() => setWorktreeTarget(undefined)} onCreate={(name, onSetup) => createWorktree(worktreeTarget, name, onSetup)} />}
   </div>;
 }

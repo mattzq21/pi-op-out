@@ -3,6 +3,7 @@ import { Archive, ChevronDown, Columns2, CopyPlus, Ellipsis, Folder, FolderOpen,
 import type { SessionSummary } from "../types";
 import { isTemporaryChatCwd, useSessionGroups, type SessionGroup } from "../lib/sessionGroups";
 import { gitProjectKind, gitWorktreeRoots, openGroupDirectory } from "../lib/nativeTransport";
+import { hasVisibleText } from "../lib/content";
 import { RemoveGroupDialog } from "./RemoveGroupDialog";
 import { RemoveWorktreeDialog } from "./RemoveWorktreeDialog";
 
@@ -168,9 +169,11 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   const groupNameTaken = (name: string, excludedId?: string) => sidebarCollator.compare(RECENT_LABEL, name.trim()) === 0 || storedGroups?.groups.some((group) => group.id !== excludedId && sidebarCollator.compare(group.name.trim(), name.trim()) === 0);
   const finishGroup = async (cancel = false) => {
     if (!groupDraftActive.current || groupSavePending.current) return;
-    const name = newGroupName?.trim();
+    const name = (newGroupName ?? "").trim();
     if (cancel) { groupDraftActive.current = false; setEditingGroupId(undefined); setGroupDraftError(undefined); setNewGroupName(undefined); return; }
     if (!name) { setGroupDraftError("Enter a group name."); return; }
+    if (!hasVisibleText(name)) { setGroupDraftError("Enter a group name."); return; }
+    if (name.length > 80) { setGroupDraftError("Keep the group name under 80 characters."); return; }
     if (groupNameTaken(name, editingGroupId)) { setGroupDraftError("A project or group already uses that name."); return; }
     if (!storedGroups) { setGroupDraftError("Groups are still loading."); return; }
     groupSavePending.current = true; setGroupSaving(true);
@@ -444,7 +447,7 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
       {newGroupName !== undefined && !editingGroupId && <section className="project custom-group-draft"><div className="project-label"><input ref={groupNameRef} disabled={groupSaving} aria-label="New session group name" aria-invalid={Boolean(groupDraftError)} aria-describedby={groupDraftError ? "new-group-error" : undefined} placeholder="Group name" value={newGroupName} onChange={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} /></div>{groupDraftError && <small id="new-group-error" className="group-error">{groupDraftError}</small>}</section>}
       {sidebarEntries.flatMap((token) => { const group = groupsByToken.get(token); if (!group) return []; const [projectKey, project, hostId, hostName, projectSessions] = group; const label = !hostId || hostId === "local" ? project : `${hostName ?? hostId} / ${project}`; const collapsed = !normalizedQuery && collapsedProjects.has(projectKey); const groupId = disclosureId(projectKey); return [renderDropZone(token), <section data-sidebar-token={token} className={`project ${!normalizedQuery ? "reorderable" : ""} ${draggedProject === projectKey ? "dragging" : ""} ${dropTarget?.projectKey === projectKey && !dropTarget.sessionKey && dropTarget.layoutBefore === undefined ? "drop-project" : ""}`} key={projectKey}>
         <div className="project-heading" data-drop-project-key={projectKey}>
-          {customGroupsByKey.has(projectKey) && editingGroupId === customGroupsByKey.get(projectKey)?.id ? <div className="project-label"><input ref={groupNameRef} disabled={groupSaving} aria-label="Rename session group" aria-invalid={Boolean(groupDraftError)} value={newGroupName ?? ""} onChange={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} />{groupDraftError && <small className="group-error">{groupDraftError}</small>}</div> : <>
+          {customGroupsByKey.has(projectKey) && editingGroupId === customGroupsByKey.get(projectKey)?.id ? <div className="project-label"><input ref={groupNameRef} disabled={groupSaving} aria-label="Rename session group" aria-invalid={Boolean(groupDraftError)} aria-describedby={groupDraftError ? "rename-group-error" : undefined} value={newGroupName ?? ""} onChange={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} />{groupDraftError && <small id="rename-group-error" className="group-error">{groupDraftError}</small>}</div> : <>
             <button className="project-label" disabled={Boolean(normalizedQuery)} aria-expanded={!collapsed} aria-controls={groupId} {...projectDragProps(projectKey)}><ChevronDown className={collapsed ? "collapsed" : ""} size={13} />{projectDetails.get(projectKey)?.projectKind === "no-repo" && <Folder size={14} aria-hidden="true" />}<span className={projectKey === activeProjectKey ? "active" : undefined}>{label}</span></button>
             {projectKey !== RECENT_KEY && <div className="project-actions">
               {customGroupsByKey.has(projectKey) && <button aria-label={`Rename group ${label}`} title="Rename group" onClick={() => editGroup(customGroupsByKey.get(projectKey)!)}><Pencil size={12} /></button>}

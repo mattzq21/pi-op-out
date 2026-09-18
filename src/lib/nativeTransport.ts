@@ -18,7 +18,7 @@ const call = <T>(command: string, args?: Record<string, unknown>) => {
 
 export const openSessionWindow = (target: NativeConnectionTarget & { sessionId: string }) => call<string>("new_window", { target });
 export function initialWindowTarget(): NativeConnectionTarget {
-  try { const value = JSON.parse(new URLSearchParams(window.location.search).get("target") || "{}"); return value && typeof value === "object" ? value : {}; }
+  try { const value = JSON.parse(new URLSearchParams(window.location.search).get("target") || "{}"); return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
   catch { return {}; }
 }
 export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; sessionId?: string; hostId?: string; }
@@ -124,7 +124,14 @@ export class NativeTransport {
       if (event.statusText) this.retainedStatuses.set(event.statusKey, event); else this.retainedStatuses.delete(event.statusKey);
     }
     if (event.type === "extension_ui_request" && ["input", "editor", "select", "confirm"].includes(String(event.method)) && typeof event.id === "string") this.retainedRequests.set(event.id, event);
-    this.listeners.forEach((listener) => listener(event));
+    for (const listener of [...this.listeners]) {
+      try {
+        listener(event);
+      } catch (reason) {
+        // One poison event must not starve the remaining listeners.
+        queueMicrotask(() => { throw reason; });
+      }
+    }
     if (["agent_settled", "auto_compaction_end", "queue_update"].includes(event.type)) this.applyPendingSettings();
   }
   async connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string, ephemeral = false) {

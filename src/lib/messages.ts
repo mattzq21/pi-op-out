@@ -40,26 +40,40 @@ export function checkpointLatestUser(messages: ChatMessage[]) {
 
 export function cacheHitStats(usage?: { input: number; cacheRead: number; cacheWrite?: number }) {
   if (!usage) return undefined;
-  const promptTokens = usage.input + usage.cacheRead + (usage.cacheWrite ?? 0);
-  if (promptTokens <= 0) return undefined;
-  return { rate: Math.round(usage.cacheRead / promptTokens * 100), low: usage.cacheRead < Math.max(promptTokens * .5, 1000), cachedTokens: usage.cacheRead, promptTokens };
+  const input = Number(usage.input);
+  const cacheRead = Number(usage.cacheRead);
+  const cacheWrite = Number(usage.cacheWrite ?? 0);
+  if (!Number.isFinite(input) || !Number.isFinite(cacheRead) || !Number.isFinite(cacheWrite)) return undefined;
+  const promptTokens = input + cacheRead + cacheWrite;
+  if (!(promptTokens > 0) || !Number.isFinite(promptTokens)) return undefined;
+  if (cacheRead < 0 || cacheRead > promptTokens) return undefined;
+  return { rate: Math.round(cacheRead / promptTokens * 100), low: cacheRead < Math.max(promptTokens * .5, 1000), cachedTokens: cacheRead, promptTokens };
 }
 
-export function normalizeMessage(message: Record<string, unknown>, entryId?: string, completedAt?: string, fallbackId?: string): ChatMessage {
-  const numericStamp = Number(message.timestamp || Date.now());
-  const stamp = Number.isFinite(numericStamp) ? numericStamp : Date.parse(String(message.timestamp)) || Date.now();
+export function normalizeMessage(message: Record<string, unknown> | null | undefined, entryId?: string, completedAt?: string, fallbackId?: string): ChatMessage {
+  const source = (message && typeof message === "object" ? message : {}) as Record<string, unknown>;
+  const numericStamp = Number((source as { timestamp?: unknown }).timestamp || Date.now());
+  const stamp = Number.isFinite(numericStamp) ? numericStamp : Date.parse(String((source as { timestamp?: unknown }).timestamp)) || Date.now();
   const completionStamp = completedAt ? Date.parse(completedAt) : NaN;
-  const isBtw = message.role === "custom" && message.customType === "pi-desktop-btw";
-  const isSystemMessage = message.role === "custom" && SYSTEM_MESSAGES.has(String(message.customType));
-  return { ...(message as unknown as ChatMessage), ...(message.role === "user" ? { content: visibleUserContent(message.content) as ChatMessage["content"] } : {}), id: entryId || fallbackId || (typeof message.id === "string" ? message.id : undefined) || `live-${message.role}-${stamp}`, entryId, role: (message.role === "toolResult" ? "tool" : isBtw ? "assistant" : isSystemMessage ? "system" : message.role) as ChatMessage["role"], toolStatus: message.role === "toolResult" ? (message.isError ? "error" : "done") : undefined, timestamp: stamp, ...(Number.isFinite(completionStamp) ? { completedAt: completionStamp } : {}), ...parseVoicePrompt(message) };
+  const isBtw = source.role === "custom" && source.customType === "pi-desktop-btw";
+  const isSystemMessage = source.role === "custom" && SYSTEM_MESSAGES.has(String(source.customType));
+  return { ...(source as unknown as ChatMessage), ...(source.role === "user" ? { content: visibleUserContent(source.content) as ChatMessage["content"] } : {}), id: entryId || fallbackId || (typeof source.id === "string" ? source.id : undefined) || `live-${String((source as { role?: unknown }).role ?? "message")}-${stamp}`, entryId, role: (source.role === "toolResult" ? "tool" : isBtw ? "assistant" : isSystemMessage ? "system" : source.role) as ChatMessage["role"], toolStatus: source.role === "toolResult" ? ((source as { isError?: unknown }).isError ? "error" : "done") : undefined, timestamp: stamp, ...(Number.isFinite(completionStamp) ? { completedAt: completionStamp } : {}), ...parseVoicePrompt(source) };
 }
+
+const MAX_CONTENT_INDEX_GAP = 8;
+const MAX_CONTENT_PARTS = 64;
 
 export function applyAssistantMessageEvent(message: ChatMessage, value: unknown): ChatMessage {
   const event = value as { type?: string; contentIndex?: number; delta?: string; content?: string; id?: string; toolName?: string; toolCall?: { id?: string; name?: string; arguments?: unknown } };
   const index = event.contentIndex;
   if (!Number.isInteger(index) || index === undefined || index < 0) return message;
   const content: ContentPart[] = Array.isArray(message.content) ? [...message.content] : message.content ? [{ type: "text", text: message.content }] : [];
-  while (content.length <= index) content.push({ type: "text", text: "" });
+  if (index > content.length + MAX_CONTENT_INDEX_GAP) return message;
+  if (index >= MAX_CONTENT_PARTS) return message;
+  while (content.length <= index) {
+    if (content.length >= MAX_CONTENT_PARTS) return message;
+    content.push({ type: "text", text: "" });
+  }
   const current = content[index];
   const tool = current?.type === "toolCall" ? current : { type: "toolCall" as const, id: event.id || `tool-${index}`, name: event.toolName || "tool", arguments: {}, partialArgs: "" };
   if (event.type === "text_start") content[index] = { type: "text", text: "" };
@@ -75,7 +89,13 @@ export function applyAssistantMessageEvent(message: ChatMessage, value: unknown)
 }
 
 export function branchMessages(entries: PiEntry[], leafId: string | null): ChatMessage[] {
-  const byId = new Map(entries.map((entry) => [entry.id, entry])); const branch: PiEntry[] = []; const visited = new Set<string>(); let cursor = leafId;
+  const list = Array.isArray(entries) ? entries : [];
+  const byId = new Map<string, PiEntry>();
+  for (const entry of list) {
+    if (!entry || typeof entry !== "object" || typeof (entry as PiEntry).id !== "string") continue;
+    if (!byId.has((entry as PiEntry).id)) byId.set((entry as PiEntry).id, entry as PiEntry);
+  }
+  const branch: PiEntry[] = []; const visited = new Set<string>(); let cursor = leafId;
   while (cursor && !visited.has(cursor)) { visited.add(cursor); const entry = byId.get(cursor); if (!entry) break; branch.unshift(entry); cursor = entry.parentId; }
   let messages: ChatMessage[] = []; const resumeMarkers = new Set<string>();
   const spoken: ChatMessage[] = [];

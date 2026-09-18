@@ -6,7 +6,8 @@ export function validateHost(connection: HostConnection): string {
   const url = new URL(connection.url);
   if (url.protocol !== "wss:") throw new Error("Use a secure wss:// address for your Piop host.");
   if (url.username || url.password || url.search || url.hash) throw new Error("The host address must not contain credentials, a query, or a fragment.");
-  if (connection.token.length < 32) throw new Error("Enter the host’s pairing token (at least 32 characters).");
+  const tokenVisible = connection.token.replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, "").trim();
+  if (tokenVisible.length < 32) throw new Error("Enter the host’s pairing token (at least 32 characters).");
   return url.href;
 }
 
@@ -25,6 +26,9 @@ export class RemoteClient {
     this.socket = socket;
     await new Promise<void>((resolve, reject) => {
       let ready = false;
+      let settled = false;
+      const settleReject = (error: Error) => { if (!settled) { settled = true; reject(error); } };
+      const settleResolve = () => { if (!settled) { settled = true; resolve(); } };
       const timer = setTimeout(() => { reject(new Error("Connection timed out. Check the host address and TLS proxy.")); socket.close(); }, 15000);
       socket.onopen = () => socket.send(JSON.stringify({ type: "authenticate", token: connection.token }));
       socket.onmessage = ({ data }) => {
@@ -33,17 +37,21 @@ export class RemoteClient {
         if (message.type === "ready" && message.protocol === 1) {
           ready = true; this.ready = true; clearTimeout(timer);
           this.heartbeat = setInterval(() => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" })); }, 20000);
-          resolve(); return;
+          settleResolve(); return;
         }
         if (ready) this.receive(message);
       };
-      socket.onerror = () => { if (!ready) reject(new Error("Could not connect. Check the address, trusted TLS certificate, and host availability.")); };
+      socket.onerror = () => { if (!ready) settleReject(new Error("Could not connect. Check the address, trusted TLS certificate, and host availability.")); };
       socket.onclose = () => {
         clearTimeout(timer);
-        if (!ready) reject(new Error("Host rejected the connection. Check your pairing token."));
+        // Preserve the first specific error: a rejected promise must not be
+        // overwritten by the generic disconnect notice.
+        if (!ready) settleReject(new Error("Host rejected the connection. Check your pairing token."));
         if (this.socket !== socket) return;
         this.failPending();
-        this.onDisconnect?.("Connection lost. Reconnect to reload saved conversations. A command sent just before disconnection may have completed on the host.");
+        // Only report a generic disconnect for established connections; the
+        // specific connect error above already covers the never-connected case.
+        if (ready) this.onDisconnect?.("Connection lost. Reconnect to reload saved conversations. A command sent just before disconnection may have completed on the host.");
       };
     });
   }

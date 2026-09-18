@@ -32,7 +32,7 @@ export function HooksSettings({ hosts }: { hosts: RemoteHost[] }) {
     catch (reason) { if (owner === generation.current) setError(String(reason)); }
     finally { if (owner === generation.current) setOpening(false); }
   };
-  const hooks = listing?.hooks.filter((hook) => hook.entry.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase())) ?? [];
+  const hooks = Array.isArray(listing?.hooks) ? listing.hooks.filter((hook) => hook && typeof hook.entry === "string" && typeof hook.path === "string" && typeof hook.name === "string").filter((hook) => hook.entry.toLocaleLowerCase().includes(filter.trim().toLocaleLowerCase())) : [];
   return <div className="settings-section">
     <div className="section-title"><div><h2>Hooks</h2><p>Hooks from the directory below on the selected machine. Reload the session after changing files.</p></div></div>
     <div className="hooks-toolbar">

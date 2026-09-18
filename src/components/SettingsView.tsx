@@ -4,7 +4,7 @@ import { HooksSettings, HookIcon } from "./HooksSettings";
 import { StorageSettings } from "./StorageSettings";
 import type { AgentProfile, AppSettings, McpServer, Model, AgentConfig, RemoteHost, SessionSummary } from "../types";
 import { uid } from "../lib/content";
-import { defaultKeybindings, keybindDefinitions, shortcutFromEvent, type KeybindAction } from "../lib/keybindings";
+import { defaultKeybindings, keybindDefinitions, shortcutFromEvent, shortcutsConflict, type KeybindAction } from "../lib/keybindings";
 import { IconButton } from "./IconButton";
 import { Toggle } from "./Toggle";
 
@@ -124,11 +124,18 @@ export function SettingsView({ settings, pendingSettingsCount = 0, agentConfig: 
   const duplicateDictionaryKeys = new Set([...dictionaryKeyCounts].filter(([, count]) => count > 1).map(([key]) => key));
   const invalidDictionary = draft.dictionaries.find((dictionary) => !dictionary.name.trim());
   const invalidActiveDictionaryEntry = draft.dictionaries.find((dictionary) => activeDictionaryIds.has(dictionary.id) && dictionary.entries.some((entry) => !entry.word.trim() || !entry.replacement.trim()));
-  const shortcutCounts = new Map<string, number>();
-  Object.values(draft.keybindings).forEach((shortcut) => { const key = shortcut.trim().toLowerCase(); if (key) shortcutCounts.set(key, (shortcutCounts.get(key) ?? 0) + 1); });
-  const duplicateShortcuts = new Set([...shortcutCounts].filter(([, count]) => count > 1).map(([shortcut]) => shortcut));
+  const shortcutList = Object.values(draft.keybindings).filter((shortcut) => shortcut.trim());
+  const duplicateShortcuts = new Set<string>();
+  for (let i = 0; i < shortcutList.length; i += 1) for (let j = i + 1; j < shortcutList.length; j += 1) {
+    const left = shortcutList[i].trim().toLowerCase();
+    const right = shortcutList[j].trim().toLowerCase();
+    if (left === right || shortcutsConflict(shortcutList[i], shortcutList[j])) {
+      duplicateShortcuts.add(left);
+      duplicateShortcuts.add(right);
+    }
+  }
   const unsafeShortcut = Object.values(draft.keybindings).find((shortcut) => shortcut.trim() && !/[+]/.test(shortcut));
-  const contextWindowValid = Number.isInteger(draft.contextWindowCap) && draft.contextWindowCap >= 1000;
+  const contextWindowValid = Number.isInteger(draft.contextWindowCap) && draft.contextWindowCap >= 1000 && draft.contextWindowCap <= 10000000 && Number.isSafeInteger(draft.contextWindowCap);
   const duplicateNames = <T extends { name: string }>(items: T[]) => { const counts = new Map<string, number>(); items.forEach((item) => { const name = item.name.trim().toLowerCase(); if (name) counts.set(name, (counts.get(name) ?? 0) + 1); }); return new Set([...counts].filter(([, count]) => count > 1).map(([name]) => name)); };
   const duplicateHostNames = duplicateNames(draft.hosts);
   const reservedLocalHostName = draft.hosts.some((host) => host.name.trim().toLowerCase() === "local");
@@ -172,7 +179,7 @@ export function SettingsView({ settings, pendingSettingsCount = 0, agentConfig: 
           {!draft.worktreeSetupScripts?.length && <div className="empty-small">Add scripts to prepare new worktrees and clean up their external resources before deletion.</div>}
         </SettingsSection>}
         {visibleSection === "general" && <SettingsSection title="General" description="Agent behavior.">
-          <SettingRow icon={<CircleGauge />} title="Default context window cap" description="Applies to new conversations. Each conversation keeps its initial cap, including whether it is enabled."><div className="setting-cap-controls"><input className="setting-number" aria-label="Context window cap" aria-invalid={!contextWindowValid} disabled={!draft.contextWindowCapEnabled} type="number" min={1000} step={1000} value={draft.contextWindowCap} onChange={(event) => patch({ contextWindowCap: Number(event.target.value) })} /><Toggle label="Enable context window cap" checked={draft.contextWindowCapEnabled} onChange={(contextWindowCapEnabled) => patch({ contextWindowCapEnabled })} /></div></SettingRow>
+          <SettingRow icon={<CircleGauge />} title="Default context window cap" description="Applies to new conversations. Each conversation keeps its initial cap, including whether it is enabled."><div className="setting-cap-controls"><input className="setting-number" aria-label="Context window cap" aria-invalid={!contextWindowValid} disabled={!draft.contextWindowCapEnabled} type="number" min={1000} max={10000000} step={1000} value={draft.contextWindowCap} onChange={(event) => patch({ contextWindowCap: Number(event.target.value) })} /><Toggle label="Enable context window cap" checked={draft.contextWindowCapEnabled} onChange={(contextWindowCapEnabled) => patch({ contextWindowCapEnabled })} /></div></SettingRow>
           <SettingRow icon={<ShieldCheck />} title="Automatic retry" description="Retry transient provider and network errors."><Toggle label="Automatic retry" checked={draft.autoRetry} onChange={(autoRetry) => patch({ autoRetry })} /></SettingRow>
           <div className="general-agent-default">
           <label className="field"><span>Default agent</span><select aria-label="Default agent" disabled={!agentConfig} value={draft.defaultAgent ?? "general"} onChange={(event) => patch({ defaultAgent: event.target.value })}>{!defaultAgentAvailable && <option value={draft.defaultAgent} disabled>Unavailable: {draft.defaultAgent}</option>}{!agentConfig && <option value={draft.defaultAgent ?? "general"}>{draft.defaultAgent ?? "general"}</option>}{agentDrafts.map((item) => <option key={item.name} value={item.name}>{item.name}</option>)}</select><small>Used for new conversations. Configure model, effort, and fast mode in Agents.</small></label>

@@ -19,7 +19,16 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
   const eventHandler = useRef<(event: RpcEvent) => void>(() => undefined);
   const resumeMarkers = useRef(new Set<string>());
   const liveRevision = useRef(0); const activeAssistantId = useRef<string | undefined>(undefined); const activeMessageIds = useRef(new Map<string, string>()); const liveMessageSequence = useRef(0); const pendingUpdates = useRef<MessageUpdate[]>([]); const frame = useRef<number | undefined>(undefined);
-  const nextLiveMessageId = (role: unknown) => `live-${String(role)}-${Date.now()}-${++liveMessageSequence.current}`;
+  const nextLiveMessageId = (role: unknown) => `live-${String(role).slice(0, 32)}-${Date.now()}-${++liveMessageSequence.current}`;
+  const trackLiveId = (roleKey: string, liveId: string) => {
+    // Role strings are backend-controlled; cap the registry so distinct
+    // unended roles cannot grow it without bound (F-052).
+    if (activeMessageIds.current.size >= 32 && !activeMessageIds.current.has(roleKey)) {
+      const oldest = activeMessageIds.current.keys().next();
+      if (!oldest.done) activeMessageIds.current.delete(oldest.value);
+    }
+    activeMessageIds.current.set(roleKey, liveId);
+  };
   const flush = useCallback(() => { if (frame.current !== undefined) cancelAnimationFrame(frame.current); frame.current = undefined; const updates = pendingUpdates.current.splice(0); if (updates.length) setMessages((current) => updates.reduce((next, update) => update(next), current)); }, []);
   const queue = useCallback((update: MessageUpdate) => { pendingUpdates.current.push(update); if (frame.current === undefined) frame.current = requestAnimationFrame(flush); }, [flush]);
   const discardPendingUpdates = useCallback(() => { if (frame.current !== undefined) cancelAnimationFrame(frame.current); frame.current = undefined; pendingUpdates.current.length = 0; }, []);
@@ -49,7 +58,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
         const nextMessages = branchMessages(snapshot.history.entries, snapshot.history.leafId);
         activeAssistantId.current = [...nextMessages].reverse().find((message) => message.role === "assistant" && message.streaming)?.id;
         activeMessageIds.current.clear();
-        for (const message of nextMessages.filter((message) => message.streaming)) activeMessageIds.current.set(message.role, message.id);
+        for (const message of nextMessages.filter((message) => message.streaming)) trackLiveId(message.role, message.id);
         setMessages(nextMessages);
         setState({ ...snapshot.state, pendingMessages: snapshot.queue.pendingMessages as AgentState["pendingMessages"], ...(statsResult ? { contextUsage: statsResult.contextUsage } : {}) });
         if (modelResult) setModels(modelResult.models);
@@ -93,11 +102,12 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
     if (event.type === "disconnected") setState((current) => ({ ...current, isStreaming: false, isPausing: false, activity: undefined }));
     if (event.type === "message_start" || event.type === "message_end") {
       if (event.type === "message_end") flush();
-      const rawMessage = event.message as Record<string, unknown>; const roleKey = String(rawMessage.role ?? "message");
+      const rawMessage = (event.message ?? {}) as Record<string, unknown>; const roleKey = String((rawMessage as { role?: unknown }).role ?? "message");
       if (isResumeMessage(rawMessage, resumeMarkers.current)) return;
-      if (rawMessage.role === "custom" && rawMessage.display === false) return;
-      const liveId = rawMessage.role === "toolResult" && typeof rawMessage.toolCallId === "string" ? rawMessage.toolCallId : event.type === "message_start" ? nextLiveMessageId(roleKey) : activeMessageIds.current.get(roleKey) ?? nextLiveMessageId(roleKey);
-      if (event.type === "message_start") activeMessageIds.current.set(roleKey, liveId); else activeMessageIds.current.delete(roleKey);
+      if (rawMessage.role === "custom" && (rawMessage as { display?: unknown }).display === false) return;
+      const toolCallId = (rawMessage as { toolCallId?: unknown }).toolCallId;
+      const liveId = rawMessage.role === "toolResult" && typeof toolCallId === "string" ? toolCallId : event.type === "message_start" ? nextLiveMessageId(roleKey) : activeMessageIds.current.get(roleKey) ?? nextLiveMessageId(roleKey);
+      if (event.type === "message_start") trackLiveId(roleKey, liveId); else activeMessageIds.current.delete(roleKey);
       let message = normalizeMessage(rawMessage, undefined, undefined, liveId);
       if (message.customType === "pi-desktop-btw") return;
       if (message.role === "assistant" && event.type === "message_start") { message = { ...message, streaming: true }; activeAssistantId.current = message.id; }
@@ -106,7 +116,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
     }
     if (event.type === "message_update") {
       if (event.assistantMessageEvent) queue((current) => { let index = -1; for (let candidate = current.length - 1; candidate >= 0; candidate -= 1) { const message = current[candidate]; if (message.role === "assistant" && (message.id === activeAssistantId.current || message.streaming)) { index = candidate; break; } } if (index < 0) return current; const next = [...current]; next[index] = applyAssistantMessageEvent(next[index], event.assistantMessageEvent); return next; });
-      else if (event.message) { const rawMessage = event.message as Record<string, unknown>; const roleKey = String(rawMessage.role ?? "message"); let liveId = activeMessageIds.current.get(roleKey); if (!liveId) { liveId = nextLiveMessageId(roleKey); activeMessageIds.current.set(roleKey, liveId); } const message = { ...normalizeMessage(rawMessage, undefined, undefined, liveId), streaming: true }; queue((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? message : item) : [...current, message]); }
+      else if (event.message) { const rawMessage = (event.message ?? {}) as Record<string, unknown>; const roleKey = String((rawMessage as { role?: unknown }).role ?? "message"); let liveId = activeMessageIds.current.get(roleKey); if (!liveId) { liveId = nextLiveMessageId(roleKey); trackLiveId(roleKey, liveId); } const message = { ...normalizeMessage(rawMessage, undefined, undefined, liveId), streaming: true }; queue((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? message : item) : [...current, message]); }
     }
     if (event.type === "tool_execution_start") { const message: ChatMessage = { id: String(event.toolCallId), role: "tool", toolName: String(event.toolName), toolStatus: "running", toolInput: event.args ?? {}, content: "", timestamp: Date.now() }; setMessages((current) => [...current.filter((item) => item.id !== message.id), message]); }
     if (event.type === "tool_execution_update") queue((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.partialResult), toolStatus: "running" } : item));

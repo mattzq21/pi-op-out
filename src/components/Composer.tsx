@@ -8,6 +8,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperti
 import { ChevronUp, ChevronDown, CornerDownRight, MoveVertical, Trash2, ArrowUp, CircleStop, CircleX, FileText, ImagePlus, Pause, Play, TerminalSquare, X, Zap } from "lucide-react";
 import type { AgentProfile, ComposerUpload, ContextUsage, ImageAttachment, Model, PromptDictionary, SlashCommand } from "../types";
 import { applyDictionary, dictionaryMatches } from "../lib/dictionaries";
+import { hasVisibleText } from "../lib/content";
 import { usePendingMessageDrag } from "../lib/usePendingMessageDrag";
 import { IconButton } from "./IconButton";
 
@@ -66,14 +67,20 @@ function expandSkillReference(value: string, commands: SlashCommand[]) {
   if (value.startsWith("/")) return value;
   const skills = new Map(commands.flatMap((command) => { const name = skillName(command); return name ? [[name.toLowerCase(), name] as const] : []; }));
   const reference = /(^|[^a-zA-Z0-9_$])\$([a-zA-Z0-9][a-zA-Z0-9_-]*)\b/g;
-  for (const match of value.matchAll(reference)) {
-    const name = skills.get(match[2].toLowerCase()); if (!name || match.index === undefined) continue;
-    const tokenStart = match.index + match[1].length; const tokenEnd = tokenStart + match[0].length - match[1].length;
-    const before = value.slice(0, tokenStart).replace(/\s+$/, " "); const after = value.slice(tokenEnd).replace(/^\s+/, "");
-    const message = `${before}${after}`.trim();
-    return `/skill:${name}${message ? ` ${message}` : ""}`;
+  let primary: string | undefined;
+  let rest = value;
+  // Expand every known $reference; the first known skill becomes the command prefix.
+  for (const match of [...value.matchAll(reference)]) {
+    const name = skills.get(match[2].toLowerCase());
+    if (!name || match.index === undefined) continue;
+    if (!primary) primary = name;
+    const token = match[0].slice(match[1].length);
+    const at = rest.indexOf(token);
+    if (at >= 0) rest = rest.slice(0, at) + rest.slice(at + token.length);
   }
-  return value;
+  if (!primary) return value;
+  rest = rest.replace(/\s+/g, " ").trim();
+  return `/skill:${primary}${rest ? ` ${rest}` : ""}`;
 }
 const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((resolve, reject) => {
   const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error);
@@ -266,7 +273,9 @@ export function Composer({ voiceControls, streaming, paused = false, pausing = f
   const submit = async (behavior: "steer" | "followUp" = "followUp") => {
     if (controlsDisabled || pausing || controlActionRef.current || stoppingRef.current) return;
     const textFiles = uploads.filter((upload) => upload.kind === "text");
-    const message = [expandSkillReference(applyDictionary(value.trim(), dictionaries), commands), ...textFiles.map((file) => `<file name="${escapeAttribute(file.name)}">\n${file.text}\n</file>`)].filter(Boolean).join("\n\n");
+    const escapeFileContent = (text: string) => text.replace(/<\/file>/gi, "<\\/file>");
+    // Expand skills before dictionaries so dictionary replacement text stays literal.
+    const message = [applyDictionary(expandSkillReference(value.trim(), commands), dictionaries), ...textFiles.map((file) => `<file name="${escapeAttribute(file.name)}">\n${escapeFileContent(file.text ?? "")}\n</file>`)].filter(Boolean).join("\n\n");
     const images = uploads.flatMap((upload) => upload.image ? [upload.image] : []);
     if (images.length && !supportsImagesRef.current) { setImageInputError(true); return; }
     if (!message && !images.length) return;
@@ -311,23 +320,24 @@ export function Composer({ voiceControls, streaming, paused = false, pausing = f
     {(streaming || paused || pausing) && <div className={`stream-banner${paused ? " paused" : ""}`}>
       <span className="stream-status" role="status">{paused ? <Pause size={11} /> : <span className="pulse" />}{stopping ? "Stopping…" : controlAction === "resume" ? "Resuming…" : pausing || controlAction === "pause" ? "Pausing…" : paused ? "Paused · Completed turns saved" : "piop is working"}{queued > 0 && ` · ${queued} queued`}</span>
     </div>}
-    {pendingMessages.length > 0 && <div className="pending-messages" aria-label="Pending messages">{pendingMessages.map((message) => {
+    {pendingMessages.length > 0 && <div className="pending-messages" aria-label="Pending messages">{pendingMessages.filter((message) => message && typeof message.id === "string").map((message) => {
+      const text = typeof message.message === "string" ? message.message : String(message.message ?? "");
       const change = (action: import("../types").PendingMessageAction) => changePending(message.id, action);
       const disabled = controlsDisabled || changingPending || pausing;
       const peers = pendingMessages.filter((item) => !item.retry && item.behavior === message.behavior);
       const position = peers.findIndex((item) => item.id === message.id);
       return <div data-pending-id={message.id} className={`pending-message${expandedPending === message.id ? " expanded" : ""}${pendingDrop?.id === message.id ? " dragging" : ""}${pendingDrop?.targetId === message.id ? ` drop-${pendingDrop.edge}` : ""}`} key={message.id}>
-        <button type="button" className="pending-icon-button pending-drag-handle" disabled={disabled || message.retry || !onChangePending || peers.length < 2} aria-label={`Drag to reorder queued message: ${message.message}`} title="Drag to reorder · Arrow keys to move" onKeyDown={(event) => {
+        <button type="button" className="pending-icon-button pending-drag-handle" disabled={disabled || message.retry || !onChangePending || peers.length < 2} aria-label={`Drag to reorder queued message: ${text}`} title="Drag to reorder · Arrow keys to move" onKeyDown={(event) => {
           if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); change(event.key === "ArrowUp" ? "moveUp" : "moveDown"); }
         }} onPointerDown={(event) => beginPendingDrag(event, message.id)}><MoveVertical size={16} /></button>
-        <span className="pending-message-text" title={message.message} onDoubleClick={() => setExpandedPending((current) => current === message.id ? undefined : message.id)}>{message.retry && <small>Not sent · </small>}{message.message}</span>
+        <span className="pending-message-text" title={text} onDoubleClick={() => setExpandedPending((current) => current === message.id ? undefined : message.id)}>{message.retry && <small>Not sent · </small>}{text}</span>
         {onChangePending && <div className="pending-message-actions">
           <div className="pending-order-actions">
-            <button type="button" className="pending-icon-button" disabled={disabled || position <= 0} aria-label={`Move queued message up: ${message.message}`} title="Move earlier in this delivery queue" onClick={() => change("moveUp")}><ChevronUp size={13} /></button>
-            <button type="button" className="pending-icon-button" disabled={disabled || position < 0 || position >= peers.length - 1} aria-label={`Move queued message down: ${message.message}`} title="Move later in this delivery queue" onClick={() => change("moveDown")}><ChevronDown size={13} /></button>
+            <button type="button" className="pending-icon-button" disabled={disabled || position <= 0} aria-label={`Move queued message up: ${text}`} title="Move earlier in this delivery queue" onClick={() => change("moveUp")}><ChevronUp size={13} /></button>
+            <button type="button" className="pending-icon-button" disabled={disabled || position < 0 || position >= peers.length - 1} aria-label={`Move queued message down: ${text}`} title="Move later in this delivery queue" onClick={() => change("moveDown")}><ChevronDown size={13} /></button>
           </div>
           <button type="button" disabled={disabled} title={message.behavior === "steer" ? "Queue after the current response" : "Steer at the next turn"} onClick={() => change(message.retry ? message.behavior : message.behavior === "steer" ? "followUp" : "steer")}><CornerDownRight size={13} />{message.retry ? "Retry" : message.behavior === "steer" ? "Queue" : "Steer"}</button>
-          <button type="button" className="pending-icon-button" disabled={disabled} aria-label={`Remove queued message: ${message.message}`} title="Remove message" onClick={() => change("remove")}><Trash2 size={13} /></button>
+          <button type="button" className="pending-icon-button" disabled={disabled} aria-label={`Remove queued message: ${text}`} title="Remove message" onClick={() => change("remove")}><Trash2 size={13} /></button>
         </div>}
       </div>;
     })}</div>}
@@ -378,7 +388,7 @@ export function Composer({ voiceControls, streaming, paused = false, pausing = f
         <textarea ref={ref} aria-label="Message piop" disabled={controlsDisabled} placeholder={controlsDisabled ? "Connecting to piop…" : paused ? "Send a message to continue piop…" : streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value} rows={1} onScroll={(event) => setEditorScrollTop(event.currentTarget.scrollTop)} onChange={(event) => { setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape" && matches.length) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true); } else if (matches.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length); } else if ((event.key === "Tab" || event.key === "Enter") && !event.shiftKey && !event.ctrlKey && matches[selectedMatch]) { event.preventDefault(); chooseCommand(matches[selectedMatch]); } else if (event.key === "Enter" && !event.shiftKey && (!isMobile || event.ctrlKey)) { event.preventDefault(); event.stopPropagation(); void submit(event.ctrlKey ? "steer" : "followUp"); } }} />
       </div>
       <div className="composer-bar"><div className="composer-tools">{voiceControls}{onOpenTerminal && <IconButton title="" label="Open terminal" disabled={controlsDisabled} onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton>}{contextUsage && <ContextWheel usage={contextUsage} />}<HookWheel counts={sessionHooks} label="Other session hooks" />{sessionCache && <span className={`session-cache-hit${sessionCache.low ? " low" : ""}`}>Cache {sessionCache.rate}%</span>}</div>
-        <div className="composer-actions">{isMobile && streaming && <button className="mobile-steer" disabled={controlsDisabled || !value.trim()} onClick={() => void submit("steer")}>Steer</button>}
+        <div className="composer-actions">{isMobile && streaming && <button className="mobile-steer" disabled={controlsDisabled || !hasVisibleText(value)} onClick={() => void submit("steer")}>Steer</button>}
         <ContainedPicker label="Agent" value={activeAgent ?? "default"} disabled={agentLocked || streaming || inputDisabled} menuWidth={120} centered options={[...(agents.length ? agents : [{ name: "default" }]).map((agent) => ({ value: agent.name, label: agent.name, detail: "Agent" }))]} onChange={onAgent} />
         {fastModeSupported && <button type="button" className={`fast-mode-indicator${fastModeEnabled ? " active" : ""}`} aria-label="Fast mode" aria-description={fastModeStatus} aria-pressed={fastModeEnabled} aria-busy={togglingFastMode} disabled={inputDisabled || togglingFastMode} onClick={() => void toggleFastMode()}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled ? "currentColor" : "none"} aria-hidden="true" /></button>}
         <ContainedPicker label="Model" selectedLabel={model ? displayModelName(model) : undefined} value={model ? `${model.provider}/${model.id}` : ""} disabled={streaming || inputDisabled} options={models.map((item) => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item), detail: item.provider }))} onChange={(value) => { const next = models.find((item) => `${item.provider}/${item.id}` === value); if (next) onModel(next); }} />
@@ -387,7 +397,7 @@ export function Composer({ voiceControls, streaming, paused = false, pausing = f
         {(streaming || paused || pausing) && <IconButton title="" label="Stop piop" className="stop-compact" disabled={stopDisabled} onClick={() => void control("abort")}><CircleStop size={17} /></IconButton>}
         {(streaming || paused || pausing)
           ? <IconButton title="" label={paused ? "Resume piop" : "Pause piop"} className="send" disabled={inputDisabled} onClick={() => void control(paused ? "resume" : "pause")}>{paused ? <Play size={17} /> : <Pause size={17} />}</IconButton>
-          : <IconButton title="" label="Send message" className="send" disabled={inputDisabled || sending || (!value.trim() && uploads.length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>}
+          : <IconButton title="" label="Send message" className="send" disabled={inputDisabled || sending || (!hasVisibleText(value) && uploads.length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>}
         </div>
       </div>
     </div>

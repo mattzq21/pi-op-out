@@ -43,7 +43,7 @@ While Piop is responding, Enter queues a follow-up and Ctrl+Enter sends a steeri
 
 Pause saves completed model turns and tool results. Resume continues from that context, including after reopening a saved conversation. Interrupted partial responses remain visible but are excluded from the resumed model context.
 
-Ctrl+click an HTTP or HTTPS Markdown link to open it in your browser. Right-click to copy the link.
+Click an HTTP or HTTPS Markdown link to open it in your browser. Right-click to copy the link.
 
 Select an agent in the conversation and configure profiles in Settings → Agents. Piop installs the bundled agent extension locally and on SSH hosts.
 

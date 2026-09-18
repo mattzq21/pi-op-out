@@ -667,12 +667,20 @@ fn validate_dictionaries(settings: &AppSettings) -> Result<(), String> {
 }
 
 fn canonical_shortcut(shortcut: &str) -> Result<Option<String>, String> {
-    let parts: Vec<String> = shortcut.split('+').map(|part| part.trim().to_lowercase()).filter(|part| !part.is_empty()).collect();
+    // A single trailing "+" denotes the "+" key itself: "Ctrl++" -> ["ctrl", "+"].
+    let mut raw: Vec<&str> = shortcut.split('+').collect();
+    let mut plus_key = false;
+    if (raw.len() > 1 && raw[raw.len() - 1].trim().is_empty()) { plus_key = true; raw.pop(); }
+    let mut parts: Vec<String> = raw.iter().map(|part| part.trim().to_lowercase()).filter(|part| !part.is_empty()).collect();
+    if (plus_key) { parts.push("+".to_string()); }
     if parts.is_empty() { return Ok(None); }
     let modifiers = ["ctrl", "meta", "alt", "shift", "mod"];
-    let key = parts.iter().find(|part| !modifiers.contains(&part.as_str())).ok_or_else(|| format!("Shortcut '{shortcut}' needs a key"))?;
+    let keys: Vec<&String> = parts.iter().filter(|part| !modifiers.contains(&part.as_str())).collect();
+    if (keys.len() != 1) { return Err(format!("Shortcut '{shortcut}' needs exactly one key")); }
+    let key = keys[0];
+    if (["control", "meta", "alt", "shift", "mod"].contains(&key.as_str())) { return Err(format!("Shortcut '{shortcut}' needs a key")); }
     let protected = parts.iter().any(|part| matches!(part.as_str(), "ctrl" | "meta" | "alt" | "mod"));
-    if key.chars().count() == 1 && !protected { return Err(format!("Shortcut '{shortcut}' needs Ctrl, Alt, or Meta")); }
+    if (!protected) { return Err(format!("Shortcut '{shortcut}' needs Ctrl, Alt, or Meta")); }
     let mut canonical: Vec<&str> = modifiers.iter().copied().filter(|modifier| parts.iter().any(|part| part == modifier)).collect(); canonical.push(key); Ok(Some(canonical.join("+")))
 }
 
@@ -680,6 +688,9 @@ fn migrate_keybindings(settings: &mut AppSettings) {
     // Retired actions can retain shortcuts now reserved by the app (e.g. conversation search).
     let supported = default_keybindings();
     settings.keybindings.retain(|action, _| supported.contains_key(action));
+    for (action, shortcut) in supported {
+        settings.keybindings.entry(action).or_insert(shortcut);
+    }
     if settings.keybindings.get("focusComposer").map(String::as_str) == Some("Ctrl+L") {
         settings.keybindings.insert("focusComposer".into(), "Ctrl+E".into());
     }

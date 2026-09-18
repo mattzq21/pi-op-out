@@ -27,8 +27,12 @@ export function MobileApp() {
   const connect = async () => {
     setConnecting(true); setError("");
     try {
-      await remoteClient.connect({ url: url.trim(), token: token.trim() });
-      localStorage.setItem("piop-mobile-host", url.trim()); setConnected(true);
+      const cleanUrl = url.trim();
+      const cleanToken = token.trim();
+      if (!cleanUrl.replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, "").trim()) throw new Error("Enter the host address.");
+      if (cleanToken.replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, "").trim().length < 32) throw new Error("Enter the host’s pairing token (at least 32 characters).");
+      await remoteClient.connect({ url: cleanUrl, token: cleanToken });
+      localStorage.setItem("piop-mobile-host", cleanUrl); setConnected(true);
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setConnecting(false); }
   };

@@ -12,6 +12,7 @@ const categoryDetails: Record<StorageCategory["id"], { name: string; description
 };
 
 function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes)) return "—";
   if (bytes < 1024) return `${bytes} B`;
   const units = ["KiB", "MiB", "GiB", "TiB"];
   let value = bytes / 1024;
@@ -21,12 +22,16 @@ function formatBytes(bytes: number) {
 }
 
 function itemCount(category: StorageCategory) {
-  const item = categoryDetails[category.id].item;
-  return `${category.itemCount} ${item}${category.itemCount === 1 ? "" : "s"}`;
+  const item = categoryDetails[category.id]?.item ?? "item";
+  const count = Number.isFinite(category.itemCount) ? category.itemCount : 0;
+  return `${count} ${item}${count === 1 ? "" : "s"}`;
 }
 
 function formatDate(timestamp: number) {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(timestamp * 1000);
+  if (!Number.isFinite(timestamp)) return "Unknown date";
+  const date = new Date(timestamp * 1000);
+  if (Number.isNaN(date.getTime())) return "Unknown date";
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
 
 function archiveKey(host: HostStorage, archive: ArchivedConversation) { return `${host.hostId}:${archive.path}`; }
@@ -94,22 +99,24 @@ export function StorageSettings() {
       return <section className="storage-host" key={host.hostId}>
         <header><span className="config-icon"><Database size={16} /></span><span><strong>{host.hostName}</strong><small>{host.error ? "Storage unavailable" : `${approximate ? "About " : ""}${formatBytes(total)} tracked`}</small></span></header>
         {host.error ? <div className="storage-host-error" role="alert">{host.error}</div> : <>
-          <div className="storage-categories">{host.categories.map((category) => {
+          <div className="storage-categories">{host.categories.filter((category) => category && categoryDetails[category.id]).map((category) => {
             const details = categoryDetails[category.id]; const CategoryIcon = details.icon;
             return <div className="storage-category" key={category.id}>
               <span className="storage-category-icon"><CategoryIcon size={15} /></span>
               <span><strong>{details.name}</strong><small>{details.description} · {itemCount(category)}</small><i><b style={{ width: `${Math.max(category.byteSize ? 2 : 0, category.byteSize / maximum * 100)}%` }} /></i></span>
-              <code>{category.estimated && category.byteSize > 0 ? "~" : ""}{formatBytes(category.byteSize)}</code>
+              <code>{category.estimated && category.byteSize > 0 ? "~" : ""}{formatBytes(Number(category.byteSize) || 0)}</code>
             </div>;
           })}</div>
           {host.warnings.length > 0 && <div className="storage-warning" title={host.warnings.join("\n")}>Checkpoint size could not be measured for {host.warnings.length} checkpoint location{host.warnings.length === 1 ? "" : "s"}; other totals are unaffected.</div>}
           <div className="archive-heading"><span><strong>Archived conversations</strong><small>{host.archives.length ? `${host.archives.length} stored on ${host.hostName}` : `No archives on ${host.hostName}`}</small></span>{deletableArchives.length > 1 && <button className="storage-delete-all" disabled={deleting.size > 0 || loading} onClick={() => deleteAll(host)}><Trash2 size={13} />{deletableArchives.length === host.archives.length ? "Delete all" : "Delete available"}</button>}</div>
-          {host.archives.length > 0 && <div className="archive-list">{host.archives.map((archive) => {
-            const key = archiveKey(host, archive); const pending = deleting.has(key);
+          {host.archives.length > 0 && <div className="archive-list">{host.archives.map((archive, index) => {
+            if (!archive || typeof archive.path !== "string") return null;
+            const name = typeof archive.name === "string" ? archive.name : archive.path;
+            const key = archiveKey(host, { ...archive, name }); const pending = deleting.has(key);
             return <div className={`archive-row${archive.deletable ? "" : " cleanup-unavailable"}`} key={key} title={archive.deleteError || archive.path}>
-              <span><strong>{archive.name}</strong><small>{archive.deletable ? `${archive.cwd} · ${formatDate(archive.modifiedAt)}` : `Cleanup unavailable · ${archive.deleteError}`}</small></span>
-              <code>{formatBytes(archive.byteSize)}</code>
-              <button aria-label={archive.deletable ? `Permanently delete ${archive.name}` : `Cannot safely delete ${archive.name}: ${archive.deleteError}`} disabled={!archive.deletable || deleting.size > 0 || loading} onClick={() => deleteOne(host, archive)}>{!archive.deletable ? <ShieldAlert size={14} /> : pending ? <RefreshCw size={14} className="spinning" /> : <Trash2 size={14} />}</button>
+              <span><strong>{name}</strong><small>{archive.deletable ? `${typeof archive.cwd === "string" ? archive.cwd : ""} · ${formatDate(archive.modifiedAt)}` : `Cleanup unavailable · ${archive.deleteError}`}</small></span>
+              <code>{formatBytes(Number(archive.byteSize) || 0)}</code>
+              <button aria-label={archive.deletable ? `Permanently delete ${name}` : `Cannot safely delete ${name}: ${archive.deleteError}`} disabled={!archive.deletable || deleting.size > 0 || loading} onClick={() => deleteOne(host, archive)}>{!archive.deletable ? <ShieldAlert size={14} /> : pending ? <RefreshCw size={14} className="spinning" /> : <Trash2 size={14} />}</button>
             </div>;
           })}</div>}
         </>}
