@@ -1062,6 +1062,16 @@ fn merge_discovered_skills_at(settings: &mut AppSettings, home: &Path) {
 #[tauri::command(async)]
 fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     let path = settings_path(&app)?;
+    let mut settings = read_settings_at(&path)?;
+    for tool in session_operation_tools() {
+        if !settings.tools.iter().any(|existing| existing["name"] == tool["name"]) { settings.tools.push(tool); }
+    }
+    merge_discovered_skills(&mut settings);
+    validate_dictionaries(&settings)?;
+    Ok(settings)
+}
+
+fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
     let mut settings = if !path.exists() { default_settings() } else { serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())? };
     for (legacy, replacements) in [
         ("exec_command", &["read", "bash", "grep", "find", "ls"][..]),
@@ -1079,14 +1089,9 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     if !settings.tools.iter().any(|tool| tool.get("name").and_then(Value::as_str) == Some("web_search")) {
         settings.tools.push(codex_web_search_tool());
     }
-    for tool in session_operation_tools() {
-        if !settings.tools.iter().any(|existing| existing["name"] == tool["name"]) { settings.tools.push(tool); }
-    }
     migrate_keybindings(&mut settings);
     if settings.hosts.len() > MAX_REMOTE_HOSTS { return Err(format!("Settings contain more than {MAX_REMOTE_HOSTS} remote machines")); }
     if settings.mcp_servers.len() > MAX_MCP_SERVERS { return Err(format!("Settings contain more than {MAX_MCP_SERVERS} MCP servers")); }
-    merge_discovered_skills(&mut settings);
-    validate_dictionaries(&settings)?;
     Ok(settings)
 }
 

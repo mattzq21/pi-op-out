@@ -915,3 +915,34 @@ fn snapshot_token_validation_checks_storage_errors_expiry_and_canonical_location
     assert_eq!(parse_local_snapshot_with(&token, || Ok(parent)).err().unwrap(), "Invalid Git snapshot location");
     assert!(outside.exists());
 }
+
+#[test]
+fn saved_settings_migrate_legacy_tools_without_overwriting_explicit_preferences() {
+    let directory = TestDirectory::new(); let path = directory.0.join("settings.json");
+    let mut settings = default_settings();
+    settings.tools = vec![json!({"name":"exec_command","enabled":false}), json!({"name":"apply_patch","enabled":true}), json!({"name":"read","enabled":true}), json!({"name":"edit","enabled":false})];
+    fs::write(&path, serde_json::to_vec(&settings).unwrap()).unwrap(); let before = fs::read(&path).unwrap();
+    let migrated = read_settings_at(&path).unwrap();
+    let enabled = |name: &str| migrated.tools.iter().find(|tool| tool["name"] == name).unwrap()["enabled"].as_bool().unwrap();
+    assert!(enabled("read")); assert!(!enabled("edit")); assert!(enabled("write")); assert!(enabled("web_search"));
+    for name in ["bash", "grep", "find", "ls"] { assert!(!enabled(name)); }
+    assert!(!migrated.tools.iter().any(|tool| tool["name"] == "exec_command" || tool["name"] == "apply_patch"));
+    assert_eq!(fs::read(&path).unwrap(), before, "loading must not rewrite saved settings");
+    fs::write(&path, serde_json::to_vec(&migrated).unwrap()).unwrap();
+    assert_eq!(read_settings_at(&path).unwrap().tools, migrated.tools, "migration must be idempotent");
+}
+
+#[test]
+fn settings_loading_defaults_only_when_absent_and_rejects_corrupt_or_excessive_configuration() {
+    let directory = TestDirectory::new(); let path = directory.0.join("settings.json");
+    assert_eq!(read_settings_at(&path).unwrap().default_model, default_settings().default_model);
+    assert!(!path.exists());
+    fs::write(&path, "broken json").unwrap(); assert!(read_settings_at(&path).is_err());
+    let mut settings = default_settings();
+    settings.hosts = vec![RemoteHost { id: "remote".into(), name: "Remote".into(), target: "host".into(), pi_path: "pi".into() }; MAX_REMOTE_HOSTS + 1];
+    fs::write(&path, serde_json::to_vec(&settings).unwrap()).unwrap();
+    assert!(read_settings_at(&path).err().unwrap().contains("remote machines"));
+    settings.hosts.clear(); settings.mcp_servers = vec![json!({}); MAX_MCP_SERVERS + 1];
+    fs::write(&path, serde_json::to_vec(&settings).unwrap()).unwrap();
+    assert!(read_settings_at(&path).err().unwrap().contains("MCP servers"));
+}
