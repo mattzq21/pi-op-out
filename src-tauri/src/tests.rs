@@ -2417,6 +2417,112 @@ fn remote_directory_output_preserves_names_and_root_parent_semantics() {
 }
 
 #[test]
+fn saved_diff_history_round_trips_and_replaces_removed_messages() {
+    let home = TestDirectory::new();
+    let sessions = home.0.join(STORAGE_DIRECTORY).join("sessions/project");
+    fs::create_dir_all(&sessions).unwrap();
+    let session = sessions.join("conversation.jsonl");
+    fs::write(&session, "{\"type\":\"session\",\"id\":\"conversation\"}\n").unwrap();
+    let original = fs::read(&session).unwrap();
+    let history = json!({"first":"diff --git a/a b/a\n+hello 日本語\n", "second":{"patch":"+new\n","repositoryRoot":"/project with spaces","toolPaths":[{"toolCallId":"call","path":"a","absolutePath":"/project with spaces/a","canonicalPath":"/project with spaces/a"}]}});
+    for expected in [history, json!({"second":"updated patch"}), json!({})] {
+        save_local_git_diffs(&home.0, session.to_str().unwrap(), &expected.to_string()).unwrap();
+        let loaded = load_local_git_diffs(&home.0, session.to_str().unwrap()).unwrap();
+        assert_eq!(serde_json::to_value(loaded).unwrap(), expected);
+        assert_eq!(fs::read(&session).unwrap(), original);
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(session.with_extension("diffs.json")).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+    }
+    assert_eq!(fs::read_dir(&sessions).unwrap().count(), 2);
+}
+
+#[test]
+fn saving_diffs_requires_an_existing_desktop_session_and_reports_sidecar_failures() {
+    let home = TestDirectory::new();
+    let sessions = home.0.join(STORAGE_DIRECTORY).join("sessions");
+    fs::create_dir_all(&sessions).unwrap();
+    let missing = sessions.join("missing.jsonl");
+    assert!(save_local_git_diffs(&home.0, missing.to_str().unwrap(), "{}").is_err());
+    assert!(!missing.with_extension("diffs.json").exists());
+    let outside = home.0.join("outside.jsonl");
+    fs::write(&outside, "outside").unwrap();
+    assert!(save_local_git_diffs(&home.0, outside.to_str().unwrap(), "{}").is_err());
+    assert!(!outside.with_extension("diffs.json").exists());
+    let session = sessions.join("valid.jsonl");
+    fs::write(&session, "original").unwrap();
+    let sidecar = session.with_extension("diffs.json");
+    fs::create_dir(&sidecar).unwrap();
+    fs::write(sidecar.join("keep"), "keep").unwrap();
+    assert!(save_local_git_diffs(&home.0, session.to_str().unwrap(), "{}").unwrap_err().starts_with("Could not save diffs:"));
+    assert_eq!(fs::read_to_string(sidecar.join("keep")).unwrap(), "keep");
+    assert_eq!(fs::read_to_string(&session).unwrap(), "original");
+}
+
+#[test]
+fn oversized_diff_histories_are_rejected_before_accessing_local_or_remote_storage() {
+    let root = TestDirectory::new(); let session = root.0.join("untouched.jsonl"); fs::write(&session, "retain").unwrap();
+    let remote = RemoteHost { id: "remote".into(), name: "Remote".into(), target: "unused.invalid".into(), pi_path: "pi".into() };
+    for host in [None, Some(&remote)] {
+        let snapshots = HashMap::from([("message".into(), GitDiffSnapshot::Legacy("x".repeat(MAX_GIT_DIFFS_BYTES)))]);
+        assert_eq!(save_git_diffs_at_host(session.to_str().unwrap(), snapshots, host).unwrap_err(), "Diff history exceeds the 16 MiB limit");
+    }
+    assert_eq!(fs::read_to_string(&session).unwrap(), "retain");
+    assert!(!session.with_extension("diffs.json").exists());
+}
+
+#[test]
+fn project_inspection_batches_distinct_directories_and_updates_all_matching_sessions() {
+    let root = TestDirectory::new();
+    let repository = root.0.join("repo ' 日本語"); fs::create_dir(&repository).unwrap();
+    test_git(&repository, &["init", "--initial-branch=main"]); test_git(&repository, &["commit", "--allow-empty", "-m", "Initial"]);
+    let worktree = root.0.join("worktree"); test_git(&repository, &["worktree", "add", "-b", "feature", worktree.to_str().unwrap()]);
+    let plain = root.0.join("plain"); fs::create_dir(&plain).unwrap();
+    let mut paths = vec![repository.clone(), worktree.clone(), plain.clone()];
+    paths.extend((0..127).map(|index| root.0.join(format!("missing-{index}"))));
+    let mut sessions = paths.iter().enumerate().map(|(index, path)| {
+        let mut session = test_session("remote", &index.to_string(), "/session"); session.cwd = path.to_string_lossy().into_owned(); session
+    }).collect::<Vec<_>>();
+    sessions.push(sessions[0].clone());
+    let mut batches = Vec::new(); let mut inspected = HashSet::new();
+    inspect_session_projects_with(&mut sessions, |script, batch| {
+        batches.push(batch.len()); for path in batch { assert!(inspected.insert(path.clone())); }
+        let mut command = Command::new("sh"); command.args(["-c", script, "sh"]).args(batch).env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_CONFIG_GLOBAL", "/dev/null"); command
+    }).unwrap();
+    assert_eq!(batches, [128, 2]); assert_eq!(inspected.len(), 130);
+    assert!(matches!(sessions[0].project_kind, Some(ProjectKind::Main)));
+    assert!(matches!(sessions[1].project_kind, Some(ProjectKind::Worktree)));
+    assert!(matches!(sessions[2].project_kind, Some(ProjectKind::NoRepo)));
+    assert_eq!(sessions[1].project_root.as_deref(), repository.to_str());
+    for session in &sessions[3..130] { assert!(!session.cwd_exists); assert!(session.project_kind.is_none()); assert!(session.project_root.is_none()); }
+    assert_eq!(serde_json::to_value(&sessions[0]).unwrap(), serde_json::to_value(&sessions[130]).unwrap());
+}
+
+#[test]
+fn project_inspection_preserves_all_sessions_when_a_later_batch_is_incomplete() {
+    let mut sessions = (0..129).map(|index| {
+        let mut session = test_session("local", &index.to_string(), "/session"); session.cwd = format!("/project/{index}"); session.project_root = Some("previous".into()); session
+    }).collect::<Vec<_>>();
+    let original = serde_json::to_value(&sessions).unwrap();
+    for failure in ["printf incomplete", "printf 'main\\000'", "printf denied >&2; exit 1"] {
+        let mut calls = 0;
+        let error = inspect_session_projects_with(&mut sessions, |_, batch| {
+            calls += 1;
+            let mut command = Command::new("sh");
+            if calls == 1 { command.args(["-c", "for path do printf 'missing\\000\\000'; done", "sh"]).args(batch); }
+            else { command.args(["-c", failure]); }
+            command
+        }).unwrap_err();
+        assert!(!error.is_empty()); assert_eq!(calls, 2);
+        assert_eq!(serde_json::to_value(&sessions).unwrap(), original);
+    }
+    assert!(inspect_session_projects_with(&mut sessions, |_, _| Command::new("/missing/piop-project-test")).is_err());
+    assert_eq!(serde_json::to_value(&sessions).unwrap(), original);
+    inspect_session_projects_with(&mut [], |_, _| panic!("empty list launched a process")).unwrap();
+}
+
+#[test]
 fn ephemeral_forks_copy_history_with_new_identity_and_private_permissions() {
     let home = TestDirectory::new(); let temporary = TestDirectory::new();
     let sessions = home.0.join(STORAGE_DIRECTORY).join("sessions"); fs::create_dir_all(&sessions).unwrap();

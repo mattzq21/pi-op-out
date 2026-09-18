@@ -634,6 +634,7 @@ fn atomic_write_private(path: &Path, body: &[u8]) -> Result<(), String> {
     let parent = path.parent().ok_or("Configuration file has no parent directory")?;
     ensure_private_dir(parent)?;
     if path.exists() {
+        if path.is_dir() { return Err(format!("Configuration path is a directory: {}", path.display())); }
         set_private_file_permissions(path)?;
         match fs::read(path) {
             Ok(current) if current == body => return Ok(()),
@@ -1952,8 +1953,6 @@ fn load_git_diff_between_at_host(cwd: &str, base_tree: &str, current_token: &str
     Ok((!patch.trim().is_empty()).then_some(GitDiffSnapshot::Located { patch, repository_root: current.repository_root, tool_paths: Vec::new() }))
 }
 
-fn local_git_diffs_path(session_path: &str) -> Result<PathBuf, String> { Ok(local_desktop_session_file(session_path)?.with_extension("diffs.json")) }
-
 fn remote_session_sidecar_script(session_path: &str, action: &str) -> String {
     format!("session=$(readlink -f -- {}) || exit 7; sessions=$(cd \"$HOME/{STORAGE_DIRECTORY}/sessions\" && pwd -P) || exit 7; case \"$session\" in \"$sessions\"/*.jsonl) ;; *) exit 7;; esac; sidecar=${{session%.jsonl}}.diffs.json; {action}", shell_quote(session_path))
 }
@@ -2007,9 +2006,14 @@ fn save_git_diffs(app: AppHandle, session_path: String, snapshots: GitDiffSnapsh
 fn save_git_diffs_at_host(session_path: &str, snapshots: GitDiffSnapshots, host: Option<&RemoteHost>) -> Result<(), String> {
     let body = serde_json::to_string(&snapshots).map_err(|error| format!("Could not serialize diffs: {error}"))?;
     if body.len() > MAX_GIT_DIFFS_BYTES { return Err("Diff history exceeds the 16 MiB limit".into()); }
-    let Some(host) = host else { return atomic_write_private(&local_git_diffs_path(session_path)?, body.as_bytes()).map_err(|error| format!("Could not save diffs: {error}")); };
+    let Some(host) = host else { return save_local_git_diffs(&home_dir()?, session_path, &body); };
     let mut command = ssh(host); command.arg(remote_save_git_diffs_script(session_path));
     write_remote_git_diffs(&mut command, &body)
+}
+
+fn save_local_git_diffs(home: &Path, session_path: &str, body: &str) -> Result<(), String> {
+    let path = local_desktop_session_file_at(home, session_path)?.with_extension("diffs.json");
+    atomic_write_private(&path, body.as_bytes()).map_err(|error| format!("Could not save diffs: {error}"))
 }
 
 fn remote_save_git_diffs_script(session_path: &str) -> String {
@@ -2537,6 +2541,21 @@ fn unix_timestamp(time: SystemTime) -> u64 { time.duration_since(SystemTime::UNI
 
 // Inspect each distinct directory once per refresh, batching remote checks into one SSH call per batch.
 fn inspect_session_projects(sessions: &mut [SessionSummary], host: Option<&RemoteHost>) -> Result<(), String> {
+    inspect_session_projects_with(sessions, |script, batch| {
+        if let Some(host) = host {
+            let arguments = batch.iter().map(|path| shell_quote(path)).collect::<Vec<_>>().join(" ");
+            let mut command = ssh(host);
+            command.arg(format!("sh -c {} sh {arguments}", shell_quote(script)));
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", script, "sh"]).args(batch);
+            command
+        }
+    })
+}
+
+fn inspect_session_projects_with(sessions: &mut [SessionSummary], mut command: impl FnMut(&str, &[String]) -> Command) -> Result<(), String> {
     let directories = sessions.iter().map(|session| session.cwd.clone()).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>();
     let script = r#"for path do
         if [ ! -d "$path" ]; then printf 'missing\000\000'; continue; fi
@@ -2548,17 +2567,7 @@ fn inspect_session_projects(sessions: &mut [SessionSummary], host: Option<&Remot
     done"#;
     let mut projects = HashMap::new();
     for batch in directories.chunks(128) {
-        let mut command = if let Some(host) = host {
-            let arguments = batch.iter().map(|path| shell_quote(path)).collect::<Vec<_>>().join(" ");
-            let mut command = ssh(host);
-            command.arg(format!("sh -c {} sh {arguments}", shell_quote(script)));
-            command
-        } else {
-            let mut command = Command::new("sh");
-            command.args(["-c", script, "sh"]).args(batch);
-            command
-        };
-        let output = run_limited(&mut command, MAX_GIT_PATH_LIST_BYTES, "Could not inspect session projects")?;
+        let output = run_limited(&mut command(script, batch), MAX_GIT_PATH_LIST_BYTES, "Could not inspect session projects")?;
         if !output.status.success() { return Err(format!("Could not inspect session projects: {}", String::from_utf8_lossy(&output.stderr).trim())); }
         let fields = output.stdout.strip_suffix(&[0]).ok_or("Incomplete session project details")?.split(|byte| *byte == 0).collect::<Vec<_>>();
         if fields.len() != batch.len() * 2 { return Err("Could not inspect every session project".into()); }
