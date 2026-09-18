@@ -14,6 +14,7 @@
     "build:mcp-bridge": "node scripts/build-mcp-bridge.mjs",
     "pretauri": "npm install --no-audit --no-fund && npm run build:extensions",
     "test:extensions": "node --test test/extensions/*.test.mjs",
+    "test:unit": "node --enable-source-maps --import ./test/register-typescript.mjs --test --test-isolation=none test/unit/*.test.mjs",
     "test:mutation": "stryker run",
     "test:mutation:rust": "npm run build && node scripts/mutate-rust.mjs",
     "test:e2e": "npm run test:e2e:build && npm run test:e2e:run",
