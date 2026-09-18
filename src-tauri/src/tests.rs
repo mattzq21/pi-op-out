@@ -865,6 +865,10 @@ fn git_project_detection_distinguishes_main_worktrees_and_plain_directories() {
     assert_eq!(main_objects, linked_objects, "linked worktrees share the object database");
     assert!(git_root_and_objects(root.0.to_str().unwrap()).unwrap().is_none());
     assert!(git_root_and_objects(root.0.join("missing").to_str().unwrap()).unwrap_err().contains("Could not open project directory"));
+    let bare = root.0.join("bare"); fs::create_dir(&bare).unwrap(); test_git(&bare, &["init", "--bare"]);
+    assert!(matches!(inspect_git_project_kind(&settings, bare.to_str().unwrap(), "local").unwrap(), ProjectKind::Main));
+    let file = root.0.join("file"); fs::write(&file, "not a directory").unwrap();
+    assert!(inspect_git_project_kind(&settings, file.to_str().unwrap(), "local").unwrap_err().contains("Project directory does not exist"));
 }
 #[test]
 fn git_capture_limits_accept_exact_file_and_total_boundaries() {
@@ -3928,5 +3932,64 @@ fn temporary_startup_preserves_remote_cleanup_metadata_and_isolates_failures() {
     match &sessions["remote-view"] {
         EphemeralSession::Remote { host, path } => { assert_eq!(host.target, "user@example.com"); assert_eq!(host.id, "remote"); assert_eq!(path, "/tmp/existing-fork.jsonl"); }
         _ => panic!("remote cleanup metadata replaced"),
+    }
+}
+
+#[test]
+fn prepared_runtime_configuration_tracks_settings_and_removes_stale_values() {
+    let home = TestDirectory::new();
+    let _home = HomeOverride::take(&home.0);
+    let mut settings = default_settings();
+    settings.tools = vec![json!({"name":"read","enabled":true}), json!({"name":"bash","enabled":false})];
+    settings.skills = vec![json!({"path":"/skill with spaces/SKILL.md","enabled":true}), json!({"path":"/disabled","enabled":false})];
+    settings.mcp_servers = vec![json!({"id":"server","command":"node","args":["a b"],"env":{"TOKEN":"test-only-token"},"enabled":true})];
+    for enabled in [true, false] {
+        settings.context_window_cap = if enabled { 12345 } else { 2000 };
+        settings.context_window_cap_enabled = enabled;
+        if !enabled { settings.mcp_servers.clear(); settings.skills.clear(); settings.tools.clear(); }
+        let (bridge, mcp) = prepare_mcp_bridge(&settings).unwrap();
+        let runtime = prepare_runtime_settings(&settings).unwrap();
+        let context = prepare_context_window_cap_extension(&settings).unwrap();
+        assert_eq!(fs::read_to_string(&bridge).unwrap(), include_str!("../resources/mcp-bridge.bundle.mjs"));
+        assert_eq!(fs::read_to_string(&runtime).unwrap(), include_str!("../../extensions/piop-runtime-settings/index.ts"));
+        assert_eq!(fs::read_to_string(&context).unwrap(), include_str!("../../extensions/piop-context-window-cap/index.ts"));
+        let mcp_value: Value = serde_json::from_slice(&fs::read(&mcp).unwrap()).unwrap();
+        assert_eq!(mcp_value, json!(settings.mcp_servers));
+        let runtime_config = runtime.with_file_name("runtime-settings.json");
+        let runtime_value: Value = serde_json::from_slice(&fs::read(&runtime_config).unwrap()).unwrap();
+        assert_eq!(runtime_value["tools"], if enabled { json!(["read"]) } else { json!([]) });
+        assert_eq!(runtime_value["skills"], if enabled { json!(["/skill with spaces/SKILL.md"]) } else { json!([]) });
+        assert_eq!(runtime_value["mcpServers"], mcp_value);
+        assert_eq!(runtime_value["contextWindowCap"], settings.context_window_cap);
+        assert_eq!(runtime_value["contextWindowCapEnabled"], enabled);
+        let context_config = context.with_file_name("config.json");
+        assert_eq!(serde_json::from_slice::<Value>(&fs::read(&context_config).unwrap()).unwrap(), json!({"contextWindowCap":settings.context_window_cap,"enabled":enabled}));
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            for file in [&bridge, &mcp, &runtime, &runtime_config, &context, &context_config] {
+                assert_eq!(fs::metadata(file).unwrap().permissions().mode() & 0o777, 0o600);
+            }
+        }
+    }
+}
+
+#[test]
+fn configuration_preparation_reports_failed_writes_and_cleans_temporary_files() {
+    let settings = default_settings();
+    for (relative, kind) in [("mcp-servers.json", 0), ("runtime-settings.json", 1), ("piop-context-window-cap/config.json", 2)] {
+        let home = TestDirectory::new();
+        let _home = HomeOverride::take(&home.0);
+        let obstruction = home.0.join(STORAGE_DIRECTORY).join(relative);
+        fs::create_dir_all(&obstruction).unwrap();
+        fs::write(obstruction.join("keep"), "original").unwrap();
+        let result = match kind {
+            0 => prepare_mcp_bridge(&settings).map(|_| ()),
+            1 => prepare_runtime_settings(&settings).map(|_| ()),
+            _ => prepare_context_window_cap_extension(&settings).map(|_| ()),
+        };
+        assert!(result.is_err());
+        assert_eq!(fs::read_to_string(obstruction.join("keep")).unwrap(), "original");
+        let files: Vec<_> = fs::read_dir(obstruction.parent().unwrap()).unwrap().map(|entry| entry.unwrap().file_name()).collect();
+        assert_eq!(files.len(), 2, "failed writes must not leave temporary files: {files:?}");
     }
 }
