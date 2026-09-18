@@ -2348,20 +2348,7 @@ fn start_terminal(app: AppHandle, window: tauri::WebviewWindow, runtime: State<T
     let mut writer = pair.master.take_writer().map_err(|error| error.to_string())?;
     let event_app = app.clone(); let event_id = terminal_id.clone(); let terminal_processes = runtime.processes.clone();
     thread::spawn(move || {
-        let mut buffer = [0_u8; 8192];
-        let mut pending_utf8 = Vec::new();
-        loop {
-            match std::io::Read::read(&mut reader, &mut buffer) {
-                Ok(0) => break,
-                Ok(length) => {
-                    let data = decode_terminal_bytes(&mut pending_utf8, &buffer[..length], false);
-                    if !data.is_empty() { let _ = event_app.emit("pi://event", json!({ "type": "terminal_output", "terminalId": event_id, "data": data })); }
-                }
-                Err(_) => break,
-            }
-        }
-        let tail = decode_terminal_bytes(&mut pending_utf8, &[], true);
-        if !tail.is_empty() { let _ = event_app.emit("pi://event", json!({ "type": "terminal_output", "terminalId": event_id, "data": tail })); }
+        stream_terminal_output(&mut reader, &event_id, |packet| { let _ = event_app.emit("pi://event", packet); });
         if let Some(mut process) = terminal_processes.lock().ok().and_then(|mut values| values.remove(&event_id)) { let _ = process.child.wait(); }
         let _ = event_app.emit("pi://event", json!({ "type": "terminal_exit", "terminalId": event_id }));
     });
@@ -2375,6 +2362,23 @@ fn write_terminal_queue(writer: &mut impl Write, queued: mpsc::Receiver<String>)
     while let Ok(data) = queued.recv() {
         if writer.write_all(data.as_bytes()).and_then(|_| writer.flush()).is_err() { break; }
     }
+}
+
+fn stream_terminal_output(reader: &mut impl Read, terminal_id: &str, mut emit: impl FnMut(Value)) {
+    let mut buffer = [0_u8; 8192];
+    let mut pending_utf8 = Vec::new();
+    loop {
+        match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(length) => {
+                let data = decode_terminal_bytes(&mut pending_utf8, &buffer[..length], false);
+                if !data.is_empty() { emit(json!({"type":"terminal_output","terminalId":terminal_id,"data":data})); }
+            }
+            Err(_) => break,
+        }
+    }
+    let tail = decode_terminal_bytes(&mut pending_utf8, &[], true);
+    if !tail.is_empty() { emit(json!({"type":"terminal_output","terminalId":terminal_id,"data":tail})); }
 }
 
 fn decode_terminal_bytes(pending: &mut Vec<u8>, bytes: &[u8], eof: bool) -> String {

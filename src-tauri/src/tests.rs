@@ -95,6 +95,43 @@ fn usage_chooses_the_most_consumed_window_and_prefers_the_codex_bucket() {
     }
 }
 #[test]
+fn terminal_output_stream_preserves_split_unicode_and_flushes_incomplete_bytes_on_eof_or_error() {
+    struct Chunks { chunks: std::collections::VecDeque<Vec<u8>>, fail: bool }
+    impl Read for Chunks {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if let Some(chunk) = self.chunks.pop_front() {
+                buffer[..chunk.len()].copy_from_slice(&chunk); return Ok(chunk.len());
+            }
+            if self.fail { Err(std::io::Error::other("terminal closed")) } else { Ok(0) }
+        }
+    }
+    for fail in [false, true] {
+        let mut reader = Chunks { chunks: vec![b"hello ".to_vec(), vec![0xf0], vec![0x9f, 0x98], vec![0x80, b'!'], vec![0xe2, 0x82]].into(), fail };
+        let mut packets = Vec::new();
+        stream_terminal_output(&mut reader, "terminal", |packet| packets.push(packet));
+        assert_eq!(packets, vec![
+            json!({"type":"terminal_output","terminalId":"terminal","data":"hello "}),
+            json!({"type":"terminal_output","terminalId":"terminal","data":"😀!"}),
+            json!({"type":"terminal_output","terminalId":"terminal","data":"�"}),
+        ]);
+    }
+    let mut empty = std::io::Cursor::new(Vec::<u8>::new());
+    stream_terminal_output(&mut empty, "empty", |_| panic!("empty terminal emitted output"));
+}
+
+#[test]
+fn terminal_output_stream_preserves_large_output_across_read_buffer_boundaries() {
+    let text = "line λ 😀\r\n".repeat(3000);
+    let mut reader = std::io::Cursor::new(text.as_bytes());
+    let mut output = String::new(); let mut packets = 0;
+    stream_terminal_output(&mut reader, "large", |packet| {
+        assert_eq!(packet["terminalId"], "large"); assert_eq!(packet["type"], "terminal_output");
+        output.push_str(packet["data"].as_str().unwrap()); packets += 1;
+    });
+    assert_eq!(output, text);
+    assert!(packets > 1);
+}
+#[test]
 fn terminal_input_queue_handles_short_writes_and_flushes_each_message_in_order() {
     #[derive(Default)]
     struct ShortWriter { bytes: Vec<u8>, flushes: Vec<Vec<u8>> }
