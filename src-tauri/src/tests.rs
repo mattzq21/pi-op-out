@@ -94,6 +94,59 @@ fn usage_chooses_the_most_consumed_window_and_prefers_the_codex_bucket() {
         assert!(codex_usage_values(&value).is_none());
     }
 }
+#[test]
+fn session_summary_batches_preserve_metadata_and_host_identity() {
+    let root = TestDirectory::new();
+    let mut candidates = Vec::new();
+    for number in 0..129 {
+        let path = root.0.join(format!("chat {number}.jsonl"));
+        let entries = [
+            json!({"type":"session","id":format!("id-{number}"),"cwd":"/projects/example"}),
+            json!({"type":"session_info","name":format!("Chat {number}")}),
+            json!({"type":"message","message":{"role":"user","content":"Question"}}),
+            json!({"type":"message","message":{"role":"assistant","content":"Answer 🦆","usage":{"cost":{"total":0.25}}}}),
+        ];
+        let body = entries.iter().map(|entry| format!("{entry}\n")).collect::<String>();
+        fs::write(&path, &body).unwrap();
+        candidates.push((path.to_string_lossy().into_owned(), format!("fingerprint-{number}"), 100 + number, body.len() as u64));
+    }
+    let summaries = read_session_summaries(&candidates, None).unwrap();
+    assert_eq!(summaries.len(), 129, "include sessions on both sides of the 128-file batch boundary");
+    for (number, (path, fingerprint, modified, _)) in candidates.iter().enumerate() {
+        let cached = &summaries[path];
+        assert_eq!(&cached.fingerprint, fingerprint);
+        assert_eq!(cached.summary.id, format!("id-{number}"));
+        assert_eq!(cached.summary.name, format!("Chat {number}"));
+        assert_eq!(cached.summary.project, "example");
+        assert_eq!(cached.summary.modified_at, *modified);
+        assert_eq!(cached.summary.message_count, 2);
+        assert_eq!(cached.summary.api_cost, 0.25);
+        assert_eq!(cached.summary.preview, "Answer 🦆");
+        assert_eq!(cached.summary.host_id, "local");
+        assert_eq!(cached.summary.host_name, "Local");
+    }
+}
+
+#[test]
+fn session_summary_loading_skips_unreadable_and_invalid_files_without_losing_valid_sessions() {
+    let root = TestDirectory::new();
+    let mut candidates = Vec::new();
+    for (name, body) in [
+        ("empty", ""), ("broken", "not json\n"),
+        ("wrong-header", "{\"type\":\"message\"}\n"),
+        ("valid", "{\"type\":\"session\",\"id\":\"valid\",\"cwd\":\"/repo\"}\nmalformed line\n"),
+    ] {
+        let path = root.0.join(format!("{name}.jsonl")); fs::write(&path, body).unwrap();
+        candidates.push((path.to_string_lossy().into_owned(), name.into(), 1, body.len() as u64));
+    }
+    candidates.push((root.0.join("missing.jsonl").to_string_lossy().into_owned(), "missing".into(), 1, 0));
+    let summaries = read_session_summaries(&candidates, None).unwrap();
+    assert_eq!(summaries.len(), 1);
+    let summary = &summaries[&candidates[3].0].summary;
+    assert_eq!(summary.id, "valid"); assert_eq!(summary.name, "Untitled session");
+    assert_eq!(summary.message_count, 0); assert_eq!(summary.api_cost, 0.0);
+    assert!(read_session_summaries(&[], None).unwrap().is_empty());
+}
 
 #[test]
 fn session_deletion_removes_trace_and_sidecar_in_both_storage_areas() {
