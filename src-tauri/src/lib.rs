@@ -364,6 +364,9 @@ struct WorktreeSetupScript {
     host_id: Option<String>,
 }
 
+#[cfg(test)]
+mod tests;
+
 fn default_pi_path() -> String { "pi".into() }
  fn default_context_window_cap() -> u64 { 300_000 }
 fn default_context_window_cap_enabled() -> bool { true }
