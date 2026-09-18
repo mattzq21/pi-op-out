@@ -2806,6 +2806,64 @@ fn settings_path_rejects_directory_obstructions_without_changing_their_permissio
 }
 
 #[test]
+fn project_worktree_creation_uses_repository_root_and_preserves_source_changes() {
+    let temporary = TestDirectory::new();
+    let repository = temporary.0.join("Project's files");
+    let nested = repository.join("nested");
+    fs::create_dir_all(&nested).unwrap();
+    test_git(&repository, &["init", "--initial-branch=main"]);
+    fs::write(repository.join("tracked"), "committed").unwrap();
+    test_git(&repository, &["add", "."]); test_git(&repository, &["commit", "-m", "Initial"]);
+    fs::write(repository.join("tracked"), "local edits").unwrap();
+    fs::write(repository.join("untracked"), "private").unwrap();
+    let worktree = create_project_worktree_at(nested.to_str().unwrap(), " feature ", None).unwrap();
+    assert_eq!(worktree.branch, "Project-s-files-feature");
+    assert_eq!(Path::new(&worktree.path), temporary.0.join("Project-s-files-feature"));
+    assert_eq!(fs::read_to_string(Path::new(&worktree.path).join("tracked")).unwrap(), "committed");
+    assert!(!Path::new(&worktree.path).join("untracked").exists());
+    assert_eq!(fs::read_to_string(repository.join("tracked")).unwrap(), "local edits");
+    assert_eq!(fs::read_to_string(repository.join("untracked")).unwrap(), "private");
+    assert!(local_worktree_is_registered(&repository, Path::new(&worktree.path)).unwrap());
+    assert!(local_branch_exists(&repository, &worktree.branch).unwrap());
+    let output = Command::new("git").args(["-C", &worktree.path, "branch", "--show-current"]).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), worktree.branch);
+}
+
+#[test]
+fn project_worktree_creation_rejects_invalid_sources_and_names_without_creating_targets() {
+    let temporary = TestDirectory::new();
+    let repository = temporary.0.join("project"); fs::create_dir(&repository).unwrap();
+    for name in ["", "../escape", "two words", "a/b"] {
+        assert!(create_project_worktree_at(repository.to_str().unwrap(), name, None).is_err());
+    }
+    assert_eq!(create_project_worktree_at(repository.to_str().unwrap(), "feature", None).err().unwrap(), "Project is not a Git repository");
+    assert_eq!(create_project_worktree_at(repository.join("missing").to_str().unwrap(), "feature", None).err().unwrap(), "Project is not a Git repository");
+    test_git(&repository, &["init", "--initial-branch=main"]);
+    assert!(create_project_worktree_at(repository.to_str().unwrap(), "feature", None).is_err(), "unborn repositories have no HEAD to check out");
+    assert!(!temporary.0.join("project-feature").exists());
+    assert!(!local_branch_exists(&repository, "project-feature").unwrap());
+}
+
+#[test]
+fn project_worktree_creation_preserves_existing_branch_and_target_on_collisions() {
+    let temporary = TestDirectory::new();
+    let repository = temporary.0.join("project"); fs::create_dir(&repository).unwrap();
+    test_git(&repository, &["init", "--initial-branch=main"]);
+    test_git(&repository, &["commit", "--allow-empty", "-m", "Initial"]);
+    let created = create_project_worktree_at(repository.to_str().unwrap(), "feature", None).unwrap();
+    let marker = Path::new(&created.path).join("keep"); fs::write(&marker, "existing work").unwrap();
+    assert!(create_project_worktree_at(repository.to_str().unwrap(), "feature", None).is_err());
+    assert_eq!(fs::read_to_string(marker).unwrap(), "existing work");
+    assert!(local_worktree_is_registered(&repository, Path::new(&created.path)).unwrap());
+    let occupied = temporary.0.join("project-occupied"); fs::create_dir(&occupied).unwrap();
+    fs::write(occupied.join("keep"), "unrelated directory").unwrap();
+    assert!(create_project_worktree_at(repository.to_str().unwrap(), "occupied", None).is_err());
+    assert_eq!(fs::read_to_string(occupied.join("keep")).unwrap(), "unrelated directory");
+    assert!(!local_worktree_is_registered(&repository, &occupied).unwrap());
+}
+
+#[test]
 fn project_inspection_batches_distinct_directories_and_updates_all_matching_sessions() {
     let root = TestDirectory::new();
     let repository = root.0.join("repo ' 日本語"); fs::create_dir(&repository).unwrap();

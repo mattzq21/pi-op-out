@@ -1653,10 +1653,14 @@ fn local_worktree_is_registered(root: &Path, target: &Path) -> Result<bool, Stri
 
 #[tauri::command(async)]
 fn create_project_worktree(app: AppHandle, cwd: String, name: String, host_id: Option<String>) -> Result<GitWorktree, String> {
-    let name = worktree_suffix(&name)?;
     let settings = load_app_settings(app)?;
     let host_id = host_id.as_deref().unwrap_or("local");
     let host = if host_id == "local" { None } else { Some(remote_host(&settings, host_id)?) };
+    create_project_worktree_at(&cwd, &name, host)
+}
+
+fn create_project_worktree_at(cwd: &str, name: &str, host: Option<&RemoteHost>) -> Result<GitWorktree, String> {
+    let name = worktree_suffix(name)?;
     let located = if let Some(host) = host {
         run_limited(ssh(host).arg(format!("git -C {} rev-parse --show-toplevel", shell_quote(&cwd))), 64 * 1024, "Could not locate Git repository")?
     } else {
