@@ -2586,24 +2586,44 @@ fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<S
 }
 
 fn list_remote_sessions(index: &SessionIndexRuntime, host: &RemoteHost) -> Result<Vec<SessionSummary>, String> {
-    let output = run_limited(ssh(host).arg(format!(r#"mkdir -p "$HOME/{STORAGE_DIRECTORY}/sessions" && find "$HOME/{STORAGE_DIRECTORY}/sessions" -type f -name '*.jsonl' -printf '%p\000%T@\000%s\000' 2>/dev/null"#)), MAX_SESSION_INDEX_BATCH_BYTES, "Could not list remote sessions")?;
+    let metadata = query_remote_session_metadata(|script| { let mut command = ssh(host); command.arg(script); command })?;
+    update_remote_session_index(index, host, &metadata,
+        |changed| read_session_summaries(changed, Some(host)),
+        |sessions| inspect_session_projects(sessions, Some(host)))
+}
+
+fn query_remote_session_metadata(command: impl FnOnce(&str) -> Command) -> Result<Vec<u8>, String> {
+    let mut command = command(&format!(r#"mkdir -p "$HOME/{STORAGE_DIRECTORY}/sessions" && find "$HOME/{STORAGE_DIRECTORY}/sessions" -type f -name '*.jsonl' -printf '%p\000%T@\000%s\000' 2>/dev/null"#));
+    let output = run_limited(&mut command, MAX_SESSION_INDEX_BATCH_BYTES, "Could not list remote sessions")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).into_owned()); }
-    let fields = output.stdout.split(|byte| *byte == 0).collect::<Vec<_>>();
-    let metadata = fields.chunks_exact(3).filter_map(|frame| {
-        let path = String::from_utf8_lossy(frame[0]).into_owned(); let modified = String::from_utf8_lossy(frame[1]); let size = String::from_utf8_lossy(frame[2]).parse().ok()?;
-        Some((path, format!("{modified}:{size}"), modified.split('.').next()?.parse().ok()?, size))
-    }).collect::<Vec<(String, String, u64, u64)>>();
+    Ok(output.stdout)
+}
+
+fn update_remote_session_index(
+    index: &SessionIndexRuntime, host: &RemoteHost, metadata: &[u8],
+    read: impl FnOnce(&[(String, String, u64, u64)]) -> Result<HashMap<String, CachedSession>, String>,
+    inspect: impl FnOnce(&mut [SessionSummary]) -> Result<(), String>,
+) -> Result<Vec<SessionSummary>, String> {
+    let metadata = parse_remote_session_metadata(metadata);
     let previous = index.remote.lock().map_err(|_| "Remote session index lock was poisoned")?.get(&host.id).cloned().unwrap_or_default();
     let changed = metadata.iter().filter(|(path, fingerprint, _, _)| previous.get(path).is_none_or(|cached| cached.fingerprint != *fingerprint)).cloned().collect::<Vec<_>>();
-    let mut parsed = read_session_summaries(&changed, Some(host))?;
+    let mut parsed = read(&changed)?;
 
     let mut next = HashMap::new(); let mut sessions = Vec::new();
     for (path, _, _, _) in metadata {
         let Some(mut cached) = parsed.remove(&path).or_else(|| previous.get(&path).cloned()) else { continue };
         cached.summary.host_name = host.name.clone(); sessions.push(cached.summary.clone()); next.insert(path, cached);
     }
-    inspect_session_projects(&mut sessions, Some(host))?;
+    inspect(&mut sessions)?;
     index.remote.lock().map_err(|_| "Remote session index lock was poisoned")?.insert(host.id.clone(), next); Ok(sessions)
+}
+
+fn parse_remote_session_metadata(output: &[u8]) -> Vec<(String, String, u64, u64)> {
+    let fields = output.split(|byte| *byte == 0).collect::<Vec<_>>();
+    fields.chunks_exact(3).filter_map(|frame| {
+        let path = String::from_utf8_lossy(frame[0]).into_owned(); let modified = String::from_utf8_lossy(frame[1]); let size = String::from_utf8_lossy(frame[2]).parse().ok()?;
+        Some((path, format!("{modified}:{size}"), modified.split('.').next()?.parse().ok()?, size))
+    }).collect()
 }
 
 #[tauri::command(async)]

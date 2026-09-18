@@ -94,6 +94,83 @@ fn usage_chooses_the_most_consumed_window_and_prefers_the_codex_bucket() {
         assert!(codex_usage_values(&value).is_none());
     }
 }
+#[test]
+fn remote_session_metadata_preserves_paths_and_subsecond_cache_fingerprints() {
+    let records = [
+        ("/sessions/a b's\n日本語.jsonl", "1750000000.123456789", "42"),
+        ("/sessions/second.jsonl", "1750000000.987654321", "0"),
+        ("/sessions/large.jsonl", "1750000001", "18446744073709551615"),
+    ];
+    let bytes = records.iter().map(|(path, modified, size)| format!("{path}\0{modified}\0{size}\0")).collect::<String>();
+    let parsed = parse_remote_session_metadata(bytes.as_bytes());
+    assert_eq!(parsed, vec![
+        (records[0].0.into(), "1750000000.123456789:42".into(), 1750000000, 42),
+        (records[1].0.into(), "1750000000.987654321:0".into(), 1750000000, 0),
+        (records[2].0.into(), "1750000001:18446744073709551615".into(), 1750000001, u64::MAX),
+    ]);
+    assert_ne!(parsed[0].1, parsed[1].1, "subsecond updates must invalidate cached summaries");
+}
+
+#[test]
+fn remote_session_metadata_skips_bad_records_without_losing_later_valid_records() {
+    let mut input = Vec::new();
+    for (modified, size) in [("bad", "1"), ("1.0", "bad"), ("-1", "2"), ("1", "18446744073709551616")] {
+        input.extend_from_slice(format!("/bad.jsonl\0{modified}\0{size}\0").as_bytes());
+    }
+    input.extend_from_slice(b"/valid.jsonl\0\x31.25\0\x32\0/incomplete\0timestamp");
+    assert_eq!(parse_remote_session_metadata(&input), vec![("/valid.jsonl".into(), "1.25:2".into(), 1, 2)]);
+    for bytes in [b"".as_slice(), b"path", b"path\0timestamp"] { assert!(parse_remote_session_metadata(bytes).is_empty()); }
+}
+#[test]
+fn remote_session_index_reuses_unchanged_entries_refreshes_changed_files_and_prunes_deleted_files() {
+    let index = SessionIndexRuntime::default();
+    let host = RemoteHost { id:"remote".into(), name:"Renamed server".into(), target:"unused.invalid".into(), pi_path:"pi".into() };
+    let old = |path: &str| CachedSession { fingerprint:"1.0:10".into(), summary:test_session("remote", path, path) };
+    index.remote.lock().unwrap().insert("remote".into(), HashMap::from([
+        ("/same".into(), old("/same")), ("/changed".into(), old("/changed")), ("/deleted".into(), old("/deleted")),
+    ]));
+    index.remote.lock().unwrap().insert("other".into(), HashMap::from([("/other".into(), old("/other"))]));
+    let metadata = b"/same\x001.0\x0010\x00/changed\x002.0\x0020\x00/new\x003.0\x0030\x00/invalid\x004.0\x0040\x00";
+    let sessions = update_remote_session_index(&index, &host, metadata, |changed| {
+        assert_eq!(changed.iter().map(|entry| entry.0.as_str()).collect::<Vec<_>>(), vec!["/changed", "/new", "/invalid"]);
+        Ok(changed.iter().filter(|entry| entry.0 != "/invalid").map(|(path, fingerprint, modified, _)| {
+            let mut summary = test_session("remote", path, path); summary.modified_at = *modified;
+            (path.clone(), CachedSession { fingerprint:fingerprint.clone(), summary })
+        }).collect())
+    }, |sessions| {
+        assert_eq!(sessions.len(), 3);
+        for session in sessions { session.cwd_exists = false; }
+        Ok(())
+    }).unwrap();
+    assert_eq!(sessions.iter().map(|session| session.path.as_str()).collect::<Vec<_>>(), vec!["/same", "/changed", "/new"]);
+    assert!(sessions.iter().all(|session| session.host_name == "Renamed server" && !session.cwd_exists));
+    let cache = index.remote.lock().unwrap();
+    assert_eq!(cache["remote"].len(), 3);
+    assert_eq!(cache["remote"]["/changed"].fingerprint, "2.0:20");
+    assert_eq!(cache["remote"]["/new"].summary.modified_at, 3);
+    assert!(cache["other"].contains_key("/other"));
+}
+
+#[test]
+fn remote_session_index_preserves_previous_cache_when_reading_or_inspection_fails() {
+    for failure in ["read", "inspect"] {
+        let index = SessionIndexRuntime::default();
+        let host = RemoteHost { id:"remote".into(), name:"Server".into(), target:"unused.invalid".into(), pi_path:"pi".into() };
+        index.remote.lock().unwrap().insert("remote".into(), HashMap::from([("/old".into(), CachedSession {
+            fingerprint:"1:10".into(), summary:test_session("remote", "old", "/old"),
+        })]));
+        let result = update_remote_session_index(&index, &host, b"/new\x002\x0020\x00", |_| {
+            if failure == "read" { Err("read failed".into()) } else { Ok(HashMap::new()) }
+        }, |_| {
+            assert_eq!(failure, "inspect");
+            Err("inspect failed".into())
+        });
+        assert_eq!(result.err().unwrap(), format!("{failure} failed"));
+        let cache = index.remote.lock().unwrap();
+        assert_eq!(cache["remote"].len(), 1);
+        assert_eq!(cache["remote"]["/old"].fingerprint, "1:10");
+    }
+}
 #[cfg(unix)]
 #[test]
 fn terminal_lifecycle_delivers_queued_input_and_resized_dimensions_to_the_shell() {
