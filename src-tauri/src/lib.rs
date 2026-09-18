@@ -1471,11 +1471,15 @@ fn is_git_repository(app: AppHandle, cwd: String, host_id: Option<String>) -> Re
 #[tauri::command(async)]
 fn git_branch(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<Option<String>, String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
-    let output = if host_id == "local" {
-        Command::new("git").args(["-C", &cwd, "rev-parse", "--abbrev-ref", "HEAD"]).output().map_err(|error| format!("Could not read project Git branch: {error}"))?
+    let host = if host_id == "local" { None } else { Some(remote_host(&load_app_settings(app)?, &host_id)?.clone()) };
+    git_branch_at(&cwd, host.as_ref())
+}
+
+fn git_branch_at(cwd: &str, host: Option<&RemoteHost>) -> Result<Option<String>, String> {
+    let output = if let Some(host) = host {
+        ssh(host).arg(format!("git -C {} rev-parse --abbrev-ref HEAD", shell_quote(cwd))).output().map_err(|error| format!("Could not read Git branch on {}: {error}", host.name))?
     } else {
-        let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
-        ssh(host).arg(format!("git -C {} rev-parse --abbrev-ref HEAD", shell_quote(&cwd))).output().map_err(|error| format!("Could not read Git branch on {}: {error}", host.name))?
+        Command::new("git").args(["-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"]).output().map_err(|error| format!("Could not read project Git branch: {error}"))?
     };
     if !output.status.success() { return Ok(None); }
     let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();

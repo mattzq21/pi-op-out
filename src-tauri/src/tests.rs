@@ -96,6 +96,27 @@ fn usage_chooses_the_most_consumed_window_and_prefers_the_codex_bucket() {
 }
 
 #[test]
+fn git_branch_reporting_handles_unborn_detached_and_linked_worktrees() {
+    let temporary = TestDirectory::new();
+    let repository = temporary.0.join("project's files");
+    fs::create_dir(&repository).unwrap();
+    assert_eq!(git_branch_at(repository.to_str().unwrap(), None).unwrap(), None);
+    assert_eq!(git_branch_at(repository.join("missing").to_str().unwrap(), None).unwrap(), None);
+    test_git(&repository, &["init", "--initial-branch=main"]);
+    assert_eq!(git_branch_at(repository.to_str().unwrap(), None).unwrap(), None);
+    test_git(&repository, &["commit", "--allow-empty", "-m", "Initial"]);
+    assert_eq!(git_branch_at(repository.to_str().unwrap(), None).unwrap().as_deref(), Some("main"));
+    let nested = repository.join("nested"); fs::create_dir(&nested).unwrap();
+    assert_eq!(git_branch_at(nested.to_str().unwrap(), None).unwrap().as_deref(), Some("main"));
+    let linked = temporary.0.join("linked");
+    test_git(&repository, &["worktree", "add", "-b", "feature/topic", linked.to_str().unwrap()]);
+    assert_eq!(git_branch_at(linked.to_str().unwrap(), None).unwrap().as_deref(), Some("feature/topic"));
+    test_git(&linked, &["checkout", "--detach"]);
+    assert_eq!(git_branch_at(linked.to_str().unwrap(), None).unwrap().as_deref(), Some("HEAD"));
+    assert_eq!(git_branch_at(repository.to_str().unwrap(), None).unwrap().as_deref(), Some("main"));
+}
+
+#[test]
 fn hook_list_query_runs_the_bundled_scanner_and_preserves_hook_entry_paths() {
     let home = TestDirectory::new(); let hooks = home.0.join(".piop/hooks");
     let script = format!("require('node:os').homedir = () => {};\n{}", serde_json::to_string(home.0.to_str().unwrap()).unwrap(), include_str!("../resources/list-hooks.cjs"));
