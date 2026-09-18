@@ -2473,6 +2473,81 @@ fn oversized_diff_histories_are_rejected_before_accessing_local_or_remote_storag
 }
 
 #[test]
+fn session_identity_reads_only_the_header_and_accepts_the_size_boundary() {
+    let directory = TestDirectory::new();
+    let path = directory.0.join("session.jsonl");
+    let settings = default_settings();
+    for suffix in ["", "\ninvalid body", "\r\n{\"id\":\"wrong-message-id\"}\n"] {
+        fs::write(&path, format!("{{\"type\":\"session\",\"id\":\"session-日本語\"}}{suffix}")).unwrap();
+        assert_eq!(session_identity(&settings, "local", path.to_str().unwrap()).unwrap(), "session-日本語");
+    }
+    let prefix = "{\"id\":\"boundary\",\"padding\":\"";
+    let header = format!("{prefix}{}\"}}", "x".repeat(64 * 1024 - prefix.len() - 2));
+    assert_eq!(header.len(), 64 * 1024);
+    fs::write(&path, format!("{header}\n{{\"id\":\"ignored\"}}\n")).unwrap();
+    assert_eq!(session_identity(&settings, "local", path.to_str().unwrap()).unwrap(), "boundary");
+    let oversized = format!("{prefix}{}\"}}\n", "x".repeat(64 * 1024));
+    fs::write(&path, oversized).unwrap();
+    assert!(session_identity(&settings, "local", path.to_str().unwrap()).is_err());
+}
+
+#[test]
+fn session_identity_rejects_missing_ids_invalid_headers_and_unavailable_files() {
+    let directory = TestDirectory::new();
+    let path = directory.0.join("session.jsonl");
+    let settings = default_settings();
+    assert!(session_identity(&settings, "local", path.to_str().unwrap()).is_err());
+    for header in ["{}", "[]", "null", "{\"id\":null}", "{\"id\":42}", "{\"id\":\"\"}"] {
+        fs::write(&path, format!("{header}\n{{\"id\":\"later-id\"}}\n")).unwrap();
+        assert_eq!(session_identity(&settings, "local", path.to_str().unwrap()).unwrap_err(), "Missing session identity");
+    }
+    for content in [b"".as_slice(), b"not json\n", b"\xff\n", b"\n{\"id\":\"later\"}"] {
+        fs::write(&path, content).unwrap();
+        assert!(session_identity(&settings, "local", path.to_str().unwrap()).is_err());
+        assert_eq!(fs::read(&path).unwrap(), content);
+    }
+    assert!(session_identity(&settings, "unknown-host", path.to_str().unwrap()).unwrap_err().contains("Unknown machine"));
+}
+
+#[test]
+fn git_snapshot_workflow_compares_changes_and_cleans_both_snapshots() {
+    for changed in [false, true] {
+        let temporary = TestDirectory::new(); let repository = temporary.0.join("repository");
+        let snapshots = temporary.0.join("snapshots");
+        fs::create_dir(&repository).unwrap(); fs::create_dir(&snapshots).unwrap();
+        test_git(&repository, &["init", "--initial-branch=main"]);
+        fs::write(repository.join("file"), "before\n").unwrap();
+        test_git(&repository, &["add", "."]); test_git(&repository, &["commit", "-m", "Initial"]);
+        let baseline = local_git_tree_with(repository.to_str().unwrap(), || Ok(snapshots.clone())).unwrap().unwrap();
+        if changed { fs::write(repository.join("file"), "after\n").unwrap(); }
+        let diff = local_git_diff_with(repository.to_str().unwrap(), &baseline,
+            |token| validate_snapshot_location(serde_json::from_str(token).unwrap(), &snapshots),
+            |cwd| local_git_tree_with(cwd, || Ok(snapshots.clone()))).unwrap();
+        if changed {
+            match diff.unwrap() {
+                GitDiffSnapshot::Located { patch, repository_root, .. } => {
+                    assert!(patch.contains("-before\n+after")); assert_eq!(repository_root, repository.to_str().unwrap());
+                }
+                _ => panic!("expected located diff"),
+            }
+        } else { assert!(diff.is_none()); }
+        assert_eq!(fs::read_dir(&snapshots).unwrap().count(), 0);
+    }
+}
+
+#[test]
+fn git_snapshot_workflow_skips_non_repositories_and_discards_baseline_when_capture_unavailable() {
+    let temporary = TestDirectory::new();
+    assert!(local_git_tree_with(temporary.0.to_str().unwrap(), || panic!("non-repository allocated storage")).unwrap().is_none());
+    let snapshots = temporary.0.join("snapshots"); fs::create_dir(&snapshots).unwrap();
+    let baseline_root = snapshots.join("pi-desktop-diff-baseline"); fs::create_dir(&baseline_root).unwrap();
+    let token = serde_json::to_string(&GitSnapshotToken { root:baseline_root.to_string_lossy().into_owned(), tree:"a".repeat(40), repository_root:temporary.0.to_string_lossy().into_owned() }).unwrap();
+    let result = local_git_diff_with(temporary.0.to_str().unwrap(), &token,
+        |token| validate_snapshot_location(serde_json::from_str(token).unwrap(), &snapshots), |_| Ok(None)).unwrap();
+    assert!(result.is_none()); assert!(!baseline_root.exists());
+}
+
+#[test]
 fn project_inspection_batches_distinct_directories_and_updates_all_matching_sessions() {
     let root = TestDirectory::new();
     let repository = root.0.join("repo ' 日本語"); fs::create_dir(&repository).unwrap();

@@ -1414,11 +1414,19 @@ fn parse_local_snapshot_with(token: &str, parent: impl FnOnce() -> Result<PathBu
     Ok(GitSnapshotToken { root: root.to_string_lossy().into_owned(), ..snapshot })
 }
 
-fn local_git_tree(cwd: &str) -> Result<Option<String>, String> {
+fn local_git_tree(cwd: &str) -> Result<Option<String>, String> { local_git_tree_with(cwd, local_snapshot_parent) }
+
+fn validate_snapshot_location(snapshot: GitSnapshotToken, parent: &Path) -> Result<GitSnapshotToken, String> {
+    let root = PathBuf::from(&snapshot.root).canonicalize().map_err(|_| "Git snapshot expired".to_string())?;
+    if root.parent() != Some(parent) || !root.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.starts_with("pi-desktop-diff-")) { return Err("Invalid Git snapshot location".into()); }
+    Ok(GitSnapshotToken { root: root.to_string_lossy().into_owned(), ..snapshot })
+}
+
+fn local_git_tree_with(cwd: &str, parent: impl FnOnce() -> Result<PathBuf, String>) -> Result<Option<String>, String> {
     let Some((root, repository_objects)) = git_root_and_objects(cwd)? else { return Ok(None) };
     let cwd = root.to_str().ok_or("Git root is not valid UTF-8")?;
     if !local_git_input_is_bounded(cwd, &root)? { return Ok(None); }
-    let snapshot_parent = local_snapshot_parent()?;
+    let snapshot_parent = parent()?;
     let snapshot_root = snapshot_parent.join(format!("pi-desktop-diff-{}", Uuid::new_v4()));
     let objects = snapshot_root.join("objects"); let index = snapshot_root.join("index");
     let seed = run_limited(Command::new("git").args(["-C", cwd, "write-tree"]), 64 * 1024, "Could not read project index")?;
@@ -1441,9 +1449,15 @@ fn local_git_tree(cwd: &str) -> Result<Option<String>, String> {
 }
 
 fn local_git_diff(cwd: &str, base_token: &str) -> Result<Option<GitDiffSnapshot>, String> {
-    let base = parse_local_snapshot(base_token)?;
-    let Some(current_token) = local_git_tree(cwd)? else { let _ = fs::remove_dir_all(&base.root); return Ok(None) };
-    let current = parse_local_snapshot(&current_token)?;
+    local_git_diff_with(cwd, base_token, parse_local_snapshot, local_git_tree)
+}
+
+fn local_git_diff_with(cwd: &str, base_token: &str,
+    mut parse: impl FnMut(&str) -> Result<GitSnapshotToken, String>,
+    capture: impl FnOnce(&str) -> Result<Option<String>, String>) -> Result<Option<GitDiffSnapshot>, String> {
+    let base = parse(base_token)?;
+    let Some(current_token) = capture(cwd)? else { let _ = fs::remove_dir_all(&base.root); return Ok(None) };
+    let current = parse(&current_token)?;
     let result = local_git_diff_between(cwd, &base, &current);
     let _ = fs::remove_dir_all(&base.root); let _ = fs::remove_dir_all(&current.root); result
 }
