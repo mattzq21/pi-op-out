@@ -661,9 +661,10 @@ fn rpc_responses_skip_notifications_and_other_ids_and_surface_errors() {
 fn shortcuts_canonicalize_modifiers_and_reject_plain_typing() {
     assert_eq!(canonical_shortcut(" Shift + CTRL + n ").unwrap(), Some("ctrl+shift+n".into()));
     assert_eq!(canonical_shortcut("Ctrl+Ctrl+N").unwrap(), Some("ctrl+n".into()));
-    assert_eq!(canonical_shortcut("F2").unwrap(), Some("f2".into()));
-    assert_eq!(canonical_shortcut(" + ").unwrap(), None);
-    for invalid in ["Ctrl", "n", "Shift+é", "🦆"] { assert!(canonical_shortcut(invalid).is_err(), "{invalid}"); }
+    assert_eq!(canonical_shortcut("Ctrl+F2").unwrap(), Some("ctrl+f2".into()));
+    assert_eq!(canonical_shortcut("Ctrl++").unwrap(), Some("ctrl++".into()));
+    assert_eq!(canonical_shortcut(" ").unwrap(), None);
+    for invalid in ["Ctrl", "n", "Shift+é", "🦆", "F2", " + "] { assert!(canonical_shortcut(invalid).is_err(), "{invalid}"); }
 }
 
 #[test]

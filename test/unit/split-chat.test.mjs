@@ -70,7 +70,7 @@ describe('split conversation lifecycle', () => {
     assert.ok(calls.some(command => command.type === 'steer' && command.message === 'Direction'));
     await render({ draft: '/catch-up latest' });
     await act(async () => control('Message piop').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
-    assert.ok(calls.some(command => command.type === 'prompt' && command.message === '/catch-up latest'));
+    assert.ok(calls.some(command => command.type === 'follow_up' && command.message === '/catch-up latest'));
   });
 
   test('disconnect clears extension state, retries connection and restores controls', async t => {

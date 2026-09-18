@@ -72,11 +72,11 @@ describe('in-page search', () => {
     await view.rerender({ ...props, enabled: false }); assert.equal(document.querySelector('.find-highlights'), null);
   });
 
-  test('search collapses normal whitespace but preserves preformatted spacing', async () => {
+  test('search matches query whitespace across normal and preformatted text', async () => {
     root.querySelector('.messages').innerHTML = '<p>one \n\t <em> two</em>  three</p><pre style="white-space:pre">one  two</pre>';
     await render(); await open(); await enterText(input(), 'one two three'); assert.equal(count(), '1 / 1');
-    await enterText(input(), 'one  two'); assert.equal(count(), '1 / 1');
-    await enterText(input(), 'one two'); assert.equal(count(), '1 / 1');
+    await enterText(input(), 'one  two'); assert.equal(count(), '1 / 2');
+    await enterText(input(), 'one two'); assert.equal(count(), '1 / 2');
   });
 
   test('live DOM changes rescan matches and retain the current match when its text node survives', async t => {

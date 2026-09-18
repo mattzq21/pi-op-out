@@ -93,7 +93,7 @@ test('shortcut matching supports Mod on either platform and rejects extra modifi
   assert.ok(matchesShortcut(keyEvent('n', { metaKey: true }), 'Mod+N'));
   assert.ok(matchesShortcut(keyEvent('n', { ctrlKey: true }), 'Mod+N'));
   assert.ok(matchesShortcut(keyEvent(' ', { altKey: true }), 'Alt+Space'));
-  assert.ok(matchesShortcut(keyEvent('F2'), 'F2'));
+  assert.equal(matchesShortcut(keyEvent('F2'), 'F2'), false);
   for (const shortcut of ['', '+', 'Ctrl', 'N', 'Shift+N', 'Alt+N', 'Meta+N', 'Ctrl+Shift+N', 'Ctrl+B']) assert.equal(matchesShortcut(keyEvent('n', { ctrlKey: true }), shortcut), false);
   assert.equal(matchesShortcut(keyEvent('n'), 'Mod+N'), false);
   assert.equal(matchesShortcut(keyEvent('n', { ctrlKey: true, altKey: true }), 'Ctrl+N'), false);
