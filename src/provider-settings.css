@@ -1,5 +1,4 @@
-.provider-host-label, .provider-login-help { color: var(--text-muted, #a09c93); font-size: 13px; line-height: 1.5; }
-.provider-host-label strong { color: var(--text, #e8e5dd); }
+.provider-login-help { color: var(--text-muted, #a09c93); font-size: 13px; line-height: 1.5; }
 .provider-account { display: flex; justify-content: space-between; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--border, #34322d); }
 .provider-account small { display: block; color: var(--text-muted, #a09c93); margin-top: 5px; overflow-wrap: anywhere; }
 .provider-group { border-bottom: 1px solid var(--border, #34322d); }

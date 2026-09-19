@@ -84,7 +84,6 @@ export function ProviderSettings({ hosts, initialHostId = "local" }: { hosts: Re
       <label className="section-filter"><Search size={14} /><input aria-label="Filter providers" placeholder="Filter providers" value={filter} onChange={(event) => setFilter(event.target.value)} /></label>
       <button className="section-toggle-all" disabled={auth.loading || disabled} onClick={auth.refresh}><RefreshCw size={14} />Refresh</button>
     </div>
-    <p className="provider-host-label">Credentials are managed on <strong>{hostName}</strong>. Changes apply immediately.</p>
     {auth.error && <p className="hooks-error" role="alert">{auth.error}</p>}
     {auth.flow && <LoginPanel flow={auth.flow} auth={auth} />}
     {auth.loading && <div className="empty-small" role="status">Loading providers on {hostName}…</div>}
