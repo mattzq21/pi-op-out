@@ -153,7 +153,7 @@ async function readConfig(pi: ExtensionAPI): Promise<Config> {
   try {
     const stored = JSON.parse(await readFile(configPath, "utf8"));
     const config = await migratePrompts(stored, pi);
-    if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && (agent.name === "default" && !stored.agents.some((item: StoredAgent) => item.name === "general") || "description" in agent || agent.path_systemprompt === undefined || agent.path_agentprompt === undefined || "agentsMd" in agent || "systemPrompt" in agent || "developerPrompt" in agent))) await writeConfig(config);
+    if (Array.isArray(stored.agents) && stored.agents.some((agent: StoredAgent) => agent && (agent.name === "default" && !stored.agents.some((item: StoredAgent) => item?.name === "general") || "description" in agent || agent.path_systemprompt === undefined || agent.path_agentprompt === undefined || "agentsMd" in agent || "systemPrompt" in agent || "developerPrompt" in agent))) await writeConfig(config);
     return config;
   }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
