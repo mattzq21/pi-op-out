@@ -7,6 +7,10 @@ export function installDom() {
   for (const key of ['HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Element', 'Node', 'NodeFilter', 'MutationObserver', 'KeyboardEvent', 'MouseEvent', 'Event']) values[key] = dom.window[key];
   values.getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
   const frames = new Map(); let frame = 0;
+  const pointerCaptures = new Map();
+  dom.window.HTMLElement.prototype.setPointerCapture = function (id) { pointerCaptures.set(id, this); };
+  dom.window.HTMLElement.prototype.hasPointerCapture = function (id) { return pointerCaptures.get(id) === this; };
+  dom.window.HTMLElement.prototype.releasePointerCapture = function (id) { if (pointerCaptures.get(id) === this) pointerCaptures.delete(id); };
   dom.window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   dom.window.HTMLDialogElement.prototype.close = function () { this.open = false; };
   values.requestAnimationFrame = callback => { frames.set(++frame, callback); return frame; };
@@ -17,6 +21,7 @@ export function installDom() {
     frames,
     async flushFrames() { await act(async () => { const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(callback => callback(0)); }); },
     restore() {
+      pointerCaptures.clear();
       dom.window.close();
       for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key]; }
     },

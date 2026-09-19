@@ -47,15 +47,14 @@ describe('native text editing shortcuts', () => {
 });
 
 describe('pending-message dragging', () => {
-  let dom, hook, queue, handle, moves, messages, captured;
+  let dom, hook, queue, handle, moves, messages;
   beforeEach(async () => {
-    dom = installDom(); moves = []; captured = false;
+    dom = installDom(); moves = [];
     messages = [{ id: 'a', behavior: 'steer' }, { id: 'b', behavior: 'steer' }, { id: 'c', behavior: 'steer' }, { id: 'other', behavior: 'followUp' }, { id: 'retry', behavior: 'steer', retry: true }];
     queue = document.createElement('div'); queue.className = 'pending-messages'; document.body.append(queue);
     queue.getBoundingClientRect = () => ({ left: 0, right: 300, top: 0, bottom: 200 });
     messages.forEach((message, index) => { const row = document.createElement('div'); row.dataset.pendingId = message.id; row.getBoundingClientRect = () => ({ top: index * 30, height: 30 }); queue.append(row); });
     handle = document.createElement('button'); queue.firstChild.append(handle);
-    handle.setPointerCapture = () => { captured = true; }; handle.hasPointerCapture = () => captured; handle.releasePointerCapture = () => { captured = false; };
     hook = await renderHook(props => usePendingMessageDrag(props.messages, props.disabled, (...args) => moves.push(args)), { messages, disabled: false });
   });
   afterEach(async () => { await hook.unmount(); dom.restore(); });
@@ -67,7 +66,7 @@ describe('pending-message dragging', () => {
     assert.deepEqual(hook.current.drop, { id: 'a', targetId: 'c', edge: 'after' });
     await pointer('pointerup', 100, 90);
     assert.deepEqual(moves, [['a', { type: 'move', targetId: 'c', edge: 'after' }]]);
-    assert.equal(captured, false); assert.equal(dom.frames.size, 0); assert.equal(hook.current.drop, undefined);
+    assert.equal(handle.hasPointerCapture(1), false); assert.equal(dom.frames.size, 0); assert.equal(hook.current.drop, undefined);
   });
 
   test('dragging upwards uses row midpoints, filters retries and avoids no-op moves', async () => {
@@ -81,7 +80,7 @@ describe('pending-message dragging', () => {
   test('small movements, other pointers, disabled queues and missing sources cannot reorder', async () => {
     await begin('retry'); await begin('missing'); await begin('a', { button: 2 }); assert.equal(dom.frames.size, 0);
     await begin(); await pointer('pointermove', 100, 17); assert.equal(hook.current.drop, undefined);
-    await pointer('pointermove', 100, 90, 2); await pointer('pointerup', 100, 90, 2); assert.equal(captured, true);
+    await pointer('pointermove', 100, 90, 2); await pointer('pointerup', 100, 90, 2); assert.equal(handle.hasPointerCapture(1), true);
     await pointer('pointerup', 100, 17); assert.deepEqual(moves, []);
     await hook.rerender({ messages, disabled: true }); await begin(); assert.equal(dom.frames.size, 0);
   });
@@ -96,8 +95,8 @@ describe('pending-message dragging', () => {
 
   test('escape, cancellation, disabled state and source removal clear listeners and scheduled scrolling', async () => {
     for (const type of ['pointercancel', 'blur']) { await begin(); await act(async () => window.dispatchEvent(new Event(type))); assert.equal(dom.frames.size, 0); }
-    await begin(); await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }))); assert.equal(captured, true);
-    await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))); assert.equal(captured, false);
+    await begin(); await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }))); assert.equal(handle.hasPointerCapture(1), true);
+    await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))); assert.equal(handle.hasPointerCapture(1), false);
     await begin(); await hook.rerender({ messages, disabled: true }); assert.equal(dom.frames.size, 0);
     await hook.rerender({ messages, disabled: false }); await begin(); await hook.rerender({ messages: messages.slice(1), disabled: false }); assert.equal(dom.frames.size, 0);
     assert.deepEqual(moves, []);

@@ -17,7 +17,7 @@
     "test": "npm run test:unit && npm run test:extensions && npm run test:mobile && npm run test:rust && npm run test:mobile:ui && npm run test:e2e",
     "test:rust": "npm run build && cargo test --locked --manifest-path src-tauri/Cargo.toml",
     "test:extensions": "node --test test/extensions/*.test.mjs",
-    "test:unit": "node --enable-source-maps --import ./test/register-typescript.mjs --test --test-isolation=none test/unit/*.test.mjs",
+    "test:unit": "node --max-old-space-size=768 --enable-source-maps --import ./test/register-typescript.mjs --test --test-concurrency=1 --test-timeout=30000 test/unit/*.test.mjs",
     "test:mutation": "stryker run",
     "test:mutation:rust": "npm run build && node scripts/mutate-rust.mjs",
     "test:e2e": "npm run test:e2e:build && npm run test:e2e:run",
