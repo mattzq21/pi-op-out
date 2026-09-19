@@ -4,7 +4,6 @@ import { installDom, renderComponent, act } from '../dom.mjs';
 import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
 import { Message } from '../../src/components/Message.tsx';
 import { DiffViewer } from '../../src/components/DiffViewer.tsx';
-import { HookWheel } from '../../src/components/HookWheel.tsx';
 import { parseDiff } from '../../src/lib/diff.ts';
 
 describe('message rendering', () => {
@@ -114,10 +113,10 @@ describe('message rendering', () => {
     await view.rerender({ message, showActions: false }); assert.equal(document.querySelector('.message-actions'), null);
   });
 
-  test('reasoning, cache totals and hook statistics accompany completed assistant responses', async () => {
-    await render({ role: 'assistant', timestamp: 1000, content: [{ type: 'thinking', thinking: 'Reasoning' }, { type: 'text', text: 'Answer' }], usage: { input: 1000, cacheRead: 1000 } }, { debug: true, hookCounts: { completed: 4, failed: 1 }, turnCacheUsage: { input: 1000, cacheRead: 3000 } });
+  test('reasoning and cache totals accompany completed assistant responses', async () => {
+    await render({ role: 'assistant', timestamp: 1000, content: [{ type: 'thinking', thinking: 'Reasoning' }, { type: 'text', text: 'Answer' }], usage: { input: 1000, cacheRead: 1000 } }, { debug: true, turnCacheUsage: { input: 1000, cacheRead: 3000 } });
     assert.equal(document.querySelector('.reasoning-text').textContent, 'Reasoning'); assert.equal(document.querySelector('.cache-hit-rate').textContent, 'Cache 75%');
-    assert.match(document.querySelector('.cache-hit-rate').title, /across all calls/); assert.match(document.querySelector('.hook-wheel').getAttribute('aria-label'), /3 succeeded, 1 failed \(25%\)/);
+    assert.match(document.querySelector('.cache-hit-rate').title, /across all calls/);
     await click(document.querySelector('.message-actions .icon-button')); assert.deepEqual(copied, ['Answer']);
   });
 
@@ -131,8 +130,4 @@ describe('message rendering', () => {
     await view.rerender({ files: [], warnings: [] }); assert.equal(document.querySelector('.diff-viewer'), null);
   });
 
-  test('hook wheel handles no statistics and a known empty history', async () => {
-    view = await renderComponent(HookWheel, { label: 'Hooks' }); assert.equal(document.querySelector('.hook-wheel'), null);
-    await view.rerender({ label: 'Hooks', counts: { completed: 0, failed: 0 } }); assert.equal(document.querySelector('.hook-wheel').getAttribute('aria-label'), 'Hooks: no hooks completed');
-  });
 });

@@ -63,7 +63,7 @@ function LoginPrompt({ prompt, working, reply }: { prompt: NonNullable<AuthFlow[
 function FlowStatus({ flow }: { flow: AuthFlow }) {
   if (flow.status === "complete") return <p role="status">Credentials saved on this host.</p>;
   if (flow.status === "cancelled") return <p role="status">Login cancelled.</p>;
-  if (flow.status === "failed") return <p className="hooks-error" role="alert">{flow.error}</p>;
+  if (flow.status === "failed") return <p className="provider-error" role="alert">{flow.error}</p>;
   return <p role="status">Waiting for provider login…</p>;
 }
 
@@ -79,12 +79,12 @@ export function ProviderSettings({ hosts, initialHostId = "local" }: { hosts: Re
     .sort((left, right) => Number(right.accounts.length > 0) - Number(left.accounts.length > 0));
   return <div className="settings-section provider-settings">
     <div className="section-title"><div><h2>Providers</h2><p>Sign in to providers on the machine running Pi. Credentials stay on that host and remain available after you disconnect.</p></div></div>
-    <div className="hooks-toolbar">
+    <div className="provider-toolbar">
       <label>Host <select aria-label="Provider host" value={hostId} disabled={disabled} onChange={(event) => setHostId(event.target.value)}><option value="local">{localHostLabel}</option>{hosts.map((host) => <option key={host.id} value={host.id}>{host.name}</option>)}</select></label>
       <label className="section-filter"><Search size={14} /><input aria-label="Filter providers" placeholder="Filter providers" value={filter} onChange={(event) => setFilter(event.target.value)} /></label>
       <button className="section-toggle-all" disabled={auth.loading || disabled} onClick={auth.refresh}><RefreshCw size={14} />Refresh</button>
     </div>
-    {auth.error && <p className="hooks-error" role="alert">{auth.error}</p>}
+    {auth.error && <p className="provider-error" role="alert">{auth.error}</p>}
     {auth.flow && <LoginPanel flow={auth.flow} auth={auth} />}
     {auth.loading && <div className="empty-small" role="status">Loading providers on {hostName}…</div>}
     <ProviderList providers={providers} auth={auth} disabled={disabled} />

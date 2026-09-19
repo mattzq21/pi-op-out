@@ -112,8 +112,6 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .message:hover .message-time, .message:focus-within .message-time { opacity: 1; }
 @media (hover: none) { .message-time { opacity: 1; } }
 @media (pointer: coarse) { .message-time { opacity: 1; } }
-.hook-wheel { display: inline-flex; flex: 0 0 20px; width: 20px; height: 20px; margin-left: 5px; border-radius: 50%; background: conic-gradient(#d9534f var(--hook-failure), #41464f 0); box-shadow: inset 0 0 0 1px #ffffff20; vertical-align: middle; }
-.hook-wheel svg { width: 20px; height: 20px; fill: none; stroke: white; stroke-opacity: .65; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .cache-hit-rate { margin-left: 5px; color: var(--muted); font: 10px "DM Sans"; }.cache-hit-rate.low { color: #d77865; }
 .message-failure { display: flex; align-items: center; gap: 7px; color: #c64f38; font-size: 12px; }.message-failure button { margin-left: 5px; border: 1px solid currentColor; border-radius: 6px; background: transparent; color: inherit; padding: 4px 9px; font: inherit; cursor: pointer; }.message-failure button:hover { background: #c64f3812; }
 .message-paused { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
@@ -383,12 +381,6 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .find-highlights span.active { background: #ee963966; outline: 1px solid #efaa56; }
 
 .config-row.model-row { grid-template-columns: 34px minmax(0, 1fr) auto; }
-.hooks-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 18px 0 10px; }
-.hooks-toolbar > label:first-child { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
-.hooks-toolbar select { max-width: 180px; border: 1px solid var(--line); border-radius: 6px; padding: 6px; color: var(--ink); background: var(--surface, transparent); }
-.hooks-toolbar button { display: inline-flex; align-items: center; gap: 6px; }
-.hooks-directory { color: var(--muted); font: 11px ui-monospace, monospace; overflow-wrap: anywhere; }
-.hooks-error { color: #d9534f; font-size: 12px; }
 .model-row small { overflow-wrap: anywhere; }
 
 .pending-messages { display: grid; max-height: 190px; overflow-y: auto; margin: 0 13px -12px; padding: 0 7px 17px; border: 1px solid var(--line); border-radius: 16px 16px 0 0; background: #efede7; }

@@ -871,39 +871,6 @@ fn prepare_session_broker() -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn prepare_hooks_extension() -> Result<PathBuf, String> {
-    let dir = home_dir()?.join(STORAGE_DIRECTORY);
-    ensure_private_dir(&dir)?;
-    ensure_private_dir(&dir.join("hooks"))?;
-    let path = dir.join("hook-loader.ts");
-    atomic_write_private(&dir.join("hook-stats.ts"), include_str!("../../extensions/piop-hooks/hook-stats.ts").as_bytes())?;
-    atomic_write_private(&path, include_str!("../../extensions/piop-hooks/index.ts").as_bytes())?;
-    Ok(path)
-}
-
-#[cfg_attr(feature = "desktop", tauri::command(async))]
-fn list_hooks(app: AppHandle, host_id: String) -> Result<Value, String> {
-    let script = include_str!("../resources/list-hooks.cjs");
-    let mut command = if host_id == "local" {
-        let mut command = node_command();
-        command.args(["-e", script]);
-        command
-    } else {
-        let settings = load_app_settings(app)?;
-        let host = remote_host(&settings, &host_id)?;
-        let mut command = ssh(host);
-        command.arg(format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {}", shell_quote(script)));
-        command
-    };
-    query_hook_list(&mut command)
-}
-
-fn query_hook_list(command: &mut Command) -> Result<Value, String> {
-    let output = run_limited(command, 4 * 1024 * 1024, "Could not list hooks")?;
-    if !output.status.success() { return Err(format!("Could not list hooks: {}", String::from_utf8_lossy(&output.stderr).trim())); }
-    serde_json::from_slice(&output.stdout).map_err(|error| format!("Could not read hook list: {error}"))
-}
-
 fn prepare_trace_reader() -> Result<PathBuf, String> {
     let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
@@ -2363,8 +2330,6 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let runtime_settings_extension = shell_quote(include_str!("../../extensions/piop-runtime-settings/index.ts"));
     let provider_accounts = shell_quote(include_str!("../../extensions/piop-runtime-settings/provider-accounts.mjs"));
     let runtime_settings_config = shell_quote(&serde_json::to_string(&runtime_settings(settings)).map_err(|error| error.to_string())?);
-    let hook_stats = shell_quote(include_str!("../../extensions/piop-hooks/hook-stats.ts"));
-    let hooks = shell_quote(include_str!("../../extensions/piop-hooks/index.ts"));
     let broker = shell_quote(include_str!("../resources/session-broker.ts"));
     let trace_reader = shell_quote(include_str!("../resources/trace-reader.ts"));
     let btw = shell_quote(include_str!("../resources/btw.ts"));
@@ -2380,7 +2345,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let mcp_bridge = shell_quote(include_str!("../resources/mcp-bridge.bundle.mjs"));
     let mcp_config = shell_quote(&serde_json::to_string_pretty(&settings.mcp_servers).map_err(|error| error.to_string())?);
      let migration = [("pi-define-agents", "piop-define-agents"), ("pi-openai-fast-mode-piop", "piop-openai-fast-mode"), ("pi-context-window-cap", "piop-context-window-cap"), ("pi-session-cost-limit", "piop-session-cost-limit"), ("pi-diff-watch", "piop-diff-watch")].iter().map(|(old, new)| format!(r#"if [ -d "$HOME/{STORAGE_DIRECTORY}/{old}" ] && [ ! -e "$HOME/{STORAGE_DIRECTORY}/{new}" ]; then mv "$HOME/{STORAGE_DIRECTORY}/{old}" "$HOME/{STORAGE_DIRECTORY}/{new}"; fi"#)).collect::<Vec<_>>().join(" && ");
-    let remote = format!("umask 077 && {migration} && rm -rf -- \"$HOME/{STORAGE_DIRECTORY}/pi-git-change-context\" && mkdir -p -m 700 \"$HOME/{STORAGE_DIRECTORY}/sessions\" \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap\" \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch\" \"$HOME/{STORAGE_DIRECTORY}/piop-define-agents\" && chmod 700 \"$HOME/{STORAGE_DIRECTORY}\" \"$HOME/{STORAGE_DIRECTORY}/sessions\" \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap\" \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch\" \"$HOME/{STORAGE_DIRECTORY}/piop-define-agents\" && mkdir -p -m 700 \"$HOME/{STORAGE_DIRECTORY}/hooks\" && printf %s {hook_stats} > \"$HOME/{STORAGE_DIRECTORY}/hook-stats.ts\" && printf %s {hooks} > \"$HOME/{STORAGE_DIRECTORY}/hook-loader.ts\" && printf %s {broker} > \"$HOME/{STORAGE_DIRECTORY}/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/{STORAGE_DIRECTORY}/piop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/{STORAGE_DIRECTORY}/piop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/{STORAGE_DIRECTORY}/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/config.json\" && printf %s {diff_watch} > \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/index.ts\" && printf %s {codex_web_search} > \"$HOME/{STORAGE_DIRECTORY}/piop-codex-web-search.ts\" && printf %s {openai_cache_fork} > \"$HOME/{STORAGE_DIRECTORY}/piop-openai-cache-fork.ts\" && printf %s {btw} > \"$HOME/{STORAGE_DIRECTORY}/piop-btw.ts\" && printf %s {defined_agents} > \"$HOME/{STORAGE_DIRECTORY}/piop-define-agents/index.ts\" && chmod 600 -- \"$HOME/{STORAGE_DIRECTORY}/piop-codex-web-search.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-openai-cache-fork.ts\" \"$HOME/{STORAGE_DIRECTORY}/session-broker.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-trace-reader.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-mcp-bridge.ts\" \"$HOME/{STORAGE_DIRECTORY}/mcp-servers.json\" \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/index.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/config.json\" \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/index.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-btw.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-define-agents/index.ts\"");
+    let remote = format!("umask 077 && {migration} && rm -rf -- \"$HOME/{STORAGE_DIRECTORY}/pi-git-change-context\" && mkdir -p -m 700 \"$HOME/{STORAGE_DIRECTORY}/sessions\" \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap\" \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch\" \"$HOME/{STORAGE_DIRECTORY}/piop-define-agents\" && chmod 700 \"$HOME/{STORAGE_DIRECTORY}\" \"$HOME/{STORAGE_DIRECTORY}/sessions\" \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap\" \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch\" \"$HOME/{STORAGE_DIRECTORY}/piop-define-agents\" && printf %s {broker} > \"$HOME/{STORAGE_DIRECTORY}/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/{STORAGE_DIRECTORY}/piop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/{STORAGE_DIRECTORY}/piop-mcp-bridge.ts\" && printf %s {mcp_config} > \"$HOME/{STORAGE_DIRECTORY}/mcp-servers.json\" && printf %s {context_window_cap} > \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/config.json\" && printf %s {diff_watch} > \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/index.ts\" && printf %s {codex_web_search} > \"$HOME/{STORAGE_DIRECTORY}/piop-codex-web-search.ts\" && printf %s {openai_cache_fork} > \"$HOME/{STORAGE_DIRECTORY}/piop-openai-cache-fork.ts\" && printf %s {btw} > \"$HOME/{STORAGE_DIRECTORY}/piop-btw.ts\" && printf %s {defined_agents} > \"$HOME/{STORAGE_DIRECTORY}/piop-define-agents/index.ts\" && chmod 600 -- \"$HOME/{STORAGE_DIRECTORY}/piop-codex-web-search.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-openai-cache-fork.ts\" \"$HOME/{STORAGE_DIRECTORY}/session-broker.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-trace-reader.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-mcp-bridge.ts\" \"$HOME/{STORAGE_DIRECTORY}/mcp-servers.json\" \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/index.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/config.json\" \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/index.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-btw.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-define-agents/index.ts\"");
     let remote = format!(r#"{remote} && printf %s {agent_extension_loader} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/extension-loader.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/extension-loader.ts""#);
     let remote = if DEVELOPMENT { remote } else { format!(r#"{remote} && if [ ! -f "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/config.json" ] && [ -f "$HOME/.pi/agent/extensions/pi-define-agents/config.json" ]; then cp "$HOME/.pi/agent/extensions/pi-define-agents/config.json" "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/config.json"; fi && rm -f -- "$HOME/.pi/agent/extensions/pi-define-agents/index.ts" "$HOME/.pi/agent/extensions/pi-desktop-btw.ts""#) };
      let remote = format!(r#"{remote} && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/piop-openai-fast-mode" && printf %s {fast_mode} > "$HOME/{STORAGE_DIRECTORY}/piop-openai-fast-mode/index.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-openai-fast-mode/index.ts""#);
@@ -2431,7 +2396,7 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
         let session_dir = ensure_desktop_sessions_dir(&desktop_home)?;
         let mut command = Command::new(session_worker_executable()?); command.args([std::ffi::OsStr::new("--piop-session-worker"), pi_path.as_os_str()]); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY); command.arg(if is_rpc { "--mode" } else { "--print" }); if is_rpc { command.arg("rpc"); }
         command.arg("--extension").arg(prepare_rtk_extension()?);
-         command.arg("--extension").arg(prepare_runtime_settings(settings)?).arg("--session-dir").arg(session_dir).arg("--approve").arg("--no-skills").arg("--extension").arg(prepare_hooks_extension()?).arg("--extension").arg(mcp_extension).arg("--extension").arg(prepare_session_broker()?).arg("--extension").arg(&trace_reader_extension).arg("--extension").arg(&context_window_cap_extension).arg("--extension").arg(&session_cost_limit_extension).arg("--extension").arg(&diff_watch_extension).arg("--extension").arg(prepare_fast_mode_extension()?).arg("--extension").arg(&openai_cache_fork_extension).arg("--extension").arg(&codex_web_search_extension).arg("--extension").arg(&defined_agents_extension)
+         command.arg("--extension").arg(prepare_runtime_settings(settings)?).arg("--session-dir").arg(session_dir).arg("--approve").arg("--no-skills").arg("--extension").arg(mcp_extension).arg("--extension").arg(prepare_session_broker()?).arg("--extension").arg(&trace_reader_extension).arg("--extension").arg(&context_window_cap_extension).arg("--extension").arg(&session_cost_limit_extension).arg("--extension").arg(&diff_watch_extension).arg("--extension").arg(prepare_fast_mode_extension()?).arg("--extension").arg(&openai_cache_fork_extension).arg("--extension").arg(&codex_web_search_extension).arg("--extension").arg(&defined_agents_extension)
              .env("PI_DESKTOP_DEFINED_AGENTS_EXTENSION", &defined_agents_extension).env("PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION", &codex_web_search_extension).env("PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION", &context_window_cap_extension).env("PI_DESKTOP_SESSION_COST_LIMIT_EXTENSION", &session_cost_limit_extension).env("PI_DESKTOP_TRACE_READER_EXTENSION", &trace_reader_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config).env("PI_DESKTOP_BROKER_URL", format!("http://127.0.0.1:{broker_port}")).env("PI_DESKTOP_BROKER_TOKEN", &broker_token).env("PI_DESKTOP_HOST_ID", host_id);
         match launch {
             PiLaunch::Rpc { cwd, session_path, session_id, fork_path, no_session } => {
@@ -2450,7 +2415,7 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
     let host = remote_host(settings, host_id)?; stage_remote_extensions(host, settings)?; let remote_port = daemon_port.unwrap_or_else(remote_broker_port); let remote_pi = remote_pi_path(&host.pi_path);
     let mut arguments = vec![remote_pi.clone()]; if is_rpc { arguments.extend(["--mode".into(), "rpc".into()]); } else { arguments.push("--print".into()); }
     arguments.extend(["--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/rtk.ts\"")]);
-    arguments.extend(["--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/hook-loader.ts\"")]);
+    arguments.extend(["--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts\"")]);
        arguments.extend(["--session-dir".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/sessions\""), "--approve".into(), "--no-skills".into(), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/piop-mcp-bridge.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/session-broker.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/piop-trace-reader.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/index.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit/index.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/index.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/piop-define-agents/index.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/piop-openai-cache-fork.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/piop-codex-web-search.ts\"")]);
     arguments.extend(["--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/piop-openai-fast-mode/index.ts\"")]);
     if is_rpc { arguments.extend(["--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/piop-btw.ts\"")]); }

@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, enterText, act } from '../dom.mjs';
 import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
-import { HooksSettings } from '../../src/components/HooksSettings.tsx';
 import { StorageSettings } from '../../src/components/StorageSettings.tsx';
 import { PromptContextBar } from '../../src/components/PromptContextBar.tsx';
 
@@ -16,41 +15,11 @@ describe('settings panels', () => {
   async function render(Component, props) { const view = await renderComponent(Component, props); views.push(view); return view; }
   const button = text => [...document.querySelectorAll('button')].find(button => button.textContent === text);
   const click = async element => act(async () => element.click());
-  const select = async (element, value) => act(async () => { element.value = value; element.dispatchEvent(new Event('change', { bubbles: true })); });
-  const listing = { directory: '/hooks', exists: true, hooks: [{ name: 'alpha', entry: 'alpha.ts', path: '/hooks/alpha.ts' }, { name: 'beta', entry: 'package/index.js', path: '/hooks/package/index.js' }] };
   const archive = (name, extra = {}) => ({ name, path: `/${name}.jsonl`, cwd: '/repo', byteSize: 42, modifiedAt: 100, deletable: true, ...extra });
   const host = (extra = {}) => ({ hostId: 'local', hostName: 'Local', categories: [], archives: [], warnings: [], ...extra });
 
-  test('hook filtering matches paths case-insensitively and opening a folder reports failures', async () => {
-    responses.set('list_hooks', listing); responses.set('open_project_directory', new Error('open failed'));
-    await render(HooksSettings, { hosts: [] });
-    assert.equal(document.querySelectorAll('.config-row').length, 2);
-    await enterText(document.querySelector('input'), ' PACKAGE '); assert.equal(document.querySelectorAll('.config-row').length, 1); assert.match(document.querySelector('.config-row').textContent, /beta/);
-    await enterText(document.querySelector('input'), 'missing'); assert.match(document.body.textContent, /No hooks match/);
-    await click(button('Open folder')); assert.match(document.querySelector('[role=alert]').textContent, /open failed/);
-    assert.deepEqual(calls.at(-1), { command: 'open_project_directory', args: { cwd: '/hooks', hostId: 'local' } });
-    responses.set('list_hooks', { directory: '/hooks', exists: false, hooks: [] });
-    await click(button('Refresh')); assert.match(document.body.textContent, /No hooks found/); assert.equal(button('Open folder').disabled, true);
-  });
 
-  test('switching hook hosts rejects stale load results and hides local-only folder actions', async () => {
-    const old = Promise.withResolvers(); responses.set('list_hooks', args => args.hostId === 'local' ? old.promise : { ...listing, directory: '/remote/hooks', hooks: [] });
-    await render(HooksSettings, { hosts: [{ id: 'remote', name: 'Remote' }] });
-    assert.match(document.querySelector('[role=status]').textContent, /Loading hooks/);
-    await select(document.querySelector('select'), 'remote'); assert.equal(button('Open folder'), undefined);
-    await act(async () => old.resolve(listing)); assert.equal(document.querySelector('.hooks-directory').textContent, '/remote/hooks');
-    responses.set('list_hooks', new Error('remote offline')); await click(button('Refresh'));
-    assert.match(document.querySelector('[role=alert]').textContent, /remote offline/);
-  });
 
-  test('late folder-open failures cannot replace the newly selected host state', async () => {
-    const pending = Promise.withResolvers(); responses.set('list_hooks', listing); responses.set('open_project_directory', () => pending.promise);
-    await render(HooksSettings, { hosts: [{ id: 'remote', name: 'Remote' }] }); await click(button('Open folder'));
-    assert.equal(button('Open folder').disabled, true);
-    await select(document.querySelector('select'), 'remote');
-    await act(async () => pending.reject(new Error('old failure')));
-    assert.equal(document.querySelector('[role=alert]'), null);
-  });
 
   test('storage scan renders per-host categories, approximate totals, warnings and inaccessible hosts', async () => {
     const pending = Promise.withResolvers(); responses.set('storage_report', () => pending.promise);

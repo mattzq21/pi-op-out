@@ -4,7 +4,6 @@ import { textOf, thinkingOf, uid } from '../../src/lib/content.ts';
 import { encodeAgentValue, decodeAgentValue } from '../../src/lib/agentProtocol.ts';
 import { contextUsageAfterCompaction } from '../../src/lib/contextUsage.ts';
 import { dictionaryMatches, applyDictionary } from '../../src/lib/dictionaries.ts';
-import { parseHookStats, messageHookCounts } from '../../src/lib/hookStats.ts';
 import { findReplaceableAbortedTurn } from '../../src/lib/abortedTurn.ts';
 import { appendTerminalOutput, TERMINAL_OUTPUT_LIMIT } from '../../src/lib/terminalOutput.ts';
 import { matchesShortcut, shortcutFromEvent } from '../../src/lib/keybindings.ts';
@@ -51,16 +50,6 @@ test('dictionary expansion respects boundaries, longest phrases, escaping and fi
   assert.equal(applyDictionary('cat', [{ entries: [{ word: 'cat', replacement: 'cat cat' }] }]), 'cat cat');
 });
 
-test('hook statistics reject corrupt data and aggregate each user timestamp once', () => {
-  const stats = { other: { completed: 2, failed: 1 }, messages: { 10: { completed: 3, failed: 1 }, 20: { completed: 4, failed: 0 } } };
-  assert.deepEqual(parseHookStats(`json:${JSON.stringify(stats)}`), stats);
-  for (const value of [undefined, '', 'plain', 'json:{', 'json:null', 'json:{}']) assert.equal(parseHookStats(value), undefined);
-  for (const counts of [null, { completed: 1, failed: 2 }, { completed: 1, failed: -1 }, { completed: 1.5, failed: 0 }, { completed: '2', failed: 0 }]) assert.equal(parseHookStats(`json:${JSON.stringify({ ...stats, other: counts })}`), undefined);
-  for (const messages of [null, [], { 10: { completed: 0, failed: 1 } }]) assert.equal(parseHookStats(`json:${JSON.stringify({ ...stats, messages })}`), undefined);
-  assert.deepEqual(messageHookCounts([{ role: 'user', timestamp: 10 }, { role: 'user', timestamp: 10 }, { role: 'assistant', timestamp: 20 }, { role: 'user', timestamp: 20 }, { role: 'user', timestamp: 30 }], stats), { completed: 7, failed: 1 });
-  assert.equal(messageHookCounts([], stats), undefined);
-  assert.equal(messageHookCounts([]), undefined);
-});
 
 test('retry only replaces an aborted turn after a nonempty user prompt and no checkpoint', () => {
   const user = { role: 'user', content: '  retry me  ' };

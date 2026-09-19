@@ -6,15 +6,13 @@ import remarkGfm from "remark-gfm";
 import type { ChatMessage } from "../types";
 import type { turnDiff } from "../lib/turnDiff";
 import { textOf, thinkingOf } from "../lib/content";
-import { HookWheel } from "./HookWheel";
 import { VOICE_MESSAGE } from "../lib/voiceMessages";
-import type { HookCounts } from "../lib/hookStats";
 import { cacheHitStats } from "../lib/messages";
 import { openExternalUrl } from "../lib/nativeTransport";
 import { IconButton } from "./IconButton";
 import { DiffViewer } from "./DiffViewer";
 
-interface Props { hookCounts?: HookCounts; message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; diff?: ReturnType<typeof turnDiff>; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
+interface Props { message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; diff?: ReturnType<typeof turnDiff>; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
 
 function nodeText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -125,7 +123,7 @@ function formatMessageTime(timestamp?: number) {
   };
 }
 
-export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = false, showActions = true, toolCount = 1, debug = false, paused = false, onBranch, onForkAndForget, onCreateWorktree, onRetry, retrying = false }: Props) {
+export function Message({ message, turnCacheUsage, diff, expanded = false, showActions = true, toolCount = 1, debug = false, paused = false, onBranch, onForkAndForget, onCreateWorktree, onRetry, retrying = false }: Props) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [branching, setBranching] = useState(false);
   const branchingRef = useRef(false);
@@ -198,7 +196,6 @@ export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = 
         {onBranch && <button className="branch-button" aria-label={`Branch from ${responseLabel.toLowerCase()}`} title="Branch from here" disabled={branching || forgetting} onClick={() => void branch()}><GitBranch size={14} /></button>}
         {onForkAndForget && <button className="branch-button" aria-label={`Fork and forget from ${responseLabel.toLowerCase()}`} title="Fork and forget from here" disabled={branching || forgetting} onClick={() => void forkAndForget()}><Undo2 size={14} /></button>}
         {onCreateWorktree && <button className="branch-button" aria-label="Create Git worktree" title="Create Git worktree after this response" onClick={() => onCreateWorktree(message)}><FolderGit2 size={14} /></button>}
-        {debug && <HookWheel counts={hookCounts} label="Message hooks" />}
         {debug && cache && <span className={`cache-hit-rate${cache.low ? " low" : ""}`} title={`${cache.cachedTokens.toLocaleString()} of ${cache.promptTokens.toLocaleString()} prompt tokens read from cache${turnCacheUsage ? " across all calls in this response" : ""}`}>Cache {cache.rate}%</span>}
         {responseTime && <span className="message-time" title={responseTime.full}>{responseTime.short}</span>}
       </div>}

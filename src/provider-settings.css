@@ -24,3 +24,9 @@
   .provider-account-actions { justify-content: flex-start; }
   .provider-login-link { align-items: stretch; flex-direction: column; }
 }
+
+.provider-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 18px 0 10px; }
+.provider-toolbar > label:first-child { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.provider-toolbar select { max-width: 180px; border: 1px solid var(--line); border-radius: 6px; padding: 6px; color: var(--ink); background: var(--surface, transparent); }
+.provider-toolbar button { display: inline-flex; align-items: center; gap: 6px; }
+.provider-error { color: #d9534f; font-size: 12px; }
