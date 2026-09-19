@@ -49,6 +49,7 @@ struct PiProcess {
     daemon: Arc<daemon::Daemon>,
     window_label: String,
     blank_cleanup: BlankSessionCleanup,
+    _session_claim: Option<Arc<SessionClaim>>,
 }
 
 struct BlankSessionCleanup { path: Option<String>, id: Option<String>, host: Option<RemoteHost>, submitted: bool }
@@ -144,6 +145,7 @@ struct BrokerRuntime {
     busy: Arc<Mutex<HashSet<String>>>,
     jobs: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
     cancelled: Arc<Mutex<HashSet<String>>>,
+    session_claims: Arc<Mutex<HashMap<String, std::sync::Weak<SessionClaim>>>>,
 }
 
 impl Default for BrokerRuntime {
@@ -155,6 +157,7 @@ impl Default for BrokerRuntime {
             busy: Arc::new(Mutex::new(HashSet::new())),
             jobs: Arc::new(Mutex::new(HashMap::new())),
             cancelled: Arc::new(Mutex::new(HashSet::new())),
+            session_claims: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -163,6 +166,64 @@ struct BusyAgent { key: String, busy: Arc<Mutex<HashSet<String>>> }
 
 impl Drop for BusyAgent {
     fn drop(&mut self) { if let Ok(mut busy) = self.busy.lock() { busy.remove(&self.key); } }
+}
+
+#[derive(Clone)]
+struct SessionClaim {
+    path: Arc<PathBuf>,
+    active: Arc<AtomicBool>,
+}
+
+impl Drop for SessionClaim {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::SeqCst);
+        let _ = fs::write(&*self.path, b"released");
+    }
+}
+
+fn claims_dir() -> Result<PathBuf, String> {
+    let dir = home_dir()?.join(STORAGE_DIRECTORY).join("session-claims");
+    ensure_private_dir(&dir)?;
+    Ok(dir)
+}
+
+fn parse_session_claim(body: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(body).ok().and_then(|value| value.get("taken").and_then(Value::as_bool)).unwrap_or(false)
+}
+
+fn claim_taken(path: &Path) -> bool {
+    fs::read(path).map(|body| parse_session_claim(&body)).unwrap_or(true)
+}
+
+/// Claim a saved conversation across desktop and daemon backends on this host.
+/// Remote hosts coordinate through their own backend. The claim is released on
+/// drop, including process exit. Claims are shared between windows of the same
+/// backend and stale claims are cleaned up opportunistically.
+fn claim_session(broker: &BrokerRuntime, session_path: &str) -> Result<Arc<SessionClaim>, String> {
+    let canonical = fs::canonicalize(session_path).map_err(|error| error.to_string())?;
+    let key = canonical.to_string_lossy().into_owned();
+    if let Some(claim) = broker.session_claims.lock().map_err(|_| "Session broker lock was poisoned")?.get(&key).and_then(std::sync::Weak::upgrade) { return Ok(claim); }
+    let dir = claims_dir()?;
+    let name = format!("{}.json", hash_claim_key(canonical.to_string_lossy().as_bytes()));
+    let file = dir.join(&name);
+    if !claim_taken(&file) && fs::remove_file(&file).is_ok() { if let Ok(entries) = fs::read_dir(&dir) { for entry in entries.flatten() { if claim_taken(&entry.path()) { let _ = fs::remove_file(entry.path()); } } } }
+    let body = json!({"path": canonical.to_string_lossy(), "taken": true}).to_string();
+    let mut options = OpenOptions::new(); options.write(true).create_new(true);
+    #[cfg(unix)]
+    { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
+    let mut handle = options.open(&file).map_err(|_| "This conversation is open in another window or daemon")?;
+    handle.write_all(body.as_bytes()).and_then(|_| handle.sync_all()).map_err(|error| format!("Could not create a session claim: {error}"))?;
+    let claim = Arc::new(SessionClaim { path: file.into(), active: Arc::new(AtomicBool::new(true)) });
+    broker.session_claims.lock().map_err(|_| "Session broker lock was poisoned")?.insert(key, Arc::downgrade(&claim));
+    Ok(claim)
+}
+
+/// Collision-resistant name for a canonical session path.
+fn hash_claim_key(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    use std::fmt::Write;
+    let digest = sha2::Sha256::digest(bytes);
+    digest.iter().take(20).fold(String::new(), |mut out, byte| { let _ = write!(out, "{byte:02x}"); out })
 }
 
 struct BrokerWriter { child: Arc<Mutex<Child>>, _claim: BusyAgent }
@@ -2419,7 +2480,10 @@ fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, 
     let claim_id = if ephemeral { None } else if let Some(id) = session_id.as_deref() { Some(id.to_string()) } else if let Some(path) = session_path.as_deref() {
         Some(session_identity(&settings, &host_id, path)?)
     } else { None };
-    let _claim = claim_id.as_deref().map(|id| claim_agent(&broker, &host_id, id)).transpose()?;
+    let _agent_claim = claim_id.as_deref().map(|id| claim_agent(&broker, &host_id, id)).transpose()?;
+    // Desktop and the standalone daemon each own a broker, so saved conversations
+    // are claimed on disk. A live claim on this host rejects a second attach.
+    let session_claim = (host_id == "local").then_some(session_path.as_deref()).flatten().map(|path| claim_session(&broker, path)).transpose()?;
     let daemon = daemon::connect(&app, &runtime, &broker, &settings, &host_id)?;
     let launch_session_path = ephemeral_path.as_deref().or(session_path.as_deref());
     let launch_fork_path = if ephemeral_path.is_some() { None } else { fork_path.as_deref() };
@@ -2430,7 +2494,7 @@ fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, 
         .max().unwrap_or(0) * 1000 + 30_000;
     let result = daemon.request(json!({"type":"attach","runtimeId":runtime_id,"sessionKey":claim_id.unwrap_or_else(|| runtime_id.clone()),"spec":daemon::spec(&command),"timeout":command_timeout,"ephemeral":ephemeral,"cwd":cwd,"presence":presence.unwrap_or_else(|| json!({}))}))?;
     let blank_cleanup = BlankSessionCleanup { path: session_path.clone(), id: session_id.clone(), host: if host_id == "local" { None } else { Some(remote_host(&settings, &host_id)?.clone()) }, submitted: ephemeral };
-    runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { daemon, window_label: owner, blank_cleanup });
+    runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { daemon, window_label: owner, blank_cleanup, _session_claim: session_claim });
     runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id, AgentAddress { host_id, session_id, session_path, worktree: None, presence_id: None, working: false, messageable: false });
     Ok(result)
 }
@@ -2473,17 +2537,20 @@ fn pi_command(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRun
     let command_type = command["type"].as_str().unwrap_or_default().to_owned();
     let _lifecycle = if command_type == "switch_session" { Some(runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?) } else { None };
     let mut _claim = None;
+    let mut switch_claim = None;
     if command_type == "switch_session" {
         let path = command["sessionPath"].as_str().ok_or("Session path is required")?;
         let host_id = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.get(&runtime_id).map(|agent| agent.host_id.clone()).ok_or("Unknown Pi runtime")?;
         let settings = load_app_settings(app)?;
         let path = desktop_session_file(&settings, &host_id, path)?;
         _claim = Some(claim_agent(&broker, &host_id, &session_identity(&settings, &host_id, &path)?)?);
+        switch_claim = (host_id == "local").then(|| claim_session(&broker, &path)).transpose()?;
         command["sessionPath"] = json!(path);
     }
     let result = execute_pi_command(&runtime, &runtime_id, command)?;
     if command_type == "voice_history" {
         if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(&runtime_id) { process.blank_cleanup.submitted = true; }
+        if let Some(claim) = switch_claim { if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(&runtime_id) { process._session_claim = Some(claim); } }
     }
     let state = if command_type == "get_snapshot" { Some(&result["state"]) } else if command_type == "get_state" { Some(&result) } else { None };
     if let Some(state) = state {
@@ -3290,15 +3357,16 @@ fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &Ses
     if remaining == 0 || broker.closing.load(Ordering::SeqCst) { return Err("Agent message expired or app is closing".into()); }
     let deadline = Instant::now() + Duration::from_millis(remaining.min(120_000));
     let runtime = app.state::<PiRuntime>();
-    let (settings, _claim) = {
+    let (settings, _claim, _session_claim) = {
         let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
         let settings = load_app_settings(app.clone())?;
         let claim = claim_agent(broker, &session.host_id, &session.id)?;
+        let session_claim = (session.host_id == "local").then_some(session.path.as_str()).map(|path| claim_session(broker, path)).transpose()?;
         let daemon = runtime.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?.get(&session.host_id).cloned();
         if let Some(daemon) = daemon.filter(|daemon| daemon.alive.load(Ordering::SeqCst)) {
             daemon.request(json!({"type":"retire","sessionKey":session.id,"sessionPath":session.path}))?;
         }
-        (settings, claim)
+        (settings, claim, session_claim)
     };
     if Instant::now() >= deadline { return Err("Agent message expired".into()); }
     let mut command = build_pi_command(broker, &settings, &session.host_id, PiLaunch::Print { cwd: &session.cwd, session_path: &session.path }, None)?;

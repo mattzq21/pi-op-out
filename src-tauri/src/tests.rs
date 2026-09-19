@@ -252,7 +252,7 @@ fn terminal_startup_streams_shell_output_and_removes_finished_process() {
 fn terminal_startup_rejects_limits_and_launch_failures_without_registering_new_processes() {
     let runtime = TestTerminals(TerminalRuntime::default());
     for id in 0..MAX_TERMINALS { runtime.add(&format!("terminal-{id}")); }
-    start_terminal_with(&runtime.0, "terminal-0".into(), "session".into(), "/tmp".into(), 80, 24, "local".into(), "window".into(),
+    start_terminal_with(&runtime.0, "terminal-0".into(), "session".into(), "/tmp".into(), 80, 24, "local".into(), "main".into(),
         || panic!("duplicate must not launch"), |_| panic!("duplicate emitted")).unwrap();
     let error = start_terminal_with(&runtime.0, "extra".into(), "session".into(), "/tmp".into(), 80, 24, "local".into(), "window".into(),
         || panic!("limit must prevent launch"), |_| panic!("limit emitted")).unwrap_err();

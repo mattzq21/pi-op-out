@@ -29,6 +29,7 @@ const call = <T>(hostId: string, request: Record<string, unknown>) => invoke<T>(
 const message = (reason: unknown) => reason instanceof Error ? reason.message : String(reason);
 const cancelFlow = (hostId: string, flowId: string) => call<AuthFlow>(hostId, { action: "cancel", flowId });
 const INTERRUPTED = "Provider login was interrupted on the host. Start again.";
+const TRANSIENT_HINT = "Host is busy";
 
 export function useProviderAuth(hostId: string) {
   const [providers, setProviders] = useState<ProviderAccount[]>([]);
@@ -88,19 +89,23 @@ export function useProviderAuth(hostId: string) {
         const next = await call<AuthFlow>(hostId, { action: "poll", flowId: flow.flowId });
         if (cancelled) return;
         setError(undefined); setFlow(next);
+        failures = 0;
         if (next.status === "pending") timer = setTimeout(() => void poll(), 5000);
         else { active.current = undefined; setRevision((value) => value + 1); }
       } catch (reason) {
         if (cancelled) return;
         failures += 1;
-        if (failures >= 2) {
+        const reasonText = message(reason);
+        const lost = failures >= 2 && !reasonText.includes(TRANSIENT_HINT);
+        if (lost) {
+          void cancelFlow(hostId, flow.flowId).catch(() => undefined);
           active.current = undefined;
           setFlow(undefined);
           setRevision((value) => value + 1);
           setError(INTERRUPTED);
           return;
         }
-        setError(message(reason));
+        setError(reasonText);
         timer = setTimeout(() => void poll(), 1500);
       }
     };
