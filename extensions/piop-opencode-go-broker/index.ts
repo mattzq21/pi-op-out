@@ -12,11 +12,11 @@ type Account = { id: string; provider: string; key: string };
 type Health = { checked?: number; usage?: Usage; blockedUntil?: number };
 type Update = { id: string; checked: number; usage: Usage };
 type Source = Provider["streamSimple"];
-export type GoBrokerSettings = { enabled: boolean; failover: boolean };
+export type GoBrokerSettings = { enabled: boolean };
 type Request = {
   source: Source; model: Parameters<Source>[0]; messages: Parameters<Source>[1];
   options: NonNullable<Parameters<Source>[2]>; session: string; ctx: ExtensionContext;
-  output: ReturnType<typeof createAssistantMessageEventStream>; failover: boolean;
+  output: ReturnType<typeof createAssistantMessageEventStream>;
 };
 const PROVIDER = "opencode-go";
 const MARKER = Symbol.for("piop.opencode-go-broker");
@@ -72,7 +72,7 @@ async function sendAttempt(request: Request, account: Account, lease: string): P
     for await (const event of stream) {
       if (event.type === "start") { start = event; continue; }
       backoff = errorBackoff(event, status, options.signal);
-      if (!emitted && backoff && request.failover) return event;
+      if (!emitted && backoff) return event;
       emit(event);
     }
     if (!terminal) throw new Error("OpenCode Go stream ended without a result");
@@ -150,7 +150,7 @@ export default function opencodeGoBroker(pi: ExtensionAPI) {
   const settings = (): GoBrokerSettings => {
     const request: { settings?: { plugins?: { opencodeGoBroker?: GoBrokerSettings } } } = {};
     pi.events.emit("piop:runtime-settings", request);
-    return request.settings?.plugins?.opencodeGoBroker ?? { enabled: false, failover: true };
+    return request.settings?.plugins?.opencodeGoBroker ?? { enabled: false };
   };
   const wrap = (source: Provider["streamSimple"]): Provider["streamSimple"] => (model, messages, options = {}) => {
     const config = settings();
@@ -158,7 +158,7 @@ export default function opencodeGoBroker(pi: ExtensionAPI) {
     const output = createAssistantMessageEventStream();
     const headerSession = Object.entries(options.headers || {}).find(([key]) => key.toLowerCase() === "x-opencode-session")?.[1];
     const session = headerSession || options.sessionId || context.sessionManager.getSessionId();
-    void runRequest({ source, model, messages, options, session, ctx: context, output, failover: config.failover }).catch(error => {
+    void runRequest({ source, model, messages, options, session, ctx: context, output }).catch(error => {
       const message = failure(model, error, options.signal?.aborted === true);
       output.push({ type: "error", reason: message.stopReason as "error" | "aborted", error: message });
     }).finally(() => output.end());

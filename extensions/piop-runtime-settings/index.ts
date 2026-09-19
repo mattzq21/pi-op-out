@@ -27,7 +27,7 @@ function validate(value: Settings): Settings {
 
 function validatePlugins(plugins: Settings["plugins"]) {
   const broker = plugins?.opencodeGoBroker;
-  if (broker && (typeof broker.enabled !== "boolean" || typeof broker.failover !== "boolean")) throw new Error("Invalid OpenCode Go broker settings");
+  if (broker && typeof broker.enabled !== "boolean") throw new Error("Invalid OpenCode Go broker settings");
 }
 
 export default async function runtimeSettings(pi: ExtensionAPI) {

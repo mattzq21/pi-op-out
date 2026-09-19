@@ -68,8 +68,8 @@ function FlowStatus({ flow }: { flow: AuthFlow }) {
   return <p role="status">Waiting for provider login…</p>;
 }
 
-type BrokerProps = { broker: GoBrokerSettings; onBrokerChange: (settings: GoBrokerSettings) => void; onBrokerSettings: () => void };
-export function ProviderSettings({ hosts, initialHostId = "local", broker, onBrokerChange, onBrokerSettings }: { hosts: RemoteHost[]; initialHostId?: string } & BrokerProps) {
+type BrokerProps = { broker: GoBrokerSettings; onBrokerChange: (settings: GoBrokerSettings) => void };
+export function ProviderSettings({ hosts, initialHostId = "local", broker, onBrokerChange }: { hosts: RemoteHost[]; initialHostId?: string } & BrokerProps) {
   const [hostId, setHostId] = useState(initialHostId);
   const [filter, setFilter] = useState("");
   const auth = useProviderAuth(hostId);
@@ -89,7 +89,7 @@ export function ProviderSettings({ hosts, initialHostId = "local", broker, onBro
     {auth.error && <p className="provider-error" role="alert">{auth.error}</p>}
     {auth.flow && <LoginPanel flow={auth.flow} auth={auth} />}
     {auth.loading && <div className="empty-small" role="status">Loading providers on {hostName}…</div>}
-    <ProviderList providers={providers} auth={auth} disabled={disabled} broker={broker} onBrokerChange={onBrokerChange} onBrokerSettings={onBrokerSettings} />
+    <ProviderList providers={providers} auth={auth} disabled={disabled} broker={broker} onBrokerChange={onBrokerChange} />
     <p className="provider-login-help">Removing a saved login leaves credentials from environment variables or other host configuration in place. Voice uses the host’s separate Codex login.</p>
   </div>;
 }
@@ -104,11 +104,11 @@ function LoginPanel({ flow, auth }: { flow: AuthFlow; auth: AuthControls }) {
   </div>;
 }
 
-function ProviderList({ providers, auth, disabled, broker, onBrokerChange, onBrokerSettings }: { providers: ProviderGroup[]; auth: AuthControls; disabled: boolean } & BrokerProps) {
+function ProviderList({ providers, auth, disabled, broker, onBrokerChange }: { providers: ProviderGroup[]; auth: AuthControls; disabled: boolean } & BrokerProps) {
   return <><div className="config-list">{providers.map((group) => <section className="provider-group" key={group.key} aria-label={group.name}>
     <div className="provider-account provider-heading">
       <div><strong>{group.name}</strong>{!group.accounts.length && <small>Not configured</small>}</div>
-      <div className="provider-account-actions">{group.base.providerId === "opencode-go" && <BrokerControls settings={broker} onChange={onBrokerChange} onSettings={onBrokerSettings} />}{group.method.interactive
+      <div className="provider-account-actions">{group.base.providerId === "opencode-go" && <BrokerControls settings={broker} onChange={onBrokerChange} />}{group.method.interactive
         ? <button disabled={disabled || auth.loading} onClick={() => void auth.begin(group.base.id, group.method.type, group.base.configured || !!group.base.storedType)}>Add account</button>
         : <small>Configured through the host environment</small>}</div>
     </div>

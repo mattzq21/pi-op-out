@@ -445,12 +445,10 @@ struct AppPlugins {
 struct GoBrokerSettings {
     #[serde(default)]
     enabled: bool,
-    #[serde(default = "default_true")]
-    failover: bool,
 }
 
 impl Default for GoBrokerSettings {
-    fn default() -> Self { Self { enabled: false, failover: true } }
+    fn default() -> Self { Self { enabled: false } }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

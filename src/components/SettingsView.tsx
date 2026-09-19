@@ -60,7 +60,6 @@ export function SettingsView({ providerHostId = "local", settings, pendingSettin
   const agentConfig = saving ? capabilitiesBeforeSave.current.configuration : incomingConfiguration;
   const [draft, setDraft] = useState(() => structuredClone(settings)); const [agentDrafts, setAgentDrafts] = useState(() => structuredClone(agentConfig?.agents ?? [])); const [agentIndex, setAgentIndex] = useState(() => firstEditableAgent(agentConfig?.agents ?? [])); const [section, setSection] = useState<Section>("general"); const [saved, setSaved] = useState(false); const savingRef = useRef(false); const [saveError, setSaveError] = useState<string>();
   const [modelFilter, setModelFilter] = useState("");
-  const [brokerSettingsOpen, setBrokerSettingsOpen] = useState(false);
   const broker = draft.plugins?.opencodeGoBroker ?? defaultGoBrokerSettings;
   const updateBroker = (opencodeGoBroker: typeof broker) => setDraft(current => ({ ...current, plugins: { ...current.plugins, opencodeGoBroker } }));
   const [settingsQuery, setSettingsQuery] = useState("");
@@ -170,8 +169,8 @@ export function SettingsView({ providerHostId = "local", settings, pendingSettin
     <div className="settings-layout"><nav className="settings-nav"><label className="search settings-search"><Search size={15} /><input autoFocus type="search" aria-label="Search settings" placeholder="Search settings" value={settingsQuery} onChange={(event) => setSettingsQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setSettingsQuery(""); } }} /></label>{matchingSections.map((item) => <button key={item.id} className={visibleSection === item.id ? "active" : ""} aria-current={visibleSection === item.id ? "page" : undefined} onClick={() => setSection(item.id)}><item.icon size={16} /><span>{item.label}</span></button>)}</nav>
       <section className="settings-content">
         {!matchingSections.length && <div className="empty-small" role="status">No settings match your search.</div>}
-        {visibleSection === "providers" && <ProviderSettings hosts={settings.hosts} initialHostId={providerHostId} broker={broker} onBrokerChange={updateBroker} onBrokerSettings={() => { setSettingsQuery(""); setSection("plugins"); setBrokerSettingsOpen(true); }} />}
-        {visibleSection === "plugins" && <PluginSettings broker={broker} onBrokerChange={updateBroker} brokerSettingsOpen={brokerSettingsOpen} onBrokerSettingsOpen={setBrokerSettingsOpen} />}
+        {visibleSection === "providers" && <ProviderSettings hosts={settings.hosts} initialHostId={providerHostId} broker={broker} onBrokerChange={updateBroker} />}
+        {visibleSection === "plugins" && <PluginSettings broker={broker} onBrokerChange={updateBroker} />}
         {visibleSection === "environment" && <SettingsSection title="Worktree scripts" description="Assign setup and cleanup scripts to a project and machine. Setup runs in order after creation; cleanup runs in reverse order before deletion. A failure stops the operation and keeps the worktree." headerAction={<button className="secondary-button" onClick={() => patch({ worktreeSetupScripts: [...(draft.worktreeSetupScripts ?? []), { id: uid("setup"), name: "Worktree script", script: "", cleanupScript: "", enabled: true, projectPath: "", hostId: "local" }] })}><CirclePlus size={15} />Add script</button>}>
           <p>Source workspace: <code>PIOP_SOURCE_TREE_PATH</code><br />Worktree: <code>PIOP_WORKTREE_PATH</code><br />Branch: <code>PIOP_WORKTREE_BRANCH</code></p>
           {(draft.worktreeSetupScripts ?? []).map((script, index, scripts) => {
