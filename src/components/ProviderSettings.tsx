@@ -7,14 +7,25 @@ import { openExternalUrl } from "../lib/nativeTransport";
 import { useProviderAuth, type AuthFlow, type AuthNotice, type ProviderAccount } from "../lib/providerAuth";
 
 type AuthControls = ReturnType<typeof useProviderAuth>;
-type ProviderRow = ProviderAccount & { rowKey: string; addNew?: boolean };
+type ProviderGroup = {
+  key: string; name: string; base: ProviderAccount;
+  method: ProviderAccount["methods"][number]; accounts: ProviderAccount[];
+};
 
-function providerRows(provider: ProviderAccount): ProviderRow[] {
-  if (provider.methods.length < 2) return [{ ...provider, rowKey: provider.id }];
-  return provider.methods.filter((method) => provider.number === 1 || !provider.storedType || method.type === provider.storedType).map((method) => {
-    const storedType = provider.storedType === method.type ? provider.storedType : undefined;
-    const configured = provider.configured && (provider.storedType ? !!storedType : method.type === "api_key");
-    return { ...provider, rowKey: `${provider.id}:${method.type}`, name: `${method.name} #${provider.number}`, configured, source: configured ? provider.source : undefined, storedType, methods: [method], addNew: !!provider.storedType && !storedType };
+function providerGroups(providers: ProviderAccount[]): ProviderGroup[] {
+  const families = new Map<string, ProviderAccount[]>();
+  for (const provider of providers) {
+    const accounts = families.get(provider.providerId) ?? [];
+    accounts.push(provider); families.set(provider.providerId, accounts);
+  }
+  return [...families.values()].flatMap((accounts) => {
+    const base = accounts.find((account) => account.number === 1) ?? accounts[0];
+    return base.methods.map((method) => ({
+      key: `${base.providerId}:${method.type}`,
+      name: base.methods.length > 1 ? method.name : base.name.replace(/ #\d+$/, ""),
+      base, method,
+      accounts: accounts.filter((account) => account.storedType === method.type || (!account.storedType && account.configured && method.type === "api_key")).sort((a, b) => a.number - b.number),
+    }));
   });
 }
 const localHostLabel = isMobile ? "Connected daemon" : "This computer";
@@ -64,8 +75,8 @@ export function ProviderSettings({ hosts, initialHostId = "local" }: { hosts: Re
   const disabled = auth.working || active;
   useEffect(() => { if (hostId !== "local" && !hosts.some((host) => host.id === hostId)) setHostId("local"); }, [hostId, hosts]);
   const hostName = selectedHostName(hosts, hostId);
-  const providers = auth.providers.flatMap(providerRows).filter((provider) => `${provider.name} ${provider.id}`.toLowerCase().includes(filter.toLowerCase().trim()))
-    .sort((left, right) => Number(right.configured) - Number(left.configured));
+  const providers = providerGroups(auth.providers).filter((group) => `${group.name} ${group.base.providerId} ${group.accounts.map((account) => account.name).join(" ")}`.toLowerCase().includes(filter.toLowerCase().trim()))
+    .sort((left, right) => Number(right.accounts.length > 0) - Number(left.accounts.length > 0));
   return <div className="settings-section provider-settings">
     <div className="section-title"><div><h2>Providers</h2><p>Sign in to providers on the machine running Pi. Credentials stay on that host and remain available after you disconnect.</p></div></div>
     <div className="hooks-toolbar">
@@ -92,15 +103,19 @@ function LoginPanel({ flow, auth }: { flow: AuthFlow; auth: AuthControls }) {
   </div>;
 }
 
-function ProviderList({ providers, auth, disabled }: { providers: ProviderRow[]; auth: AuthControls; disabled: boolean }) {
-  return <><div className="config-list">{providers.map((provider) => <div className="provider-account" key={provider.rowKey}>
-      <div><strong>{provider.name}</strong><small>{provider.configured ? <>Configured{provider.source && <> · <span className={provider.source === "stored" ? "provider-stored" : undefined}>{provider.source}</span></>}</> : "Not configured"}</small></div>
-      <div className="provider-account-actions">{!provider.storedType && provider.methods.filter((method) => method.interactive).map((method) => <button key={method.type} disabled={disabled || auth.loading} onClick={() => void auth.begin(provider.id, method.type, provider.addNew)}>Add account{provider.methods.filter((entry) => entry.interactive).length > 1 ? ` · ${method.name}` : ""}</button>)}
-        {provider.storedType && <button disabled={disabled || auth.loading} onClick={() => void auth.logout(provider.id)}>Remove saved login</button>}
-        {provider.number === 1 && provider.storedType && provider.methods.filter((method) => method.interactive).map((method) => <button key={`add:${method.type}`} disabled={disabled || auth.loading} onClick={() => void auth.begin(provider.id, method.type, true)}>Add account{provider.methods.filter((entry) => entry.interactive).length > 1 ? ` · ${method.name}` : ""}</button>)}
-        {!provider.methods.some((method) => method.interactive) && <small>Configured through the host environment</small>}
-      </div>
-    </div>)}</div>
+function ProviderList({ providers, auth, disabled }: { providers: ProviderGroup[]; auth: AuthControls; disabled: boolean }) {
+  return <><div className="config-list">{providers.map((group) => <section className="provider-group" key={group.key} aria-label={group.name}>
+    <div className="provider-account provider-heading">
+      <div><strong>{group.name}</strong>{!group.accounts.length && <small>Not configured</small>}</div>
+      <div className="provider-account-actions">{group.method.interactive
+        ? <button disabled={disabled || auth.loading} onClick={() => void auth.begin(group.base.id, group.method.type, group.base.configured || !!group.base.storedType)}>Add account</button>
+        : <small>Configured through the host environment</small>}</div>
+    </div>
+    {group.accounts.map((account) => <div className="provider-account provider-account-child" key={account.id}>
+      <div><strong>{group.name} #{account.number}</strong><small>Configured{account.source && <> · <span className={account.source === "stored" ? "provider-stored" : undefined}>{account.source}</span></>}</small></div>
+      <div className="provider-account-actions">{account.storedType && <button disabled={disabled || auth.loading} onClick={() => void auth.logout(account.id)}>Remove saved login</button>}</div>
+    </div>)}
+  </section>)}</div>
     {!auth.loading && !auth.error && !providers.length && <div className="empty-small">No providers match.</div>}
   </>;
 }
