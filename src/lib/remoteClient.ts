@@ -1,4 +1,4 @@
-export interface HostConnection { url: string; token: string; authMode?: "token" | "tailscale" }
+export interface HostConnection { url: string }
 export type RemoteEvent = { event: string; payload: unknown };
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
 
@@ -6,8 +6,6 @@ export function validateHost(connection: HostConnection): string {
   const url = new URL(connection.url);
   if (url.protocol !== "wss:") throw new Error("Use a secure wss:// address for your Piop host.");
   if (url.username || url.password || url.search || url.hash) throw new Error("The host address must not contain credentials, a query, or a fragment.");
-  const tokenVisible = connection.token.replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, "").trim();
-  if (connection.authMode !== "tailscale" && tokenVisible.length < 32) throw new Error("Enter the host’s pairing token (at least 32 characters).");
   return url.href;
 }
 
@@ -29,8 +27,8 @@ export class RemoteClient {
       let settled = false;
       const settleReject = (error: Error) => { if (!settled) { settled = true; reject(error); } };
       const settleResolve = () => { if (!settled) { settled = true; resolve(); } };
-      const timer = setTimeout(() => { reject(new Error("Connection timed out. Check the host address and TLS proxy.")); socket.close(); }, 15000);
-      socket.onopen = () => socket.send(JSON.stringify(connection.authMode === "tailscale" ? { type: "authenticate", mode: "tailscale" } : { type: "authenticate", token: connection.token }));
+      const timer = setTimeout(() => { reject(new Error("Connection timed out. Check the host address and Tailscale Serve.")); socket.close(); }, 15000);
+      socket.onopen = () => socket.send(JSON.stringify({ type: "authenticate", mode: "tailscale" }));
       socket.onmessage = ({ data }) => {
         let message: Record<string, unknown>;
         try { message = JSON.parse(String(data)); } catch { socket.close(); return; }
@@ -50,7 +48,7 @@ export class RemoteClient {
         clearTimeout(timer);
         // Preserve the first specific error: a rejected promise must not be
         // overwritten by the generic disconnect notice.
-        if (!ready) settleReject(new Error(connection.authMode === "tailscale" ? "Host rejected the connection. Check Tailscale Serve, your Tailscale login, and the host’s allowed users." : "Host rejected the connection. Check your pairing token."));
+        if (!ready) settleReject(new Error("Host rejected the connection. Check Tailscale Serve and sign both devices into the same Tailscale account."));
         if (this.socket !== socket) return;
         this.failPending();
         // Only report a generic disconnect for established connections; the

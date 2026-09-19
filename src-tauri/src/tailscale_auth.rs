@@ -1,24 +1,24 @@
 use super::*;
 
-pub(super) fn configuration() -> Result<Option<Vec<String>>, String> {
-    match std::env::var("PIOP_MOBILE_AUTH").as_deref().unwrap_or("token") {
-        "token" => Ok(None),
-        "tailscale" => {
-            if !cfg!(target_os = "linux") { return Err("Tailscale authentication currently requires a Linux host".into()); }
-            let users: Vec<_> = std::env::var("PIOP_TAILSCALE_USERS").unwrap_or_default().split(',').map(str::trim).filter(|user| !user.is_empty()).map(str::to_owned).collect();
-            if users.is_empty() || users.iter().any(|user| !user.is_ascii() || user.contains('*') || user.chars().any(char::is_whitespace)) {
-                return Err("Set PIOP_TAILSCALE_USERS to an explicit comma-separated list of Tailscale login names (no wildcards)".into());
-            }
-            Ok(Some(users))
-        },
-        _ => Err("PIOP_MOBILE_AUTH must be token or tailscale".into()),
+#[cfg(target_os = "linux")]
+async fn host_login() -> Result<String, String> {
+    let mut command = tokio::process::Command::new("/usr/bin/tailscale");
+    command.args(["status", "--json"]).kill_on_drop(true);
+    let output = tokio::time::timeout(Duration::from_secs(5), command.output()).await
+        .map_err(|_| "Tailscale status timed out")?.map_err(|_| "Tailscale is not installed")?;
+    if !output.status.success() { return Err("Cannot read the host's Tailscale identity".into()); }
+    let status: Value = serde_json::from_slice(&output.stdout).map_err(|_| "Invalid Tailscale status")?;
+    if status["BackendState"] != "Running" || status["Self"]["Tags"].as_array().is_some_and(|tags| !tags.is_empty()) {
+        return Err("Sign the host into a personal Tailscale account to enable mobile access".into());
     }
+    let id = status["Self"]["UserID"].as_u64().ok_or("Missing Tailscale host user")?.to_string();
+    status["User"][&id]["LoginName"].as_str().filter(|login| !login.is_empty() && login.is_ascii())
+        .map(str::to_owned).ok_or("Missing Tailscale host login".into())
 }
 
 #[cfg(target_os = "linux")]
-pub(super) fn start(users: Option<Vec<String>>, app: AppHandle, events: broadcast::Sender<Value>, connections: Arc<Semaphore>, jobs: Arc<Semaphore>) -> Result<(), String> {
+pub(super) fn start(app: AppHandle, events: broadcast::Sender<Value>, connections: Arc<Semaphore>, jobs: Arc<Semaphore>) -> Result<(), String> {
     use std::os::unix::fs::FileTypeExt;
-    let Some(users) = users else { return Ok(()); };
     let directory = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&directory)?;
     let path = directory.join("tailscale.sock");
@@ -37,22 +37,22 @@ pub(super) fn start(users: Option<Vec<String>>, app: AppHandle, events: broadcas
         let Ok(listener) = tokio::net::UnixListener::from_std(listener) else { return; };
         while let Ok((stream, _)) = listener.accept().await {
             let Ok(permit) = connections.clone().try_acquire_owned() else { continue; };
-            let app = app.clone(); let events = events.clone(); let jobs = jobs.clone(); let users = users.clone();
+            let app = app.clone(); let events = events.clone(); let jobs = jobs.clone();
             tokio::spawn(async move {
                 let _permit = permit;
-                if let Ok(socket) = authenticate(stream, &users).await { let _ = serve_connection(app, socket, events, jobs).await; }
+                if let Ok(socket) = authenticate(stream).await { let _ = serve_connection(app, socket, events, jobs).await; }
             });
         }
     });
-    eprintln!("Tailscale authentication enabled at unix:{} (explicit user allowlist)", path.display());
+    eprintln!("Tailscale authentication enabled at unix:{} (host Tailscale account only)", path.display());
     Ok(())
 }
 
 #[cfg(not(target_os = "linux"))]
-pub(super) fn start(_: Option<Vec<String>>, _: AppHandle, _: broadcast::Sender<Value>, _: Arc<Semaphore>, _: Arc<Semaphore>) -> Result<(), String> { Ok(()) }
+pub(super) fn start(_: AppHandle, _: broadcast::Sender<Value>, _: Arc<Semaphore>, _: Arc<Semaphore>) -> Result<(), String> { Ok(()) }
 
 #[cfg(target_os = "linux")]
-async fn authenticate(stream: tokio::net::UnixStream, users: &[String]) -> Result<tokio_tungstenite::WebSocketStream<tokio::net::UnixStream>, String> {
+async fn authenticate(stream: tokio::net::UnixStream) -> Result<tokio_tungstenite::WebSocketStream<tokio::net::UnixStream>, String> {
     use std::os::unix::fs::MetadataExt;
     use tokio_tungstenite::tungstenite::handshake::server::{Request, Response, ErrorResponse};
     let peer = stream.peer_cred().map_err(|error| error.to_string())?;
@@ -61,6 +61,7 @@ async fn authenticate(stream: tokio::net::UnixStream, users: &[String]) -> Resul
     let expected = fs::canonicalize("/usr/sbin/tailscaled").map_err(|_| "Expected root-owned /usr/sbin/tailscaled")?;
     let metadata = fs::metadata(format!("/proc/{pid}/exe")).map_err(|_| "Cannot inspect Tailscale proxy")?;
     if peer.uid() != 0 || executable != expected || metadata.uid() != 0 || metadata.mode() & 0o022 != 0 { return Err("Untrusted Tailscale proxy peer".into()); }
+    let allowed_login = host_login().await?;
     let callback = |request: &Request, response: Response| -> Result<Response, ErrorResponse> {
         let headers = request.headers();
         let login = headers.get("tailscale-user-login").and_then(|value| value.to_str().ok());
@@ -70,7 +71,7 @@ async fn authenticate(stream: tokio::net::UnixStream, users: &[String]) -> Resul
             None => true,
             Some(value) => matches!(value.to_str(), Ok("https://localhost" | "capacitor://localhost")),
         };
-        if headers.contains_key("tailscale-funnel-request") || !origin_allowed || !login.is_some_and(|login| users.iter().any(|user| user == login)) {
+        if headers.contains_key("tailscale-funnel-request") || !origin_allowed || login != Some(allowed_login.as_str()) {
             return Err(Response::builder().status(403).body(Some("Tailscale identity is not authorized".into())).unwrap());
         }
         Ok(response)

@@ -10,7 +10,6 @@ const MAX_MESSAGE: usize = 32 * 1024 * 1024;
 mod tailscale_auth;
 
 pub(super) fn start(app: AppHandle) -> Result<(), String> {
-    let tailscale = tailscale_auth::configuration()?;
     let token = std::env::var("PIOP_MOBILE_TOKEN").unwrap_or_else(|_| daemon_endpoint::read().map(|endpoint| endpoint.token).unwrap_or_else(|_| format!("{}{}", Uuid::new_v4(), Uuid::new_v4())));
     if token.len() < 32 { return Err("PIOP_MOBILE_TOKEN must contain at least 32 characters".into()); }
     let bind = std::env::var("PIOP_MOBILE_BIND").unwrap_or_else(|_| if DEVELOPMENT { "127.0.0.1:9848" } else { "127.0.0.1:9847" }.into());
@@ -28,7 +27,7 @@ pub(super) fn start(app: AppHandle) -> Result<(), String> {
     }
     let connections = Arc::new(Semaphore::new(8));
     let jobs = Arc::new(Semaphore::new(16));
-    tailscale_auth::start(tailscale, app.clone(), events.clone(), connections.clone(), jobs.clone())?;
+    tailscale_auth::start(app.clone(), events.clone(), connections.clone(), jobs.clone())?;
     crate::platform::async_runtime::spawn(async move {
         let Ok(listener) = tokio::net::TcpListener::from_std(listener) else { return; };
         while let Ok((stream, _)) = listener.accept().await {
