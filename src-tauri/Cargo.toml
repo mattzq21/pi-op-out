@@ -27,9 +27,6 @@ name = "piop-daemon"
 path = "src/daemon_main.rs"
 required-features = ["daemon"]
 
-[lints.clippy]
-cognitive_complexity = "warn"
-
 [build-dependencies]
 tauri-build = { version = "2", features = [], optional = true }
 
