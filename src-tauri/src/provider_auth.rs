@@ -7,7 +7,7 @@ pub(crate) fn provider_auth(app: AppHandle, window: tauri::WebviewWindow, host_i
 }
 
 pub(crate) fn for_owner(app: AppHandle, owner: String, host_id: Option<String>, request: Value) -> Result<Value, String> {
-    if !matches!(request["action"].as_str(), Some("list" | "begin" | "poll" | "reply" | "cancel" | "logout")) { return Err("Unknown provider authentication operation".into()); }
+    if !matches!(request["action"].as_str(), Some("list" | "begin" | "poll" | "reply" | "cancel" | "logout" | "create")) { return Err("Unknown provider authentication operation".into()); }
     if request.to_string().len() > 256 * 1024 { return Err("Provider authentication request is too large".into()); }
     let settings = load_app_settings(app.clone())?;
     let runtime = app.state::<PiRuntime>();

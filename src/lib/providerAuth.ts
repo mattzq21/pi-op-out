@@ -28,6 +28,10 @@ export interface AuthFlow {
   prompt?: { id: string; type: "text" | "secret" | "select" | "manual_code"; message: string; placeholder?: string; options?: Array<{ id: string; label: string; description?: string }> };
 }
 interface Listing { providers: ProviderAccount[] }
+export interface CustomProviderInput {
+  providerId: string; name: string; baseUrl: string; api: string; apiKey: string; noKey: boolean; sessionAffinity: boolean;
+  models: Array<{ id: string; name: string; contextWindow: number; maxTokens: number; reasoning: boolean; images: boolean }>;
+}
 const call = <T>(hostId: string, request: Record<string, unknown>) => invoke<T>("provider_auth", { hostId, request });
 const message = (reason: unknown) => reason instanceof Error ? reason.message : String(reason);
 const cancelFlow = (hostId: string, flowId: string) => call<AuthFlow>(hostId, { action: "cancel", flowId });
@@ -146,12 +150,26 @@ export function useProviderAuth(hostId: string) {
     finally { if (current === generation.current) { setWorking(false); requestPending.current = false; } }
   };
 
+  const createProvider = async (input: CustomProviderInput) => {
+    if (requestPending.current) return false;
+    requestPending.current = true;
+    const current = generation.current;
+    setWorking(true); setError(undefined); setFlow(undefined);
+    try {
+      const result = await call<{ created: boolean; warning?: string }>(hostId, { action: "create", ...input });
+      if (current !== generation.current) return false;
+      setError(result.warning); setRevision((value) => value + 1);
+      return result.created;
+    } catch (reason) { if (current === generation.current) setError(message(reason)); return false; }
+    finally { if (current === generation.current) { setWorking(false); requestPending.current = false; } }
+  };
+
   return {
     providers, flow, loading, working, error,
     refresh: () => { setError(undefined); setRevision((value) => value + 1); },
     begin: (providerId: string, authType: string, addAccount = false) => perform({ action: "begin", providerId, authType, addAccount }, true),
     reply: (answer: string) => flow?.prompt ? perform({ action: "reply", flowId: flow.flowId, promptId: flow.prompt.id, answer }) : Promise.resolve(),
     cancel: () => flow ? perform({ action: "cancel", flowId: flow.flowId }) : Promise.resolve(),
-    logout,
+    logout, createProvider,
   };
 }
