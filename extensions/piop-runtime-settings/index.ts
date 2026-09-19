@@ -4,10 +4,8 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { loadAccountProviders } from "./provider-accounts.mjs";
-import opencodeGoBroker, { type GoBrokerSettings } from "../piop-opencode-go-broker/index.ts";
 
 type Settings = {
-  plugins?: { opencodeGoBroker?: GoBrokerSettings };
   tools: string[];
   skills: string[];
   contextWindowCap: number;
@@ -21,13 +19,7 @@ const processState = globalThis as typeof globalThis & { [key]?: Settings; [repl
 
 function validate(value: Settings): Settings {
   if (!value || !Array.isArray(value.tools) || !value.tools.every((item) => typeof item === "string") || !Array.isArray(value.skills) || !value.skills.every((item) => typeof item === "string") || !Number.isSafeInteger(value.contextWindowCap) || value.contextWindowCap < 1000 || typeof value.contextWindowCapEnabled !== "boolean") throw new Error("Invalid runtime settings");
-  validatePlugins(value.plugins);
   return structuredClone(value);
-}
-
-function validatePlugins(plugins: Settings["plugins"]) {
-  const broker = plugins?.opencodeGoBroker;
-  if (broker && typeof broker.enabled !== "boolean") throw new Error("Invalid OpenCode Go broker settings");
 }
 
 export default async function runtimeSettings(pi: ExtensionAPI) {
@@ -54,16 +46,12 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
     }
     applyTools();
   });
-  opencodeGoBroker(pi);
   pi.on("resources_discover", () => process.env.PI_DEFINE_AGENTS_ACTIVE === "1" ? undefined : { skillPaths: current().skills });
   const update = async (event: string, ctx: ExtensionContext) => {
     const request: Update = { ctx };
     pi.events.emit(event, request);
     if (!request.ready) throw new Error(`Live settings handler unavailable: ${event}`);
     await request.ready;
-  };
-  const refreshPlugins = async (previous: Settings, next: Settings, ctx: ExtensionContext) => {
-    if (JSON.stringify(previous.plugins) !== JSON.stringify(next.plugins)) await update("piop:plugins:refresh", ctx);
   };
   pi.registerCommand("piop-runtime-settings", {
     description: "Apply saved Piop runtime settings",
@@ -74,7 +62,6 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
         if (ctx.mode !== "rpc" || !ctx.isIdle()) throw new Error("Runtime settings require an idle RPC session");
         const next = validate({ ...previous, ...request.settings });
         processState[key] = next;
-        await refreshPlugins(previous, next, ctx);
         if (request.reloadAgents || JSON.stringify(previous.skills) !== JSON.stringify(next.skills)) {
           // Pi exposes skill registry updates through resource reload, without restarting the process.
           await ctx.reload();
@@ -84,9 +71,7 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
         }
         processState[replyKey]?.(`json:${JSON.stringify({ type: "response", id: request.id, command: "runtime_settings", success: true })}`);
       } catch (error) {
-        const failed = current();
         processState[key] = previous;
-        await refreshPlugins(failed, previous, ctx).catch(() => {});
         processState[replyKey]?.(`json:${JSON.stringify({ type: "response", id: request.id, command: "runtime_settings", success: false, error: error instanceof Error ? error.message : String(error) })}`);
       }
     },
