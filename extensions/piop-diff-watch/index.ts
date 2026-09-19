@@ -250,9 +250,11 @@ function checkpointData(data: unknown): PromptCheckpoint | undefined {
   const value = data as PromptCheckpoint;
   return typeof value.key === "string" && /^[a-zA-Z0-9-]+$/.test(value.key)
     && typeof value.owner === "string" && typeof value.commit === "string" && /^[a-f0-9]{40,64}$/.test(value.commit)
-    && (value.base === null || (typeof value.base === "string" && /^[a-f0-9]{40,64}$/.test(value.base)))
+    && validCheckpointBase(value.base)
     ? value : undefined;
 }
+
+function validCheckpointBase(base: unknown) { return base === null || (typeof base === "string" && /^[a-f0-9]{40,64}$/.test(base)); }
 
 async function promptRefs(root: string, sessionId: string) {
   const output = await runGit(root, ["for-each-ref", "--sort=-refname", "--format=%(refname)%09%(objectname)", `${sessionRefPrefix(sessionId)}prompts/`]);
@@ -298,59 +300,28 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
   const root = await repositoryRoot(ctx.cwd);
   if (!root) throw new Error("Project is not a Git repository");
   const history = ctx.sessionManager.getBranch(entryId);
-  const user = history.at(-1);
-  if (!user || user.id !== entryId || user.type !== "message" || user.message.role !== (afterResponse ? "assistant" : "user")) throw new Error("Message not found in this conversation");
-  // Stop at the previous user; a failed/missing capture must never borrow its checkpoint.
-  let checkpoint: PromptCheckpoint | undefined;
-  for (let i = history.length - 2; !afterResponse && i >= 0; i--) {
-    const entry = history[i];
-    if (entry.type === "message" && entry.message.role === "user") break;
-    if (entry.type === "custom" && entry.customType === PROMPT_ENTRY) { checkpoint = checkpointData(entry.data); break; }
-  }
+  validateBranchMessage(history, entryId, afterResponse);
+  let checkpoint = precedingCheckpoint(history, afterResponse);
   const owner = ctx.sessionManager.getSessionId();
-  if (afterResponse) {
-    const saved = ctx.sessionManager.getEntries().find((entry) => entry.type === "custom" && entry.customType === SNAPSHOT_ENTRY
-      && (entry.data as { responseEntryIds?: string[] })?.responseEntryIds?.includes(entryId));
-    const data = saved?.type === "custom" ? saved.data as { commit?: string } : undefined;
-    if (!data?.commit || !/^[a-f0-9]{40,64}$/.test(data.commit)) {
-      throw new Error("No settled Git checkpoint is available for this response. Wait for the agent to settle or stop it first.");
-    }
-    // Forks retain the commit through their own baseline even after the source session's refs are deleted.
-    await runGit(root, ["cat-file", "-e", `${data.commit}^{commit}`]);
-    checkpoint = { key: "", owner, commit: data.commit, base: data.commit, capturedAt: "" };
-  }
-  if (!checkpoint || (!afterResponse && await resolveRef(root, promptRef(owner, checkpoint.key)) !== checkpoint.commit)) {
+  if (afterResponse) checkpoint = await responseCheckpoint(ctx, root, entryId, owner);
+  if (!checkpoint || !await checkpointRefValid(root, owner, checkpoint, afterResponse)) {
     throw new Error("Project snapshot unavailable. This prompt's checkpoint is missing or was removed.");
   }
-  name = name.trim();
-  if (!name || !/^[a-zA-Z0-9._-]+$/.test(name)) throw new Error("Name may only contain letters, numbers, dots, hyphens, and underscores");
-  const project = basename(root).replace(/[^a-zA-Z0-9_]+/g, "-").replace(/^-|-$/g, "") || "project";
-  const branch = `${project}-${name}`;
-  await runGit(root, ["check-ref-format", "--branch", branch]);
+  const branch = await checkpointBranchName(root, name);
   const target = join(dirname(root), branch);
   const id = randomUUID();
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${id}.jsonl`);
-  const existingBranch = await runGit(root, ["show-ref", "--verify", `refs/heads/${branch}`]).catch(() => "");
-  if (existingBranch) throw new Error("Branch already exists");
-  const before = await runGit(root, ["worktree", "list", "--porcelain"]);
-  if (before.split("\n").includes(`worktree ${target}`)) throw new Error("Worktree already exists");
-  try { await lstat(target); throw new Error("Worktree directory already exists"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  await assertWorktreeAvailable(root, branch, target);
   let created = false;
   let sessionWritten = false;
   try {
     created = true;
     await runGit(root, ["worktree", "add", "-b", branch, target, checkpoint.commit]);
-    const retained = afterResponse ? history : history.slice(0, -1);
-    await pinPromptHistory(root, id, retained, owner);
-    const baselineRef = `${sessionRefPrefix(id)}${snapshotName(timestamp, checkpoint.commit)}`;
-    await runGit(root, ["update-ref", baselineRef, checkpoint.commit]);
-    const baseline = { type: "custom", id: randomUUID(), parentId: retained.at(-1)?.id ?? null, timestamp, customType: SNAPSHOT_ENTRY,
-      data: { version: 1, repositoryRoot: target, ref: baselineRef, commit: checkpoint.commit, capturedAt: timestamp, ...(afterResponse ? { responseEntryIds: [entryId] } : {}) } };
-    const header = { ...ctx.sessionManager.getHeader(), type: "session", id, timestamp, cwd: target, parentSession: ctx.sessionManager.getSessionFile() };
+    const entries = await branchSessionEntries(ctx, root, id, history, owner, checkpoint, timestamp, target, afterResponse, entryId);
     const session = await open(sessionPath, "wx", 0o600);
     sessionWritten = true;
-    try { await session.writeFile([header, ...retained, baseline].map((entry) => JSON.stringify(entry)).join("\n") + "\n"); }
+    try { await session.writeFile(entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n"); }
     finally { await session.close(); }
     return { branch, path: target, sessionPath, sessionId: id };
   } catch (error) {
@@ -362,6 +333,72 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
     }
     throw error;
   }
+}
+
+async function checkpointRefValid(root: string, owner: string, checkpoint: PromptCheckpoint, afterResponse: boolean) {
+  return afterResponse || await resolveRef(root, promptRef(owner, checkpoint.key)) === checkpoint.commit;
+}
+
+type CheckpointHistory = ReturnType<ExtensionContext["sessionManager"]["getBranch"]>;
+
+function validateBranchMessage(history: CheckpointHistory, entryId: string, afterResponse: boolean) {
+  const user = history.at(-1);
+  if (!user || user.id !== entryId || user.type !== "message" || user.message.role !== (afterResponse ? "assistant" : "user")) throw new Error("Message not found in this conversation");
+
+}
+
+function precedingCheckpoint(history: CheckpointHistory, afterResponse: boolean) {
+  // Stop at the previous user; a failed/missing capture must never borrow its checkpoint.
+  let checkpoint: PromptCheckpoint | undefined;
+  for (let i = history.length - 2; !afterResponse && i >= 0; i--) {
+    const entry = history[i];
+    if (entry.type === "message" && entry.message.role === "user") break;
+    if (entry.type === "custom" && entry.customType === PROMPT_ENTRY) { checkpoint = checkpointData(entry.data); break; }
+  }
+  return checkpoint;
+}
+
+async function responseCheckpoint(ctx: ExtensionContext, root: string, entryId: string, owner: string) {
+  const saved = ctx.sessionManager.getEntries().find((entry) => entry.type === "custom" && entry.customType === SNAPSHOT_ENTRY
+    && (entry.data as { responseEntryIds?: string[] })?.responseEntryIds?.includes(entryId));
+  const data = saved?.type === "custom" ? saved.data as { commit?: string } : undefined;
+  if (!data?.commit || !/^[a-f0-9]{40,64}$/.test(data.commit)) {
+    throw new Error("No settled Git checkpoint is available for this response. Wait for the agent to settle or stop it first.");
+  }
+  // Forks retain the commit through their own baseline even after the source session's refs are deleted.
+  await runGit(root, ["cat-file", "-e", `${data.commit}^{commit}`]);
+  return { key: "", owner, commit: data.commit, base: data.commit, capturedAt: "" };
+}
+
+async function checkpointBranchName(root: string, name: string) {
+  name = name.trim();
+  if (!name || !/^[a-zA-Z0-9._-]+$/.test(name)) throw new Error("Name may only contain letters, numbers, dots, hyphens, and underscores");
+  const project = basename(root).replace(/[^a-zA-Z0-9_]+/g, "-").replace(/^-|-$/g, "") || "project";
+  const branch = `${project}-${name}`;
+  await runGit(root, ["check-ref-format", "--branch", branch]);
+  return branch;
+}
+
+async function assertWorktreeAvailable(root: string, branch: string, target: string) {
+  const existingBranch = await runGit(root, ["show-ref", "--verify", `refs/heads/${branch}`]).catch(() => "");
+  if (existingBranch) throw new Error("Branch already exists");
+  const before = await runGit(root, ["worktree", "list", "--porcelain"]);
+  if (before.split("\n").includes(`worktree ${target}`)) throw new Error("Worktree already exists");
+  try { await lstat(target); throw new Error("Worktree directory already exists"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+
+}
+
+async function branchSessionEntries(ctx: ExtensionContext, root: string, id: string, history: CheckpointHistory, owner: string, checkpoint: PromptCheckpoint, timestamp: string, target: string, afterResponse: boolean, entryId: string) {
+  const retained = afterResponse ? history : history.slice(0, -1);
+  await pinPromptHistory(root, id, retained, owner);
+  const baselineRef = `${sessionRefPrefix(id)}${snapshotName(timestamp, checkpoint.commit)}`;
+  await runGit(root, ["update-ref", baselineRef, checkpoint.commit]);
+  const baseline = {
+    type: "custom", id: randomUUID(), parentId: retained.at(-1)?.id ?? null, timestamp, customType: SNAPSHOT_ENTRY,
+    data: { version: 1, repositoryRoot: target, ref: baselineRef, commit: checkpoint.commit, capturedAt: timestamp, ...(afterResponse ? { responseEntryIds: [entryId] } : {}) }
+  };
+  const header = { ...ctx.sessionManager.getHeader(), type: "session", id, timestamp, cwd: target, parentSession: ctx.sessionManager.getSessionFile() };
+  return [header, ...retained, baseline];
 }
 
 function shellQuote(value: string) { return `'${value.replaceAll("'", `'\\''`)}'`; }
@@ -488,9 +525,11 @@ export default function diffWatch(pi: ExtensionAPI) {
     return snapshotQueue;
   });
 
+  const clearIdleSnapshot = async (ctx: ExtensionContext) => { if (pendingSnapshotCleanup && ctx.isIdle()) { await pendingSnapshotCleanup(); pendingSnapshotCleanup = undefined; } };
+
   pi.on("input", async (event, ctx) => {
     pendingContext = undefined;
-    if (pendingSnapshotCleanup && ctx.isIdle()) { await pendingSnapshotCleanup(); pendingSnapshotCleanup = undefined; }
+    await clearIdleSnapshot(ctx);
     if (event.source === "extension" || !event.text.trim()) {
       return { action: "continue" };
     }

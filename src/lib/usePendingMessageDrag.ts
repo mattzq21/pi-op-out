@@ -4,6 +4,13 @@ import type { PendingMessage, PendingMessageAction } from "../types";
 type Drop = { id: string; targetId?: string; edge?: "before" | "after" };
 type Drag = { id: string; pointerId: number; startX: number; startY: number; x: number; y: number; moved: boolean; queue: HTMLElement; handle: HTMLButtonElement };
 
+function changesPosition(peers: PendingMessage[], id: string, destination: Drop) {
+  const from = peers.findIndex((item) => item.id === id);
+  const to = peers.findIndex((item) => item.id === destination.targetId);
+  if (from < 0 || to < 0) return false;
+  return to + (destination.edge === "after" ? 1 : 0) - (from < to ? 1 : 0) !== from;
+}
+
 export function usePendingMessageDrag(messages: PendingMessage[], disabled: boolean, onMove: (id: string, action: PendingMessageAction) => void) {
   const latest = useRef({ messages, disabled, onMove });
   latest.current = { messages, disabled, onMove };
@@ -49,11 +56,7 @@ export function usePendingMessageDrag(messages: PendingMessage[], disabled: bool
       cleanup.current(); setDrop(undefined);
       if (!drag.moved || latest.current.disabled || !destination.targetId || !destination.edge) return;
       const peers = latest.current.messages.filter((item) => !item.retry && item.behavior === source.behavior);
-      const from = peers.findIndex((item) => item.id === id);
-      const to = peers.findIndex((item) => item.id === destination.targetId);
-      if (from < 0 || to < 0) return;
-      const insertion = to + (destination.edge === "after" ? 1 : 0) - (from < to ? 1 : 0);
-      if (insertion !== from) latest.current.onMove(id, { type: "move", targetId: destination.targetId, edge: destination.edge });
+      if (changesPosition(peers, id, destination)) latest.current.onMove(id, { type: "move", targetId: destination.targetId, edge: destination.edge });
     };
     const cancel = () => { cleanup.current(); setDrop(undefined); };
     const key = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); cancel(); } };

@@ -1,4 +1,4 @@
-import type { ChatMessage, ContentPart, FileChangeSnapshot, PromptContextInfo } from "../types";
+import type { ChatMessage, FileChangeSnapshot, PromptContextInfo } from "../types";
 
 import { mergeSpokenMessages, parseVoicePrompt, voiceEntry } from "./voiceMessages";
 
@@ -7,17 +7,26 @@ const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "pi-desktop-catch-up"]
 
 export type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number }; customType?: string; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string };
 
+function validFileChanges(data: Partial<FileChangeSnapshot> | undefined): data is FileChangeSnapshot {
+  return Boolean(data && typeof data.cwd === "string" && typeof data.patch === "string" && Array.isArray(data.toolCallIds) && Array.isArray(data.paths));
+}
+
 export function appendFileChanges(messages: ChatMessage[], entry: PiEntry): ChatMessage[] {
   if (entry.type !== "custom" || entry.customType !== "piop-file-changes") return messages;
   const data = entry.data as Partial<FileChangeSnapshot> | undefined;
-  if (!data || typeof data.cwd !== "string" || typeof data.patch !== "string" || !Array.isArray(data.toolCallIds) || !Array.isArray(data.paths)) return messages;
+  if (!validFileChanges(data)) return messages;
   const ids = new Set(data.toolCallIds);
-  let index = messages.length - 1;
-  while (index >= 0 && !(messages[index].role === "tool" && ids.has(messages[index].toolCallId ?? messages[index].id))) index--;
+  const index = latestMatchingTool(messages, ids);
   if (index < 0) return messages;
   const toolPaths = Array.isArray(data.toolPaths) ? data.toolPaths.filter((value) => value && typeof value === "object" && typeof value.toolCallId === "string" && typeof value.path === "string" && typeof value.absolutePath === "string" && typeof value.canonicalPath === "string") : [];
   const snapshot: FileChangeSnapshot = { id: entry.id, cwd: data.cwd, patch: data.patch, toolCallIds: data.toolCallIds.filter((id) => typeof id === "string"), toolPaths, paths: data.paths.filter((path) => typeof path === "string"), warnings: Array.isArray(data.warnings) ? data.warnings.filter((value) => typeof value === "string") : [] };
   return messages.map((message, candidate) => candidate === index ? { ...message, fileChanges: [...(message.fileChanges ?? []).filter((change) => change.id !== entry.id), snapshot] } : message);
+}
+
+function latestMatchingTool(messages: ChatMessage[], ids: Set<string>) {
+  let index = messages.length - 1;
+  while (index >= 0 && !(messages[index].role === "tool" && ids.has(messages[index].toolCallId ?? messages[index].id))) index--;
+  return index;
 }
 
 export function resumeMarker(entry: PiEntry) {
@@ -50,45 +59,31 @@ export function cacheHitStats(usage?: { input: number; cacheRead: number; cacheW
   return { rate: Math.round(cacheRead / promptTokens * 100), low: cacheRead < Math.max(promptTokens * .5, 1000), cachedTokens: cacheRead, promptTokens };
 }
 
-export function normalizeMessage(message: Record<string, unknown> | null | undefined, entryId?: string, completedAt?: string, fallbackId?: string): ChatMessage {
-  const source = (message && typeof message === "object" ? message : {}) as Record<string, unknown>;
+function messageTimestamp(source: Record<string, unknown>) {
   const numericStamp = Number((source as { timestamp?: unknown }).timestamp || Date.now());
-  const stamp = Number.isFinite(numericStamp) ? numericStamp : Date.parse(String((source as { timestamp?: unknown }).timestamp)) || Date.now();
-  const completionStamp = completedAt ? Date.parse(completedAt) : NaN;
+  return Number.isFinite(numericStamp) ? numericStamp : Date.parse(String((source as { timestamp?: unknown }).timestamp)) || Date.now();
+}
+
+function messageRole(source: Record<string, unknown>): ChatMessage['role'] {
   const isBtw = source.role === "custom" && source.customType === "pi-desktop-btw";
   const isSystemMessage = source.role === "custom" && SYSTEM_MESSAGES.has(String(source.customType));
-  return { ...(source as unknown as ChatMessage), ...(source.role === "user" ? { content: visibleUserContent(source.content) as ChatMessage["content"] } : {}), id: entryId || fallbackId || (typeof source.id === "string" ? source.id : undefined) || `live-${String((source as { role?: unknown }).role ?? "message")}-${stamp}`, entryId, role: (source.role === "toolResult" ? "tool" : isBtw ? "assistant" : isSystemMessage ? "system" : source.role) as ChatMessage["role"], toolStatus: source.role === "toolResult" ? ((source as { isError?: unknown }).isError ? "error" : "done") : undefined, timestamp: stamp, ...(Number.isFinite(completionStamp) ? { completedAt: completionStamp } : {}), ...parseVoicePrompt(source) };
+  return (source.role === 'toolResult' ? 'tool' : isBtw ? 'assistant' : isSystemMessage ? 'system' : source.role) as ChatMessage['role'];
 }
 
-const MAX_CONTENT_INDEX_GAP = 8;
-const MAX_CONTENT_PARTS = 64;
-
-export function applyAssistantMessageEvent(message: ChatMessage, value: unknown): ChatMessage {
-  const event = value as { type?: string; contentIndex?: number; delta?: string; content?: string; id?: string; toolName?: string; toolCall?: { id?: string; name?: string; arguments?: unknown } };
-  const index = event.contentIndex;
-  if (!Number.isInteger(index) || index === undefined || index < 0) return message;
-  const content: ContentPart[] = Array.isArray(message.content) ? [...message.content] : message.content ? [{ type: "text", text: message.content }] : [];
-  if (index > content.length + MAX_CONTENT_INDEX_GAP) return message;
-  if (index >= MAX_CONTENT_PARTS) return message;
-  while (content.length <= index) {
-    if (content.length >= MAX_CONTENT_PARTS) return message;
-    content.push({ type: "text", text: "" });
-  }
-  const current = content[index];
-  const tool = current?.type === "toolCall" ? current : { type: "toolCall" as const, id: event.id || `tool-${index}`, name: event.toolName || "tool", arguments: {}, partialArgs: "" };
-  if (event.type === "text_start") content[index] = { type: "text", text: "" };
-  if (event.type === "text_delta") content[index] = { type: "text", text: `${current?.type === "text" ? current.text : ""}${event.delta || ""}` };
-  if (event.type === "text_end") content[index] = { type: "text", text: event.content || "" };
-  if (event.type === "thinking_start") content[index] = { type: "thinking", thinking: "" };
-  if (event.type === "thinking_delta") content[index] = { type: "thinking", thinking: `${current?.type === "thinking" ? current.thinking : ""}${event.delta || ""}` };
-  if (event.type === "thinking_end") content[index] = { type: "thinking", thinking: event.content || "" };
-  if (event.type === "toolcall_start") content[index] = tool;
-  if (event.type === "toolcall_delta") content[index] = { ...tool, partialArgs: `${tool.partialArgs || ""}${event.delta || ""}` };
-  if (event.type === "toolcall_end" && event.toolCall) content[index] = { type: "toolCall", id: event.toolCall.id || tool.id, name: event.toolCall.name || tool.name, arguments: event.toolCall.arguments && typeof event.toolCall.arguments === "object" ? event.toolCall.arguments as Record<string, unknown> : {} };
-  return { ...message, content, streaming: true };
+function messageIdentity(source: Record<string, unknown>, stamp: number, entryId?: string, fallbackId?: string) {
+  return entryId || fallbackId || (typeof source.id === 'string' ? source.id : undefined) || `live-${String(source.role ?? 'message')}-${stamp}`;
 }
 
-export function branchMessages(entries: PiEntry[], leafId: string | null): ChatMessage[] {
+export function normalizeMessage(message: Record<string, unknown> | null | undefined, entryId?: string, completedAt?: string, fallbackId?: string): ChatMessage {
+  const source = (message && typeof message === "object" ? message : {}) as Record<string, unknown>;
+  const stamp = messageTimestamp(source);
+  const completionStamp = completedAt ? Date.parse(completedAt) : NaN;
+  return { ...(source as unknown as ChatMessage), ...(source.role === "user" ? { content: visibleUserContent(source.content) as ChatMessage["content"] } : {}), id: messageIdentity(source, stamp, entryId, fallbackId), entryId, role: messageRole(source), toolStatus: source.role === "toolResult" ? ((source as { isError?: unknown }).isError ? "error" : "done") : undefined, timestamp: stamp, ...(Number.isFinite(completionStamp) ? { completedAt: completionStamp } : {}), ...parseVoicePrompt(source) };
+}
+
+export { applyAssistantMessageEvent } from "./messageEvents";
+
+function entryBranch(entries: PiEntry[], leafId: string | null): PiEntry[] {
   const list = Array.isArray(entries) ? entries : [];
   const byId = new Map<string, PiEntry>();
   for (const entry of list) {
@@ -97,30 +92,45 @@ export function branchMessages(entries: PiEntry[], leafId: string | null): ChatM
   }
   const branch: PiEntry[] = []; const visited = new Set<string>(); let cursor = leafId;
   while (cursor && !visited.has(cursor)) { visited.add(cursor); const entry = byId.get(cursor); if (!entry) break; branch.unshift(entry); cursor = entry.parentId; }
+  return branch;
+}
+
+function appendPromptContext(messages: ChatMessage[], entry: PiEntry) {
+  const userIndex = messages.map((message) => message.role).lastIndexOf("user");
+  if (userIndex >= 0 && !messages[userIndex].promptContext) messages[userIndex] = { ...messages[userIndex], promptContext: entry.data as PromptContextInfo };
+}
+
+function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, resumeMarkers: Set<string>) {
+  if (entry.customType === "piop-file-changes") return appendFileChanges(messages, entry);
+  const marker = resumeMarker(entry);
+  if (marker) { resumeMarkers.add(marker); return checkpointLatestUser(messages); }
+  if (entry.customType === "pi-desktop-pause-state" && (entry.data as { isPaused?: boolean } | undefined)?.isPaused) return checkpointLatestUser(messages);
+  if (entry.customType === "pi-desktop-prompt-context") appendPromptContext(messages, entry);
+  return messages;
+}
+
+function visibleEntryMessage(entry: PiEntry, resumeMarkers: Set<string>): ChatMessage | undefined {
+  if (entry.type === "custom_message" && entry.customType !== "pi-desktop-btw" && entry.display !== false) {
+    return normalizeMessage({ role: "custom", customType: entry.customType, content: entry.content ?? "", timestamp: entry.timestamp }, entry.id, entry.timestamp);
+  }
+  if (entry.type !== "message" || !entry.message || isResumeMessage(entry.message, resumeMarkers)) return undefined;
+  const message = normalizeMessage(entry.message as unknown as Record<string, unknown>, entry.id, entry.timestamp);
+  return (["user", "assistant", "tool"] as string[]).includes(message.role) ? message : undefined;
+}
+
+export function branchMessages(entries: PiEntry[], leafId: string | null): ChatMessage[] {
   let messages: ChatMessage[] = []; const resumeMarkers = new Set<string>();
   const spoken: ChatMessage[] = [];
-  for (const entry of branch) {
+  for (const entry of entryBranch(entries, leafId)) {
     const voice = voiceEntry(entry); if (voice) { spoken.push(voice); continue; }
-    if (entry.type === "custom" && entry.customType === "piop-file-changes") { messages = appendFileChanges(messages, entry); continue; }
-    const marker = resumeMarker(entry); if (marker) { resumeMarkers.add(marker); messages = checkpointLatestUser(messages); continue; }
-    if (entry.type === "custom" && entry.customType === "pi-desktop-pause-state" && (entry.data as { isPaused?: boolean } | undefined)?.isPaused) messages = checkpointLatestUser(messages);
-    if (entry.type === "custom" && entry.customType === "pi-desktop-prompt-context") {
-      const userIndex = messages.map((message) => message.role).lastIndexOf("user");
-      if (userIndex >= 0 && !messages[userIndex].promptContext) messages[userIndex] = { ...messages[userIndex], promptContext: entry.data as PromptContextInfo };
-      continue;
-    }
-    if (entry.type === "custom_message" && entry.customType !== "pi-desktop-btw" && entry.display !== false) {
-      messages.push(normalizeMessage({ role: "custom", customType: entry.customType, content: entry.content ?? "", timestamp: entry.timestamp }, entry.id, entry.timestamp));
-      continue;
-    }
-    if (entry.type === "message" && entry.message) {
-      if (isResumeMessage(entry.message, resumeMarkers)) continue;
-      const message = normalizeMessage(entry.message as unknown as Record<string, unknown>, entry.id, entry.timestamp);
-      if (!(["user", "assistant", "tool"] as string[]).includes(message.role)) continue;
-      messages.push(message);
-    }
+    if (entry.type === "custom") { messages = applyCustomEntry(messages, entry, resumeMarkers); continue; }
+    const message = visibleEntryMessage(entry, resumeMarkers);
+    if (message) messages.push(message);
   }
-  messages = mergeSpokenMessages(messages, spoken);
+  return withToolInputs(mergeSpokenMessages(messages, spoken));
+}
+
+function withToolInputs(messages: ChatMessage[]) {
   const toolInputs = new Map<string, unknown>();
   for (const message of messages) if (message.role === "assistant" && Array.isArray(message.content)) for (const part of message.content) {
     if (part.type === "toolCall") toolInputs.set(part.id, part.arguments);

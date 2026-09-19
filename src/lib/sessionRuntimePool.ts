@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import type { AppSettings, ExtensionUiRequest, GitDiffSnapshots, SessionSummary } from "../types";
+import type { AgentState, AppSettings, ExtensionUiRequest, GitDiffSnapshots, RpcEvent, SessionSummary } from "../types";
 import { NativeTransport, type NativeConnectionTarget } from "./nativeTransport";
 import { branchMessages, type PiEntry } from "./messages";
 import { textOf } from "./content";
@@ -13,6 +13,16 @@ type DiffState = { snapshots: GitDiffSnapshots; path?: string; load?: { key: str
 function latestAssistantEntry(entries: PiEntry[], leafId: string | null) {
   return [...branchMessages(entries, leafId)].reverse().find((message) => message.role === "assistant" && (textOf(message.content).trim() || message.stopReason === "aborted" || message.stopReason === "error"));
 }
+
+function retainedName(state: AgentState, prompt: string | undefined, previous: SessionSummary | undefined) {
+  return state.sessionName || prompt?.slice(0, 60) || previous?.name || "New session";
+}
+
+function retainedActivity(state: AgentState, previous: SessionSummary | undefined, prompt?: string, lastMessageAt?: number) {
+  return { preview: retainedPreview(prompt, previous), messageCount: Math.max(prompt ? 1 : 0, state.messageCount, previous?.messageCount ?? 0), lastMessageAt: lastMessageAt ?? previous?.lastMessageAt ?? 0, apiCost: previous?.apiCost ?? 0 };
+}
+
+function retainedPreview(prompt: string | undefined, previous: SessionSummary | undefined) { return prompt ?? previous?.preview ?? ""; }
 
 export class SessionRuntimePool {
   private readonly transports = new Set<NativeTransport>();
@@ -115,41 +125,57 @@ export class SessionRuntimePool {
       const cwd = transport.currentCwd() || "";
       const previous = this.liveSessions.get(transport);
       const projectDetails = previous?.cwd === cwd && previous.hostId === transport.currentHostId() ? { projectKind: previous.projectKind, projectRoot: previous.projectRoot, cwdExists: previous.cwdExists } : {};
-      this.liveSessions.set(transport, { ...projectDetails, id: state.sessionId, path: state.sessionFile || "", name: state.sessionName || prompt?.slice(0, 60) || previous?.name || "New session", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: prompt ?? previous?.preview ?? "", messageCount: Math.max(prompt ? 1 : 0, state.messageCount, previous?.messageCount ?? 0), lastMessageAt: lastMessageAt ?? previous?.lastMessageAt ?? 0, apiCost: previous?.apiCost ?? 0, hostId: transport.currentHostId() });
+      this.liveSessions.set(transport, { ...projectDetails, id: state.sessionId, path: state.sessionFile || "", name: retainedName(state, prompt, previous), project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, ...retainedActivity(state, previous, prompt, lastMessageAt), hostId: transport.currentHostId() });
       this.liveRevision += 1; this.notify();
     }).catch((reason) => this.errorHandler?.(`Could not list the retained session: ${reason instanceof Error ? reason.message : String(reason)}`));
+  }
+
+  private retainMcpSession(transport: NativeTransport, event: RpcEvent) {
+    if (event.type === "extension_ui_request") {
+      const request = event as unknown as ExtensionUiRequest;
+      if (request.method === "setStatus" && request.statusKey === "pi-desktop-mcp-status" && request.statusText?.startsWith("json:") && !this.retainedTransports.has(transport)) {
+        try {
+          const statuses: unknown = JSON.parse(request.statusText.slice(5));
+          if (Array.isArray(statuses) && statuses.some((value) => value?.status === "starting")) this.retainSession(transport);
+        } catch { /* Ignore malformed extension status payloads. */ }
+      }
+    }
+  }
+
+  private retainUserSession(transport: NativeTransport, event: RpcEvent) {
+    if (event.type === "message_start" && (event.message as { role?: string })?.role === "user") {
+      const message = event.message as { content: import("../types").ChatMessage["content"]; timestamp?: unknown };
+      const prompt = textOf(message.content); const timestamp = Number(message.timestamp);
+      this.retainSession(transport, prompt, Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Date.now());
+    }
+  }
+
+  private captureDiffEvent(transport: NativeTransport, event: RpcEvent) {
+    if (this.diffState(transport).persistence === "memory") {
+      if (event.type === "agent_start") this.captureTurnStart(transport);
+      if (event.type === "agent_end" || event.type === "agent_settled") this.captureTurnEnd(transport);
+    }
+    if (event.type === "diffs_changed" && event.hostId === transport.currentHostId() && event.sessionPath === transport.currentSessionPath()) {
+      this.diffState(transport).load = undefined;
+      void this.loadSavedDiffs(transport, String(event.sessionPath));
+    }
+  }
+
+  private updateActivity(transport: NativeTransport, event: RpcEvent) {
+    if (event.type === "runtime_presence") { if (event.isStreaming) this.runningTransports.add(transport); else this.runningTransports.delete(transport); }
+    if (event.type === "agent_start" || event.type === "message_start") { this.runningTransports.add(transport); this.unseenTransports.delete(transport); }
+    if (event.type === "agent_settled") { this.runningTransports.delete(transport); if (transport !== this.activeTransport) this.unseenTransports.add(transport); }
+    if (event.type === "disconnected") { this.runningTransports.delete(transport); this.discardBaselines(transport, this.diffState(transport)); }
   }
 
   create(target?: NativeConnectionTarget) {
     const transport = new NativeTransport(target); this.transports.add(transport);
     if (transport.currentSessionPath()) void this.loadSavedDiffs(transport, transport.currentSessionPath()!);
     transport.subscribe((event) => {
-      if (event.type === "extension_ui_request") {
-        const request = event as unknown as ExtensionUiRequest;
-        if (request.method === "setStatus" && request.statusKey === "pi-desktop-mcp-status" && request.statusText?.startsWith("json:") && !this.retainedTransports.has(transport)) {
-          try {
-            const statuses: unknown = JSON.parse(request.statusText.slice(5));
-            if (Array.isArray(statuses) && statuses.some((value) => value?.status === "starting")) this.retainSession(transport);
-          } catch { /* Ignore malformed extension status payloads. */ }
-        }
-      }
-      if (event.type === "runtime_presence") { if (event.isStreaming) this.runningTransports.add(transport); else this.runningTransports.delete(transport); }
-      if (event.type === "message_start" && (event.message as { role?: string })?.role === "user") {
-        const message = event.message as { content: import("../types").ChatMessage["content"]; timestamp?: unknown };
-        const prompt = textOf(message.content); const timestamp = Number(message.timestamp);
-        this.retainSession(transport, prompt, Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Date.now());
-      }
-      if (this.diffState(transport).persistence === "memory") {
-        if (event.type === "agent_start") this.captureTurnStart(transport);
-        if (event.type === "agent_end" || event.type === "agent_settled") this.captureTurnEnd(transport);
-      }
-      if (event.type === "diffs_changed" && event.hostId === transport.currentHostId() && event.sessionPath === transport.currentSessionPath()) {
-        this.diffState(transport).load = undefined;
-        void this.loadSavedDiffs(transport, String(event.sessionPath));
-      }
-      if (event.type === "agent_start" || event.type === "message_start") { this.runningTransports.add(transport); this.unseenTransports.delete(transport); }
-      if (event.type === "agent_settled") { this.runningTransports.delete(transport); if (transport !== this.activeTransport) this.unseenTransports.add(transport); }
-      if (event.type === "disconnected") { this.runningTransports.delete(transport); this.discardBaselines(transport, this.diffState(transport)); }
+      this.retainMcpSession(transport, event);
+      this.retainUserSession(transport, event);
+      this.captureDiffEvent(transport, event);
+      this.updateActivity(transport, event);
       this.publishSessionStates();
       if (event.type === "settings_pending" || event.type === "settings_applied") this.notify();
     });

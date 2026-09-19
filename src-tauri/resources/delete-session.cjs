@@ -12,7 +12,7 @@ function git(cwd, args, input = "") {
       if (error) reject(new Error(stderr.trim() || error.message));
       else resolve(stdout);
     });
-    child.stdin.on("error", () => {});
+    child.stdin.on("error", () => { });
     child.stdin.end(input);
   });
 }
@@ -91,46 +91,14 @@ async function snapshotRefs(entries, header) {
   const roots = new Map();
   checkpointRepository(roots, header.cwd);
   for (const entry of entries) {
-    if (entry.type === "custom" && entry.customType === "pi-project-files-watch-snapshot" && snapshotCheckpoint(entry.data)) {
-      if (entry.data.ref.startsWith(prefix) || entry.data.ref === legacy) {
-        const repository = checkpointRepository(roots, entry.data.repositoryRoot);
-        repository.required = true;
-        repository.commits.add(entry.data.commit);
-        repository.expectedRefs.set(entry.data.ref, entry.data.commit);
-      }
-    }
-    else if (entry.type === "custom" && entry.customType === "pi-project-files-watch-snapshot" && !unavailableCheckpoint(entry.data)) {
-      throw new Error("Cannot safely delete a conversation with invalid project snapshot metadata. The conversation was not deleted.");
-    }
-    if (entry.type === "custom" && entry.customType === "pi-project-prompt-checkpoint" && promptCheckpoint(entry.data)) {
-      const repository = checkpointRepository(roots, header.cwd);
-      repository.required = true;
-      repository.commits.add(entry.data.commit);
-      repository.expectedRefs.set(`${prefix}prompts/${entry.data.key}`, entry.data.commit);
-    }
-    else if (entry.type === "custom" && entry.customType === "pi-project-prompt-checkpoint" && !unavailableCheckpoint(entry.data)) {
-      throw new Error("Cannot safely delete a conversation with invalid prompt checkpoint metadata. The conversation was not deleted.");
-    }
+    collectSnapshot(entry, roots, prefix, legacy);
+    collectPromptCheckpoint(entry, roots, header, prefix);
   }
   const repositories = new Map();
   for (const [cwd, checkpoint] of roots) {
-    try {
-      if (!(await fs.stat(cwd)).isDirectory()) {
-        if (checkpoint.required) throw new Error(`Checkpoint repository is no longer a directory: ${cwd}`);
-        continue;
-      }
-    } catch (error) {
-      if (error.code === "ENOENT" && !checkpoint.required) continue;
-      if (error.code === "ENOENT") throw new Error(`Cannot verify checkpoint cleanup because the repository no longer exists: ${cwd}. The conversation was not deleted.`);
-      throw error;
-    }
-    let common;
-    try { common = (await git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"])).trim(); }
-    catch (error) {
-      if (error.message.startsWith("fatal: not a git repository") && !checkpoint.required) continue;
-      if (error.message.startsWith("fatal: not a git repository")) throw new Error(`Cannot verify checkpoint cleanup because the repository is unavailable: ${cwd}. The conversation was not deleted.`);
-      throw error;
-    }
+    if (!await checkpointDirectory(cwd, checkpoint)) continue;
+    const common = await checkpointCommonDir(cwd, checkpoint);
+    if (common === undefined) continue;
     const key = await fs.realpath(common);
     if (!repositories.has(key)) repositories.set(key, { cwd: key, displayPath: cwd, required: false, commits: new Set(), expectedRefs: new Map(), refs: [], deleted: false });
     const repository = repositories.get(key);
@@ -139,35 +107,15 @@ async function snapshotRefs(entries, header) {
     checkpoint.expectedRefs.forEach((commit, ref) => repository.expectedRefs.set(ref, commit));
   }
   for (const repository of repositories.values()) {
-    const output = await git(repository.cwd, ["for-each-ref", "--format=%(refname) %(objectname)", prefix, legacy]);
-    const refs = output.trim().split("\n").filter(Boolean).map((line) => {
-      const [ref, oid] = line.split(" "); return { ref, oid };
-    }).filter(({ ref }) => ref.startsWith(prefix) || ref === legacy);
-    repository.refs = refs;
-    if (!refs.length && repository.required) throw new Error(`Cannot verify checkpoint repository identity at ${repository.displayPath}: the conversation's refs are missing. The conversation was not deleted.`);
-    if (!refs.length) continue;
-    const actual = new Map(refs.map(({ ref, oid }) => [ref, oid]));
-    for (const [ref, commit] of repository.expectedRefs) {
-      if (actual.has(ref) && actual.get(ref) !== commit) throw new Error(`Cannot verify checkpoint repository identity at ${repository.displayPath}: ${ref} no longer points to its recorded commit. The conversation was not deleted.`);
-    }
-    const matched = refs.some(({ ref, oid }) => repository.expectedRefs.get(ref) === oid || repository.commits.has(oid));
-    if (!matched) throw new Error(`Cannot verify checkpoint repository identity at ${repository.displayPath}: no conversation ref matches the recorded checkpoint commits. The conversation was not deleted.`);
+    await verifyRepositoryRefs(repository, prefix, legacy);
   }
   return [...repositories.values()].filter(({ refs }) => refs.length);
 }
 
 async function main() {
   const target = JSON.parse(process.argv[1]);
-  const area = target.area === "archived" ? "archived" : "sessions";
-  const root = await fs.realpath(target.root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", area));
-  const source = await fs.realpath(target.path);
-  const relative = path.relative(root, source);
-  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || path.extname(source) !== ".jsonl") {
-    throw new Error("Only Piop sessions can have their supporting data deleted");
-  }
-  const lock = path.join(path.dirname(source), `.delete-${createHash("sha256").update(source).digest("hex")}.lock`);
-  try { await fs.mkdir(lock, { mode: 0o700 }); }
-  catch (error) { if (error.code === "EEXIST") throw new Error("Deletion is already in progress for this session"); throw error; }
+  const source = await sessionSource(target);
+  const lock = await acquireDeletionLock(source);
   let preserveRecovery = false;
   let lockRemoved = false;
   try {
@@ -175,10 +123,7 @@ async function main() {
     const files = sidecar ? [trace, sidecar] : [trace];
     const entries = trace.body.toString("utf8").split("\n").filter((line) => line.trim()).map(JSON.parse);
     const header = entries[0];
-    if (header?.type !== "session" || typeof header.id !== "string" || !header.id || typeof header.cwd !== "string" || !path.isAbsolute(header.cwd)) {
-      throw new Error("Invalid session header; nothing was deleted");
-    }
-    if (target.activeSessionIds.includes(header.id)) throw new Error("Close the session before deleting it");
+    validateHeader(header, target);
     const repositories = await snapshotRefs(entries, header);
     files.forEach((saved, index) => { saved.stagedPath = path.join(lock, `${index}.staged`); });
     await fs.writeFile(path.join(lock, "recovery.json"), JSON.stringify({
@@ -222,6 +167,102 @@ async function main() {
     // Lock cleanup is bookkeeping after commit/rollback, not a failed deletion.
     if (!preserveRecovery && !lockRemoved) await fs.rm(lock, { recursive: true }).catch((error) => console.error(`Could not remove deletion recovery directory ${lock}: ${error.message}`));
   }
+}
+
+function collectSnapshot(entry, roots, prefix, legacy) {
+  if (entry.type === "custom" && entry.customType === "pi-project-files-watch-snapshot" && snapshotCheckpoint(entry.data)) {
+    if (entry.data.ref.startsWith(prefix) || entry.data.ref === legacy) {
+      const repository = checkpointRepository(roots, entry.data.repositoryRoot);
+      repository.required = true;
+      repository.commits.add(entry.data.commit);
+      repository.expectedRefs.set(entry.data.ref, entry.data.commit);
+    }
+  }
+  else if (entry.type === "custom" && entry.customType === "pi-project-files-watch-snapshot" && !unavailableCheckpoint(entry.data)) {
+    throw new Error("Cannot safely delete a conversation with invalid project snapshot metadata. The conversation was not deleted.");
+  }
+
+}
+
+function collectPromptCheckpoint(entry, roots, header, prefix) {
+  if (entry.type === "custom" && entry.customType === "pi-project-prompt-checkpoint" && promptCheckpoint(entry.data)) {
+    const repository = checkpointRepository(roots, header.cwd);
+    repository.required = true;
+    repository.commits.add(entry.data.commit);
+    repository.expectedRefs.set(`${prefix}prompts/${entry.data.key}`, entry.data.commit);
+  }
+  else if (entry.type === "custom" && entry.customType === "pi-project-prompt-checkpoint" && !unavailableCheckpoint(entry.data)) {
+    throw new Error("Cannot safely delete a conversation with invalid prompt checkpoint metadata. The conversation was not deleted.");
+  }
+
+}
+
+async function checkpointDirectory(cwd, checkpoint) {
+  try {
+    if (!(await fs.stat(cwd)).isDirectory()) {
+      if (checkpoint.required) throw new Error(`Checkpoint repository is no longer a directory: ${cwd}`);
+      return false;
+    }
+  } catch (error) {
+    if (error.code === "ENOENT" && !checkpoint.required) return false;
+    if (error.code === "ENOENT") throw new Error(`Cannot verify checkpoint cleanup because the repository no longer exists: ${cwd}. The conversation was not deleted.`);
+    throw error;
+  }
+  return true;
+}
+
+async function checkpointCommonDir(cwd, checkpoint) {
+  let common;
+  try { common = (await git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"])).trim(); }
+  catch (error) {
+    if (error.message.startsWith("fatal: not a git repository") && !checkpoint.required) return undefined;
+    if (error.message.startsWith("fatal: not a git repository")) throw new Error(`Cannot verify checkpoint cleanup because the repository is unavailable: ${cwd}. The conversation was not deleted.`);
+    throw error;
+  }
+  return common;
+}
+
+async function verifyRepositoryRefs(repository, prefix, legacy) {
+  const output = await git(repository.cwd, ["for-each-ref", "--format=%(refname) %(objectname)", prefix, legacy]);
+  const refs = output.trim().split("\n").filter(Boolean).map((line) => {
+    const [ref, oid] = line.split(" "); return { ref, oid };
+  }).filter(({ ref }) => ref.startsWith(prefix) || ref === legacy);
+  repository.refs = refs;
+  if (!refs.length && repository.required) throw new Error(`Cannot verify checkpoint repository identity at ${repository.displayPath}: the conversation's refs are missing. The conversation was not deleted.`);
+  if (!refs.length) return;
+  const actual = new Map(refs.map(({ ref, oid }) => [ref, oid]));
+  for (const [ref, commit] of repository.expectedRefs) {
+    if (actual.has(ref) && actual.get(ref) !== commit) throw new Error(`Cannot verify checkpoint repository identity at ${repository.displayPath}: ${ref} no longer points to its recorded commit. The conversation was not deleted.`);
+  }
+  const matched = refs.some(({ ref, oid }) => repository.expectedRefs.get(ref) === oid || repository.commits.has(oid));
+  if (!matched) throw new Error(`Cannot verify checkpoint repository identity at ${repository.displayPath}: no conversation ref matches the recorded checkpoint commits. The conversation was not deleted.`);
+
+}
+
+async function sessionSource(target) {
+  const area = target.area === "archived" ? "archived" : "sessions";
+  const root = await fs.realpath(target.root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", area));
+  const source = await fs.realpath(target.path);
+  const relative = path.relative(root, source);
+  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || path.extname(source) !== ".jsonl") {
+    throw new Error("Only Piop sessions can have their supporting data deleted");
+  }
+  return source;
+}
+
+async function acquireDeletionLock(source) {
+  const lock = path.join(path.dirname(source), `.delete-${createHash("sha256").update(source).digest("hex")}.lock`);
+  try { await fs.mkdir(lock, { mode: 0o700 }); }
+  catch (error) { if (error.code === "EEXIST") throw new Error("Deletion is already in progress for this session"); throw error; }
+  return lock;
+}
+
+function validateHeader(header, target) {
+  if (header?.type !== "session" || typeof header.id !== "string" || !header.id || typeof header.cwd !== "string" || !path.isAbsolute(header.cwd)) {
+    throw new Error("Invalid session header; nothing was deleted");
+  }
+  if (target.activeSessionIds.includes(header.id)) throw new Error("Close the session before deleting it");
+
 }
 
 main().catch((error) => { console.error(error.message); process.exitCode = 1; });

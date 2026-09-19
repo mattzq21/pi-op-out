@@ -3,7 +3,7 @@ import { isMobile } from "../lib/platform";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readDroppedFile } from "../lib/nativeTransport";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type SetStateAction } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type SetStateAction } from "react";
 import { ChevronUp, ChevronDown, CornerDownRight, MoveVertical, Trash2, ArrowUp, CircleStop, CircleX, FileText, ImagePlus, Pause, Play, TerminalSquare, X, Zap } from "lucide-react";
 import type { AgentProfile, ComposerUpload, ContextUsage, ImageAttachment, Model, PromptDictionary, SlashCommand } from "../types";
 import { applyDictionary, dictionaryMatches } from "../lib/dictionaries";
@@ -88,7 +88,62 @@ const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((
 });
 const escapeAttribute = (value: string) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]!);
 
-export function Composer({ voiceControls, streaming, paused = false, pausing = false, queued, pendingMessages = [], onChangePending, commands, agents, activeAgent, agentLocked = false, agentSaved = false, agentUnavailable = false, dictionaries = [], models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
+function composerDefaults({ voiceControls, streaming, paused = false, pausing = false, queued, pendingMessages = [], onChangePending, commands, agents, activeAgent, agentLocked = false, agentSaved = false, agentUnavailable = false, dictionaries = [], models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
+  return { voiceControls, streaming, paused, pausing, queued, pendingMessages, onChangePending, commands, agents, activeAgent, agentLocked, agentSaved, agentUnavailable, dictionaries, models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled, draft, onDraftChange, controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking };
+}
+
+function modelSupportsImages(model: Props['model'], models: Model[]) {
+  return Boolean((model?.input ?? models.find((item) => item.provider === model?.provider && item.id === model?.id)?.input)?.includes("image"));
+}
+
+function composerControlState(controlsDisabled: boolean, action: "pause" | "resume" | undefined, pausing: boolean, stopping: boolean) {
+  const controlPending = Boolean(action) || pausing || stopping;
+  return { controlPending, inputDisabled: controlsDisabled || controlPending, stopDisabled: controlsDisabled || stopping || action === "resume" };
+}
+
+function insideBounds(bounds: DOMRect | undefined, x: number, y: number) {
+  return Boolean(bounds && x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom);
+}
+
+function pendingControlsDisabled(controlsDisabled: boolean, changingPending: boolean, pausing: boolean, onChangePending: Props['onChangePending']) {
+  return controlsDisabled || changingPending || pausing || !onChangePending;
+}
+
+function pendingMessageClass(id: string, expanded: string | undefined, drop: ReturnType<typeof usePendingMessageDrag>['drop']) {
+  return `pending-message${expanded === id ? " expanded" : ""}${drop?.id === id ? " dragging" : ""}${drop?.targetId === id ? ` drop-${drop.edge}` : ""}`;
+}
+
+function canPickCommand(event: KeyboardEvent) {
+  return (event.key === "Tab" || event.key === "Enter") && !event.shiftKey && !event.ctrlKey;
+}
+
+function imageFile(file: File) {
+  return file.type.toLowerCase().startsWith("image/") || /\.(?:png|jpe?g|gif|webp|svg|bmp|ico|avif|heic|heif|tiff?)$/i.test(file.name);
+}
+
+async function imageUpload(file: File, errors: string[]): Promise<ComposerUpload | undefined> {
+  if (!SUPPORTED_IMAGE_TYPES.has(file.type.toLowerCase())) { errors.push(`${file.name} uses an unsupported image format`); return undefined; }
+  if (file.size > IMAGE_LIMIT) { errors.push(`${file.name} is larger than 10 MB`); return undefined; }
+  const url = await readFile(file, "dataUrl");
+  try { const image = new Image(); image.src = url; await image.decode(); }
+  catch { errors.push(`${file.name} is not a valid image`); return undefined; }
+  return { id: crypto.randomUUID(), name: file.name, kind: "image", byteSize: file.size, image: { type: "image", data: url.slice(url.indexOf(",") + 1), mimeType: file.type || "image/png", name: file.name } };
+
+}
+
+async function textUpload(file: File, errors: string[]): Promise<ComposerUpload | undefined> {
+  if (!(file.type.startsWith("text/") || TEXT_MIME_TYPES.has(file.type.toLowerCase()) || TEXT_EXTENSIONS.test(file.name))) { errors.push(`${file.name} is not a supported text file`); return undefined; }
+  if (file.size > TEXT_LIMIT) { errors.push(`${file.name} is larger than 200 KB`); return undefined; }
+  let text: string;
+  try { text = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer()); }
+  catch { errors.push(`${file.name} does not contain valid UTF-8 text`); return undefined; }
+  if (text.includes("\0")) { errors.push(`${file.name} does not contain valid text`); return undefined; }
+  return { id: crypto.randomUUID(), name: file.name, kind: "text", byteSize: file.size, text };
+
+}
+
+export function Composer(props: Props) {
+  const { voiceControls, streaming, paused, pausing, queued, pendingMessages, onChangePending, commands, agents, activeAgent, agentLocked, agentSaved, agentUnavailable, dictionaries, models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled, draft, onDraftChange, controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking } = composerDefaults(props);
   const [localValue, setLocalValue] = useState("");
   const value = draft ?? localValue;
   const fastModeEnabled = fastModeStatus === "Fast mode on";
@@ -103,7 +158,7 @@ export function Composer({ voiceControls, streaming, paused = false, pausing = f
   };
   const [uploadError, setUploadError] = useState<string>();
   const [imageInputError, setImageInputError] = useState(false);
-  const supportsImages = Boolean((model?.input ?? models.find((item) => item.provider === model?.provider && item.id === model?.id)?.input)?.includes("image"));
+  const supportsImages = modelSupportsImages(model, models);
   const supportsImagesRef = useRef(supportsImages);
   useLayoutEffect(() => { supportsImagesRef.current = supportsImages; }, [supportsImages]);
   useEffect(() => { if (supportsImages) setImageInputError(false); }, [supportsImages]);
@@ -121,9 +176,7 @@ export function Composer({ voiceControls, streaming, paused = false, pausing = f
     finally { togglingFastModeRef.current = false; setTogglingFastMode(false); }
   };
   const controlActionRef = useRef(false);
-  const controlPending = Boolean(controlAction) || pausing || stopping;
-  const inputDisabled = controlsDisabled || controlPending;
-  const stopDisabled = controlsDisabled || stopping || controlAction === "resume";
+  const { controlPending, inputDisabled, stopDisabled } = composerControlState(controlsDisabled, controlAction, pausing, stopping);
   const [selectedMatch, setSelectedMatch] = useState(0);
   const [paletteDismissed, setPaletteDismissed] = useState(false);
   const [editorScrollTop, setEditorScrollTop] = useState(0);
@@ -195,25 +248,12 @@ export function Composer({ voiceControls, streaming, paused = false, pausing = f
     const errors = [...initialErrors];
     let totalBytes = uploads.reduce((total, upload) => total + upload.byteSize, 0);
     for (const file of Array.from(files)) {
-      if ((file.type.toLowerCase().startsWith("image/") || /\.(?:png|jpe?g|gif|webp|svg|bmp|ico|avif|heic|heif|tiff?)$/i.test(file.name)) && !supportsImagesRef.current) { setImageInputError(true); continue; }
+      if (imageFile(file) && !supportsImagesRef.current) { setImageInputError(true); continue; }
       if (uploads.length + next.length >= UPLOAD_COUNT_LIMIT) { errors.push(`Only ${UPLOAD_COUNT_LIMIT} attachments are allowed`); break; }
       if (file.size + totalBytes > TOTAL_UPLOAD_LIMIT) { errors.push(`${file.name} exceeds the 24 MB attachment limit`); continue; }
-      if (file.type.startsWith("image/")) {
-        if (!SUPPORTED_IMAGE_TYPES.has(file.type.toLowerCase())) { errors.push(`${file.name} uses an unsupported image format`); continue; }
-        if (file.size > IMAGE_LIMIT) { errors.push(`${file.name} is larger than 10 MB`); continue; }
-        const url = await readFile(file, "dataUrl");
-        try { const image = new Image(); image.src = url; await image.decode(); }
-        catch { errors.push(`${file.name} is not a valid image`); continue; }
-        next.push({ id: crypto.randomUUID(), name: file.name, kind: "image", byteSize: file.size, image: { type: "image", data: url.slice(url.indexOf(",") + 1), mimeType: file.type || "image/png", name: file.name } });
-      } else {
-        if (!(file.type.startsWith("text/") || TEXT_MIME_TYPES.has(file.type.toLowerCase()) || TEXT_EXTENSIONS.test(file.name))) { errors.push(`${file.name} is not a supported text file`); continue; }
-        if (file.size > TEXT_LIMIT) { errors.push(`${file.name} is larger than 200 KB`); continue; }
-        let text: string;
-        try { text = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer()); }
-        catch { errors.push(`${file.name} does not contain valid UTF-8 text`); continue; }
-        if (text.includes("\0")) { errors.push(`${file.name} does not contain valid text`); continue; }
-        next.push({ id: crypto.randomUUID(), name: file.name, kind: "text", byteSize: file.size, text });
-      }
+      const upload = file.type.startsWith("image/") ? await imageUpload(file, errors) : await textUpload(file, errors);
+      if (!upload) continue;
+      next.push(upload);
       totalBytes += file.size;
     }
     updateUploads((current) => {
@@ -251,7 +291,7 @@ export function Composer({ voiceControls, streaming, paused = false, pausing = f
       const bounds = composerRef.current?.getBoundingClientRect();
       const x = payload.position.x / window.devicePixelRatio;
       const y = payload.position.y / window.devicePixelRatio;
-      const inside = Boolean(bounds && x >= bounds.left && x <= bounds.right && y >= bounds.top && y <= bounds.bottom);
+      const inside = insideBounds(bounds, x, y);
       const enabled = inside && !nativeDropRef.current.inputDisabled;
       setDraggingFiles(payload.type !== "drop" && enabled);
       if (payload.type !== "drop" || !enabled) return;
@@ -269,17 +309,26 @@ export function Composer({ voiceControls, streaming, paused = false, pausing = f
     setChangingPending(true); setControlError(undefined);
     void onChangePending(id, action).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))).finally(() => setChangingPending(false));
   };
-  const { drop: pendingDrop, begin: beginPendingDrag } = usePendingMessageDrag(pendingMessages, controlsDisabled || changingPending || pausing || !onChangePending, changePending);
+  const { drop: pendingDrop, begin: beginPendingDrag } = usePendingMessageDrag(pendingMessages, pendingControlsDisabled(controlsDisabled, changingPending, pausing, onChangePending), changePending);
+  const controlsBlocked = () => controlsDisabled || pausing || controlActionRef.current || stoppingRef.current;
+  const canSubmit = (message: string, images: ImageAttachment[]) => {
+    if (images.length && !supportsImagesRef.current) { setImageInputError(true); return false; }
+    return Boolean((message || images.length) && !sendingRef.current);
+  };
+  const restoreSubmission = (submittedValue: string, submittedUploads: ComposerUpload[], reason: unknown) => {
+    const newerDraft = ref.current?.value || "";
+    setValue(newerDraft && newerDraft !== submittedValue ? `${submittedValue}\n\n${newerDraft}` : submittedValue);
+    updateUploads((current) => [...submittedUploads.filter((item) => !current.some((other) => other.id === item.id)), ...current]);
+    setUploadError(reason instanceof Error ? reason.message : String(reason));
+  };
   const submit = async (behavior: "steer" | "followUp" = "followUp") => {
-    if (controlsDisabled || pausing || controlActionRef.current || stoppingRef.current) return;
+    if (controlsBlocked()) return;
     const textFiles = uploads.filter((upload) => upload.kind === "text");
     const escapeFileContent = (text: string) => text.replace(/<\/file>/gi, "<\\/file>");
     // Expand skills before dictionaries so dictionary replacement text stays literal.
     const message = [applyDictionary(expandSkillReference(value.trim(), commands), dictionaries), ...textFiles.map((file) => `<file name="${escapeAttribute(file.name)}">\n${escapeFileContent(file.text ?? "")}\n</file>`)].filter(Boolean).join("\n\n");
     const images = uploads.flatMap((upload) => upload.image ? [upload.image] : []);
-    if (images.length && !supportsImagesRef.current) { setImageInputError(true); return; }
-    if (!message && !images.length) return;
-    if (sendingRef.current) return;
+    if (!canSubmit(message, images)) return;
     sendingRef.current = true; setSending(true); setUploadError(undefined);
     const submittedValue = value; const submittedUploads = uploads;
     setValue(""); updateUploads([]);
@@ -287,22 +336,19 @@ export function Composer({ voiceControls, streaming, paused = false, pausing = f
       const accepted = await onSend(message || "Describe the attached image.", streaming ? behavior : undefined, images);
       if (accepted === false) throw new Error("Message was not submitted");
     } catch (reason) {
-      const newerDraft = ref.current?.value || "";
-      setValue(newerDraft && newerDraft !== submittedValue ? `${submittedValue}\n\n${newerDraft}` : submittedValue);
-      updateUploads((current) => [...submittedUploads.filter((item) => !current.some((other) => other.id === item.id)), ...current]);
-      setUploadError(reason instanceof Error ? reason.message : String(reason));
+      restoreSubmission(submittedValue, submittedUploads, reason);
     } finally { sendingRef.current = false; setSending(false); }
   };
+  const abort = async () => {
+    if (controlsDisabled || stoppingRef.current || controlAction === "resume") return;
+    stoppingRef.current = true; setStopping(true); setControlError(undefined);
+    try { await onAbort(); }
+    catch (reason) { setControlError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { stoppingRef.current = false; setStopping(false); }
+  };
   const control = async (action: "pause" | "resume" | "abort") => {
-    if (action === "abort") {
-      if (controlsDisabled || stoppingRef.current || controlAction === "resume") return;
-      stoppingRef.current = true; setStopping(true); setControlError(undefined);
-      try { await onAbort(); }
-      catch (reason) { setControlError(reason instanceof Error ? reason.message : String(reason)); }
-      finally { stoppingRef.current = false; setStopping(false); }
-      return;
-    }
-    if (controlsDisabled || pausing || controlActionRef.current || stoppingRef.current) return;
+    if (action === "abort") return abort();
+    if (controlsBlocked()) return;
     controlActionRef.current = true; setControlAction(action); setControlError(undefined);
     try { await (action === "pause" ? onPause() : onResume()); }
     catch (reason) { setControlError(reason instanceof Error ? reason.message : String(reason)); }
@@ -314,34 +360,56 @@ export function Composer({ voiceControls, streaming, paused = false, pausing = f
     else setValue(`/${command.name} `);
     ref.current?.focus();
   };
+  const handlePaletteKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Escape" && matches.length) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true); return true; }
+    if (matches.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length); return true; }
+    if (canPickCommand(event) && matches[selectedMatch]) { event.preventDefault(); chooseCommand(matches[selectedMatch]); return true; }
+    return false;
+  };
+  const handleEditorKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.nativeEvent.isComposing || handlePaletteKey(event)) return;
+    if (event.key === "Enter" && !event.shiftKey && (!isMobile || event.ctrlKey)) { event.preventDefault(); event.stopPropagation(); void submit(event.ctrlKey ? "steer" : "followUp"); }
+  };
 
-  return <div className="composer-wrap">
-    {imageInputError && <div className="image-input-toast" role="alert"><CircleX size={14} aria-hidden="true" /><span>This model does not support image inputs. Try a different model</span><button type="button" aria-label="Dismiss image input error" onClick={() => setImageInputError(false)}><X size={14} /></button></div>}
-    {(streaming || paused || pausing) && <div className={`stream-banner${paused ? " paused" : ""}`}>
-      <span className="stream-status" role="status">{paused ? <Pause size={11} /> : <span className="pulse" />}{stopping ? "Stopping…" : controlAction === "resume" ? "Resuming…" : pausing || controlAction === "pause" ? "Pausing…" : paused ? "Paused · Completed turns saved" : "piop is working"}{queued > 0 && ` · ${queued} queued`}</span>
-    </div>}
-    {pendingMessages.length > 0 && <div className="pending-messages" aria-label="Pending messages">{pendingMessages.filter((message) => message && typeof message.id === "string").map((message) => {
-      const text = typeof message.message === "string" ? message.message : String(message.message ?? "");
-      const change = (action: import("../types").PendingMessageAction) => changePending(message.id, action);
-      const disabled = controlsDisabled || changingPending || pausing;
-      const peers = pendingMessages.filter((item) => !item.retry && item.behavior === message.behavior);
-      const position = peers.findIndex((item) => item.id === message.id);
-      return <div data-pending-id={message.id} className={`pending-message${expandedPending === message.id ? " expanded" : ""}${pendingDrop?.id === message.id ? " dragging" : ""}${pendingDrop?.targetId === message.id ? ` drop-${pendingDrop.edge}` : ""}`} key={message.id}>
-        <button type="button" className="pending-icon-button pending-drag-handle" disabled={disabled || message.retry || !onChangePending || peers.length < 2} aria-label={`Drag to reorder queued message: ${text}`} title="Drag to reorder · Arrow keys to move" onKeyDown={(event) => {
-          if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); change(event.key === "ArrowUp" ? "moveUp" : "moveDown"); }
-        }} onPointerDown={(event) => beginPendingDrag(event, message.id)}><MoveVertical size={16} /></button>
-        <span className="pending-message-text" title={text} onDoubleClick={() => setExpandedPending((current) => current === message.id ? undefined : message.id)}>{message.retry && <small>Not sent · </small>}{text}</span>
-        {onChangePending && <div className="pending-message-actions">
-          <div className="pending-order-actions">
-            <button type="button" className="pending-icon-button" disabled={disabled || position <= 0} aria-label={`Move queued message up: ${text}`} title="Move earlier in this delivery queue" onClick={() => change("moveUp")}><ChevronUp size={13} /></button>
-            <button type="button" className="pending-icon-button" disabled={disabled || position < 0 || position >= peers.length - 1} aria-label={`Move queued message down: ${text}`} title="Move later in this delivery queue" onClick={() => change("moveDown")}><ChevronDown size={13} /></button>
-          </div>
-          <button type="button" disabled={disabled} title={message.behavior === "steer" ? "Queue after the current response" : "Steer at the next turn"} onClick={() => change(message.retry ? message.behavior : message.behavior === "steer" ? "followUp" : "steer")}><CornerDownRight size={13} />{message.retry ? "Retry" : message.behavior === "steer" ? "Queue" : "Steer"}</button>
-          <button type="button" className="pending-icon-button" disabled={disabled} aria-label={`Remove queued message: ${text}`} title="Remove message" onClick={() => change("remove")}><Trash2 size={13} /></button>
-        </div>}
-      </div>;
-    })}</div>}
-    <div ref={composerRef} className={`composer${draggingFiles && !inputDisabled ? " dragging-files" : ""}`}
+  const renderStreamBanner = () => {
+    const renderStreamStatus = () => (<span className="stream-status" role="status">{paused ? <Pause size={11} /> : <span className="pulse" />}{stopping ? "Stopping…" : controlAction === "resume" ? "Resuming…" : pausing || controlAction === "pause" ? "Pausing…" : paused ? "Paused · Completed turns saved" : "piop is working"}{queued > 0 && ` · ${queued} queued`}</span>);
+    return ((streaming || paused || pausing) && <div className={`stream-banner${paused ? " paused" : ""}`}>
+      {renderStreamStatus()}
+    </div>);
+  };
+  const renderComposer = () => {
+    const renderComposerDropHint = () => (draggingFiles && !inputDisabled && <div className="composer-drop-hint" role="status">Drop files to attach</div>);
+    const renderCommandPalette = () => (matches.length > 0 && <div className="command-palette" role="listbox" aria-label={skillQuery === undefined ? "piop commands" : "piop skills"}>{matches.map((command, index) => <button ref={index === selectedMatch ? selectedCommandRef : undefined} role="option" aria-selected={index === selectedMatch} key={`${command.source}:${command.name}`} type="button" onClick={() => chooseCommand(command)}><span><strong>{skillQuery !== undefined ? `$${skillName(command)}` : `/${command.name}`}</strong>{command.description && <small>{command.description}</small>}</span></button>)}</div>);
+    const renderComposerEditor = () => (<div className={`composer-editor${dictionaryHighlights.length ? " has-dictionary-matches" : ""}`}>
+        {dictionaryHighlights.length > 0 && <div className="composer-highlight-viewport" aria-hidden="true"><div className="composer-highlight-layer" style={{ transform: `translateY(-${editorScrollTop}px)` }}>{dictionaryHighlights.map((match, index) => <span key={`${match.start}-${match.end}`}><span>{value.slice(index ? dictionaryHighlights[index - 1].end : 0, match.start)}</span><mark onPointerDown={(event) => { event.preventDefault(); ref.current?.focus(); ref.current?.setSelectionRange(match.start, match.end); }}>{value.slice(match.start, match.end)}</mark></span>)}<span>{value.slice(dictionaryHighlights.at(-1)?.end ?? 0)}</span></div></div>}
+        <textarea ref={ref} aria-label="Message piop" disabled={controlsDisabled} placeholder={controlsDisabled ? "Connecting to piop…" : paused ? "Send a message to continue piop…" : streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value} rows={1} onScroll={(event) => setEditorScrollTop(event.currentTarget.scrollTop)} onChange={(event) => { setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
+      </div>);
+    const renderComposerBar = () => {
+      const renderComposerTools = () => (<div className="composer-tools">{voiceControls}{onOpenTerminal && <IconButton title="" label="Open terminal" disabled={controlsDisabled} onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton>}{contextUsage && <ContextWheel usage={contextUsage} />}{sessionCache && <span className={`session-cache-hit${sessionCache.low ? " low" : ""}`}>Cache {sessionCache.rate}%</span>}</div>);
+      const renderComposerActions = () => {
+        const renderMobileSteer = () => (isMobile && streaming && <button className="mobile-steer" disabled={controlsDisabled || !hasVisibleText(value)} onClick={() => void submit("steer")}>Steer</button>);
+        const renderAgentPicker = () => (<ContainedPicker label="Agent" selectedLabel={agentUnavailable ? `Agent unavailable: ${activeAgent}` : `${activeAgent ?? "general"}${agentSaved ? " · saved" : ""}`} value={activeAgent ?? "general"} disabled={agentLocked || streaming || inputDisabled} menuWidth={240} centered options={agents.map((agent) => ({ value: agent.name, label: agent.name, detail: agent.name === activeAgent && agentSaved ? "Use latest definition" : agent.name === "general" && agentUnavailable ? "Continue with default agent" : undefined }))} onChange={onAgent} />);
+        const renderFastModeIndicator = () => (fastModeSupported && <button type="button" className={`fast-mode-indicator${fastModeEnabled ? " active" : ""}`} aria-label="Fast mode" aria-description={fastModeStatus} aria-pressed={fastModeEnabled} aria-busy={togglingFastMode} disabled={inputDisabled || togglingFastMode} onClick={() => void toggleFastMode()}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled ? "currentColor" : "none"} aria-hidden="true" /></button>);
+        const renderModelPicker = () => (<ContainedPicker label="Model" selectedLabel={model ? displayModelName(model, models) : undefined} value={model ? `${model.provider}/${model.id}` : ""} disabled={streaming || inputDisabled} options={models.map((item) => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item, models), detail: providerAccountLabel(item.provider) }))} onChange={(value) => { const next = models.find((item) => `${item.provider}/${item.id}` === value); if (next) onModel(next); }} />);
+        const renderStopButton = () => ((streaming || paused || pausing) && <IconButton title="" label="Stop piop" className="stop-compact" disabled={stopDisabled} onClick={() => void control("abort")}><CircleStop size={17} /></IconButton>);
+        const renderSend = () => ((streaming || paused || pausing)
+            ? <IconButton title="" label={paused ? "Resume piop" : "Pause piop"} className="send" disabled={inputDisabled} onClick={() => void control(paused ? "resume" : "pause")}>{paused ? <Play size={17} /> : <Pause size={17} />}</IconButton>
+            : <IconButton title="" label="Send message" className="send" disabled={inputDisabled || sending || (!hasVisibleText(value) && uploads.length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>);
+        return (<div className="composer-actions">{renderMobileSteer()}
+          {renderAgentPicker()}
+          {renderFastModeIndicator()}
+          {renderModelPicker()}
+          <ContainedPicker label="Thinking level" value={thinkingLevel} disabled={streaming || inputDisabled} menuWidth={120} centered compact options={thinkingLevels.map((level) => ({ value: level, label: level.charAt(0).toUpperCase() + level.slice(1) }))} onChange={onThinking} />
+          <span className="composer-divider" />
+          {renderStopButton()}
+          {renderSend()}
+        </div>);
+      };
+      return (<div className="composer-bar">{renderComposerTools()}
+        {renderComposerActions()}
+      </div>);
+    };
+    return (<div ref={composerRef} className={`composer${draggingFiles && !inputDisabled ? " dragging-files" : ""}`}
       onPaste={(event) => {
         const files = Array.from(event.clipboardData.files);
         if (!files.length) return;
@@ -378,35 +446,53 @@ export function Composer({ voiceControls, streaming, paused = false, pausing = f
         })().catch((reason) => setUploadError(reason instanceof Error ? reason.message : String(reason)));
         ref.current?.focus();
       }}>
-      {draggingFiles && !inputDisabled && <div className="composer-drop-hint" role="status">Drop files to attach</div>}
-      {matches.length > 0 && <div className="command-palette" role="listbox" aria-label={skillQuery === undefined ? "piop commands" : "piop skills"}>{matches.map((command, index) => <button ref={index === selectedMatch ? selectedCommandRef : undefined} role="option" aria-selected={index === selectedMatch} key={`${command.source}:${command.name}`} type="button" onClick={() => chooseCommand(command)}><span><strong>{skillQuery !== undefined ? `$${skillName(command)}` : `/${command.name}`}</strong>{command.description && <small>{command.description}</small>}</span></button>)}</div>}
+      {renderComposerDropHint()}
+      {renderCommandPalette()}
       {uploads.length > 0 && <div className="attachments">{uploads.map((upload) => <span key={upload.id}>{upload.kind === "image" ? <ImagePlus size={12} /> : <FileText size={12} />}<b>{upload.name}</b><button aria-label={`Remove ${upload.name}`} onClick={() => { updateUploads((current) => current.filter((item) => item.id !== upload.id)); setUploadError(undefined); }}><X size={11} /></button></span>)}</div>}
       {uploadError && <div className="upload-error" role="alert">{uploadError}</div>}
       {controlError && <div className="upload-error" role="alert">{controlError}</div>}
-      <div className={`composer-editor${dictionaryHighlights.length ? " has-dictionary-matches" : ""}`}>
-        {dictionaryHighlights.length > 0 && <div className="composer-highlight-viewport" aria-hidden="true"><div className="composer-highlight-layer" style={{ transform: `translateY(-${editorScrollTop}px)` }}>{dictionaryHighlights.map((match, index) => <span key={`${match.start}-${match.end}`}><span>{value.slice(index ? dictionaryHighlights[index - 1].end : 0, match.start)}</span><mark onPointerDown={(event) => { event.preventDefault(); ref.current?.focus(); ref.current?.setSelectionRange(match.start, match.end); }}>{value.slice(match.start, match.end)}</mark></span>)}<span>{value.slice(dictionaryHighlights.at(-1)?.end ?? 0)}</span></div></div>}
-        <textarea ref={ref} aria-label="Message piop" disabled={controlsDisabled} placeholder={controlsDisabled ? "Connecting to piop…" : paused ? "Send a message to continue piop…" : streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value} rows={1} onScroll={(event) => setEditorScrollTop(event.currentTarget.scrollTop)} onChange={(event) => { setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape" && matches.length) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true); } else if (matches.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length); } else if ((event.key === "Tab" || event.key === "Enter") && !event.shiftKey && !event.ctrlKey && matches[selectedMatch]) { event.preventDefault(); chooseCommand(matches[selectedMatch]); } else if (event.key === "Enter" && !event.shiftKey && (!isMobile || event.ctrlKey)) { event.preventDefault(); event.stopPropagation(); void submit(event.ctrlKey ? "steer" : "followUp"); } }} />
-      </div>
-      <div className="composer-bar"><div className="composer-tools">{voiceControls}{onOpenTerminal && <IconButton title="" label="Open terminal" disabled={controlsDisabled} onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton>}{contextUsage && <ContextWheel usage={contextUsage} />}{sessionCache && <span className={`session-cache-hit${sessionCache.low ? " low" : ""}`}>Cache {sessionCache.rate}%</span>}</div>
-        <div className="composer-actions">{isMobile && streaming && <button className="mobile-steer" disabled={controlsDisabled || !hasVisibleText(value)} onClick={() => void submit("steer")}>Steer</button>}
-        <ContainedPicker label="Agent" selectedLabel={agentUnavailable ? `Agent unavailable: ${activeAgent}` : `${activeAgent ?? "general"}${agentSaved ? " · saved" : ""}`} value={activeAgent ?? "general"} disabled={agentLocked || streaming || inputDisabled} menuWidth={240} centered options={agents.map((agent) => ({ value: agent.name, label: agent.name, detail: agent.name === activeAgent && agentSaved ? "Use latest definition" : agent.name === "general" && agentUnavailable ? "Continue with default agent" : undefined }))} onChange={onAgent} />
-        {fastModeSupported && <button type="button" className={`fast-mode-indicator${fastModeEnabled ? " active" : ""}`} aria-label="Fast mode" aria-description={fastModeStatus} aria-pressed={fastModeEnabled} aria-busy={togglingFastMode} disabled={inputDisabled || togglingFastMode} onClick={() => void toggleFastMode()}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled ? "currentColor" : "none"} aria-hidden="true" /></button>}
-        <ContainedPicker label="Model" selectedLabel={model ? displayModelName(model, models) : undefined} value={model ? `${model.provider}/${model.id}` : ""} disabled={streaming || inputDisabled} options={models.map((item) => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item, models), detail: providerAccountLabel(item.provider) }))} onChange={(value) => { const next = models.find((item) => `${item.provider}/${item.id}` === value); if (next) onModel(next); }} />
-        <ContainedPicker label="Thinking level" value={thinkingLevel} disabled={streaming || inputDisabled} menuWidth={120} centered compact options={thinkingLevels.map((level) => ({ value: level, label: level.charAt(0).toUpperCase() + level.slice(1) }))} onChange={onThinking} />
-        <span className="composer-divider" />
-        {(streaming || paused || pausing) && <IconButton title="" label="Stop piop" className="stop-compact" disabled={stopDisabled} onClick={() => void control("abort")}><CircleStop size={17} /></IconButton>}
-        {(streaming || paused || pausing)
-          ? <IconButton title="" label={paused ? "Resume piop" : "Pause piop"} className="send" disabled={inputDisabled} onClick={() => void control(paused ? "resume" : "pause")}>{paused ? <Play size={17} /> : <Pause size={17} />}</IconButton>
-          : <IconButton title="" label="Send message" className="send" disabled={inputDisabled || sending || (!hasVisibleText(value) && uploads.length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>}
-        </div>
-      </div>
-    </div>
+      {renderComposerEditor()}
+      {renderComposerBar()}
+    </div>);
+  };
+  return <div className="composer-wrap">
+    {imageInputError && <div className="image-input-toast" role="alert"><CircleX size={14} aria-hidden="true" /><span>This model does not support image inputs. Try a different model</span><button type="button" aria-label="Dismiss image input error" onClick={() => setImageInputError(false)}><X size={14} /></button></div>}
+    {renderStreamBanner()}
+    {pendingMessages.length > 0 && <div className="pending-messages" aria-label="Pending messages">{pendingMessages.filter((message) => message && typeof message.id === "string").map((message) => {
+      const text = typeof message.message === "string" ? message.message : String(message.message ?? "");
+      const change = (action: import("../types").PendingMessageAction) => changePending(message.id, action);
+      const disabled = controlsDisabled || changingPending || pausing;
+      const peers = pendingMessages.filter((item) => !item.retry && item.behavior === message.behavior);
+      const position = peers.findIndex((item) => item.id === message.id);
+      const renderPendingDragHandle = () => (<button type="button" className="pending-icon-button pending-drag-handle" disabled={disabled || message.retry || !onChangePending || peers.length < 2} aria-label={`Drag to reorder queued message: ${text}`} title="Drag to reorder · Arrow keys to move" onKeyDown={(event) => {
+          if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); change(event.key === "ArrowUp" ? "moveUp" : "moveDown"); }
+        }} onPointerDown={(event) => beginPendingDrag(event, message.id)}><MoveVertical size={16} /></button>);
+      const renderPendingMessageActions = () => (onChangePending && <div className="pending-message-actions">
+          <div className="pending-order-actions">
+            <button type="button" className="pending-icon-button" disabled={disabled || position <= 0} aria-label={`Move queued message up: ${text}`} title="Move earlier in this delivery queue" onClick={() => change("moveUp")}><ChevronUp size={13} /></button>
+            <button type="button" className="pending-icon-button" disabled={disabled || position < 0 || position >= peers.length - 1} aria-label={`Move queued message down: ${text}`} title="Move later in this delivery queue" onClick={() => change("moveDown")}><ChevronDown size={13} /></button>
+          </div>
+          <button type="button" disabled={disabled} title={message.behavior === "steer" ? "Queue after the current response" : "Steer at the next turn"} onClick={() => change(message.retry ? message.behavior : message.behavior === "steer" ? "followUp" : "steer")}><CornerDownRight size={13} />{message.retry ? "Retry" : message.behavior === "steer" ? "Queue" : "Steer"}</button>
+          <button type="button" className="pending-icon-button" disabled={disabled} aria-label={`Remove queued message: ${text}`} title="Remove message" onClick={() => change("remove")}><Trash2 size={13} /></button>
+        </div>);
+      return <div data-pending-id={message.id} className={pendingMessageClass(message.id, expandedPending, pendingDrop)} key={message.id}>
+        {renderPendingDragHandle()}
+        <span className="pending-message-text" title={text} onDoubleClick={() => setExpandedPending((current) => current === message.id ? undefined : message.id)}>{message.retry && <small>Not sent · </small>}{text}</span>
+        {renderPendingMessageActions()}
+      </div>;
+    })}</div>}
+    {renderComposer()}
   </div>;
 }
 
 type PickerOption = { value: string; label: string; detail?: string; disabled?: boolean };
 
-function ContainedPicker({ label, selectedLabel, value, options, disabled, menuWidth = 200, centered = false, compact = false, onChange }: { label: string; selectedLabel?: string; value: string; options: PickerOption[]; disabled?: boolean; menuWidth?: number; centered?: boolean; compact?: boolean; onChange: (value: string) => void }) {
+function pickerDefaults({ label, selectedLabel, value, options, disabled, menuWidth = 200, centered = false, compact = false, onChange }: { label: string; selectedLabel?: string; value: string; options: PickerOption[]; disabled?: boolean; menuWidth?: number; centered?: boolean; compact?: boolean; onChange: (value: string) => void }) {
+  return { label, selectedLabel, value, options, disabled, menuWidth, centered, compact, onChange };
+}
+
+function ContainedPicker(props: { label: string; selectedLabel?: string; value: string; options: PickerOption[]; disabled?: boolean; menuWidth?: number; centered?: boolean; compact?: boolean; onChange: (value: string) => void }) {
+  const { label, selectedLabel, value, options, disabled, menuWidth, centered, compact, onChange } = pickerDefaults(props);
   const [menuStyle, setMenuStyle] = useState<CSSProperties>();
   const [activeIndex, setActiveIndex] = useState(0);
   const root = useRef<HTMLDivElement>(null);

@@ -15,15 +15,19 @@ const MESSAGE_TIMEOUT_MS = 120_000;
 
 type StoppedAssistantMessage = AssistantMessage & { piopCompletedBlocks?: true };
 
+function replayableThinking(signatureText: string | undefined) {
+  try {
+    const signature = JSON.parse(signatureText ?? "null");
+    return signature?.type === "reasoning" && typeof signature.encrypted_content === "string" && signature.encrypted_content.trim();
+  } catch { return false; }
+}
+
 export function desktopPauseContext(messages: ContextEvent["messages"], resumeMessages: ReadonlySet<string>): ContextEvent["messages"] {
   return messages.filter((message) => !(message.role === "assistant" && message.stopReason === "aborted" && message.errorMessage === "Response paused")).map((message) => {
     if (message.role === "assistant" && message.stopReason === "aborted" && (message as StoppedAssistantMessage).piopCompletedBlocks && message.content.length) {
       const content = message.content.flatMap<AssistantMessage["content"][number]>((block) => {
         if (block.type !== "thinking" || !["openai-responses", "openai-codex-responses", "azure-openai-responses"].includes(message.api)) return [block];
-        try {
-          const signature = JSON.parse(block.thinkingSignature ?? "null");
-          if (signature?.type === "reasoning" && typeof signature.encrypted_content === "string" && signature.encrypted_content.trim()) return [block];
-        } catch { /* A stopped stream may not have finalized its replay metadata. */ }
+        if (replayableThinking(block.thinkingSignature)) return [block];
         return !block.redacted && block.thinking.trim() ? [{ type: "text", text: block.thinking }] : [];
       });
       if (!content.length) return message;
@@ -45,6 +49,10 @@ async function cancelRequest(requestId: string) {
   await fetch(`${url}/cancel`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ requestId }), signal: AbortSignal.timeout(5_000) }).catch(() => undefined);
 }
 
+function requestOptions(body: unknown, signal: AbortSignal) {
+  return { method: body ? "POST" : "GET", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: body ? JSON.stringify({ ...(body as Record<string, unknown>), clientId: process.env.PIOP_CONVERSATION_CLIENT }) : undefined, signal };
+}
+
 async function request(path: string, body?: unknown, signal?: AbortSignal, timeoutMs = 10_000) {
   signal?.throwIfAborted();
   if (!url || !token) throw new Error("piop session broker is unavailable");
@@ -52,7 +60,7 @@ async function request(path: string, body?: unknown, signal?: AbortSignal, timeo
   const timeout = setTimeout(() => controller.abort(new Error("Session broker request timed out")), timeoutMs);
   const abort = () => controller.abort(signal?.reason); signal?.addEventListener("abort", abort, { once: true });
   try {
-    const response = await fetch(`${url}${path}`, { method: body ? "POST" : "GET", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: body ? JSON.stringify({ ...(body as Record<string, unknown>), clientId: process.env.PIOP_CONVERSATION_CLIENT }) : undefined, signal: controller.signal });
+    const response = await fetch(`${url}${path}`, requestOptions(body, controller.signal));
     const result = await response.json() as { error?: string; data?: unknown };
     if (!response.ok || result.error) throw new Error(result.error || `Session broker returned HTTP ${response.status}`);
     return result.data;
@@ -155,6 +163,12 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
   };
   const unsubscribe = pi.events.on("pi-desktop:pause-controller", (value) => { (value as { controller?: PauseController }).controller = controller; });
   pi.on("session_shutdown", () => { generation += 1; unsubscribe(); pauseOperation = undefined; });
+  const applyControl = async (action: string, ctx: ExtensionContext) => {
+    if (action === "pause") await controller.pause(ctx);
+    else if (action === "resume") return controller.resume(ctx);
+    else if (action === "stop") await controller.stop(ctx);
+    else if (action !== "state") throw new Error(`Unknown desktop control: ${action}`);
+  };
   pi.registerCommand("pi-desktop-control", {
     description: "Control piop pause and resume",
     async handler(args, ctx) {
@@ -165,10 +179,7 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
       try {
         const control = JSON.parse(args) as { id?: string; action?: string }; id = control.id; action = control.action ?? "";
         if (!id || ctx.mode !== "rpc") throw new Error("Desktop control requires an RPC request");
-        if (action === "pause") await controller.pause(ctx);
-        else if (action === "resume") resumeMessage = controller.resume(ctx);
-        else if (action === "stop") await controller.stop(ctx);
-        else if (action !== "state") throw new Error(`Unknown desktop control: ${action}`);
+        resumeMessage = await applyControl(action, ctx);
         ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id, command: action, success: true, data: { isPaused, isPausing, ...(resumeMessage ? { resumeMessage } : {}) } })}`);
       } catch (error) {
         if (id) ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id, command: action, success: false, error: error instanceof Error ? error.message : String(error) })}`);
@@ -187,6 +198,12 @@ export function registerFastModeStatus(pi: ExtensionAPI) {
   let loaded = false;
   let available = false;
   let queue = Promise.resolve();
+  const loadConfig = async (path: string) => {
+    try {
+      const value = JSON.parse(await readFile(path, "utf8")) as Partial<FastConfig>;
+      if (typeof value.enabled === "boolean" && Array.isArray(value.targets) && value.targets.every((target) => target && typeof target.provider === "string" && typeof target.model === "string")) config = value as FastConfig;
+    } catch { /* A missing or unreadable setting must not appear as disabled. */ }
+  };
   const publish = (ctx: ExtensionContext, model = ctx.model) => {
     const supported = config?.targets.some((target) => target.provider === model?.provider && target.model === model?.id && ["openai", "openai-codex"].includes(target.provider));
     const text = available && config && supported ? (config.enabled ? "Fast mode on" : "Fast mode off") : undefined;
@@ -203,10 +220,7 @@ export function registerFastModeStatus(pi: ExtensionAPI) {
         const projectConfig = join(projectDir, packageName, "config.json");
         const projectLocal = extensionDir === projectDir || extensionDir.startsWith(`${projectDir}${sep}`);
         const path = existsSync(projectConfig) || projectLocal ? projectConfig : join(getAgentDir(), "extensions", packageName, "config.json");
-        try {
-          const value = JSON.parse(await readFile(path, "utf8")) as Partial<FastConfig>;
-          if (typeof value.enabled === "boolean" && Array.isArray(value.targets) && value.targets.every((target) => target && typeof target.provider === "string" && typeof target.model === "string")) config = value as FastConfig;
-        } catch { /* A missing or unreadable setting must not appear as disabled. */ }
+        await loadConfig(path);
       }
       loaded = true;
     }
@@ -216,17 +230,23 @@ export function registerFastModeStatus(pi: ExtensionAPI) {
   // startup and after /fast finishes writing its scoped configuration.
   // Keep that snapshot for model changes: another session may share the file
   // while each extension instance retains its own in-memory toggle.
-  pi.registerCommand("pi-desktop-fast-status", { description: "Read Fast Mode status for piop", handler: (args, ctx) => {
-    const next = queue.then(() => refresh(ctx, args.trim() === "refresh"));
-    queue = next.catch(() => undefined);
-    return next;
-  } });
+  pi.registerCommand("pi-desktop-fast-status", {
+    description: "Read Fast Mode status for piop", handler: (args, ctx) => {
+      const next = queue.then(() => refresh(ctx, args.trim() === "refresh"));
+      queue = next.catch(() => undefined);
+      return next;
+    }
+  });
   pi.on("session_start", () => { loaded = false; config = undefined; available = false; });
   pi.on("model_select", (event, ctx) => { if (ctx.mode === "rpc" && loaded) publish(ctx, event.model); });
 }
 
 function registerForkAndForget(pi: ExtensionAPI) {
   const statusKey = "pi-desktop-control-response";
+  const assertAssistantEntry = (ctx: ExtensionContext, entryId: string) => {
+    const entry = ctx.sessionManager.getEntry(entryId);
+    if (!entry || entry.type !== "message" || entry.message.role !== "assistant") throw new Error("Assistant response not found in this conversation");
+  };
   pi.registerCommand("pi-desktop-fork-and-forget", {
     description: "Continue this session from an earlier assistant response",
     async handler(args, ctx) {
@@ -235,8 +255,7 @@ function registerForkAndForget(pi: ExtensionAPI) {
         const request = JSON.parse(args) as { id?: string; entryId?: string };
         id = request.id;
         if (!id || ctx.mode !== "rpc" || typeof request.entryId !== "string") throw new Error("Invalid fork-and-forget request");
-        const entry = ctx.sessionManager.getEntry(request.entryId);
-        if (!entry || entry.type !== "message" || entry.message.role !== "assistant") throw new Error("Assistant response not found in this conversation");
+        assertAssistantEntry(ctx, request.entryId);
         const result = await ctx.navigateTree(request.entryId);
         if (!result.cancelled) pi.appendEntry("pi-desktop-fork-and-forget", { entryId: request.entryId });
         ctx.ui.setStatus(statusKey, `json:${JSON.stringify({ type: "response", id, success: true, data: { cancelled: result.cancelled } })}`);
@@ -313,6 +332,9 @@ export function registerCatchUp(pi: ExtensionAPI) {
     const agents = await request("/worktree-agents", { id: presenceId }) as Array<{ sessionId?: string }>;
     if (agents.length) throw new Error(`Another Pi UI agent is working in this worktree${agents[0].sessionId ? ` (session ${agents[0].sessionId})` : ""}. Stop or pause it before catching up.`);
   };
+  function assertMainWorktree(first: string[], main: string | undefined): asserts main is string {
+    if (!main || first.includes("bare")) throw new Error("No main working tree is available for this repository.");
+  }
   pi.registerCommand("catch-up", {
     description: "Reset this secondary worktree to the main worktree's commit (discards tracked changes)",
     async handler(args, ctx) {
@@ -330,7 +352,7 @@ export function registerCatchUp(pi: ExtensionAPI) {
         // Git lists the main worktree first. NUL delimiters preserve quoted paths.
         const first = (await git(root, "worktree", "list", "--porcelain", "-z")).split("\0\0")[0].split("\0");
         const main = first.find((field) => field.startsWith("worktree "))?.slice(9);
-        if (!main || first.includes("bare")) throw new Error("No main working tree is available for this repository.");
+        assertMainWorktree(first, main);
         if (await realpath(root) === await realpath(main)) { report("Already in the main worktree. Nothing changed."); return; }
         await assertWorktreeIdle();
         const commit = (await git(main, "rev-parse", "--verify", "HEAD^{commit}")).trim();
@@ -399,7 +421,6 @@ function registerVoiceHistory(pi: ExtensionAPI) {
     },
   });
 }
-
 
 type ForkOptions = { cwd?: string; worktree?: string; entryId?: string };
 type CreatedWorktree = { path: string; branch: string; setupError?: string | null };
@@ -473,14 +494,18 @@ export function registerSessionOperations(pi: ExtensionAPI) {
     try { pi.sendMessage({ customType: "piop-session-operation", content: JSON.stringify(await operation(), null, 2), display: true }, { triggerTurn: false }); }
     catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
   };
-  pi.registerCommand("fork-session", { description: 'Fork conversation: /fork-session [directory] or /fork-session --worktree name', handler: async (args, ctx) => report(ctx, () => {
-    const value = args.trim();
-    if (value === "--worktree") throw new Error("Usage: /fork-session --worktree name");
-    return fork(ctx, value.startsWith("--worktree ") ? { worktree: value.slice(11).trim() } : { cwd: value || undefined });
-  }) });
+  pi.registerCommand("fork-session", {
+    description: 'Fork conversation: /fork-session [directory] or /fork-session --worktree name', handler: async (args, ctx) => report(ctx, () => {
+      const value = args.trim();
+      if (value === "--worktree") throw new Error("Usage: /fork-session --worktree name");
+      return fork(ctx, value.startsWith("--worktree ") ? { worktree: value.slice(11).trim() } : { cwd: value || undefined });
+    })
+  });
   pi.registerCommand("create-worktree", { description: "Create worktree with current files: /create-worktree name", handler: async (args, ctx) => report(ctx, () => create(ctx, args.trim())) });
-  pi.registerCommand("remove-worktree", { description: "Remove unused clean worktree, keeping its branch: /remove-worktree path", handler: async (args, ctx) => report(ctx, () => {
-    if (!args.trim()) throw new Error("Usage: /remove-worktree path");
-    return remove(resolve(ctx.cwd, args.trim()));
-  }) });
+  pi.registerCommand("remove-worktree", {
+    description: "Remove unused clean worktree, keeping its branch: /remove-worktree path", handler: async (args, ctx) => report(ctx, () => {
+      if (!args.trim()) throw new Error("Usage: /remove-worktree path");
+      return remove(resolve(ctx.cwd, args.trim()));
+    })
+  });
 }

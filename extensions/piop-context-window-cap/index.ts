@@ -2,7 +2,6 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Model } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
@@ -19,16 +18,15 @@ async function loadCap(): Promise<number | undefined> {
     throw new Error(`Could not read ${configPath}: ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  if (config && typeof config === "object" && (config as Record<string, unknown>).enabled === false) return undefined;
-
-  const cap = config && typeof config === "object" ? (config as Record<string, unknown>).contextWindowCap : undefined;
+  const values = config && typeof config === "object" ? config as Record<string, unknown> : {};
+  if (values.enabled === false) return undefined;
+  const cap = values.contextWindowCap;
   if (typeof cap !== "number" || !Number.isSafeInteger(cap) || cap <= 0) {
     throw new Error(`${configPath}: contextWindowCap must be a positive integer`);
   }
 
   return cap;
 }
-
 
 function skillsFromPrompt(prompt: string) {
   const block = prompt.match(/\n\nThe following skills provide specialized instructions[\s\S]*?<\/available_skills>/)?.[0] ?? "";
@@ -67,8 +65,7 @@ function customMessageContent(value: unknown, customType: string) {
   if (!value || typeof value !== "object") return undefined;
   const entry = value as { type?: unknown; role?: unknown; customType?: unknown; message?: { role?: unknown; customType?: unknown; content?: unknown }; content?: unknown };
   if (entry.type === "message" && entry.message?.role === "custom" && entry.message.customType === customType) return textContent(entry.message.content);
-  if (entry.type === "custom_message" && entry.customType === customType) return textContent(entry.content);
-  if (entry.role === "custom" && entry.customType === customType) return textContent(entry.content);
+  if ((entry.type === "custom_message" || entry.role === "custom") && entry.customType === customType) return textContent(entry.content);
   return undefined;
 }
 
@@ -110,12 +107,25 @@ function changeInstructionFromMessages(messages: unknown[]) {
   return match ? { path: "File changes", content: match[1], block: match[0] } : undefined;
 }
 
+function savedCap(data: unknown) {
+  const saved = (data as { cap?: unknown } | undefined)?.cap;
+  if (saved !== null && (typeof saved !== "number" || !Number.isSafeInteger(saved) || saved < 1000)) throw new Error("Invalid saved session context cap");
+  return saved === null ? undefined : saved as number;
+}
+
+function precedingUser(messages: unknown[], contextIndex: number) {
+  for (let index = contextIndex - 1; index >= 0; index -= 1) {
+    if (messages[index] && typeof messages[index] === "object" && (messages[index] as { role?: unknown }).role === "user") return index;
+  }
+  return -1;
+}
+
 export default async function contextWindowCap(pi: ExtensionAPI) {
   const settings = () => { const request: { settings?: { contextWindowCap: number; contextWindowCapEnabled: boolean } } = {}; pi.events.emit("piop:runtime-settings", request); return request.settings; };
   const initial = settings();
   let cap = initial ? (initial.contextWindowCapEnabled ? initial.contextWindowCap : undefined) : await loadCap();
-  const originalWindows = new Map<Model<any>, number>();
-  const capModel = (model: Model<any> | undefined) => {
+  const originalWindows = new Map<{ contextWindow: number }, number>();
+  const capModel = (model: { contextWindow: number } | undefined) => {
     if (!model) return;
     if (!originalWindows.has(model)) originalWindows.set(model, model.contextWindow);
     const original = originalWindows.get(model)!;
@@ -124,9 +134,7 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
   const restoreCap = (ctx: ExtensionContext) => {
     const entry = ctx.sessionManager.getEntries().find((entry) => entry.type === "custom" && entry.customType === CAP_ENTRY);
     if (entry?.type === "custom") {
-      const saved = (entry.data as { cap?: unknown } | undefined)?.cap;
-      if (saved !== null && (typeof saved !== "number" || !Number.isSafeInteger(saved) || saved < 1000)) throw new Error("Invalid saved session context cap");
-      cap = saved === null ? undefined : saved as number;
+      cap = savedCap(entry.data);
     } else {
       const defaults = settings();
       if (defaults) cap = defaults.contextWindowCapEnabled ? defaults.contextWindowCap : undefined;
@@ -201,10 +209,7 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
       if (customMessageContent(messages[index], PROJECT_CONTEXT_MESSAGE) !== undefined) { contextIndex = index; break; }
     }
     if (contextIndex >= 0) {
-      let userIndex = -1;
-      for (let index = contextIndex - 1; index >= 0; index -= 1) {
-        if (messages[index] && typeof messages[index] === "object" && (messages[index] as { role?: unknown }).role === "user") { userIndex = index; break; }
-      }
+      const userIndex = precedingUser(messages, contextIndex);
       if (userIndex >= 0 && contextIndex === userIndex + 1) {
         messages = [...messages];
         const [context] = messages.splice(contextIndex, 1);

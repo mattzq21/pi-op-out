@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { ArrowDown, ArrowUp, Folder, FolderOpen, Search } from "lucide-react";
 import type { DirectoryListing, RemoteHost } from "../types";
 
@@ -26,6 +26,15 @@ const expandHome = (path: string, home: string) => {
   return home ? withSeparator(home) + (home.includes("\\") ? path.slice(2).replace(/\//g, "\\") : path.slice(2)) : "";
 };
 
+function parentPath(typedParent: string, homePath: string, basePath: string) {
+  return /^~[\\/]/.test(typedParent) ? expandHome(typedParent, homePath) : !typedParent ? basePath : /^(?:[\\/]|[a-z]:[\\/])/i.test(typedParent) ? typedParent : basePath ? withSeparator(basePath) + typedParent : typedParent;
+}
+
+function isHistoryShortcut(event: KeyboardEvent) {
+  const key = event.key.toLowerCase();
+  return (event.ctrlKey || event.metaKey) && !event.altKey && !event.nativeEvent.isComposing && (key === "z" || key === "y");
+}
+
 export function ProjectDialog({ initialPath, hosts, initialHostId, onHomeDirectory, onChooseDirectory, onOpen, onCancel }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -47,7 +56,7 @@ export function ProjectDialog({ initialPath, hosts, initialHostId, onHomeDirecto
   const [browseRequest, setBrowseRequest] = useState(0);
   const separator = Math.max(query.lastIndexOf("/"), query.lastIndexOf("\\"));
   const typedParent = separator < 0 ? "" : query.slice(0, separator + 1);
-  const parent = /^~[\\/]/.test(typedParent) ? expandHome(typedParent, homePath) : !typedParent ? basePath : /^(?:[\\/]|[a-z]:[\\/])/i.test(typedParent) ? typedParent : basePath ? withSeparator(basePath) + typedParent : typedParent;
+  const parent = parentPath(typedParent, homePath, basePath);
   const fragment = query.slice(separator + 1);
   const listing = loaded?.hostId === hostId && loaded.requested === parent ? loaded.listing : undefined;
   const results = (listing?.directories ?? []).filter((path) => folderName(path).toLocaleLowerCase().includes(fragment.toLocaleLowerCase())).sort((a, b) => {
@@ -130,13 +139,32 @@ export function ProjectDialog({ initialPath, hosts, initialHostId, onHomeDirecto
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { openingRef.current = false; setOpening(false); }
   };
+  const handlePathKey = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing || opening || event.metaKey || event.ctrlKey) return;
+    const move = () => { event.preventDefault(); setActive((index) => results.length ? (index + (event.key === "ArrowDown" ? 1 : -1) + results.length) % results.length : 0); };
+    const handlers: Record<string, () => void> = {
+      ArrowDown: move, ArrowUp: move,
+      Enter: () => { event.preventDefault(); if (fragment && selected) void open(selected); else if (query.trim()) void open(expandHome(query === "~" || /^(?:~[\\/]|[\\/]|[a-z]:[\\/])/i.test(query) ? query : withSeparator(basePath) + query, homePath)); },
+      Tab: () => { if (!event.shiftKey && selected && !loading) { event.preventDefault(); browse(selected); } },
+      Backspace: () => { if (event.altKey && listing?.parent) { event.preventDefault(); browse(listing.parent); } },
+    };
+    if (Object.hasOwn(handlers, event.key)) handlers[event.key]();
+  };
 
+  const renderDirectoryPaletteSearch = () => (<div className="directory-palette-search"><Search size={20} />{hasHomePrefix && <span className="directory-palette-prefix" aria-hidden="true">~/</span>}<input ref={inputRef} autoFocus role="combobox" aria-label={hasHomePrefix ? "Folder path relative to home" : "Search or type a folder path"} aria-autocomplete="list" aria-expanded="true" aria-controls="directory-palette-results" aria-activedescendant={!loading && selected ? "directory-result-" + active : undefined} autoComplete="off" spellCheck={false} placeholder="Type a folder path…" readOnly={opening} value={hasHomePrefix ? query.slice(2) : query} onChange={(event) => { changeQuery(hasHomePrefix ? "~/" + event.target.value.replace(/^~[\\/]/, "") : event.target.value); }} onKeyDown={handlePathKey} /></div>);
+  const renderDirectoryPaletteCaption = () => (<div className="directory-palette-caption"><span>{loading ? "Finding folders…" : fragment ? results.length + " matching folders" : "Continue into a folder"}</span><span>Tab to complete · Enter to open</span></div>);
+  const renderDirectoryPaletteResults = () => (<div id="directory-palette-results" className="directory-palette-results" role="listbox" aria-label="Matching folders" aria-busy={loading}>
+      {!loading && results.map((path, index) => <div id={"directory-result-" + index} key={path} role="option" aria-selected={index === active} className="directory-palette-result" onMouseDown={(event) => event.preventDefault()} onMouseMove={() => setActive(index)} onClick={() => { if (!opening) browse(path); }}><Folder size={17} /><span>{folderName(path)}</span></div>)}
+      {!loading && !results.length && <div className="directory-palette-empty">{error ? "Check the path and try again." : fragment ? "No matches. Keep typing a path, or press Enter to open it." : "No child folders. Press Enter to open this folder."}</div>}
+      {loading && <div className="directory-palette-empty" role="status">Loading folder suggestions…</div>}
+    </div>);
+  const renderDirectoryPaletteOpen = () => (<button className="directory-palette-open" disabled={!listing || loading || opening} onClick={() => void open()}><FolderOpen size={18} /><span><strong>{opening ? "Opening…" : "Open current folder"}</strong><small title={listing?.path}>{displayPath(listing?.path || parent, homePath) || "Type a path to begin"}</small></span><kbd>{isMac ? "⌘" : "Ctrl"} Enter</kbd></button>);
   return <dialog ref={dialogRef} className="extension-dialog directory-palette" aria-labelledby="project-dialog-title" onCancel={(event) => { event.preventDefault(); if (!openingRef.current) onCancel(); }} onMouseDown={(event) => {
     const bounds = event.currentTarget.getBoundingClientRect();
     if (!openingRef.current && (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)) onCancel();
   }} onKeyDown={(event) => {
     const key = event.key.toLowerCase();
-    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.nativeEvent.isComposing && (key === "z" || key === "y")) {
+    if (isHistoryShortcut(event)) {
       event.preventDefault(); event.stopPropagation();
       if (!openingRef.current) navigateHistory(key === "y" || event.shiftKey);
       return;
@@ -144,21 +172,11 @@ export function ProjectDialog({ initialPath, hosts, initialHostId, onHomeDirecto
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void open(); }
   }}>
     <header className="directory-palette-heading"><h2 id="project-dialog-title">Jump to a folder</h2><select aria-label="Machine" disabled={opening} value={hostId} onChange={(event) => setHostId(event.target.value)}><option value="local">Local</option>{hosts.map((host) => <option key={host.id} value={host.id}>{host.name}</option>)}</select><button className="directory-palette-escape" disabled={opening} onClick={onCancel}>esc</button></header>
-    <div className="directory-palette-search"><Search size={20} />{hasHomePrefix && <span className="directory-palette-prefix" aria-hidden="true">~/</span>}<input ref={inputRef} autoFocus role="combobox" aria-label={hasHomePrefix ? "Folder path relative to home" : "Search or type a folder path"} aria-autocomplete="list" aria-expanded="true" aria-controls="directory-palette-results" aria-activedescendant={!loading && selected ? "directory-result-" + active : undefined} autoComplete="off" spellCheck={false} placeholder="Type a folder path…" readOnly={opening} value={hasHomePrefix ? query.slice(2) : query} onChange={(event) => { changeQuery(hasHomePrefix ? "~/" + event.target.value.replace(/^~[\\/]/, "") : event.target.value); }} onKeyDown={(event) => {
-      if (event.nativeEvent.isComposing || opening || event.metaKey || event.ctrlKey) return;
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setActive((index) => results.length ? (index + (event.key === "ArrowDown" ? 1 : -1) + results.length) % results.length : 0); }
-      else if (event.key === "Enter") { event.preventDefault(); if (fragment && selected) void open(selected); else if (query.trim()) void open(expandHome(query === "~" || /^(?:~[\\/]|[\\/]|[a-z]:[\\/])/i.test(query) ? query : withSeparator(basePath) + query, homePath)); }
-      else if (event.key === "Tab" && !event.shiftKey && selected && !loading) { event.preventDefault(); browse(selected); }
-      else if (event.key === "Backspace" && event.altKey && listing?.parent) { event.preventDefault(); browse(listing.parent); }
-    }} /></div>
-    <div className="directory-palette-caption"><span>{loading ? "Finding folders…" : fragment ? results.length + " matching folders" : "Continue into a folder"}</span><span>Tab to complete · Enter to open</span></div>
-    <div id="directory-palette-results" className="directory-palette-results" role="listbox" aria-label="Matching folders" aria-busy={loading}>
-      {!loading && results.map((path, index) => <div id={"directory-result-" + index} key={path} role="option" aria-selected={index === active} className="directory-palette-result" onMouseDown={(event) => event.preventDefault()} onMouseMove={() => setActive(index)} onClick={() => { if (!opening) browse(path); }}><Folder size={17} /><span>{folderName(path)}</span></div>)}
-      {!loading && !results.length && <div className="directory-palette-empty">{error ? "Check the path and try again." : fragment ? "No matches. Keep typing a path, or press Enter to open it." : "No child folders. Press Enter to open this folder."}</div>}
-      {loading && <div className="directory-palette-empty" role="status">Loading folder suggestions…</div>}
-    </div>
+    {renderDirectoryPaletteSearch()}
+    {renderDirectoryPaletteCaption()}
+    {renderDirectoryPaletteResults()}
     {error && <p className="dialog-error" role="alert">{error}</p>}
-    <button className="directory-palette-open" disabled={!listing || loading || opening} onClick={() => void open()}><FolderOpen size={18} /><span><strong>{opening ? "Opening…" : "Open current folder"}</strong><small title={listing?.path}>{displayPath(listing?.path || parent, homePath) || "Type a path to begin"}</small></span><kbd>{isMac ? "⌘" : "Ctrl"} Enter</kbd></button>
+    {renderDirectoryPaletteOpen()}
     <footer className="directory-palette-hints"><span><ArrowUp size={12} /><ArrowDown size={12} /> navigate</span><span>Alt + Backspace parent</span></footer>
   </dialog>;
 }

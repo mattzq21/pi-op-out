@@ -35,26 +35,36 @@ function legacyGroups(seeds: SessionGroupSeed[]): SessionGroups {
   const removedProjects = Array.isArray(removed) ? removed.filter((id): id is string => typeof id === "string") : [];
   const groups = new Map(seeds.filter((seed) => !removedProjects.includes(seed.project.id)).map((seed) => [seed.project.id, seed.project]));
   const custom = read("pi-desktop-custom-session-groups");
+  addLegacyCustomGroups(groups, custom);
+  const assignments = legacyAssignments(groups, read("pi-desktop-session-locations"), removedProjects);
+  return { groups: [...groups.values()], assignments, removedProjects };
+}
+
+function addLegacyCustomGroups(groups: Map<string, SessionGroup>, custom: unknown) {
   if (Array.isArray(custom)) for (const group of custom) {
     if (group && typeof group.id === "string" && typeof group.name === "string" && group.name.trim()) {
       const id = `__pi-desktop-custom-group__:${group.id}`;
       groups.set(id, { id, name: group.name });
     }
   }
+}
+
+function addLegacyLocation(groups: Map<string, SessionGroup>, location: string, removedProjects: string[]) {
+  if (groups.has(location) || removedProjects.includes(location) || location.startsWith("__pi-desktop-")) return;
+  const separator = location.indexOf(":");
+  if (separator <= 0) return;
+  const hostId = location.slice(0, separator); const cwd = location.slice(separator + 1);
+  if (cwd) groups.set(location, { id: location, name: cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd, cwd, hostId });
+}
+
+function legacyAssignments(groups: Map<string, SessionGroup>, locations: unknown, removedProjects: string[]) {
   const assignments: Record<string, string | null> = {};
-  const locations = read("pi-desktop-session-locations");
   if (locations && typeof locations === "object" && !Array.isArray(locations)) for (const [key, location] of Object.entries(locations)) {
     if (typeof location !== "string") continue;
-    if (!groups.has(location) && !removedProjects.includes(location) && !location.startsWith("__pi-desktop-")) {
-      const separator = location.indexOf(":");
-      if (separator > 0) {
-        const hostId = location.slice(0, separator); const cwd = location.slice(separator + 1);
-        if (cwd) groups.set(location, { id: location, name: cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd, cwd, hostId });
-      }
-    }
+    addLegacyLocation(groups, location, removedProjects);
     assignments[key] = groups.has(location) ? location : null;
   }
-  return { groups: [...groups.values()], assignments, removedProjects };
+  return assignments;
 }
 
 export function useSessionGroups(sessions: SessionSummary[]) {

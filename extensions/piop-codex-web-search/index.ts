@@ -83,6 +83,29 @@ function responseError(payload: RecordValue): string | undefined {
 }
 
 // Codex uses SSE even though the caller only needs the completed answer.
+function streamEvent(frame: string) {
+  const data = frame.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
+  if (!data || data === "[DONE]") return undefined;
+  const event: unknown = JSON.parse(data);
+  if (!record(event)) return undefined;
+  if (["error", "response.failed", "response.incomplete"].includes(String(event.type))) {
+    const failure = record(event.response) ? event.response : event;
+    throw new Error(responseError(failure) ?? (typeof event.message === "string" ? event.message : "Codex web search failed"));
+  }
+  return event;
+}
+
+function streamResponse(text: string, items: RecordValue[]) {
+  let completed: RecordValue | undefined;
+  for (const frame of text.split(/\r?\n\r?\n/)) {
+    const event = streamEvent(frame);
+    if (!event) continue;
+    if (event.type === "response.output_item.done" && record(event.item)) items.push(event.item);
+    if ((event.type === "response.completed" || event.type === "response.done") && record(event.response)) completed = event.response;
+  }
+  return completed;
+}
+
 function parseResponse(text: string): RecordValue[] {
   let completed: RecordValue | undefined;
   const items: RecordValue[] = [];
@@ -91,19 +114,7 @@ function parseResponse(text: string): RecordValue[] {
     if (!record(payload)) throw new Error("Invalid Codex web search response");
     completed = payload;
   } else {
-    for (const frame of text.split(/\r?\n\r?\n/)) {
-      const data = frame.split(/\r?\n/).filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice(5).trimStart()).join("\n");
-      if (!data || data === "[DONE]") continue;
-      const event: unknown = JSON.parse(data);
-      if (!record(event)) continue;
-      if (event.type === "error" || event.type === "response.failed" || event.type === "response.incomplete") {
-        const failure = record(event.response) ? event.response : event;
-        throw new Error(responseError(failure) ?? (typeof event.message === "string" ? event.message : "Codex web search failed"));
-      }
-      if (event.type === "response.output_item.done" && record(event.item)) items.push(event.item);
-      if ((event.type === "response.completed" || event.type === "response.done") && record(event.response)) completed = event.response;
-    }
+    completed = streamResponse(text, items);
   }
   if (!completed) throw new Error("Codex web search stream ended before completion. Try the search again.");
   const error = responseError(completed);
@@ -113,10 +124,28 @@ function parseResponse(text: string): RecordValue[] {
   return output;
 }
 
+function answerParts(output: RecordValue[], addSource: (source: RecordValue) => void) {
+  const parts: string[] = [];
+  for (const item of output) {
+    if (item.type !== "message" || !Array.isArray(item.content)) continue;
+    for (const part of item.content.filter(record)) {
+      if (part.type === "output_text" && typeof part.text === "string") parts.push(part.text);
+      if (Array.isArray(part.annotations)) {
+        for (const annotation of part.annotations.filter(record)) if (annotation.type === "url_citation") addSource(annotation);
+      }
+    }
+  }
+  return parts;
+}
+
+function sourceTitle(source: RecordValue, clean: string) {
+  const title = source.title ?? source.caption;
+  return typeof title === "string" && title.trim() ? title : clean;
+}
+
 function extractResult(output: RecordValue[]) {
   const sources: Source[] = [];
   const seen = new Set<string>();
-  const parts: string[] = [];
   const addSource = (source: RecordValue) => {
     const raw = source.url ?? source.source_website_url;
     if (typeof raw !== "string") return;
@@ -127,18 +156,9 @@ function extractResult(output: RecordValue[]) {
     const clean = url.toString();
     if (seen.has(clean)) return;
     seen.add(clean);
-    const title = source.title ?? source.caption;
-    sources.push({ title: typeof title === "string" && title.trim() ? title : clean, url: clean });
+    sources.push({ title: sourceTitle(source, clean), url: clean });
   };
-  for (const item of output) {
-    if (item.type !== "message" || !Array.isArray(item.content)) continue;
-    for (const part of item.content.filter(record)) {
-      if (part.type === "output_text" && typeof part.text === "string") parts.push(part.text);
-      if (Array.isArray(part.annotations)) {
-        for (const annotation of part.annotations.filter(record)) if (annotation.type === "url_citation") addSource(annotation);
-      }
-    }
-  }
+  const parts = answerParts(output, addSource);
   for (const item of output) {
     if (item.type !== "web_search_call") continue;
     for (const group of [record(item.action) ? item.action.sources : undefined, item.sources, item.results]) {
@@ -148,6 +168,29 @@ function extractResult(output: RecordValue[]) {
   const answer = parts.join("\n").trim();
   if (!answer && !sources.length) throw new Error("Codex web search returned no answer or sources.");
   return { answer, sources };
+}
+
+function searchHeaders(apiKey: string, extra: Record<string, string | null> | undefined) {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(extra ?? {})) if (value !== null) headers.set(key, value);
+  headers.set("Authorization", `Bearer ${apiKey}`);
+  headers.set("chatgpt-account-id", accountId(apiKey));
+  headers.set("Content-Type", "application/json");
+  headers.set("Accept", "text/event-stream");
+  headers.set("OpenAI-Beta", "responses=experimental");
+  headers.set("originator", "pi");
+  return headers;
+}
+
+function searchFailure(error: unknown, apiKey: string, timeout: AbortSignal, signal?: AbortSignal) {
+  if (signal?.aborted) return new Error("Codex web search cancelled.");
+  if (timeout.aborted) return new Error("Codex web search timed out after 60 seconds. Try a narrower query.");
+  return new Error((error instanceof Error ? error.message : String(error)).split(apiKey).join("[redacted]"));
+}
+
+function searchContent(result: ReturnType<typeof extractResult>) {
+  const sourceText = result.sources.map((source, index) => `${index + 1}. ${source.title}: ${source.url}`).join("\n");
+  return [result.answer, sourceText && `Sources:\n${sourceText}`].filter(Boolean).join("\n\n");
 }
 
 export default function codexWebSearch(pi: ExtensionAPI) {
@@ -168,14 +211,7 @@ export default function codexWebSearch(pi: ExtensionAPI) {
       const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
       if (!auth.ok || !auth.apiKey) throw new Error("Codex web search authentication is unavailable. Use Pi /login on this host.");
       signal?.throwIfAborted();
-      const headers = new Headers();
-      for (const [key, value] of Object.entries(auth.headers ?? {})) if (value !== null) headers.set(key, value);
-      headers.set("Authorization", `Bearer ${auth.apiKey}`);
-      headers.set("chatgpt-account-id", accountId(auth.apiKey));
-      headers.set("Content-Type", "application/json");
-      headers.set("Accept", "text/event-stream");
-      headers.set("OpenAI-Beta", "responses=experimental");
-      headers.set("originator", "pi");
+      const headers = searchHeaders(auth.apiKey, auth.headers);
       const timeout = AbortSignal.timeout(TIMEOUT_MS);
       try {
         const response = await fetch(ENDPOINT, {
@@ -193,15 +229,12 @@ export default function codexWebSearch(pi: ExtensionAPI) {
         const text = await response.text();
         if (!response.ok) throw new Error(`Codex web search HTTP ${response.status}: ${text.split(auth.apiKey).join("[redacted]").slice(0, 300)}`);
         const result = extractResult(parseResponse(text));
-        const sourceText = result.sources.map((source, index) => `${index + 1}. ${source.title}: ${source.url}`).join("\n");
         return {
-          content: [{ type: "text", text: [result.answer, sourceText && `Sources:\n${sourceText}`].filter(Boolean).join("\n\n") }],
+          content: [{ type: "text", text: searchContent(result) }],
           details: { model: model.id, ...result },
         };
       } catch (error) {
-        if (signal?.aborted) throw new Error("Codex web search cancelled.");
-        if (timeout.aborted) throw new Error("Codex web search timed out after 60 seconds. Try a narrower query.");
-        throw new Error((error instanceof Error ? error.message : String(error)).split(auth.apiKey).join("[redacted]"));
+        throw searchFailure(error, auth.apiKey, timeout, signal);
       }
     },
   });

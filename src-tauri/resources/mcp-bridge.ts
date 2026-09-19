@@ -24,17 +24,43 @@ const MCP_STATUS_KEY = "pi-desktop-mcp-status";
 
 function splitArgs(input = ""): string[] {
   const result: string[] = []; let current = ""; let quote: "'" | '"' | undefined; let escaped = false; let present = false;
-  for (const char of input) {
-    if (escaped) { present = true; current += char; escaped = false; continue; }
-    if (char === "\\" && quote !== "'") { escaped = true; present = true; continue; }
-    if (quote) { if (char === quote) quote = undefined; else current += char; continue; }
-    if (char === "'" || char === '"') { quote = char; present = true; continue; }
-    if (/\s/.test(char)) { if (present) { result.push(current); current = ""; present = false; } continue; }
+  const consume = (char: string) => {
+    if (escaped) { present = true; current += char; escaped = false; return; }
+    if (char === "\\" && quote !== "'") { escaped = true; present = true; return; }
+    if (quote) { if (char === quote) quote = undefined; else current += char; return; }
+    if (char === "'" || char === '"') { quote = char; present = true; return; }
+    if (/\s/.test(char)) { if (present) { result.push(current); current = ""; present = false; } return; }
     current += char; present = true;
-  }
+  };
+  for (const char of input) consume(char);
   if (escaped) current += "\\";
   if (quote) throw new Error("Unterminated quote in MCP server arguments");
   if (present) result.push(current); return result;
+}
+
+async function discoverTools(client: Client, signal: AbortSignal) {
+  const discovered: Awaited<ReturnType<Client["listTools"]>>["tools"] = [];
+  let cursor: string | undefined;
+  do {
+    const result = await client.listTools(cursor ? { cursor } : undefined, { timeout: REQUEST_TIMEOUT_MS, signal });
+    discovered.push(...result.tools); cursor = result.nextCursor;
+  } while (cursor);
+  return discovered;
+}
+
+function toolParameters(inputSchema: Awaited<ReturnType<Client["listTools"]>>["tools"][number]["inputSchema"]) {
+  const schema = inputSchema ?? { type: "object", properties: {} };
+  const injectAgentId = Object.hasOwn(schema.properties ?? {}, "agent_id");
+  const parameters = injectAgentId ? {
+    ...schema,
+    properties: Object.fromEntries(Object.entries(schema.properties ?? {}).filter(([key]) => key !== "agent_id")),
+    required: schema.required?.filter((key) => key !== "agent_id"),
+  } : schema;
+  return { injectAgentId, parameters };
+}
+
+function serverAllowed(server: ServerConfig | undefined, allowed: Set<string> | undefined, id: string): server is ServerConfig {
+  return Boolean(server && server.enabled && (!allowed || allowed.has(id)));
 }
 
 function safeName(value: string): string {
@@ -57,21 +83,21 @@ async function connectClient(client: Client, config: ServerConfig, instanceId: s
   client.onerror = (error) => { diagnostic(`${error.message}\n`); process.stderr.write(`[mcp:${config.name}] ${error.message}\n`); };
   const transport = config.transport === "http"
     ? (() => {
-        if (!config.url?.trim()) throw new Error("URL is required for HTTP transport");
-        const url = new URL(config.url);
-        if (!/^https?:$/.test(url.protocol)) throw new Error("MCP URL must use HTTP or HTTPS");
-        return new StreamableHTTPClientTransport(url, { requestInit: { headers: parseHeaders(config.headers) } });
-      })()
+      if (!config.url?.trim()) throw new Error("URL is required for HTTP transport");
+      const url = new URL(config.url);
+      if (!/^https?:$/.test(url.protocol)) throw new Error("MCP URL must use HTTP or HTTPS");
+      return new StreamableHTTPClientTransport(url, { requestInit: { headers: parseHeaders(config.headers) } });
+    })()
     : (() => {
-        if (!config.command?.trim()) throw new Error("Command is required for stdio transport");
-        return new StdioClientTransport({
-          command: config.command,
-          args: splitArgs(config.args),
-          env: { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PIOP_CUA_INSTANCE_ID: instanceId },
-          stderr: "pipe",
-          maxBufferSize: MAX_MCP_MESSAGE_BYTES,
-        });
-      })();
+      if (!config.command?.trim()) throw new Error("Command is required for stdio transport");
+      return new StdioClientTransport({
+        command: config.command,
+        args: splitArgs(config.args),
+        env: { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), PIOP_CUA_INSTANCE_ID: instanceId },
+        stderr: "pipe",
+        maxBufferSize: MAX_MCP_MESSAGE_BYTES,
+      });
+    })();
   if (transport instanceof StdioClientTransport) {
     transport.stderr?.on("data", (chunk: Buffer) => {
       diagnostic(chunk.toString("utf8"));
@@ -153,7 +179,7 @@ export default async function mcpBridge(pi: ExtensionAPI) {
     const errors: string[] = [];
     await Promise.all([...wanted].map(async (id) => {
       const server = servers.find((item) => item.id === id);
-      if (!server || !server.enabled || (allowed && !allowed.has(id))) {
+      if (!serverAllowed(server, allowed, id)) {
         const error = `MCP server "${id}" is unavailable or disabled`;
         statuses.set(id, { id, status: "error", error }); errors.push(error); return;
       }
@@ -168,22 +194,11 @@ export default async function mcpBridge(pi: ExtensionAPI) {
       const errorDetails = (message: string) => recentOutput.trim() ? `${message}\n\nRecent MCP output (last 8 KB):\n${recentOutput.trim()}` : message;
       try {
         await connectClient(client, server, instanceId, shutdown.signal, diagnostic);
-        const discovered = [];
-        let cursor: string | undefined;
-        do {
-          const result = await client.listTools(cursor ? { cursor } : undefined, { timeout: REQUEST_TIMEOUT_MS, signal: shutdown.signal });
-          discovered.push(...result.tools); cursor = result.nextCursor;
-        } while (cursor);
+        const discovered = await discoverTools(client, shutdown.signal);
         if (shutdown.signal.aborted) throw new Error("MCP bridge has shut down");
         for (const tool of discovered) {
           const name = registeredName(server.id, tool.name);
-          const schema = tool.inputSchema ?? { type: "object", properties: {} };
-          const injectAgentId = Object.hasOwn(schema.properties ?? {}, "agent_id");
-          const parameters = injectAgentId ? {
-            ...schema,
-            properties: Object.fromEntries(Object.entries(schema.properties ?? {}).filter(([key]) => key !== "agent_id")),
-            required: schema.required?.filter((key) => key !== "agent_id"),
-          } : schema;
+          const { injectAgentId, parameters } = toolParameters(tool.inputSchema);
           connection.tools.push(name);
           pi.registerTool({
             name, label: `${server.name} · ${tool.name}`, description: tool.description || `Run ${tool.name} on the ${server.name} MCP server`,
@@ -255,10 +270,12 @@ export default async function mcpBridge(pi: ExtensionAPI) {
     }
     return { action: "continue" as const };
   });
-  pi.registerCommand("mcp-status", { description: "Show MCP servers and tools loaded by piop", handler: async () => {
-    const loaded = [...connections].filter(([, connection]) => connection.connected);
-    pi.sendMessage({ customType: MCP_STATUS_KEY, content: loaded.length ? loaded.map(([id, connection]) => `${id}: ${connection.tools.join(", ") || "no tools"}`).join("\n") : "No MCP servers loaded", display: true }, { triggerTurn: false });
-  } });
+  pi.registerCommand("mcp-status", {
+    description: "Show MCP servers and tools loaded by piop", handler: async () => {
+      const loaded = [...connections].filter(([, connection]) => connection.connected);
+      pi.sendMessage({ customType: MCP_STATUS_KEY, content: loaded.length ? loaded.map(([id, connection]) => `${id}: ${connection.tools.join(", ") || "no tools"}`).join("\n") : "No MCP servers loaded", display: true }, { triggerTurn: false });
+    }
+  });
   pi.on("context", (event) => ({ messages: event.messages.filter((message) => message.role !== "custom" || message.customType !== MCP_STATUS_KEY) }));
   pi.on("session_shutdown", async () => {
     unsubscribe(); stopUpdates(); shutdown.abort();

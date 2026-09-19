@@ -3,11 +3,13 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-type Handler = (...args: any[]) => any;
+type Handler = (...args: unknown[]) => unknown;
+type Tool = Parameters<ExtensionAPI["registerTool"]>[0];
+type Command = Parameters<ExtensionAPI["registerCommand"]>[1];
 type Group = {
   key: string;
   handlers: Map<string, Handler[]>;
-  registrations: Map<string, Map<string, any[]>>;
+  registrations: Map<string, Map<string, unknown[]>>;
   listeners: Array<{ name: string; handler: Handler; removed?: boolean; unsubscribe?: () => void }>;
   stops: Array<() => void>;
   ready: boolean;
@@ -57,37 +59,39 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
     const group: Group = { key, handlers: new Map(), registrations: new Map(), listeners: [], stops: [], ready: false };
     const loaded = new Set<string>();
     const visiting: string[] = [];
-    const api = new Proxy(pi, { get(target, property) {
-      if (property === "on") return (event: string, handler: Handler) => {
-        const list = group.handlers.get(event) ?? []; list.push(handler); group.handlers.set(event, list);
-      };
-      if (property === "events") return {
-        on(name: string, handler: Handler) {
-          const listener: Group["listeners"][number] = { name, handler, removed: false }; group.listeners.push(listener);
-          let unsubscribe: (() => void) | undefined;
-          if (group.ready && current === group) { unsubscribe = pi.events.on(name, handler); group.stops.push(unsubscribe); }
-          return () => { listener.removed = true; unsubscribe?.(); listener.unsubscribe?.(); };
-        },
-        emit(name: string, value: unknown) {
-          if (!group.ready || current !== group) throw new Error("piop extension events may only be emitted after activation");
-          return pi.events.emit(name, value);
-        },
-      };
-      if (registrations.has(String(property))) return (...args: any[]) => {
-        if (group.ready) throw new Error("piop extensions must register resources during initialization");
-        const name = property === "registerTool" ? args[0].name : args[0];
-        const items = group.registrations.get(String(property)) ?? new Map();
-        if (items.has(name)) throw new Error(`Duplicate piop extension registration: ${String(property)} ${name}`);
-        items.set(name, args); group.registrations.set(String(property), items);
-      };
-      if (property === "getFlag" && !group.ready) return (name: string) => group.registrations.get("registerFlag")?.get(name)?.[1]?.default;
-      const value = Reflect.get(target, property);
-      if (typeof value !== "function") return value;
-      return (...args: any[]) => {
-        if (!group.ready || current !== group) throw new Error(`piop extension API ${String(property)} is unavailable before activation or after deactivation`);
-        return value.apply(target, args);
-      };
-    } });
+    const api = new Proxy(pi, {
+      get(target, property) {
+        if (property === "on") return (event: string, handler: Handler) => {
+          const list = group.handlers.get(event) ?? []; list.push(handler); group.handlers.set(event, list);
+        };
+        if (property === "events") return {
+          on(name: string, handler: Handler) {
+            const listener: Group["listeners"][number] = { name, handler, removed: false }; group.listeners.push(listener);
+            let unsubscribe: (() => void) | undefined;
+            if (group.ready && current === group) { unsubscribe = pi.events.on(name, handler); group.stops.push(unsubscribe); }
+            return () => { listener.removed = true; unsubscribe?.(); listener.unsubscribe?.(); };
+          },
+          emit(name: string, value: unknown) {
+            if (!group.ready || current !== group) throw new Error("piop extension events may only be emitted after activation");
+            return pi.events.emit(name, value);
+          },
+        };
+        if (registrations.has(String(property))) return (...args: unknown[]) => {
+          if (group.ready) throw new Error("piop extensions must register resources during initialization");
+          const name = property === "registerTool" ? (args[0] as Tool).name : args[0] as string;
+          const items = group.registrations.get(String(property)) ?? new Map();
+          if (items.has(name)) throw new Error(`Duplicate piop extension registration: ${String(property)} ${name}`);
+          items.set(name, args); group.registrations.set(String(property), items);
+        };
+        if (property === "getFlag" && !group.ready) return (name: string) => (group.registrations.get("registerFlag")?.get(name)?.[1] as { default?: unknown } | undefined)?.default;
+        const value = Reflect.get(target, property);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => {
+          if (!group.ready || current !== group) throw new Error(`piop extension API ${String(property)} is unavailable before activation or after deactivation`);
+          return value.apply(target, args);
+        };
+      }
+    });
     async function load(path: string, parent: string) {
       const absolute = path.startsWith("~/") ? join(homedir(), path.slice(2)) : resolve(parent, path);
       try {
@@ -124,33 +128,38 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
       if (event === "session_start") continue;
       for (let index = dispatchedEvents.get(event) ?? 0; index < handlers.length; index++) {
         // Individual slots let Pi preserve its native transform/cancellation semantics.
-        pi.on(event as any, (...args: any[]) => current?.handlers.get(event)?.[index]?.(...args));
+        const subscribe = pi.on as unknown as (event: string, handler: Handler) => void;
+        subscribe.call(pi, event, (...args: unknown[]) => current?.handlers.get(event)?.[index]?.(...args));
       }
       dispatchedEvents.set(event, Math.max(dispatchedEvents.get(event) ?? 0, handlers.length));
     }
   }
-  function publishRegistration(method: string, name: string, args: any[]) {
-  if (method === "registerCommand") {
-    if (dispatchedCommands.has(name)) return;
-    dispatchedCommands.add(name);
-    pi.registerCommand(name, { ...args[1], handler: (...values: any[]) => {
-      const command = current?.registrations.get(method)?.get(name)?.[1];
-      if (!command) throw new Error(`piop extension command is inactive: ${name}`);
-      return command.handler(...values);
-    } });
-  } else if (method === "registerTool") {
-    managedTools.add(name);
-    pi.registerTool({ ...args[0], execute: (...values: any[]) => {
-      const tool = current?.registrations.get(method)?.get(name)?.[0];
-      if (!tool) throw new Error(`piop extension tool is inactive: ${name}`);
-      return tool.execute(...values);
-    } });
-  } else {
-    // Renderers remain available for historical messages in the universal context.
-    const values = method === "registerShortcut" ? [args[0], { ...args[1], handler: (...values: any[]) => current?.registrations.get(method)?.get(name)?.[1].handler(...values) }] : args;
-    (pi as any)[method](...values);
+  function publishRegistration(method: string, name: string, args: unknown[]) {
+    if (method === "registerCommand") {
+      if (dispatchedCommands.has(name)) return;
+      dispatchedCommands.add(name);
+      pi.registerCommand(name, {
+        ...args[1] as Command, handler: (...values: Parameters<Command["handler"]>) => {
+          const command = current?.registrations.get(method)?.get(name)?.[1] as Command | undefined;
+          if (!command) throw new Error(`piop extension command is inactive: ${name}`);
+          return command.handler(...values);
+        }
+      });
+    } else if (method === "registerTool") {
+      managedTools.add(name);
+      pi.registerTool({
+        ...args[0] as Tool, execute: (...values: Parameters<Tool["execute"]>) => {
+          const tool = current?.registrations.get(method)?.get(name)?.[0] as Tool | undefined;
+          if (!tool) throw new Error(`piop extension tool is inactive: ${name}`);
+          return tool.execute(...values);
+        }
+      });
+    } else {
+      // Renderers remain available for historical messages in the universal context.
+      const values = method === "registerShortcut" ? [args[0], { ...args[1] as object, handler: (...values: unknown[]) => (current?.registrations.get(method)?.get(name)?.[1] as { handler: Handler } | undefined)?.handler(...values) }] : args;
+      Reflect.get(pi, method).apply(pi, values);
+    }
   }
-}
 
   async function start(group: Group, ctx: ExtensionContext) {
     for (const handler of group.handlers.get("session_start") ?? []) await handler({ type: "session_start" }, ctx);

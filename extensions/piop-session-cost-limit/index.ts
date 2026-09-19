@@ -21,12 +21,16 @@ function parseAmount(raw: string): number {
   return amount;
 }
 
+function entryCost(entry: unknown): number {
+  if (!entry || typeof entry !== "object" || (entry as { type?: unknown }).type !== "message") return 0;
+  const amount = (entry as { message?: { usage?: { cost?: { total?: unknown } } } }).message?.usage?.cost?.total;
+  return typeof amount === "number" && Number.isFinite(amount) && amount > 0 ? amount : 0;
+}
+
 function sessionCost(ctx: CostContext): number {
   let total = 0;
   for (const entry of ctx.sessionManager.getBranch()) {
-    if (!entry || typeof entry !== "object" || (entry as { type?: unknown }).type !== "message") continue;
-    const amount = (entry as { message?: { usage?: { cost?: { total?: unknown } } } }).message?.usage?.cost?.total;
-    if (typeof amount === "number" && Number.isFinite(amount) && amount > 0) total += amount;
+    total += entryCost(entry);
   }
   return total;
 }

@@ -48,13 +48,8 @@ function canonical(value, follow = true, depth = 0) {
     catch (error) {
       if (error.code !== 'ENOENT') throw error;
       // A write through a dangling symlink creates its target, not the link.
-      try {
-        if (raw.lstatSync(name).isSymbolicLink()) {
-          const target = raw.readlinkSync(name);
-          return canonical(path.isAbsolute(target) ? target
-            : path.dirname(name) + path.sep + target, true, depth + 1);
-        }
-      } catch (missing) { if (missing.code !== 'ENOENT') throw missing; }
+      const target = danglingTarget(name, depth);
+      if (target !== undefined) return target;
     }
   }
   const parent = path.dirname(name);
@@ -62,6 +57,15 @@ function canonical(value, follow = true, depth = 0) {
   // Recursive copies can create several missing ancestors. Resolve the nearest
   // existing ancestor (including its symlinks) before appending missing names.
   return path.join(canonical(parent, true, depth), path.basename(name));
+}
+
+function danglingTarget(name, depth) {
+  try {
+    if (raw.lstatSync(name).isSymbolicLink()) {
+      const target = raw.readlinkSync(name);
+      return canonical(path.isAbsolute(target) ? target : path.dirname(name) + path.sep + target, true, depth + 1);
+    }
+  } catch (missing) { if (missing.code !== 'ENOENT') throw missing; }
 }
 
 function readBytes(name, limit) {
@@ -98,7 +102,7 @@ function unavailable(name) {
 
 function acquireLock(name) {
   const deadline = Date.now() + 100;
-  for (;;) {
+  for (; ;) {
     try { raw.mkdirSync(lock); return true; }
     catch (error) {
       if (error.code !== 'EEXIST' || Date.now() >= deadline) { unavailable(name); return false; }
@@ -108,30 +112,43 @@ function acquireLock(name) {
   }
 }
 
-function snapshot(name) {
-  if (name === root || name.startsWith(root + path.sep)) return;
+function snapshotState() {
+  try { return JSON.parse(decoder.decode(readBytes(statePath, 256 * 1024))); }
+  catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    return { paths: [], bytes: 0 };
+  }
+}
+
+function snapshotContent(name) {
+  let content = null;
+  let skip = false;
+  try {
+    const bytes = readBytes(name, maxFile);
+    if (bytes.includes(0)) skip = true;
+    else content = decoder.decode(bytes);
+  } catch (error) { skip = error.code !== 'ENOENT'; }
+  return { content, skip };
+}
+
+function canSnapshot(name) {
+  if (name === root || name.startsWith(root + path.sep)) return false;
   // Never capture a later, already-truncated state after the first attempt failed.
-  if (attempted.has(name)) return;
-  if (attempted.size >= 32) { unavailable(name); return; }
+  if (attempted.has(name)) return false;
+  if (attempted.size >= 32) { unavailable(name); return false; }
+  return true;
+}
+
+function snapshot(name) {
+  if (!canSnapshot(name)) return;
   attempted.add(name);
   if (!acquireLock(name)) return;
   try {
     if (fs.existsSync(skippedPath(name))) return;
-    let state;
-    try { state = JSON.parse(decoder.decode(readBytes(statePath, 256 * 1024))); }
-    catch (error) {
-      if (error.code !== 'ENOENT') throw error;
-      state = { paths: [], bytes: 0 };
-    }
+    const state = snapshotState();
     if (state.paths.includes(name)) return;
     if (state.paths.length >= 32) { unavailable(name); return; }
-    let content = null;
-    let skip = false;
-    try {
-      const bytes = readBytes(name, maxFile);
-      if (bytes.includes(0)) skip = true;
-      else content = decoder.decode(bytes);
-    } catch (error) { skip = error.code !== 'ENOENT'; }
+    const { content, skip } = snapshotContent(name);
     const record = Buffer.from(JSON.stringify({ path: name, content, skip, capturedAt: Date.now() }));
     if (state.bytes + record.length > 8 * maxFile) { unavailable(name); return; }
     const temporary = path.join(root, 'pending.json');
@@ -145,6 +162,8 @@ function snapshot(name) {
   finally { raw.rmdirSync(lock); }
 }
 
+function sameFile(left, right) { return left.dev === right.dev && left.ino === right.ino; }
+
 function descriptorPath(fd) {
   const metadata = raw.fstatSync(fd, { bigint: true });
   if (!metadata.isFile()) return;
@@ -153,13 +172,13 @@ function descriptorPath(fd) {
     try {
       const name = raw.readlinkSync(`/proc/self/fd/${fd}`);
       const current = raw.statSync(name, { bigint: true });
-      if (current.dev === metadata.dev && current.ino === metadata.ino) return canonical(name);
+      if (sameFile(current, metadata)) return canonical(name);
     } catch { /* Use the open-time identity when procfs is unavailable. */ }
   }
   const entry = descriptors.get(fd);
-  if (entry && entry.dev === metadata.dev && entry.ino === metadata.ino) {
+  if (entry && sameFile(entry, metadata)) {
     const current = raw.statSync(entry.path, { bigint: true });
-    if (current.dev === metadata.dev && current.ino === metadata.ino) return entry.path;
+    if (sameFile(current, metadata)) return entry.path;
   }
   descriptors.delete(fd);
 }
@@ -193,7 +212,7 @@ function writable(flags) {
 function wrap(object, name, beforeCall) {
   const original = object[name];
   if (typeof original !== 'function') return;
-  const wrapper = function (...args) {
+  const wrapper = function(...args) {
     try { beforeCall.call(this, args); } catch { /* Keep the original call authoritative. */ }
     return Reflect.apply(original, this, args);
   };
@@ -210,7 +229,7 @@ function instrumentHandle(handle) {
     if (handlePrototypes.has(prototype)) return;
     handlePrototypes.add(prototype);
     for (const name of ['write', 'writev', 'writeFile', 'appendFile', 'truncate', 'createWriteStream']) {
-      wrap(prototype, name, function () { before(this.fd); });
+      wrap(prototype, name, function() { before(this.fd); });
     }
   });
   const fd = handle.fd;
@@ -222,18 +241,18 @@ function instrumentHandle(handle) {
 }
 
 const openSync = fs.openSync;
-fs.openSync = function (...args) {
+fs.openSync = function(...args) {
   if (writable(args[1])) before(args[0]);
   const fd = Reflect.apply(openSync, this, args);
   remember(fd, args[0]);
   return fd;
 };
 const open = fs.open;
-fs.open = function (...args) {
+fs.open = function(...args) {
   if (writable(args[1])) before(args[0]);
   const callback = args.at(-1);
   if (typeof callback === 'function') {
-    args[args.length - 1] = function (error, fd) {
+    args[args.length - 1] = function(error, fd) {
       if (!error) remember(fd, args[0]);
       return Reflect.apply(callback, this, arguments);
     };
@@ -241,7 +260,7 @@ fs.open = function (...args) {
   return Reflect.apply(open, this, args);
 };
 const promiseOpen = promises.open;
-promises.open = function (...args) {
+promises.open = function(...args) {
   if (writable(args[1])) before(args[0]);
   return Reflect.apply(promiseOpen, this, args).then(handle => {
     remember(handle.fd, args[0]);
@@ -250,23 +269,37 @@ promises.open = function (...args) {
 };
 
 const closeSync = fs.closeSync;
-fs.closeSync = function (fd) {
+fs.closeSync = function(fd) {
   const result = Reflect.apply(closeSync, this, arguments);
   descriptors.delete(fd);
   return result;
 };
 const close = fs.close;
-fs.close = function (...args) {
+fs.close = function(...args) {
   const callback = args.at(-1);
   const entry = descriptors.get(args[0]);
   if (typeof callback === 'function') {
-    args[args.length - 1] = function (error) {
+    args[args.length - 1] = function(error) {
       if (!error && descriptors.get(args[0]) === entry) descriptors.delete(args[0]);
       return Reflect.apply(callback, this, arguments);
     };
   }
   return Reflect.apply(close, this, args);
 };
+
+function enqueueDirectory(input, output, pending, entries, deadline) {
+  const directory = raw.opendirSync(input, { encoding: 'buffer' });
+  try {
+    let child;
+    for (; ;) {
+      if (pending.length + entries >= 4096 || Date.now() >= deadline) { unavailable(); break; }
+      child = directory.readSync();
+      if (child === null) break;
+      const name = nativePath(child.name);
+      pending.push([path.join(input, name), path.join(output, name)]);
+    }
+  } finally { directory.closeSync(); }
+}
 
 function beforeTree(source, destination, moving = false) {
   observe(() => {
@@ -281,20 +314,7 @@ function beforeTree(source, destination, moving = false) {
       const [input, output] = pending.pop();
       const metadata = raw.lstatSync(input);
       if (metadata.isDirectory()) {
-        const directory = raw.opendirSync(input, { encoding: 'buffer' });
-        try {
-          let child;
-          for (;;) {
-            if (pending.length + entries >= 4096 || Date.now() >= deadline) {
-              unavailable();
-              break;
-            }
-            child = directory.readSync();
-            if (child === null) break;
-            const name = nativePath(child.name);
-            pending.push([path.join(input, name), path.join(output, name)]);
-          }
-        } finally { directory.closeSync(); }
+        enqueueDirectory(input, output, pending, entries, deadline);
       } else if (metadata.isFile()) {
         if (moving) snapshot(input);
         snapshot(output);

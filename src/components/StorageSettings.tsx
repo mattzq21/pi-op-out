@@ -96,30 +96,34 @@ export function StorageSettings() {
       const approximate = host.categories.some((category) => category.estimated && category.byteSize > 0);
       const maximum = Math.max(...host.categories.map((category) => category.byteSize), 1);
       const deletableArchives = host.archives.filter((archive) => archive.deletable);
+      const renderHostHeader = () => (<header><span className="config-icon"><Database size={16} /></span><span><strong>{host.hostName}</strong><small>{host.error ? "Storage unavailable" : `${approximate ? "About " : ""}${formatBytes(total)} tracked`}</small></span></header>);
+      const renderStorageHostError = () => (host.error ? <div className="storage-host-error" role="alert">{host.error}</div> : <>
+        <div className="storage-categories">{host.categories.filter((category) => category && categoryDetails[category.id]).map((category) => {
+          const details = categoryDetails[category.id]; const CategoryIcon = details.icon;
+          return <div className="storage-category" key={category.id}>
+            <span className="storage-category-icon"><CategoryIcon size={15} /></span>
+            <span><strong>{details.name}</strong><small>{details.description} · {itemCount(category)}</small><i><b style={{ width: `${Math.max(category.byteSize ? 2 : 0, category.byteSize / maximum * 100)}%` }} /></i></span>
+            <code>{category.estimated && category.byteSize > 0 ? "~" : ""}{formatBytes(Number(category.byteSize) || 0)}</code>
+          </div>;
+        })}</div>
+        {host.warnings.length > 0 && <div className="storage-warning" title={host.warnings.join("\n")}>Checkpoint size could not be measured for {host.warnings.length} checkpoint location{host.warnings.length === 1 ? "" : "s"}; other totals are unaffected.</div>}
+        <div className="archive-heading"><span><strong>Archived conversations</strong><small>{host.archives.length ? `${host.archives.length} stored on ${host.hostName}` : `No archives on ${host.hostName}`}</small></span>{deletableArchives.length > 1 && <button className="storage-delete-all" disabled={deleting.size > 0 || loading} onClick={() => deleteAll(host)}><Trash2 size={13} />{deletableArchives.length === host.archives.length ? "Delete all" : "Delete available"}</button>}</div>
+        {host.archives.length > 0 && <div className="archive-list">{host.archives.map((archive, index) => {
+          if (!archive || typeof archive.path !== "string") return null;
+          const name = typeof archive.name === "string" ? archive.name : archive.path;
+          const key = archiveKey(host, { ...archive, name }); const pending = deleting.has(key);
+          const renderArchiveDetails = () => (<span><strong>{name}</strong><small>{archive.deletable ? `${typeof archive.cwd === "string" ? archive.cwd : ""} · ${formatDate(archive.modifiedAt)}` : `Cleanup unavailable · ${archive.deleteError}`}</small></span>);
+          const renderArchiveDelete = () => (<button aria-label={archive.deletable ? `Permanently delete ${name}` : `Cannot safely delete ${name}: ${archive.deleteError}`} disabled={!archive.deletable || deleting.size > 0 || loading} onClick={() => deleteOne(host, archive)}>{!archive.deletable ? <ShieldAlert size={14} /> : pending ? <RefreshCw size={14} className="spinning" /> : <Trash2 size={14} />}</button>);
+          return <div className={`archive-row${archive.deletable ? "" : " cleanup-unavailable"}`} key={key} title={archive.deleteError || archive.path}>
+            {renderArchiveDetails()}
+            <code>{formatBytes(Number(archive.byteSize) || 0)}</code>
+            {renderArchiveDelete()}
+          </div>;
+        })}</div>}
+      </>);
       return <section className="storage-host" key={host.hostId}>
-        <header><span className="config-icon"><Database size={16} /></span><span><strong>{host.hostName}</strong><small>{host.error ? "Storage unavailable" : `${approximate ? "About " : ""}${formatBytes(total)} tracked`}</small></span></header>
-        {host.error ? <div className="storage-host-error" role="alert">{host.error}</div> : <>
-          <div className="storage-categories">{host.categories.filter((category) => category && categoryDetails[category.id]).map((category) => {
-            const details = categoryDetails[category.id]; const CategoryIcon = details.icon;
-            return <div className="storage-category" key={category.id}>
-              <span className="storage-category-icon"><CategoryIcon size={15} /></span>
-              <span><strong>{details.name}</strong><small>{details.description} · {itemCount(category)}</small><i><b style={{ width: `${Math.max(category.byteSize ? 2 : 0, category.byteSize / maximum * 100)}%` }} /></i></span>
-              <code>{category.estimated && category.byteSize > 0 ? "~" : ""}{formatBytes(Number(category.byteSize) || 0)}</code>
-            </div>;
-          })}</div>
-          {host.warnings.length > 0 && <div className="storage-warning" title={host.warnings.join("\n")}>Checkpoint size could not be measured for {host.warnings.length} checkpoint location{host.warnings.length === 1 ? "" : "s"}; other totals are unaffected.</div>}
-          <div className="archive-heading"><span><strong>Archived conversations</strong><small>{host.archives.length ? `${host.archives.length} stored on ${host.hostName}` : `No archives on ${host.hostName}`}</small></span>{deletableArchives.length > 1 && <button className="storage-delete-all" disabled={deleting.size > 0 || loading} onClick={() => deleteAll(host)}><Trash2 size={13} />{deletableArchives.length === host.archives.length ? "Delete all" : "Delete available"}</button>}</div>
-          {host.archives.length > 0 && <div className="archive-list">{host.archives.map((archive, index) => {
-            if (!archive || typeof archive.path !== "string") return null;
-            const name = typeof archive.name === "string" ? archive.name : archive.path;
-            const key = archiveKey(host, { ...archive, name }); const pending = deleting.has(key);
-            return <div className={`archive-row${archive.deletable ? "" : " cleanup-unavailable"}`} key={key} title={archive.deleteError || archive.path}>
-              <span><strong>{name}</strong><small>{archive.deletable ? `${typeof archive.cwd === "string" ? archive.cwd : ""} · ${formatDate(archive.modifiedAt)}` : `Cleanup unavailable · ${archive.deleteError}`}</small></span>
-              <code>{formatBytes(Number(archive.byteSize) || 0)}</code>
-              <button aria-label={archive.deletable ? `Permanently delete ${name}` : `Cannot safely delete ${name}: ${archive.deleteError}`} disabled={!archive.deletable || deleting.size > 0 || loading} onClick={() => deleteOne(host, archive)}>{!archive.deletable ? <ShieldAlert size={14} /> : pending ? <RefreshCw size={14} className="spinning" /> : <Trash2 size={14} />}</button>
-            </div>;
-          })}</div>}
-        </>}
+        {renderHostHeader()}
+        {renderStorageHostError()}
       </section>;
     })}
   </div>;

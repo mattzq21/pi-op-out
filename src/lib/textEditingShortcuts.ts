@@ -1,17 +1,26 @@
+function isEditableField(field: Element | null) {
+  if (!(field instanceof HTMLElement) || field.closest(".xterm")) return false;
+  if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
+    if (field.disabled || field.readOnly) return false;
+    return !(field instanceof HTMLInputElement) || ["text", "search", "email", "url", "tel", "password", "number"].includes(field.type);
+  }
+  return field.isContentEditable;
+}
+
+function historyCommand(event: KeyboardEvent) {
+  const key = event.key.toLowerCase();
+  if (key === "z") return event.shiftKey ? "redo" : "undo";
+  return key === "y" && !event.shiftKey ? "redo" : undefined;
+}
+
 /** Webviews do not consistently bind the platform's undo/redo shortcuts. */
 export function installTextEditingShortcuts() {
   const handleKeyDown = (event: KeyboardEvent) => {
     if (event.defaultPrevented || event.isComposing || event.altKey || !(event.ctrlKey || event.metaKey)) return;
-    const key = event.key.toLowerCase();
-    const command = key === "z" ? (event.shiftKey ? "redo" : "undo") : key === "y" && !event.shiftKey ? "redo" : undefined;
+    const command = historyCommand(event);
     if (!command) return;
 
-    const field = document.activeElement;
-    if (!(field instanceof HTMLElement) || field.closest(".xterm")) return;
-    if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
-      if (field.disabled || field.readOnly) return;
-      if (field instanceof HTMLInputElement && !["text", "search", "email", "url", "tel", "password", "number"].includes(field.type)) return;
-    } else if (!field.isContentEditable) return;
+    if (!isEditableField(document.activeElement)) return;
 
     // Use the browser's history so typing, paste, selection and IME edits retain
     // their native undo boundaries and emit input events for controlled fields.

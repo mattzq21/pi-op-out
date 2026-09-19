@@ -6,9 +6,13 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type { GroupChange, SessionGroups, SessionGroupSeed } from "./sessionGroups";
 import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, OpencodeGoUsage, PendingMessage, RpcCommand, RpcEvent, SessionSummary, SettingsChange, StorageReport } from "../types";
 
+function responseKey(command: string, args?: Record<string, unknown>) {
+  return command === "pi_command" ? `${command}:${String((args?.command as RpcCommand)?.type)}` : command;
+}
+
 const call = <T>(command: string, args?: Record<string, unknown>) => {
   if (import.meta.env.MODE !== "e2e") return invoke<T>(command, args);
-  const key = command === "pi_command" ? `${command}:${String((args?.command as RpcCommand)?.type)}` : command;
+  const key = responseKey(command, args);
   const responseField = document.querySelector<HTMLTextAreaElement>("#pi-e2e-responses"); const callField = document.querySelector<HTMLTextAreaElement>("#pi-e2e-calls");
   const responses = JSON.parse(responseField?.value || "{}");
   if (callField?.value) { const calls = JSON.parse(callField.value); calls.push({ command, args, mocked: key in responses }); callField.value = JSON.stringify(calls); }
@@ -117,20 +121,67 @@ export class NativeTransport {
   lastDiagnostic() { return this.stderrLines.join("\n"); }
   private runProcessCommand<T>(command: () => Promise<T>) { const result = this.processLifecycle.then(command, command); this.processLifecycle = result.then(() => undefined, () => undefined); return result; }
   private queueView(): RpcEvent { return this.queueSnapshot; }
-  private emit(event: RpcEvent) {
+  private trackSessionActivity(event: RpcEvent) {
     if (event.type === "settings_pending" && typeof event.pending === "boolean") this.daemonSettingsPending = event.pending;
     if (event.type === "disconnected") this.daemonSettingsPending = false;
     if (event.type === "agent_start" || (event.type === "message_start" && (event.message as { role?: string })?.role === "user")) this.temporaryChatUsed = true;
+  }
+  private retainAssistant(event: RpcEvent) {
     if (event.type === "session_switched") this.liveAssistant = undefined;
-    if ((event.type === "message_start" || event.type === "message_end") && (event.message as { role?: string })?.role === "assistant") this.liveAssistant = { ...normalizeMessage(event.message as Record<string, unknown>, undefined, undefined, this.liveAssistant?.streaming ? this.liveAssistant.id : `live-assistant-${crypto.randomUUID()}`), streaming: event.type === "message_start" };
+    if ((event.type === "message_start" || event.type === "message_end") && (event.message as { role?: string })?.role === "assistant") this.liveAssistant = { ...normalizeMessage(event.message as Record<string, unknown>, undefined, undefined, this.liveAssistantId()), streaming: event.type === "message_start" };
     if (event.type === "message_update" && event.assistantMessageEvent && this.liveAssistant) this.liveAssistant = applyAssistantMessageEvent(this.liveAssistant, event.assistantMessageEvent);
 
+  }
+  private liveAssistantId() { return this.liveAssistant?.streaming ? this.liveAssistant.id : `live-assistant-${crypto.randomUUID()}`; }
+  private retainExtensionState(event: RpcEvent) {
     if (event.type === "extension_ui_resolved" && typeof event.id === "string") this.retainedRequests.delete(event.id);
-    if (event.type === "queue_update") this.queueSnapshot = event;
     if (event.type === "extension_ui_request" && event.method === "setStatus" && typeof event.statusKey === "string") {
       if (event.statusText) this.retainedStatuses.set(event.statusKey, event); else this.retainedStatuses.delete(event.statusKey);
     }
     if (event.type === "extension_ui_request" && ["input", "editor", "select", "confirm"].includes(String(event.method)) && typeof event.id === "string") this.retainedRequests.set(event.id, event);
+  }
+  private async ensureConnectionDirectory(version: number) {
+    if (this.cwd === undefined && this.sessionPath === undefined) { const chat = await call<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId: this.hostId, e2e: import.meta.env.MODE === "e2e" }); if (version !== this.connectionVersion) { await call<void>("remove_temporary_chat", { path: chat.cwd, hostId: this.hostId }); return false; } this.cwd = chat.cwd; this.sessionId = chat.sessionId; this.temporaryChat = true; }
+    return true;
+  }
+  private normalizeCommand(command: RpcCommand) {
+    const compact = command.type === "prompt" && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null;
+    if (compact) command = { type: "compact", ...(compact[1]?.trim() ? { customInstructions: compact[1].trim() } : {}) };
+    return command;
+  }
+  private retainCommandSession(command: RpcCommand, result: unknown) {
+    if (command.type === "get_state" || command.type === "get_snapshot") { const state = (command.type === "get_snapshot" ? (result as { state: unknown }).state : result) as { sessionFile?: string; sessionId?: string }; if (this.sessionId && this.sessionId !== state.sessionId) this.liveAssistant = undefined; this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; }
+  }
+  private appendLiveHistory(command: RpcCommand, result: unknown) {
+    if (command.type === "get_entries") {
+      const history = result as { entries: Array<{ message?: { role?: string; timestamp?: number; deliveryBehavior?: string } }> };
+      const live = this.liveAssistant; const branch = result as { entries: PiEntry[]; leafId: string | null };
+      if (live?.streaming && !history.entries.some((entry) => entry.message?.role === "assistant" && entry.message.timestamp === live.timestamp)) {
+        branch.entries.push({ type: "message", id: live.id, parentId: branch.leafId, message: live } as PiEntry); branch.leafId = live.id;
+      }
+    }
+  }
+  private async discoverFastCommands(result: unknown) {
+    const { commands } = result as { commands: Array<{ name: string; source: string; sourceInfo?: { source?: string; path?: string } }> };
+    const fromPackage = (item: typeof commands[number], name: string) => item.sourceInfo?.source === `npm:${name}` || item.sourceInfo?.path?.split(/[\\/]/).includes(name);
+    const localFastPackages = ["piop-openai-fast-mode", "pi-openai-fast-mode-piop"];
+    const fastCommands = commands.filter((item) => item.source === "extension" && /^fast(?::\d+)?$/.test(item.name) && [...localFastPackages, "pi-openai-fast-mode"].some((name) => fromPackage(item, name)));
+    this.fastCommands = new Set(fastCommands.map((item) => item.name));
+    // The local fork publishes its live state directly. Only the original
+    // TUI-only package needs the compatibility query after each command.
+    this.fastStatusCommand = fastCommands.some((item) => localFastPackages.some((name) => fromPackage(item, name))) ? undefined : commands.find((item) => item.source === "extension" && item.name === "pi-desktop-fast-status")?.name;
+    await this.refreshFastStatus(false);
+  }
+  private async afterPrompt(command: RpcCommand) {
+    this.temporaryChatUsed = true;
+    const invocation = typeof command.message === "string" ? command.message.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/) : undefined;
+    if (invocation && this.fastCommands.has(invocation[1]) && ["", "on", "off", "toggle"].includes((invocation[2] ?? "").trim().toLowerCase())) await this.refreshFastStatus(true);
+  }
+  private emit(event: RpcEvent) {
+    this.trackSessionActivity(event);
+    this.retainAssistant(event);
+    this.retainExtensionState(event);
+    if (event.type === "queue_update") this.queueSnapshot = event;
     for (const listener of [...this.listeners]) {
       try {
         listener(event);
@@ -151,7 +202,7 @@ export class NativeTransport {
   }
   private async establishConnection(forkPath?: string, _ephemeral = false) {
     const version = ++this.connectionVersion;
-    if (this.cwd === undefined && this.sessionPath === undefined) { const chat = await call<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId: this.hostId, e2e: import.meta.env.MODE === "e2e" }); if (version !== this.connectionVersion) { await call<void>("remove_temporary_chat", { path: chat.cwd, hostId: this.hostId }); return; } this.cwd = chat.cwd; this.sessionId = chat.sessionId; this.temporaryChat = true; }
+    if (!await this.ensureConnectionDirectory(version)) return;
     this.fastStatusCommand = undefined; this.fastCommands.clear();
     this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.stderrLines = [];
     const unlisten = await listen<RpcEvent | { runtimeId: string; event: RpcEvent }>("pi://event", ({ payload }) => {
@@ -169,9 +220,7 @@ export class NativeTransport {
     this.unlisten = unlisten; this.stderrUnlisten = stderrUnlisten;
     // Pi can resume by ID before a fresh session has a file on disk.
     const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call<{ attached: boolean; owned?: boolean }>("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }));
-    if (attached?.attached) this.fresh = false;
-    this.owns = attached?.owned !== false;
-    this.emit({ type: this.owns ? "ownership_acquired" : "ownership_lost" });
+    this.connectedOwnership(attached);
     if (version === this.connectionVersion) {
       this.running = true;
       this.presenceCleanup?.();
@@ -179,6 +228,11 @@ export class NativeTransport {
       this.presenceCleanup = () => { window.removeEventListener("focus", this.publishPresence); window.removeEventListener("blur", this.publishPresence); document.removeEventListener("visibilitychange", this.publishPresence); };
       this.publishPresence();
     }
+  }
+  private connectedOwnership(attached: { attached: boolean; owned?: boolean } | undefined) {
+    if (attached?.attached) this.fresh = false;
+    this.owns = attached?.owned !== false;
+    this.emit({ type: this.owns ? "ownership_acquired" : "ownership_lost" });
   }
   async disconnect(discardBlank = false) { ++this.connectionVersion; this.presenceCleanup?.(); this.presenceCleanup = undefined; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; const stopped = await this.runProcessCommand(() => call<boolean>("stop_pi", { runtimeId: this.runtimeId, discardBlank })); this.running = false; this.retainedStatuses.clear(); this.retainedRequests.clear(); return stopped; }
   async reconnectForSettings(settings: AppSettings) {
@@ -221,41 +275,23 @@ export class NativeTransport {
     finally { this.activeCommands -= 1; this.applyPendingSettings(); }
   }
   private async executeCommandNow<T>(command: RpcCommand) {
-    const compact = command.type === "prompt" && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null;
-    if (compact) command = { type: "compact", ...(compact[1]?.trim() ? { customInstructions: compact[1].trim() } : {}) };
+    command = this.normalizeCommand(command);
     try {
       const result = await call<T>("pi_command", { runtimeId: this.runtimeId, command });
-      if (command.type === "get_state" || command.type === "get_snapshot") { const state = (command.type === "get_snapshot" ? (result as { state: unknown }).state : result) as { sessionFile?: string; sessionId?: string }; if (this.sessionId && this.sessionId !== state.sessionId) this.liveAssistant = undefined; this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; }
-      if (command.type === "get_entries") {
-        const history = result as { entries: Array<{ message?: { role?: string; timestamp?: number; deliveryBehavior?: string } }> };
-        const live = this.liveAssistant; const branch = result as { entries: PiEntry[]; leafId: string | null };
-        if (live?.streaming && !history.entries.some((entry) => entry.message?.role === "assistant" && entry.message.timestamp === live.timestamp)) {
-          branch.entries.push({ type: "message", id: live.id, parentId: branch.leafId, message: live } as PiEntry); branch.leafId = live.id;
-        }
-      }
-      if (["new_session", "switch_session", "fork", "clone"].includes(command.type) && !(result as { cancelled?: boolean })?.cancelled) { this.liveAssistant = undefined; this.sessionId = undefined; }
-      if (command.type === "get_commands") {
-        const { commands } = result as { commands: Array<{ name: string; source: string; sourceInfo?: { source?: string; path?: string } }> };
-        const fromPackage = (item: typeof commands[number], name: string) => item.sourceInfo?.source === `npm:${name}` || item.sourceInfo?.path?.split(/[\\/]/).includes(name);
-        const localFastPackages = ["piop-openai-fast-mode", "pi-openai-fast-mode-piop"];
-        const fastCommands = commands.filter((item) => item.source === "extension" && /^fast(?::\d+)?$/.test(item.name) && [...localFastPackages, "pi-openai-fast-mode"].some((name) => fromPackage(item, name)));
-        this.fastCommands = new Set(fastCommands.map((item) => item.name));
-        // The local fork publishes its live state directly. Only the original
-        // TUI-only package needs the compatibility query after each command.
-        this.fastStatusCommand = fastCommands.some((item) => localFastPackages.some((name) => fromPackage(item, name))) ? undefined : commands.find((item) => item.source === "extension" && item.name === "pi-desktop-fast-status")?.name;
-        await this.refreshFastStatus(false);
-      }
-      if (command.type === "prompt") {
-        this.temporaryChatUsed = true;
-        const invocation = typeof command.message === "string" ? command.message.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/) : undefined;
-        if (invocation && this.fastCommands.has(invocation[1]) && ["", "on", "off", "toggle"].includes((invocation[2] ?? "").trim().toLowerCase())) await this.refreshFastStatus(true);
-      }
+      this.retainCommandSession(command, result);
+      this.appendLiveHistory(command, result);
+      this.resetChangedSession(command, result);
+      if (command.type === "get_commands") await this.discoverFastCommands(result);
+      if (command.type === "prompt") await this.afterPrompt(command);
       if (command.type === "extension_ui_response" && typeof command.id === "string") this.retainedRequests.delete(command.id);
       return result;
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason); const diagnostics = this.stderrLines.join("\n");
       throw new Error(diagnostics && /disconnect|connect|start|running/i.test(message) ? `${message}\n${diagnostics}` : message);
     }
+  }
+  private resetChangedSession(command: RpcCommand, result: unknown) {
+    if (["new_session", "switch_session", "fork", "clone"].includes(command.type) && !(result as { cancelled?: boolean })?.cancelled) { this.liveAssistant = undefined; this.sessionId = undefined; }
   }
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); listener(this.queueView()); this.retainedStatuses.forEach((event) => listener(event)); this.retainedRequests.forEach((event) => listener(event)); return () => this.listeners.delete(listener); }
   listSessions() { return call<SessionSummary[]>("list_sessions"); }

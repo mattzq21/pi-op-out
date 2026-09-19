@@ -18,6 +18,20 @@ interface Props { voiceTransport?: NativeTransport; state: AgentState; messages:
 
 type SelectionBtwTip = { text: string; left: number; top: number; below: boolean };
 
+function canRetry(props: Props, ownsConversation: boolean) {
+  return ownsConversation && !props.controlsDisabled && !props.state.isStreaming && !props.state.isPaused && !props.state.isPausing;
+}
+
+function selectionWithinMessage(range: Range, messages: HTMLElement) {
+  const ancestor = range.commonAncestorContainer instanceof Element ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement;
+  const body = ancestor?.closest(".message-body");
+  return body && messages.contains(body) && body.contains(range.startContainer) && body.contains(range.endContainer);
+}
+
+function turnKey(turn: ChatMessage[], index: number) {
+  return `${turn[0]?.timestamp ?? turn[0]?.id ?? "turn"}:${index}`;
+}
+
 export function ChatView(props: Props) {
   const [ownsConversation, setOwnsConversation] = useState(() => props.voiceTransport?.ownsConversation() !== false);
   const [takingOwnership, setTakingOwnership] = useState(false);
@@ -87,7 +101,7 @@ export function ChatView(props: Props) {
   const activity = mcpLoading ? undefined : props.state.activity;
   const statuses = Object.entries(props.statuses).filter(([key]) => !["pi-desktop-hook-stats", "pi-desktop-fast-mode", "pi-desktop-mcp-loading"].includes(key)).map(([, text]) => text);
   const projectName = props.projectCwd?.split(/[\\/]/).filter(Boolean).at(-1);
-  const retryable = ownsConversation && !props.controlsDisabled && !props.state.isStreaming && !props.state.isPaused && !props.state.isPausing;
+  const retryable = canRetry(props, ownsConversation);
   const abortedTurn = retryable ? findReplaceableAbortedTurn(props.messages) : undefined;
   const scrollToLatest = useCallback(() => {
     const element = messagesRef.current;
@@ -115,9 +129,7 @@ export function ChatView(props: Props) {
       const messages = messagesRef.current;
       if (!selection || selection.isCollapsed || !selection.rangeCount || !messages) { setSelectionBtwTip(undefined); return; }
       const range = selection.getRangeAt(0);
-      const ancestor = range.commonAncestorContainer instanceof Element ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement;
-      const messageBody = ancestor?.closest(".message-body");
-      if (!messageBody || !messages.contains(messageBody) || !messageBody.contains(range.startContainer) || !messageBody.contains(range.endContainer)) { setSelectionBtwTip(undefined); return; }
+      if (!selectionWithinMessage(range, messages)) { setSelectionBtwTip(undefined); return; }
       const text = selection.toString().trim();
       const rect = Array.from(range.getClientRects()).filter((box) => box.width || box.height).at(-1);
       if (!text || !rect) { setSelectionBtwTip(undefined); return; }
@@ -145,10 +157,9 @@ export function ChatView(props: Props) {
     } catch { setSelectionBtwError(true); }
     finally { setAskingSelection(false); }
   };
-  return <main ref={shell} className={`chat-shell${ownsConversation ? "" : " conversation-unowned"}`} onFocusCapture={props.onActivate} onPointerDownCapture={props.onActivate}>
-    <div className="conversation-content">
-    {(props.state.viewers ?? 0) > 1 && <div className="concurrent-view-status" role="status">Open in {props.state.viewers} views · Messages and controls are shared</div>}
-    <div ref={messagesRef} className="messages" aria-live="polite"
+  const renderConversationContent = () => {
+    const renderConcurrentViewStatus = () => ((props.state.viewers ?? 0) > 1 && <div className="concurrent-view-status" role="status">Open in {props.state.viewers} views · Messages and controls are shared</div>);
+    const renderMessagesSection = () => (<div ref={messagesRef} className="messages" aria-live="polite"
       onWheel={(event) => { if (event.deltaY < 0 && event.currentTarget.scrollTop > 0) followLatest.current = false; }}
       onTouchStart={(event) => { touchY.current = event.touches[0]?.clientY; }}
       onTouchMove={(event) => { const y = event.touches[0]?.clientY; if (y !== undefined && touchY.current !== undefined && y > touchY.current && event.currentTarget.scrollTop > 0) followLatest.current = false; touchY.current = y; }}
@@ -162,17 +173,30 @@ export function ChatView(props: Props) {
         else if (element.scrollTop > lastScrollTop.current) followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight <= 2;
         lastScrollTop.current = element.scrollTop;
       }}><div className="conversation">
-      {!messages.length && !mcpLoading && <div className="empty-chat"><span>πop</span></div>}
-      {turns.map((turn, index) => <ConversationTurn key={`${turn[0]?.timestamp ?? turn[0]?.id ?? "turn"}:${index}`} messages={turn} gitDiffs={props.gitDiffs} cwd={props.projectCwd} debug={props.debug ?? false} active={props.state.isStreaming && index === turns.length - 1} retryable={retryable && index === turns.length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index === turns.length - 1} onRetry={onRetry} onBranch={onBranch} onForkAndForget={props.onForkAndForget ? onForkAndForget : undefined} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} />)}
-      {mcpLoading && <section className="mcp-pending-turn" aria-label="Message waiting for MCP" aria-busy="true">
-        {submittedMessage && <div className="mcp-pending-message"><Message message={submittedMessage} showActions={false} /></div>}
-        <div className="mcp-loading-list" role="status">{props.debug ? loadingServers.map((server) => <div className="mcp-loading" key={server.id}><LoaderCircle className="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading {server.name}</span></div>) : <div className="mcp-loading"><LoaderCircle className="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading MCPs</span></div>}</div>
-      </section>}
-      <div className="scroll-anchor" />
-    </div></div>
-    {selectionBtwTip && <button type="button" className={`selection-btw-tip${selectionBtwTip.below ? " below" : ""}${selectionBtwError ? " error" : ""}`} style={{ left: selectionBtwTip.left, top: selectionBtwTip.top }} aria-label="Ask about selected text in a side chat with /btw" aria-live="polite" disabled={askingSelection} onPointerDown={(event) => event.preventDefault()} onClick={() => void askSelectionInBtw()}><span>{askingSelection ? "Opening side chat…" : selectionBtwError ? "Could not open side chat" : "Ask in side chat"}</span><kbd>/btw</kbd></button>}
-    {!props.readOnly && <div ref={composerStack} className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.filter((line) => typeof line === "string").map((line, index) => <div key={index}>{line}</div>)}</div>} {statuses.length > 0 && <div className="extension-status">{statuses.join(" · ")}</div>}{activity && <div className="runtime-activity" role="status">{activity}</div>}{!messages.length && props.state.messageCount === 0 && <div className="new-chat-project"><div className="project-picker"><button type="button" className={projectName ? "selected" : undefined} aria-label={projectName ? `Selected project: ${projectName}` : "Choose project"} title={props.projectCwd} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName ?? "Choose project"}</button>{projectName && props.onClearProject && <button type="button" className="clear-project" aria-label="Clear project" title="Clear project" disabled={props.controlsDisabled || !ownsConversation} onClick={props.onClearProject}><X size={14} /></button>}</div></div>}{!ownsConversation && <div className="conversation-ownership-banner"><div role="status"><p>This conversation is read-only on this client.</p><button type="button" disabled={takingOwnership} onClick={() => void takeOwnership()}>{takingOwnership ? "Taking ownership…" : "Take ownership"}</button>{ownershipError && <p role="alert">{ownershipError}</p>}</div></div>}<div className="composer-interaction" inert={!ownsConversation}><Composer voiceControls={props.voiceTransport && <VoiceControls transport={props.voiceTransport} state={props.state} messages={messages} disabled={props.controlsDisabled || !ownsConversation} />} streaming={props.state.isStreaming} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} pendingMessages={props.state.pendingMessages} onChangePending={props.onChangePending} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} agentLocked={props.agentLocked} agentSaved={props.agentSaved} agentUnavailable={props.agentUnavailable} dictionaries={props.dictionaries} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug ? sessionCache : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled || !ownsConversation} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn ? { id: `${abortedTurn.assistant.timestamp ?? abortedTurn.assistant.id}:${abortedTurn.prompt}`, value: abortedTurn.prompt } : undefined} onSend={send} onAbort={props.onAbort} onPause={props.onPause} onResume={props.onResume} onOpenTerminal={props.onOpenTerminal} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div></div>}
-    </div>
+        {!messages.length && !mcpLoading && <div className="empty-chat"><span>πop</span></div>}
+        {turns.map((turn, index) => <ConversationTurn key={turnKey(turn, index)} messages={turn} gitDiffs={props.gitDiffs} cwd={props.projectCwd} debug={props.debug ?? false} active={props.state.isStreaming && index === turns.length - 1} retryable={retryable && index === turns.length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index === turns.length - 1} onRetry={onRetry} onBranch={onBranch} onForkAndForget={props.onForkAndForget ? onForkAndForget : undefined} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} />)}
+        {mcpLoading && <section className="mcp-pending-turn" aria-label="Message waiting for MCP" aria-busy="true">
+          {submittedMessage && <div className="mcp-pending-message"><Message message={submittedMessage} showActions={false} /></div>}
+          <div className="mcp-loading-list" role="status">{props.debug ? loadingServers.map((server) => <div className="mcp-loading" key={server.id}><LoaderCircle className="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading {server.name}</span></div>) : <div className="mcp-loading"><LoaderCircle className="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading MCPs</span></div>}</div>
+        </section>}
+        <div className="scroll-anchor" />
+      </div></div>);
+    const renderSelectionBtwTip = () => (selectionBtwTip && <button type="button" className={`selection-btw-tip${selectionBtwTip.below ? " below" : ""}${selectionBtwError ? " error" : ""}`} style={{ left: selectionBtwTip.left, top: selectionBtwTip.top }} aria-label="Ask about selected text in a side chat with /btw" aria-live="polite" disabled={askingSelection} onPointerDown={(event) => event.preventDefault()} onClick={() => void askSelectionInBtw()}><span>{askingSelection ? "Opening side chat…" : selectionBtwError ? "Could not open side chat" : "Ask in side chat"}</span><kbd>/btw</kbd></button>);
+    const renderComposerStack = () => {
+      const renderNewChatProject = () => (!messages.length && props.state.messageCount === 0 && <div className="new-chat-project"><div className="project-picker"><button type="button" className={projectName ? "selected" : undefined} aria-label={projectName ? `Selected project: ${projectName}` : "Choose project"} title={props.projectCwd} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName ?? "Choose project"}</button>{projectName && props.onClearProject && <button type="button" className="clear-project" aria-label="Clear project" title="Clear project" disabled={props.controlsDisabled || !ownsConversation} onClick={props.onClearProject}><X size={14} /></button>}</div></div>);
+      const renderConversationOwnershipBanner = () => (!ownsConversation && <div className="conversation-ownership-banner"><div role="status"><p>This conversation is read-only on this client.</p><button type="button" disabled={takingOwnership} onClick={() => void takeOwnership()}>{takingOwnership ? "Taking ownership…" : "Take ownership"}</button>{ownershipError && <p role="alert">{ownershipError}</p>}</div></div>);
+      const renderComposerInteraction = () => (<div className="composer-interaction" inert={!ownsConversation}><Composer voiceControls={props.voiceTransport && <VoiceControls transport={props.voiceTransport} state={props.state} messages={messages} disabled={props.controlsDisabled || !ownsConversation} />} streaming={props.state.isStreaming} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} pendingMessages={props.state.pendingMessages} onChangePending={props.onChangePending} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} agentLocked={props.agentLocked} agentSaved={props.agentSaved} agentUnavailable={props.agentUnavailable} dictionaries={props.dictionaries} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug ? sessionCache : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled || !ownsConversation} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn ? { id: `${abortedTurn.assistant.timestamp ?? abortedTurn.assistant.id}:${abortedTurn.prompt}`, value: abortedTurn.prompt } : undefined} onSend={send} onAbort={props.onAbort} onPause={props.onPause} onResume={props.onResume} onOpenTerminal={props.onOpenTerminal} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div>);
+      return (!props.readOnly && <div ref={composerStack} className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.filter((line) => typeof line === "string").map((line, index) => <div key={index}>{line}</div>)}</div>} {statuses.length > 0 && <div className="extension-status">{statuses.join(" · ")}</div>}{activity && <div className="runtime-activity" role="status">{activity}</div>}{renderNewChatProject()}{renderConversationOwnershipBanner()}{renderComposerInteraction()}</div>);
+    };
+    return (<div className="conversation-content">
+      {renderConcurrentViewStatus()}
+      {renderMessagesSection()}
+      {renderSelectionBtwTip()}
+      {renderComposerStack()}
+    </div>);
+  };
+  return <main ref={shell} className={`chat-shell${ownsConversation ? "" : " conversation-unowned"}`} onFocusCapture={props.onActivate} onPointerDownCapture={props.onActivate}>
+    {renderConversationContent()}
   </main>;
 }
 
@@ -197,17 +221,44 @@ function formatWorkedFor(startedAt?: number, completedAt?: number) {
 
 function compactCompletedTools(messages: ChatMessage[], groupRepeated = true) {
   return messages.reduce<Array<{ message: ChatMessage; count: number }>>((runs, message) => {
-    const hasToolCall = Array.isArray(message.content) && message.content.some((part) => part.type === "toolCall");
-    if (message.role === "assistant" && !hasVisibleText(textOf(message.content)) && !hasVisibleText(thinkingOf(message.content)) && message.stopReason !== "aborted" && message.stopReason !== "error" && (hasToolCall || !message.streaming)) return runs;
+    if (invisibleAssistant(message)) return runs;
     const previous = runs.at(-1);
-    const status = message.toolStatus ?? "done";
-    if (groupRepeated && message.role === "tool" && status === "done" && previous?.message.role === "tool" && (previous.message.toolStatus ?? "done") === "done" && (previous.message.toolName || "tool") === (message.toolName || "tool")) {
+    if (groupRepeated && previous && repeatedCompletedTool(message, previous.message)) {
       const outputs = [textOf(previous.message.content), textOf(message.content)].filter(Boolean);
       previous.message = { ...previous.message, content: outputs.join("\n\n") };
       previous.count += 1;
     } else runs.push({ message, count: 1 });
     return runs;
   }, []);
+}
+
+function invisibleAssistant(message: ChatMessage) {
+  const hasToolCall = Array.isArray(message.content) && message.content.some((part) => part.type === "toolCall");
+  return message.role === "assistant" && !hasVisibleText(textOf(message.content)) && !hasVisibleText(thinkingOf(message.content)) && message.stopReason !== "aborted" && message.stopReason !== "error" && (hasToolCall || !message.streaming);
+}
+
+function repeatedCompletedTool(message: ChatMessage, previous: ChatMessage) {
+  return message.role === "tool" && (message.toolStatus ?? "done") === "done" && previous.role === "tool" && (previous.toolStatus ?? "done") === "done" && (previous.toolName || "tool") === (message.toolName || "tool");
+}
+
+function finalResponseIndex(messages: ChatMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "assistant" && (textOf(message.content).trim().length > 0 || message.stopReason === "aborted" || message.stopReason === "error")) return index;
+  }
+  return -1;
+}
+
+function turnTiming(messages: ChatMessage[], userIndex: number, finalMessage?: ChatMessage) {
+  return formatWorkedFor(userIndex >= 0 ? messages[userIndex].timestamp : messages[0]?.timestamp, finalMessage?.completedAt ?? finalMessage?.timestamp);
+}
+
+function retryAttachments(retryTurn: ReturnType<typeof findReplaceableAbortedTurn>) {
+  return Array.isArray(retryTurn?.user.content) ? retryTurn.user.content.filter((part) => part.type === "image") : [];
+}
+
+function worktreeAction(onCreateWorktree: Props['onCreateWorktree'], finalMessage: ChatMessage | undefined) {
+  return onCreateWorktree && finalMessage && finalMessage.stopReason !== "toolUse" ? () => onCreateWorktree(finalMessage) : undefined;
 }
 
 function renderMessages(messages: ChatMessage[], expanded: boolean, compact = true, debug = false, paused = false, showActions = true) {
@@ -226,11 +277,7 @@ function ConversationTurnView({ messages, gitDiffs, cwd, debug, active, retryabl
   const userIndex = messages.findIndex((message) => message.role === "user");
   const promptContext = userIndex >= 0 && messages[userIndex].deliveryBehavior !== "steer" ? messages[userIndex].promptContext : undefined;
 
-  let finalIndex = -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message.role === "assistant" && (textOf(message.content).trim().length > 0 || message.stopReason === "aborted" || message.stopReason === "error")) { finalIndex = index; break; }
-  }
+  const finalIndex = finalResponseIndex(messages);
   const finalThinking = finalIndex >= 0 ? thinkingOf(messages[finalIndex].content) : "";
   const intermediate = messages.flatMap((message, index) => {
     if (message.role === "user" || message.role === "system") return [];
@@ -250,30 +297,30 @@ function ConversationTurnView({ messages, gitDiffs, cwd, debug, active, retryabl
     }
     return total;
   }, { input: 0, cacheRead: 0, cacheWrite: 0 });
-  const worktreeResponse = onCreateWorktree && finalMessage && finalMessage.stopReason !== "toolUse" ? () => onCreateWorktree(finalMessage) : undefined;
-  const workedFor = formatWorkedFor(userIndex >= 0 ? messages[userIndex].timestamp : messages[0]?.timestamp, finalMessage?.completedAt ?? finalMessage?.timestamp);
+  const worktreeResponse = worktreeAction(onCreateWorktree, finalMessage);
+  const workedFor = turnTiming(messages, userIndex, finalMessage);
   const retryTurn = retryable ? findReplaceableAbortedTurn(messages) : undefined;
   const retryPrompt = retryTurn?.prompt;
-  const retryImages = Array.isArray(retryTurn?.user.content) ? retryTurn.user.content.filter((part) => part.type === "image") : [];
+  const retryImages = retryAttachments(retryTurn);
 
   if (messages.length === 1 && messages[0].customType === VOICE_MESSAGE) return <section className="conversation-turn"><Message message={messages[0]} debug={debug} /></section>;
-  return <section className="conversation-turn">
-    {userMessages.map((message) => <Message key={message.id} message={message} debug={debug} />)}
-    {debug && promptContext && <PromptContextBar context={promptContext} />}
-    {active || paused ? <div className="active-work-content">{renderMessages(messages.filter((message) => message.role !== "user"), true, false, debug, paused)}</div> : <>
+  const renderPromptContextBar = () => (debug && promptContext && <PromptContextBar context={promptContext} />);
+  const renderActiveWorkContent = () => (active || paused ? <div className="active-work-content">{renderMessages(messages.filter((message) => message.role !== "user"), true, false, debug, paused)}</div> : <>
     {workContent.length > 0 && <details className="work-group"><summary>{reasoningOnly ? "Reasoning" : workedFor ? `Worked for ${workedFor}` : "Work"}<ChevronRight size={12} className="work-group-chevron" aria-hidden="true" /></summary><div className={`work-group-content${reasoningOnly ? " reasoning-group-content" : ""}`}>{workContent}</div></details>}
     {finalMessage && <Message message={finalMessage} turnCacheUsage={turnCacheUsage} diff={changes} debug={debug} paused={paused} onBranch={onBranch} onForkAndForget={onForkAndForget} onCreateWorktree={worktreeResponse} retrying={retrying} onRetry={retryPrompt ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(onRetry(retryPrompt, undefined, retryImages)).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
     {retryError && <div className="message-failure retry-error" role="alert">Retry failed: {retryError}</div>}
     {renderMessages(messages.filter((message) => message.role === "system"), false)}
-    </>}
-    {(active || paused || !finalMessage) && <DiffViewer {...changes} />}
+  </>);
+  const renderDiffViewer = () => ((active || paused || !finalMessage) && <DiffViewer {...changes} />);
+  return <section className="conversation-turn">
+    {userMessages.map((message) => <Message key={message.id} message={message} debug={debug} />)}
+    {renderPromptContextBar()}
+    {renderActiveWorkContent()}
+    {renderDiffViewer()}
   </section>;
 }
 
-const ConversationTurn = memo(ConversationTurnView, (previous, next) => previous.active === next.active
-  && previous.retryable === next.retryable && previous.paused === next.paused && previous.debug === next.debug && previous.gitDiffs === next.gitDiffs
-  && previous.onRetry === next.onRetry && previous.onBranch === next.onBranch
-  && previous.onForkAndForget === next.onForkAndForget
-  && previous.onCreateWorktree === next.onCreateWorktree && previous.messages.length === next.messages.length
-  && previous.cwd === next.cwd
+const comparedTurnProps = ["active", "retryable", "paused", "debug", "gitDiffs", "onRetry", "onBranch", "onForkAndForget", "onCreateWorktree", "cwd"] as const;
+const ConversationTurn = memo(ConversationTurnView, (previous, next) => comparedTurnProps.every((key) => previous[key] === next[key])
+  && previous.messages.length === next.messages.length
   && previous.messages.every((message, index) => message === next.messages[index]));

@@ -1,33 +1,12 @@
+import { DiffParser } from './diffParser';
+
 export type DiffPart = { text: string; changed: boolean };
 export type DiffLine = { kind: "add" | "delete" | "context" | "meta"; text: string; oldLine?: number; newLine?: number; parts?: DiffPart[] };
 export type DiffFile = { id: string; path: string; oldPath?: string; lines: DiffLine[]; additions: number; deletions: number };
 
-const MAX_DIFF_INPUT_CHARS = 4 * 1024 * 1024;
-const MAX_RENDERED_DIFF_LINES = 10_000;
-const MAX_RENDERED_LINE_CHARS = 20_000;
 const MAX_ANNOTATED_LINE_CHARS = 4_000;
 const MAX_PAIR_MATRIX_CELLS = 400;
 const MAX_TOKEN_MATRIX_CELLS = 40_000;
-
-function decodeGitPath(value: string) {
-  if (!value.startsWith('"') || !value.endsWith('"')) return value;
-  const source = value.slice(1, -1); const bytes: number[] = []; const encoder = new TextEncoder();
-  const escapes: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, "\\": 92, '"': 34 };
-  for (let index = 0; index < source.length; index += 1) {
-    if (source[index] !== "\\") { const character = String.fromCodePoint(source.codePointAt(index)!); bytes.push(...encoder.encode(character)); index += character.length - 1; continue; }
-    const next = source[++index]; if (next === undefined) break;
-    if (/[0-7]/.test(next)) { let octal = next; while (octal.length < 3 && /[0-7]/.test(source[index + 1] ?? "")) octal += source[++index]; bytes.push(Number.parseInt(octal, 8)); }
-    else if (escapes[next] !== undefined) bytes.push(escapes[next]);
-    else bytes.push(...encoder.encode(next));
-  }
-  return new TextDecoder().decode(new Uint8Array(bytes));
-}
-
-function displayPath(header: string) {
-  const fields = header.replace(/^diff --git\s+/, "").match(/"(?:\\.|[^"])*"|\S+/g) ?? [];
-  const decoded = decodeGitPath(fields[1] ?? fields[0] ?? "");
-  return decoded.replace(/^b\//, "");
-}
 
 const tokens = (text: string) => text.match(/#[\da-fA-F]{3,8}\b|\s+|[\p{L}\p{N}_$]+|./gu) ?? [];
 
@@ -38,16 +17,23 @@ function appendPart(parts: DiffPart[], text: string, changed: boolean) {
   else parts.push({ text, changed });
 }
 
-function intralineParts(before: string, after: string): [DiffPart[], DiffPart[]] {
-  const left = tokens(before); const right = tokens(after);
-  if (left.length * right.length > MAX_TOKEN_MATRIX_CELLS) {
-    let prefix = 0; while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix += 1;
-    let suffix = 0; while (suffix < before.length - prefix && suffix < after.length - prefix && before[before.length - suffix - 1] === after[after.length - suffix - 1]) suffix += 1;
-    const split = (text: string) => [{ text: text.slice(0, prefix), changed: false }, { text: text.slice(prefix, text.length - suffix), changed: true }, { text: suffix ? text.slice(-suffix) : "", changed: false }].filter((part) => part.text);
-    return [split(before), split(after)];
-  }
+function boundedIntralineParts(before: string, after: string): [DiffPart[], DiffPart[]] {
+  let prefix = 0; while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix += 1;
+  let suffix = 0; while (suffix < before.length - prefix && suffix < after.length - prefix && before[before.length - suffix - 1] === after[after.length - suffix - 1]) suffix += 1;
+  const split = (text: string) => [{ text: text.slice(0, prefix), changed: false }, { text: text.slice(prefix, text.length - suffix), changed: true }, { text: suffix ? text.slice(-suffix) : "", changed: false }].filter((part) => part.text);
+  return [split(before), split(after)];
+}
+
+function matchingTokenTable(left: string[], right: string[]) {
   const table = Array.from({ length: left.length + 1 }, () => new Uint16Array(right.length + 1));
   for (let i = left.length - 1; i >= 0; i -= 1) for (let j = right.length - 1; j >= 0; j -= 1) table[i][j] = left[i] === right[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
+  return table;
+}
+
+function intralineParts(before: string, after: string): [DiffPart[], DiffPart[]] {
+  const left = tokens(before); const right = tokens(after);
+  if (left.length * right.length > MAX_TOKEN_MATRIX_CELLS) return boundedIntralineParts(before, after);
+  const table = matchingTokenTable(left, right);
   const leftParts: DiffPart[] = []; const rightParts: DiffPart[] = []; let i = 0; let j = 0;
   while (i < left.length || j < right.length) {
     if (i < left.length && j < right.length && left[i] === right[j]) { appendPart(leftParts, left[i], false); appendPart(rightParts, right[j], false); i += 1; j += 1; }
@@ -65,12 +51,21 @@ function similarity(left: string, right: string) {
   return 2 * common / (a.length + b.length);
 }
 
+function canAnnotate(deleted: DiffLine[], added: DiffLine[]) {
+  return deleted.length > 0 && added.length > 0 && deleted.length * added.length <= MAX_PAIR_MATRIX_CELLS && ![...deleted, ...added].some((line) => line.text.length > MAX_ANNOTATED_LINE_CHARS);
+}
+
+function linePairTable(scores: number[][], width: number) {
+  const table = Array.from({ length: scores.length + 1 }, () => new Float32Array(width + 1));
+  for (let i = scores.length - 1; i >= 0; i -= 1) for (let j = width - 1; j >= 0; j -= 1) table[i][j] = Math.max(table[i + 1][j], table[i][j + 1], scores[i][j] >= .35 ? scores[i][j] + table[i + 1][j + 1] : 0);
+  return table;
+}
+
 function annotateBlock(block: DiffLine[]) {
   const deleted = block.filter((line) => line.kind === "delete"); const added = block.filter((line) => line.kind === "add");
-  if (!deleted.length || !added.length || deleted.length * added.length > MAX_PAIR_MATRIX_CELLS || [...deleted, ...added].some((line) => line.text.length > MAX_ANNOTATED_LINE_CHARS)) return;
+  if (!canAnnotate(deleted, added)) return;
   const scores = deleted.map((line) => added.map((candidate) => similarity(line.text, candidate.text)));
-  const table = Array.from({ length: deleted.length + 1 }, () => new Float32Array(added.length + 1));
-  for (let i = deleted.length - 1; i >= 0; i -= 1) for (let j = added.length - 1; j >= 0; j -= 1) table[i][j] = Math.max(table[i + 1][j], table[i][j + 1], scores[i][j] >= .35 ? scores[i][j] + table[i + 1][j + 1] : 0);
+  const table = linePairTable(scores, added.length);
   let i = 0; let j = 0;
   while (i < deleted.length && j < added.length) {
     const paired = scores[i][j] >= .35 ? scores[i][j] + table[i + 1][j + 1] : -1;
@@ -90,50 +85,6 @@ function annotateIntraline(files: DiffFile[]) {
 }
 
 export function parseDiff(patch: string, fallbackPath?: string): DiffFile[] {
-  const files: DiffFile[] = [];
-  let file: DiffFile | undefined;
-  let inHunk = false; let oldLine: number | undefined; let newLine: number | undefined; let renderedLines = 0;
-  let gitPaths = false; let oldRemaining = 0; let newRemaining = 0; let codex = false;
-  const boundedPatch = patch.slice(0, MAX_DIFF_INPUT_CHARS);
-  const pushLine = (line: DiffLine) => { if (!file || renderedLines >= MAX_RENDERED_DIFF_LINES) return; file.lines.push(line.text.length > MAX_RENDERED_LINE_CHARS ? { ...line, text: `${line.text.slice(0, MAX_RENDERED_LINE_CHARS)}…` } : line); renderedLines += 1; };
-  const startFile = (path: string) => { file = { id: `${files.length}:${path}`, path, lines: [], additions: 0, deletions: 0 }; files.push(file); inHunk = false; oldLine = undefined; newLine = undefined; };
-  const lines = boundedPatch.split("\n");
-  for (let index = 0; index < lines.length; index++) {
-    const text = lines[index];
-    if (text.startsWith("diff --git ")) {
-      startFile(displayPath(text)); gitPaths = true; codex = false; continue;
-    }
-    const operation = /^\*\*\* (Add File|Update File|Delete File): (.+)$/.exec(text);
-    if (operation) { startFile(operation[2]); gitPaths = false; codex = true; inHunk = operation[1] === "Add File"; newLine = inHunk ? 1 : undefined; pushLine({ kind: "meta", text }); continue; }
-    if (codex && text.startsWith("*** Move to: ") && file) { file.oldPath = file.path; file.path = text.slice(13); pushLine({ kind: "meta", text }); continue; }
-    if (codex && text.startsWith("*** ")) { inHunk = false; continue; }
-    if (!codex && text.startsWith("--- ") && lines[index + 1]?.startsWith("+++ ") && (!inHunk || (oldRemaining <= 0 && newRemaining <= 0))) {
-      if (!file || inHunk) { startFile(fallbackPath ?? ""); gitPaths = false; }
-      inHunk = false;
-    }
-    if (!file && fallbackPath && (text.startsWith("@@") || /^[ +\-]\s*\d+\s/.test(text))) startFile(fallbackPath);
-    if (!file) continue;
-    if (!inHunk && (text.startsWith("+++ ") || text.startsWith("--- "))) {
-      const path = decodeGitPath(text.slice(4).split("\t")[0]);
-      if (path !== "/dev/null") { file.path = gitPaths ? path.replace(/^[ab]\//, "") : path; if (text.startsWith("--- ")) file.oldPath = file.path; }
-      continue;
-    }
-    const hunk = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(text);
-    if (hunk) { inHunk = true; oldLine = Number(hunk[1]); newLine = Number(hunk[3]); oldRemaining = Number(hunk[2] ?? 1); newRemaining = Number(hunk[4] ?? 1); pushLine({ kind: "meta", text }); continue; }
-    if (codex && text.startsWith("@@")) { inHunk = true; oldLine = undefined; newLine = undefined; pushLine({ kind: "meta", text }); continue; }
-    const numbered = !inHunk && fallbackPath ? /^([ +\-])\s*(\d+) (.*)$/.exec(text) : null;
-    if (numbered) {
-      const kind = numbered[1] === "+" ? "add" : numbered[1] === "-" ? "delete" : "context";
-      pushLine({ kind, text: numbered[3], ...(kind !== "add" ? { oldLine: Number(numbered[2]) } : {}), ...(kind !== "delete" ? { newLine: Number(numbered[2]) } : {}) });
-      if (kind === "add") file.additions++; if (kind === "delete") file.deletions++; continue;
-    }
-    if (inHunk && text.startsWith("+")) { pushLine({ kind: "add", text: text.slice(1), newLine }); if (newLine !== undefined) newLine++; newRemaining--; file.additions += 1; continue; }
-    if (inHunk && text.startsWith("-")) { pushLine({ kind: "delete", text: text.slice(1), oldLine }); if (oldLine !== undefined) oldLine++; oldRemaining--; file.deletions += 1; continue; }
-    if (inHunk && text.startsWith(" ")) { pushLine({ kind: "context", text: text.slice(1), oldLine, newLine }); if (oldLine !== undefined) oldLine++; if (newLine !== undefined) newLine++; oldRemaining--; newRemaining--; continue; }
-    if (text.startsWith("rename from ")) file.oldPath = decodeGitPath(text.slice(12));
-    if (text.startsWith("rename to ")) file.path = decodeGitPath(text.slice(10));
-    if (text && !text.startsWith("index ") && !text.startsWith("--- ") && !text.startsWith("+++ ")) pushLine({ kind: "meta", text });
-  }
-  if (patch.length > boundedPatch.length || renderedLines >= MAX_RENDERED_DIFF_LINES) files.at(-1)?.lines.push({ kind: "meta", text: "Diff display truncated for performance." });
+  const files = new DiffParser(fallbackPath).parse(patch);
   annotateIntraline(files); return files;
 }

@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { lstat, mkdtemp, open, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, open, realpath, rm, writeFile, type FileHandle } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -20,6 +20,18 @@ type Journal = { directory: string; capture: Capture; capturedAt: number };
 const newCapture = (): Capture => ({ files: new Map(), bytes: 0, toolCallIds: new Set(), toolPaths: [], warnings: new Set() });
 const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
+async function readText(handle: FileHandle, limit: number) {
+  const buffer = Buffer.alloc(limit + 1);
+  let size = 0;
+  while (size < buffer.length) {
+    const { bytesRead } = await handle.read(buffer, size, buffer.length - size, size);
+    if (!bytesRead) break;
+    size += bytesRead;
+  }
+  if (size > limit || buffer.subarray(0, size).includes(0)) throw new Error("Binary or oversized file");
+  return decoder.decode(buffer.subarray(0, size));
+}
+
 async function textFile(path: string, limit = MAX_FILE_BYTES): Promise<string | null> {
   let handle;
   try {
@@ -27,15 +39,7 @@ async function textFile(path: string, limit = MAX_FILE_BYTES): Promise<string | 
     if (!metadata.isFile() || metadata.size > limit) throw new Error("Not a small regular file");
     handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     if (!(await handle.stat()).isFile()) throw new Error("Not a regular file");
-    const buffer = Buffer.alloc(limit + 1);
-    let size = 0;
-    while (size < buffer.length) {
-      const { bytesRead } = await handle.read(buffer, size, buffer.length - size, size);
-      if (!bytesRead) break;
-      size += bytesRead;
-    }
-    if (size > limit || buffer.subarray(0, size).includes(0)) throw new Error("Binary or oversized file");
-    return decoder.decode(buffer.subarray(0, size));
+    return await readText(handle, limit);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
@@ -74,13 +78,17 @@ function remember(capture: Capture, path: string, content: string | null, captur
   capture.files.set(path, { content, capturedAt }); capture.bytes = total;
 }
 
+function validJournalRecord(record: { path?: unknown; skip?: unknown; content?: unknown }) {
+  return typeof record.path === "string" && isAbsolute(record.path) && !record.skip && (record.content === null || typeof record.content === "string");
+}
+
 async function collectJournal(journal: Journal) {
   try {
     for (let index = 0; index < 32; index++) {
       const raw = await textFile(join(journal.directory, `${index}.json`), MAX_TOTAL_BYTES);
       if (raw === null) break;
       const record = JSON.parse(raw);
-      if (typeof record.path !== "string" || !isAbsolute(record.path) || record.skip || (record.content !== null && typeof record.content !== "string")) {
+      if (!validJournalRecord(record)) {
         journal.capture.warnings.add("Some shell changes could not be captured."); continue;
       }
       const skipped = `skipped-${createHash("sha256").update(record.path).digest("hex")}`;
@@ -110,9 +118,33 @@ async function filePatch(path: string, before: string | null, after: string | nu
   return `diff --git ${oldName} ${newName}\n${before === null ? "new file mode 100644\n" : after === null ? "deleted file mode 100644\n" : ""}--- ${before === null ? "/dev/null" : oldName}\n+++ ${after === null ? "/dev/null" : newName}\n${hunk < 0 ? "" : diff.slice(hunk + 1)}`;
 }
 
+function affectedPaths(name: string | undefined, input: Record<string, unknown>) {
+  const paths = typeof input.path === "string" ? [input.path] : [];
+  if (name === "apply_patch") {
+    const patch = input.patch ?? input.input;
+    if (typeof patch === "string") for (const match of patch.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm)) paths.push(match[1]);
+  }
+  return paths;
+}
+
 export function registerFileChanges(pi: ExtensionAPI) {
   let capture = newCapture();
   const journals = new Map<string, Journal>();
+
+  const captureShell = async (name: string, input: Record<string, unknown>, toolCallId: string, current: Capture) => {
+    const key = name === "bash" ? "command" : "cmd";
+    if (typeof input[key] !== "string") return;
+    let directory: string | undefined;
+    try {
+      directory = await mkdtemp(join(tmpdir(), "piop-file-changes-"));
+      journals.set(toolCallId, { directory, capture: current, capturedAt: Date.now() });
+      const preload = `--require ${JSON.stringify(join(assets, "node_fs.cjs"))}`;
+      input[key] = `export PIOP_DIFF_JOURNAL=${quote(directory)}\nexport PYTHONPATH=${quote(assets)}\${PYTHONPATH:+:"$PYTHONPATH"}\nexport NODE_OPTIONS=${quote(preload)}\${NODE_OPTIONS:+ "$NODE_OPTIONS"}\n${input[key]}`;
+    } catch {
+      if (directory) await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+      current.warnings.add("Shell file capture could not be started.");
+    }
+  };
 
   pi.on("agent_start", () => { capture = newCapture(); });
   pi.on("tool_call", async (event, ctx) => {
@@ -122,26 +154,10 @@ export function registerFileChanges(pi: ExtensionAPI) {
     current.toolCallIds.add(event.toolCallId);
     const input = event.input as Record<string, unknown>;
     if (name === "bash" || name === "exec_command") {
-      const key = name === "bash" ? "command" : "cmd";
-      if (typeof input[key] !== "string") return;
-      let directory: string | undefined;
-      try {
-        directory = await mkdtemp(join(tmpdir(), "piop-file-changes-"));
-        journals.set(event.toolCallId, { directory, capture: current, capturedAt: Date.now() });
-        const preload = `--require ${JSON.stringify(join(assets, "node_fs.cjs"))}`;
-        input[key] = `export PIOP_DIFF_JOURNAL=${quote(directory)}\nexport PYTHONPATH=${quote(assets)}\${PYTHONPATH:+:"$PYTHONPATH"}\nexport NODE_OPTIONS=${quote(preload)}\${NODE_OPTIONS:+ "$NODE_OPTIONS"}\n${input[key]}`;
-      } catch {
-        if (directory) await rm(directory, { recursive: true, force: true }).catch(() => undefined);
-        current.warnings.add("Shell file capture could not be started.");
-      }
+      await captureShell(name, input, event.toolCallId, current);
       return;
     }
-    const paths = typeof input.path === "string" ? [input.path] : [];
-    if (name === "apply_patch") {
-      const patch = input.patch ?? input.input;
-      if (typeof patch === "string") for (const match of patch.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm)) paths.push(match[1]);
-    }
-    for (const path of paths) {
+    for (const path of affectedPaths(name, input)) {
       try {
         const absolute = absoluteToolPath(path, ctx.cwd);
         const canonical = await canonicalPath(absolute);
@@ -157,12 +173,15 @@ export function registerFileChanges(pi: ExtensionAPI) {
     await collectJournal(journal);
   });
 
-  const finish = async (ctx: ExtensionContext) => {
-    const current = capture; capture = newCapture();
+  const collectPendingJournals = async (current: Capture) => {
     for (const [id, journal] of journals) {
       if (journal.capture !== current) continue;
       journals.delete(id); await collectJournal(journal);
     }
+  };
+  const finish = async (ctx: ExtensionContext) => {
+    const current = capture; capture = newCapture();
+    await collectPendingJournals(current);
     if (!current.toolCallIds.size) return;
     const paths: string[] = []; const patches: string[] = [];
     let directory: string | undefined; let patchBytes = 0;

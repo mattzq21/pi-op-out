@@ -25,7 +25,7 @@ type CommandContext = {
   };
 };
 
-async function runFork(pi: PiApi, sessionFile: string, cwd: string, task: string): Promise<string> {
+function forkCommand(pi: PiApi, sessionFile: string, task: string) {
   const executable = process.env.PI_DESKTOP_PI_EXECUTABLE;
   const command = executable || process.execPath;
   const args = executable
@@ -42,6 +42,11 @@ async function runFork(pi: PiApi, sessionFile: string, cwd: string, task: string
   const definedAgentsExtension = process.env.PI_DESKTOP_DEFINED_AGENTS_EXTENSION;
   if (definedAgentsExtension) args.push("--extension", definedAgentsExtension);
   args.push(task);
+  return { command, args };
+}
+
+async function runFork(pi: PiApi, sessionFile: string, cwd: string, task: string): Promise<string> {
+  const { command, args } = forkCommand(pi, sessionFile, task);
   try {
     const { stdout } = await execFile(command, args, {
       cwd,

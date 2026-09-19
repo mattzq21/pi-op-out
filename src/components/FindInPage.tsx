@@ -27,6 +27,13 @@ function findMatches(root: HTMLElement, query: string): Match[] {
     text = ""; offsets = [];
   };
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const appendNode = (node: Text, collapse: boolean) => {
+    for (let i = 0; i < node.data.length; i++) {
+      const char = collapse && /[ \t\r\n\f]/.test(node.data[i]) ? " " : node.data[i];
+      if (collapse && char === " " && text.endsWith(" ")) { if (offsets[offsets.length - 1].node === node) offsets[offsets.length - 1].end = i + 1; continue; }
+      text += char; offsets.push({ node, start: i, end: i + 1 });
+    }
+  };
   while (walker.nextNode()) {
     const node = walker.currentNode as Text, parent = node.parentElement;
     if (!parent || !node.data || parent.closest('script, style, textarea, input, [hidden], [aria-hidden="true"]')) continue;
@@ -35,20 +42,20 @@ function findMatches(root: HTMLElement, query: string): Match[] {
     const nextBlock = parent.closest("p, pre, li, h1, h2, h3, h4, h5, h6, td, th, summary, button, label, .message-body") ?? parent;
     if (block !== nextBlock) { flush(); block = nextBlock; }
     const collapse = !["pre", "pre-wrap", "break-spaces"].includes(style.whiteSpace);
-    for (let i = 0; i < node.data.length; i++) {
-      const char = collapse && /[ \t\r\n\f]/.test(node.data[i]) ? " " : node.data[i];
-      if (collapse && char === " " && text.endsWith(" ")) { if (offsets[offsets.length - 1].node === node) offsets[offsets.length - 1].end = i + 1; continue; }
-      text += char; offsets.push({ node, start: i, end: i + 1 });
-    }
+    appendNode(node, collapse);
   }
   flush();
   return matches;
 }
 
+function composerBounds(element: Element) {
+  return element.classList.contains("messages") ? element.closest(".chat-shell")?.querySelector(".composer-stack")?.getBoundingClientRect() : undefined;
+}
+
 function reveal(range: Range) {
   for (let element = range.startContainer.parentElement; element; element = element.parentElement) {
     const style = getComputedStyle(element), bounds = element.getBoundingClientRect(), target = range.getBoundingClientRect();
-    const composer = element.classList.contains("messages") ? element.closest(".chat-shell")?.querySelector(".composer-stack")?.getBoundingClientRect() : undefined;
+    const composer = composerBounds(element);
     const bottom = composer ? Math.min(bounds.bottom, composer.top) : bounds.bottom;
     if (/auto|scroll/.test(style.overflowY) && (target.top < bounds.top || target.bottom > bottom)) {
       element.scrollTop += target.top - bounds.top - (bottom - bounds.top) / 2;
@@ -57,6 +64,22 @@ function reveal(range: Range) {
       element.scrollLeft += target.left - bounds.left - element.clientWidth / 2;
     }
   }
+}
+
+function ownsFindShortcut(event: KeyboardEvent, root: HTMLElement | null, bar: HTMLElement | null, active: boolean) {
+  const focused = document.activeElement;
+  if (focused?.closest(".keybind-input") || (event.target instanceof Element && event.target.closest(".keybind-input"))) return false;
+  const focusedBar = focused?.closest(".find-bar");
+  const focusedShell = focused?.closest(".chat-shell");
+  return focusedBar ? focusedBar === bar : focusedShell ? focusedShell === root : active;
+}
+
+function isFindShortcut(event: KeyboardEvent) {
+  return (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f";
+}
+
+function findShortcutBlocked(event: KeyboardEvent, enabled: boolean) {
+  return !enabled || event.isComposing || Boolean(document.querySelector("dialog[open]"));
 }
 
 export function FindInPage({ selector, scopeKey, active = true, enabled = true, onActivate }: { selector: string; scopeKey: string; active?: boolean; enabled?: boolean; onActivate?: () => void }) {
@@ -82,14 +105,10 @@ export function FindInPage({ selector, scopeKey, active = true, enabled = true, 
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!enabled || event.isComposing || document.querySelector("dialog[open]")) return;
+      if (findShortcutBlocked(event, enabled)) return;
       const root = document.querySelector<HTMLElement>(selector);
-      const focused = document.activeElement;
-      if (focused?.closest(".keybind-input") || (event.target instanceof Element && event.target.closest(".keybind-input"))) return;
-      const focusedBar = focused?.closest(".find-bar");
-      const focusedShell = focused?.closest(".chat-shell");
-      if (focusedBar ? focusedBar !== bar.current : focusedShell ? focusedShell !== root : !active) return;
-      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") {
+      if (!ownsFindShortcut(event, root, bar.current, active)) return;
+      if (isFindShortcut(event)) {
         event.preventDefault(); event.stopImmediatePropagation();
 
         if (!open) previousFocus.current = document.activeElement as HTMLElement;
@@ -142,10 +161,8 @@ export function FindInPage({ selector, scopeKey, active = true, enabled = true, 
             const bounds = parent.getBoundingClientRect();
             if (style.overflowX !== "visible") { left = Math.max(left, bounds.left); right = Math.min(right, bounds.right); }
             if (style.overflowY !== "visible") { top = Math.max(top, bounds.top); bottom = Math.min(bottom, bounds.bottom); }
-            if (parent.classList.contains("messages")) {
-              const composer = parent.closest(".chat-shell")?.querySelector(".composer-stack");
-              if (composer) bottom = Math.min(bottom, composer.getBoundingClientRect().top);
-            }
+            const composer = composerBounds(parent);
+            if (composer) bottom = Math.min(bottom, composer.top);
           }
         }
         for (const rect of range.getClientRects()) {

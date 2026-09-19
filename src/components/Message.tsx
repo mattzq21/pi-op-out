@@ -123,6 +123,33 @@ function formatMessageTime(timestamp?: number) {
   };
 }
 
+function responseFailure(message: ChatMessage, paused: boolean) {
+  const pausedResponse = message.stopReason === "aborted" && (paused || message.errorMessage === "Response paused");
+  const failure = message.stopReason === "aborted" ? (pausedResponse ? undefined : message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
+  return { pausedResponse, failure };
+}
+
+function responseMetadata(message: ChatMessage, turnCacheUsage: Props['turnCacheUsage']) {
+  return {
+    cache: cacheHitStats(turnCacheUsage ?? message.usage),
+    responseLabel: `Assistant response${message.timestamp ? ` from ${new Date(message.timestamp).toLocaleString()}` : ` ${message.id.slice(0, 8)}`}`,
+    responseTime: formatMessageTime(message.completedAt ?? message.timestamp),
+  };
+}
+
+function toolInputLines(message: ChatMessage) {
+  const input = message.toolInput === undefined ? undefined : JSON.stringify(message.toolInput, null, 2);
+  return input && message.toolInput !== null && typeof message.toolInput === "object" && !Array.isArray(message.toolInput) ? input.slice(1, -1).replace(/^\n|\n$/g, "").replace(/^  /gm, "") : input;
+}
+
+function MessageCopyButton({ state, copy }: { state: "idle" | "copied" | "error"; copy: () => Promise<void> }) {
+  return <IconButton label={state === "copied" ? "Message copied" : state === "error" ? "Copy failed" : "Copy message"} onClick={copy}>{state === "copied" ? <Check size={14} /> : state === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>;
+}
+
+function ToolLabel({ message, toolCount, status }: { message: ChatMessage; toolCount: number; status: string }) {
+  return <><Wrench size={14} /><span><strong>{message.toolName || "tool"}{toolCount > 1 ? ` x${toolCount}` : ""}</strong><small>{status === "running" ? "Running…" : status === "error" ? "Failed" : "Completed"}</small></span></>;
+}
+
 export function Message({ message, turnCacheUsage, diff, expanded = false, showActions = true, toolCount = 1, debug = false, paused = false, onBranch, onForkAndForget, onCreateWorktree, onRetry, retrying = false }: Props) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [branching, setBranching] = useState(false);
@@ -141,17 +168,15 @@ export function Message({ message, turnCacheUsage, diff, expanded = false, showA
     window.setTimeout(() => setCopyState("idle"), 1800);
   };
   if (message.role === "system") return <div className="command-result" role="status">{textOf(message.content)}</div>;
-  if (message.role === "tool") {
+  const renderToolMessage = () => {
     const output = textOf(message.content);
     const status = message.toolStatus ?? "done";
-    const label = <><Wrench size={14} /><span><strong>{message.toolName || "tool"}{toolCount > 1 ? ` x${toolCount}` : ""}</strong><small>{status === "running" ? "Running…" : status === "error" ? "Failed" : "Completed"}</small></span></>;
+    const label = <ToolLabel message={message} toolCount={toolCount} status={status} />;
     if (!debug) return <div className={`tool-event ${status}`}><div className="tool-summary">{label}</div></div>;
-    const input = message.toolInput === undefined ? undefined : JSON.stringify(message.toolInput, null, 2);
-    const debraced = input && message.toolInput !== null && typeof message.toolInput === "object" && !Array.isArray(message.toolInput) ? input.slice(1, -1).replace(/^\n|\n$/g, "").replace(/^  /gm, "") : input;
-    const inputLines = debraced;
+    const inputLines = toolInputLines(message);
     return <details className={`tool-event ${status}`} open={status === "running" || (expanded && status !== "done")}><summary className="tool-summary">{label}<ChevronRight size={12} className="tool-chevron" aria-hidden="true" /></summary>{inputLines !== undefined && <div className="tool-payload"><div className="tool-payload-label">In</div><div className="tool-input" aria-label="Tool arguments"><pre>{inputLines}</pre></div></div>}{output && <div className="tool-payload"><div className="tool-payload-label">Out</div><div className="tool-output" aria-label="Tool output"><pre>{output}</pre></div></div>}</details>;
-  }
-  if (message.role === "user") {
+  };
+  const renderUserMessage = () => {
     const { skills, text, literalSkill } = userMessageParts(textOf(message.content));
     const sentTime = formatMessageTime(message.timestamp);
     return <article className={`message user-message${message.deliveryBehavior === "steer" ? " steering-message" : ""}`} title={sentTime ? `Sent ${sentTime.full}` : undefined}>
@@ -159,19 +184,18 @@ export function Message({ message, turnCacheUsage, diff, expanded = false, showA
       {Array.isArray(message.content) && message.content.map((part, index) => part.type === "image" && part.data && part.mimeType && /^image\/(png|jpeg|gif|webp)$/.test(part.mimeType) ? <img key={index} src={`data:${part.mimeType};base64,${part.data}`} alt="Sent attachment" style={{ maxWidth: "100%", maxHeight: 320, objectFit: "contain" }} /> : null)}
       <div className="message-actions">
         {sentTime && <span className="message-time" title={sentTime.full}>{sentTime.short}</span>}
-        <IconButton label={copyState === "copied" ? "Message copied" : copyState === "error" ? "Copy failed" : "Copy message"} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>
+        <MessageCopyButton state={copyState} copy={copy} />
         {copyState === "error" && <span className="copy-feedback" role="status">Could not copy message</span>}
       </div>
     </article>;
-  }
+  };
+  if (message.role === "tool") return renderToolMessage();
+  if (message.role === "user") return renderUserMessage();
   const output = textOf(message.content);
   const thinking = thinkingOf(message.content);
-  const cache = cacheHitStats(turnCacheUsage ?? message.usage);
-  const responseLabel = `Assistant response${message.timestamp ? ` from ${new Date(message.timestamp).toLocaleString()}` : ` ${message.id.slice(0, 8)}`}`;
-  const responseTime = formatMessageTime(message.completedAt ?? message.timestamp);
+  const { cache, responseLabel, responseTime } = responseMetadata(message, turnCacheUsage);
   const voiceResponse = message.customType === VOICE_MESSAGE;
-  const pausedResponse = message.stopReason === "aborted" && (paused || message.errorMessage === "Response paused");
-  const failure = message.stopReason === "aborted" ? (pausedResponse ? undefined : message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
+  const { pausedResponse, failure } = responseFailure(message, paused);
   const branch = async () => {
     if (!onBranch || branchingRef.current || forgettingRef.current) return;
     branchingRef.current = true; setBranching(true);
@@ -182,23 +206,37 @@ export function Message({ message, turnCacheUsage, diff, expanded = false, showA
     forgettingRef.current = true; setForgetting(true);
     try { await onForkAndForget(message); } finally { forgettingRef.current = false; setForgetting(false); }
   };
-  return <article className={`message assistant-message ${thinking ? "reasoning-message" : ""}`} aria-label={responseLabel} title={responseTime ? `Responded ${responseTime.full}` : undefined}>
-    <div className="message-body">
-      {thinking && <div className="reasoning-text"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{thinking}</ReactMarkdown></div>}
-      {voiceResponse ? <div className="voice-response-bubble"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{output}</ReactMarkdown>{message.streaming && <span className="stream-caret" />}</div> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{output}</ReactMarkdown>}
-      {failure && <div className="message-failure" role="status"><CircleAlert size={14} /><span>{failure}</span>{onRetry && <button disabled={retrying} onClick={onRetry}>{retrying ? "Retrying…" : "Retry"}</button>}</div>}
-      {pausedResponse && <div className="message-paused" role="status"><Pause size={14} /><span>Response paused</span></div>}
-      {message.streaming && !voiceResponse && <span className="stream-caret" />}
-      {diff && <DiffViewer {...diff} />}
-      {showActions && !message.streaming && (output.trim().length > 0 || onCreateWorktree) && <div className="message-actions">
-        <IconButton label={copyState === "copied" ? `${responseLabel} copied` : copyState === "error" ? `Copy failed for ${responseLabel.toLowerCase()}` : `Copy ${responseLabel.toLowerCase()}`} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>
+  const renderMessageBody = () => {
+    const renderVoiceResponseBubble = () => (voiceResponse ? <div className="voice-response-bubble"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{output}</ReactMarkdown>{message.streaming && <span className="stream-caret" />}</div> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{output}</ReactMarkdown>);
+    const renderMessageFailure = () => (failure && <div className="message-failure" role="status"><CircleAlert size={14} /><span>{failure}</span>{onRetry && <button disabled={retrying} onClick={onRetry}>{retrying ? "Retrying…" : "Retry"}</button>}</div>);
+    const renderStreamCaret = () => (message.streaming && !voiceResponse && <span className="stream-caret" />);
+    const renderMessageActions = () => {
+      const renderCopyResponse = () => (<IconButton label={copyState === "copied" ? `${responseLabel} copied` : copyState === "error" ? `Copy failed for ${responseLabel.toLowerCase()}` : `Copy ${responseLabel.toLowerCase()}`} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>);
+      const renderBranchAction = () => (onBranch && <button className="branch-button" aria-label={`Branch from ${responseLabel.toLowerCase()}`} title="Branch from here" disabled={branching || forgetting} onClick={() => void branch()}><GitBranch size={14} /></button>);
+      const renderForkAndForgetAction = () => (onForkAndForget && <button className="branch-button" aria-label={`Fork and forget from ${responseLabel.toLowerCase()}`} title="Fork and forget from here" disabled={branching || forgetting} onClick={() => void forkAndForget()}><Undo2 size={14} /></button>);
+      const renderCacheHitRate = () => (debug && cache && <span className={`cache-hit-rate${cache.low ? " low" : ""}`} title={`${cache.cachedTokens.toLocaleString()} of ${cache.promptTokens.toLocaleString()} prompt tokens read from cache${turnCacheUsage ? " across all calls in this response" : ""}`}>Cache {cache.rate}%</span>);
+      return (showActions && !message.streaming && (output.trim().length > 0 || onCreateWorktree) && <div className="message-actions">
+        {renderCopyResponse()}
         {copyState === "error" && <span className="copy-feedback" role="status">Could not copy response</span>}
-        {onBranch && <button className="branch-button" aria-label={`Branch from ${responseLabel.toLowerCase()}`} title="Branch from here" disabled={branching || forgetting} onClick={() => void branch()}><GitBranch size={14} /></button>}
-        {onForkAndForget && <button className="branch-button" aria-label={`Fork and forget from ${responseLabel.toLowerCase()}`} title="Fork and forget from here" disabled={branching || forgetting} onClick={() => void forkAndForget()}><Undo2 size={14} /></button>}
+        {renderBranchAction()}
+        {renderForkAndForgetAction()}
         {onCreateWorktree && <button className="branch-button" aria-label="Create Git worktree" title="Create Git worktree after this response" onClick={() => onCreateWorktree(message)}><FolderGit2 size={14} /></button>}
-        {debug && cache && <span className={`cache-hit-rate${cache.low ? " low" : ""}`} title={`${cache.cachedTokens.toLocaleString()} of ${cache.promptTokens.toLocaleString()} prompt tokens read from cache${turnCacheUsage ? " across all calls in this response" : ""}`}>Cache {cache.rate}%</span>}
+        {renderCacheHitRate()}
         {responseTime && <span className="message-time" title={responseTime.full}>{responseTime.short}</span>}
-      </div>}
-    </div>
-  </article>;
+      </div>);
+    };
+    return (<div className="message-body">
+      {thinking && <div className="reasoning-text"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{thinking}</ReactMarkdown></div>}
+      {renderVoiceResponseBubble()}
+      {renderMessageFailure()}
+      {pausedResponse && <div className="message-paused" role="status"><Pause size={14} /><span>Response paused</span></div>}
+      {renderStreamCaret()}
+      {diff && <DiffViewer {...diff} />}
+      {renderMessageActions()}
+    </div>);
+  };
+  const renderAssistantMessage = () => (<article className={`message assistant-message ${thinking ? "reasoning-message" : ""}`} aria-label={responseLabel} title={responseTime ? `Responded ${responseTime.full}` : undefined}>
+    {renderMessageBody()}
+  </article>);
+  return renderAssistantMessage();
 }

@@ -81,6 +81,34 @@ async function inspectSession(file, includeArchiveDetails) {
   let malformed = false;
   let checkpointError = "";
   const checkpointRepositories = new Map();
+  const recordSnapshot = (entry) => {
+    if (entry.type === "custom" && entry.customType === "pi-project-files-watch-snapshot") {
+      if (snapshotCheckpoint(entry.data)) {
+        const id = typeof header.id === "string" ? safeSessionId(header.id) : "";
+        const prefix = `refs/pi-session-snapshots/chats/${id}/`;
+        if (id && (entry.data.ref.startsWith(prefix) || entry.data.ref === `refs/pi-session-snapshots/${id}`)) {
+          const repository = checkpointRepositoryRecord(checkpointRepositories, entry.data.repositoryRoot);
+          repository.commits.add(entry.data.commit);
+          repository.expectedRefs.set(entry.data.ref, entry.data.commit);
+        }
+      }
+      else if (!unavailableCheckpoint(entry.data)) checkpointError ||= "This archive contains invalid project snapshot metadata, so checkpoint cleanup cannot be verified.";
+    }
+  };
+  const recordPromptCheckpoint = (entry) => {
+    if (entry.type === "custom" && entry.customType === "pi-project-prompt-checkpoint") {
+      if (promptCheckpoint(entry.data) && typeof header.cwd === "string" && path.isAbsolute(header.cwd) && typeof header.id === "string") {
+        const repository = checkpointRepositoryRecord(checkpointRepositories, header.cwd);
+        repository.commits.add(entry.data.commit);
+        repository.expectedRefs.set(`refs/pi-session-snapshots/chats/${safeSessionId(header.id)}/prompts/${entry.data.key}`, entry.data.commit);
+      }
+      else if (!unavailableCheckpoint(entry.data)) checkpointError ||= "This archive contains invalid prompt checkpoint metadata, so checkpoint cleanup cannot be verified.";
+    }
+  };
+  const recordDescription = (entry) => {
+    if (entry.type === "session_info" && typeof entry.name === "string" && entry.name.trim()) explicitName = entry.name.trim().slice(0, 2000);
+    if (!firstPrompt && entry.type === "message" && entry.message?.role === "user") firstPrompt = messageText(entry.message).trim().slice(0, 2000);
+  };
   const lines = readline.createInterface({ input: createReadStream(file), crlfDelay: Infinity });
   try {
     for await (const line of lines) {
@@ -92,36 +120,21 @@ async function inspectSession(file, includeArchiveDetails) {
         header = entry;
         continue;
       }
-      if (entry.type === "session_info" && typeof entry.name === "string" && entry.name.trim()) explicitName = entry.name.trim().slice(0, 2000);
-      if (!firstPrompt && entry.type === "message" && entry.message?.role === "user") firstPrompt = messageText(entry.message).trim().slice(0, 2000);
-      if (entry.type === "custom" && entry.customType === "pi-project-files-watch-snapshot") {
-        if (snapshotCheckpoint(entry.data)) {
-          const id = typeof header.id === "string" ? safeSessionId(header.id) : "";
-          const prefix = `refs/pi-session-snapshots/chats/${id}/`;
-          if (id && (entry.data.ref.startsWith(prefix) || entry.data.ref === `refs/pi-session-snapshots/${id}`)) {
-            const repository = checkpointRepositoryRecord(checkpointRepositories, entry.data.repositoryRoot);
-            repository.commits.add(entry.data.commit);
-            repository.expectedRefs.set(entry.data.ref, entry.data.commit);
-          }
-        }
-        else if (!unavailableCheckpoint(entry.data)) checkpointError ||= "This archive contains invalid project snapshot metadata, so checkpoint cleanup cannot be verified.";
-      }
-      if (entry.type === "custom" && entry.customType === "pi-project-prompt-checkpoint") {
-        if (promptCheckpoint(entry.data) && typeof header.cwd === "string" && path.isAbsolute(header.cwd) && typeof header.id === "string") {
-          const repository = checkpointRepositoryRecord(checkpointRepositories, header.cwd);
-          repository.commits.add(entry.data.commit);
-          repository.expectedRefs.set(`refs/pi-session-snapshots/chats/${safeSessionId(header.id)}/prompts/${entry.data.key}`, entry.data.commit);
-        }
-        else if (!unavailableCheckpoint(entry.data)) checkpointError ||= "This archive contains invalid prompt checkpoint metadata, so checkpoint cleanup cannot be verified.";
-      }
+      recordDescription(entry);
+      recordSnapshot(entry);
+      recordPromptCheckpoint(entry);
     }
   } finally { lines.close(); }
   const result = { checkpointRepositories: [...checkpointRepositories.values()] };
   if (!includeArchiveDetails) return result;
+  return archiveDetails(file, header, explicitName, firstPrompt, malformed, checkpointError, result);
+}
+
+async function archiveDetails(file, header, explicitName, firstPrompt, malformed, checkpointError, result) {
   const metadata = await fs.lstat(file);
   const diffFile = file.replace(/\.jsonl$/, ".diffs.json");
   const diffBytes = await regularFileSize(diffFile);
-  const validHeader = header?.type === "session" && typeof header.id === "string" && Boolean(header.id) && typeof header.cwd === "string" && path.isAbsolute(header.cwd);
+  const validHeader = validSessionHeader(header);
   const deletable = validHeader && !malformed && !checkpointError;
   const deleteError = malformed || !validHeader
     ? "This archive is malformed, so piop cannot discover and safely remove its project checkpoint refs."
@@ -129,10 +142,8 @@ async function inspectSession(file, includeArchiveDetails) {
   return {
     ...result,
     archive: {
-      id: typeof header?.id === "string" && header.id ? header.id : path.basename(file, ".jsonl"),
-      path: file,
+      ...archiveLocation(header, file),
       name: explicitName || firstPrompt || "Untitled conversation",
-      cwd: typeof header?.cwd === "string" ? header.cwd : "Unknown project",
       modifiedAt: Math.floor(metadata.mtimeMs / 1000),
       byteSize: metadata.size + diffBytes,
       deletable,
@@ -141,13 +152,23 @@ async function inspectSession(file, includeArchiveDetails) {
   };
 }
 
+function archiveLocation(header, file) {
+  return {
+    id: typeof header?.id === "string" && header.id ? header.id : path.basename(file, ".jsonl"),
+    path: file,
+    cwd: typeof header?.cwd === "string" ? header.cwd : "Unknown project",
+  };
+}
+
+function validSessionHeader(header) { return header?.type === "session" && typeof header.id === "string" && Boolean(header.id) && typeof header.cwd === "string" && path.isAbsolute(header.cwd); }
+
 function git(cwd, args, input = "") {
   return new Promise((resolve, reject) => {
     const child = execFile("git", ["-C", cwd, ...args], { env: { ...process.env, LC_ALL: "C" }, maxBuffer: 64 * 1024 * 1024, timeout: 30_000 }, (error, stdout, stderr) => {
       if (error) reject(new Error(stderr.trim() || error.message));
       else resolve(stdout);
     });
-    child.stdin.on("error", () => {});
+    child.stdin.on("error", () => { });
     child.stdin.end(input);
   });
 }
@@ -187,21 +208,27 @@ async function checkpointIdentity(sessionId, records) {
     record.expectedRefs.forEach((commit, ref) => repository.expectedRefs.set(ref, commit));
   }
   for (const repository of repositories.values()) {
-    let refs;
-    try {
-      const output = await git(repository.root, ["for-each-ref", "--format=%(refname) %(objectname)", prefix, legacy]);
-      refs = output.trim().split("\n").filter(Boolean).map((line) => {
-        const [ref, oid] = line.split(" "); return { ref, oid };
-      }).filter(({ ref }) => ref.startsWith(prefix) || ref === legacy);
-    } catch (error) { return `Checkpoint refs could not be inspected at ${repository.displayRoot}: ${error.message}`; }
-    if (!refs.length) return `Checkpoint repository identity cannot be verified at ${repository.displayRoot}: the conversation's refs are missing`;
-    const actual = new Map(refs.map(({ ref, oid }) => [ref, oid]));
-    for (const [ref, commit] of repository.expectedRefs) {
-      if (actual.has(ref) && actual.get(ref) !== commit) return `Checkpoint repository identity cannot be verified at ${repository.displayRoot}: ${ref} no longer points to its recorded commit`;
-    }
-    if (!refs.some(({ ref, oid }) => repository.expectedRefs.get(ref) === oid || repository.commits.has(oid))) {
-      return `Checkpoint repository identity cannot be verified at ${repository.displayRoot}: no conversation ref matches the recorded checkpoint commits`;
-    }
+    const error = await verifyCheckpointIdentity(repository, prefix, legacy);
+    if (error) return error;
+  }
+  return "";
+}
+
+async function verifyCheckpointIdentity(repository, prefix, legacy) {
+  let refs;
+  try {
+    const output = await git(repository.root, ["for-each-ref", "--format=%(refname) %(objectname)", prefix, legacy]);
+    refs = output.trim().split("\n").filter(Boolean).map((line) => {
+      const [ref, oid] = line.split(" "); return { ref, oid };
+    }).filter(({ ref }) => ref.startsWith(prefix) || ref === legacy);
+  } catch (error) { return `Checkpoint refs could not be inspected at ${repository.displayRoot}: ${error.message}`; }
+  if (!refs.length) return `Checkpoint repository identity cannot be verified at ${repository.displayRoot}: the conversation's refs are missing`;
+  const actual = new Map(refs.map(({ ref, oid }) => [ref, oid]));
+  for (const [ref, commit] of repository.expectedRefs) {
+    if (actual.has(ref) && actual.get(ref) !== commit) return `Checkpoint repository identity cannot be verified at ${repository.displayRoot}: ${ref} no longer points to its recorded commit`;
+  }
+  if (!refs.some(({ ref, oid }) => repository.expectedRefs.get(ref) === oid || repository.commits.has(oid))) {
+    return `Checkpoint repository identity cannot be verified at ${repository.displayRoot}: no conversation ref matches the recorded checkpoint commits`;
   }
   return "";
 }
@@ -223,7 +250,7 @@ async function checkpointStorage(repositoryRoots) {
       if (!snapshots.length) continue;
       itemCount += snapshots.length;
       const ordinary = refs.filter((ref) => !snapshots.includes(ref)).map((ref) => `^${ref}`);
-      try { await git(cwd, ["rev-parse", "--verify", "HEAD"]); ordinary.push("^HEAD"); } catch {}
+      try { await git(cwd, ["rev-parse", "--verify", "HEAD"]); ordinary.push("^HEAD"); } catch { }
       const revisions = `${snapshots.join("\n")}\n${ordinary.join("\n")}\n`;
       const objects = [...new Set((await git(cwd, ["rev-list", "--objects", "--stdin"], revisions)).trim().split("\n").filter(Boolean).map((line) => line.split(" ", 1)[0]))];
       if (!objects.length) continue;

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
+import { dirname, resolve } from 'node:path';
 import ts from 'typescript';
 
 const { values } = parseArgs({ options: { grep: { type: 'string' }, list: { type: 'boolean' } } });
@@ -15,6 +16,11 @@ function collect(node, parents = []) {
     if (name === 'describe') { collect(node.arguments[1], title); return; }
   }
   ts.forEachChild(node, child => collect(child, parents));
+}
+for (const statement of source.statements) {
+  if (!ts.isImportDeclaration(statement) || !statement.moduleSpecifier.text.endsWith('.cases.js')) continue;
+  const casesFile = resolve(dirname(file), statement.moduleSpecifier.text.replace(/\.js$/, '.ts'));
+  collect(ts.createSourceFile(casesFile, readFileSync(casesFile, 'utf8'), ts.ScriptTarget.Latest));
 }
 collect(source);
 const selected = values.grep ? titles.filter(title => new RegExp(values.grep).test(title)) : titles;

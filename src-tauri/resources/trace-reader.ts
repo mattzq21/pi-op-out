@@ -40,10 +40,14 @@ async function traceFiles(root: string): Promise<TraceFile[]> {
   return files;
 }
 
+function expandHome(requested: string) {
+  return requested === "~" ? homedir() : requested.startsWith("~/") ? join(homedir(), requested.slice(2)) : requested;
+}
+
 async function findTrace(query: string, cwd: string): Promise<{ selected?: string; matches: TraceFile[] }> {
   const requested = query.trim();
   if (!requested) throw new Error("Trace query cannot be empty");
-  const expanded = requested === "~" ? homedir() : requested.startsWith("~/") ? join(homedir(), requested.slice(2)) : requested;
+  const expanded = expandHome(requested);
   const direct = isAbsolute(expanded) ? expanded : resolve(cwd, expanded);
   if (isAbsolute(expanded) || requested.includes("/") || requested.includes("\\")) {
     return { selected: await piopTracePath(direct), matches: [] };
@@ -69,6 +73,10 @@ function syntheticUserMessage(text: string) {
     || /^\/pi-define-agents-(?:config|use)\b/.test(value);
 }
 
+function rememberResume(entry: Entry, resumeMessages: Set<string>) {
+  if (entry.type === "custom" && entry.customType === "pi-desktop-resume" && typeof entry.data?.message === "string") resumeMessages.add(entry.data.message);
+}
+
 export function cleanTrace(content: string): CleanMessage[] {
   const entries = content.split(/\r?\n/).flatMap((line) => {
     try {
@@ -86,7 +94,7 @@ export function cleanTrace(content: string): CleanMessage[] {
   }
   const resumeMessages = new Set<string>();
   return branch.flatMap((entry): CleanMessage[] => {
-    if (entry.type === "custom" && entry.customType === "pi-desktop-resume" && typeof entry.data?.message === "string") resumeMessages.add(entry.data.message);
+    rememberResume(entry, resumeMessages);
     if (entry.type !== "message" || !entry.message) return [];
     const text = textContent(entry.message.content); if (!text) return [];
     if (entry.message.role === "user" && !syntheticUserMessage(text) && !resumeMessages.has(text)) return [{ role: "user", text }];

@@ -39,6 +39,30 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
     if (owner.current !== transport) return Promise.reject(new Error("Conversation changed"));
     if (refreshOperation.current?.transport === transport) return refreshOperation.current.promise;
     const buffer: RpcEvent[] = []; bufferedEvents.current = buffer;
+    const restoreHistory = (snapshot: SessionSnapshot) => {
+      for (const entry of snapshot.history.entries) { const marker = resumeMarker(entry); if (marker) resumeMarkers.current.add(marker); }
+      const nextMessages = branchMessages(snapshot.history.entries, snapshot.history.leafId);
+      activeAssistantId.current = [...nextMessages].reverse().find((message) => message.role === "assistant" && message.streaming)?.id;
+      activeMessageIds.current.clear();
+      for (const message of nextMessages.filter((message) => message.streaming)) trackLiveId(message.role, message.id);
+      setMessages(nextMessages);
+    };
+    const restoreCapabilities = (modelResult?: { models: Model[] }, thinkingResult?: { levels: string[] }, commandResult?: { commands: SlashCommand[] }) => {
+      if (modelResult) setModels(modelResult.models);
+      if (thinkingResult) setThinkingLevels(thinkingResult.levels);
+      if (commandResult) {
+        const visible = commandResult.commands.filter((command) => command.sourceInfo?.source !== "inline" && !command.name.startsWith("pi-orchestration-") && !["pi-desktop-control", "pi-desktop-fast-status", "pi-desktop-fork-and-forget", "pi-desktop-voice-history"].includes(command.name));
+        setCommands(visible.some((command) => command.name === "compact") ? visible : [{ name: "compact", description: "Compact conversation context", source: "builtin" }, ...visible]);
+      }
+    };
+    const replaySnapshotEvents = (snapshot: SessionSnapshot) => {
+      for (const event of snapshot.liveTools) { eventHandler.current(event); if (event.partialResult) eventHandler.current({ ...event, type: "tool_execution_update" }); }
+      for (const event of buffer) if (typeof event.sequence !== "number" || (event.epoch === snapshot.epoch && event.sequence > snapshot.sequence)) eventHandler.current(event);
+    };
+    const finishRefresh = () => {
+      if (bufferedEvents.current === buffer) { bufferedEvents.current = undefined; if (owner.current === transport) for (const event of buffer) eventHandler.current(event); }
+      if (refreshOperation.current?.buffer === buffer) refreshOperation.current = undefined;
+    };
     const promise = (async () => {
       try {
         const [snapshot, modelResult, thinkingResult, commandResult, statsResult] = await Promise.all([
@@ -54,26 +78,14 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
           return refresh();
         }
         discardPendingUpdates();
-        for (const entry of snapshot.history.entries) { const marker = resumeMarker(entry); if (marker) resumeMarkers.current.add(marker); }
-        const nextMessages = branchMessages(snapshot.history.entries, snapshot.history.leafId);
-        activeAssistantId.current = [...nextMessages].reverse().find((message) => message.role === "assistant" && message.streaming)?.id;
-        activeMessageIds.current.clear();
-        for (const message of nextMessages.filter((message) => message.streaming)) trackLiveId(message.role, message.id);
-        setMessages(nextMessages);
+        restoreHistory(snapshot);
         setState({ ...snapshot.state, pendingMessages: snapshot.queue.pendingMessages as AgentState["pendingMessages"], ...(statsResult ? { contextUsage: statsResult.contextUsage } : {}) });
-        if (modelResult) setModels(modelResult.models);
-        if (thinkingResult) setThinkingLevels(thinkingResult.levels);
-        if (commandResult) {
-          const visible = commandResult.commands.filter((command) => command.sourceInfo?.source !== "inline" && !command.name.startsWith("pi-orchestration-") && !["pi-desktop-control", "pi-desktop-fast-status", "pi-desktop-fork-and-forget", "pi-desktop-voice-history"].includes(command.name));
-          setCommands(visible.some((command) => command.name === "compact") ? visible : [{ name: "compact", description: "Compact conversation context", source: "builtin" }, ...visible]);
-        }
+        restoreCapabilities(modelResult, thinkingResult, commandResult);
         bufferedEvents.current = undefined;
-        for (const event of snapshot.liveTools) { eventHandler.current(event); if (event.partialResult) eventHandler.current({ ...event, type: "tool_execution_update" }); }
-        for (const event of buffer) if (typeof event.sequence !== "number" || (event.epoch === snapshot.epoch && event.sequence > snapshot.sequence)) eventHandler.current(event);
+        replaySnapshotEvents(snapshot);
         return snapshot.state;
       } finally {
-        if (bufferedEvents.current === buffer) { bufferedEvents.current = undefined; if (owner.current === transport) for (const event of buffer) eventHandler.current(event); }
-        if (refreshOperation.current?.buffer === buffer) refreshOperation.current = undefined;
+        finishRefresh();
       }
     })();
     refreshOperation.current = { transport, promise, buffer };
@@ -99,49 +111,109 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
   const handleEvent = useCallback((event: RpcEvent) => {
     if (owner.current !== transport) return;
     if (bufferedEvents.current) { bufferedEvents.current.push(event); return; }
-    if (event.type === "runtime_presence") setState((current) => ({ ...current, viewers: Number(event.viewers), isStreaming: event.isStreaming === true }));
-    if (event.type === "extension_ui_request" && event.method === "setStatus" && event.statusKey === "pi-desktop-prompt-context" && typeof event.statusText === "string" && event.statusText.startsWith("json:")) {
-      try {
-        const context = JSON.parse(event.statusText.slice(5)) as PromptContextInfo;
-        if (typeof context.userTimestamp === "number") {
-          liveRevision.current += 1;
-          setMessages((current) => current.map((message) => message.role === "user" && message.timestamp === context.userTimestamp && !message.promptContext ? { ...message, promptContext: context } : message));
-        }
-      } catch { /* Ignore malformed extension status data. */ }
-    }
-    if (event.type === "entry_appended" && event.entry) { const entry = event.entry as PiEntry; const voice = voiceEntry(entry); if (voice) { liveRevision.current += 1; setMessages((current) => mergeSpokenMessages(current, [voice])); } const marker = resumeMarker(entry); if (marker) { resumeMarkers.current.add(marker); setMessages(checkpointLatestUser); } if (entry.customType === "piop-file-changes") { liveRevision.current += 1; setMessages((current) => appendFileChanges(current, entry)); } }
     if (["agent_start", "agent_end", "agent_settled", "pause_state", "message_start", "message_update", "message_end", "tool_execution_start", "tool_execution_update", "tool_execution_end"].includes(event.type)) liveRevision.current += 1;
-    if (event.type === "agent_start") setState((current) => ({ ...current, isStreaming: true, isPaused: false }));
-    if (event.type === "pause_state") setState((current) => ({ ...current, isPaused: event.isPaused === true, isPausing: event.isPausing === true, ...(event.isPaused === true && event.isPausing !== true ? { isStreaming: false, activity: undefined } : {}) }));
-    if (event.type === "pause_state" && event.isPaused === true && event.isPausing !== true) { flush(); setMessages(checkpointLatestUser); }
-    if (event.type === "agent_settled") setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
-    if (event.type === "disconnected") setState((current) => ({ ...current, isStreaming: false, isPausing: false, activity: undefined }));
-    if (event.type === "message_start" || event.type === "message_end") {
+    const handleRuntimePresence = () => {
+      setState((current) => ({ ...current, viewers: Number(event.viewers), isStreaming: event.isStreaming === true }));
+    };
+    const handleExtensionUiRequest = () => {
+      if (event.type === "extension_ui_request" && event.method === "setStatus" && event.statusKey === "pi-desktop-prompt-context" && typeof event.statusText === "string" && event.statusText.startsWith("json:")) {
+        try {
+          const context = JSON.parse(event.statusText.slice(5)) as PromptContextInfo;
+          if (typeof context.userTimestamp === "number") {
+            liveRevision.current += 1;
+            setMessages((current) => current.map((message) => message.role === "user" && message.timestamp === context.userTimestamp && !message.promptContext ? { ...message, promptContext: context } : message));
+          }
+        } catch { /* Ignore malformed extension status data. */ }
+      }
+    };
+    const handleEntryAppended = () => {
+      if (event.type === "entry_appended" && event.entry) { const entry = event.entry as PiEntry; const voice = voiceEntry(entry); if (voice) { liveRevision.current += 1; setMessages((current) => mergeSpokenMessages(current, [voice])); } const marker = resumeMarker(entry); if (marker) { resumeMarkers.current.add(marker); setMessages(checkpointLatestUser); } if (entry.customType === "piop-file-changes") { liveRevision.current += 1; setMessages((current) => appendFileChanges(current, entry)); } }
+    };
+    const handleAgentStart = () => {
+      setState((current) => ({ ...current, isStreaming: true, isPaused: false }));
+    };
+    const handlePauseState = () => {
+      setState((current) => ({ ...current, isPaused: event.isPaused === true, isPausing: event.isPausing === true, ...(event.isPaused === true && event.isPausing !== true ? { isStreaming: false, activity: undefined } : {}) }));
+      if (event.type === "pause_state" && event.isPaused === true && event.isPausing !== true) { flush(); setMessages(checkpointLatestUser); }
+    };
+    const handleAgentSettled = () => {
+      setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
+    };
+    const handleDisconnected = () => {
+      setState((current) => ({ ...current, isStreaming: false, isPausing: false, activity: undefined }));
+    };
+    const messageLiveId = (rawMessage: Record<string, unknown>, roleKey: string) => {
+      const toolCallId = rawMessage.toolCallId;
+      return rawMessage.role === "toolResult" && typeof toolCallId === "string" ? toolCallId : event.type === "message_start" ? nextLiveMessageId(roleKey) : activeMessageIds.current.get(roleKey) ?? nextLiveMessageId(roleKey);
+    };
+    const updateAssistant = (message: ChatMessage) => {
+      if (message.role === "assistant" && event.type === "message_start") { message = { ...message, streaming: true }; activeAssistantId.current = message.id; }
+      if (message.role === "assistant" && event.type === "message_end") { message = { ...message, ...(activeAssistantId.current ? { id: activeAssistantId.current } : {}), completedAt: Date.now(), streaming: false }; activeAssistantId.current = undefined; }
+      return message;
+    };
+    const handleMessageStart = () => {
       if (event.type === "message_end") flush();
       const rawMessage = (event.message ?? {}) as Record<string, unknown>; const roleKey = String((rawMessage as { role?: unknown }).role ?? "message");
       if (isResumeMessage(rawMessage, resumeMarkers.current)) return;
       if (rawMessage.role === "custom" && (rawMessage as { display?: unknown }).display === false) return;
-      const toolCallId = (rawMessage as { toolCallId?: unknown }).toolCallId;
-      const liveId = rawMessage.role === "toolResult" && typeof toolCallId === "string" ? toolCallId : event.type === "message_start" ? nextLiveMessageId(roleKey) : activeMessageIds.current.get(roleKey) ?? nextLiveMessageId(roleKey);
+      const liveId = messageLiveId(rawMessage, roleKey);
       if (event.type === "message_start") trackLiveId(roleKey, liveId); else activeMessageIds.current.delete(roleKey);
       let message = normalizeMessage(rawMessage, undefined, undefined, liveId);
       if (message.customType === "pi-desktop-btw") return;
-      if (message.role === "assistant" && event.type === "message_start") { message = { ...message, streaming: true }; activeAssistantId.current = message.id; }
-      if (message.role === "assistant" && event.type === "message_end") { message = { ...message, ...(activeAssistantId.current ? { id: activeAssistantId.current } : {}), completedAt: Date.now(), streaming: false }; activeAssistantId.current = undefined; }
+      message = updateAssistant(message);
       setMessages((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? { ...message, toolInput: message.toolInput ?? item.toolInput, details: message.details ?? item.details, fileChanges: item.fileChanges, promptContext: item.promptContext } : item) : [...current, message]);
-    }
-    if (event.type === "message_update") {
+    };
+    const handleMessageUpdate = () => {
       if (event.assistantMessageEvent) queue((current) => { let index = -1; for (let candidate = current.length - 1; candidate >= 0; candidate -= 1) { const message = current[candidate]; if (message.role === "assistant" && (message.id === activeAssistantId.current || message.streaming)) { index = candidate; break; } } if (index < 0) return current; const next = [...current]; next[index] = applyAssistantMessageEvent(next[index], event.assistantMessageEvent); return next; });
       else if (event.message) { const rawMessage = (event.message ?? {}) as Record<string, unknown>; const roleKey = String((rawMessage as { role?: unknown }).role ?? "message"); let liveId = activeMessageIds.current.get(roleKey); if (!liveId) { liveId = nextLiveMessageId(roleKey); trackLiveId(roleKey, liveId); } const message = { ...normalizeMessage(rawMessage, undefined, undefined, liveId), streaming: true }; queue((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? message : item) : [...current, message]); }
-    }
-    if (event.type === "tool_execution_start") { const message: ChatMessage = { id: String(event.toolCallId), role: "tool", toolName: String(event.toolName), toolStatus: "running", toolInput: event.args ?? {}, content: "", timestamp: Date.now() }; setMessages((current) => [...current.filter((item) => item.id !== message.id), message]); }
-    if (event.type === "tool_execution_update") queue((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.partialResult), toolStatus: "running" } : item));
-    if (event.type === "tool_execution_end") { flush(); setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.result), details: (event.result as { details?: unknown })?.details, toolStatus: event.isError ? "error" : "done" } : item)); }
-    if (event.type === "queue_update") setState((current) => ({ ...current, pendingMessages: event.pendingMessages as AgentState["pendingMessages"], pendingMessageCount: [...((event.steering as unknown[]) ?? []), ...((event.followUp as unknown[]) ?? [])].length }));
-    if (event.type === "compaction_start") setState((current) => ({ ...current, activity: "Compacting context…" }));
-    if (event.type === "compaction_end") setState((current) => ({ ...current, activity: undefined, contextUsage: contextUsageAfterCompaction(current.contextUsage, event) }));
-    if (event.type === "auto_retry_start") setState((current) => ({ ...current, activity: `Retrying · attempt ${event.attempt}` }));
-    if (event.type === "thinking_level_changed" && typeof event.level === "string") setState((current) => ({ ...current, thinkingLevel: event.level as string }));
+    };
+    const handleToolExecutionStart = () => {
+      const message: ChatMessage = { id: String(event.toolCallId), role: "tool", toolName: String(event.toolName), toolStatus: "running", toolInput: event.args ?? {}, content: "", timestamp: Date.now() };
+      setMessages((current) => [...current.filter((item) => item.id !== message.id), message]);
+    };
+    const handleToolExecutionUpdate = () => {
+      queue((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.partialResult), toolStatus: "running" } : item));
+    };
+    const handleToolExecutionEnd = () => {
+      flush();
+      setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.result), details: (event.result as { details?: unknown })?.details, toolStatus: event.isError ? "error" : "done" } : item));
+    };
+    const handleQueueUpdate = () => {
+      setState((current) => ({ ...current, pendingMessages: event.pendingMessages as AgentState["pendingMessages"], pendingMessageCount: [...((event.steering as unknown[]) ?? []), ...((event.followUp as unknown[]) ?? [])].length }));
+    };
+    const handleCompactionStart = () => {
+      setState((current) => ({ ...current, activity: "Compacting context…" }));
+    };
+    const handleCompactionEnd = () => {
+      setState((current) => ({ ...current, activity: undefined, contextUsage: contextUsageAfterCompaction(current.contextUsage, event) }));
+    };
+    const handleAutoRetryStart = () => {
+      setState((current) => ({ ...current, activity: `Retrying · attempt ${event.attempt}` }));
+    };
+    const handleThinkingLevelChanged = () => {
+      if (event.type === "thinking_level_changed" && typeof event.level === "string") setState((current) => ({ ...current, thinkingLevel: event.level as string }));
+    };
+    const handlers: Record<string, () => void> = {
+      "runtime_presence": handleRuntimePresence,
+      "extension_ui_request": handleExtensionUiRequest,
+      "entry_appended": handleEntryAppended,
+      "agent_start": handleAgentStart,
+      "pause_state": handlePauseState,
+      "agent_settled": handleAgentSettled,
+      "disconnected": handleDisconnected,
+      "message_start": handleMessageStart,
+      "message_end": handleMessageStart,
+      "message_update": handleMessageUpdate,
+      "tool_execution_start": handleToolExecutionStart,
+      "tool_execution_update": handleToolExecutionUpdate,
+      "tool_execution_end": handleToolExecutionEnd,
+      "queue_update": handleQueueUpdate,
+      "compaction_start": handleCompactionStart,
+      "compaction_end": handleCompactionEnd,
+      "auto_retry_start": handleAutoRetryStart,
+      "thinking_level_changed": handleThinkingLevelChanged
+    };
+    if (Object.hasOwn(handlers, event.type)) handlers[event.type]();
   }, [flush, queue, transport]);
 
   eventHandler.current = handleEvent;

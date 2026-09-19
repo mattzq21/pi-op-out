@@ -25,20 +25,22 @@ export function parseShortcut(shortcut: string) {
   return { mod: has("mod"), ctrl: has("ctrl"), meta: has("meta"), alt: has("alt"), shift: has("shift"), key: keys[0] };
 }
 
+function primaryModifiers(shortcut: NonNullable<ReturnType<typeof parseShortcut>>) {
+  const primary = new Set<string>();
+  if (shortcut.mod) { primary.add("ctrl"); primary.add("meta"); }
+  if (shortcut.ctrl) primary.add("ctrl");
+  if (shortcut.meta) primary.add("meta");
+  return primary;
+}
+
 export function shortcutsConflict(left: string, right: string) {
   const a = parseShortcut(left);
   const b = parseShortcut(right);
   if (!a || !b) return false;
   if (a.key.toLowerCase() !== b.key.toLowerCase()) return false;
   if (a.alt !== b.alt || a.shift !== b.shift) return false;
-  const aPrimary = new Set<string>();
-  if (a.mod) { aPrimary.add("ctrl"); aPrimary.add("meta"); }
-  if (a.ctrl) aPrimary.add("ctrl");
-  if (a.meta) aPrimary.add("meta");
-  const bPrimary = new Set<string>();
-  if (b.mod) { bPrimary.add("ctrl"); bPrimary.add("meta"); }
-  if (b.ctrl) bPrimary.add("ctrl");
-  if (b.meta) bPrimary.add("meta");
+  const aPrimary = primaryModifiers(a);
+  const bPrimary = primaryModifiers(b);
   if (aPrimary.size === 0 && bPrimary.size === 0) return true;
   for (const key of aPrimary) if (bPrimary.has(key)) return true;
   return false;
@@ -55,10 +57,13 @@ function splitShortcut(shortcut: string) {
   return parts;
 }
 
-export function shortcutFromEvent(event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">) {
+type ShortcutEvent = Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">;
+const hasEventModifier = (event: ShortcutEvent) => event.ctrlKey || event.metaKey || event.altKey;
+
+export function shortcutFromEvent(event: ShortcutEvent) {
   if (["Meta", "Control", "Alt", "Shift"].includes(event.key)) return null;
-  if (["Tab", "Escape"].includes(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) return null;
-  if ([...event.key].length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) return null;
+  if (["Tab", "Escape"].includes(event.key) && !hasEventModifier(event)) return null;
+  if ([...event.key].length === 1 && !hasEventModifier(event)) return null;
   const parts: string[] = [];
   if (event.ctrlKey) parts.push("Ctrl");
   if (event.metaKey) parts.push("Meta");
@@ -68,7 +73,13 @@ export function shortcutFromEvent(event: Pick<KeyboardEvent, "key" | "metaKey" |
   return parts.join("+");
 }
 
-export function matchesShortcut(event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">, shortcut: string) {
+function matchesModifiers(event: ShortcutEvent, expected: NonNullable<ReturnType<typeof parseShortcut>>) {
+  if (!expected.mod && !expected.ctrl && !expected.meta && !expected.alt) return false;
+  const primaryMatches = expected.mod ? event.metaKey || event.ctrlKey : expected.ctrl === event.ctrlKey && expected.meta === event.metaKey;
+  return primaryMatches && expected.alt === event.altKey && expected.shift === event.shiftKey;
+}
+
+export function matchesShortcut(event: ShortcutEvent, shortcut: string) {
   const parts = splitShortcut(shortcut);
   if (!parts.length) return false;
   const expected = {
@@ -86,10 +97,5 @@ export function matchesShortcut(event: Pick<KeyboardEvent, "key" | "metaKey" | "
   if (["control", "meta", "alt", "shift", "mod"].includes(key.toLowerCase())) return false;
   // Every shortcut needs a real modifier (Ctrl, Alt, Meta, or Mod): bare keys
   // such as "Space" must never match, so typing cannot trigger global actions.
-  if (!expected.mod && !expected.ctrl && !expected.meta && !expected.alt) return false;
-  const primaryMatches = expected.mod ? event.metaKey || event.ctrlKey : expected.ctrl === event.ctrlKey && expected.meta === event.metaKey;
-  return primaryMatches
-    && expected.alt === event.altKey
-    && expected.shift === event.shiftKey
-    && key.toLowerCase() === keyName(event.key).toLowerCase();
+  return matchesModifiers(event, { ...expected, key }) && key.toLowerCase() === keyName(event.key).toLowerCase();
 }
