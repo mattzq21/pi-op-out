@@ -457,7 +457,7 @@ fn deserialize_context_window_cap<'de, D>(deserializer: D) -> Result<u64, D::Err
     let value = Value::deserialize(deserializer)?;
     value.as_u64().ok_or_else(|| de::Error::custom("Context window cap must be a whole number"))
 }
-const DEFAULT_MODEL: &str = "openai-codex/gpt-5.6-sol";
+const DEFAULT_MODEL: &str = if DEVELOPMENT { "openai-codex/gpt-5.6-luna" } else { "openai-codex/gpt-5.6-sol" };
 
 fn default_keybindings() -> HashMap<String, String> {
     [
