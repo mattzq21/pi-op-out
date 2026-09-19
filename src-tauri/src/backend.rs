@@ -277,21 +277,6 @@ struct RemoteHost {
     pi_path: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DictionaryEntry {
-    word: String,
-    replacement: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PromptDictionary {
-    id: String,
-    name: String,
-    entries: Vec<DictionaryEntry>,
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CodexUsage {
@@ -429,10 +414,6 @@ struct AppSettings {
     skills: Vec<Value>,
     #[serde(default)]
     hosts: Vec<RemoteHost>,
-    #[serde(default)]
-    dictionaries: Vec<PromptDictionary>,
-    #[serde(default)]
-    active_dictionary_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -756,18 +737,6 @@ fn atomic_write_private(path: &Path, body: &[u8]) -> Result<(), String> {
     result
 }
 
-fn validate_dictionaries(settings: &AppSettings) -> Result<(), String> {
-    let mut ids = HashSet::new();
-    for dictionary in &settings.dictionaries { if dictionary.id.trim().is_empty() || !ids.insert(dictionary.id.as_str()) { return Err("Every dictionary needs a unique id".into()); } }
-    let mut active_ids = HashSet::new();
-    for id in &settings.active_dictionary_ids { if !ids.contains(id.as_str()) { return Err("Active dictionary was not found".into()); } if !active_ids.insert(id.as_str()) { return Err("A dictionary can only be active once".into()); } }
-    let mut keys = HashSet::new();
-    for dictionary in settings.dictionaries.iter().filter(|dictionary| active_ids.contains(dictionary.id.as_str())) {
-        for entry in &dictionary.entries { let key = entry.word.trim(); if key.is_empty() { continue; } if !keys.insert(key) { return Err(format!("Key '{key}' appears more than once in active dictionaries")); } }
-    }
-    Ok(())
-}
-
 fn canonical_shortcut(shortcut: &str) -> Result<Option<String>, String> {
     // A single trailing "+" denotes the "+" key itself: "Ctrl++" -> ["ctrl", "+"].
     let mut raw: Vec<&str> = shortcut.split('+').collect();
@@ -966,7 +935,7 @@ fn default_settings() -> AppSettings {
             json!({"name":"read_trace","description":"Extract clean user and final assistant messages from a Pi trace","enabled":true,"builtin":false}),
             codex_web_search_tool(),
         ]).collect(),
-        skills: vec![], hosts: vec![], dictionaries: vec![], active_dictionary_ids: vec![],
+        skills: vec![], hosts: vec![],
     }
 }
 
@@ -1123,7 +1092,6 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
         if !settings.tools.iter().any(|existing| existing["name"] == tool["name"]) { settings.tools.push(tool); }
     }
     merge_discovered_skills(&mut settings);
-    validate_dictionaries(&settings)?;
     Ok(settings)
 }
 
@@ -1168,7 +1136,6 @@ fn save_app_settings(app: AppHandle, mut settings: AppSettings, agent_host_id: O
 
 fn validate_settings_for_save(settings: &AppSettings) -> Result<(), String> {
     if settings.context_window_cap < 1000 { return Err("Context window cap must be a whole number of at least 1000".into()); }
-    validate_dictionaries(settings)?;
     validate_keybindings(settings)?;
     if settings.hosts.len() > MAX_REMOTE_HOSTS { return Err(format!("At most {MAX_REMOTE_HOSTS} remote machines can be configured")); }
     let mut host_ids = HashSet::new();

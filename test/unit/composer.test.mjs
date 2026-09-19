@@ -187,15 +187,6 @@ describe('composer interactions', () => {
     await act(async () => text.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))); assert.equal(document.querySelector('.pending-message.expanded'), null);
   });
 
-  test('dictionary highlighting selects matched words, expands on submission, and follows editor scrolling', async () => {
-    await render({ dictionaries: [{ entries: [{ word: 'api', replacement: 'application programming interface' }] }] });
-    await enterText(editor(), 'Use api and api'); assert.equal(document.querySelectorAll('mark').length, 2);
-    await act(async () => document.querySelector('mark').dispatchEvent(new Event('pointerdown', { bubbles: true, cancelable: true })));
-    assert.equal(editor().selectionStart, 4); assert.equal(editor().selectionEnd, 7);
-    Object.defineProperty(editor(), 'scrollHeight', { value: 200 }); await act(async () => window.dispatchEvent(new Event('resize'))); assert.equal(editor().style.height, '130px'); assert.equal(editor().style.overflowY, 'auto');
-    editor().scrollTop = 20; await act(async () => editor().dispatchEvent(new Event('scroll'))); assert.equal(document.querySelector('.composer-highlight-layer').style.transform, 'translateY(-20px)');
-    await key('Enter'); assert.equal(sent[0][0], 'Use application programming interface and application programming interface');
-  });
 
   test('file drag previews survive nested enters and clear on leave, drop or window blur', async () => {
     await render();

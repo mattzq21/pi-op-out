@@ -3,7 +3,6 @@ import { test } from 'node:test';
 import { textOf, thinkingOf, uid } from '../../src/lib/content.ts';
 import { encodeAgentValue, decodeAgentValue } from '../../src/lib/agentProtocol.ts';
 import { contextUsageAfterCompaction } from '../../src/lib/contextUsage.ts';
-import { dictionaryMatches, applyDictionary } from '../../src/lib/dictionaries.ts';
 import { findReplaceableAbortedTurn } from '../../src/lib/abortedTurn.ts';
 import { appendTerminalOutput, TERMINAL_OUTPUT_LIMIT } from '../../src/lib/terminalOutput.ts';
 import { matchesShortcut, shortcutFromEvent } from '../../src/lib/keybindings.ts';
@@ -40,15 +39,6 @@ test('compaction replaces valid usage estimates and preserves unknown or invalid
   assert.equal(current.tokens, 500);
 });
 
-const dictionaries = [{ entries: [{ word: ' cat ', replacement: ' dog ' }, { word: 'cat food', replacement: 'kibble' }, { word: 'C++', replacement: 'Rust' }, { word: '', replacement: 'empty' }, { word: 'skip', replacement: ' ' }] }, { entries: [{ word: 'cat', replacement: 'wrong' }] }];
-test('dictionary expansion respects boundaries, longest phrases, escaping and first-definition priority', () => {
-  const input = 'cat food, cat! C++ concatenate cat2 _cat écat caté Cat skip';
-  assert.equal(applyDictionary(input, dictionaries), 'kibble, dog! Rust concatenate cat2 _cat écat caté Cat skip');
-  assert.deepEqual(dictionaryMatches('cat cat', dictionaries, 1), [{ start: 0, end: 3, replacement: 'dog' }]);
-  assert.deepEqual(dictionaryMatches('cat'), []);
-  assert.equal(applyDictionary('cat'), 'cat');
-  assert.equal(applyDictionary('cat', [{ entries: [{ word: 'cat', replacement: 'cat cat' }] }]), 'cat cat');
-});
 
 
 test('retry only replaces an aborted turn after a nonempty user prompt and no checkpoint', () => {

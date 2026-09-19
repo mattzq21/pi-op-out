@@ -5,8 +5,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readDroppedFile } from "../lib/nativeTransport";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type SetStateAction } from "react";
 import { ChevronUp, ChevronDown, CornerDownRight, MoveVertical, Trash2, ArrowUp, CircleStop, CircleX, FileText, ImagePlus, Pause, Play, TerminalSquare, X, Zap } from "lucide-react";
-import type { AgentProfile, ComposerUpload, ContextUsage, ImageAttachment, Model, PromptDictionary, SlashCommand } from "../types";
-import { applyDictionary, dictionaryMatches } from "../lib/dictionaries";
+import type { AgentProfile, ComposerUpload, ContextUsage, ImageAttachment, Model, SlashCommand } from "../types";
 import { hasVisibleText } from "../lib/content";
 import { usePendingMessageDrag } from "../lib/usePendingMessageDrag";
 import { IconButton } from "./IconButton";
@@ -23,7 +22,6 @@ interface Props {
   agentLocked?: boolean;
   agentSaved?: boolean;
   agentUnavailable?: boolean;
-  dictionaries?: PromptDictionary[];
   models: Model[];
   model: Model | null;
   fastModeStatus?: string;
@@ -59,7 +57,6 @@ const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "
 const TEXT_MIME_TYPES = new Set(["application/json", "application/xml", "application/javascript", "application/typescript", "application/x-sh", "application/x-yaml", "application/toml"]);
 const TEXT_EXTENSIONS = /\.(?:txt|md|mdx|json|jsonl|ya?ml|toml|xml|csv|tsv|js|jsx|ts|tsx|css|scss|html?|py|rs|go|java|kt|kts|c|cc|cpp|cxx|h|hpp|sh|bash|zsh|fish|sql|graphql|gql|ini|conf|env|log)$/i;
 const COMPOSER_MAX_HEIGHT = 130;
-const DICTIONARY_HIGHLIGHT_LIMIT = 1_000;
 const displayModelName = (model: Model, models: Model[]) => accountModelName(model, models).replace(/^gpt-/i, "");
 const skillName = (command: SlashCommand) => command.source === "skill" ? command.name.replace(/^skill:/, "") : undefined;
 const skillReference = (value: string) => value.match(/(?:^|[\s([{])\$([a-zA-Z0-9_-]*)$/)?.[1]?.toLowerCase();
@@ -88,7 +85,7 @@ const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((
 });
 const escapeAttribute = (value: string) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]!);
 
-export function Composer({ voiceControls, streaming, paused = false, pausing = false, queued, pendingMessages = [], onChangePending, commands, agents, activeAgent, agentLocked = false, agentSaved = false, agentUnavailable = false, dictionaries = [], models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
+export function Composer({ voiceControls, streaming, paused = false, pausing = false, queued, pendingMessages = [], onChangePending, commands, agents, activeAgent, agentLocked = false, agentSaved = false, agentUnavailable = false, models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
   const [localValue, setLocalValue] = useState("");
   const value = draft ?? localValue;
   const fastModeEnabled = fastModeStatus === "Fast mode on";
@@ -126,7 +123,6 @@ export function Composer({ voiceControls, streaming, paused = false, pausing = f
   const stopDisabled = controlsDisabled || stopping || controlAction === "resume";
   const [selectedMatch, setSelectedMatch] = useState(0);
   const [paletteDismissed, setPaletteDismissed] = useState(false);
-  const [editorScrollTop, setEditorScrollTop] = useState(0);
   const ref = useRef<HTMLTextAreaElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const selectedCommandRef = useRef<HTMLButtonElement>(null);
@@ -135,7 +131,6 @@ export function Composer({ voiceControls, streaming, paused = false, pausing = f
   const restoredDraftId = useRef<string | undefined>(undefined);
   const commandQuery = value.match(/^\/([^\s]*)$/)?.[1]?.toLowerCase();
   const skillQuery = commandQuery === undefined ? skillReference(value) : undefined;
-  const dictionaryHighlights = useMemo(() => dictionaryMatches(value, dictionaries, DICTIONARY_HIGHLIGHT_LIMIT), [value, dictionaries]);
   const matches = useMemo(() => paletteDismissed ? [] : commandQuery !== undefined
     ? commands.filter((command) => command.name.toLowerCase().includes(commandQuery)).slice(0, 7)
     : skillQuery !== undefined
@@ -274,8 +269,7 @@ export function Composer({ voiceControls, streaming, paused = false, pausing = f
     if (controlsDisabled || pausing || controlActionRef.current || stoppingRef.current) return;
     const textFiles = uploads.filter((upload) => upload.kind === "text");
     const escapeFileContent = (text: string) => text.replace(/<\/file>/gi, "<\\/file>");
-    // Expand skills before dictionaries so dictionary replacement text stays literal.
-    const message = [applyDictionary(expandSkillReference(value.trim(), commands), dictionaries), ...textFiles.map((file) => `<file name="${escapeAttribute(file.name)}">\n${escapeFileContent(file.text ?? "")}\n</file>`)].filter(Boolean).join("\n\n");
+    const message = [expandSkillReference(value.trim(), commands), ...textFiles.map((file) => `<file name="${escapeAttribute(file.name)}">\n${escapeFileContent(file.text ?? "")}\n</file>`)].filter(Boolean).join("\n\n");
     const images = uploads.flatMap((upload) => upload.image ? [upload.image] : []);
     if (images.length && !supportsImagesRef.current) { setImageInputError(true); return; }
     if (!message && !images.length) return;
@@ -383,9 +377,8 @@ export function Composer({ voiceControls, streaming, paused = false, pausing = f
       {uploads.length > 0 && <div className="attachments">{uploads.map((upload) => <span key={upload.id}>{upload.kind === "image" ? <ImagePlus size={12} /> : <FileText size={12} />}<b>{upload.name}</b><button aria-label={`Remove ${upload.name}`} onClick={() => { updateUploads((current) => current.filter((item) => item.id !== upload.id)); setUploadError(undefined); }}><X size={11} /></button></span>)}</div>}
       {uploadError && <div className="upload-error" role="alert">{uploadError}</div>}
       {controlError && <div className="upload-error" role="alert">{controlError}</div>}
-      <div className={`composer-editor${dictionaryHighlights.length ? " has-dictionary-matches" : ""}`}>
-        {dictionaryHighlights.length > 0 && <div className="composer-highlight-viewport" aria-hidden="true"><div className="composer-highlight-layer" style={{ transform: `translateY(-${editorScrollTop}px)` }}>{dictionaryHighlights.map((match, index) => <span key={`${match.start}-${match.end}`}><span>{value.slice(index ? dictionaryHighlights[index - 1].end : 0, match.start)}</span><mark onPointerDown={(event) => { event.preventDefault(); ref.current?.focus(); ref.current?.setSelectionRange(match.start, match.end); }}>{value.slice(match.start, match.end)}</mark></span>)}<span>{value.slice(dictionaryHighlights.at(-1)?.end ?? 0)}</span></div></div>}
-        <textarea ref={ref} aria-label="Message piop" disabled={controlsDisabled} placeholder={controlsDisabled ? "Connecting to piop…" : paused ? "Send a message to continue piop…" : streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value} rows={1} onScroll={(event) => setEditorScrollTop(event.currentTarget.scrollTop)} onChange={(event) => { setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape" && matches.length) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true); } else if (matches.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length); } else if ((event.key === "Tab" || event.key === "Enter") && !event.shiftKey && !event.ctrlKey && matches[selectedMatch]) { event.preventDefault(); chooseCommand(matches[selectedMatch]); } else if (event.key === "Enter" && !event.shiftKey && (!isMobile || event.ctrlKey)) { event.preventDefault(); event.stopPropagation(); void submit(event.ctrlKey ? "steer" : "followUp"); } }} />
+      <div className="composer-editor">
+        <textarea ref={ref} aria-label="Message piop" disabled={controlsDisabled} placeholder={controlsDisabled ? "Connecting to piop…" : paused ? "Send a message to continue piop…" : streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value} rows={1} onChange={(event) => { setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Escape" && matches.length) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true); } else if (matches.length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length); } else if ((event.key === "Tab" || event.key === "Enter") && !event.shiftKey && !event.ctrlKey && matches[selectedMatch]) { event.preventDefault(); chooseCommand(matches[selectedMatch]); } else if (event.key === "Enter" && !event.shiftKey && (!isMobile || event.ctrlKey)) { event.preventDefault(); event.stopPropagation(); void submit(event.ctrlKey ? "steer" : "followUp"); } }} />
       </div>
       <div className="composer-bar"><div className="composer-tools">{voiceControls}{onOpenTerminal && <IconButton title="" label="Open terminal" disabled={controlsDisabled} onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton>}{contextUsage && <ContextWheel usage={contextUsage} />}{sessionCache && <span className={`session-cache-hit${sessionCache.low ? " low" : ""}`}>Cache {sessionCache.rate}%</span>}</div>
         <div className="composer-actions">{isMobile && streaming && <button className="mobile-steer" disabled={controlsDisabled || !hasVisibleText(value)} onClick={() => void submit("steer")}>Steer</button>}

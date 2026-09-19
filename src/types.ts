@@ -31,14 +31,12 @@ export interface ToolConfig { name: string; description: string; enabled: boolea
 export interface SkillConfig { name: string; path: string; description: string; enabled: boolean; userInvokedOnly?: boolean; }
 export interface McpServer { id: string; name: string; transport?: "stdio" | "http"; command: string; args: string; url?: string; headers?: string; enabled: boolean; startupTimeoutSec?: number; status?: "starting" | "connected" | "stopped" | "error"; error?: string; }
 export interface RemoteHost { id: string; name: string; target: string; piPath: string; }
-export interface DictionaryEntry { word: string; replacement: string; }
-export interface PromptDictionary { id: string; name: string; entries: DictionaryEntry[]; }
 export interface DirectoryListing { path: string; parent?: string; directories: string[]; }
 export interface SlashCommand { name: string; description?: string; source: "builtin" | "extension" | "prompt" | "skill"; sourceInfo?: { source?: string }; }
 export interface ImageAttachment { type: "image"; data: string; mimeType: string; name?: string; }
 export interface ComposerUpload { id: string; name: string; kind: "image" | "text"; byteSize: number; image?: ImageAttachment; text?: string; }
 export interface WorktreeSetupScript { id: string; name: string; script: string; cleanupScript?: string; enabled: boolean; projectPath?: string; hostId?: string; }
- export interface AppSettings { worktreeSetupScripts: WorktreeSetupScript[]; defaultAgent?: string; defaultModel: string; hiddenModels: string[]; knownModels?: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; autoRetry: boolean; debugMode: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; hosts: RemoteHost[]; dictionaries: PromptDictionary[]; activeDictionaryIds: string[]; }
+ export interface AppSettings { worktreeSetupScripts: WorktreeSetupScript[]; defaultAgent?: string; defaultModel: string; hiddenModels: string[]; knownModels?: string[]; defaultThinking: string; defaultFastMode: boolean; contextWindowCap: number; contextWindowCapEnabled: boolean; autoRetry: boolean; debugMode: boolean; keybindings: import("./lib/keybindings").Keybindings; tools: ToolConfig[]; skills: SkillConfig[]; hosts: RemoteHost[]; }
 export interface CodexUsage { remainingPercent: number; resetAt?: number; }
 export interface UsageWindow { status: string; remainingPercent: number; resetAt?: number; }
 export interface OpencodeGoUsage { rolling: UsageWindow; weekly: UsageWindow; monthly: UsageWindow; }

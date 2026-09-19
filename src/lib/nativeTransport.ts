@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import { applyAssistantMessageEvent, normalizeMessage, type PiEntry } from "./messages";
+import { preserveDaemonPreferences, saveClientSettings, withClientSettings } from "./clientSettings";
 import type { ChatMessage } from "../types";
 import { invoke, listen, type UnlistenFn } from "./platform";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -282,14 +283,19 @@ export class NativeTransport {
   }
   async isGitRepository() { if (!this.cwd) return false; return call<boolean>("is_git_repository", { cwd: this.cwd, hostId: this.hostId }); }
   async gitBranch() { if (!this.cwd) return null; const branch = await call<unknown>("git_branch", { cwd: this.cwd, hostId: this.hostId }); return typeof branch === "string" ? branch : null; }
-  loadSettings() { return call<AppSettings>("load_app_settings"); }
+  async loadSettings() { const settings = withClientSettings(await call<AppSettings>("load_app_settings")); saveClientSettings(settings); return settings; }
   loadHostSettings() { return call<AppSettings>("load_host_settings", { hostId: this.hostId }); }
   loadCodexUsage() { return call<CodexUsage>("codex_usage"); }
   loadOpencodeGoUsage() { return call<OpencodeGoUsage>("opencode_go_usage"); }
   saveSettings(settings: AppSettings, reconnect = true, agentHostId?: string) {
     const save = async () => {
-      const previous = await this.loadSettings(); const connection = { cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId };
-      const change = await call<SettingsChange>("save_app_settings", { settings, agentHostId }); if (!reconnect) return change;
+      const previous = await call<AppSettings>("load_app_settings"); const connection = { cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId };
+      const daemonSettings = preserveDaemonPreferences(settings, previous);
+      const daemonChanged = JSON.stringify(daemonSettings) !== JSON.stringify(previous) || Boolean(agentHostId);
+      const change = daemonChanged ? await call<SettingsChange>("save_app_settings", { settings: daemonSettings, agentHostId }) : { settings: previous };
+      saveClientSettings(settings);
+      change.settings = withClientSettings(change.settings);
+      if (!reconnect || !daemonChanged) return change;
       try { if (this.hostId !== "local" && !settings.hosts.some((host) => host.id === this.hostId)) { this.hostId = "local"; this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined; this.temporaryChat = false; this.temporaryChatUsed = false; } await this.disconnect(); await this.connect(); }
       catch (reason) {
         await call<void>("save_app_settings", { settings: previous }); this.cwd = connection.cwd; this.sessionPath = connection.sessionPath; this.sessionId = connection.sessionId; this.hostId = connection.hostId;
