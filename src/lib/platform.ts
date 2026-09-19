@@ -15,7 +15,10 @@ const conversationClientId = (() => {
 export const listen = <T>(event: string, handler: EventCallback<T>): Promise<UnlistenFn> => isMobile ? remoteClient.listen(event, handler) : nativeListen(event, handler);
 export function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   args = { ...args, clientId: conversationClientId };
-  if (!isMobile) return nativeInvoke<T>(command, args);
+  if (!isMobile) {
+    const local = ["new_window", "open_external_url", "open_project_directory", "read_dropped_file", "voice_configuration", "voice_start", "voice_stop", "voice_mute", "voice_suppress"];
+    return local.includes(command) ? nativeInvoke<T>(command, args) : nativeInvoke<T>("daemon_invoke", { command, args });
+  }
   if (command === "open_external_url") {
     const url = String(args?.url);
     if (!/^https?:\/\//i.test(url)) return Promise.reject(new Error("Only HTTP and HTTPS links can be opened."));

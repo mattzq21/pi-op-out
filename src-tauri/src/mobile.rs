@@ -7,11 +7,12 @@ use tokio_tungstenite::tungstenite::{Message, protocol::WebSocketConfig};
 const MAX_MESSAGE: usize = 32 * 1024 * 1024;
 
 pub(super) fn start(app: AppHandle) -> Result<(), String> {
-    let token = std::env::var("PIOP_MOBILE_TOKEN").map_err(|_| "Set PIOP_MOBILE_TOKEN to a pairing token of at least 32 characters")?;
+    let token = std::env::var("PIOP_MOBILE_TOKEN").unwrap_or_else(|_| daemon_endpoint::read().map(|endpoint| endpoint.token).unwrap_or_else(|_| format!("{}{}", Uuid::new_v4(), Uuid::new_v4())));
     if token.len() < 32 { return Err("PIOP_MOBILE_TOKEN must contain at least 32 characters".into()); }
-    let bind = std::env::var("PIOP_MOBILE_BIND").unwrap_or_else(|_| "127.0.0.1:9847".into());
+    let bind = std::env::var("PIOP_MOBILE_BIND").unwrap_or_else(|_| if DEVELOPMENT { "127.0.0.1:9848" } else { "127.0.0.1:9847" }.into());
     let listener = TcpListener::bind(&bind).map_err(|error| format!("Mobile endpoint: {error}"))?;
     listener.set_nonblocking(true).map_err(|error| error.to_string())?;
+    daemon_endpoint::publish(listener.local_addr().map_err(|error| error.to_string())?, token.clone())?;
     let (events, _) = broadcast::channel::<Value>(1024);
     for name in ["pi://event", "pi://stderr", "pi://settings-changed", "pi://groups-changed", "pi://voice", "pi://sessions-changed", "pi://daemon-error", "pi://provider-auth-changed"] {
         let events = events.clone();
@@ -61,7 +62,7 @@ async fn connection(app: AppHandle, stream: tokio::net::TcpStream, token: String
     socket.send(Message::Text(json!({"type":"ready", "protocol":1, "backend":"daemon"}).to_string().into())).await.map_err(|error| error.to_string())?;
     let (responses, mut receiver) = tokio::sync::mpsc::channel::<Value>(32);
     let mut pending = tokio::task::JoinSet::new();
-    let owner = format!("mobile:{}", Uuid::new_v4());
+    let owner = format!("client:{}", Uuid::new_v4());
     let mut heartbeat = tokio::time::interval(Duration::from_secs(20));
     let mut last_seen = Instant::now();
     loop {

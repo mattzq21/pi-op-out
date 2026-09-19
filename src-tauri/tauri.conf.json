@@ -5,9 +5,9 @@
   "identifier": "dev.pi.desktop",
   "build": {
     "features": ["desktop"],
-    "beforeDevCommand": "npm run build:voice && npm run dev",
+    "beforeDevCommand": "node scripts/build-daemon.mjs --debug && npm run build:voice && npm run dev",
     "devUrl": "http://localhost:1423",
-    "beforeBuildCommand": "npm run build && npm run build:voice",
+    "beforeBuildCommand": "npm run build && npm run build:voice && node scripts/build-daemon.mjs",
     "frontendDist": "../dist"
   },
   "app": {
@@ -17,7 +17,7 @@
   "bundle": {
     "active": true,
     "targets": ["deb"],
-    "externalBin": ["binaries/piop-voice-host"],
+    "externalBin": ["binaries/piop-voice-host", "binaries/piop-daemon"],
     "linux": { "deb": { "depends": ["libasound2t64", "libgstreamer1.0-0 (>= 1.28)", "libgstreamer-plugins-base1.0-0 (>= 1.28)", "gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good"] } },
     "icon": [
       "icons/32x32.png",

@@ -1,5 +1,7 @@
 #[cfg(feature = "desktop")]
-pub use tauri::{async_runtime, AppHandle, State};
+pub use tauri::{AppHandle, State};
+#[cfg(all(feature = "desktop", test))]
+pub use tauri::async_runtime;
 
 #[cfg(not(feature = "desktop"))]
 pub use headless::*;

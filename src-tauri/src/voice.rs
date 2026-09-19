@@ -36,10 +36,19 @@ impl VoiceRuntime {
         if let Ok(active) = self.0.lock() { if let Some(call) = active.as_ref().filter(|call| call.id == _id) { let _ = call.close.send(true); } }
     }
 }
-fn daemon(app: &AppHandle, runtime_id: &str) -> Result<Arc<crate::daemon::Daemon>, String> {
+#[cfg(not(feature = "desktop"))]
+type HostConnection = crate::daemon::Daemon;
+#[cfg(feature = "desktop")]
+type HostConnection = crate::desktop_daemon::Connection;
+#[cfg(not(feature = "desktop"))]
+fn daemon(app: &AppHandle, runtime_id: &str) -> Result<Arc<HostConnection>, String> {
     app.state::<crate::PiRuntime>().processes.lock().map_err(|_| "Pi runtime unavailable")?.get(runtime_id).map(|process| process.daemon.clone()).ok_or("Connect to the conversation before starting voice".into())
 }
-async fn request(daemon: Arc<crate::daemon::Daemon>, packet: Value) -> Result<Value, String> {
+#[cfg(feature = "desktop")]
+fn daemon(app: &AppHandle, runtime_id: &str) -> Result<Arc<HostConnection>, String> {
+    app.state::<crate::desktop_daemon::DesktopDaemon>().for_runtime(runtime_id)
+}
+async fn request(daemon: Arc<HostConnection>, packet: Value) -> Result<Value, String> {
     tokio::task::spawn_blocking(move || daemon.request(packet)).await.map_err(|error| error.to_string())?
 }
 pub async fn host_request(app: AppHandle, runtime_id: String, action: String, call_id: Option<String>, offer: Option<String>) -> Result<Value, String> {
@@ -187,7 +196,7 @@ impl Helper {
 }
 
 #[cfg(feature = "desktop")]
-async fn run_media(app: &AppHandle, id: &str, runtime_id: &str, daemon: Arc<crate::daemon::Daemon>, path: PathBuf, mut commands: mpsc::Receiver<Control>, mut closing: watch::Receiver<bool>) -> Result<(), String> {
+async fn run_media(app: &AppHandle, id: &str, runtime_id: &str, daemon: Arc<HostConnection>, path: PathBuf, mut commands: mpsc::Receiver<Control>, mut closing: watch::Receiver<bool>) -> Result<(), String> {
     let mut helper = Helper::spawn(path)?;
     let result = async {
         let offer = tokio::select! { biased; _ = closing.changed() => return Ok(()), offer = helper.offer() => offer? };

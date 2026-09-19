@@ -1,4 +1,4 @@
-// Explicit mobile command allowlist. Keep arguments aligned with the Tauri commands.
+// Shared daemon command allowlist for desktop and mobile clients.
 use super::*;
 
 fn argument<T: serde::de::DeserializeOwned>(args: &Value, key: &str) -> Result<T, String> {
@@ -61,6 +61,6 @@ pub(super) async fn dispatch(app: AppHandle, owner: String, command: String, arg
         "save_app_settings" => tokio::task::spawn_blocking(move || serde_json::to_value(save_app_settings(app.clone(), argument(&args, "settings")?, argument(&args, "agentHostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
         "codex_usage" => tokio::task::spawn_blocking(move || serde_json::to_value(codex_usage()?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
         "opencode_go_usage" => opencode_go_usage().await.and_then(|usage| serde_json::to_value(usage).map_err(|error| error.to_string())),
-        _ => Err(format!("Command is not available on mobile: {command}")),
+        _ => Err(format!("Command is not available on the daemon: {command}")),
     }
 }
