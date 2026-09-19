@@ -642,6 +642,40 @@ fn session_deletion_checks_active_path_and_identity_and_preserves_invalid_traces
 }
 
 #[test]
+fn session_deletion_only_blocks_owned_matching_sessions_on_the_same_host() {
+    let home = TestDirectory::new(); let root = home.0.join("sessions"); fs::create_dir(&root).unwrap();
+    let path = root.join("conversation.jsonl"); let sidecar = path.with_extension("diffs.json");
+    let content = json!({"type":"session","id":"one","cwd":home.0.join("missing-project")}).to_string();
+    for messageable in [false, true] { for same_host in [false, true] { for same_path in [false, true] { for same_id in [false, true] {
+        fs::write(&path, &content).unwrap(); fs::write(&sidecar, "{}").unwrap();
+        let runtime = PiRuntime::default();
+        runtime.active_agents.lock().unwrap().insert("active".into(), AgentAddress {
+            host_id: if same_host { "local" } else { "remote" }.into(),
+            session_id: Some(if same_id { "one" } else { "other" }.into()),
+            session_path: Some(if same_path { path.clone() } else { root.join("other.jsonl") }.to_string_lossy().into_owned()),
+            worktree: None, presence_id: None, working: false, messageable,
+        });
+        let result = delete_session_files(&runtime, path.to_str().unwrap(), "local", None, &root, false);
+        let blocked = !messageable && same_host && (same_path || same_id);
+        assert_eq!(result.is_err(), blocked, "viewer={messageable}, same host={same_host}, same path={same_path}, same id={same_id}: {result:?}");
+        if blocked {
+            assert_eq!(result.unwrap_err(), "Close the session before deleting it");
+            assert_eq!(fs::read_to_string(&path).unwrap(), content);
+            assert_eq!(fs::read_to_string(&sidecar).unwrap(), "{}");
+        } else { assert!(!path.exists()); assert!(!sidecar.exists()); }
+    } } } }
+}
+
+#[test]
+fn session_deletion_tolerates_login_output_but_bounds_it_and_preserves_errors() {
+    let command = |script: &str| { let mut command = Command::new("node"); command.args(["-e", script]); command };
+    run_session_deletion(&mut command("process.stdout.write('Login banner\\n'.repeat(400))")).unwrap();
+    assert_eq!(run_session_deletion(&mut command("process.stdout.write('Login banner\\n'.repeat(400));process.stderr.write(' permission denied \\n');process.exitCode=1")).unwrap_err(), "permission denied");
+    assert_eq!(run_session_deletion(&mut command("process.exitCode=1")).unwrap_err(), "Could not delete session");
+    assert!(run_session_deletion(&mut command("process.stdout.write('x'.repeat(1024 * 1024))")).unwrap_err().starts_with("Could not delete session: output exceeded"));
+}
+
+#[test]
 fn rpc_responses_skip_notifications_and_other_ids_and_surface_errors() {
     let (sender, receiver) = mpsc::channel();
     for line in ["not json", "{\"method\":\"notification\"}", "{\"id\":2,\"result\":false}", "{\"id\":1,\"result\":{\"ok\":true}}"] {
@@ -1475,14 +1509,14 @@ fn snapshot_token_validation_checks_storage_errors_expiry_and_canonical_location
     let temporary = TestDirectory::new();
     let parent = temporary.0.join("snapshots"); fs::create_dir(&parent).unwrap();
     let root = parent.join("pi-desktop-diff-test"); fs::create_dir(&root).unwrap();
-    for length in [40, 64] {
-        let token = json!({"root":root,"tree":"A".repeat(length),"repository_root":"/repo"}).to_string();
+    for length in [40, 64] { for token_root in [&root, &root.join("..").join("pi-desktop-diff-test")] {
+        let token = json!({"root":token_root,"tree":"A".repeat(length),"repository_root":"/repo"}).to_string();
         let parsed = parse_local_snapshot_with(&token, || Ok(parent.clone())).unwrap();
         assert_eq!(parsed.root, root.canonicalize().unwrap().to_string_lossy());
         assert_eq!(parsed.tree, "A".repeat(length)); assert_eq!(parsed.repository_root, "/repo");
         assert_eq!(parse_local_snapshot_with(&token, || Err("storage failed".into())).err().unwrap(), "storage failed");
         assert!(parse_local_snapshot_with(&token, || Ok(temporary.0.join("missing"))).is_err());
-    }
+    } }
     let token = json!({"root":root,"tree":"a".repeat(40),"repositoryRoot":"/repo"}).to_string();
     fs::remove_dir(&root).unwrap();
     assert_eq!(parse_local_snapshot_with(&token, || Ok(parent.clone())).err().unwrap(), "Git snapshot expired");

@@ -3310,7 +3310,11 @@ fn delete_session_files(runtime: &PiRuntime, path: &str, host_id: &str, host: Op
         command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), shell_quote(&arguments))));
         command
     };
-    let output = run_limited(&mut command, 256 * 1024, "Could not delete session")?;
+    run_session_deletion(&mut command)
+}
+
+fn run_session_deletion(command: &mut Command) -> Result<(), String> {
+    let output = run_limited(command, 256 * 1024, "Could not delete session")?;
     if output.status.success() { return Ok(()); }
     let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
     Err(if error.is_empty() { "Could not delete session".into() } else { error })
