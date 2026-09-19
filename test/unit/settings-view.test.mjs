@@ -8,7 +8,7 @@ describe('settings editor', () => {
   let dom, view, props, saves, dirty;
   beforeEach(() => {
     dom = installDom(); saves = []; dirty = [];
-    props = { settings: { worktreeSetupScripts: [], defaultAgent: 'general', defaultModel: 'p/model', hiddenModels: [], defaultThinking: 'off', defaultFastMode: false, contextWindowCap: 10000, contextWindowCapEnabled: true, autoCompaction: true, autoRetry: true, debugMode: false, keybindings: { ...defaultKeybindings }, tools: [], skills: [], mcpServers: [], hosts: [], dictionaries: [], activeDictionaryIds: [] }, onSave: async (...args) => saves.push(args), onDirtyChange: value => dirty.push(value) };
+    props = { settings: { worktreeSetupScripts: [], defaultAgent: 'general', defaultModel: 'p/model', hiddenModels: [], defaultThinking: 'off', defaultFastMode: false, contextWindowCap: 10000, contextWindowCapEnabled: true, autoCompaction: true, autoRetry: true, debugMode: false, keybindings: { ...defaultKeybindings }, tools: [], skills: [], hosts: [], dictionaries: [], activeDictionaryIds: [] }, onSave: async (...args) => saves.push(args), onDirtyChange: value => dirty.push(value) };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; dom.restore(); });
   async function render(extra = {}) { props = { ...props, ...extra }; if (view) await view.rerender(props); else view = await renderComponent(SettingsView, props); }
@@ -61,16 +61,16 @@ describe('settings editor', () => {
   });
 
   test('MCP HTTP validation rejects bad URLs, headers and timeouts before saving', async () => {
-    await render(); await section('MCP servers'); await click(button('Add MCP server')); await enterText(control('Server name'), 'Search');
+    await render({ agentConfig: { agents: [profile('general')] } }); await section('Agents'); await click(button('Add MCP server')); await enterText(control('Server name'), 'Search');
     await click(button('HTTP')); const fields = () => document.querySelectorAll('.http-fields input');
     assert.match(document.querySelector('.mcp-error').textContent, /valid HTTP URL/);
     await enterText(fields()[0], 'file:///tmp/x'); assert.match(document.querySelector('.mcp-error').textContent, /HTTP or HTTPS/);
     await enterText(fields()[0], 'https://example.com/mcp');
     for (const [headers, error] of [['{bad', 'valid JSON'], ['[]', 'string values'], ['{"a":3}', 'string values'], ['null', 'string values']]) { await enterText(fields()[1], headers); assert.match(document.querySelector('.mcp-error').textContent, new RegExp(error)); }
     await enterText(fields()[1], '{"Authorization":"test"}'); await enterText(control('Search startup timeout'), '0'); assert.match(document.querySelector('.mcp-error').textContent, /between 1 and 600/);
-    await enterText(control('Search startup timeout'), '20'); await click(save()); assert.equal(saves[0][0].mcpServers[0].startupTimeoutSec, 20); assert.equal(saves[0][0].mcpServers[0].url, 'https://example.com/mcp');
+    await enterText(control('Search startup timeout'), '20'); await click(save()); assert.equal(saves[0][1].agents[0].mcpServers[0].startupTimeoutSec, 20); assert.equal(saves[0][1].agents[0].mcpServers[0].url, 'https://example.com/mcp');
     await click(button('stdio')); await enterText(document.querySelector('.stdio-fields input'), ''); assert.match(document.querySelector('.mcp-error').textContent, /Command is required/);
-    await click(control('Remove Search')); await click(save()); assert.deepEqual(saves[1][0].mcpServers, []);
+    await click(control('Remove Search')); await click(save()); assert.deepEqual(saves[1][1].agents[0].mcpServers, []);
   });
 
   test('machine removal confirms existing session dependencies while new machines validate required fields', async () => {
@@ -108,16 +108,16 @@ describe('settings editor', () => {
   });
 
   test('agent edits save defaults, prompts and resource permissions without changing the built-in identity', async () => {
-    props.settings.tools = [{ name: 'read', enabled: true }]; props.settings.skills = [{ name: 'Research', path: '/research', enabled: true }]; props.settings.mcpServers = [{ id: 'search', name: 'Search', command: 'search', args: '', enabled: true }];
+    props.settings.tools = [{ name: 'read', enabled: true }]; props.settings.skills = [{ name: 'Research', path: '/research', enabled: true }];
     await render({ agentConfig: { agents: [profile('general'), profile('review')], fastModeModels: ['p/model'] }, models: [{ provider: 'p', id: 'model' }] });
     await section('Agents'); assert.equal(control('Agent name').value, 'review');
     await enterText(control('Agent name'), 'code review!'); assert.equal(control('Agent name').value, 'codereview');
     await enterText(control('Agent name'), 'general'); assert.equal(control('Agent name').value, 'codereview');
     await select('Agent default model', 'p/model'); await select('Agent default effort', 'high'); await click(control('Agent fast mode'));
     await enterText(control('System prompt file'), 'review.md'); await enterText(control('Agent prompt file'), 'extra.md');
-    for (const label of ['Allow read', 'Allow Research', 'Allow Search']) await click(control(label));
+    for (const label of ['Allow read', 'Allow Research']) await click(control(label));
     await click(control('Allow read')); await click(control('Allow read')); await click(save());
-    assert.deepEqual(saves[0][1].agents[1], profile('codereview', { model: 'p/model', effort: 'high', fastMode: true, path_systemprompt: 'review.md', path_agentprompt: 'extra.md', tools: ['read'], skills: ['/research'], mcpServers: ['search'] }));
+    assert.deepEqual(saves[0][1].agents[1], profile('codereview', { model: 'p/model', effort: 'high', fastMode: true, path_systemprompt: 'review.md', path_agentprompt: 'extra.md', tools: ['read'], skills: ['/research'], mcpServers: [] }));
     await click(document.querySelector('.agent-list button')); assert.equal(control('Agent name').disabled, true); assert.equal(control('Remove general').disabled, true);
   });
 
@@ -130,15 +130,14 @@ describe('settings editor', () => {
     const firstName = control('Agent name').value; await click(button('Add agent')); assert.notEqual(control('Agent name').value, firstName); await click(save()); assert.equal(saves[2][1].agents.length, 3);
   });
 
-  test('unavailable agent resources block saving until corrected and server deletion removes references', async () => {
-    props.settings.mcpServers = [{ id: 'existing', name: 'Existing', command: 'cmd', args: '' }];
-    await render({ agentConfig: { agents: [profile('general'), profile('review', { model: 'p/missing', effort: 'extreme', mcpServers: ['gone', 'existing'] })] }, models: [{ provider: 'p', id: 'model' }], thinkingLevels: ['off', 'high'] });
+  test('unavailable agent settings block saving until corrected and embedded servers can be removed', async () => {
+    await render({ agentConfig: { agents: [profile('general'), profile('review', { model: 'p/missing', effort: 'extreme', mcpServers: [{ id: 'existing', name: 'Existing', command: 'cmd', args: '', enabled: true }] })] }, models: [{ provider: 'p', id: 'model' }], thinkingLevels: ['off', 'high'] });
     await section('Agents'); assert.match(document.querySelector('[role=alert]').textContent, /model is unavailable/);
     await select('Agent default model', 'p/model'); assert.match(document.querySelector('[role=alert]').textContent, /effort is unavailable/);
-    await select('Agent default effort', 'high'); assert.match(document.querySelector('[role=alert]').textContent, /remove unavailable MCP server/);
-    await click(control('Remove unavailable MCP server gone')); await enterText(control('System prompt file'), ''); assert.match(document.querySelector('[role=alert]').textContent, /system prompt file is required/);
+    await select('Agent default effort', 'high');
+    await enterText(control('System prompt file'), ''); assert.match(document.querySelector('[role=alert]').textContent, /system prompt file is required/);
     await enterText(control('System prompt file'), 'system.md'); await click(control('Agent fast mode')); assert.match(document.querySelector('[role=alert]').textContent, /does not support fast mode/);
-    await click(control('Agent fast mode')); await section('MCP servers'); await click(control('Remove Existing')); await click(save()); assert.deepEqual(saves[0][1].agents[1].mcpServers, []);
+    await click(control('Agent fast mode')); await click(control('Remove Existing')); await click(save()); assert.deepEqual(saves[0][1].agents[1].mcpServers, []);
   });
 
   test('late configuration discovery preserves general edits and leaves existing agent edits intact', async () => {

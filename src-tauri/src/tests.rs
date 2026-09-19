@@ -677,41 +677,7 @@ fn dictionary_validation_limits_collision_checks_to_active_dictionaries() {
     }
 }
 
-#[test]
-fn mcp_validation_accepts_supported_transports_and_string_headers() {
-    let mut settings = default_settings();
-    for headers in [json!(null), json!(""), json!({"Authorization":"Bearer token"}), json!("{\"X-Test\":\"yes\"}")] {
-        settings.mcp_servers = vec![json!({"id":"stdio","name":"Local","command":"node","startupTimeoutSec":1}), json!({"id":"http","name":"Remote","transport":"http","url":"https://example.com/mcp","headers":headers,"startupTimeoutSec":600})];
-        assert!(validate_mcp_servers(&settings).is_ok());
-    }
-}
 
-#[test]
-fn mcp_validation_rejects_invalid_identity_timeouts_urls_and_headers() {
-    let mut settings = default_settings();
-    let valid = json!({"id":"server","name":"Server","command":"node"});
-    for (key, values) in [
-        ("id", vec![json!(" "), json!(null)]),
-        ("name", vec![json!(" "), json!(null)]),
-        ("command", vec![json!(""), json!(null)]),
-        ("transport", vec![json!("unsupported")]),
-        ("startupTimeoutSec", vec![json!(0), json!(601), json!(1.5), json!("30"), json!(null)]),
-    ] {
-        for value in values { let mut server = valid.clone(); server[key] = value; settings.mcp_servers = vec![server]; assert!(validate_mcp_servers(&settings).is_err(), "{key}"); }
-    }
-    for url in ["invalid", "file:///tmp/a"] {
-        settings.mcp_servers = vec![json!({"id":"server","name":"Server","transport":"http","url":url})];
-        assert!(validate_mcp_servers(&settings).is_err());
-    }
-    for headers in [json!(42), json!([]), json!("not json"), json!("[]"), json!({"X":42})] {
-        settings.mcp_servers = vec![json!({"id":"server","name":"Server","transport":"http","url":"http://localhost/mcp","headers":headers})];
-        assert!(validate_mcp_servers(&settings).is_err());
-    }
-    settings.mcp_servers = vec![valid.clone(), valid.clone()];
-    assert!(validate_mcp_servers(&settings).unwrap_err().contains("unique id"));
-    settings.mcp_servers = vec![valid; MAX_MCP_SERVERS + 1];
-    assert!(validate_mcp_servers(&settings).unwrap_err().contains("At most"));
-}
 
 #[test]
 fn frontmatter_respects_the_header_boundary_and_quoted_values() {
@@ -981,10 +947,9 @@ fn runtime_settings_include_only_enabled_named_tools_and_valid_skill_paths() {
     let mut settings = default_settings();
     settings.tools = vec![json!({"name":"read","enabled":true}), json!({"name":"bash","enabled":false}), json!({"name":"write"}), json!({"name":42,"enabled":true}), json!({"name":"edit","enabled":"true"})];
     settings.skills = vec![json!({"path":"/skills/active","enabled":true}), json!({"path":"/skills/off","enabled":false}), json!({"path":42,"enabled":true}), json!({"path":"/skills/unset"})];
-    settings.mcp_servers = vec![json!({"id":"server","transport":"stdio","command":"node","enabled":true})];
     settings.context_window_cap = 12345; settings.context_window_cap_enabled = false;
     assert_eq!(runtime_settings(&settings), json!({
-        "tools":["read"], "skills":["/skills/active"], "mcpServers":settings.mcp_servers,
+        "tools":["read"], "skills":["/skills/active"],
         "contextWindowCap":12345, "contextWindowCapEnabled":false
     }));
     assert_eq!(settings.tools.len(), 5, "conversion must not mutate saved settings");
@@ -1488,9 +1453,6 @@ fn settings_loading_defaults_only_when_absent_and_rejects_corrupt_or_excessive_c
     settings.hosts = vec![RemoteHost { id: "remote".into(), name: "Remote".into(), target: "host".into(), pi_path: "pi".into() }; MAX_REMOTE_HOSTS + 1];
     fs::write(&path, serde_json::to_vec(&settings).unwrap()).unwrap();
     assert!(read_settings_at(&path).err().unwrap().contains("remote machines"));
-    settings.hosts.clear(); settings.mcp_servers = vec![json!({}); MAX_MCP_SERVERS + 1];
-    fs::write(&path, serde_json::to_vec(&settings).unwrap()).unwrap();
-    assert!(read_settings_at(&path).err().unwrap().contains("MCP servers"));
 }
 #[test]
 fn summary_ingestion_ignores_unrequested_paths_and_preserves_trusted_file_metadata() {
@@ -2755,7 +2717,6 @@ fn settings_save_validation_enforces_context_and_delegates_other_configuration_c
     settings.active_dictionary_ids = vec!["missing".into()]; assert!(validate_settings_for_save(&settings).unwrap_err().contains("dictionary"));
     settings.active_dictionary_ids.clear(); settings.keybindings.insert("newConversation".into(), "Ctrl+G".into());
     assert!(validate_settings_for_save(&settings).is_err()); settings.keybindings = default_keybindings();
-    settings.mcp_servers = vec![json!({"id":"invalid"})]; assert!(validate_settings_for_save(&settings).is_err());
 }
 
 #[test]
@@ -3882,31 +3843,27 @@ fn prepared_runtime_configuration_tracks_settings_and_removes_stale_values() {
     let mut settings = default_settings();
     settings.tools = vec![json!({"name":"read","enabled":true}), json!({"name":"bash","enabled":false})];
     settings.skills = vec![json!({"path":"/skill with spaces/SKILL.md","enabled":true}), json!({"path":"/disabled","enabled":false})];
-    settings.mcp_servers = vec![json!({"id":"server","command":"node","args":["a b"],"env":{"TOKEN":"test-only-token"},"enabled":true})];
     for enabled in [true, false] {
         settings.context_window_cap = if enabled { 12345 } else { 2000 };
         settings.context_window_cap_enabled = enabled;
-        if !enabled { settings.mcp_servers.clear(); settings.skills.clear(); settings.tools.clear(); }
-        let (bridge, mcp) = prepare_mcp_bridge(&settings).unwrap();
+        if !enabled { settings.skills.clear(); settings.tools.clear(); }
+        let bridge = prepare_mcp_bridge().unwrap();
         let runtime = prepare_runtime_settings(&settings).unwrap();
         let context = prepare_context_window_cap_extension(&settings).unwrap();
         assert_eq!(fs::read_to_string(&bridge).unwrap(), include_str!("../resources/mcp-bridge.bundle.mjs"));
         assert_eq!(fs::read_to_string(&runtime).unwrap(), include_str!("../../extensions/piop-runtime-settings/index.ts"));
         assert_eq!(fs::read_to_string(&context).unwrap(), include_str!("../../extensions/piop-context-window-cap/index.ts"));
-        let mcp_value: Value = serde_json::from_slice(&fs::read(&mcp).unwrap()).unwrap();
-        assert_eq!(mcp_value, json!(settings.mcp_servers));
         let runtime_config = runtime.with_file_name("runtime-settings.json");
         let runtime_value: Value = serde_json::from_slice(&fs::read(&runtime_config).unwrap()).unwrap();
         assert_eq!(runtime_value["tools"], if enabled { json!(["read"]) } else { json!([]) });
         assert_eq!(runtime_value["skills"], if enabled { json!(["/skill with spaces/SKILL.md"]) } else { json!([]) });
-        assert_eq!(runtime_value["mcpServers"], mcp_value);
         assert_eq!(runtime_value["contextWindowCap"], settings.context_window_cap);
         assert_eq!(runtime_value["contextWindowCapEnabled"], enabled);
         let context_config = context.with_file_name("config.json");
         assert_eq!(serde_json::from_slice::<Value>(&fs::read(&context_config).unwrap()).unwrap(), json!({"contextWindowCap":settings.context_window_cap,"enabled":enabled}));
         #[cfg(unix)] {
             use std::os::unix::fs::PermissionsExt;
-            for file in [&bridge, &mcp, &runtime, &runtime_config, &context, &context_config] {
+            for file in [&bridge, &runtime, &runtime_config, &context, &context_config] {
                 assert_eq!(fs::metadata(file).unwrap().permissions().mode() & 0o777, 0o600);
             }
         }
@@ -3916,14 +3873,14 @@ fn prepared_runtime_configuration_tracks_settings_and_removes_stale_values() {
 #[test]
 fn configuration_preparation_reports_failed_writes_and_cleans_temporary_files() {
     let settings = default_settings();
-    for (relative, kind) in [("mcp-servers.json", 0), ("runtime-settings.json", 1), ("piop-context-window-cap/config.json", 2)] {
+    for (relative, kind) in [("piop-mcp-bridge.ts", 0), ("runtime-settings.json", 1), ("piop-context-window-cap/config.json", 2)] {
         let home = TestDirectory::new();
         let _home = HomeOverride::take(&home.0);
         let obstruction = home.0.join(STORAGE_DIRECTORY).join(relative);
         fs::create_dir_all(&obstruction).unwrap();
         fs::write(obstruction.join("keep"), "original").unwrap();
         let result = match kind {
-            0 => prepare_mcp_bridge(&settings).map(|_| ()),
+            0 => prepare_mcp_bridge().map(|_| ()),
             1 => prepare_runtime_settings(&settings).map(|_| ()),
             _ => prepare_context_window_cap_extension(&settings).map(|_| ()),
         };

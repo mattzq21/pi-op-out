@@ -1,3 +1,4 @@
+import { mcpServers, type McpServer } from "./mcp-config.ts";
 import { agentExtensions, extensionPaths } from "./extension-loader.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { link, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
@@ -7,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { formatSkillsForPrompt, type BuildSystemPromptOptions } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; extensions?: string[]; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: string[] };
+export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; extensions?: string[]; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: McpServer[] };
 type RuntimeDefaults = { model: string; effort: string };
 type AgentSnapshot = { version: 1; definition: Agent; systemPrompt: string; agentPrompt: string };
 type SessionAgentState = { snapshot?: AgentSnapshot; active?: string; locked?: boolean; modelOverride?: string; effortOverride?: string };
@@ -136,7 +137,7 @@ function normalize(value: Partial<Config>, pi: ExtensionAPI): Config {
     name: agent.name, model: typeof agent.model === "string" ? agent.model : "", effort: typeof agent.effort === "string" ? agent.effort : fallbackConfig.agents[0].effort,
     fastMode: agent.fastMode, extensions: extensionPaths(agent.extensions),
     path_systemprompt: promptPath(agent), path_agentprompt: typeof agent.path_agentprompt === "string" ? agent.path_agentprompt.trim() : ["default", "general"].includes(agent.name) ? DEFAULT_AGENT_PROMPT_PATH : "",
-    tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => typeof item === "string") : defaultAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => typeof item === "string") : [], mcpServers: Array.isArray(agent.mcpServers) ? agent.mcpServers.filter((item): item is string => typeof item === "string" && item !== "filesystem") : [],
+    tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => typeof item === "string") : defaultAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => typeof item === "string") : [], mcpServers: mcpServers(agent.mcpServers),
   })) : [];
   if (!supplied.some((agent) => agent.name === "general")) {
     const legacy = supplied.find((agent) => agent.name === "default");
@@ -278,14 +279,12 @@ export default async function defineAgents(pi: ExtensionAPI) {
     pi.events.emit("piop:fast-mode", { apply: true, enabled: agent.fastMode, ctx });
     pi.setActiveTools([]);
     const tools = new Set([...agent.tools, ...extensions.tools()]);
-    if (connectMcp && process.env.PI_DESKTOP_MCP_CONFIG) {
-      const selection: { serverIds: string[]; agentName: string; sessionId: string; ready?: Promise<string[]> } = { serverIds: agent.mcpServers, agentName: agent.name, sessionId: ctx.sessionManager.getSessionId() };
+    if (connectMcp) {
+      const selection: { servers: McpServer[]; agentName: string; sessionId: string; ready?: Promise<string[]> } = { servers: mcpServers(agent.mcpServers), agentName: agent.name, sessionId: ctx.sessionManager.getSessionId() };
       pi.events.emit("piop:mcp:select", selection);
-      if (!selection.ready) return `Agent "${agent.name}" cannot run because the MCP bridge is unavailable`;
-      try { for (const tool of await selection.ready) tools.add(tool); }
+      if (!selection.ready && selection.servers.some((server) => server.enabled)) return `Agent "${agent.name}" cannot run because the MCP bridge is unavailable`;
+      try { for (const tool of await (selection.ready ?? Promise.resolve([]))) tools.add(tool); }
       catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" could not connect its MCP servers:\n${error instanceof Error ? error.message : String(error)}`; }
-    } else if (connectMcp) {
-      for (const info of pi.getAllTools()) if (agent.mcpServers.some((server) => info.name.startsWith(`mcp_${safeName(server)}_`))) tools.add(info.name);
     }
     pi.setActiveTools([...tools]); return undefined;
   };

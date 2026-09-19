@@ -143,7 +143,6 @@ export default function App() {
   }, [closeTransportDialogs, runtimePool]);
   const [statuses, setStatuses] = useState<Record<string, string>>({}); const [widgets, setWidgets] = useState<Record<string, string[]>>({});
   const [extensionOwner, setExtensionOwner] = useState(transport);
-  const [mcpStatuses, setMcpStatuses] = useState<Record<string, { status: "starting" | "connected" | "stopped" | "error"; error?: string }>>({});
   const [renameSession, setRenameSession] = useState<RenameTarget>();
   const [projectOpen, setProjectOpen] = useState(false);
   const [worktreeTarget, setWorktreeTarget] = useState<WorktreeTarget>();
@@ -332,7 +331,7 @@ export default function App() {
           setDefinedAgents(capability);
           if (capability) void refreshSession().catch(() => undefined);
         } catch { setDefinedAgents(undefined); } }
-        else if (request.method === "setStatus" && request.statusKey === MCP_STATUS_KEY) { setExtensionOwner(transport); try { const values = request.statusText?.startsWith("json:") ? JSON.parse(request.statusText.slice(5)) as Array<{ id: string; status: "starting" | "connected" | "stopped" | "error"; error?: string }> : []; setMcpStatuses(Object.fromEntries(values.map((value) => [value.id, { status: value.status, error: value.error }]))); } catch { setMcpStatuses({}); } }
+        else if (request.method === "setStatus" && request.statusKey === MCP_STATUS_KEY) { /* MCP connection status belongs to the active agent. */ }
         else if (request.method === "setStatus" && request.statusKey && request.statusKey !== PROMPT_CONTEXT_STATUS_KEY) { setExtensionOwner(transport); setStatuses((current) => { const next = { ...current }; if (request.statusText) next[request.statusKey!] = request.statusText; else delete next[request.statusKey!]; return next; }); }
         else if (request.method === "setWidget" && request.widgetKey) { setExtensionOwner(transport); setWidgets((current) => { const next = { ...current }; if (request.widgetLines) next[request.widgetKey!] = (Array.isArray(request.widgetLines) ? request.widgetLines : []).filter((line): line is string => typeof line === "string").map((line) => line.slice(0, 500)).slice(0, 50); else delete next[request.widgetKey!]; return next; }); }
         else if (request.method === "setTitle") document.title = request.title || "piop";
@@ -353,7 +352,7 @@ export default function App() {
       if (event.type === "ownership_lost") { updateConnected(false); setDialogs((current) => current.filter((dialog) => dialog.transport !== transport)); }
       if (event.type === "ownership_acquired") updateConnected(true);
       if (event.type === "disconnected") {
-        setDefinedAgents(undefined); setMcpStatuses({}); setStatuses({}); setWidgets({}); document.title = "piop"; setDialogs((current) => current.filter((dialog) => dialog.transport !== transport)); updateConnected(false);
+        setDefinedAgents(undefined);  setStatuses({}); setWidgets({}); document.title = "piop"; setDialogs((current) => current.filter((dialog) => dialog.transport !== transport)); updateConnected(false);
         if (reconnecting) return; reconnecting = true;
         window.setTimeout(() => {
           if (cancelled) return; const diagnostic = transport.lastDiagnostic();
@@ -623,7 +622,7 @@ export default function App() {
   };
   const applySettings = async (value: AppSettings, nextConfig?: AgentConfig) => {
     if (!settings) throw new Error("Settings are still loading");
-    const next = { ...value, debugMode: settings.debugMode, mcpServers: value.mcpServers.map(({ error: _error, ...server }) => ({ ...server, status: "stopped" as const })) };
+    const next = { ...value, debugMode: settings.debugMode };
     const agentHostId = nextConfig ? transport.currentHostId() : undefined;
     // Use a separate, sessionless runtime to persist agent definitions without
     // reloading the extension inside a conversation that is still responding.
@@ -790,7 +789,6 @@ export default function App() {
   </main>;
 
   const extensionStateIsCurrent = extensionOwner === transport;
-  const settingsWithMcpStatuses = { ...settings, mcpServers: settings.mcpServers.map((server) => ({ ...server, ...(extensionStateIsCurrent ? mcpStatuses[server.id] : undefined) })) };
   const activeDialog = dialogs[0];
   const projectCwd = selectedProjectCwd(activeCwd, transport.isTemporaryChat());
   return <div className={`app dark ${panelOpen && view === "chat" ? "mobile-panel-open" : ""}`}>
@@ -805,7 +803,7 @@ export default function App() {
       </div>
       {terminalOpen && <TerminalView key={`${terminalSessionId}:${activeTerminal.id}`} cwd={terminalCwd} terminals={sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={activeTerminal.id} output={activeTerminal.output} outputEnd={activeTerminal.outputEnd} snapshot={activeTerminal.snapshot} snapshotEnd={activeTerminal.snapshotEnd} started={activeTerminal.started} exited={activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { void transport.writeTerminal(activeTerminal.id, data).catch((reason) => queueTerminalOutput(activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { void transport.resizeTerminal(activeTerminal.id, cols, rows).catch(() => undefined); }} onSnapshot={(value, outputEnd) => saveTerminalSnapshot(terminalSessionId, activeTerminal.id, value, outputEnd)} onDelete={deleteTerminal} onClose={() => { terminalPanelRevision.current += 1; setTerminalOpen(false); }} />}
     </div>
-    {view === "settings" && <SettingsView providerHostId={transport.currentHostId()} pendingSettingsCount={pendingSettingsCount} settings={settingsWithMcpStatuses} agentConfig={extensionStateIsCurrent ? agentSettings : undefined} sessions={sessions} models={models} thinkingLevels={thinkingLevels} onSave={saveSettings} onDirtyChange={setSettingsDirty} />}
+    {view === "settings" && <SettingsView providerHostId={transport.currentHostId()} pendingSettingsCount={pendingSettingsCount} settings={settings} agentConfig={extensionStateIsCurrent ? agentSettings : undefined} sessions={sessions} models={models} thinkingLevels={thinkingLevels} onSave={saveSettings} onDirtyChange={setSettingsDirty} />}
     <FindInPage selector=".chat-panes > .chat-shell" scopeKey={activeConversationKey} onActivate={() => setActivePane("main")} active={activePane === "main" || !splitPane} enabled={view === "chat"} />
     {splitPane && <FindInPage key={splitSessionId} selector=".split-chat .chat-shell" scopeKey={splitSessionId} onActivate={() => setActivePane("split")} active={activePane === "split"} enabled={view === "chat"} />}
     {view === "settings" && <FindInPage selector=".settings-shell" scopeKey="settings" />}

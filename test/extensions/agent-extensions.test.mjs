@@ -9,9 +9,9 @@ import { transform } from 'esbuild';
 export async function fixture(t) {
   const dir = await mkdtemp(join(tmpdir(), 'piop-extensions-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  for (const name of ['index', 'extension-loader']) {
+  for (const name of ['index', 'extension-loader', 'mcp-config']) {
     let source = await readFile(new URL(`../../extensions/piop-define-agents/${name}.ts`, import.meta.url), 'utf8');
-    source = source.replace('./extension-loader.ts', './extension-loader.mjs').replace(/import \{ formatSkillsForPrompt, type BuildSystemPromptOptions \} from "@earendil-works\/pi-coding-agent";/, 'const formatSkillsForPrompt = () => "";');
+    source = source.replace('./extension-loader.ts', './extension-loader.mjs').replace('./mcp-config.ts', './mcp-config.mjs').replace(/import \{ formatSkillsForPrompt, type BuildSystemPromptOptions \} from "@earendil-works\/pi-coding-agent";/, 'const formatSkillsForPrompt = () => "";');
     await writeFile(join(dir, `${name}.mjs`), (await transform(source, { loader: 'ts', format: 'esm' })).code);
   }
   const handlers = new Map(), commands = new Map(), tools = new Map(), listeners = new Map();
@@ -113,7 +113,6 @@ test('RPC agent selection rejects broken dependencies and keeps previous selecti
   await f.file('config.json', JSON.stringify({ agents: [agent('general'), agent('good', ['good.mjs']), agent('bad', ['bad.mjs']), agent('startup', ['startup.mjs'])], webSearchDefaultApplied: true }));
   const previous = { ...process.env };
   t.after(() => { for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key]; Object.assign(process.env, previous); });
-  delete process.env.PI_DESKTOP_MCP_CONFIG;
   const define = (await import(pathToFileURL(join(f.dir, 'index.mjs')))).default;
   await define(f.pi); await f.emit('session_start');
   const select = name => f.commands.get('pi-define-agents-use').handler(name, f.ctx);
@@ -167,7 +166,6 @@ test('a failed restored agent blocks input and a failed config save preserves th
   await f.file('config.json', JSON.stringify({ agents: [agent], webSearchDefaultApplied: true }));
   const previous = { ...process.env };
   t.after(() => { for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key]; Object.assign(process.env, previous); });
-  delete process.env.PI_DESKTOP_MCP_CONFIG;
   await (await import(pathToFileURL(join(f.dir, 'index.mjs')))).default(f.pi);
   await assert.rejects(f.emit('session_start'), /missing.mjs/);
   assert.deepEqual(await f.emit('input', { text: 'Never infer' }), { action: 'handled' });
@@ -211,7 +209,6 @@ async function invalidAgentFixture(t, position, source) {
   await f.file('config.json', JSON.stringify({ agents: [agent('general', ['stable.mjs']), agent('invalid', [rootPath])], webSearchDefaultApplied: true }));
   const previous = { ...process.env };
   t.after(() => { for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key]; Object.assign(process.env, previous); });
-  delete process.env.PI_DESKTOP_MCP_CONFIG;
   await (await import(pathToFileURL(join(f.dir, 'index.mjs')))).default(f.pi);
   await f.emit('session_start');
   return { ...f, invalidPath, rootPath };
@@ -262,7 +259,6 @@ async function sessionAgentFixture(t) {
   const f = await fixture(t);
   const previous = { ...process.env };
   t.after(() => { for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key]; Object.assign(process.env, previous); });
-  delete process.env.PI_DESKTOP_MCP_CONFIG;
   await f.file('prompt.md', 'Prompt');
   const agent = name => ({ name, path_systemprompt: 'prompt.md', path_agentprompt: '', model: '', effort: 'high', tools: [], skills: [], mcpServers: [] });
   await f.file('config.json', JSON.stringify({ agents: [agent('general'), agent('reviewer')], webSearchDefaultApplied: true }));

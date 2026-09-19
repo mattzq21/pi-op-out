@@ -1,7 +1,6 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -99,16 +98,12 @@ function startupTimeoutMs(server: ServerConfig): number {
   return seconds * 1000;
 }
 
-type Selection = { serverIds: string[]; agentName: string; sessionId: string; ready?: Promise<string[]> };
+type Selection = { servers: ServerConfig[]; agentName: string; sessionId: string; ready?: Promise<string[]> };
 type Connection = { client: Client; instanceId: string; tools: string[]; connected: boolean };
 const SELECT_EVENT = "piop:mcp:select";
 
 export default async function mcpBridge(pi: ExtensionAPI) {
-  const configPath = process.env.PI_DESKTOP_MCP_CONFIG; if (!configPath) return;
-  const settings = () => { const request: { settings?: { mcpServers: ServerConfig[] } } = {}; pi.events.emit("piop:runtime-settings", request); return request.settings; };
-  let servers = settings()?.mcpServers ?? JSON.parse(await readFile(configPath, "utf8")) as ServerConfig[];
-  const allowedServerIds = process.env.PI_DESKTOP_MCP_ALLOWED_SERVER_IDS?.split(",").map((id) => id.trim()).filter(Boolean);
-  const allowed = allowedServerIds ? new Set(allowedServerIds) : undefined;
+  let servers: ServerConfig[] = [];
   const connections = new Map<string, Connection>();
   // Keep ownership across reconnects so retained tool registrations cannot alias.
   const toolNames = new Map<string, string>();
@@ -145,15 +140,17 @@ export default async function mcpBridge(pi: ExtensionAPI) {
   };
   const select = async (selection: Selection): Promise<string[]> => {
     if (shutdown.signal.aborted) throw new Error("MCP bridge has shut down");
-    const wanted = new Set(selection.serverIds);
+    const next = selection.servers.filter((server) => server.enabled);
+    const wanted = new Set(next.map((server) => server.id));
     const instanceFor = (id: string) => `piop-${createHash("sha256").update(JSON.stringify([selection.sessionId, selection.agentName, id])).digest("hex").slice(0, 32)}`;
     // Close the old lease before requesting a new one, including on agent changes.
-    await Promise.all([...connections].filter(([id, connection]) => !wanted.has(id) || connection.instanceId !== instanceFor(id) || !connection.connected).map(([id]) => close(id)));
-    for (const id of statuses.keys()) if (!wanted.has(id)) statuses.set(id, { id, status: "stopped", error: undefined });
+    await Promise.all([...connections].filter(([id, connection]) => !wanted.has(id) || connection.instanceId !== instanceFor(id) || !connection.connected || JSON.stringify(servers.find((server) => server.id === id)) !== JSON.stringify(next.find((server) => server.id === id))).map(([id]) => close(id)));
+    servers = structuredClone(next);
+    for (const id of statuses.keys()) if (!wanted.has(id)) statuses.delete(id);
     const errors: string[] = [];
     await Promise.all([...wanted].map(async (id) => {
       const server = servers.find((item) => item.id === id);
-      if (!server || !server.enabled || (allowed && !allowed.has(id))) {
+      if (!server || !server.enabled) {
         const error = `MCP server "${id}" is unavailable or disabled`;
         statuses.set(id, { id, status: "error", error }); errors.push(error); return;
       }
@@ -224,44 +221,14 @@ export default async function mcpBridge(pi: ExtensionAPI) {
     selection.ready = pending.then(() => select(selection));
     pending = selection.ready.catch(() => undefined);
   });
-  const stopUpdates = pi.events.on("piop:mcp:update", (value) => {
-    const request = value as { ctx: ExtensionContext; ready?: Promise<void> };
-    request.ready = pending.then(async () => {
-      const next = settings()?.mcpServers;
-      if (!next) throw new Error("Runtime settings are unavailable");
-      context = request.ctx;
-      await Promise.all([...connections.keys()].filter((id) => JSON.stringify(servers.find((server) => server.id === id)) !== JSON.stringify(next.find((server) => server.id === id))).map(close));
-      servers = next;
-      for (const id of statuses.keys()) if (!servers.some((server) => server.id === id)) statuses.delete(id);
-      for (const server of servers) if (!statuses.has(server.id)) statuses.set(server.id, { id: server.id, status: "stopped", error: undefined });
-      publish();
-    });
-    pending = request.ready.catch(() => undefined);
-  });
-  pi.on("session_start", (_event, ctx) => {
-    servers = settings()?.mcpServers ?? servers;
-    context = ctx; publish();
-  });
-  pi.on("input", async (event, ctx) => {
-    if (process.env.PI_DEFINE_AGENTS_ACTIVE !== "1") {
-      const selection: Selection = { serverIds: servers.filter((server) => server.enabled && (!allowed || allowed.has(server.id))).map((server) => server.id), agentName: "default", sessionId: ctx.sessionManager.getSessionId() };
-      try { await select(selection); }
-      catch (error) {
-        const message = `Could not connect MCP servers:\n${error instanceof Error ? error.message : String(error)}`;
-        ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error: message }));
-        ctx.ui.notify(message, "error");
-        return { action: "handled" as const };
-      }
-    }
-    return { action: "continue" as const };
-  });
+  pi.on("session_start", (_event, ctx) => { context = ctx; publish(); });
   pi.registerCommand("mcp-status", { description: "Show MCP servers and tools loaded by piop", handler: async () => {
     const loaded = [...connections].filter(([, connection]) => connection.connected);
     pi.sendMessage({ customType: MCP_STATUS_KEY, content: loaded.length ? loaded.map(([id, connection]) => `${id}: ${connection.tools.join(", ") || "no tools"}`).join("\n") : "No MCP servers loaded", display: true }, { triggerTurn: false });
   } });
   pi.on("context", (event) => ({ messages: event.messages.filter((message) => message.role !== "custom" || message.customType !== MCP_STATUS_KEY) }));
   pi.on("session_shutdown", async () => {
-    unsubscribe(); stopUpdates(); shutdown.abort();
+    unsubscribe(); shutdown.abort();
     await pending;
     await Promise.all([...connections.keys()].map(close));
     context?.ui.setStatus(MCP_STATUS_KEY, undefined);

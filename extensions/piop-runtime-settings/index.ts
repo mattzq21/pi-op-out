@@ -8,7 +8,6 @@ import { loadAccountProviders } from "./provider-accounts.mjs";
 type Settings = {
   tools: string[];
   skills: string[];
-  mcpServers: unknown[];
   contextWindowCap: number;
   contextWindowCapEnabled: boolean;
 };
@@ -19,7 +18,7 @@ const bootKey = Symbol.for("piop.runtime-settings.boot");
 const processState = globalThis as typeof globalThis & { [key]?: Settings; [replyKey]?: (value: string) => void; [bootKey]?: boolean };
 
 function validate(value: Settings): Settings {
-  if (!value || !Array.isArray(value.tools) || !value.tools.every((item) => typeof item === "string") || !Array.isArray(value.skills) || !value.skills.every((item) => typeof item === "string") || !Array.isArray(value.mcpServers) || !Number.isSafeInteger(value.contextWindowCap) || value.contextWindowCap < 1000 || typeof value.contextWindowCapEnabled !== "boolean") throw new Error("Invalid runtime settings");
+  if (!value || !Array.isArray(value.tools) || !value.tools.every((item) => typeof item === "string") || !Array.isArray(value.skills) || !value.skills.every((item) => typeof item === "string") || !Number.isSafeInteger(value.contextWindowCap) || value.contextWindowCap < 1000 || typeof value.contextWindowCapEnabled !== "boolean") throw new Error("Invalid runtime settings");
   return structuredClone(value);
 }
 
@@ -67,7 +66,6 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
           // Pi exposes skill registry updates through resource reload, without restarting the process.
           await ctx.reload();
         } else {
-          await update("piop:mcp:update", ctx);
           applyTools();
           if (process.env.PI_DEFINE_AGENTS_ACTIVE === "1") await update("piop:agents:refresh", ctx);
         }

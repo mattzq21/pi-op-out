@@ -1645,7 +1645,7 @@ describe("Settings acceptance", () => {
     await app.openSettings();
     await expect(app.saveSettingsButton).toHaveText("Save changes");
 
-    for (const section of ["General", "Machines", "Keybinds", "Skills", "Tools", "MCP servers"]) {
+    for (const section of ["General", "Machines", "Keybinds", "Agents"]) {
       await app.openSettingsSection(section);
       await expect(app.settingsSectionHeading).toHaveText(section);
     }
@@ -1705,7 +1705,7 @@ describe("Settings acceptance", () => {
 
   it("can prepare an MCP server without saving it", async () => {
     await app.openSettings();
-    await app.openSettingsSection("MCP servers");
+    await app.openSettingsSection("Agents");
     const before = await $$("input[aria-label='Server name']");
     await app.addMcpServerButton.click();
     const names = await $$("input[aria-label='Server name']");
@@ -1729,7 +1729,7 @@ describe("Settings acceptance", () => {
 
   it("can prepare an HTTP MCP server with headers without saving it", async () => {
     await app.openSettings();
-    await app.openSettingsSection("MCP servers");
+    await app.openSettingsSection("Agents");
     const before = await $$('input[aria-label="Server name"]');
     await app.addMcpServerButton.click();
     const names = await $$('input[aria-label="Server name"]');
