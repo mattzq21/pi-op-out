@@ -243,6 +243,7 @@ function ConversationTurnView({ messages, hookCounts, gitDiffs, cwd, debug, acti
   });
   const userMessages = messages.filter((message) => message.role === "user");
   const workContent = renderMessages(intermediate, true, true, debug, paused, false);
+  const reasoningOnly = compactCompletedTools(intermediate).every(({ message }) => message.role === "assistant" && hasVisibleText(thinkingOf(message.content)) && !hasVisibleText(textOf(message.content)) && message.stopReason !== "error" && message.stopReason !== "aborted");
   const finalMessage = finalIndex >= 0 ? { ...messages[finalIndex], content: textOf(messages[finalIndex].content) } : undefined;
   const turnCacheUsage = messages.reduce((total, message) => {
     if (message.role === "assistant" && message.usage) {
@@ -262,7 +263,7 @@ function ConversationTurnView({ messages, hookCounts, gitDiffs, cwd, debug, acti
     {userMessages.map((message) => <Message key={message.id} message={message} debug={debug} />)}
     {debug && promptContext && <PromptContextBar context={promptContext} />}
     {active || paused ? <div className="active-work-content">{renderMessages(messages.filter((message) => message.role !== "user"), true, false, debug, paused)}</div> : <>
-    {workContent.length > 0 && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}<ChevronRight size={12} className="work-group-chevron" aria-hidden="true" /></summary><div className="work-group-content">{workContent}</div></details>}
+    {workContent.length > 0 && <details className="work-group"><summary>{reasoningOnly ? "Reasoning" : workedFor ? `Worked for ${workedFor}` : "Work"}<ChevronRight size={12} className="work-group-chevron" aria-hidden="true" /></summary><div className="work-group-content">{workContent}</div></details>}
     {finalMessage && <Message message={finalMessage} hookCounts={hookCounts} turnCacheUsage={turnCacheUsage} diff={changes} debug={debug} paused={paused} onBranch={onBranch} onForkAndForget={onForkAndForget} onCreateWorktree={worktreeResponse} retrying={retrying} onRetry={retryPrompt ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(onRetry(retryPrompt, undefined, retryImages)).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
     {retryError && <div className="message-failure retry-error" role="alert">Retry failed: {retryError}</div>}
     {renderMessages(messages.filter((message) => message.role === "system"), false)}
