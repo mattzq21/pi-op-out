@@ -100,6 +100,9 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .message-actions { margin-top: 12px; height: 25px; display: flex; align-items: center; gap: 1px; opacity: .55; transition: .15s; }.message:hover .message-actions { opacity: 1; }.message-actions .icon-button { width: 27px; height: 25px; }
 .user-message .message-actions { margin-top: 4px; opacity: 0; pointer-events: none; }
 .user-message:hover .message-actions, .user-message:focus-within .message-actions { opacity: 1; pointer-events: auto; }
+.assistant-message .message-actions { opacity: 0; pointer-events: none; }
+.assistant-message:hover .message-actions, .assistant-message:focus-within .message-actions { opacity: 1; pointer-events: auto; }
+@media (hover: none), (pointer: coarse) { .assistant-message .message-actions { opacity: 1; pointer-events: auto; } }
 @media (hover: none) { .user-message .message-actions { opacity: 1; pointer-events: auto; } }
 .message-time { margin-left: 6px; color: var(--muted); font: 500 11px "DM Sans", sans-serif; white-space: nowrap; opacity: 0; transition: opacity .15s; cursor: default; }
 .message:hover .message-time, .message:focus-within .message-time { opacity: 1; }
