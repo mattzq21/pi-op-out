@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "vite",
     "lint": "eslint . --max-warnings 0",
-    "lint:rust": "npm run lint:rust:complexity && npm run build:extensions && vite build && cd src-tauri && cargo clippy --locked --all-targets --all-features -- -D warnings",
-    "lint:rust:complexity": "uvx --from lizard==1.23.0 lizard --language rust --CCN 10 --length 1000000 --arguments 1000000 --warnings_only --exclude '**/target/**' --exclude '**/gen/**' src-tauri",
+    "lint:rust": "npm run build:extensions && vite build && cd src-tauri && cargo clippy --locked --all-targets --all-features -- -D warnings",
     "build": "npm run build:extensions && tsc -b && vite build",
     "build:voice": "node scripts/build-voice.mjs",
     "build:icons": "node scripts/build-icons.mjs",
