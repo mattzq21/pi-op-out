@@ -263,6 +263,7 @@ class Session {
     await voiceClosed;
     const stopped = !this.views.size && (this.ephemeral || (discardBlank && !this.submitted && !this.working));
     if (stopped) await this.stop();
+    if (!this.ephemeral && !this.views.size) await ownership.releaseClient(this.identity, this.clientId, () => !this.views.size);
     return { stopped, submitted: this.submitted };
   }
 
