@@ -38,6 +38,15 @@ export const listHooks = (hostId: string) => call<HookListing>("list_hooks", { h
 export const openHooksDirectory = (cwd: string) => call<void>("open_project_directory", { cwd, hostId: "local" });
 
 export class NativeTransport {
+  private owns = true;
+  ownsConversation() { return this.owns; }
+  async takeOwnership() {
+    await this.command({ type: "take_ownership" });
+    this.owns = true;
+    this.emit({ type: "ownership_acquired" });
+    this.emit({ type: "session_info_changed" });
+    this.emit({ type: "settings_applied" });
+  }
   private liveAssistant?: ChatMessage;
   private ephemeral = false;
   private fresh = true;
@@ -149,7 +158,7 @@ export class NativeTransport {
     this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.stderrLines = [];
     const unlisten = await listen<RpcEvent | { runtimeId: string; event: RpcEvent }>("pi://event", ({ payload }) => {
       const envelope = payload as { runtimeId?: unknown; event?: RpcEvent };
-      if (typeof envelope.runtimeId === "string") { if (envelope.runtimeId === this.runtimeId && envelope.event) { if (envelope.event.type === "disconnected") { this.running = false; this.retainedStatuses.clear(); this.retainedRequests.clear(); } this.emit(envelope.event); } }
+      if (typeof envelope.runtimeId === "string") { if (envelope.runtimeId === this.runtimeId && envelope.event) { if (envelope.event.type === "ownership_lost") { this.owns = false; this.retainedRequests.clear(); } if (envelope.event.type === "disconnected") { this.running = false; this.retainedStatuses.clear(); this.retainedRequests.clear(); } this.emit(envelope.event); } }
       else this.emit(payload as RpcEvent);
     });
     const stderrUnlisten = await listen<{ runtimeId?: string; line?: string } | string>("pi://stderr", ({ payload }) => {
@@ -161,8 +170,10 @@ export class NativeTransport {
     if (version !== this.connectionVersion) { unlisten(); stderrUnlisten(); return; }
     this.unlisten = unlisten; this.stderrUnlisten = stderrUnlisten;
     // Pi can resume by ID before a fresh session has a file on disk.
-    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call<{ attached: boolean }>("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }));
+    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call<{ attached: boolean; owned?: boolean }>("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }));
     if (attached?.attached) this.fresh = false;
+    this.owns = attached?.owned !== false;
+    this.emit({ type: this.owns ? "ownership_acquired" : "ownership_lost" });
     if (version === this.connectionVersion) {
       this.running = true;
       this.presenceCleanup?.();

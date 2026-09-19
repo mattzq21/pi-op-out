@@ -67,11 +67,15 @@ export function useProviderAuth(hostId: string) {
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
     let cancelled = false;
-    void listen("pi://provider-auth-changed", () => setTick((value) => value + 1)).then((stop) => {
+    void listen<{ hostId: string }>("pi://provider-auth-changed", ({ payload }) => {
+      if (cancelled || payload.hostId !== hostId) return;
+      setTick((value) => value + 1);
+      setRevision((value) => value + 1);
+    }).then((stop) => {
       if (cancelled) void stop(); else unlisten = stop;
     }).catch(() => undefined);
     return () => { cancelled = true; unlisten?.(); };
-  }, []);
+  }, [hostId]);
 
   const receive = (next: AuthFlow) => {
     setFlow(next);

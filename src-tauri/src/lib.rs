@@ -6,6 +6,7 @@ mod platform;
 mod provider_auth;
 #[cfg(feature = "desktop")]
 use provider_auth::provider_auth;
+mod conversation_ownership;
 mod session_groups;
 mod daemon;
 mod voice;
@@ -2188,8 +2189,10 @@ fn query_remote_git_diffs(command: &mut Command, host_name: &str) -> Result<GitD
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn save_git_diffs(app: AppHandle, session_path: String, snapshots: GitDiffSnapshots, host_id: Option<String>) -> Result<(), String> {
-    save_git_diffs_at_host(&session_path, snapshots, saved_remote_host(app, host_id)?.as_ref())
+fn save_git_diffs(app: AppHandle, session_path: String, snapshots: GitDiffSnapshots, host_id: Option<String>, client_id: String) -> Result<(), String> {
+    let mutation = conversation_ownership::MutationGuard::acquire(&app, host_id.as_deref().unwrap_or("local"), &session_path, &client_id, false, "save_diffs")?;
+    save_git_diffs_at_host(&session_path, snapshots, saved_remote_host(app, host_id)?.as_ref())?;
+    mutation.finish()
 }
 
 fn save_git_diffs_at_host(session_path: &str, snapshots: GitDiffSnapshots, host: Option<&RemoteHost>) -> Result<(), String> {
@@ -2457,6 +2460,8 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
     if daemon_port.is_some() {
         let mut command = Command::new("sh");
         command.env("PIOP_REMOTE_SESSION_CLAIMS", STORAGE_DIRECTORY);
+        command.env("PIOP_SESSION_CWD", cwd.unwrap_or("~"));
+        let remote = remote.replacen(&format!("cd {} && ", remote_directory_path(cwd)), "cd \"$PIOP_SESSION_CWD\" && ", 1);
         command.args(["-c", &format!("{remote} \"$@\""), "piop"]).args(session_arguments);
         return Ok(command);
     }
@@ -2469,11 +2474,11 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
 
 #[cfg(feature = "desktop")]
 #[tauri::command(async)]
-fn start_pi(app: AppHandle, window: tauri::WebviewWindow, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, no_session: Option<bool>, host_id: Option<String>, presence: Option<Value>) -> Result<Value, String> {
-    start_pi_for_owner(app, window.label().into(), runtime, broker, runtime_id, cwd, session_path, session_id, fork_path, no_session, host_id, presence)
+fn start_pi(app: AppHandle, window: tauri::WebviewWindow, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, no_session: Option<bool>, host_id: Option<String>, presence: Option<Value>, client_id: String) -> Result<Value, String> {
+    start_pi_for_owner(app, window.label().into(), runtime, broker, runtime_id, cwd, session_path, session_id, fork_path, no_session, host_id, presence, client_id)
 }
 
-fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, no_session: Option<bool>, host_id: Option<String>, presence: Option<Value>) -> Result<Value, String> {
+fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, no_session: Option<bool>, host_id: Option<String>, presence: Option<Value>, client_id: String) -> Result<Value, String> {
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
     if runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(&runtime_id).is_some_and(|process| process.window_label != owner) { return Err("Runtime belongs to another connection".into()); }
     let settings = load_app_settings(app.clone())?;
@@ -2497,10 +2502,10 @@ fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, 
         .filter(|server| server.get("enabled").and_then(Value::as_bool) == Some(true))
         .map(|server| server.get("startupTimeoutSec").and_then(Value::as_u64).unwrap_or(10).clamp(1, 600))
         .max().unwrap_or(0) * 1000 + 30_000;
-    let result = daemon.request(json!({"type":"attach","runtimeId":runtime_id,"sessionKey":claim_id.unwrap_or_else(|| runtime_id.clone()),"spec":daemon::spec(&command),"timeout":command_timeout,"ephemeral":ephemeral,"cwd":cwd,"presence":presence.unwrap_or_else(|| json!({}))}))?;
+    let result = daemon.request(json!({"type":"attach","clientId":client_id,"runtimeId":runtime_id,"sessionKey":claim_id.unwrap_or_else(|| runtime_id.clone()),"spec":daemon::spec(&command),"timeout":command_timeout,"ephemeral":ephemeral,"cwd":cwd,"presence":presence.unwrap_or_else(|| json!({}))}))?;
     let blank_cleanup = BlankSessionCleanup { path: session_path.clone(), id: session_id.clone(), host: if host_id == "local" { None } else { Some(remote_host(&settings, &host_id)?.clone()) }, submitted: ephemeral };
     runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { daemon, window_label: owner, blank_cleanup });
-    runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id, AgentAddress { host_id, session_id, session_path, worktree: None, presence_id: None, working: false, messageable: false });
+    runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id, AgentAddress { host_id, session_id, session_path, worktree: None, presence_id: None, working: false, messageable: result["owned"].as_bool() == Some(false) });
     Ok(result)
 }
 
@@ -2551,6 +2556,9 @@ fn pi_command(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRun
         command["sessionPath"] = json!(path);
     }
     let result = execute_pi_command(&runtime, &runtime_id, command)?;
+    if command_type == "take_ownership" {
+        if let Some(agent) = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.get_mut(&runtime_id) { agent.messageable = false; }
+    }
     if command_type == "voice_history" {
         if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(&runtime_id) { process.blank_cleanup.submitted = true; }
     }
@@ -3202,10 +3210,11 @@ fn remote_session_file(path: &str, archived: bool, command: impl FnOnce(String) 
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path: String, host_id: Option<String>, terminal_ids: Vec<String>) -> Result<(), String> {
+fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path: String, host_id: Option<String>, terminal_ids: Vec<String>, client_id: String) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let client = app.state::<PiRuntime>();
     let _lifecycle = client.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
+    let mutation = conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, false, "archive")?;
     let daemon = client.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?.get(&host_id).cloned();
     if let Some(daemon) = daemon {
         let settings = load_app_settings(app.clone())?;
@@ -3220,11 +3229,11 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
         let settings = load_app_settings(app.clone())?; let host = remote_host(&settings, &host_id)?;
         archive_remote_session(&session_path, |script| { let mut command = ssh(host); command.arg(script); command })?;
         let _ = stop_terminals(&runtime, &terminal_ids);
-        return Ok(());
+        return mutation.finish();
     }
     archive_local_session(&home_dir()?, &session_path)?;
     let _ = stop_terminals(&runtime, &terminal_ids);
-    Ok(())
+    mutation.finish()
 }
 
 fn archive_remote_session(session_path: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
@@ -3260,22 +3269,24 @@ fn archive_local_session(home: &Path, session_path: &str) -> Result<(), String> 
     Ok(())
 }
 
-fn delete_stored_session(app: AppHandle, runtime: &PiRuntime, session_path: String, host_id: Option<String>, archived: bool) -> Result<(), String> {
+fn delete_stored_session(app: AppHandle, runtime: &PiRuntime, session_path: String, host_id: Option<String>, archived: bool, client_id: String) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
+    let mutation = conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, archived, "delete")?;
     let settings = load_app_settings(app)?;
     let path = if archived { archived_session_file(&settings, &host_id, &session_path)? } else { desktop_session_file(&settings, &host_id, &session_path)? };
     let local_root = if archived { home_dir()?.join(STORAGE_DIRECTORY).join("archived") } else { desktop_sessions_dir(&home_dir()?) };
     let host = if host_id == "local" { None } else { Some(remote_host(&settings, &host_id)?.clone()) };
-    delete_session_files(runtime, &path, &host_id, host.as_ref(), &local_root, archived)
+    delete_session_files(runtime, &path, &host_id, host.as_ref(), &local_root, archived)?;
+    mutation.finish()
 }
 
 fn delete_session_files(runtime: &PiRuntime, path: &str, host_id: &str, host: Option<&RemoteHost>, local_root: &Path, archived: bool) -> Result<(), String> {
     if runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values()
-        .any(|agent| agent.host_id == host_id && agent.session_path.as_deref() == Some(path)) {
+        .any(|agent| !agent.messageable && agent.host_id == host_id && agent.session_path.as_deref() == Some(path)) {
         return Err("Close the session before deleting it".into());
     }
     let active_session_ids: Vec<String> = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values()
-        .filter(|agent| agent.host_id == host_id).filter_map(|agent| agent.session_id.clone()).collect();
+        .filter(|agent| !agent.messageable && agent.host_id == host_id).filter_map(|agent| agent.session_id.clone()).collect();
     let arguments = json!({ "path": path, "activeSessionIds": active_session_ids, "area": if archived { "archived" } else { "sessions" }, "root": if host_id == "local" { Some(local_root) } else { None } }).to_string();
     let script = include_str!("../resources/delete-session.cjs");
     let mut command = if host_id == "local" {
@@ -3295,23 +3306,26 @@ fn delete_session_files(runtime: &PiRuntime, path: &str, host_id: &str, host: Op
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn delete_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, host_id: Option<String>) -> Result<(), String> {
-    delete_stored_session(app, &runtime, session_path, host_id, false)
+fn delete_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, host_id: Option<String>, client_id: String) -> Result<(), String> {
+    delete_stored_session(app, &runtime, session_path, host_id, false, client_id)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn delete_archived_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, host_id: Option<String>) -> Result<(), String> {
-    delete_stored_session(app, &runtime, session_path, host_id, true)
+fn delete_archived_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, host_id: Option<String>, client_id: String) -> Result<(), String> {
+    delete_stored_session(app, &runtime, session_path, host_id, true, client_id)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn relocate_session(app: AppHandle, session_path: String, cwd: String, host_id: Option<String>) -> Result<(), String> {
+fn relocate_session(app: AppHandle, session_path: String, cwd: String, host_id: Option<String>, client_id: String) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
+    let mutation = conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, false, "relocate")?;
     if host_id != "local" {
         let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
-        return relocate_remote_session(&session_path, &cwd, &host.name, |script| { let mut command = ssh(host); command.arg(remote_login_command(&script)); command });
+        relocate_remote_session(&session_path, &cwd, &host.name, |script| { let mut command = ssh(host); command.arg(remote_login_command(&script)); command })?;
+        return mutation.finish();
     }
-    relocate_local_session(&home_dir()?, &session_path, &cwd)
+    relocate_local_session(&home_dir()?, &session_path, &cwd)?;
+    mutation.finish()
 }
 
 fn relocate_remote_session(session_path: &str, cwd: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
@@ -3354,23 +3368,33 @@ fn agent_is_active(session: &SessionSummary, agent: &AgentAddress) -> bool {
     !agent.messageable && agent.host_id == session.host_id && (agent.session_id.as_deref() == Some(session.id.as_str()) || agent.session_path.as_deref() == Some(session.path.as_str()))
 }
 
-fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &SessionSummary, message: &str, request_id: &str, deadline_ms: u64) -> Result<String, String> {
+fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &SessionSummary, message: &str, request_id: &str, deadline_ms: u64, client_id: &str) -> Result<String, String> {
     let remaining = deadline_ms.saturating_sub(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis() as u64);
     if remaining == 0 || broker.closing.load(Ordering::SeqCst) { return Err("Agent message expired or app is closing".into()); }
     let deadline = Instant::now() + Duration::from_millis(remaining.min(120_000));
     let runtime = app.state::<PiRuntime>();
-    let (settings, _claim) = {
+    let (settings, _claim, _ownership) = {
         let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
+        let ownership = conversation_ownership::MutationGuard::acquire(app, &session.host_id, &session.path, client_id, false, "message")?;
         let settings = load_app_settings(app.clone())?;
         let claim = claim_agent(broker, &session.host_id, &session.id)?;
         let daemon = runtime.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?.get(&session.host_id).cloned();
         if let Some(daemon) = daemon.filter(|daemon| daemon.alive.load(Ordering::SeqCst)) {
             daemon.request(json!({"type":"retire","sessionKey":session.id,"sessionPath":session.path}))?;
         }
-        (settings, claim)
+        (settings, claim, ownership)
     };
     if Instant::now() >= deadline { return Err("Agent message expired".into()); }
     let mut command = build_pi_command(broker, &settings, &session.host_id, PiLaunch::Print { cwd: &session.cwd, session_path: &session.path }, None)?;
+    if session.host_id != "local" {
+        let mut args: Vec<_> = command.get_args().map(|arg| arg.to_string_lossy().into_owned()).collect();
+        let script = args.last_mut().ok_or("Missing remote agent command")?;
+        *script = format!("export PIOP_CONVERSATION_CLIENT={}; {}", shell_quote(client_id), script);
+        let mut inherited = Command::new(command.get_program()); inherited.args(args);
+        for (key, value) in command.get_envs() { if let Some(value) = value { inherited.env(key, value); } else { inherited.env_remove(key); } }
+        command = inherited;
+    }
+    command.env("PIOP_CONVERSATION_CLIENT", client_id);
     let output_root = std::env::temp_dir().join(format!("pi-desktop-broker-{}", Uuid::new_v4()));
     ensure_private_dir(&output_root).map_err(|error| format!("Could not prepare agent message: {error}"))?;
     let stdout_path = output_root.join("stdout"); let stderr_path = output_root.join("stderr");
@@ -3460,7 +3484,7 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
             let message = value.get("message").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("message is required")?;
             let sessions = collect_sessions(&app, &session_index)?;
             let session = resolve_agent(&sessions, host_id, session_id)?;
-            dispatch_agent_message(&app, &broker, session, message, request_id, value.get("deadline").and_then(Value::as_u64).unwrap_or_else(|| SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis() as u64 + 120_000)).map(|reply| json!({"reply":reply}))
+            dispatch_agent_message(&app, &broker, session, message, request_id, value.get("deadline").and_then(Value::as_u64).unwrap_or_else(|| SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis() as u64 + 120_000), value["clientId"].as_str().ok_or("Conversation client is missing")?).map(|reply| json!({"reply":reply}))
         })();
             if let Ok(mut count) = broker.message_count.lock() { *count = count.saturating_sub(1); }
             match result { Ok(data) => broker_response(stream, "200 OK", json!({"data":data})), Err(error) => broker_response(stream, "400 Bad Request", json!({"error":error})) }

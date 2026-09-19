@@ -42,9 +42,9 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
       try {
         if (initial) await transport.connect(session.cwd, forkFrom ? undefined : session.path, session.hostId, forkFrom, Boolean(forkFrom));
         else await transport.connect();
-        await refresh(); await configure();
+        await refresh(); if (transport.ownsConversation()) await configure();
         if (closing) return;
-        updateConnected(true); connectedOnce = true; setError(undefined); setControlError(undefined);
+        updateConnected(transport.ownsConversation()); connectedOnce = true; setError(undefined); setControlError(undefined);
         if (initial && initialPrompt) { await transport.command({ type: "prompt", message: initialPrompt }); if (!closing) onReady?.(); }
       } catch (reason) {
         if (closing) return;
@@ -56,6 +56,7 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
     reconnectRef.current = () => void connectRuntime(false);
     const unsubscribe = transport.subscribe((event: RpcEvent) => {
       handleEvent(event);
+      if (event.type === "ownership_lost") { updateConnected(false); void onDialogTransportClosed(transport); }
       if (event.type === "extension_ui_resolved" && typeof event.id === "string") onDialogResolved(transport, event.id);
       if (event.type === "session_info_changed" || event.type === "session_switched") void refresh().catch(reportControlError);
       if (event.type === "extension_ui_request") { const request = event as unknown as ExtensionUiRequest;

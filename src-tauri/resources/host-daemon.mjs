@@ -8,12 +8,45 @@ import { homedir, tmpdir } from 'node:os';
 
 const sessions = new Map();
 const subscriptions = new Map();
+const attachments = new Map();
+const readonlyViews = new Map();
+const ownershipDrains = new Map();
+const ownershipReleases = new Map();
+const ownershipCaptureKeys = new Map();
 const retryMessages = new Map();
 let desiredConfiguration;
 const interactiveMethods = new Set(['input', 'editor', 'select', 'confirm']);
 const stateChanges = new Set(['session_info_changed', 'session_switched', 'model_select', 'thinking_level_changed', 'agent_start', 'agent_end', 'agent_settled', 'message_start', 'message_end', 'entry_appended', 'pause_state', 'compaction_start', 'compaction_end', 'auto_compaction_start', 'auto_compaction_end']);
 const output = (packet) => process.stdout.write(JSON.stringify(packet) + '\n');
 const errorText = (error) => error instanceof Error ? error.message : String(error);
+async function releaseConversation(id, intent) {
+  if (ownershipReleases.has(id)) return ownershipReleases.get(id);
+  const pending = (async () => {
+    const keys = ownershipCaptureKeys.get(id) ?? new Set();
+    ownershipCaptureKeys.set(id, keys);
+    for (const session of [...sessions.values()].filter((item) => item.identity === id)) {
+      if (intent === 'message') await session.retire();
+      for (const runtimeId of session.views.keys()) readonlyViews.set(runtimeId, { id, path: session.state?.sessionFile });
+      session.publish({ type: 'ownership_lost' });
+      if (session.working || session.compacting) { try { await session.raw({ type: 'abort' }); } catch { /* Stopping the worker below still fences all writes. */ } }
+      await session.stop();
+      keys.add(session.key);
+    }
+    for (const key of keys) {
+      const requestId = randomUUID();
+      await new Promise((resolve, reject) => {
+        ownershipDrains.set(requestId, { resolve, reject });
+        output({ type: 'ownership_drain', id: requestId, sessionKey: key });
+      });
+      keys.delete(key);
+    }
+    ownershipCaptureKeys.delete(id);
+  })();
+  ownershipReleases.set(id, pending);
+  void pending.then(() => { ownershipReleases.delete(id); }, () => { ownershipReleases.delete(id); });
+  return pending;
+}
+const ownership = new ConversationOwnership(piStorageDirectory, releaseConversation);
 let providerAuthRevision = 0;
 const providerAuth = typeof ProviderAuthService === 'undefined' ? undefined : new ProviderAuthService(piAuthExecutable, () => {
   providerAuthRevision++;
@@ -49,9 +82,12 @@ function applyAssistantMessageDelta(message, event) {
 }
 
 class Session {
-  constructor(key, spec, timeout, ephemeral, transient = false) {
+  constructor(key, spec, timeout, ephemeral, transient = false, clientId) {
+    spec = { ...spec, env: { ...spec.env, PIOP_CONVERSATION_CLIENT: clientId || '' } };
+    if (spec.env.PIOP_SESSION_CWD?.startsWith('~')) spec.env.PIOP_SESSION_CWD = spec.env.PIOP_SESSION_CWD.replace(/^~(?=\/|$)/, homedir());
+    this.clientId = clientId;
     const identityIndex = spec.args.lastIndexOf('--session-id');
-    if (!spec.args.includes('--session') && identityIndex < 0) spec = { ...spec, args: [...spec.args, '--session-id', randomUUID()] };
+    if (!spec.args.includes('--session') && identityIndex < 0) spec = { ...spec, args: [...spec.args, '--session-id', key] };
     this.key = key;
     this.identity = spec.args.includes('--session') ? key : spec.args[spec.args.lastIndexOf('--session-id') + 1];
     this.spec = spec;
@@ -166,7 +202,10 @@ class Session {
 
   async stop() {
     if (this.closed) return;
-    this.stopPromise ??= new Promise((resolve) => { this.child.once('close', resolve); this.child.kill(); });
+    this.stopPromise ??= new Promise((resolve) => {
+      const force = setTimeout(() => this.child.kill('SIGKILL'), 5000); force.unref();
+      this.child.once('close', () => { clearTimeout(force); resolve(); }); this.child.kill();
+    });
     await this.stopPromise;
   }
 
@@ -375,6 +414,11 @@ function sessionSpec(spec, flag, value) {
   return { ...spec, args: [...args, flag, value] };
 }
 
+function rememberAttachment(runtimeId, session) {
+  const spec = session.ephemeral ? session.spec : sessionSpec(session.spec, '--session-id', session.state?.sessionId || session.identity);
+  attachments.set(runtimeId, { ...attachments.get(runtimeId), spec, sessionKey: session.identity, cwd: session.cwd });
+}
+
 function workerLaunch(spec, identity) {
   if (!spec.env?.PIOP_REMOTE_SESSION_CLAIMS) return spec;
   const directory = join(homedir(), spec.env.PIOP_REMOTE_SESSION_CLAIMS, 'session-claims');
@@ -389,7 +433,7 @@ async function sessionIdentity(spec, fallback) {
     const idIndex = spec.args.lastIndexOf('--session-id');
     return idIndex < 0 ? fallback : spec.args[idIndex + 1];
   }
-  const file = await open(spec.args[index + 1], 'r');
+  const file = await open(spec.args[index + 1], 'r').catch((error) => { if (error.code === 'ENOENT') throw new Error('This conversation has been deleted or archived'); throw error; });
   try {
     const buffer = Buffer.alloc(64 * 1024);
     const { bytesRead } = await file.read(buffer);
@@ -401,13 +445,13 @@ async function sessionIdentity(spec, fallback) {
 
 async function forkSession(session, runtimeId, command, state) {
   const directory = await mkdtemp(join(tmpdir(), 'piop-branch-'));
-  let worker, next, pendingPath;
+  let worker, next, pendingPath, ownershipGuard;
   let pendingCreated = false;
   let committed = false;
   try {
     const spec = sessionSpec(session.spec, '--fork', state.sessionFile);
     spec.args.push('--session-dir', directory);
-    worker = new Session(randomUUID(), spec, session.timeout, session.ephemeral, true);
+    worker = new Session(randomUUID(), spec, session.timeout, session.ephemeral, true, session.clientId);
     worker.cwd = session.cwd; sessions.set(worker.key, worker);
     const initial = await worker.execute({ type: 'get_state' });
     const result = await worker.raw(command);
@@ -428,7 +472,9 @@ async function forkSession(session, runtimeId, command, state) {
       await output.writeFile(content.subarray(newline + 1));
     } finally { await output.close(); }
     await link(pendingPath, destination);
-    next = new Session(branch.sessionId, sessionSpec(session.spec, '--session', destination), session.timeout, session.ephemeral, true);
+    ownershipGuard = session.ephemeral ? { owned: true, release: async () => {} } : await ownership.begin(branch.sessionId, session.clientId, { path: destination });
+    if (!ownershipGuard.owned) throw ownershipError();
+    next = new Session(branch.sessionId, sessionSpec(session.spec, '--session', destination), session.timeout, session.ephemeral, true, session.clientId);
     next.cwd = session.cwd; next.reservedPath = destination; sessions.set(next.key, next);
     const opened = await next.execute({ type: 'get_state' });
     if (opened.sessionId !== branch.sessionId || opened.sessionFile !== destination) throw new Error('Pi did not open the prepared branch');
@@ -436,11 +482,13 @@ async function forkSession(session, runtimeId, command, state) {
     const presence = session.views.get(runtimeId);
     const detached = session.detach(runtimeId);
     next.reservedPath = undefined; next.transient = false; next.attach(runtimeId, presence); committed = true;
+    rememberAttachment(runtimeId, next);
     await detached;
     void next.reconcileConfiguration(true);
     if (subscriptions.get(runtimeId) === next) next.publish({ type: 'session_switched' }, runtimeId);
     return result;
   } finally {
+    await ownershipGuard?.release?.();
     try {
       if (worker) await worker.stop();
       if (!committed && next) await next.stop();
@@ -460,6 +508,22 @@ async function forkSession(session, runtimeId, command, state) {
 
 async function handle(packet) {
   const { runtimeId, type } = packet;
+  if (type === 'ownership_drained') {
+    const pending = ownershipDrains.get(packet.requestId);
+    if (pending) { ownershipDrains.delete(packet.requestId); if (packet.error) pending.reject(new Error(packet.error)); else pending.resolve(); }
+    return;
+  }
+  if (type === 'conversation_mutation') {
+    const guard = await ownership.begin(packet.sessionId, packet.clientId, { mutation: packet.operation !== 'save_diffs', message: packet.operation === 'message', path: packet.sessionPath, archived: packet.archived });
+    if (!guard.owned) throw ownershipError();
+    const token = randomUUID(); ownership.guards.set(token, { ...guard, operation: packet.operation });
+    return { token };
+  }
+  if (type === 'conversation_mutation_end') {
+    const guard = ownership.guards.get(packet.token);
+    if (guard) { ownership.guards.delete(packet.token); await guard.release(packet.success && ['delete', 'archive'].includes(guard.operation)); }
+    return;
+  }
   if (type === 'provider_auth') {
     if (!providerAuth) throw new Error('Provider authentication is unavailable. Restart Piop.');
     return providerAuth.handle(packet.owner, packet.request);
@@ -476,21 +540,33 @@ async function handle(packet) {
     return;
   }
   if (type === 'attach') {
-    if (subscriptions.has(runtimeId)) return { attached: true };
     const identity = await sessionIdentity(packet.spec, packet.sessionKey);
+    const pathIndex = packet.spec.args.lastIndexOf('--session');
+    const path = pathIndex < 0 ? undefined : packet.spec.args[pathIndex + 1];
+    attachments.set(runtimeId, packet);
+    const guard = packet.ephemeral ? { owned: true, release: async () => {} } : await ownership.begin(identity, packet.clientId, { take: packet.takeOwnership, path, create: !path });
+    if (!guard.owned) { readonlyViews.set(runtimeId, { id: identity, path }); return { attached: true, owned: false }; }
+    try {
+    const cwd = guard.saved?.header.cwd || packet.cwd;
+    const spec = packet.spec.env?.PIOP_REMOTE_SESSION_CLAIMS
+      ? { ...packet.spec, env: { ...packet.spec.env, PIOP_SESSION_CWD: cwd || '~' } }
+      : { ...packet.spec, cwd: cwd || packet.spec.cwd };
     const findSession = () => [...sessions.values()].find((candidate) => candidate.identity === identity && !candidate.closed);
     let session = findSession();
     if (session?.transient) throw new Error('This conversation branch is still being prepared');
     if (session?.stopPromise) { await session.stopPromise; session = findSession(); }
     if (!session || session.closed) {
-      session = new Session(identity, packet.spec, packet.timeout, packet.ephemeral);
-      session.cwd = packet.cwd;
+      session = new Session(identity, spec, packet.timeout, packet.ephemeral, false, packet.clientId);
+      session.cwd = cwd;
       sessions.set(identity, session);
     }
     await session.execute({ type: 'get_state' });
+    readonlyViews.delete(runtimeId);
     session.attach(runtimeId, packet.presence);
+    rememberAttachment(runtimeId, session);
     void session.reconcileConfiguration(true);
-    return { attached: session.views.size > 1 || session.submitted };
+    return { attached: session.views.size > 1 || session.submitted, owned: true };
+    } finally { await guard.release(); }
   }
   if (type === 'shutdown') { providerAuth?.shutdown(); await Promise.all([...sessions.values()].map((session) => session.stop())); process.exit(0); }
   if (type === 'retire') {
@@ -503,9 +579,22 @@ async function handle(packet) {
     if (!session) throw new Error('Conversation is no longer running');
     return session.execute(packet.command);
   }
+  if (type === 'command' && packet.command.type === 'take_ownership') {
+    const target = attachments.get(runtimeId);
+    if (!target) throw new Error('This conversation has been deleted or closed');
+    return handle({ ...target, takeOwnership: true });
+  }
+  if (readonlyViews.has(runtimeId)) {
+    const target = readonlyViews.get(runtimeId);
+    if (type === 'detach') { readonlyViews.delete(runtimeId); attachments.delete(runtimeId); return { stopped: false }; }
+    if (type === 'presence') return;
+    if (packet.command?.type === 'get_snapshot') return ownership.snapshot(target.id, target.path);
+    if (packet.command?.type === 'get_state') return (await ownership.snapshot(target.id, target.path)).state;
+    throw ownershipError();
+  }
   const session = subscriptions.get(runtimeId);
   if (!session) { if (type === 'detach') return { stopped: false }; throw new Error('Pi is not running'); }
-  if (type === 'detach') return session.detach(runtimeId, packet.discardBlank);
+  if (type === 'detach') { attachments.delete(runtimeId); return session.detach(runtimeId, packet.discardBlank); }
   if (type === 'presence') { session.views.set(runtimeId, packet.presence); session.routeDialogs(); session.publishPresence(); return; }
   const command = packet.command;
   if (command.type === 'extension_ui_response') {
@@ -532,10 +621,20 @@ async function handle(packet) {
     const value = command.type === 'new_session' ? key : command.type === 'switch_session' ? command.sessionPath : state.sessionFile;
     if (!value) throw new Error('The conversation has no session file');
     if (command.type === 'switch_session') key = await sessionIdentity(sessionSpec(session.spec, flag, value), key);
+    const destinationSpec = sessionSpec(session.spec, flag, value);
+    const destinationGuard = session.ephemeral ? { owned: true, release: async () => {} } : await ownership.begin(key, session.clientId, { path: command.type === 'switch_session' ? value : undefined, create: command.type !== 'switch_session' });
+    if (!destinationGuard.owned) {
+      attachments.set(runtimeId, { ...attachments.get(runtimeId), spec: destinationSpec, sessionKey: key });
+      readonlyViews.set(runtimeId, { id: key, path: value });
+      session.publish({ type: 'ownership_lost' }, runtimeId);
+      await session.detach(runtimeId);
+      return {};
+    }
+    try {
     let next = command.type === 'switch_session' ? [...sessions.values()].find((candidate) => !candidate.closed && candidate.identity === key) : undefined;
     if (next?.transient) throw new Error('This conversation branch is still being prepared');
     const created = !next;
-    if (!next) { next = new Session(key, sessionSpec(session.spec, flag, value), session.timeout, session.ephemeral); next.cwd = session.cwd; sessions.set(key, next); }
+    if (!next) { next = new Session(key, destinationSpec, session.timeout, session.ephemeral, false, session.clientId); next.cwd = session.cwd; sessions.set(key, next); }
     try {
       const result = {};
       await next.execute({ type: 'get_state' });
@@ -548,9 +647,11 @@ async function handle(packet) {
         await detached;
       }
       void next.reconcileConfiguration(true);
+      rememberAttachment(runtimeId, next);
       if (subscriptions.get(runtimeId) === next) next.publish({ type: 'session_switched' }, runtimeId);
       return result;
     } catch (error) { if (created && !next.views.size && !next.submitted && !next.working) await next.stop(); throw error; }
+    } finally { await destinationGuard.release(); }
   }
   if (command.type === 'change_pending') return session.queue.changePendingMessage(command.id, command.action);
   if (command.type === 'prompt' && !String(command.message).startsWith('/') && !session.queue.heldMessages) return session.queue.command({ ...command, type: command.streamingBehavior === 'steer' ? 'steer' : 'follow_up' });
@@ -566,6 +667,6 @@ input.on('line', (line) => {
     (error) => output({ type: 'response', id: packet.id, error: errorText(error) }),
   );
 });
-input.on('close', () => { providerAuth?.shutdown(); for (const session of sessions.values()) session.child.kill(); });
-process.on('SIGTERM', () => { providerAuth?.shutdown(); for (const session of sessions.values()) session.child.kill(); });
-process.on('exit', () => { for (const session of sessions.values()) session.child.kill(); });
+input.on('close', () => { providerAuth?.shutdown(); ownership.shutdown(); for (const session of sessions.values()) session.child.kill(); });
+process.on('SIGTERM', () => { providerAuth?.shutdown(); ownership.shutdown(); for (const session of sessions.values()) session.child.kill(); });
+process.on('exit', () => { ownership.shutdown(); for (const session of sessions.values()) session.child.kill(); });

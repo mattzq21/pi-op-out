@@ -99,7 +99,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
     if (event.type === "pause_state") setState((current) => ({ ...current, isPaused: event.isPaused === true, isPausing: event.isPausing === true, ...(event.isPaused === true && event.isPausing !== true ? { isStreaming: false, activity: undefined } : {}) }));
     if (event.type === "pause_state" && event.isPaused === true && event.isPausing !== true) { flush(); setMessages(checkpointLatestUser); }
     if (event.type === "agent_settled") setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
-    if (event.type === "disconnected") setState((current) => ({ ...current, isStreaming: false, isPausing: false, activity: undefined }));
+    if (event.type === "disconnected" || event.type === "ownership_lost") setState((current) => ({ ...current, isStreaming: false, isPausing: false, activity: undefined }));
     if (event.type === "message_start" || event.type === "message_end") {
       if (event.type === "message_end") flush();
       const rawMessage = (event.message ?? {}) as Record<string, unknown>; const roleKey = String((rawMessage as { role?: unknown }).role ?? "message");

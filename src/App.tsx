@@ -115,7 +115,7 @@ export default function App() {
   const [settingsDirty, setSettingsDirty] = useState(false);
   const settingsDirtyRef = useRef(settingsDirty); settingsDirtyRef.current = settingsDirty;
   const sessionIndexRequest = useRef<Promise<void> | undefined>(undefined);
-  const [panelOpen, setPanelOpen] = useState(() => !window.matchMedia("(max-width: 700px)").matches); const [query, setQuery] = useState(""); const [connected, setConnected] = useState(false); const connectionReadyRef = useRef(connected); connectionReadyRef.current = connected; const updateConnected = (value: boolean) => { connectionReadyRef.current = value; setConnected(value); }; const [error, setError] = useState<string>();
+  const [panelOpen, setPanelOpen] = useState(() => !window.matchMedia("(max-width: 700px)").matches); const [query, setQuery] = useState(""); const [connected, setConnected] = useState(false); const connectionReadyRef = useRef(connected); connectionReadyRef.current = connected; const updateConnected = (value: boolean) => { const owned = value && activeTransportRef.current.ownsConversation(); connectionReadyRef.current = owned; setConnected(owned); }; const [error, setError] = useState<string>();
   const [createGroupRequest, setCreateGroupRequest] = useState(0);
   const handleCreateGroup = useCallback(() => setCreateGroupRequest(0), []);
   const [activeHostId, setActiveHostId] = useState(() => transport.currentHostId());
@@ -275,6 +275,7 @@ export default function App() {
   }, [addNotice, applyRuntimeSettings, refreshSession, runtimePool, syncSessionIndex, transport]);
 
   const configureRuntime = useCallback(async (value: AppSettings) => {
+    if (!transport.ownsConversation()) return;
     const [modelResult] = await Promise.allSettled([
       transport.command<{ models: Model[] }>({ type: "get_available_models" }),
       transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }),
@@ -349,6 +350,7 @@ export default function App() {
         void refresh().then((value) => configureRuntime(value)).then(() => { setError(undefined); updateConnected(true); }).catch((reason) => setError(String(reason)));
       }
       if (event.type === "session_info_changed") void refresh();
+      if (event.type === "ownership_lost") { updateConnected(false); setDialogs((current) => current.filter((dialog) => dialog.transport !== transport)); }
       if (event.type === "disconnected") {
         setDefinedAgents(undefined); setMcpStatuses({}); setStatuses({}); setWidgets({}); document.title = "piop"; setDialogs((current) => current.filter((dialog) => dialog.transport !== transport)); updateConnected(false);
         if (reconnecting) return; reconnecting = true;

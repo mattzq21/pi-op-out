@@ -20,6 +20,24 @@ interface Props { voiceTransport?: NativeTransport; state: AgentState; messages:
 type SelectionBtwTip = { text: string; left: number; top: number; below: boolean };
 
 export function ChatView(props: Props) {
+  const [ownsConversation, setOwnsConversation] = useState(() => props.voiceTransport?.ownsConversation() !== false);
+  const [takingOwnership, setTakingOwnership] = useState(false);
+  const [ownershipError, setOwnershipError] = useState<string>();
+  useEffect(() => {
+    setOwnsConversation(props.voiceTransport?.ownsConversation() !== false);
+    setOwnershipError(undefined);
+    const unsubscribe = props.voiceTransport?.subscribe((event) => {
+      if (event.type === "ownership_lost") setOwnsConversation(false);
+      if (event.type === "ownership_acquired") { setOwnsConversation(true); setOwnershipError(undefined); }
+    });
+    return () => { unsubscribe?.(); };
+  }, [props.voiceTransport]);
+  const takeOwnership = async () => {
+    setTakingOwnership(true); setOwnershipError(undefined);
+    try { await props.voiceTransport?.takeOwnership(); }
+    catch (reason) { setOwnershipError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setTakingOwnership(false); }
+  };
   const messagesRef = useRef<HTMLDivElement>(null);
   const followLatest = useRef(true);
   const lastScrollTop = useRef(0);
@@ -128,7 +146,9 @@ export function ChatView(props: Props) {
     } catch { setSelectionBtwError(true); }
     finally { setAskingSelection(false); }
   };
-  return <main ref={shell} className="chat-shell" onFocusCapture={props.onActivate} onPointerDownCapture={props.onActivate}>
+  return <main ref={shell} className={`chat-shell${ownsConversation ? "" : " conversation-unowned"}`} onFocusCapture={props.onActivate} onPointerDownCapture={props.onActivate}>
+    {!ownsConversation && <div className="conversation-ownership-overlay"><div role="status"><p>This conversation is read-only on this client.</p><button type="button" disabled={takingOwnership} onClick={() => void takeOwnership()}>{takingOwnership ? "Taking ownership…" : "Take ownership"}</button>{ownershipError && <p role="alert">{ownershipError}</p>}</div></div>}
+    <div className="conversation-content" inert={!ownsConversation}>
     {(props.state.viewers ?? 0) > 1 && <div className="concurrent-view-status" role="status">Open in {props.state.viewers} views · Messages and controls are shared</div>}
     <div ref={messagesRef} className="messages" aria-live="polite"
       onWheel={(event) => { if (event.deltaY < 0 && event.currentTarget.scrollTop > 0) followLatest.current = false; }}
@@ -154,6 +174,7 @@ export function ChatView(props: Props) {
     </div></div>
     {selectionBtwTip && <button type="button" className={`selection-btw-tip${selectionBtwTip.below ? " below" : ""}${selectionBtwError ? " error" : ""}`} style={{ left: selectionBtwTip.left, top: selectionBtwTip.top }} aria-label="Ask about selected text in a side chat with /btw" aria-live="polite" disabled={askingSelection} onPointerDown={(event) => event.preventDefault()} onClick={() => void askSelectionInBtw()}><span>{askingSelection ? "Opening side chat…" : selectionBtwError ? "Could not open side chat" : "Ask in side chat"}</span><kbd>/btw</kbd></button>}
     {!props.readOnly && <div ref={composerStack} className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.filter((line) => typeof line === "string").map((line, index) => <div key={index}>{line}</div>)}</div>} {statuses.length > 0 && <div className="extension-status">{statuses.join(" · ")}</div>}{activity && <div className="runtime-activity" role="status">{activity}</div>}{!messages.length && props.state.messageCount === 0 && <div className="new-chat-project"><div className="project-picker"><button type="button" className={projectName ? "selected" : undefined} aria-label={projectName ? `Selected project: ${projectName}` : "Choose project"} title={props.projectCwd} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName ?? "Choose project"}</button>{projectName && props.onClearProject && <button type="button" className="clear-project" aria-label="Clear project" title="Clear project" disabled={props.controlsDisabled} onClick={props.onClearProject}><X size={14} /></button>}</div></div>}<Composer voiceControls={props.voiceTransport && <VoiceControls transport={props.voiceTransport} state={props.state} messages={messages} disabled={props.controlsDisabled} />} streaming={props.state.isStreaming} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} pendingMessages={props.state.pendingMessages} onChangePending={props.onChangePending} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} agentLocked={props.agentLocked || props.state.messageCount > 0 || messages.length > 0} dictionaries={props.dictionaries} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionHooks={hookStats?.other} sessionCache={props.debug ? sessionCache : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn ? { id: `${abortedTurn.assistant.timestamp ?? abortedTurn.assistant.id}:${abortedTurn.prompt}`, value: abortedTurn.prompt } : undefined} onSend={send} onAbort={props.onAbort} onPause={props.onPause} onResume={props.onResume} onOpenTerminal={props.onOpenTerminal} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div>}
+    </div>
   </main>;
 }
 

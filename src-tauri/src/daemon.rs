@@ -23,6 +23,11 @@ pub(crate) struct Daemon {
 }
 
 impl Daemon {
+    fn notify(&self, packet: Value) -> Result<(), String> {
+        let mut stdin = self.stdin.lock().map_err(|_| "Daemon input lock was poisoned")?;
+        serde_json::to_writer(&mut *stdin, &packet).map_err(|error| error.to_string())?;
+        stdin.write_all(b"\n").and_then(|_| stdin.flush()).map_err(|error| error.to_string())
+    }
     fn configure(&self, runtime: &PiRuntime, settings: &AppSettings, host_id: &str) -> Result<(), String> {
         let agent_revision = runtime.agent_config_revisions.lock().map_err(|_| "Agent configuration lock was poisoned")?.get(host_id).copied().unwrap_or(0);
         let mut settings_value = runtime_settings(settings);
@@ -127,7 +132,7 @@ pub(crate) fn connect(app: &AppHandle, runtime: &PiRuntime, broker: &BrokerRunti
     if let Some(daemon) = daemons.get(host_id) { daemon.disconnect(app, runtime); daemon.shutdown(); daemon.drain_captures(None)?; }
     daemons.remove(host_id);
     let auth_executable = host.as_ref().map(|host| host.pi_path.clone()).unwrap_or_else(|| pi_executable().to_string_lossy().into_owned());
-    let script = format!("const gitCaptureScript = {};\nconst piAuthExecutable = {};\n{}\n{}\n{}", serde_json::to_string(include_str!("../resources/capture-git-tree.cjs")).map_err(|error| error.to_string())?, serde_json::to_string(&auth_executable).map_err(|error| error.to_string())?, include_str!("../resources/daemon-queue.mjs"), include_str!("../resources/provider-auth.mjs"), include_str!("../resources/host-daemon.mjs"));
+    let script = format!("const gitCaptureScript = {};\nconst piAuthExecutable = {};\nconst piStorageDirectory = {};\n{}\n{}\n{}\n{}", serde_json::to_string(include_str!("../resources/capture-git-tree.cjs")).map_err(|error| error.to_string())?, serde_json::to_string(&auth_executable).map_err(|error| error.to_string())?, serde_json::to_string(STORAGE_DIRECTORY).map_err(|error| error.to_string())?, include_str!("../resources/daemon-queue.mjs"), include_str!("../resources/provider-auth.mjs"), include_str!("../resources/conversation-ownership.mjs"), include_str!("../resources/host-daemon.mjs"));
     let remote_port = (host_id != "local").then(remote_broker_port);
     let mut command = if let Some(remote_port) = remote_port {
         let (port, _) = broker_environment(broker)?;
@@ -155,10 +160,20 @@ pub(crate) fn connect(app: &AppHandle, runtime: &PiRuntime, broker: &BrokerRunti
             let _events = connection.events.lock().unwrap_or_else(|error| error.into_inner());
             if !connection.alive.load(Ordering::SeqCst) { continue; }
             match packet["type"].as_str() {
+                Some("ownership_drain") => {
+                    let connection = connection.clone();
+                    thread::spawn(move || {
+                        let error = connection.drain_captures(packet["sessionKey"].as_str()).err();
+                        let _ = connection.notify(json!({"type":"ownership_drained","requestId":packet["id"],"error":error}));
+                    });
+                },
                 Some("response") => if let Some(sender) = packet["id"].as_str().and_then(|id| connection.pending.lock().ok()?.remove(id)) {
                     let _ = sender.send(if let Some(error) = packet["error"].as_str() { Err(error.into()) } else { Ok(packet["data"].clone()) });
                 },
                 Some("event") => {
+                    if packet["event"]["type"].as_str() == Some("ownership_lost") {
+                        if let Some(id) = packet["runtimeId"].as_str() { if let Ok(mut agents) = app.state::<PiRuntime>().active_agents.lock() { if let Some(agent) = agents.get_mut(id) { agent.working = false; agent.messageable = true; } } }
+                    }
                     if packet["event"]["type"].as_str() == Some("disconnected") {
                         if let Some(id) = packet["runtimeId"].as_str() {
                             let runtime = app.state::<PiRuntime>();

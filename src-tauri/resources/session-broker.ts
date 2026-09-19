@@ -52,7 +52,7 @@ async function request(path: string, body?: unknown, signal?: AbortSignal, timeo
   const timeout = setTimeout(() => controller.abort(new Error("Session broker request timed out")), timeoutMs);
   const abort = () => controller.abort(signal?.reason); signal?.addEventListener("abort", abort, { once: true });
   try {
-    const response = await fetch(`${url}${path}`, { method: body ? "POST" : "GET", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined, signal: controller.signal });
+    const response = await fetch(`${url}${path}`, { method: body ? "POST" : "GET", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: body ? JSON.stringify({ ...(body as Record<string, unknown>), clientId: process.env.PIOP_CONVERSATION_CLIENT }) : undefined, signal: controller.signal });
     const result = await response.json() as { error?: string; data?: unknown };
     if (!response.ok || result.error) throw new Error(result.error || `Session broker returned HTTP ${response.status}`);
     return result.data;
