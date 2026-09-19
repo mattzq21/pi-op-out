@@ -3,17 +3,19 @@ import { useEffect, useRef, useState } from "react";
 import { BookOpen, Bot, Check, CircleGauge, CirclePlus, Cpu, HardDrive, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Wrench, Zap } from "lucide-react";
 import { StorageSettings } from "./StorageSettings";
 import { ProviderSettings } from "./ProviderSettings";
+import { PluginSettings, defaultGoBrokerSettings } from "./PluginSettings";
 import type { AgentProfile, AppSettings, McpServer, Model, AgentConfig, RemoteHost, SessionSummary } from "../types";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutFromEvent, shortcutsConflict, type KeybindAction } from "../lib/keybindings";
 import { IconButton } from "./IconButton";
 import { Toggle } from "./Toggle";
 
-type Section = "providers" | "general" | "models" | "storage" | "environment" | "dictionaries" | "agents" | "machines" | "keybinds";
+type Section = "plugins" | "providers" | "general" | "models" | "storage" | "environment" | "dictionaries" | "agents" | "machines" | "keybinds";
 const sections = [
   { id: "general" as const, label: "General", icon: Settings2 },
   { id: "models" as const, label: "Models", icon: Cpu },
   { id: "providers" as const, label: "Providers", icon: ShieldCheck },
+  { id: "plugins" as const, label: "Plugins", icon: PlugZap },
   { id: "storage" as const, label: "Storage", icon: HardDrive },
   { id: "environment" as const, label: "Worktree scripts", icon: Wrench },
   { id: "keybinds" as const, label: "Keybinds", icon: Keyboard },
@@ -58,6 +60,9 @@ export function SettingsView({ providerHostId = "local", settings, pendingSettin
   const agentConfig = saving ? capabilitiesBeforeSave.current.configuration : incomingConfiguration;
   const [draft, setDraft] = useState(() => structuredClone(settings)); const [agentDrafts, setAgentDrafts] = useState(() => structuredClone(agentConfig?.agents ?? [])); const [agentIndex, setAgentIndex] = useState(() => firstEditableAgent(agentConfig?.agents ?? [])); const [section, setSection] = useState<Section>("general"); const [saved, setSaved] = useState(false); const savingRef = useRef(false); const [saveError, setSaveError] = useState<string>();
   const [modelFilter, setModelFilter] = useState("");
+  const [brokerSettingsOpen, setBrokerSettingsOpen] = useState(false);
+  const broker = draft.plugins?.opencodeGoBroker ?? defaultGoBrokerSettings;
+  const updateBroker = (opencodeGoBroker: typeof broker) => setDraft(current => ({ ...current, plugins: { ...current.plugins, opencodeGoBroker } }));
   const [settingsQuery, setSettingsQuery] = useState("");
   const [pastHeader, setPastHeader] = useState(false);
   useEffect(() => {
@@ -165,7 +170,8 @@ export function SettingsView({ providerHostId = "local", settings, pendingSettin
     <div className="settings-layout"><nav className="settings-nav"><label className="search settings-search"><Search size={15} /><input autoFocus type="search" aria-label="Search settings" placeholder="Search settings" value={settingsQuery} onChange={(event) => setSettingsQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setSettingsQuery(""); } }} /></label>{matchingSections.map((item) => <button key={item.id} className={visibleSection === item.id ? "active" : ""} aria-current={visibleSection === item.id ? "page" : undefined} onClick={() => setSection(item.id)}><item.icon size={16} /><span>{item.label}</span></button>)}</nav>
       <section className="settings-content">
         {!matchingSections.length && <div className="empty-small" role="status">No settings match your search.</div>}
-        {visibleSection === "providers" && <ProviderSettings hosts={settings.hosts} initialHostId={providerHostId} />}
+        {visibleSection === "providers" && <ProviderSettings hosts={settings.hosts} initialHostId={providerHostId} broker={broker} onBrokerChange={updateBroker} onBrokerSettings={() => { setSettingsQuery(""); setSection("plugins"); setBrokerSettingsOpen(true); }} />}
+        {visibleSection === "plugins" && <PluginSettings broker={broker} onBrokerChange={updateBroker} brokerSettingsOpen={brokerSettingsOpen} onBrokerSettingsOpen={setBrokerSettingsOpen} />}
         {visibleSection === "environment" && <SettingsSection title="Worktree scripts" description="Assign setup and cleanup scripts to a project and machine. Setup runs in order after creation; cleanup runs in reverse order before deletion. A failure stops the operation and keeps the worktree." headerAction={<button className="secondary-button" onClick={() => patch({ worktreeSetupScripts: [...(draft.worktreeSetupScripts ?? []), { id: uid("setup"), name: "Worktree script", script: "", cleanupScript: "", enabled: true, projectPath: "", hostId: "local" }] })}><CirclePlus size={15} />Add script</button>}>
           <p>Source workspace: <code>PIOP_SOURCE_TREE_PATH</code><br />Worktree: <code>PIOP_WORKTREE_PATH</code><br />Branch: <code>PIOP_WORKTREE_BRANCH</code></p>
           {(draft.worktreeSetupScripts ?? []).map((script, index, scripts) => {

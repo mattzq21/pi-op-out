@@ -400,6 +400,8 @@ type GitDiffSnapshots = HashMap<String, GitDiffSnapshot>;
 #[serde(rename_all = "camelCase")]
 struct AppSettings {
     #[serde(default)]
+    plugins: AppPlugins,
+    #[serde(default)]
     worktree_setup_scripts: Vec<WorktreeSetupScript>,
     #[serde(default = "default_agent")]
     default_agent: String,
@@ -429,6 +431,26 @@ struct AppSettings {
     dictionaries: Vec<PromptDictionary>,
     #[serde(default)]
     active_dictionary_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct AppPlugins {
+    #[serde(default)]
+    opencode_go_broker: GoBrokerSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GoBrokerSettings {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default = "default_true")]
+    failover: bool,
+}
+
+impl Default for GoBrokerSettings {
+    fn default() -> Self { Self { enabled: false, failover: true } }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -809,7 +831,7 @@ fn prepare_mcp_bridge() -> Result<PathBuf, String> {
 }
 
 fn runtime_settings(settings: &AppSettings) -> Value {
-    json!({ "tools": enabled_tool_names(settings), "skills": settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|skill| skill.get("path").and_then(Value::as_str)).collect::<Vec<_>>(), "contextWindowCap": settings.context_window_cap, "contextWindowCapEnabled": settings.context_window_cap_enabled })
+    json!({ "plugins": settings.plugins, "tools": enabled_tool_names(settings), "skills": settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|skill| skill.get("path").and_then(Value::as_str)).collect::<Vec<_>>(), "contextWindowCap": settings.context_window_cap, "contextWindowCapEnabled": settings.context_window_cap_enabled })
 }
 
 fn prepare_rtk_extension() -> Result<PathBuf, String> {
@@ -956,6 +978,7 @@ fn default_agent() -> String { "general".into() }
 
 fn default_settings() -> AppSettings {
     AppSettings {
+        plugins: AppPlugins::default(),
         worktree_setup_scripts: vec![],
         default_agent: default_agent(),
         default_fast_mode: false,

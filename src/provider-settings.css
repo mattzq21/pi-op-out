@@ -6,8 +6,9 @@
 .provider-account-child { margin-left: 16px; padding-top: 8px; }
 .provider-stored { color: var(--accent); }
 .provider-account-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
-.provider-account-actions button, .provider-login-panel button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--dark-control, var(--panel)); color: var(--ink); font-size: 12px; font-weight: 600; }
-.provider-account-actions button:hover:not(:disabled), .provider-login-panel button:hover:not(:disabled) { background: var(--dark-control-hover, var(--paper)); border-color: var(--accent); }
+.provider-account-actions button:not(.toggle), .provider-login-panel button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--dark-control, var(--panel)); color: var(--ink); font-size: 12px; font-weight: 600; }
+.provider-account-actions button:not(.toggle):hover:not(:disabled), .provider-login-panel button:hover:not(:disabled) { background: var(--dark-control-hover, var(--paper)); border-color: var(--accent); }
+.provider-account .toggle { flex-shrink: 0; align-self: center; }
 .provider-account-actions button:focus-visible, .provider-login-panel button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .provider-account-actions button:disabled, .provider-login-panel button:disabled { opacity: .45; cursor: default; }
 .provider-login-panel { padding: 18px; margin: 16px 0; border: 1px solid var(--border, #34322d); border-radius: 8px; }

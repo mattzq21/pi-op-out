@@ -12,10 +12,11 @@ type Account = { id: string; provider: string; key: string };
 type Health = { checked?: number; usage?: Usage; blockedUntil?: number };
 type Update = { id: string; checked: number; usage: Usage };
 type Source = Provider["streamSimple"];
+export type GoBrokerSettings = { enabled: boolean; failover: boolean };
 type Request = {
   source: Source; model: Parameters<Source>[0]; messages: Parameters<Source>[1];
   options: NonNullable<Parameters<Source>[2]>; session: string; ctx: ExtensionContext;
-  output: ReturnType<typeof createAssistantMessageEventStream>;
+  output: ReturnType<typeof createAssistantMessageEventStream>; failover: boolean;
 };
 const PROVIDER = "opencode-go";
 const MARKER = Symbol.for("piop.opencode-go-broker");
@@ -71,7 +72,7 @@ async function sendAttempt(request: Request, account: Account, lease: string): P
     for await (const event of stream) {
       if (event.type === "start") { start = event; continue; }
       backoff = errorBackoff(event, status, options.signal);
-      if (!emitted && backoff) return event;
+      if (!emitted && backoff && request.failover) return event;
       emit(event);
     }
     if (!terminal) throw new Error("OpenCode Go stream ended without a result");
@@ -146,12 +147,18 @@ function failure(model: Parameters<Provider["streamSimple"]>[0], error: unknown,
 
 export default function opencodeGoBroker(pi: ExtensionAPI) {
   let context: ExtensionContext;
+  const settings = (): GoBrokerSettings => {
+    const request: { settings?: { plugins?: { opencodeGoBroker?: GoBrokerSettings } } } = {};
+    pi.events.emit("piop:runtime-settings", request);
+    return request.settings?.plugins?.opencodeGoBroker ?? { enabled: false, failover: true };
+  };
   const wrap = (source: Provider["streamSimple"]): Provider["streamSimple"] => (model, messages, options = {}) => {
-    if (!goEndpoint(model.baseUrl)) return source(model, messages, options);
+    const config = settings();
+    if (!config.enabled || !goEndpoint(model.baseUrl)) return source(model, messages, options);
     const output = createAssistantMessageEventStream();
     const headerSession = Object.entries(options.headers || {}).find(([key]) => key.toLowerCase() === "x-opencode-session")?.[1];
     const session = headerSession || options.sessionId || context.sessionManager.getSessionId();
-    void runRequest({ source, model, messages, options, session, ctx: context, output }).catch(error => {
+    void runRequest({ source, model, messages, options, session, ctx: context, output, failover: config.failover }).catch(error => {
       const message = failure(model, error, options.signal?.aborted === true);
       output.push({ type: "error", reason: message.stopReason as "error" | "aborted", error: message });
     }).finally(() => output.end());
@@ -163,8 +170,16 @@ export default function opencodeGoBroker(pi: ExtensionAPI) {
     if (registered?.[MARKER]) return;
     const base = ctx.modelRegistry.getProvider(PROVIDER);
     if (!base) return;
-    const provider = { ...base, streamSimple: wrap(base.streamSimple), stream: wrap(base.stream as Provider["streamSimple"]) as Provider["stream"], [MARKER]: true };
+    const provider = { ...base,
+      getModels: () => base.getModels().map(model => settings().enabled ? { ...model, name: `${model.name} (automatic)` } : model),
+      streamSimple: wrap(base.streamSimple), stream: wrap(base.stream as Provider["streamSimple"]) as Provider["stream"], [MARKER]: true };
     pi.registerProvider(provider);
   });
   pi.on("model_select", (event, ctx) => { if (event.model.provider !== PROVIDER) ctx.ui.setStatus("piop-opencode-go-broker", undefined); });
+  const unsubscribe = pi.events.on("piop:plugins:refresh", value => {
+    const request = value as { ctx: ExtensionContext; ready?: Promise<void> };
+    if (!settings().enabled) request.ctx.ui.setStatus("piop-opencode-go-broker", undefined);
+    request.ready = request.ctx.modelRegistry.refresh({ allowNetwork: false }).then(() => undefined);
+  });
+  pi.on("session_shutdown", () => unsubscribe());
 }

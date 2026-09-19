@@ -4,14 +4,17 @@ export function providerAccount(provider: string) {
   const match = provider.match(/^(.*)--piop-account-(\d+)$/);
   return { provider: match?.[1] ?? provider, number: match ? Number(match[2]) : 1 };
 }
-export function providerAccountLabel(provider: string) {
+export function providerAccountLabel(provider: string, modelName?: string) {
+  if (provider === "opencode-go" && modelName?.endsWith(" (automatic)")) return "opencode-go · automatic";
   const account = providerAccount(provider);
   return `${account.provider} #${account.number}`;
 }
 type NamedModel = Pick<Model, "provider" | "id" | "name">;
 export function accountModelName(model: NamedModel, models: readonly NamedModel[]) {
   const account = providerAccount(model.provider);
-  const name = (model.name || model.id).replace(/ #\d+$/, "");
+  const current = models.find(candidate => candidate.provider === model.provider && candidate.id === model.id) ?? model;
+  const name = (current.name || model.id).replace(/ #\d+$/, "");
+  if (model.provider === "opencode-go" && name.endsWith(" (automatic)")) return name;
   const duplicate = models.some((candidate) => candidate.id === model.id && candidate.provider !== model.provider && providerAccount(candidate.provider).provider === account.provider);
   return duplicate ? `${name} #${account.number}` : name;
 }
