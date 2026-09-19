@@ -329,7 +329,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .app.dark .extension-widget,
 .app.dark .attachments > span { background: var(--dark-subtle); }
 .app.dark .work-group-content { background: color-mix(in srgb, var(--paper) 50%, var(--dark-subtle)); }
-.work-group-content.reasoning-group-content, .app.dark .work-group-content.reasoning-group-content { background: transparent; }
+.work-group-content.reasoning-group-content, .app.dark .work-group-content.reasoning-group-content { background: transparent; border: 0; }
 .app.dark .user-message .message-body { border-color: #393732; background: #24231f; }
 .app.dark .context-track { background: #2d2c28; }
 .app.dark .message-body { color: #d2cec5; }
