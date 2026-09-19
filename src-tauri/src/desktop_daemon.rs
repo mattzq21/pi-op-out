@@ -1,7 +1,10 @@
 use super::*;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{mpsc as async_mpsc, Mutex as AsyncMutex};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::{connect_async_with_config, tungstenite::{Message, protocol::WebSocketConfig}};
+
+// Conversation snapshots are sent as one frame and can include long tool histories.
+const MAX_DAEMON_RESPONSE: usize = 128 * 1024 * 1024;
 
 #[derive(Default)]
 pub(crate) struct DesktopDaemon {
@@ -57,9 +60,9 @@ impl Connection {
         }
     }
 
-    fn disconnected(&self, app: &AppHandle) {
+    fn disconnected(&self, app: &AppHandle, reason: &str) {
         self.alive.store(false, Ordering::SeqCst);
-        if let Ok(mut pending) = self.pending.lock() { for (_, sender) in pending.drain() { let _ = sender.send(Err("Disconnected from the Piop daemon; the command may have completed.".into())); } }
+        if let Ok(mut pending) = self.pending.lock() { for (_, sender) in pending.drain() { let _ = sender.send(Err(format!("Disconnected from the Piop daemon ({reason}); the command may have completed."))); } }
         let state = app.state::<DesktopDaemon>();
         if let Ok(runtimes) = state.runtimes.lock() {
             for (id, connection) in runtimes.iter().filter(|(_, connection)| std::ptr::eq(Arc::as_ptr(connection), self)) {
@@ -88,25 +91,33 @@ impl DesktopDaemon {
             let (mut sink, mut stream) = socket.split();
             let mut heartbeat = tokio::time::interval(Duration::from_secs(20));
             let mut last_seen = tokio::time::Instant::now();
+            let mut reason = "connection closed".to_string();
             loop {
                 let outgoing = tokio::select! {
                     message = incoming.recv() => message,
                     _ = heartbeat.tick() => {
-                        if last_seen.elapsed() > Duration::from_secs(65) { break; }
+                        if last_seen.elapsed() > Duration::from_secs(65) { reason = "heartbeat timed out".into(); break; }
                         Some(Message::Text(json!({"type":"ping"}).to_string().into()))
                     },
                     message = stream.next() => { last_seen = tokio::time::Instant::now(); match message {
-                        Some(Ok(Message::Text(text))) => { match serde_json::from_str(&text) { Ok(packet) => reader.receive(&app, packet), Err(_) => break }; continue; },
+                        Some(Ok(Message::Text(text))) => { match serde_json::from_str(&text) { Ok(packet) => reader.receive(&app, packet), Err(_) => { reason = "invalid daemon response".into(); break; } }; continue; },
                         Some(Ok(Message::Ping(data))) => Some(Message::Pong(data)),
                         Some(Ok(Message::Pong(_))) => continue,
+                        Some(Err(error)) => { reason = error.to_string(); break; },
                         _ => break,
                     } },
                 };
                 let Some(message) = outgoing else { break; };
                 let closing = matches!(message, Message::Close(_));
-                if !matches!(tokio::time::timeout(Duration::from_secs(10), sink.send(message)).await, Ok(Ok(()))) || closing { break; }
+                match tokio::time::timeout(Duration::from_secs(10), sink.send(message)).await {
+                    Ok(Ok(())) => {},
+                    Ok(Err(error)) => { reason = error.to_string(); break; },
+                    Err(_) => { reason = "sending to daemon timed out".into(); break; },
+                }
+                if closing { break; }
             }
-            reader.disconnected(&app);
+            eprintln!("Piop daemon connection closed: {reason}");
+            reader.disconnected(&app, &reason);
         });
         Ok(connection)
     }
@@ -136,7 +147,8 @@ fn configured_endpoint() -> Result<Option<daemon_endpoint::Endpoint>, String> {
 async fn open(endpoint: &daemon_endpoint::Endpoint) -> Result<Socket, String> {
     if endpoint.protocol != 1 || endpoint.token.len() < 32 { return Err("Invalid Piop daemon connection configuration".into()); }
     tokio::time::timeout(Duration::from_secs(5), async {
-        let (mut socket, _) = connect_async(&endpoint.url).await.map_err(|_| "Could not connect to the Piop daemon")?;
+        let config = WebSocketConfig::default().max_message_size(Some(MAX_DAEMON_RESPONSE)).max_frame_size(Some(MAX_DAEMON_RESPONSE));
+        let (mut socket, _) = connect_async_with_config(&endpoint.url, Some(config), false).await.map_err(|_| "Could not connect to the Piop daemon")?;
         socket.send(Message::Text(json!({"type":"authenticate","token":endpoint.token}).to_string().into())).await.map_err(|_| "Could not authenticate with the Piop daemon")?;
         let message = socket.next().await.ok_or("Piop daemon rejected the connection")?.map_err(|_| "Piop daemon rejected the connection")?;
         let reply: Value = serde_json::from_str(message.to_text().map_err(|_| "Invalid daemon handshake")?).map_err(|_| "Invalid daemon handshake")?;
