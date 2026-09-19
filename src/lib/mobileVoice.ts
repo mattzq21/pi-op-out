@@ -40,10 +40,11 @@ async function start(args: Record<string, unknown>) {
     await connection.setLocalDescription(await connection.createOffer());
     await waitForIce(connection);
     const answer = await remoteClient.invoke<string>("mobile_voice_start", { ...args, offer: connection.localDescription?.sdp });
+    if (version !== generation) throw new Error("Voice call was cancelled");
     await connection.setRemoteDescription({ type: "answer", sdp: answer });
   } catch (error) {
     if (version === generation) closeMobileVoice();
-    void remoteClient.invoke("voice_stop", { callId: args.callId }).catch(() => undefined);
+    void remoteClient.invoke("voice_stop", { callId: args.callId, runtimeId: args.runtimeId }).catch(() => undefined);
     throw error;
   }
 }

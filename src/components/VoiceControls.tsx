@@ -24,7 +24,7 @@ function CallToolbar({ voice, ownsCall, busy, run }: { voice: VoiceSnapshot; own
   </>;
 }
 
-export function VoiceControls({ transport, state, messages, disabled }: Props) {
+export function VoiceControls({ transport, state, disabled }: Props) {
   const voice = useSyncExternalStore(voiceSession.subscribe, voiceSession.getSnapshot);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -37,10 +37,10 @@ export function VoiceControls({ transport, state, messages, disabled }: Props) {
     try { await action(); } catch (reason) { report(reason); } finally { setBusy(false); }
   };
   const start = async () => {
-    const config = await voiceConfiguration();
+    const config = await voiceConfiguration(transport);
     if (!config.authenticated) throw new Error(config.error || "Sign in with codex login to use voice.");
     if (!config.helperAvailable) throw new Error("The voice helper is missing. Rebuild Piop with voice support.");
-    await voiceSession.start(transport, state, messages);
+    await voiceSession.start(transport, state);
   };
   const visibleError = error || (ownsCall ? voice.error : undefined);
   return <div className="voice-controls">

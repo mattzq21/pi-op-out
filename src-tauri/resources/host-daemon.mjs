@@ -26,6 +26,7 @@ async function releaseConversation(id, intent) {
     ownershipCaptureKeys.set(id, keys);
     for (const session of [...sessions.values()].filter((item) => item.identity === id)) {
       if (intent === 'message') await session.retire();
+      await hostVoice.release(session);
       for (const runtimeId of session.views.keys()) readonlyViews.set(runtimeId, { id, path: session.state?.sessionFile });
       session.publish({ type: 'ownership_lost' });
       if (session.working || session.compacting) { try { await session.raw({ type: 'abort' }); } catch { /* Stopping the worker below still fences all writes. */ } }
@@ -47,6 +48,7 @@ async function releaseConversation(id, intent) {
   return pending;
 }
 const ownership = new ConversationOwnership(piStorageDirectory, releaseConversation);
+const hostVoice = new HostVoiceService();
 let providerAuthRevision = 0;
 const providerAuth = typeof ProviderAuthService === 'undefined' ? undefined : new ProviderAuthService(piAuthExecutable, () => {
   providerAuthRevision++;
@@ -140,6 +142,7 @@ class Session {
   }
 
   publish(event, target) {
+    if (!target) hostVoice.agentEvent(this, event);
     if (stateChanges.has(event.type)) this.stateRevision++;
     if (this.transient) return;
     const envelope = { ...event, sequence: ++this.sequence, epoch: this.epoch };
@@ -248,10 +251,12 @@ class Session {
   }
 
   async detach(runtimeId, discardBlank = false) {
+    const voiceClosed = hostVoice.detach(runtimeId);
     this.views.delete(runtimeId);
     subscriptions.delete(runtimeId);
     this.routeDialogs();
     this.publishPresence();
+    await voiceClosed;
     const stopped = !this.views.size && (this.ephemeral || (discardBlank && !this.submitted && !this.working));
     if (stopped) await this.stop();
     return { stopped, submitted: this.submitted };
@@ -508,6 +513,7 @@ async function forkSession(session, runtimeId, command, state) {
 
 async function handle(packet) {
   const { runtimeId, type } = packet;
+  if (type === 'voice') return hostVoice.handle(packet);
   if (type === 'ownership_drained') {
     const pending = ownershipDrains.get(packet.requestId);
     if (pending) { ownershipDrains.delete(packet.requestId); if (packet.error) pending.reject(new Error(packet.error)); else pending.resolve(); }
@@ -568,7 +574,7 @@ async function handle(packet) {
     return { attached: session.views.size > 1 || session.submitted, owned: true };
     } finally { await guard.release(); }
   }
-  if (type === 'shutdown') { providerAuth?.shutdown(); await Promise.all([...sessions.values()].map((session) => session.stop())); process.exit(0); }
+  if (type === 'shutdown') { await hostVoice.shutdown(); providerAuth?.shutdown(); await Promise.all([...sessions.values()].map((session) => session.stop())); process.exit(0); }
   if (type === 'retire') {
     const session = sessions.get(packet.sessionKey) ?? [...sessions.values()].find((session) => session.state?.sessionFile === packet.sessionPath || session.reservedPath === packet.sessionPath);
     if (!session) return;
@@ -667,6 +673,6 @@ input.on('line', (line) => {
     (error) => output({ type: 'response', id: packet.id, error: errorText(error) }),
   );
 });
-input.on('close', () => { providerAuth?.shutdown(); ownership.shutdown(); for (const session of sessions.values()) session.child.kill(); });
-process.on('SIGTERM', () => { providerAuth?.shutdown(); ownership.shutdown(); for (const session of sessions.values()) session.child.kill(); });
+input.on('close', () => { hostVoice.shutdown(); providerAuth?.shutdown(); ownership.shutdown(); for (const session of sessions.values()) session.child.kill(); });
+process.on('SIGTERM', () => { hostVoice.shutdown(); providerAuth?.shutdown(); ownership.shutdown(); for (const session of sessions.values()) session.child.kill(); });
 process.on('exit', () => { ownership.shutdown(); for (const session of sessions.values()) session.child.kill(); });

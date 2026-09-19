@@ -61,7 +61,6 @@ async fn connection(app: AppHandle, stream: tokio::net::TcpStream, token: String
     socket.send(Message::Text(json!({"type":"ready", "protocol":1, "backend":"daemon"}).to_string().into())).await.map_err(|error| error.to_string())?;
     let (responses, mut receiver) = tokio::sync::mpsc::channel::<Value>(32);
     let mut pending = tokio::task::JoinSet::new();
-    let mut calls = HashSet::new();
     let owner = format!("mobile:{}", Uuid::new_v4());
     let mut heartbeat = tokio::time::interval(Duration::from_secs(20));
     let mut last_seen = Instant::now();
@@ -79,7 +78,6 @@ async fn connection(app: AppHandle, stream: tokio::net::TcpStream, token: String
                         let Some(id) = request.get("id").and_then(Value::as_u64) else { break; };
                         let Some(command) = request.get("command").and_then(Value::as_str) else { break; };
                         let args = request.get("args").cloned().unwrap_or(json!({}));
-                        if command == "mobile_voice_start" { if let Some(id) = args.get("callId").and_then(Value::as_str) { calls.insert(id.to_owned()); } }
                         match jobs.clone().try_acquire_owned() {
                             Ok(permit) => {
                                 let app = app.clone(); let responses = responses.clone(); let command = command.to_owned(); let owner = owner.clone();
@@ -114,7 +112,6 @@ async fn connection(app: AppHandle, stream: tokio::net::TcpStream, token: String
     drop(receiver);
     while pending.join_next().await.is_some() {}
     tokio::task::spawn_blocking(move || {
-        for id in calls { let _ = voice_stop(app.state(), id); }
         detach_owner(&app, &owner, false);
     }).await.map_err(|error| error.to_string())?;
     Ok(())
