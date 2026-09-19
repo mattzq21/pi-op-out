@@ -17,7 +17,7 @@ try {
  browser = await chromium.launch({ executablePath: chromePath, headless: true, args: ['--no-sandbox'] });
  const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
  const errors=[]; page.on('pageerror', error=>errors.push(error.stack));
-  const settings={worktreeSetupScripts:[],defaultAgent:'default',defaultModel:'test/model',hiddenModels:[],defaultThinking:'high',defaultFastMode:false,contextWindowCap:200000,contextWindowCapEnabled:true,autoRetry:true,debugMode:false,keybindings:{newConversation:'Ctrl+N',toggleConversations:'Ctrl+B',toggleTerminal:'Ctrl+J',toggleDebugMode:'Ctrl+D',focusComposer:'Ctrl+E',openSettings:'Ctrl+,'},tools:[],skills:[],mcpServers:[],hosts:[],dictionaries:[],activeDictionaryIds:[]};
+  const settings={worktreeSetupScripts:[],defaultAgent:'default',defaultModel:'test/model',hiddenModels:[],defaultThinking:'high',defaultFastMode:false,contextWindowCap:200000,contextWindowCapEnabled:true,autoRetry:true,debugMode:false,keybindings:{newConversation:'Ctrl+N',toggleConversations:'Ctrl+B',toggleTerminal:'Ctrl+J',toggleDebugMode:'Ctrl+D',focusComposer:'Ctrl+E',openSettings:'Ctrl+,'},tools:[],skills:[],hosts:[],dictionaries:[],activeDictionaryIds:[]};
  const state={model:{id:'model',provider:'test',name:'Test model'},thinkingLevel:'high',isStreaming:false,sessionId:'mobile-test',sessionFile:'/tmp/mobile-test.jsonl',messageCount:0,pendingMessageCount:0};
  let connection; const savedSettings=[];
  await page.routeWebSocket('wss://piop.example.test/', ws=> {

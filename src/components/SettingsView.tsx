@@ -1,6 +1,6 @@
 import { accountModelName } from "../lib/providerAccounts";
 import { useEffect, useRef, useState } from "react";
-import { Blocks, BookOpen, Bot, Check, CircleGauge, CirclePlus, Cpu, HardDrive, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Wrench, Zap } from "lucide-react";
+import { BookOpen, Bot, Check, CircleGauge, CirclePlus, Cpu, HardDrive, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Wrench, Zap } from "lucide-react";
 import { StorageSettings } from "./StorageSettings";
 import { ProviderSettings } from "./ProviderSettings";
 import type { AgentProfile, AppSettings, McpServer, Model, AgentConfig, RemoteHost, SessionSummary } from "../types";
@@ -9,7 +9,7 @@ import { defaultKeybindings, keybindDefinitions, shortcutFromEvent, shortcutsCon
 import { IconButton } from "./IconButton";
 import { Toggle } from "./Toggle";
 
-type Section = "providers" | "general" | "models" | "storage" | "environment" | "dictionaries" | "agents" | "machines" | "keybinds" | "mcp";
+type Section = "providers" | "general" | "models" | "storage" | "environment" | "dictionaries" | "agents" | "machines" | "keybinds";
 const sections = [
   { id: "general" as const, label: "General", icon: Settings2 },
   { id: "models" as const, label: "Models", icon: Cpu },
@@ -20,7 +20,6 @@ const sections = [
   { id: "machines" as const, label: "Machines", icon: Server },
   { id: "dictionaries" as const, label: "Dictionaries", icon: BookOpen },
   { id: "agents" as const, label: "Agents", icon: Bot },
-  { id: "mcp" as const, label: "MCP servers", icon: Blocks }
 ];
 const isBuiltInAgent = (agent: AgentProfile) => agent.name === "general";
 const firstEditableAgent = (agents: AgentProfile[]) => {
@@ -29,10 +28,11 @@ const firstEditableAgent = (agents: AgentProfile[]) => {
 };
 
 function settingsSnapshot(settings: AppSettings, agentConfig?: AgentConfig) {
-  const mcpServers = settings.mcpServers.map(({ status: _status, error: _error, ...server }) => server);
   const stable = (value: unknown): unknown => Array.isArray(value) ? value.map(stable) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, stable(item)])) : value;
-  return JSON.stringify(stable({ settings: { ...settings, mcpServers }, agentConfig }));
+  return JSON.stringify(stable({ settings, agentConfig }));
 }
+
+function validAgentMcp(servers: McpServer[]) { return servers.length <= 32 && new Set(servers.map((server) => server.id)).size === servers.length && servers.every((server) => !mcpServerError(server)); }
 
 function mcpServerError(server: McpServer) {
   if (!server.name.trim()) return "Server name is required";
@@ -78,7 +78,6 @@ export function SettingsView(props: SettingsViewProps) {
   const [draft, setDraft] = useState(() => structuredClone(settings)); const [agentDrafts, setAgentDrafts] = useState(() => structuredClone(agentConfig?.agents ?? [])); const [agentIndex, setAgentIndex] = useState(() => firstEditableAgent(agentConfig?.agents ?? [])); const [section, setSection] = useState<Section>("general"); const [saved, setSaved] = useState(false); const savingRef = useRef(false); const [saveError, setSaveError] = useState<string>();
   const [modelFilter, setModelFilter] = useState("");
   const [settingsQuery, setSettingsQuery] = useState("");
-  const [mcpTimeoutInputs, setMcpTimeoutInputs] = useState<Record<string, string>>({});
   const [pastHeader, setPastHeader] = useState(false);
   useEffect(() => {
     const onScroll = (event: Event) => {
@@ -116,9 +115,9 @@ export function SettingsView(props: SettingsViewProps) {
   const patch = (value: Partial<AppSettings>) => setDraft((current) => ({ ...current, ...value }));
   const save = async () => { if (savingRef.current || !dirty) return; savingRef.current = true; setSaving(true); setSaveError(undefined); try { await onSave(draft, agentConfigDirty ? currentAgentConfig : undefined); baselineSettingsRef.current = settingsSnapshot(draft); if (agentConfigDirty) baselineAgentConfigRef.current = JSON.stringify(currentAgentConfig); setSaved(currentSnapshotRef.current === currentSnapshot); window.setTimeout(() => setSaved(false), 1600); } catch (reason) { setSaveError(reason instanceof Error ? reason.message : String(reason)); } finally { savingRef.current = false; setSaving(false); } };
   const nextAgentSuffixRef = useRef(agentDrafts.length);
-  const addMcp = () => setDraft((current) => ({ ...current, mcpServers: [...current.mcpServers, { id: uid("mcp"), name: "New server", transport: "stdio", command: "npx", args: "", url: "", headers: "", enabled: true, status: "stopped" }] }));
-  const updateMcp = (id: string, value: Partial<McpServer>) => setDraft((current) => ({ ...current, mcpServers: current.mcpServers.map((server) => server.id === id ? { ...server, ...value } : server) }));
-  const removeMcp = (id: string) => { setDraft((current) => ({ ...current, mcpServers: current.mcpServers.filter((item) => item.id !== id) })); setAgentDrafts((current) => current.map((item) => ({ ...item, mcpServers: item.mcpServers.filter((serverId) => serverId !== id) }))); };
+  const addMcp = () => { if (agent) updateAgent({ mcpServers: [...agent.mcpServers, { id: uid("mcp"), name: "New server", transport: "stdio", command: "npx", args: "", enabled: true }] }); };
+  const updateMcp = (id: string, value: Partial<McpServer>) => { if (agent) updateAgent({ mcpServers: agent.mcpServers.map((server) => server.id === id ? { ...server, ...value } : server) }); };
+  const removeMcp = (id: string) => { if (agent) updateAgent({ mcpServers: agent.mcpServers.filter((server) => server.id !== id) }); };
   const addHost = () => setDraft((current) => ({ ...current, hosts: [...current.hosts, { id: uid("host"), name: "New machine", target: "", piPath: "pi" }] }));
   const updateHost = (id: string, value: Partial<RemoteHost>) => setDraft((current) => ({ ...current, hosts: current.hosts.map((host) => host.id === id ? { ...host, ...value } : host) }));
   const removeHost = (host: RemoteHost) => {
@@ -130,9 +129,9 @@ export function SettingsView(props: SettingsViewProps) {
   const agent = agentDrafts[agentIndex];
   const agentFastModeEnabled = agent?.fastMode ?? draft.defaultFastMode;
   const updateAgent = (value: Partial<AgentProfile>) => setAgentDrafts((current) => current.map((item, index) => index === agentIndex ? { ...item, ...value } : item));
-  const toggleAgentResource = (key: "tools" | "skills" | "mcpServers", value: string) => { if (agent) updateAgent({ [key]: agent[key].includes(value) ? agent[key].filter((item) => item !== value) : [...agent[key], value] }); };
+  const toggleAgentResource = (key: "tools" | "skills", value: string) => { if (agent) updateAgent({ [key]: agent[key].includes(value) ? agent[key].filter((item) => item !== value) : [...agent[key], value] }); };
   const renameAgent = (name: string) => { if (!agent || (!isBuiltInAgent(agent) && name.trim().toLowerCase() === "general")) return; if ((draft.defaultAgent ?? "general") === agent.name) patch({ defaultAgent: name }); updateAgent({ name }); };
-  const addAgent = () => { let suffix = nextAgentSuffixRef.current; while (agentDrafts.some((item) => item.name.toLowerCase() === `agent-${suffix}`)) suffix += 1; nextAgentSuffixRef.current = suffix + 1; const next: AgentProfile = { name: `agent-${suffix}`, model: "", effort: "", path_systemprompt: "sysprompt/default.md", path_agentprompt: "", tools: draft.tools.filter((item) => item.enabled).map((item) => item.name), skills: draft.skills.filter((item) => item.enabled).map((item) => item.path), mcpServers: draft.mcpServers.filter((item) => item.enabled).map((item) => item.id) }; setAgentDrafts((current) => [...current, next]); setAgentIndex(agentDrafts.length); };
+  const addAgent = () => { let suffix = nextAgentSuffixRef.current; while (agentDrafts.some((item) => item.name.toLowerCase() === `agent-${suffix}`)) suffix += 1; nextAgentSuffixRef.current = suffix + 1; const next: AgentProfile = { name: `agent-${suffix}`, model: "", effort: "", path_systemprompt: "sysprompt/default.md", path_agentprompt: "", tools: draft.tools.filter((item) => item.enabled).map((item) => item.name), skills: draft.skills.filter((item) => item.enabled).map((item) => item.path), mcpServers: [] }; setAgentDrafts((current) => [...current, next]); setAgentIndex(agentDrafts.length); };
   const removeAgent = () => { if (!agent || isBuiltInAgent(agent)) return; if (draft.defaultAgent === agent.name) patch({ defaultAgent: "general" }); const next = agentDrafts.filter((_, index) => index !== agentIndex); setAgentDrafts(next); setAgentIndex(firstEditableAgent(next)); };
   const validateAgentResources = () => {
     const availableModelIds = new Set(models.map((model) => `${model.provider}/${model.id}`));
@@ -142,14 +141,13 @@ export function SettingsView(props: SettingsViewProps) {
     const filteredModelChoices = modelChoices.filter((model) => `${model.name} ${model.id}`.toLocaleLowerCase().includes(modelFilter.trim().toLocaleLowerCase()));
     const modelDiscoveryUnavailable = models.length === 0;
     const thinkingDiscoveryUnavailable = thinkingLevels.length === 0;
-    const availableMcpIds = new Set(draft.mcpServers.map((server) => server.id));
-    const agentsValid = !agentConfig || (agentDrafts.some(isBuiltInAgent) && agentDrafts.every((item) => item.name.length > 0 && !!item.path_systemprompt?.trim() && (!item.model || modelDiscoveryUnavailable || availableModelIds.has(item.model)) && (!item.effort || thinkingDiscoveryUnavailable || thinkingLevels.includes(item.effort)) && item.mcpServers.every((id) => availableMcpIds.has(id))) && new Set(agentDrafts.map((item) => item.name)).size === agentDrafts.length);
+    const agentsValid = !agentConfig || (agentDrafts.some(isBuiltInAgent) && agentDrafts.every((item) => item.name.length > 0 && !!item.path_systemprompt?.trim() && (!item.model || modelDiscoveryUnavailable || availableModelIds.has(item.model)) && (!item.effort || thinkingDiscoveryUnavailable || thinkingLevels.includes(item.effort)) && validAgentMcp(item.mcpServers)) && new Set(agentDrafts.map((item) => item.name)).size === agentDrafts.length);
     const defaultAgentAvailable = !agentConfig || agentDrafts.some((item) => item.name === (draft.defaultAgent ?? "general"));
     const invalidHost = draft.hosts.find((host) => !host.name.trim() || !host.target.trim() || !host.piPath.trim());
-    const invalidMcp = draft.mcpServers.find((server) => mcpServerError(server));
-    return { availableModelIds, hiddenModels, modelChoices, filteredModelChoices, modelDiscoveryUnavailable, thinkingDiscoveryUnavailable, availableMcpIds, agentsValid, defaultAgentAvailable, invalidHost, invalidMcp };
+    const invalidMcp = agentDrafts.flatMap((item) => item.mcpServers).find((server) => mcpServerError(server));
+    return { availableModelIds, hiddenModels, modelChoices, filteredModelChoices, modelDiscoveryUnavailable, thinkingDiscoveryUnavailable, agentsValid, defaultAgentAvailable, invalidHost, invalidMcp };
   };
-  const { availableModelIds, hiddenModels, modelChoices, filteredModelChoices, modelDiscoveryUnavailable, thinkingDiscoveryUnavailable, availableMcpIds, agentsValid, defaultAgentAvailable, invalidHost, invalidMcp } = validateAgentResources();
+  const { availableModelIds, hiddenModels, modelChoices, filteredModelChoices, modelDiscoveryUnavailable, thinkingDiscoveryUnavailable, agentsValid, defaultAgentAvailable, invalidHost, invalidMcp } = validateAgentResources();
   const validateDictionaries = () => {
     const activeDictionaryIds = new Set(draft.activeDictionaryIds);
     const dictionaryKeyCounts = new Map<string, number>();
@@ -180,18 +178,16 @@ export function SettingsView(props: SettingsViewProps) {
     const duplicateNames = <T extends { name: string }>(items: T[]) => { const counts = new Map<string, number>(); items.forEach((item) => { const name = item.name.trim().toLowerCase(); if (name) counts.set(name, (counts.get(name) ?? 0) + 1); }); return new Set([...counts].filter(([, count]) => count > 1).map(([name]) => name)); };
     const duplicateHostNames = duplicateNames(draft.hosts);
     const reservedLocalHostName = draft.hosts.some((host) => host.name.trim().toLowerCase() === "local");
-    const duplicateMcpNames = duplicateNames(draft.mcpServers);
+    const duplicateMcpNames = duplicateNames(agent?.mcpServers ?? []);
     const duplicateDictionaryNames = duplicateNames(draft.dictionaries);
     const duplicateAgentNames = duplicateNames(agentDrafts);
     const invalidAgentModel = modelDiscoveryUnavailable ? undefined : agentDrafts.find((item) => item.model && !availableModelIds.has(item.model));
     const invalidAgentEffort = thinkingDiscoveryUnavailable ? undefined : agentDrafts.find((item) => item.effort && !thinkingLevels.includes(item.effort));
-    const danglingAgentMcp = agentDrafts.find((item) => item.mcpServers.some((id) => !availableMcpIds.has(id)));
-    const danglingMcpId = danglingAgentMcp?.mcpServers.find((id) => !availableMcpIds.has(id));
     const emptyAgent = agentDrafts.find((item) => !item.name.trim());
     const missingAgentPrompt = agentDrafts.find((item) => !item.path_systemprompt?.trim());
-    return { contextWindowValid, duplicateNames, duplicateHostNames, reservedLocalHostName, duplicateMcpNames, duplicateDictionaryNames, duplicateAgentNames, invalidAgentModel, invalidAgentEffort, danglingAgentMcp, danglingMcpId, emptyAgent, missingAgentPrompt };
+    return { contextWindowValid, duplicateNames, duplicateHostNames, reservedLocalHostName, duplicateMcpNames, duplicateDictionaryNames, duplicateAgentNames, invalidAgentModel, invalidAgentEffort, emptyAgent, missingAgentPrompt };
   };
-  const { contextWindowValid, duplicateNames, duplicateHostNames, reservedLocalHostName, duplicateMcpNames, duplicateDictionaryNames, duplicateAgentNames, invalidAgentModel, invalidAgentEffort, danglingAgentMcp, danglingMcpId, emptyAgent, missingAgentPrompt } = validateSettingsNames();
+  const { contextWindowValid, duplicateNames, duplicateHostNames, reservedLocalHostName, duplicateMcpNames, duplicateDictionaryNames, duplicateAgentNames, invalidAgentModel, invalidAgentEffort, emptyAgent, missingAgentPrompt } = validateSettingsNames();
   const validationError = firstValidationError([
     () => !defaultAgentAvailable ? `Default agent is unavailable: ${draft.defaultAgent}` : undefined,
     () => !contextWindowValid ? "Context window cap must be a whole number of at least 1000" : undefined,
@@ -199,7 +195,7 @@ export function SettingsView(props: SettingsViewProps) {
     () => reservedLocalHostName ? "The machine name “Local” is reserved for this machine" : undefined,
     () => duplicateHostNames.size ? `Machine name “${[...duplicateHostNames][0]}” is used more than once` : undefined,
     () => invalidHost ? `${invalidHost.name.trim() || "Machine"}: name, SSH target, and Pi executable are required` : undefined,
-    () => draft.mcpServers.length > 32 ? "At most 32 MCP servers can be configured" : undefined,
+    () => agentDrafts.some((item) => item.mcpServers.length > 32) ? "At most 32 MCP servers can be configured per agent" : undefined,
     () => duplicateMcpNames.size ? `MCP server name “${[...duplicateMcpNames][0]}” is used more than once` : undefined,
     () => invalidMcp ? `${invalidMcp.name.trim() || "MCP server"}: ${mcpServerError(invalidMcp)}` : undefined,
     () => invalidDictionary ? "Dictionary name is required" : undefined,
@@ -213,7 +209,6 @@ export function SettingsView(props: SettingsViewProps) {
     () => duplicateAgentNames.size ? `Agent name “${[...duplicateAgentNames][0]}” is used more than once` : undefined,
     () => invalidAgentModel ? `${invalidAgentModel.name}: model is unavailable: ${invalidAgentModel.model}` : undefined,
     () => invalidAgentEffort ? `${invalidAgentEffort.name}: effort is unavailable: ${invalidAgentEffort.effort}` : undefined,
-    () => danglingAgentMcp ? `${danglingAgentMcp.name}: remove unavailable MCP server “${danglingMcpId}”` : undefined,
     () => missingAgentPrompt ? `${missingAgentPrompt.name}: system prompt file is required. Set it in Settings → Agents; for an older profile, restart Piop to migrate its prompt.` : undefined,
     () => !agentsValid ? "Every agent needs a unique name and valid resources" : undefined
   ]);
@@ -295,7 +290,7 @@ export function SettingsView(props: SettingsViewProps) {
               {renderAgentDefaults()}
               {renderAgentPromptFiles()}<label className="field"><span>Agent prompt file</span><input aria-label="Agent prompt file" placeholder="Optional path to an agent prompt file" value={agent.path_agentprompt ?? ""} onChange={(event) => updateAgent({ path_agentprompt: event.target.value })} /></label>
               <label className="field"><span>piop extensions (one path per line)</span><textarea aria-label="Agent piop extensions" placeholder="/path/to/extension.ts" value={(agent.extensions ?? []).join("\n")} onChange={(event) => updateAgent({ extensions: event.target.value.split("\n") })} onBlur={() => updateAgent({ extensions: (agent.extensions ?? []).map(path => path.trim()).filter(Boolean) })} /></label>
-              <AgentAllowlist title="Tools">{draft.tools.map((tool) => <label key={tool.name}><input type="checkbox" aria-label={`Allow ${tool.name}`} checked={agent.tools.includes(tool.name)} onChange={() => toggleAgentResource("tools", tool.name)} />{tool.name}</label>)}</AgentAllowlist><AgentAllowlist title="Skills">{draft.skills.map((skill) => <label key={skill.path}><input type="checkbox" aria-label={`Allow ${skill.name}`} checked={agent.skills.includes(skill.path)} onChange={() => toggleAgentResource("skills", skill.path)} />{skill.name}</label>)}</AgentAllowlist><AgentAllowlist title="MCP servers">{draft.mcpServers.map((server) => <label key={server.id}><input type="checkbox" aria-label={`Allow ${server.name}`} checked={agent.mcpServers.includes(server.id)} onChange={() => toggleAgentResource("mcpServers", server.id)} />{server.name}</label>)}{agent.mcpServers.filter((id) => !availableMcpIds.has(id)).map((id) => <label className="agent-resource-unavailable" key={`unavailable:${id}`}><input type="checkbox" aria-label={`Remove unavailable MCP server ${id}`} checked onChange={() => toggleAgentResource("mcpServers", id)} /><span>Unavailable: <code>{id}</code></span></label>)}</AgentAllowlist>
+              <AgentAllowlist title="Tools">{draft.tools.map((tool) => <label key={tool.name}><input type="checkbox" aria-label={`Allow ${tool.name}`} checked={agent.tools.includes(tool.name)} onChange={() => toggleAgentResource("tools", tool.name)} />{tool.name}</label>)}</AgentAllowlist><AgentAllowlist title="Skills">{draft.skills.map((skill) => <label key={skill.path}><input type="checkbox" aria-label={`Allow ${skill.name}`} checked={agent.skills.includes(skill.path)} onChange={() => toggleAgentResource("skills", skill.path)} />{skill.name}</label>)}</AgentAllowlist><div className="agent-mcp-settings"><h3>MCP servers</h3><div className="mcp-list">{agent.mcpServers.map((server) => { const fieldError = mcpServerError(server); return <div className="mcp-card" key={server.id}><div className="mcp-card-head"><span className="config-icon mcp"><PlugZap size={16} /></span><input aria-label="Server name" aria-invalid={!server.name.trim() || duplicateMcpNames.has(server.name.trim().toLowerCase())} value={server.name} onChange={(e) => updateMcp(server.id, { name: e.target.value })} /><Toggle label={`Enable ${server.name}`} checked={server.enabled} onChange={(enabled) => updateMcp(server.id, { enabled })} /><IconButton label={`Remove ${server.name}`} onClick={() => removeMcp(server.id)}><Trash2 size={15} /></IconButton></div>{fieldError && <small className="mcp-error" role="alert">{fieldError}</small>}<div className="field"><span>Transport</span><div className="mcp-transport-toggle" role="group" aria-label={`${server.name} transport`}>{(["stdio", "http"] as const).map((transport) => <button key={transport} type="button" aria-pressed={(server.transport ?? "stdio") === transport} onClick={() => updateMcp(server.id, { transport })}>{transport === "stdio" ? "stdio" : "HTTP"}</button>)}</div></div><label className="field"><span>Startup timeout (seconds)</span><input type="number" min={1} max={600} step={1} aria-label={`${server.name} startup timeout`} value={server.startupTimeoutSec ?? 10} onChange={(event) => { const value = event.target.value; updateMcp(server.id, { startupTimeoutSec: Number(value) }); }} /></label>{(server.transport ?? "stdio") === "stdio" ? <div className="command-fields stdio-fields"><label><span>Command</span><input aria-invalid={!server.command.trim()} value={server.command} onChange={(e) => updateMcp(server.id, { command: e.target.value })} /></label><label><span>Arguments</span><input value={server.args} onChange={(e) => updateMcp(server.id, { args: e.target.value })} /></label></div> : <div className="command-fields http-fields"><label><span>URL</span><input type="url" aria-invalid={Boolean(fieldError?.includes("URL"))} placeholder="https://example.com/mcp" value={server.url ?? ""} onChange={(e) => updateMcp(server.id, { url: e.target.value })} /></label><label><span>Headers (JSON)</span><input aria-invalid={Boolean(fieldError?.startsWith("Headers"))} placeholder={'{"Authorization":"Bearer …"}'} value={server.headers ?? ""} onChange={(e) => updateMcp(server.id, { headers: e.target.value })} /></label></div>}</div>; })}</div><button className="secondary-button" disabled={agent.mcpServers.length >= 32} onClick={addMcp}><CirclePlus size={15} />Add MCP server</button></div>
             </div>);
           };
           return (<div className="agent-editor"><div className="agent-list">{agentDrafts.map((item, index) => <button key={`${item.name}-${index}`} className={index === agentIndex ? "active" : ""} onClick={() => setAgentIndex(index)}><Bot size={14} /><span>{item.name}</span>{isBuiltInAgent(item) && <small>Built in</small>}</button>)}</div>
@@ -317,11 +312,7 @@ export function SettingsView(props: SettingsViewProps) {
         {visibleSection === "storage" && <StorageSettings />}
         {visibleSection === "machines" && <SettingsSection title="Machines" description="Run projects through Pi installations reachable with SSH."><div className="mcp-list"><div className="mcp-card"><div className="mcp-card-head"><span className="config-icon mcp"><Server size={16} /></span><strong>Local</strong><code>This machine</code></div></div>{draft.hosts.map((host) => <div className="mcp-card" key={host.id}><div className="mcp-card-head"><span className="config-icon mcp"><Server size={16} /></span><input aria-label="Machine name" aria-invalid={!host.name.trim() || host.name.trim().toLowerCase() === "local" || duplicateHostNames.has(host.name.trim().toLowerCase())} value={host.name} onChange={(event) => updateHost(host.id, { name: event.target.value })} /><IconButton label={`Remove ${host.name}`} onClick={() => removeHost(host)}><Trash2 size={15} /></IconButton></div><div className="command-fields"><label><span>SSH target</span><input aria-label={`${host.name} SSH target`} aria-invalid={!host.target.trim()} placeholder="user@example.com" value={host.target} onChange={(event) => updateHost(host.id, { target: event.target.value })} /></label><label><span>Pi executable</span><input aria-label={`${host.name} Pi executable`} aria-invalid={!host.piPath.trim()} placeholder="pi" value={host.piPath} onChange={(event) => updateHost(host.id, { piPath: event.target.value })} /></label></div></div>)}</div><button className="secondary-button" disabled={draft.hosts.length >= 16} onClick={addHost}><CirclePlus size={15} />Add machine</button></SettingsSection>}
         {visibleSection === "keybinds" && <SettingsSection title="Keybinds" description="Customize global application shortcuts."><div className="keybind-list">{keybindDefinitions.map((binding) => <label className="keybind-row" key={binding.action}><span><strong>{binding.label}</strong><small>{binding.description}</small></span><KeybindInput action={binding.action} value={draft.keybindings[binding.action]} invalid={duplicateShortcuts.has(draft.keybindings[binding.action].trim().toLowerCase())} onChange={(shortcut) => setDraft((current) => ({ ...current, keybindings: { ...current.keybindings, [binding.action]: shortcut } }))} /></label>)}</div><button className="secondary-button" onClick={() => patch({ keybindings: { ...defaultKeybindings } })}><RotateCcw size={15} />Restore defaults</button></SettingsSection>}
-        {visibleSection === "mcp" && <SettingsSection title="MCP servers" description="Connect external tools and data sources through Model Context Protocol."><div className="mcp-list">{draft.mcpServers.map((server) => {
-          const fieldError = mcpServerError(server); const renderMcpTimeout = () => (<label className="field"><span>Startup timeout (seconds)</span><input type="number" min={1} max={600} step={1} aria-label={`${server.name} startup timeout`} value={mcpTimeoutInputs[server.id] ?? server.startupTimeoutSec ?? 10} onChange={(event) => { const value = event.target.value; setMcpTimeoutInputs((current) => ({ ...current, [server.id]: value })); updateMcp(server.id, { startupTimeoutSec: Number(value) }); }} /></label>);
-          const renderCommandFields = () => ((server.transport ?? "stdio") === "stdio" ? <div className="command-fields stdio-fields"><label><span>Command</span><input aria-invalid={!server.command.trim()} value={server.command} onChange={(e) => updateMcp(server.id, { command: e.target.value })} /></label><label><span>Arguments</span><input value={server.args} onChange={(e) => updateMcp(server.id, { args: e.target.value })} /></label></div> : <div className="command-fields http-fields"><label><span>URL</span><input type="url" aria-invalid={Boolean(fieldError?.includes("URL"))} placeholder="https://example.com/mcp" value={server.url ?? ""} onChange={(e) => updateMcp(server.id, { url: e.target.value })} /></label><label><span>Headers (JSON)</span><input aria-invalid={Boolean(fieldError?.startsWith("Headers"))} placeholder={'{"Authorization":"Bearer …"}'} value={server.headers ?? ""} onChange={(e) => updateMcp(server.id, { headers: e.target.value })} /></label></div>);
-          return <div className="mcp-card" key={server.id}><div className="mcp-card-head"><span className="config-icon mcp"><PlugZap size={16} /></span><input aria-label="Server name" aria-invalid={!server.name.trim() || duplicateMcpNames.has(server.name.trim().toLowerCase())} value={server.name} onChange={(e) => updateMcp(server.id, { name: e.target.value })} /><IconButton label={`Remove ${server.name}`} onClick={() => removeMcp(server.id)}><Trash2 size={15} /></IconButton></div>{fieldError && <small className="mcp-error" role="alert">{fieldError}</small>}<div className="field"><span>Transport</span><div className="mcp-transport-toggle" role="group" aria-label={`${server.name} transport`}>{(["stdio", "http"] as const).map((transport) => <button key={transport} type="button" aria-pressed={(server.transport ?? "stdio") === transport} onClick={() => updateMcp(server.id, { transport })}>{transport === "stdio" ? "stdio" : "HTTP"}</button>)}</div></div>{renderMcpTimeout()}{renderCommandFields()}</div>;
-        })}</div><button className="secondary-button" disabled={draft.mcpServers.length >= 32} onClick={addMcp}><CirclePlus size={15} />Add MCP server</button></SettingsSection>}
+
       </section>);
     };
     return (<div className="settings-layout"><nav className="settings-nav"><label className="search settings-search"><Search size={15} /><input autoFocus type="search" aria-label="Search settings" placeholder="Search settings" value={settingsQuery} onChange={(event) => setSettingsQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setSettingsQuery(""); } }} /></label>{matchingSections.map((item) => <button key={item.id} className={visibleSection === item.id ? "active" : ""} aria-current={visibleSection === item.id ? "page" : undefined} onClick={() => setSection(item.id)}><item.icon size={16} /><span>{item.label}</span></button>)}</nav>

@@ -34,6 +34,7 @@ function forkCommand(pi: PiApi, sessionFile: string, task: string) {
   args.push("--session-dir", join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "sessions"));
   args.push("--extension", join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "rtk.ts"));
   args.push("--extension", join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "runtime-settings.ts"));
+  args.push("--extension", join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "piop-mcp-bridge.ts"));
   const settings: { settings?: unknown } = {};
   pi.events.emit("piop:runtime-settings", settings);
   if (settings.settings) args.push("--piop-runtime-settings", JSON.stringify(settings.settings));

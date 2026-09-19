@@ -24,9 +24,9 @@ export async function agentFixture(t, options = {}) {
   await file('prompt.md', 'System instructions');
   if (options.config !== null) await file('config.json', JSON.stringify(options.config));
   for (const [name, content] of Object.entries(options.files)) await file(name, content);
-  for (const name of ['index', 'extension-loader']) {
+  for (const name of ['index', 'extension-loader', 'mcp-config']) {
     let source = await readFile(new URL(`../extensions/piop-define-agents/${name}.ts`, import.meta.url), 'utf8');
-    source = source.replace('./extension-loader.ts', './extension-loader.mjs')
+    source = source.replace('./extension-loader.ts', './extension-loader.mjs').replace('./mcp-config.ts', './mcp-config.mjs')
       .replace('import { homedir } from "node:os";', `const homedir = () => ${JSON.stringify(home)};`)
       .replace(/import \{ formatSkillsForPrompt, type BuildSystemPromptOptions \} from "@earendil-works\/pi-coding-agent";/, 'const formatSkillsForPrompt = (skills, tool) => `Skills via ${tool}: ${skills.map(skill => skill.filePath).join(", ")}`;');
     if (name === 'index' && options.files['fs.mjs']) source = source.replace('from "node:fs/promises"', 'from "./fs.mjs"');

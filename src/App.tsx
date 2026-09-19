@@ -87,7 +87,6 @@ export default function App() {
   }, [closeTransportDialogs, runtimePool]);
   const [statuses, setStatuses] = useState<Record<string, string>>({}); const [widgets, setWidgets] = useState<Record<string, string[]>>({});
   const [extensionOwner, setExtensionOwner] = useState(transport);
-  const [mcpStatuses, setMcpStatuses] = useState<Record<string, { status: "starting" | "connected" | "stopped" | "error"; error?: string }>>({});
   const [renameSession, setRenameSession] = useState<RenameTarget>();
   const [projectOpen, setProjectOpen] = useState(false);
   const [worktreeTarget, setWorktreeTarget] = useState<WorktreeTarget>();
@@ -246,7 +245,7 @@ export default function App() {
   }, [transport]);
   const resolveHomeDirectory = useCallback((hostId: string) => transport.homeDirectory(hostId), [transport]);
 
-  useAppEvents({ transport, handleEvent, setDialogs, refresh, queueTerminalOutput, setTerminalsBySession, addNotice, activeTransportRef, pendingBtwRequest, setSplitPane, activeHostIdRef, setExtensionOwner, setDefinedAgents, refreshSession, setMcpStatuses, setStatuses, setWidgets, setComposerDrafts, transportConversationKeys, terminalSessionIdRef, setActivePane, setMainComposerFocusRequest, queueExtensionDialog, mainDialogOwnerRef, setActiveHostId, setActiveCwd, activateConversationKey, setTerminalOpen, setTerminalTarget, configureRuntime, setError, updateConnected, terminalOutputFrame, queuedTerminalOutput });
+  useAppEvents({ transport, handleEvent, setDialogs, refresh, queueTerminalOutput, setTerminalsBySession, addNotice, activeTransportRef, pendingBtwRequest, setSplitPane, activeHostIdRef, setExtensionOwner, setDefinedAgents, refreshSession, setStatuses, setWidgets, setComposerDrafts, transportConversationKeys, terminalSessionIdRef, setActivePane, setMainComposerFocusRequest, queueExtensionDialog, mainDialogOwnerRef, setActiveHostId, setActiveCwd, activateConversationKey, setTerminalOpen, setTerminalTarget, configureRuntime, setError, updateConnected, terminalOutputFrame, queuedTerminalOutput });
 
   useEffect(() => { const shutdown = () => { for (const session of Object.values(terminalsBySessionRef.current)) for (const terminal of session.tabs) void transport.closeTerminal(terminal.id).catch(() => undefined); void runtimePool.disconnectAll(); }; window.addEventListener("pagehide", shutdown); return () => window.removeEventListener("pagehide", shutdown); }, [runtimePool, transport]);
   useEffect(() => { if (!settingsDirty) return; const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; }; window.addEventListener("beforeunload", warn); return () => window.removeEventListener("beforeunload", warn); }, [settingsDirty]);
@@ -465,7 +464,7 @@ export default function App() {
   };
   const applySettings = async (value: AppSettings, nextConfig?: AgentConfig) => {
     if (!settings) throw new Error("Settings are still loading");
-    const next = { ...value, debugMode: settings.debugMode, mcpServers: value.mcpServers.map(({ error: _error, ...server }) => ({ ...server, status: "stopped" as const })) };
+    const next = { ...value, debugMode: settings.debugMode };
     const agentHostId = nextConfig ? transport.currentHostId() : undefined;
     // Use a separate, sessionless runtime to persist agent definitions without
     // reloading the extension inside a conversation that is still responding.
@@ -650,7 +649,6 @@ export default function App() {
   if (!settings) return <AppLoading error={error} />;
 
   const extensionStateIsCurrent = extensionOwner === transport;
-  const settingsWithMcpStatuses = { ...settings, mcpServers: settings.mcpServers.map((server) => ({ ...server, ...(extensionStateIsCurrent ? mcpStatuses[server.id] : undefined) })) };
   const activeDialog = dialogs[0];
   const projectCwd = selectedProjectCwd(activeCwd, transport.isTemporaryChat());
   const renderMobileSidebarBackdrop = () => (panelOpen && view === "chat" && <button className="mobile-sidebar-backdrop" aria-label="Close conversations" onClick={() => setPanelOpen(false)} />);
@@ -675,7 +673,7 @@ export default function App() {
       {terminalOpen && <TerminalView key={`${terminalSessionId}:${activeTerminal.id}`} cwd={terminalCwd} terminals={sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={activeTerminal.id} output={activeTerminal.output} outputEnd={activeTerminal.outputEnd} snapshot={activeTerminal.snapshot} snapshotEnd={activeTerminal.snapshotEnd} started={activeTerminal.started} exited={activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { void transport.writeTerminal(activeTerminal.id, data).catch((reason) => queueTerminalOutput(activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { void transport.resizeTerminal(activeTerminal.id, cols, rows).catch(() => undefined); }} onSnapshot={(value, outputEnd) => saveTerminalSnapshot(terminalSessionId, activeTerminal.id, value, outputEnd)} onDelete={deleteTerminal} onClose={() => { terminalPanelRevision.current += 1; setTerminalOpen(false); }} />}
     </div>);
   };
-  const renderSettingsView = () => (view === "settings" && <SettingsView providerHostId={transport.currentHostId()} pendingSettingsCount={pendingSettingsCount} settings={settingsWithMcpStatuses} agentConfig={extensionStateIsCurrent ? agentSettings : undefined} sessions={sessions} models={models} thinkingLevels={thinkingLevels} onSave={saveSettings} onDirtyChange={setSettingsDirty} />);
+  const renderSettingsView = () => (view === "settings" && <SettingsView providerHostId={transport.currentHostId()} pendingSettingsCount={pendingSettingsCount} settings={settings} agentConfig={extensionStateIsCurrent ? agentSettings : undefined} sessions={sessions} models={models} thinkingLevels={thinkingLevels} onSave={saveSettings} onDirtyChange={setSettingsDirty} />);
   const renderToastStack = () => ((error || notices.length > 0) && <div className="toast-stack">
       {error && <div className="error-toast" role="alert"><strong>piop could not connect</strong><span>{error}</span><button onClick={reconnectMain} disabled={reconnectPending.current.has(transport)}>Retry</button><button aria-label="Dismiss connection error" onClick={() => setError(undefined)}>×</button></div>}
       {notices.map((notice) => <div className="error-toast" role="alert" key={notice.id}><strong>{notice.title}</strong><span>{notice.message}</span><button aria-label={`Dismiss ${notice.title}`} onClick={() => setNotices((current) => current.filter((item) => item.id !== notice.id))}>×</button></div>)}

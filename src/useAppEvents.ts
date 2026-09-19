@@ -20,7 +20,6 @@ type AppEventsContext = {
   setExtensionOwner: Dispatch<SetStateAction<NativeTransport>>;
   setDefinedAgents: Dispatch<SetStateAction<DefinedAgentsCapability | undefined>>;
   refreshSession: () => Promise<AgentState>;
-  setMcpStatuses: Dispatch<SetStateAction<Record<string, { status: "starting" | "connected" | "stopped" | "error"; error?: string; }>>>;
   setStatuses: Dispatch<SetStateAction<Record<string, string>>>;
   setWidgets: Dispatch<SetStateAction<Record<string, string[]>>>;
   setComposerDrafts: Dispatch<SetStateAction<Record<string, string>>>;
@@ -42,7 +41,7 @@ type AppEventsContext = {
   queuedTerminalOutput: RefObject<Map<string, QueuedTerminalOutput>>;
 };
 
-export function useAppEvents({ transport, handleEvent, setDialogs, refresh, queueTerminalOutput, setTerminalsBySession, addNotice, activeTransportRef, pendingBtwRequest, setSplitPane, activeHostIdRef, setExtensionOwner, setDefinedAgents, refreshSession, setMcpStatuses, setStatuses, setWidgets, setComposerDrafts, transportConversationKeys, terminalSessionIdRef, setActivePane, setMainComposerFocusRequest, queueExtensionDialog, mainDialogOwnerRef, setActiveHostId, setActiveCwd, activateConversationKey, setTerminalOpen, setTerminalTarget, configureRuntime, setError, updateConnected, terminalOutputFrame, queuedTerminalOutput }: AppEventsContext) {
+export function useAppEvents({ transport, handleEvent, setDialogs, refresh, queueTerminalOutput, setTerminalsBySession, addNotice, activeTransportRef, pendingBtwRequest, setSplitPane, activeHostIdRef, setExtensionOwner, setDefinedAgents, refreshSession, setStatuses, setWidgets, setComposerDrafts, transportConversationKeys, terminalSessionIdRef, setActivePane, setMainComposerFocusRequest, queueExtensionDialog, mainDialogOwnerRef, setActiveHostId, setActiveCwd, activateConversationKey, setTerminalOpen, setTerminalTarget, configureRuntime, setError, updateConnected, terminalOutputFrame, queuedTerminalOutput }: AppEventsContext) {
   useEffect(() => {
     let cancelled = false; let reconnecting = false; const refreshTimers = new Set<number>();
     const unsubscribe = transport.subscribe((event: RpcEvent) => {
@@ -98,10 +97,6 @@ export function useAppEvents({ transport, handleEvent, setDialogs, refresh, queu
             if (capability) void refreshSession().catch(() => undefined);
           } catch { setDefinedAgents(undefined); }
         };
-        const setMcpStatus = () => {
-          setExtensionOwner(transport);
-          try { const values = request.statusText?.startsWith("json:") ? JSON.parse(request.statusText.slice(5)) as Array<{ id: string; status: "starting" | "connected" | "stopped" | "error"; error?: string }> : []; setMcpStatuses(Object.fromEntries(values.map((value) => [value.id, { status: value.status, error: value.error }]))); } catch { setMcpStatuses({}); }
-        };
         const setExtensionStatus = () => {
           setExtensionOwner(transport);
           setStatuses((current) => { const next = { ...current }; if (request.statusText) next[request.statusKey!] = request.statusText; else delete next[request.statusKey!]; return next; });
@@ -116,7 +111,7 @@ export function useAppEvents({ transport, handleEvent, setDialogs, refresh, queu
           setActivePane("main");
           setMainComposerFocusRequest((value) => value + 1);
         };
-        const handleStatus = () => { if (request.statusKey === DEFINED_AGENTS_STATUS_KEY) return setDefinedAgentStatus(); if (request.statusKey === MCP_STATUS_KEY) return setMcpStatus(); if (request.statusKey && request.statusKey !== PROMPT_CONTEXT_STATUS_KEY) return setExtensionStatus(); };
+        const handleStatus = () => { if (request.statusKey === DEFINED_AGENTS_STATUS_KEY) return setDefinedAgentStatus(); if (request.statusKey === MCP_STATUS_KEY) return; if (request.statusKey && request.statusKey !== PROMPT_CONTEXT_STATUS_KEY) return setExtensionStatus(); };
         const openExtensionDialog = () => { queueExtensionDialog(request, transport, mainDialogOwnerRef.current); };
         if (request.method === "notify") return notifyExtension();
         if (request.method === "input" && request.title === BTW_REQUEST_TITLE) return openBtw();
@@ -149,7 +144,6 @@ export function useAppEvents({ transport, handleEvent, setDialogs, refresh, queu
       };
       const handleDisconnected = () => {
         setDefinedAgents(undefined);
-        setMcpStatuses({});
         setStatuses({});
         setWidgets({});
         document.title = "piop";

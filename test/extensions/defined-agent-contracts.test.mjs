@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { agentFixture, profile, configured, encoded } from '../defined-agent-fixture.mjs';
 
+const remoteMcp = { id: 'remote', name: 'Remote', transport: 'stdio', command: 'mcp-server', args: '', enabled: true };
+
 test('successful selections persist one complete snapshot and preserve immutable prompt history', async t => {
   const f = await agentFixture(t, { config: configured([profile(), profile('reviewer', { model: 'test/review/model', effort: 'low', path_agentprompt: 'agent.md' })]), files: { 'agent.md': 'Review instructions' } });
   await f.load(); await f.start();
@@ -97,7 +99,7 @@ test('fast mode validates configured and override models and applies supported s
 });
 
 test('MCP selections wait for readiness, deduplicate tools, and report unavailable or rejected bridges', async t => {
-  const f = await agentFixture(t, { env: { PI_DESKTOP_MCP_CONFIG: 'fixture' }, config: configured([profile('general', { mcpServers: ['remote'] })]) });
+  const f = await agentFixture(t, { config: configured([profile('general', { mcpServers: [remoteMcp] })]) });
   await f.load(); await f.start();
   assert.deepEqual(await f.input('no bridge'), { action: 'handled' }); assert.match(f.notices.at(-1).message, /MCP bridge is unavailable/);
   const gate = Promise.withResolvers(), started = Promise.withResolvers(); let selection;
@@ -106,7 +108,7 @@ test('MCP selections wait for readiness, deduplicate tools, and report unavailab
   let timer;
   try { await Promise.race([started.promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('MCP selection was not requested')), 1000); })]); }
   finally { clearTimeout(timer); }
-  assert.deepEqual({ ...selection, ready: undefined }, { serverIds: ['remote'], agentName: 'general', sessionId: 'session-id', ready: undefined });
+  assert.deepEqual({ ...selection, ready: undefined }, { servers: [{ ...remoteMcp, url: undefined, headers: undefined, startupTimeoutSec: undefined }], agentName: 'general', sessionId: 'session-id', ready: undefined });
   assert.deepEqual(f.pi.getActiveTools(), []);
   gate.resolve(['mcp_remote_read', 'read', 'mcp_remote_read']); assert.deepEqual(await pending, { action: 'continue' }); assert.deepEqual(f.pi.getActiveTools(), ['read', 'mcp_remote_read']); remove();
   for (const reason of [new Error('network lost'), 'network lost']) {
@@ -115,9 +117,10 @@ test('MCP selections wait for readiness, deduplicate tools, and report unavailab
   }
 });
 
-test('legacy MCP tools use sanitized server names and refresh respects global tool availability', async t => {
+test('agent MCP tools come from bridge selections and refresh respects global tool availability', async t => {
   const runtime = { tools: ['read'], skills: [] };
-  const f = await agentFixture(t, { runtime, tools: ['read', 'mcp_my_server_query', 'mcp_other_query', 'mcp_tool_query'], config: configured([profile('general', { mcpServers: [' MY server!! ', '!!!'] })]) });
+  const f = await agentFixture(t, { runtime, tools: ['read', 'mcp_my_server_query', 'mcp_other_query', 'mcp_tool_query'], config: configured([profile('general', { mcpServers: [remoteMcp] })]) });
+  f.pi.events.on('piop:mcp:select', request => { request.ready = Promise.resolve(['mcp_my_server_query', 'mcp_tool_query']); });
   await f.load(); await f.start(); await f.input('go');
   assert.deepEqual(f.pi.getActiveTools(), ['read', 'mcp_my_server_query', 'mcp_tool_query']);
   let request = { ctx: f.ctx }; f.pi.events.emit('piop:agents:refresh', request); await request.ready;
@@ -142,9 +145,9 @@ test('skills are intersected by normalized path and prompts preserve append inst
 
 test('configuration edits normalize resources and persist atomically without modifying the running snapshot', async t => {
   const f = await agentFixture(t); await f.load(); await f.start();
-  await f.configure({ agents: [profile('reviewer', { model: 42, effort: null, tools: ['read', 7], skills: [false, '/skill'], mcpServers: ['filesystem', 'remote', 7], path_agentprompt: '  agent.md  ' }), profile('reviewer', { tools: ['bash'] }), profile('default')] });
+  await f.configure({ agents: [profile('reviewer', { model: 42, effort: null, tools: ['read', 7], skills: [false, '/skill'], mcpServers: [remoteMcp], path_agentprompt: '  agent.md  ' }), profile('reviewer', { tools: ['bash'] }), profile('default')] });
   const saved = await f.config(); assert.deepEqual(saved.agents.map(a => a.name), ['reviewer', 'general']);
-  assert.equal(saved.agents[0].model, ''); assert.equal(saved.agents[0].effort, 'high'); assert.deepEqual(saved.agents[0].tools, ['read']); assert.deepEqual(saved.agents[0].skills, ['/skill']); assert.deepEqual(saved.agents[0].mcpServers, ['remote']); assert.equal(saved.agents[0].path_agentprompt, 'agent.md');
+  assert.equal(saved.agents[0].model, ''); assert.equal(saved.agents[0].effort, 'high'); assert.deepEqual(saved.agents[0].tools, ['read']); assert.deepEqual(saved.agents[0].skills, ['/skill']); assert.deepEqual(saved.agents[0].mcpServers, [remoteMcp]); assert.equal(saved.agents[0].path_agentprompt, 'agent.md');
   assert.equal(saved.webSearchDefaultApplied, true); assert.equal(saved.sessionToolsDefaultApplied, true);
   assert.equal(f.capability().active, 'general'); assert.deepEqual(f.entries[0].data.snapshot.definition.tools, ['read']);
   assert.equal((await stat(join(f.dir, 'config.json'))).mode & 0o777, 0o600);
@@ -227,7 +230,7 @@ test('prompt migration preserves intentional emptiness and distinguishes names a
 
 test('normalization supplies defaults for absent arrays and filters malformed profiles without dropping valid fields', async t => {
   const f = await agentFixture(t); await f.load(); await f.start();
-  const full = profile('reviewer', { model: ' test/review/model ', effort: ' low ', fastMode: false, extensions: [], tools: null, skills: null, mcpServers: null, path_agentprompt: 7 });
+  const full = profile('reviewer', { model: ' test/review/model ', effort: ' low ', fastMode: false, extensions: [], tools: null, skills: null, mcpServers: undefined, path_agentprompt: 7 });
   await f.configure({ agents: [null, false, {}, { name: '' }, { name: 7 }, full, profile('default')] });
   const config = await f.config(), reviewer = config.agents[0];
   assert.deepEqual(config.agents.map(agent => agent.name), ['reviewer', 'general']);
@@ -478,9 +481,9 @@ test('new default profiles retain available session tools after one-time migrati
   assert.deepEqual((await f.config()).agents[0].tools, tools); assert.deepEqual(f.capability().config.fastModeModels, []);
 });
 
-test('MCP server names collapse punctuation and strip all surrounding underscores', async t => {
-  const f = await agentFixture(t, { config: configured([profile('general', { mcpServers: ['___MY@@SERVER___'] })]), tools: ['read', 'mcp_my_server_query', 'mcp_my__server_query', 'mcp__my_server__query'] });
-  await f.load(); await f.start(); assert.deepEqual(f.pi.getActiveTools(), ['read']); await f.input('connect'); assert.deepEqual(f.pi.getActiveTools(), ['read', 'mcp_my_server_query']);
+test('disabled embedded MCP servers do not enable stale globally registered tools', async t => {
+  const f = await agentFixture(t, { config: configured([profile('general', { mcpServers: [{ ...remoteMcp, enabled: false }] })]), tools: ['read', 'mcp_my_server_query', 'mcp_my__server_query', 'mcp__my_server__query'] });
+  await f.load(); await f.start(); assert.deepEqual(f.pi.getActiveTools(), ['read']); assert.deepEqual(await f.input('connect'), { action: 'continue' }); assert.deepEqual(f.pi.getActiveTools(), ['read']);
 });
 
 test('shutdown removes agent extension listeners and missing-agent refresh clears externally enabled tools', async t => {

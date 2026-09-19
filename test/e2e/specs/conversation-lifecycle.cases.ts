@@ -154,17 +154,29 @@ describe("Conversation lifecycle", () => {
   });
 
   it("starts a fresh conversation in the selected project from the keyboard", async () => {
-    await mockBackend({ stop_pi: {}, start_pi: {}, ...connectedSessionResponses("keyboard-session") });
+    const selected = { id: "keyboard-session", path: "/tmp/keyboard-session.jsonl", name: "Keyboard conversation", project: "Keyboard project", cwd: "/tmp", preview: "Keyboard", messageCount: 2, hostId: "local" };
+    await mockBackend({ list_sessions: [selected], stop_pi: {}, start_pi: {}, ...connectedSessionResponses("") });
     try {
       await app.openConversations();
+      await emitPiEvent({ type: "session_switched" });
+      await updateBackendResponse("pi_command:get_state", connectedSessionResponses(selected.id)["pi_command:get_state"]);
+      await app.conversationSearch.setValue(selected.name);
+      await $(".session-item .session-main").click();
+      await app.composer.waitForEnabled();
       await app.prepareMessage("Discard this old draft");
+      await updateBackendResponse("pi_command:get_state", connectedSessionResponses("keyboard-new-session")["pi_command:get_state"]);
+      const callCount = (await backendCalls()).length;
       await app.confirmAction("Start a new conversation and discard the unsent draft?", () => browser.keys(["Control", "n"]), true);
 
       await expect(app.composer).toHaveValue("");
-      await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "start_pi"))
+      await browser.waitUntil(async () => (await backendCalls()).slice(callCount).some(({ command }) => command === "start_pi"))
         .catch(async (cause) => { throw new Error(`New conversation did not connect: ${JSON.stringify(await backendCalls())}; ${await $("body").getText()}`, { cause }); });
-      expect((await backendCalls()).filter(({ command }) => command === "start_pi")).toHaveLength(1);
+      const starts = (await backendCalls()).slice(callCount).filter(({ command }) => command === "start_pi");
+      expect(starts).toHaveLength(1);
+      expect(starts[0].args).toMatchObject({ cwd: selected.cwd, hostId: selected.hostId });
+      expect(starts[0].args.sessionPath).toBeUndefined();
     } finally {
+      await app.conversationSearch.clearValue();
       await resetBackend();
     }
   });

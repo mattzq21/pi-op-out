@@ -459,3 +459,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .voice-toolbar button:hover, .voice-toolbar button[aria-pressed="true"] { background: #ffffff12; color: #fff; }
 .voice-toolbar meter { width: 45px; height: 8px; }
 .voice-error { color: #f3a59e; padding: 6px 0; }
+.agent-mcp-settings { margin-top: 20px; }
+.agent-mcp-settings h3 { font-size: 13px; font-weight: 500; }
+.agent-mcp-settings .mcp-card-head { grid-template-columns: 24px minmax(0, 1fr) auto auto; }
+.agent-mcp-settings > .secondary-button { margin-top: 10px; }
