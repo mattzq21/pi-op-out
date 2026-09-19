@@ -18,7 +18,8 @@ const fs = require('node:fs');
           if (entry.type !== 'message' && !voice) continue;
           const message = voice ? { role: voice.role, content: voice.text } : entry.message || {}, content = text(message).replace(/^\[Voice request [a-f0-9-]{36}; answer concisely\]\n/, '');
           if (message.role === 'user' && resumes.has(content)) continue;
-          if (message.role === 'user' || message.role === 'assistant') lastMessageAt = Math.max(lastMessageAt, timestamp(voice?.endMs ?? voice?.startMs ?? message.timestamp ?? entry.timestamp));
+          // Sidebar recency follows prompts, not later assistant/tool activity.
+          if (message.role === 'user') lastMessageAt = Math.max(lastMessageAt, timestamp(voice?.startMs ?? message.timestamp ?? entry.timestamp));
           count++; if (content) { if (!first && message.role === 'user') first = content.slice(0, 2000); preview = [...content].slice(0, 100).join(''); }
           const amount = message.usage?.cost?.total; if (message.role === 'assistant' && Number.isFinite(amount) && amount >= 0) cost += amount;
         }
