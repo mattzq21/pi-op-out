@@ -32,7 +32,6 @@ class AppPage {
   get addMachineButton() { return $('//button[normalize-space(.)="Add machine"]'); }
   get addMcpServerButton() { return $('//button[normalize-space(.)="Add MCP server"]'); }
   get restoreKeybindsButton() { return $('//button[normalize-space(.)="Restore defaults"]'); }
-  get skillFilter() { return $('input[aria-label="Filter skills by name"]'); }
   get contextWindowCap() { return $('input[aria-label="Context window cap"]'); }
 
   settingsSection(label: string) {

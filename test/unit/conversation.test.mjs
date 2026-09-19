@@ -131,7 +131,7 @@ describe('conversation behavior', () => {
 
   test('editable chat shows project actions, extension activity and the submitted message while MCP loads', async () => {
     let opened = 0, cleared = 0; const pending = Promise.withResolvers();
-    await render({ readOnly: false, projectCwd: '/repo/project', onOpenProject: () => opened++, onClearProject: () => cleared++, widgets: ['widget'], statuses: { visible: 'Ready' }, state: { messageCount: 0, activity: 'Preparing' }, draft: 'Question', onSend: () => pending.promise });
+    await render({ readOnly: false, projectCwd: '/repo/project', onOpenProject: () => opened++, onClearProject: () => cleared++, widgets: ['widget'], statuses: { visible: 'Ready', 'pi-desktop-hook-stats': 'legacy hook payload' }, state: { messageCount: 0, activity: 'Preparing' }, draft: 'Question', onSend: () => pending.promise });
     await click(document.querySelector('[aria-label="Selected project: project"]')); await click(document.querySelector('[aria-label="Clear project"]')); assert.equal(opened, 1); assert.equal(cleared, 1);
     assert.equal(document.querySelector('.extension-widget').textContent, 'widget'); assert.equal(document.querySelector('.extension-status').textContent, 'Ready'); assert.equal(document.querySelector('.runtime-activity').textContent, 'Preparing');
     await render({ statuses: { 'pi-desktop-mcp-loading': 'Loading server' } }); assert.equal(document.querySelector('.runtime-activity'), null);

@@ -43,7 +43,8 @@ const updateBackendResponse = async (command: string, response: unknown) => {
 };
 const resetBackend = async () => { await callBridge().setValue("[]"); await responseBridge().setValue(JSON.stringify(isolatedUsageResponses)); };
 const resetApp = async () => {
-  await resetBackend();
+  try { await resetBackend(); }
+  catch (cause) { throw new Error(`Backend reset failed: ${await $("body").getText()}`, { cause }); }
   await app.refreshForReset();
   try { await app.root.waitForDisplayed({ timeout: 10_000 }); }
   catch (cause) { throw new Error(`App reset failed: ${await $("body").getText()}`, { cause }); }
@@ -1687,7 +1688,7 @@ describe("Settings acceptance", () => {
     await app.openSettings();
     await expect(app.saveSettingsButton).toHaveText("Save changes");
 
-    for (const section of ["General", "Machines", "Keybinds", "Skills", "Tools", "MCP servers"]) {
+    for (const section of ["General", "Machines", "Keybinds", "Agents", "MCP servers"]) {
       await app.openSettingsSection(section);
       await expect(app.settingsSectionHeading).toHaveText(section);
     }
@@ -1714,7 +1715,7 @@ describe("Settings acceptance", () => {
   it("keeps an unsaved context-window cap while reviewing settings", async () => {
     await app.openSettings();
     await app.contextWindowCap.setValue("123000");
-    await app.openSettingsSection("Tools");
+    await app.openSettingsSection("MCP servers");
     await app.openSettingsSection("General");
 
     await expect(app.contextWindowCap).toHaveValue("123000");
@@ -1827,46 +1828,12 @@ describe("Settings acceptance", () => {
     await app.openConversations();
   });
 
-  it("lists skills without global toggle controls", async () => {
-    const settings = {
-      ...defaultSettings,
-      skills: [
-        { name: "Explicit only", path: "/skills/explicit", description: "Must be invoked directly", enabled: true, userInvokedOnly: true },
-        { name: "Alpha skill", path: "/skills/alpha", description: "Alpha behavior", enabled: false },
-        { name: "Beta skill", path: "/skills/beta", description: "Beta behavior", enabled: false },
-      ],
-    };
-    await mockBackend({ ...connectedSessionResponses("skill-settings"), load_app_settings: settings });
-    try {
-      await emitPiEvent({ type: "session_switched" });
-      await app.openSettings();
-      await app.openSettingsSection("Skills");
-      await expect($(".skill-invocation")).toHaveText("User invoked only");
-      await expect($$(".skill-row")).toBeElementsArrayOfSize(3);
-      await expect($('.settings-content [role="switch"]')).not.toBeExisting();
-      await expect($('//button[normalize-space(.)="Enable all"]')).not.toBeExisting();
-      await expect($('//button[normalize-space(.)="Disable all"]')).not.toBeExisting();
-    } finally {
-      await app.openConversations();
-      await resetBackend();
-    }
-  });
-
-  it("filters skills by name without changing configuration", async () => {
+  it("offers agent settings without obsolete global Tools and Skills pages", async () => {
     await app.openSettings();
-    await app.openSettingsSection("Skills");
-    await app.skillFilter.setValue("__webdriver_no_matching_skill__");
-
-    await expect($$(".skill-row")).toBeElementsArrayOfSize(0);
-    await app.skillFilter.clearValue();
-    await app.openConversations();
-  });
-
-  it("lists tools without global toggle controls", async () => {
-    await app.openSettings();
-    await app.openSettingsSection("Tools");
-    expect((await $$(".settings-content .config-row")).length).toBeGreaterThan(0);
-    await expect($('.settings-content [role="switch"]')).not.toBeExisting();
+    await expect($('//*[contains(@class,"settings-nav")]//button[normalize-space(.)="Tools"]')).not.toBeExisting();
+    await expect($('//*[contains(@class,"settings-nav")]//button[normalize-space(.)="Skills"]')).not.toBeExisting();
+    await app.openSettingsSection("Agents");
+    await expect(app.settingsSectionHeading).toHaveText("Agents");
     await app.openConversations();
   });
 });

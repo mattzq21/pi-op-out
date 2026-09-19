@@ -4,6 +4,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
+import { pathToFileURL } from "node:url";
 import { mkdtempSync, mkdirSync, copyFileSync, chmodSync } from "node:fs";
 import { selectWindowBounds } from "./scripts/window-placement.mjs";
 
@@ -30,6 +31,7 @@ for (const name of ["auth.json", "models.json", "models-store.json"]) {
 const fixtureEnvironment = {
   PIOP_TEST_HOME: fixtureHome,
   PI_CODING_AGENT_DIR: fixtureAgent,
+  NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${pathToFileURL(path.resolve("test/isolated-node-home.mjs")).href}`.trim(),
   XDG_CONFIG_HOME: path.join(fixtureHome, "config"), XDG_DATA_HOME: path.join(fixtureHome, "data"), XDG_CACHE_HOME: path.join(fixtureHome, "cache"),
 };
 const defaultActualCallModel = "openai-codex/gpt-5.6-luna";
@@ -116,13 +118,16 @@ const markedTestProjects = () => !existsSync(temporaryProjectsRoot) ? [] : readd
   .filter((entry) => entry.isDirectory() && existsSync(path.join(temporaryProjectsRoot, entry.name, ".pi-e2e-test")))
   .map((entry) => path.join(temporaryProjectsRoot, entry.name));
 
+const isFixtureProject = (cwd: string, id: string) => path.dirname(cwd) === path.resolve(temporaryProjectsRoot)
+  && path.basename(cwd) === id && existsSync(path.join(cwd, ".pi-e2e-test"));
+
 const cleanupTestSessions = () => {
   for (const sessionFile of sessionFiles().filter((file) => !baselineSessions.has(file))) {
     let header: { type?: string; id?: string; cwd?: string } = {};
     try { header = JSON.parse(readFileSync(sessionFile, "utf8").split("\n", 1)[0]); } catch { /* A new malformed test artifact still belongs to this run. */ }
     if (header.type !== "session" || !header.id || !header.cwd) continue;
     const cwd = path.resolve(header.cwd);
-    if (path.dirname(cwd) !== path.resolve(temporaryProjectsRoot) || path.basename(cwd) !== header.id || !existsSync(path.join(cwd, ".pi-e2e-test"))) continue;
+    if (!isFixtureProject(cwd, header.id)) continue;
     rmSync(sessionFile);
     try { rmdirSync(path.dirname(sessionFile)); } catch { /* Keep shared or non-empty session directories. */ }
     rmSync(cwd, { recursive: true, force: true });
