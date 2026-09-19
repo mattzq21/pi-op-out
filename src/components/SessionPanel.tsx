@@ -73,14 +73,15 @@ function disclosureId(key: string) {
 
 function orderedSessions(projectKey: string, sessions: SessionSummary[], orders: Record<string, string[]>) {
   const customOrder = orders[projectKey];
-  if (!customOrder) return sessions.sort(stableSessionOrder);
+  const defaultOrder = projectKey === RECENT_KEY ? recentSessionOrder : stableSessionOrder;
+  if (!customOrder) return sessions.sort(defaultOrder);
   const positions = new Map(customOrder.map((key, index) => [key, index]));
   return sessions.sort((left, right) => {
     const leftPosition = positions.get(sessionKey(left)); const rightPosition = positions.get(sessionKey(right));
     if (leftPosition !== undefined && rightPosition !== undefined) return leftPosition - rightPosition;
-    if (leftPosition !== undefined) return -1;
-    if (rightPosition !== undefined) return 1;
-    return stableSessionOrder(left, right);
+    if (leftPosition !== undefined) return projectKey === RECENT_KEY ? 1 : -1;
+    if (rightPosition !== undefined) return projectKey === RECENT_KEY ? -1 : 1;
+    return defaultOrder(left, right);
   });
 }
 
@@ -254,7 +255,21 @@ export function SessionPanel({ sessions, activeId, activeHostId = "local", runni
   const groupedSessions = filtered.reduce<Record<string, SessionSummary[]>>((result, session) => {
     (result[visualProjectKey(session)] ??= []).push(session); return result;
   }, {});
-  const recentSessions = (groupedSessions[RECENT_KEY] ?? []).sort(recentSessionOrder);
+  const recentSessions = orderedSessions(RECENT_KEY, groupedSessions[RECENT_KEY] ?? [], sessionOrders);
+  const recentKeys = recentSessions.map(sessionKey).join("\n");
+  useEffect(() => {
+    if (normalizedQuery) return;
+    setSessionOrders((current) => {
+      const saved = current[RECENT_KEY];
+      if (!saved) return current;
+      const known = new Set(saved);
+      const added = recentKeys.split("\n").filter((key) => key && !known.has(key));
+      if (!added.length) return current;
+      const next = { ...current, [RECENT_KEY]: [...added, ...saved] };
+      try { localStorage.setItem(SESSION_ORDERS_KEY, JSON.stringify(next)); } catch { /* Persistence is best-effort. */ }
+      return next;
+    });
+  }, [recentKeys, normalizedQuery]);
   const physicalGroups = (storedGroups?.groups ?? []).filter((group) => group.cwd && !isTemporaryChatCwd(group.cwd)).map((group) => [group.id, group.name, group.hostId ?? "local", group.hostName ?? undefined, orderedSessions(group.id, groupedSessions[group.id] ?? [], sessionOrders)] as const);
   const customVisualGroups = customGroups.map((group) => [group.id, group.name, "", undefined, orderedSessions(group.id, groupedSessions[group.id] ?? [], sessionOrders)] as const);
   // Remember projects even while search or session placement hides them.

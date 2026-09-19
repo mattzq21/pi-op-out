@@ -37,7 +37,6 @@ async function runFork(pi: PiApi, sessionFile: string, cwd: string, task: string
   const settings: { settings?: unknown } = {};
   pi.events.emit("piop:runtime-settings", settings);
   if (settings.settings) args.push("--piop-runtime-settings", JSON.stringify(settings.settings));
-  args.push("--extension", join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "hook-loader.ts"));
   const codexWebSearchExtension = process.env.PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION;
   if (codexWebSearchExtension) args.push("--extension", codexWebSearchExtension);
   const definedAgentsExtension = process.env.PI_DESKTOP_DEFINED_AGENTS_EXTENSION;

@@ -787,16 +787,22 @@ describe("Conversation acceptance", () => {
   });
 
   it("renders live assistant activity delivered through Tauri events", async () => {
-    await emitPiEvent({ type: "agent_start" });
-    await expect($(".stream-banner")).toHaveText(expect.stringContaining("piop is working"));
-    await expect($('button[aria-label="Stop piop"]')).toBeDisplayed();
+    await startTemporaryConversation({});
+    try {
+      await emitPiEvent({ type: "agent_start" });
+      await expect($(".stream-banner")).toHaveText(expect.stringContaining("piop is working"));
+      await expect($('button[aria-label="Stop piop"]')).toBeDisplayed();
 
-    await emitPiEvent({ type: "message_start", message: { id: "acceptance-stream", role: "assistant", content: "Streaming acceptance response" } });
-    await expect($(".assistant-message")).toHaveText(expect.stringContaining("Streaming acceptance response"));
-    await expect($(".stream-caret")).toBeDisplayed();
+      await emitPiEvent({ type: "message_start", message: { id: "acceptance-stream", role: "assistant", content: "Streaming acceptance response" } });
+      await expect($(".assistant-message")).toHaveText(expect.stringContaining("Streaming acceptance response"));
+      await expect($(".stream-caret")).toBeDisplayed();
 
-    await emitPiEvent({ type: "agent_end" });
-    await expect($(".stream-banner")).not.toBeExisting();
+      await emitPiEvent({ type: "agent_end" });
+      await expect($(".stream-banner")).not.toBeExisting();
+    } finally {
+      await emitPiEvent({ type: "agent_end" });
+      await resetBackend();
+    }
   });
 
   it("assembles incremental assistant text and exposes the completed response actions", async () => {
@@ -817,7 +823,7 @@ describe("Conversation acceptance", () => {
       await emitPiEvent({ type: "message_end", message: { role: "assistant", content: "Incremental answer", timestamp: 200 } });
       await emitPiEvent({ type: "agent_end" });
       await expect($(".stream-caret")).not.toBeExisting();
-      await expect($('//article[contains(@class,"assistant-message")][contains(.,"Incremental answer")]').$('button[aria-label^="Copy assistant response"]')).toBeDisplayed();
+      await expect($('//article[contains(@class,"assistant-message")][contains(.,"Incremental answer")]').$('button[aria-label^="Copy assistant response"]')).toBeEnabled();
     } finally {
       await emitPiEvent({ type: "agent_end" });
       await resetBackend();
@@ -1007,7 +1013,9 @@ describe("Conversation acceptance", () => {
       await emitPiEvent({ type: "session_switched" });
       await expect($(".assistant-message")).toHaveText(expect.stringContaining("const answer = 42;"));
 
-      await $(".assistant-message").$('button[aria-label^="Copy assistant response"]').click();
+      await expect($(".assistant-message").$('button[aria-label^="Copy assistant response"]')).toBeEnabled();
+      // The native fixture stays unfocused, so hover-only controls need DOM activation.
+      await browser.execute(() => document.querySelector<HTMLButtonElement>('.assistant-message button[aria-label^="Copy assistant response"]')!.click());
       expect(await browser.execute(() => (window as unknown as { __e2eClipboard?: string }).__e2eClipboard)).toBe(response);
       await $('button[aria-label="Copy code"]').click();
       await expect($('button[aria-label="Code copied"]')).toBeDisplayed();
@@ -1069,8 +1077,8 @@ describe("Conversation acceptance", () => {
     try {
       await emitPiEvent({ type: "session_switched" });
       const branch = $(".assistant-message").$('button[aria-label^="Branch from assistant response"]');
-      await branch.waitForClickable();
-      await branch.click();
+      await expect(branch).toBeEnabled();
+      await browser.execute(() => document.querySelector<HTMLButtonElement>('.assistant-message button[aria-label^="Branch from assistant response"]')!.click());
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "clone"));
       expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "clone")?.args.command).toEqual({ type: "clone" });

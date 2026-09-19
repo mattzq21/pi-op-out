@@ -49,6 +49,20 @@ describe('conversation sidebar', () => {
     await render({ runningSessions: new Set(), unseenSessions: new Set(['local:b']) }); assert.match(row('b').getAttribute('aria-label'), /New activity/);
   });
 
+  test('recent conversations preserve manual order and prepend newly discovered sessions', async () => {
+    const recent = '__pi-desktop-ungrouped__';
+    groups = { groups: [], assignments: { 'local:a': null, 'local:b': null, 'local:c': null }, removedProjects: [] };
+    localStorage.setItem('pi-desktop-session-orders', JSON.stringify({ [recent]: ['local:a', 'local:b'] }));
+    const sessions = [session('a', 'Older', { lastMessageAt: 1 }), session('b', 'Newer', { lastMessageAt: 2 })];
+    const order = () => [...document.querySelectorAll('[data-session-key]')].map(item => item.dataset.sessionKey);
+    await render({ sessions }); assert.deepEqual(order(), ['local:a', 'local:b']);
+    await render({ sessions: [...sessions, session('c', 'Newest', { lastMessageAt: 3 })] });
+    assert.deepEqual(order(), ['local:c', 'local:a', 'local:b']);
+    assert.deepEqual(JSON.parse(localStorage.getItem('pi-desktop-session-orders'))[recent], ['local:c', 'local:a', 'local:b']);
+    await render({ sessions: [session('a', 'Older', { lastMessageAt: 99 }), ...props.sessions.slice(1)] });
+    assert.deepEqual(order(), ['local:c', 'local:a', 'local:b']);
+  });
+
   test('context actions omit splitting the active session and support keyboard focus navigation', async () => {
     const actions = []; await render({ activeId: 'a', onAction: (...args) => actions.push(args) });
     row('a').focus(); await menu('a'); await dom.flushFrames();

@@ -436,37 +436,7 @@ fn git_branch_reporting_handles_unborn_detached_and_linked_worktrees() {
     assert_eq!(git_branch_at(repository.to_str().unwrap(), None).unwrap().as_deref(), Some("main"));
 }
 
-#[test]
-fn hook_list_query_runs_the_bundled_scanner_and_preserves_hook_entry_paths() {
-    let home = TestDirectory::new(); let hooks = home.0.join(".piop/hooks");
-    let script = format!("require('node:os').homedir = () => {};\n{}", serde_json::to_string(home.0.to_str().unwrap()).unwrap(), include_str!("../resources/list-hooks.cjs"));
-    let run = || { let mut command = Command::new("node"); command.args(["-e", &script]); query_hook_list(&mut command) };
-    assert_eq!(run().unwrap(), json!({"directory":hooks,"exists":false,"hooks":[]}));
-    fs::create_dir_all(hooks.join("bundle")).unwrap();
-    for name in ["z.ts", "a.mjs", ".hidden.ts", "types.d.ts", "notes.txt", "bundle/index.js", "bundle/index.ts"] {
-        fs::write(hooks.join(name), "throw new Error('must not execute hooks');").unwrap();
-    }
-    assert_eq!(run().unwrap(), json!({"directory":hooks,"exists":true,"hooks":[
-        {"name":"a.mjs","path":hooks.join("a.mjs"),"entry":"a.mjs"},
-        {"name":"bundle","path":hooks.join("bundle/index.ts"),"entry":"bundle/index.ts"},
-        {"name":"z.ts","path":hooks.join("z.ts"),"entry":"z.ts"},
-    ]}));
-}
 
-#[test]
-fn hook_list_query_rejects_failed_malformed_and_oversized_responses() {
-    for (script, expected) in [
-        ("process.stderr.write(' scanner failed \\n'); process.exitCode=7", "Could not list hooks: scanner failed"),
-        ("process.stdout.write('not JSON')", "Could not read hook list:"),
-        ("process.stdout.write('x'.repeat(4*1024*1024+1))", "Could not list hooks"),
-    ] {
-        let mut command = Command::new("node"); command.args(["-e", script]);
-        let error = query_hook_list(&mut command).unwrap_err();
-        assert!(error.starts_with(expected), "{error}");
-    }
-    let temporary = TestDirectory::new();
-    assert!(query_hook_list(&mut Command::new(temporary.0.join("missing"))).is_err());
-}
 #[test]
 fn storage_inventory_query_counts_real_files_and_marks_malformed_archives_undeletable() {
     let home = TestDirectory::new(); let root = home.0.join(".piop");
@@ -3766,7 +3736,7 @@ fn bundled_extension_installers_refresh_private_files_at_the_expected_paths() {
     let installers: [(Installer, &str, &str); 4] = [
         (prepare_session_broker, "session-broker.ts", include_str!("../resources/session-broker.ts")),
         (prepare_trace_reader, "piop-trace-reader.ts", include_str!("../resources/trace-reader.ts")),
-        (prepare_openai_cache_lineage_extension, "piop-openai-cache-lineage.ts", include_str!("../../extensions/piop-openai-cache-lineage/index.ts")),
+        (prepare_openai_cache_fork_extension, "piop-openai-cache-fork.ts", include_str!("../../extensions/piop-openai-cache-fork/index.ts")),
         (prepare_codex_web_search_extension, "piop-codex-web-search.ts", include_str!("../../extensions/piop-codex-web-search/index.ts")),
     ];
     for (install, relative, expected) in installers {
@@ -3794,37 +3764,6 @@ fn bundled_extension_installers_refresh_private_files_at_the_expected_paths() {
     }
 }
 
-#[test]
-fn hook_preparation_updates_bundles_without_changing_user_hooks() {
-    let home = TestDirectory::new();
-    let _home = HomeOverride::take(&home.0);
-    let hooks = home.0.join(STORAGE_DIRECTORY).join("hooks");
-    fs::create_dir_all(hooks.join("custom")).unwrap();
-    fs::write(hooks.join("custom/index.ts"), "user hook").unwrap();
-    for _ in 0..2 {
-        let entry = prepare_hooks_extension().unwrap();
-        assert_eq!(entry, home.0.join(STORAGE_DIRECTORY).join("hook-loader.ts"));
-        assert_eq!(fs::read_to_string(&entry).unwrap(), include_str!("../../extensions/piop-hooks/index.ts"));
-        let stats = entry.with_file_name("hook-stats.ts");
-        assert_eq!(fs::read_to_string(&stats).unwrap(), include_str!("../../extensions/piop-hooks/hook-stats.ts"));
-        assert_eq!(fs::read_to_string(hooks.join("custom/index.ts")).unwrap(), "user hook");
-        #[cfg(unix)] {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(fs::metadata(&hooks).unwrap().permissions().mode() & 0o777, 0o700);
-            for path in [&entry, &stats] { assert_eq!(fs::metadata(path).unwrap().permissions().mode() & 0o777, 0o600); }
-        }
-        fs::write(&entry, "old loader").unwrap();
-        fs::write(&stats, "old stats").unwrap();
-    }
-    let blocked = TestDirectory::new();
-    drop(_home);
-    let _blocked = HomeOverride::take(&blocked.0);
-    fs::create_dir_all(blocked.0.join(STORAGE_DIRECTORY)).unwrap();
-    fs::write(blocked.0.join(STORAGE_DIRECTORY).join("hooks"), "keep").unwrap();
-    assert!(prepare_hooks_extension().is_err());
-    assert_eq!(fs::read_to_string(blocked.0.join(STORAGE_DIRECTORY).join("hooks")).unwrap(), "keep");
-    assert!(!blocked.0.join(STORAGE_DIRECTORY).join("hook-loader.ts").exists());
-}
 
 #[test]
 fn side_conversation_preparation_removes_only_the_legacy_extension_after_installing() {

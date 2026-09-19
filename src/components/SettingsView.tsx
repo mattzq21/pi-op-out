@@ -1,7 +1,6 @@
 import { accountModelName } from "../lib/providerAccounts";
 import { useEffect, useRef, useState } from "react";
 import { Blocks, BookOpen, Bot, Check, CircleGauge, CirclePlus, Cpu, HardDrive, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Sparkles, Trash2, Wrench, Zap } from "lucide-react";
-import { HooksSettings, HookIcon } from "./HooksSettings";
 import { StorageSettings } from "./StorageSettings";
 import { ProviderSettings } from "./ProviderSettings";
 import type { AgentProfile, AppSettings, McpServer, Model, AgentConfig, RemoteHost, SessionSummary } from "../types";
@@ -10,7 +9,7 @@ import { defaultKeybindings, keybindDefinitions, shortcutFromEvent, shortcutsCon
 import { IconButton } from "./IconButton";
 import { Toggle } from "./Toggle";
 
-type Section = "providers" | "general" | "models" | "storage" | "environment" | "dictionaries" | "agents" | "machines" | "keybinds" | "tools" | "skills" | "hooks" | "mcp";
+type Section = "providers" | "general" | "models" | "storage" | "environment" | "dictionaries" | "agents" | "machines" | "keybinds" | "tools" | "skills" | "mcp";
 const sections = [
   { id: "general" as const, label: "General", icon: Settings2 },
   { id: "models" as const, label: "Models", icon: Cpu },
@@ -21,7 +20,6 @@ const sections = [
   { id: "machines" as const, label: "Machines", icon: Server },
   { id: "dictionaries" as const, label: "Dictionaries", icon: BookOpen },
   { id: "agents" as const, label: "Agents", icon: Bot },
-  { id: "hooks" as const, label: "Hooks", icon: HookIcon },
   { id: "skills" as const, label: "Skills", icon: Sparkles }, { id: "tools" as const, label: "Tools", icon: Wrench }, { id: "mcp" as const, label: "MCP servers", icon: Blocks }
 ];
 const isBuiltInAgent = (agent: AgentProfile) => agent.name === "general";
@@ -174,7 +172,6 @@ export function SettingsView({ providerHostId = "local", settings, pendingSettin
       <section className="settings-content">
         {!matchingSections.length && <div className="empty-small" role="status">No settings match your search.</div>}
         {visibleSection === "providers" && <ProviderSettings hosts={settings.hosts} initialHostId={providerHostId} />}
-        {visibleSection === "hooks" && <HooksSettings hosts={settings.hosts} />}
         {visibleSection === "environment" && <SettingsSection title="Worktree scripts" description="Assign setup and cleanup scripts to a project and machine. Setup runs in order after creation; cleanup runs in reverse order before deletion. A failure stops the operation and keeps the worktree." headerAction={<button className="secondary-button" onClick={() => patch({ worktreeSetupScripts: [...(draft.worktreeSetupScripts ?? []), { id: uid("setup"), name: "Worktree script", script: "", cleanupScript: "", enabled: true, projectPath: "", hostId: "local" }] })}><CirclePlus size={15} />Add script</button>}>
           <p>Source workspace: <code>PIOP_SOURCE_TREE_PATH</code><br />Worktree: <code>PIOP_WORKTREE_PATH</code><br />Branch: <code>PIOP_WORKTREE_BRANCH</code></p>
           {(draft.worktreeSetupScripts ?? []).map((script, index, scripts) => {

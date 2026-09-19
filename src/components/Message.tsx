@@ -6,14 +6,13 @@ import remarkGfm from "remark-gfm";
 import type { ChatMessage } from "../types";
 import type { turnDiff } from "../lib/turnDiff";
 import { textOf, thinkingOf } from "../lib/content";
-import { HookWheel } from "./HookWheel";
-import type { HookCounts } from "../lib/hookStats";
+import { VOICE_MESSAGE } from "../lib/voiceMessages";
 import { cacheHitStats } from "../lib/messages";
 import { openExternalUrl } from "../lib/nativeTransport";
 import { IconButton } from "./IconButton";
 import { DiffViewer } from "./DiffViewer";
 
-interface Props { hookCounts?: HookCounts; message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; diff?: ReturnType<typeof turnDiff>; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
+interface Props { message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; diff?: ReturnType<typeof turnDiff>; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
 
 function nodeText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
@@ -124,7 +123,7 @@ function formatMessageTime(timestamp?: number) {
   };
 }
 
-export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = false, showActions = true, toolCount = 1, debug = false, paused = false, onBranch, onForkAndForget, onCreateWorktree, onRetry, retrying = false }: Props) {
+export function Message({ message, turnCacheUsage, diff, expanded = false, showActions = true, toolCount = 1, debug = false, paused = false, onBranch, onForkAndForget, onCreateWorktree, onRetry, retrying = false }: Props) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [branching, setBranching] = useState(false);
   const branchingRef = useRef(false);
@@ -170,6 +169,7 @@ export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = 
   const cache = cacheHitStats(turnCacheUsage ?? message.usage);
   const responseLabel = `Assistant response${message.timestamp ? ` from ${new Date(message.timestamp).toLocaleString()}` : ` ${message.id.slice(0, 8)}`}`;
   const responseTime = formatMessageTime(message.completedAt ?? message.timestamp);
+  const voiceResponse = message.customType === VOICE_MESSAGE;
   const pausedResponse = message.stopReason === "aborted" && (paused || message.errorMessage === "Response paused");
   const failure = message.stopReason === "aborted" ? (pausedResponse ? undefined : message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
   const branch = async () => {
@@ -185,20 +185,19 @@ export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = 
   return <article className={`message assistant-message ${thinking ? "reasoning-message" : ""}`} aria-label={responseLabel} title={responseTime ? `Responded ${responseTime.full}` : undefined}>
     <div className="message-body">
       {thinking && <div className="reasoning-text"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{thinking}</ReactMarkdown></div>}
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{output}</ReactMarkdown>
+      {voiceResponse ? <div className="voice-response-bubble"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{output}</ReactMarkdown>{message.streaming && <span className="stream-caret" />}</div> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{output}</ReactMarkdown>}
       {failure && <div className="message-failure" role="status"><CircleAlert size={14} /><span>{failure}</span>{onRetry && <button disabled={retrying} onClick={onRetry}>{retrying ? "Retrying…" : "Retry"}</button>}</div>}
       {pausedResponse && <div className="message-paused" role="status"><Pause size={14} /><span>Response paused</span></div>}
-      {message.streaming && <span className="stream-caret" />}
+      {message.streaming && !voiceResponse && <span className="stream-caret" />}
       {diff && <DiffViewer {...diff} />}
       {showActions && !message.streaming && (output.trim().length > 0 || onCreateWorktree) && <div className="message-actions">
-        {responseTime && <span className="message-time" title={responseTime.full}>{responseTime.short}</span>}
         <IconButton label={copyState === "copied" ? `${responseLabel} copied` : copyState === "error" ? `Copy failed for ${responseLabel.toLowerCase()}` : `Copy ${responseLabel.toLowerCase()}`} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>
         {copyState === "error" && <span className="copy-feedback" role="status">Could not copy response</span>}
         {onBranch && <button className="branch-button" aria-label={`Branch from ${responseLabel.toLowerCase()}`} title="Branch from here" disabled={branching || forgetting} onClick={() => void branch()}><GitBranch size={14} /></button>}
         {onForkAndForget && <button className="branch-button" aria-label={`Fork and forget from ${responseLabel.toLowerCase()}`} title="Fork and forget from here" disabled={branching || forgetting} onClick={() => void forkAndForget()}><Undo2 size={14} /></button>}
         {onCreateWorktree && <button className="branch-button" aria-label="Create Git worktree" title="Create Git worktree after this response" onClick={() => onCreateWorktree(message)}><FolderGit2 size={14} /></button>}
-        <HookWheel counts={hookCounts} label="Message hooks" />
         {debug && cache && <span className={`cache-hit-rate${cache.low ? " low" : ""}`} title={`${cache.cachedTokens.toLocaleString()} of ${cache.promptTokens.toLocaleString()} prompt tokens read from cache${turnCacheUsage ? " across all calls in this response" : ""}`}>Cache {cache.rate}%</span>}
+        {responseTime && <span className="message-time" title={responseTime.full}>{responseTime.short}</span>}
       </div>}
     </div>
   </article>;

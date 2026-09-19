@@ -1,6 +1,6 @@
 .mobile-navigation button { min-width: 44px; min-height: 44px; border: 0; background: transparent; color: inherit; font-size: 13px; }
 .mobile-navigation span { flex: 1; font: 24px Georgia, serif; }
-.mobile-navigation { display: none; align-items: center; gap: 8px; position: absolute; z-index: 20; top: 0; left: 0; right: 0; min-height: calc(52px + env(safe-area-inset-top)); padding: env(safe-area-inset-top) 8px 0; background: #22221f; color: #eee; border-bottom: 1px solid #38362f; }
+.mobile-navigation { display: none; align-items: center; position: absolute; z-index: 20; top: env(safe-area-inset-top); left: 8px; min-height: 52px; color: #eee; }
 html[data-mobile] .mobile-navigation { display: flex; }
 html[data-mobile] .app { padding-top: calc(52px + env(safe-area-inset-top)); }
 .mobile-sidebar-backdrop { display: none; }
@@ -11,12 +11,16 @@ html[data-mobile] .app { padding-top: calc(52px + env(safe-area-inset-top)); }
 .mobile-connect label { display: grid; gap: 8px; font-size: 14px; }
 .mobile-connect input, .mobile-connect select { width: 100%; min-height: 48px; border: 1px solid #48453e; border-radius: 9px; padding: 12px; background: #24231f; color: #eee; font-size: 16px; }
 .mobile-connect .mobile-connect-hint { font-size: 12px; }
+.mobile-connect .mobile-auto-reconnect { display: flex; align-items: center; gap: 10px; }
+.mobile-connect .mobile-auto-reconnect input { width: 20px; min-height: 20px; margin: 0; accent-color: var(--accent); }
+.mobile-host-actions { display: flex; gap: 10px; }
+.mobile-host-actions button, .mobile-connect button[type="button"] { min-height: 40px; padding: 8px 12px; border: 1px solid #48453e; border-radius: 8px; background: #24231f; color: #eee; }
 .mobile-connect [role=alert] { color: #f19b89; }
 .mobile-connect .primary-button { min-height: 48px; }
 .mobile-host-button { display: none; position: fixed; z-index: 15; bottom: max(6px, env(safe-area-inset-bottom)); left: 8px; font-size: 11px; border: 1px solid #48453e; border-radius: 5px; background: #24231f; color: #ccc; padding: 5px; }
 @media (max-width: 700px) {
   body { min-width: 0; min-height: 100dvh; }
-  .app { height: var(--mobile-height, 100dvh); padding-top: calc(52px + env(safe-area-inset-top)); padding-bottom: env(safe-area-inset-bottom); }
+  .app { height: var(--mobile-height, 100dvh); padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
   .mobile-navigation { display: flex; }
 
 
@@ -28,7 +32,7 @@ html[data-mobile] .app { padding-top: calc(52px + env(safe-area-inset-top)); }
   .chat-panes > .chat-shell, .chat-panes > .split-chat { width: 100%; }
   .chat-panes.split > * { flex: 0 0 80%; min-height: 380px; }
   .settings-shell { min-width: 0; width: 100%; }
-  .settings-header { margin-top: 0; padding: 20px 16px; min-height: 100px; }
+  .settings-header { margin-top: 0; padding: 56px 16px 20px; min-height: 100px; }
   .settings-layout { display: flex; flex-direction: column; gap: 20px; padding: 20px 16px 50px; }
   .settings-nav { flex-direction: row; flex-wrap: wrap; }
   .settings-nav button { width: auto; min-height: 44px; }
@@ -47,7 +51,7 @@ html[data-mobile] .app { padding-top: calc(52px + env(safe-area-inset-top)); }
   .message { padding-inline: 12px; }
   .message-content { min-width: 0; overflow-wrap: anywhere; }
   .message-content pre, .message-content table { max-width: 100%; overflow-x: auto; }
-  .conversation { padding: 20px 12px; }
+  .conversation { padding: 56px 12px 20px; }
   .composer-wrap, .extension-widget, .extension-status, .runtime-activity { width: calc(100% - 16px); }
   .composer { margin-inline: 0; }
   .composer-bar { flex-wrap: wrap; }

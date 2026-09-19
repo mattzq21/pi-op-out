@@ -3,7 +3,8 @@ import { lstat, open } from "node:fs/promises";
 import { isAbsolute, dirname, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext, SessionEntry, SessionHeader } from "@earendil-works/pi-coding-agent";
 
-const CACHE_LINEAGE_ENTRY = "piop-openai-cache-lineage";
+const CACHE_FORK_ENTRY = "piop-openai-cache-fork";
+const LEGACY_CACHE_LINEAGE_ENTRY = "piop-openai-cache-lineage";
 const MAX_ANCESTORS = 64;
 const MAX_CACHE_KEY_CHARS = 64;
 const MAX_SESSION_HEADER_BYTES = 64 * 1024;
@@ -30,7 +31,7 @@ function normalizeCacheKey(value: unknown): string | undefined {
 function storedLineage(entries: SessionEntry[]): string | undefined {
   for (let index = entries.length - 1; index >= 0; index--) {
     const entry = entries[index];
-    if (entry?.type !== "custom" || entry.customType !== CACHE_LINEAGE_ENTRY || !isJsonObject(entry.data)) continue;
+    if (entry?.type !== "custom" || (entry.customType !== CACHE_FORK_ENTRY && entry.customType !== LEGACY_CACHE_LINEAGE_ENTRY) || !isJsonObject(entry.data)) continue;
     const id = normalizeCacheKey(entry.data.id);
     if (id) return id;
   }
@@ -96,7 +97,7 @@ function usesOpenAIResponses(model: unknown): boolean {
     || (provider === "openai" && model.api === "openai-responses");
 }
 
-export default function openAICacheLineage(pi: ExtensionAPI): void {
+export default function openAICacheFork(pi: ExtensionAPI): void {
   let cacheLineageId: string | undefined;
 
   const wrapCodexProvider = (ctx: ExtensionContext): void => {
@@ -127,7 +128,7 @@ export default function openAICacheLineage(pi: ExtensionAPI): void {
     runtimeState.activeId = cacheLineageId;
     if (!storedLineage(ctx.sessionManager.getBranch() as SessionEntry[])) {
       try {
-        pi.appendEntry(CACHE_LINEAGE_ENTRY, { id: cacheLineageId });
+        pi.appendEntry(CACHE_FORK_ENTRY, { id: cacheLineageId });
       } catch {
         // The in-memory lineage still fixes this process even if the marker cannot be persisted.
       }

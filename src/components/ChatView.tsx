@@ -5,11 +5,10 @@ import type { NativeTransport } from "../lib/nativeTransport";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { ChevronRight, FolderGit2, LoaderCircle, X } from "lucide-react";
 import type { AgentProfile, AgentState, ChatMessage, ComposerUpload, GitDiffSnapshots, ImageAttachment, Model, PromptDictionary, SlashCommand } from "../types";
-import { HOOK_STATS_KEY, messageHookCounts, parseHookStats, type HookCounts } from "../lib/hookStats";
 import { Message } from "./Message";
 import { Composer } from "./Composer";
 import { PromptContextBar } from "./PromptContextBar";
-import { textOf, thinkingOf } from "../lib/content";
+import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
 import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 import { cacheHitStats } from "../lib/messages";
 import { turnDiff } from "../lib/turnDiff";
@@ -51,7 +50,6 @@ export function ChatView(props: Props) {
   const turns = useMemo(() => groupTurns(messages), [messages]);
   const sessionUsage = useMemo(() => props.messages.reduce((total, message) => ({ input: total.input + (message.usage?.input ?? 0), cacheRead: total.cacheRead + (message.usage?.cacheRead ?? 0), cacheWrite: total.cacheWrite + (message.usage?.cacheWrite ?? 0) }), { input: 0, cacheRead: 0, cacheWrite: 0 }), [props.messages]);
   const sessionCache = cacheHitStats(sessionUsage);
-  const hookStats = useMemo(() => parseHookStats(props.statuses[HOOK_STATS_KEY]), [props.statuses[HOOK_STATS_KEY]]);
   const [submittedMessage, setSubmittedMessage] = useState<ChatMessage>();
   const send: Props["onSend"] = async (text, behavior, images = []) => {
     if (!ownsConversation || props.controlsDisabled) return false;
@@ -87,7 +85,7 @@ export function ChatView(props: Props) {
     } catch { return []; }
   }, [mcpLoading]);
   const activity = mcpLoading ? undefined : props.state.activity;
-  const statuses = Object.entries(props.statuses).filter(([key]) => ![HOOK_STATS_KEY, "pi-desktop-fast-mode", "pi-desktop-mcp-loading"].includes(key)).map(([, text]) => text);
+  const statuses = Object.entries(props.statuses).filter(([key]) => !["pi-desktop-fast-mode", "pi-desktop-mcp-loading"].includes(key)).map(([, text]) => text);
   const projectName = props.projectCwd?.split(/[\\/]/).filter(Boolean).at(-1);
   const retryable = ownsConversation && !props.controlsDisabled && !props.state.isStreaming && !props.state.isPaused && !props.state.isPausing;
   const abortedTurn = retryable ? findReplaceableAbortedTurn(props.messages) : undefined;
@@ -165,7 +163,7 @@ export function ChatView(props: Props) {
         lastScrollTop.current = element.scrollTop;
       }}><div className="conversation">
       {!messages.length && !mcpLoading && <div className="empty-chat"><span>πop</span></div>}
-      {turns.map((turn, index) => <ConversationTurn key={`${turn[0]?.timestamp ?? turn[0]?.id ?? "turn"}:${index}`} messages={turn} hookCounts={messageHookCounts(turn, hookStats)} gitDiffs={props.gitDiffs} cwd={props.projectCwd} debug={props.debug ?? false} active={props.state.isStreaming && index === turns.length - 1} retryable={retryable && index === turns.length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index === turns.length - 1} onRetry={onRetry} onBranch={onBranch} onForkAndForget={props.onForkAndForget ? onForkAndForget : undefined} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} />)}
+      {turns.map((turn, index) => <ConversationTurn key={`${turn[0]?.timestamp ?? turn[0]?.id ?? "turn"}:${index}`} messages={turn} gitDiffs={props.gitDiffs} cwd={props.projectCwd} debug={props.debug ?? false} active={props.state.isStreaming && index === turns.length - 1} retryable={retryable && index === turns.length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index === turns.length - 1} onRetry={onRetry} onBranch={onBranch} onForkAndForget={props.onForkAndForget ? onForkAndForget : undefined} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} />)}
       {mcpLoading && <section className="mcp-pending-turn" aria-label="Message waiting for MCP" aria-busy="true">
         {submittedMessage && <div className="mcp-pending-message"><Message message={submittedMessage} showActions={false} /></div>}
         <div className="mcp-loading-list" role="status">{props.debug ? loadingServers.map((server) => <div className="mcp-loading" key={server.id}><LoaderCircle className="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading {server.name}</span></div>) : <div className="mcp-loading"><LoaderCircle className="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading MCPs</span></div>}</div>
@@ -173,7 +171,7 @@ export function ChatView(props: Props) {
       <div className="scroll-anchor" />
     </div></div>
     {selectionBtwTip && <button type="button" className={`selection-btw-tip${selectionBtwTip.below ? " below" : ""}${selectionBtwError ? " error" : ""}`} style={{ left: selectionBtwTip.left, top: selectionBtwTip.top }} aria-label="Ask about selected text in a side chat with /btw" aria-live="polite" disabled={askingSelection} onPointerDown={(event) => event.preventDefault()} onClick={() => void askSelectionInBtw()}><span>{askingSelection ? "Opening side chat…" : selectionBtwError ? "Could not open side chat" : "Ask in side chat"}</span><kbd>/btw</kbd></button>}
-    {!props.readOnly && <div ref={composerStack} className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.filter((line) => typeof line === "string").map((line, index) => <div key={index}>{line}</div>)}</div>} {statuses.length > 0 && <div className="extension-status">{statuses.join(" · ")}</div>}{activity && <div className="runtime-activity" role="status">{activity}</div>}{!messages.length && props.state.messageCount === 0 && <div className="new-chat-project"><div className="project-picker"><button type="button" className={projectName ? "selected" : undefined} aria-label={projectName ? `Selected project: ${projectName}` : "Choose project"} title={props.projectCwd} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName ?? "Choose project"}</button>{projectName && props.onClearProject && <button type="button" className="clear-project" aria-label="Clear project" title="Clear project" disabled={props.controlsDisabled || !ownsConversation} onClick={props.onClearProject}><X size={14} /></button>}</div></div>}{!ownsConversation && <div className="conversation-ownership-banner"><div role="status"><p>This conversation is read-only on this client.</p><button type="button" disabled={takingOwnership} onClick={() => void takeOwnership()}>{takingOwnership ? "Taking ownership…" : "Take ownership"}</button>{ownershipError && <p role="alert">{ownershipError}</p>}</div></div>}<div className="composer-interaction" inert={!ownsConversation}><Composer voiceControls={props.voiceTransport && <VoiceControls transport={props.voiceTransport} state={props.state} messages={messages} disabled={props.controlsDisabled || !ownsConversation} />} streaming={props.state.isStreaming} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} pendingMessages={props.state.pendingMessages} onChangePending={props.onChangePending} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} agentLocked={props.agentLocked} agentSaved={props.agentSaved} agentUnavailable={props.agentUnavailable} dictionaries={props.dictionaries} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionHooks={hookStats?.other} sessionCache={props.debug ? sessionCache : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled || !ownsConversation} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn ? { id: `${abortedTurn.assistant.timestamp ?? abortedTurn.assistant.id}:${abortedTurn.prompt}`, value: abortedTurn.prompt } : undefined} onSend={send} onAbort={props.onAbort} onPause={props.onPause} onResume={props.onResume} onOpenTerminal={props.onOpenTerminal} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div></div>}
+    {!props.readOnly && <div ref={composerStack} className="composer-stack">{props.widgets.length > 0 && <div className="extension-widget">{props.widgets.filter((line) => typeof line === "string").map((line, index) => <div key={index}>{line}</div>)}</div>} {statuses.length > 0 && <div className="extension-status">{statuses.join(" · ")}</div>}{activity && <div className="runtime-activity" role="status">{activity}</div>}{!messages.length && props.state.messageCount === 0 && <div className="new-chat-project"><div className="project-picker"><button type="button" className={projectName ? "selected" : undefined} aria-label={projectName ? `Selected project: ${projectName}` : "Choose project"} title={props.projectCwd} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName ?? "Choose project"}</button>{projectName && props.onClearProject && <button type="button" className="clear-project" aria-label="Clear project" title="Clear project" disabled={props.controlsDisabled || !ownsConversation} onClick={props.onClearProject}><X size={14} /></button>}</div></div>}{!ownsConversation && <div className="conversation-ownership-banner"><div role="status"><p>This conversation is read-only on this client.</p><button type="button" disabled={takingOwnership} onClick={() => void takeOwnership()}>{takingOwnership ? "Taking ownership…" : "Take ownership"}</button>{ownershipError && <p role="alert">{ownershipError}</p>}</div></div>}<div className="composer-interaction" inert={!ownsConversation}><Composer voiceControls={props.voiceTransport && <VoiceControls transport={props.voiceTransport} state={props.state} messages={messages} disabled={props.controlsDisabled || !ownsConversation} />} streaming={props.state.isStreaming} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} pendingMessages={props.state.pendingMessages} onChangePending={props.onChangePending} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} agentLocked={props.agentLocked} agentSaved={props.agentSaved} agentUnavailable={props.agentUnavailable} dictionaries={props.dictionaries} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug ? sessionCache : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled || !ownsConversation} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn ? { id: `${abortedTurn.assistant.timestamp ?? abortedTurn.assistant.id}:${abortedTurn.prompt}`, value: abortedTurn.prompt } : undefined} onSend={send} onAbort={props.onAbort} onPause={props.onPause} onResume={props.onResume} onOpenTerminal={props.onOpenTerminal} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div></div>}
     </div>
   </main>;
 }
@@ -200,7 +198,7 @@ function formatWorkedFor(startedAt?: number, completedAt?: number) {
 function compactCompletedTools(messages: ChatMessage[], groupRepeated = true) {
   return messages.reduce<Array<{ message: ChatMessage; count: number }>>((runs, message) => {
     const hasToolCall = Array.isArray(message.content) && message.content.some((part) => part.type === "toolCall");
-    if (message.role === "assistant" && textOf(message.content).trim().length === 0 && thinkingOf(message.content).trim().length === 0 && (hasToolCall || (!message.streaming && !message.stopReason))) return runs;
+    if (message.role === "assistant" && !hasVisibleText(textOf(message.content)) && !hasVisibleText(thinkingOf(message.content)) && message.stopReason !== "aborted" && message.stopReason !== "error" && (hasToolCall || !message.streaming)) return runs;
     const previous = runs.at(-1);
     const status = message.toolStatus ?? "done";
     if (groupRepeated && message.role === "tool" && status === "done" && previous?.message.role === "tool" && (previous.message.toolStatus ?? "done") === "done" && (previous.message.toolName || "tool") === (message.toolName || "tool")) {
@@ -216,9 +214,9 @@ function renderMessages(messages: ChatMessage[], expanded: boolean, compact = tr
   return compactCompletedTools(messages, compact && !debug).map(({ message, count }) => <Message key={message.id} message={message} toolCount={count} showActions={showActions} expanded={expanded} debug={debug} paused={paused} />);
 }
 
-type ConversationTurnProps = { hookCounts?: HookCounts; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; cwd?: string; debug: boolean; active: boolean; retryable: boolean; paused: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"]; onForkAndForget?: Props["onForkAndForget"]; onCreateWorktree?: Props["onCreateWorktree"] };
+type ConversationTurnProps = { messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; cwd?: string; debug: boolean; active: boolean; retryable: boolean; paused: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"]; onForkAndForget?: Props["onForkAndForget"]; onCreateWorktree?: Props["onCreateWorktree"] };
 
-function ConversationTurnView({ messages, hookCounts, gitDiffs, cwd, debug, active, retryable, paused, onRetry, onBranch, onForkAndForget, onCreateWorktree }: ConversationTurnProps) {
+function ConversationTurnView({ messages, gitDiffs, cwd, debug, active, retryable, paused, onRetry, onBranch, onForkAndForget, onCreateWorktree }: ConversationTurnProps) {
   const changes = useMemo(() => {
     const final = [...messages].reverse().find((message) => message.role === "assistant" && (textOf(message.content).trim() || message.stopReason === "aborted" || message.stopReason === "error"));
     return turnDiff(messages, final ? gitDiffs?.[final.id] : undefined, cwd);
@@ -242,6 +240,8 @@ function ConversationTurnView({ messages, hookCounts, gitDiffs, cwd, debug, acti
     return [{ ...reasoningMessage, id: `${message.id}:reasoning`, content: [{ type: "thinking" as const, thinking: finalThinking }], stopReason: undefined, errorMessage: undefined }];
   });
   const userMessages = messages.filter((message) => message.role === "user");
+  const workContent = renderMessages(intermediate, true, true, debug, paused, false);
+  const reasoningOnly = compactCompletedTools(intermediate).every(({ message }) => message.role === "assistant" && hasVisibleText(thinkingOf(message.content)) && !hasVisibleText(textOf(message.content)) && message.stopReason !== "error" && message.stopReason !== "aborted");
   const finalMessage = finalIndex >= 0 ? { ...messages[finalIndex], content: textOf(messages[finalIndex].content) } : undefined;
   const turnCacheUsage = messages.reduce((total, message) => {
     if (message.role === "assistant" && message.usage) {
@@ -261,8 +261,8 @@ function ConversationTurnView({ messages, hookCounts, gitDiffs, cwd, debug, acti
     {userMessages.map((message) => <Message key={message.id} message={message} debug={debug} />)}
     {debug && promptContext && <PromptContextBar context={promptContext} />}
     {active || paused ? <div className="active-work-content">{renderMessages(messages.filter((message) => message.role !== "user"), true, false, debug, paused)}</div> : <>
-    {intermediate.length > 0 && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}<ChevronRight size={12} className="work-group-chevron" aria-hidden="true" /></summary><div className="work-group-content">{renderMessages(intermediate, true, true, debug, paused, false)}</div></details>}
-    {finalMessage && <Message message={finalMessage} hookCounts={hookCounts} turnCacheUsage={turnCacheUsage} diff={changes} debug={debug} paused={paused} onBranch={onBranch} onForkAndForget={onForkAndForget} onCreateWorktree={worktreeResponse} retrying={retrying} onRetry={retryPrompt ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(onRetry(retryPrompt, undefined, retryImages)).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
+    {workContent.length > 0 && <details className="work-group"><summary>{reasoningOnly ? "Reasoning" : workedFor ? `Worked for ${workedFor}` : "Work"}<ChevronRight size={12} className="work-group-chevron" aria-hidden="true" /></summary><div className={`work-group-content${reasoningOnly ? " reasoning-group-content" : ""}`}>{workContent}</div></details>}
+    {finalMessage && <Message message={finalMessage} turnCacheUsage={turnCacheUsage} diff={changes} debug={debug} paused={paused} onBranch={onBranch} onForkAndForget={onForkAndForget} onCreateWorktree={worktreeResponse} retrying={retrying} onRetry={retryPrompt ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(onRetry(retryPrompt, undefined, retryImages)).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
     {retryError && <div className="message-failure retry-error" role="alert">Retry failed: {retryError}</div>}
     {renderMessages(messages.filter((message) => message.role === "system"), false)}
     </>}
@@ -271,7 +271,6 @@ function ConversationTurnView({ messages, hookCounts, gitDiffs, cwd, debug, acti
 }
 
 const ConversationTurn = memo(ConversationTurnView, (previous, next) => previous.active === next.active
-  && previous.hookCounts?.completed === next.hookCounts?.completed && previous.hookCounts?.failed === next.hookCounts?.failed
   && previous.retryable === next.retryable && previous.paused === next.paused && previous.debug === next.debug && previous.gitDiffs === next.gitDiffs
   && previous.onRetry === next.onRetry && previous.onBranch === next.onBranch
   && previous.onForkAndForget === next.onForkAndForget

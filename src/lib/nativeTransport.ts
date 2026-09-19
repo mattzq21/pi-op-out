@@ -33,9 +33,6 @@ export interface GitWorktreeRemoval { branch?: string; branchDeleted: boolean; w
 export const openExternalUrl = (url: string) => call<void>("open_external_url", { url });
 export const loadStorageReport = () => call<StorageReport>("storage_report");
 export const deleteArchivedConversation = (sessionPath: string, hostId = "local") => call<void>("delete_archived_session", { sessionPath, hostId });
-export interface HookListing { directory: string; exists: boolean; hooks: Array<{ name: string; path: string; entry: string }> }
-export const listHooks = (hostId: string) => call<HookListing>("list_hooks", { hostId });
-export const openHooksDirectory = (cwd: string) => call<void>("open_project_directory", { cwd, hostId: "local" });
 
 export class NativeTransport {
   private owns = true;

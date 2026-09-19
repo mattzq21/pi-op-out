@@ -326,8 +326,6 @@ test('native command adapters send explicit host, path and terminal arguments an
     ['openExternalUrl', ['https://example.com'], 'open_external_url', { url: 'https://example.com' }],
     ['loadStorageReport', [], 'storage_report', undefined],
     ['deleteArchivedConversation', ['/session'], 'delete_archived_session', { sessionPath: '/session', hostId: 'local' }],
-    ['listHooks', ['remote'], 'list_hooks', { hostId: 'remote' }],
-    ['openHooksDirectory', ['/hooks'], 'open_project_directory', { cwd: '/hooks', hostId: 'local' }],
   ];
   for (const [method, args, command, expected] of functions) {
     responses.set(command, { result: command });
