@@ -3732,7 +3732,7 @@ fn bundled_extension_installers_refresh_private_files_at_the_expected_paths() {
     let installers: [(Installer, &str, &str); 4] = [
         (prepare_session_broker, "session-broker.ts", include_str!("../resources/session-broker.ts")),
         (prepare_trace_reader, "piop-trace-reader.ts", include_str!("../resources/trace-reader.ts")),
-        (prepare_openai_cache_lineage_extension, "piop-openai-cache-lineage.ts", include_str!("../../extensions/piop-openai-cache-lineage/index.ts")),
+        (prepare_openai_cache_fork_extension, "piop-openai-cache-fork.ts", include_str!("../../extensions/piop-openai-cache-fork/index.ts")),
         (prepare_codex_web_search_extension, "piop-codex-web-search.ts", include_str!("../../extensions/piop-codex-web-search/index.ts")),
     ];
     for (install, relative, expected) in installers {
