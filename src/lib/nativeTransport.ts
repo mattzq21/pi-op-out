@@ -32,7 +32,10 @@ export interface GitWorktree { branch: string; path: string; }
 export interface GitWorktreeRemoval { branch?: string; branchDeleted: boolean; warning?: string; }
 
 export const openExternalUrl = (url: string) => call<void>("open_external_url", { url });
-export const loadStorageReport = () => call<StorageReport>("storage_report");
+export const loadStorageReport = async (hostId?: string) => {
+  const report = await call<StorageReport>(hostId === undefined ? "storage_report" : "host_storage_report", hostId === undefined ? undefined : { hostId });
+  return hostId === undefined ? report : { hosts: report.hosts.map((host) => ({ ...host, hostId })) };
+};
 export const deleteArchivedConversation = (sessionPath: string, hostId = "local") => call<void>("delete_archived_session", { sessionPath, hostId });
 
 export class NativeTransport {
@@ -285,6 +288,7 @@ export class NativeTransport {
   async gitBranch() { if (!this.cwd) return null; const branch = await call<unknown>("git_branch", { cwd: this.cwd, hostId: this.hostId }); return typeof branch === "string" ? branch : null; }
   async loadSettings() { const settings = withClientSettings(await call<AppSettings>("load_app_settings")); saveClientSettings(settings); return settings; }
   loadHostSettings() { return call<AppSettings>("load_host_settings", { hostId: this.hostId }); }
+  saveHostSettings(settings: AppSettings, agentsChanged = false) { return call<SettingsChange>("save_host_settings", { hostId: this.hostId, settings, agentsChanged }); }
   loadCodexUsage() { return call<CodexUsage>("codex_usage"); }
   loadOpencodeGoUsage() { return call<OpencodeGoUsage>("opencode_go_usage"); }
   saveSettings(settings: AppSettings, reconnect = true, agentHostId?: string) {

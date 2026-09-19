@@ -33,6 +33,17 @@ async fn dispatch_local(app: AppHandle, owner: String, command: String, args: Va
     match command.as_str() {
         "broker_request" => tokio::task::spawn_blocking(move || peers::local_broker_request(&app, &argument::<String>(&args, "path")?, &argument::<Value>(&args, "body")?)).await.map_err(|error| error.to_string())?,
         "load_host_settings" => tokio::task::spawn_blocking(move || serde_json::to_value(load_app_settings(app)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
+        "save_host_settings" => tokio::task::spawn_blocking(move || {
+            let mut settings: AppSettings = argument(&args, "settings")?;
+            let previous = load_app_settings(app.clone())?;
+            settings.keybindings = previous.keybindings;
+            settings.hidden_models = previous.hidden_models;
+            settings.known_models = previous.known_models;
+            settings.debug_mode = previous.debug_mode;
+            let agents_changed: bool = argument(&args, "agentsChanged")?;
+            save_app_settings(app, settings, agents_changed.then(|| "local".into()))
+        }).await.map_err(|error| error.to_string())?,
+        "host_storage_report" => tokio::task::spawn_blocking(move || serde_json::to_value(StorageReport { hosts: vec![inspect_storage(None)?] }).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
         "provider_auth" => tokio::task::spawn_blocking(move || provider_auth::for_owner(app, owner, argument(&args, "hostId")?, argument(&args, "request")?)).await.map_err(|error| error.to_string())?,
         "open_project_directory" => tokio::task::spawn_blocking(move || open_project_directory(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?).map(|_| Value::Null)).await.map_err(|error| error.to_string())?,
         "voice_configuration" => voice_configuration(app, argument(&args, "runtimeId")?).await,

@@ -434,6 +434,11 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 
 .settings-nav .settings-search { margin: 0 0 12px; flex-shrink: 0; }
 .settings-nav-group { display: flex; flex-direction: column; gap: 3px; }
+.settings-target { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; padding: 20px 32px 0; }
+.settings-workspace { order: 2; flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.settings-workspace > [role="alert"], .settings-workspace > [role="status"] { padding: 0 32px; }
+.settings-target .field { min-width: 220px; margin: 0; }
+.settings-target > span { color: var(--muted); font-size: 12px; }
 .settings-nav-group + .settings-nav-group { margin-top: 18px; }
 .settings-nav-group > .eyebrow { margin: 0 10px 5px; }
 @media (max-width: 1050px) { .settings-nav-group { width: 100%; flex-direction: row; flex-wrap: wrap; }.settings-nav-group > .eyebrow { width: 100%; }.settings-nav-group + .settings-nav-group { margin-top: 10px; } }
