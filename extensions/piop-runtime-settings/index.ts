@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { loadAccountProviders } from "./provider-accounts.mjs";
+import opencodeGoBroker from "../piop-opencode-go-broker/index.ts";
 
 type Settings = {
   tools: string[];
@@ -30,6 +31,7 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
     for (const [id, provider] of accountProviders) if (!existing.has(id)) pi.registerProvider(provider);
   };
   await refreshAccounts();
+  opencodeGoBroker(pi);
   processState[key] ??= validate(JSON.parse(await readFile(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "runtime-settings.json"), "utf8")));
   const current = () => processState[key]!;
   const unsubscribe = pi.events.on("piop:runtime-settings", (value) => { (value as { settings?: Settings }).settings = structuredClone(current()); });

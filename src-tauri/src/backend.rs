@@ -825,8 +825,12 @@ fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf, String> {
     let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let path = dir.join("runtime-settings.ts");
+    let go_broker_dir = dir.join("piop-opencode-go-broker");
+    ensure_private_dir(&go_broker_dir)?;
+    atomic_write_private(&go_broker_dir.join("index.ts"), include_str!("../../extensions/piop-opencode-go-broker/index.ts").as_bytes())?;
+    atomic_write_private(&go_broker_dir.join("state.mjs"), include_str!("../../extensions/piop-opencode-go-broker/state.mjs").as_bytes())?;
     atomic_write_private(&dir.join("provider-accounts.mjs"), include_str!("../../extensions/piop-runtime-settings/provider-accounts.mjs").as_bytes())?;
-    atomic_write_private(&path, include_str!("../../extensions/piop-runtime-settings/index.ts").as_bytes())?;
+    atomic_write_private(&path, include_str!("../../extensions/piop-runtime-settings/index.ts").replace("../piop-opencode-go-broker/index.ts", "./piop-opencode-go-broker/index.ts").as_bytes())?;
     atomic_write_private(&dir.join("runtime-settings.json"), &serde_json::to_vec(&runtime_settings(settings)).map_err(|error| error.to_string())?)?;
     Ok(path)
 }
@@ -2294,7 +2298,9 @@ fn remote_broker_command(host: &RemoteHost, local_port: u16, remote_port: u16) -
 fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<(), String> {
     let rtk_extension = shell_quote(include_str!("../../extensions/piop-rtk/rtk.ts"));
     let rtk_license = shell_quote(include_str!("../../extensions/piop-rtk/LICENSE"));
-    let runtime_settings_extension = shell_quote(include_str!("../../extensions/piop-runtime-settings/index.ts"));
+    let runtime_settings_extension = shell_quote(&include_str!("../../extensions/piop-runtime-settings/index.ts").replace("../piop-opencode-go-broker/index.ts", "./piop-opencode-go-broker/index.ts"));
+    let go_broker_extension = shell_quote(include_str!("../../extensions/piop-opencode-go-broker/index.ts"));
+    let go_broker_state = shell_quote(include_str!("../../extensions/piop-opencode-go-broker/state.mjs"));
     let provider_accounts = shell_quote(include_str!("../../extensions/piop-runtime-settings/provider-accounts.mjs"));
     let runtime_settings_config = shell_quote(&serde_json::to_string(&runtime_settings(settings)).map_err(|error| error.to_string())?);
     let broker = shell_quote(include_str!("../resources/session-broker.ts"));
@@ -2319,6 +2325,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
      let remote = format!(r#"{remote} && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit" && printf %s {session_cost_limit} > "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit/index.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit/index.ts""#);
     let remote = format!(r#"{remote} && printf %s {runtime_settings_extension} > "$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts" && printf %s {runtime_settings_config} > "$HOME/{STORAGE_DIRECTORY}/runtime-settings.json" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts" "$HOME/{STORAGE_DIRECTORY}/runtime-settings.json""#);
     let remote = format!(r#"{remote} && printf %s {provider_accounts} > "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs""#);
+    let remote = format!(r#"{remote} && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/piop-opencode-go-broker" && printf %s {go_broker_extension} > "$HOME/{STORAGE_DIRECTORY}/piop-opencode-go-broker/index.ts" && printf %s {go_broker_state} > "$HOME/{STORAGE_DIRECTORY}/piop-opencode-go-broker/state.mjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-opencode-go-broker/index.ts" "$HOME/{STORAGE_DIRECTORY}/piop-opencode-go-broker/state.mjs""#);
     let remote = format!(r#"{remote} && printf %s {rtk_extension} > "$HOME/{STORAGE_DIRECTORY}/rtk.ts" && printf %s {rtk_license} > "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/rtk.ts" "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE""#);
     let mut remote = remote;
     for (name, content) in FILE_CHANGE_ASSETS {
