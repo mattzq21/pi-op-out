@@ -168,17 +168,8 @@ impl Drop for BusyAgent {
     fn drop(&mut self) { if let Ok(mut busy) = self.busy.lock() { busy.remove(&self.key); } }
 }
 
-#[derive(Clone)]
 struct SessionClaim {
-    path: Arc<PathBuf>,
-    active: Arc<AtomicBool>,
-}
-
-impl Drop for SessionClaim {
-    fn drop(&mut self) {
-        self.active.store(false, Ordering::SeqCst);
-        let _ = fs::write(&*self.path, b"released");
-    }
+    _file: fs::File,
 }
 
 fn claims_dir() -> Result<PathBuf, String> {
@@ -187,34 +178,25 @@ fn claims_dir() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn parse_session_claim(body: &[u8]) -> bool {
-    serde_json::from_slice::<Value>(body).ok().and_then(|value| value.get("taken").and_then(Value::as_bool)).unwrap_or(false)
-}
-
-fn claim_taken(path: &Path) -> bool {
-    fs::read(path).map(|body| parse_session_claim(&body)).unwrap_or(true)
-}
-
-/// Claim a saved conversation across desktop and daemon backends on this host.
-/// Remote hosts coordinate through their own backend. The claim is released on
-/// drop, including process exit. Claims are shared between windows of the same
-/// backend and stale claims are cleaned up opportunistically.
 fn claim_session(broker: &BrokerRuntime, session_path: &str) -> Result<Arc<SessionClaim>, String> {
     let canonical = fs::canonicalize(session_path).map_err(|error| error.to_string())?;
     let key = canonical.to_string_lossy().into_owned();
-    if let Some(claim) = broker.session_claims.lock().map_err(|_| "Session broker lock was poisoned")?.get(&key).and_then(std::sync::Weak::upgrade) { return Ok(claim); }
+    let mut claims = broker.session_claims.lock().map_err(|_| "Session broker lock was poisoned")?;
+    if let Some(claim) = claims.get(&key).and_then(std::sync::Weak::upgrade) { return Ok(claim); }
     let dir = claims_dir()?;
     let name = format!("{}.json", hash_claim_key(canonical.to_string_lossy().as_bytes()));
     let file = dir.join(&name);
-    if !claim_taken(&file) && fs::remove_file(&file).is_ok() { if let Ok(entries) = fs::read_dir(&dir) { for entry in entries.flatten() { if claim_taken(&entry.path()) { let _ = fs::remove_file(entry.path()); } } } }
-    let body = json!({"path": canonical.to_string_lossy(), "taken": true}).to_string();
-    let mut options = OpenOptions::new(); options.write(true).create_new(true);
+    // Keep the inode in place: unlinking a locked file would permit a second owner.
+    let mut options = OpenOptions::new(); options.read(true).write(true).create(true).truncate(false);
     #[cfg(unix)]
     { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
-    let mut handle = options.open(&file).map_err(|_| "This conversation is open in another window or daemon")?;
-    handle.write_all(body.as_bytes()).and_then(|_| handle.sync_all()).map_err(|error| format!("Could not create a session claim: {error}"))?;
-    let claim = Arc::new(SessionClaim { path: file.into(), active: Arc::new(AtomicBool::new(true)) });
-    broker.session_claims.lock().map_err(|_| "Session broker lock was poisoned")?.insert(key, Arc::downgrade(&claim));
+    let handle = options.open(&file).map_err(|error| format!("Could not open a session claim: {error}"))?;
+    handle.try_lock().map_err(|error| match error {
+        fs::TryLockError::WouldBlock => "This conversation is open in another window or daemon".to_string(),
+        fs::TryLockError::Error(error) => format!("Could not lock the session claim: {error}"),
+    })?;
+    let claim = Arc::new(SessionClaim { _file: handle });
+    claims.insert(key, Arc::downgrade(&claim));
     Ok(claim)
 }
 
@@ -2548,9 +2530,13 @@ fn pi_command(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRun
         command["sessionPath"] = json!(path);
     }
     let result = execute_pi_command(&runtime, &runtime_id, command)?;
+    if command_type == "switch_session" && result["cancelled"].as_bool() != Some(true) {
+        if let Some(claim) = switch_claim {
+            if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(&runtime_id) { process._session_claim = Some(claim); }
+        }
+    }
     if command_type == "voice_history" {
         if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(&runtime_id) { process.blank_cleanup.submitted = true; }
-        if let Some(claim) = switch_claim { if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(&runtime_id) { process._session_claim = Some(claim); } }
     }
     let state = if command_type == "get_snapshot" { Some(&result["state"]) } else if command_type == "get_state" { Some(&result) } else { None };
     if let Some(state) = state {
