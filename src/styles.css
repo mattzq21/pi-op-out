@@ -95,7 +95,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .user-message { display: flex; flex-direction: column; align-items: flex-end; gap: 0; }
 .user-message .message-body { width: fit-content; max-width: min(82%, 600px); padding: 10px 13px; border: 1px solid #ddd9d1; border-radius: 12px 4px 12px 12px; background: #efede7; font-weight: 500; color: var(--ink); }
 .voice-response-bubble { width: fit-content; max-width: min(82%, 600px); padding: 10px 13px; border: 1px solid #ddd9d1; border-radius: 4px 12px 12px 12px; background: #efede7; font-weight: 500; color: var(--ink); }
-.app.dark .voice-response-bubble { border-color: #48453e; background: #302e29; }
+.app.dark .voice-response-bubble { border-color: #302e29; background: #1d1c19; }
 .message-body table { display: block; max-width: 100%; overflow-x: auto; }
 .skill-reference { display: inline-block; padding: 2px 6px; border-radius: 5px; background: var(--accent-08); color: var(--accent); font: 11px "DM Sans"; }.skill-reference + p, .skill-reference + ul, .skill-reference + ol { margin-top: 8px; }
 .literal-skill-content { white-space: pre-wrap; }
