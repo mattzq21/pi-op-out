@@ -8,6 +8,10 @@ export function providerAccountLabel(provider: string) {
   const account = providerAccount(provider);
   return `${account.provider} #${account.number}`;
 }
-export function accountModelName(model: Pick<Model, "provider" | "id" | "name">) {
-  return `${(model.name || model.id).replace(/ #\d+$/, "")} #${providerAccount(model.provider).number}`;
+type NamedModel = Pick<Model, "provider" | "id" | "name">;
+export function accountModelName(model: NamedModel, models: readonly NamedModel[]) {
+  const account = providerAccount(model.provider);
+  const name = (model.name || model.id).replace(/ #\d+$/, "");
+  const duplicate = models.some((candidate) => candidate.id === model.id && candidate.provider !== model.provider && providerAccount(candidate.provider).provider === account.provider);
+  return duplicate ? `${name} #${account.number}` : name;
 }

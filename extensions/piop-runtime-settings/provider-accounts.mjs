@@ -47,8 +47,8 @@ export async function allocateProviderAccount(authPath, providerId, occupied) {
 }
 
 export function accountProvider(base, record) {
-  const model = (value) => ({ ...value, provider: record.id, name: `${value.name || value.id} #${record.number}` });
-  const original = (value) => ({ ...value, provider: base.id, name: value.name?.replace(/ #\d+$/, '') });
+  const model = (value) => ({ ...value, provider: record.id });
+  const original = (value) => ({ ...value, provider: base.id });
   // No environment fallback for extra accounts: a missing login must never use #1's key.
   const apiKey = base.auth.apiKey && { ...base.auth.apiKey, resolve: (input) => input.credential ? base.auth.apiKey.resolve(input) : undefined };
   if (apiKey?.check) apiKey.check = (input) => input.credential ? base.auth.apiKey.check(input) : undefined;
