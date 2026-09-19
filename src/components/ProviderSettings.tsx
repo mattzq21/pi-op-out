@@ -7,6 +7,16 @@ import { openExternalUrl } from "../lib/nativeTransport";
 import { useProviderAuth, type AuthFlow, type AuthNotice, type ProviderAccount } from "../lib/providerAuth";
 
 type AuthControls = ReturnType<typeof useProviderAuth>;
+type ProviderRow = ProviderAccount & { rowKey: string; addNew?: boolean };
+
+function providerRows(provider: ProviderAccount): ProviderRow[] {
+  if (provider.methods.length < 2) return [{ ...provider, rowKey: provider.id }];
+  return provider.methods.filter((method) => provider.number === 1 || !provider.storedType || method.type === provider.storedType).map((method) => {
+    const storedType = provider.storedType === method.type ? provider.storedType : undefined;
+    const configured = provider.configured && (provider.storedType ? !!storedType : method.type === "api_key");
+    return { ...provider, rowKey: `${provider.id}:${method.type}`, name: `${method.name} #${provider.number}`, configured, source: configured ? provider.source : undefined, storedType, methods: [method], addNew: !!provider.storedType && !storedType };
+  });
+}
 const localHostLabel = isMobile ? "Connected daemon" : "This computer";
 function selectedHostName(hosts: RemoteHost[], hostId: string) {
   return hostId === "local" ? localHostLabel : hosts.find((host) => host.id === hostId)?.name || hostId;
@@ -54,7 +64,7 @@ export function ProviderSettings({ hosts, initialHostId = "local" }: { hosts: Re
   const disabled = auth.working || active;
   useEffect(() => { if (hostId !== "local" && !hosts.some((host) => host.id === hostId)) setHostId("local"); }, [hostId, hosts]);
   const hostName = selectedHostName(hosts, hostId);
-  const providers = auth.providers.filter((provider) => `${provider.name} ${provider.id}`.toLowerCase().includes(filter.toLowerCase().trim()))
+  const providers = auth.providers.flatMap(providerRows).filter((provider) => `${provider.name} ${provider.id}`.toLowerCase().includes(filter.toLowerCase().trim()))
     .sort((left, right) => Number(right.configured) - Number(left.configured));
   return <div className="settings-section provider-settings">
     <div className="section-title"><div><h2>Providers</h2><p>Sign in to providers on the machine running Pi. Credentials stay on that host and remain available after you disconnect.</p></div></div>
@@ -82,10 +92,10 @@ function LoginPanel({ flow, auth }: { flow: AuthFlow; auth: AuthControls }) {
   </div>;
 }
 
-function ProviderList({ providers, auth, disabled }: { providers: ProviderAccount[]; auth: AuthControls; disabled: boolean }) {
-  return <><div className="config-list">{providers.map((provider) => <div className="provider-account" key={provider.id}>
+function ProviderList({ providers, auth, disabled }: { providers: ProviderRow[]; auth: AuthControls; disabled: boolean }) {
+  return <><div className="config-list">{providers.map((provider) => <div className="provider-account" key={provider.rowKey}>
       <div><strong>{provider.name}</strong><small>{provider.configured ? <>Configured{provider.source && <> · <span className={provider.source === "stored" ? "provider-stored" : undefined}>{provider.source}</span></>}</> : "Not configured"}</small></div>
-      <div className="provider-account-actions">{!provider.storedType && provider.methods.filter((method) => method.interactive).map((method) => <button key={method.type} disabled={disabled || auth.loading} onClick={() => void auth.begin(provider.id, method.type)}>Add account{provider.methods.filter((entry) => entry.interactive).length > 1 ? ` · ${method.name}` : ""}</button>)}
+      <div className="provider-account-actions">{!provider.storedType && provider.methods.filter((method) => method.interactive).map((method) => <button key={method.type} disabled={disabled || auth.loading} onClick={() => void auth.begin(provider.id, method.type, provider.addNew)}>Add account{provider.methods.filter((entry) => entry.interactive).length > 1 ? ` · ${method.name}` : ""}</button>)}
         {provider.storedType && <button disabled={disabled || auth.loading} onClick={() => void auth.logout(provider.id)}>Remove saved login</button>}
         {provider.number === 1 && provider.storedType && provider.methods.filter((method) => method.interactive).map((method) => <button key={`add:${method.type}`} disabled={disabled || auth.loading} onClick={() => void auth.begin(provider.id, method.type, true)}>Add account{provider.methods.filter((entry) => entry.interactive).length > 1 ? ` · ${method.name}` : ""}</button>)}
         {!provider.methods.some((method) => method.interactive) && <small>Configured through the host environment</small>}
