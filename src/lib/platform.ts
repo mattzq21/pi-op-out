@@ -6,7 +6,8 @@ import { remoteClient } from "./remoteClient";
 export type { UnlistenFn };
 export const isMobile = import.meta.env.MODE === "mobile";
 const conversationClientId = (() => {
-  const fresh = `${isMobile ? "mobile" : "desktop"}:${crypto.randomUUID()}`;
+  const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}-${Math.random()}`;
+  const fresh = `${isMobile ? "mobile" : "desktop"}:${id}`;
   const key = `piop-conversation-client:${isMobile ? "mobile" : "desktop"}`;
   try { const saved = localStorage.getItem(key); if (saved) return saved; localStorage.setItem(key, fresh); } catch { /* Keep a stable identity for this client lifetime. */ }
   return fresh;
