@@ -9,7 +9,7 @@ import { HOOK_STATS_KEY, messageHookCounts, parseHookStats, type HookCounts } fr
 import { Message } from "./Message";
 import { Composer } from "./Composer";
 import { PromptContextBar } from "./PromptContextBar";
-import { textOf, thinkingOf } from "../lib/content";
+import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
 import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 import { cacheHitStats } from "../lib/messages";
 import { turnDiff } from "../lib/turnDiff";
@@ -200,7 +200,7 @@ function formatWorkedFor(startedAt?: number, completedAt?: number) {
 function compactCompletedTools(messages: ChatMessage[], groupRepeated = true) {
   return messages.reduce<Array<{ message: ChatMessage; count: number }>>((runs, message) => {
     const hasToolCall = Array.isArray(message.content) && message.content.some((part) => part.type === "toolCall");
-    if (message.role === "assistant" && textOf(message.content).trim().length === 0 && thinkingOf(message.content).trim().length === 0 && (hasToolCall || (!message.streaming && !message.stopReason))) return runs;
+    if (message.role === "assistant" && !hasVisibleText(textOf(message.content)) && !hasVisibleText(thinkingOf(message.content)) && message.stopReason !== "aborted" && message.stopReason !== "error" && (hasToolCall || !message.streaming)) return runs;
     const previous = runs.at(-1);
     const status = message.toolStatus ?? "done";
     if (groupRepeated && message.role === "tool" && status === "done" && previous?.message.role === "tool" && (previous.message.toolStatus ?? "done") === "done" && (previous.message.toolName || "tool") === (message.toolName || "tool")) {
@@ -242,6 +242,7 @@ function ConversationTurnView({ messages, hookCounts, gitDiffs, cwd, debug, acti
     return [{ ...reasoningMessage, id: `${message.id}:reasoning`, content: [{ type: "thinking" as const, thinking: finalThinking }], stopReason: undefined, errorMessage: undefined }];
   });
   const userMessages = messages.filter((message) => message.role === "user");
+  const workContent = renderMessages(intermediate, true, true, debug, paused, false);
   const finalMessage = finalIndex >= 0 ? { ...messages[finalIndex], content: textOf(messages[finalIndex].content) } : undefined;
   const turnCacheUsage = messages.reduce((total, message) => {
     if (message.role === "assistant" && message.usage) {
@@ -261,7 +262,7 @@ function ConversationTurnView({ messages, hookCounts, gitDiffs, cwd, debug, acti
     {userMessages.map((message) => <Message key={message.id} message={message} debug={debug} />)}
     {debug && promptContext && <PromptContextBar context={promptContext} />}
     {active || paused ? <div className="active-work-content">{renderMessages(messages.filter((message) => message.role !== "user"), true, false, debug, paused)}</div> : <>
-    {intermediate.length > 0 && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}<ChevronRight size={12} className="work-group-chevron" aria-hidden="true" /></summary><div className="work-group-content">{renderMessages(intermediate, true, true, debug, paused, false)}</div></details>}
+    {workContent.length > 0 && <details className="work-group"><summary>{workedFor ? `Worked for ${workedFor}` : "Work"}<ChevronRight size={12} className="work-group-chevron" aria-hidden="true" /></summary><div className="work-group-content">{workContent}</div></details>}
     {finalMessage && <Message message={finalMessage} hookCounts={hookCounts} turnCacheUsage={turnCacheUsage} diff={changes} debug={debug} paused={paused} onBranch={onBranch} onForkAndForget={onForkAndForget} onCreateWorktree={worktreeResponse} retrying={retrying} onRetry={retryPrompt ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(onRetry(retryPrompt, undefined, retryImages)).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
     {retryError && <div className="message-failure retry-error" role="alert">Retry failed: {retryError}</div>}
     {renderMessages(messages.filter((message) => message.role === "system"), false)}

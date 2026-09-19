@@ -2,14 +2,12 @@
 
 ## Daemon
 
-Requires Node.js, Rust, and Pi. Runs independently of desktop:
+
 
 ```bash
 npm ci
 npm run daemon:dev
 ```
-
-
 
 ## Android
 
