@@ -54,7 +54,8 @@ export function ProviderSettings({ hosts, initialHostId = "local" }: { hosts: Re
   const disabled = auth.working || active;
   useEffect(() => { if (hostId !== "local" && !hosts.some((host) => host.id === hostId)) setHostId("local"); }, [hostId, hosts]);
   const hostName = selectedHostName(hosts, hostId);
-  const providers = auth.providers.filter((provider) => `${provider.name} ${provider.id}`.toLowerCase().includes(filter.toLowerCase().trim()));
+  const providers = auth.providers.filter((provider) => `${provider.name} ${provider.id}`.toLowerCase().includes(filter.toLowerCase().trim()))
+    .sort((left, right) => Number(right.configured) - Number(left.configured));
   return <div className="settings-section provider-settings">
     <div className="section-title"><div><h2>Providers</h2><p>Sign in to providers on the machine running Pi. Credentials stay on that host and remain available after you disconnect.</p></div></div>
     <div className="hooks-toolbar">
