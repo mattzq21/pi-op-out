@@ -105,7 +105,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 @media (hover: none), (pointer: coarse) { .assistant-message .message-actions { opacity: 1; pointer-events: auto; } }
 @media (hover: none) { .user-message .message-actions { opacity: 1; pointer-events: auto; } }
 .message-time { margin-left: 6px; color: var(--muted); font: 500 11px "DM Sans", sans-serif; white-space: nowrap; opacity: 0; transition: opacity .15s; cursor: default; }
-.assistant-message .message-time { margin-left: auto; padding-left: 12px; font-weight: 400; }
+.assistant-message .message-time { margin-left: 6px; font-weight: 400; }
 .message:hover .message-time, .message:focus-within .message-time { opacity: 1; }
 @media (hover: none) { .message-time { opacity: 1; } }
 @media (pointer: coarse) { .message-time { opacity: 1; } }
