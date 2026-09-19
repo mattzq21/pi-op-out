@@ -40,7 +40,10 @@ pub(super) fn start(app: AppHandle, events: broadcast::Sender<Value>, connection
             let app = app.clone(); let events = events.clone(); let jobs = jobs.clone();
             tokio::spawn(async move {
                 let _permit = permit;
-                if let Ok(socket) = authenticate(stream).await { let _ = serve_connection(app, socket, events, jobs).await; }
+                match authenticate(stream).await {
+                    Ok(socket) => { let _ = serve_connection(app, socket, events, jobs).await; },
+                    Err(error) => eprintln!("Tailscale connection rejected: {error}"),
+                }
             });
         }
     });
@@ -53,14 +56,18 @@ pub(super) fn start(_: AppHandle, _: broadcast::Sender<Value>, _: Arc<Semaphore>
 
 #[cfg(target_os = "linux")]
 async fn authenticate(stream: tokio::net::UnixStream) -> Result<tokio_tungstenite::WebSocketStream<tokio::net::UnixStream>, String> {
-    use std::os::unix::fs::MetadataExt;
     use tokio_tungstenite::tungstenite::handshake::server::{Request, Response, ErrorResponse};
     let peer = stream.peer_cred().map_err(|error| error.to_string())?;
     let pid = peer.pid().ok_or("Missing proxy peer PID")?;
-    let executable = fs::read_link(format!("/proc/{pid}/exe")).map_err(|_| "Cannot verify Tailscale proxy")?;
-    let expected = fs::canonicalize("/usr/sbin/tailscaled").map_err(|_| "Expected root-owned /usr/sbin/tailscaled")?;
-    let metadata = fs::metadata(format!("/proc/{pid}/exe")).map_err(|_| "Cannot inspect Tailscale proxy")?;
-    if peer.uid() != 0 || executable != expected || metadata.uid() != 0 || metadata.mode() & 0o022 != 0 { return Err("Untrusted Tailscale proxy peer".into()); }
+    if peer.uid() != 0 { return Err("Untrusted Tailscale proxy peer".into()); }
+    // Unprivileged daemons cannot inspect a root process's /proc/PID/exe.
+    // Ask the system service manager for the trusted proxy's PID instead.
+    let mut command = tokio::process::Command::new("/usr/bin/systemctl");
+    command.args(["--system", "show", "tailscaled.service", "--property=MainPID", "--value"]).kill_on_drop(true);
+    let output = tokio::time::timeout(Duration::from_secs(5), command.output()).await
+        .map_err(|_| "Tailscale service lookup timed out")?.map_err(|_| "Cannot verify tailscaled system service")?;
+    let service_pid = std::str::from_utf8(&output.stdout).ok().and_then(|value| value.trim().parse::<i32>().ok());
+    if !output.status.success() || service_pid != Some(pid) || pid <= 0 { return Err("Untrusted Tailscale proxy peer".into()); }
     let allowed_login = host_login().await?;
     let callback = |request: &Request, response: Response| -> Result<Response, ErrorResponse> {
         let headers = request.headers();
