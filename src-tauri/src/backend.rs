@@ -6,15 +6,11 @@ mod platform;
 mod daemon_endpoint;
 #[cfg(feature = "desktop")]
 mod desktop_daemon;
-#[cfg(feature = "desktop")]
-use desktop_daemon::daemon_invoke;
 mod provider_auth;
 mod conversation_ownership;
 mod session_groups;
 mod daemon;
 mod voice;
-#[cfg(feature = "desktop")]
-use voice::voice_start;
 use voice::{voice_configuration, voice_stop, voice_mute, voice_suppress};
 use session_groups::{load_session_groups, change_session_groups};
 
@@ -3571,95 +3567,6 @@ fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), Str
         }
     });
     Ok(())
-}
-
-#[cfg(all(feature = "desktop", target_os = "linux"))]
-const LOAD_ERROR_HTML: &str = r#"<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>piop - connection error</title>
-  <style>
-    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #181817; color: #e8e5dd; }
-    * { box-sizing: border-box; }
-    body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 32px; background: #181817; }
-    main { width: min(440px, 100%); padding: 30px; border: 1px solid #34322d; border-radius: 12px; background: #1f1f1c; box-shadow: 0 18px 60px #0006; }
-    .eyebrow { margin: 0 0 10px; color: #d46a24; font-size: 11px; font-weight: 600; letter-spacing: .15em; text-transform: uppercase; }
-    h1 { margin: 0 0 10px; font-size: 24px; font-weight: 600; letter-spacing: -.02em; }
-    p { margin: 0; color: #a09c93; font-size: 14px; line-height: 1.55; }
-    button { margin-top: 22px; padding: 9px 14px; border: 1px solid #48453e; border-radius: 7px; background: #292824; color: #e8e5dd; font: 600 13px system-ui, sans-serif; cursor: pointer; }
-    button:hover { border-color: #d46a24; color: #fff; }
-    button:focus-visible { outline: 2px solid #d46a24; outline-offset: 2px; }
-  </style>
-</head>
-<body>
-  <main>
-    <p class="eyebrow">piop</p>
-    <h1>Could not connect</h1>
-    <p>The local app server is not available. Start or restart it, then try again.</p>
-    <button type="button" onclick="window.location.reload()">Try again</button>
-  </main>
-</body>
-</html>"#;
-
-#[cfg(feature = "desktop")]
-pub fn run() {
-    let mut context = tauri::generate_context!();
-    if DEVELOPMENT {
-        let config = context.config_mut();
-        config.identifier = "dev.pi.desktop.debug".into();
-        config.product_name = Some(APP_TITLE.into());
-        for window in &mut config.app.windows { window.title = APP_TITLE.into(); }
-    }
-    #[cfg(target_os = "linux")]
-    let (context, start_window) = {
-        let mut context = context;
-        let window = context.config_mut().app.windows.first_mut().expect("Missing main window configuration");
-        let start_window = window.visible.then(|| (window.label.clone(), window.focus));
-        // Configure GTK's focus-on-map policy before the first show. Keeping the window
-        // hidden also lets Tao apply decorations before GNOME chooses its geometry.
-        window.visible = false;
-        if let Ok(value) = std::env::var("PI_WINDOW_BOUNDS") {
-            #[derive(Deserialize)]
-            struct WindowBounds { x: i32, y: i32, width: u32, height: u32 }
-            let bounds: WindowBounds = serde_json::from_str(&value).expect("Invalid PI_WINDOW_BOUNDS");
-            window.x = Some(f64::from(bounds.x));
-            window.y = Some(f64::from(bounds.y));
-            window.width = f64::from(bounds.width);
-            window.height = f64::from(bounds.height);
-            window.decorations = false;
-        }
-        (context, start_window)
-    };
-    let builder = tauri::Builder::default();
-    #[cfg(feature = "webdriver")]
-    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
-    builder.plugin(tauri_plugin_dialog::init()).manage(voice::VoiceRuntime::default()).manage(desktop_daemon::DesktopDaemon::default()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
-        #[cfg(target_os = "linux")]
-        if let Some((label, focus)) = start_window.as_ref() {
-            use gtk::prelude::GtkWindowExt;
-            use webkit2gtk::WebViewExt;
-            let window = app.get_webview_window(label).ok_or("Missing main window")?;
-            window.with_webview(|platform_webview| {
-                platform_webview.inner().connect_load_failed(|webview, _, failing_uri, _| {
-                    webview.load_alternate_html(LOAD_ERROR_HTML, failing_uri, None);
-                    true
-                });
-            })?;
-            window.gtk_window()?.set_focus_on_map(*focus);
-            window.show()?;
-        }
-        Ok(())
-    }).invoke_handler(tauri::generate_handler![daemon_invoke, voice_configuration, voice_start, voice_stop, voice_mute, voice_suppress, new_window, open_project_directory, open_external_url, read_dropped_file]).build(context).expect("error while building piop").run(|app, event| {
-        if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } = &event {
-            let app = app.clone(); let label = label.clone();
-            tauri::async_runtime::spawn(async move { app.state::<desktop_daemon::DesktopDaemon>().close_window(&label).await; });
-        }
-        if matches!(event, tauri::RunEvent::Exit) {
-            app.state::<voice::VoiceRuntime>().shutdown();
-        }
-    });
 }
 
 #[cfg(not(feature = "desktop"))]

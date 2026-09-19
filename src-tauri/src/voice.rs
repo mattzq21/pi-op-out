@@ -19,12 +19,16 @@ use protocol::{AudioControls, Message};
 #[derive(Default, Clone)]
 pub struct VoiceRuntime(Arc<Mutex<Option<ActiveCall>>>);
 #[cfg(feature = "desktop")]
-struct ActiveCall { id: String, close: watch::Sender<bool>, commands: mpsc::Sender<Control> }
+struct ActiveCall { id: String, runtime_id: String, close: watch::Sender<bool>, commands: mpsc::Sender<Control> }
 #[cfg(not(feature = "desktop"))]
 struct ActiveCall;
 #[cfg(feature = "desktop")]
 enum Control { Mute(bool), Suppress(bool) }
 impl VoiceRuntime {
+    #[cfg(feature = "desktop")]
+    pub fn disconnect_runtime(&self, runtime_id: &str) {
+        if let Ok(active) = self.0.lock() { if let Some(call) = active.as_ref().filter(|call| call.runtime_id == runtime_id) { let _ = call.close.send(true); } }
+    }
     pub fn shutdown(&self) {
         if let Ok(mut active) = self.0.lock() { if let Some(_call) = active.take() {
             #[cfg(feature = "desktop")]
@@ -90,7 +94,7 @@ pub async fn voice_start(app: AppHandle, runtime: State<'_, VoiceRuntime>, runti
     if active.is_some() { return Err("End the current voice call first".into()); }
     let (commands, receiver) = mpsc::channel(64);
     let (close, closing) = watch::channel(false);
-    let id = call_id.clone(); let owner = runtime.inner().clone();
+    let id = call_id.clone(); let owner = runtime.inner().clone(); let target_runtime = runtime_id.clone();
     tokio::spawn(async move {
         let result = run_media(&app, &id, &runtime_id, daemon.clone(), path, receiver, closing).await;
         let _ = request(daemon, json!({"type":"voice","action":"stop","runtimeId":runtime_id,"callId":id})).await;
@@ -98,7 +102,7 @@ pub async fn voice_start(app: AppHandle, runtime: State<'_, VoiceRuntime>, runti
         if let Ok(mut active) = owner.0.lock() { if active.as_ref().is_some_and(|call| call.id == id) { *active = None; } }
         emit(&app, &id, json!({"type":"ended"}));
     });
-    *active = Some(ActiveCall { id: call_id, close, commands });
+    *active = Some(ActiveCall { id: call_id, runtime_id: target_runtime, close, commands });
     Ok(())
 }
 #[cfg_attr(feature = "desktop", tauri::command)]

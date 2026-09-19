@@ -193,11 +193,10 @@ pub fn run() {
     }).invoke_handler(tauri::generate_handler![daemon_invoke, voice_configuration, voice_start, voice_stop, voice_mute, voice_suppress, new_window, open_project_directory, open_external_url, read_dropped_file]).build(context).expect("error while building piop").run(|app, event| {
         if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } = &event {
             let app = app.clone(); let label = label.clone();
-            tauri::async_runtime::spawn(async move { app.state::<desktop_daemon::DesktopDaemon>().close_window(&label).await; });
+            tauri::async_runtime::spawn(async move { app.state::<desktop_daemon::DesktopDaemon>().close_window(&app, &label).await; });
         }
         if matches!(event, tauri::RunEvent::Exit) {
             app.state::<voice::VoiceRuntime>().shutdown();
         }
     });
 }
-
