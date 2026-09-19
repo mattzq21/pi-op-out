@@ -196,7 +196,7 @@ export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = 
         {onBranch && <button className="branch-button" aria-label={`Branch from ${responseLabel.toLowerCase()}`} title="Branch from here" disabled={branching || forgetting} onClick={() => void branch()}><GitBranch size={14} /></button>}
         {onForkAndForget && <button className="branch-button" aria-label={`Fork and forget from ${responseLabel.toLowerCase()}`} title="Fork and forget from here" disabled={branching || forgetting} onClick={() => void forkAndForget()}><Undo2 size={14} /></button>}
         {onCreateWorktree && <button className="branch-button" aria-label="Create Git worktree" title="Create Git worktree after this response" onClick={() => onCreateWorktree(message)}><FolderGit2 size={14} /></button>}
-        <HookWheel counts={hookCounts} label="Message hooks" />
+        {debug && <HookWheel counts={hookCounts} label="Message hooks" />}
         {debug && cache && <span className={`cache-hit-rate${cache.low ? " low" : ""}`} title={`${cache.cachedTokens.toLocaleString()} of ${cache.promptTokens.toLocaleString()} prompt tokens read from cache${turnCacheUsage ? " across all calls in this response" : ""}`}>Cache {cache.rate}%</span>}
         {responseTime && <span className="message-time" title={responseTime.full}>{responseTime.short}</span>}
       </div>}
