@@ -9,7 +9,8 @@ import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@e
 
 export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; extensions?: string[]; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: string[] };
 type RuntimeDefaults = { model: string; effort: string };
-type SessionAgentState = { active?: string; locked?: boolean; modelOverride?: string; effortOverride?: string };
+type AgentSnapshot = { version: 1; definition: Agent; systemPrompt: string; agentPrompt: string };
+type SessionAgentState = { snapshot?: AgentSnapshot; active?: string; locked?: boolean; modelOverride?: string; effortOverride?: string };
 
 
 const STATUS_KEY = "pi-define-agents";
@@ -208,6 +209,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const extensions = agentExtensions(pi, dirname(configPath));
   let config = await loadConfig(pi);
   let active = "general";
+  let snapshot: AgentSnapshot | undefined;
   let locked = false;
   let runtimeDefaults: RuntimeDefaults | undefined;
   let runtimeSession = "";
@@ -221,16 +223,13 @@ export default async function defineAgents(pi: ExtensionAPI) {
   let reloading = false;
   process.env.PI_DEFINE_AGENTS_ACTIVE = "1";
   const findAgent = (name: string) => config.agents.find((agent) => agent.name === name);
-  const currentAgent = () => findAgent(active);
+  const currentAgent = () => snapshot?.definition ?? findAgent(active);
   const restoredAgentName = (name: string | undefined) => !name || (name === "default" && !findAgent("default")) ? "general" : name;
-  const requireSessionAgent = (names: string[]) => {
-    if (locked && !names.includes(active)) throw new Error(`This session uses agent "${active}". Start a new session to use another agent; its active profile cannot be removed or renamed.`);
-  };
   const currentSkillPaths = () => [...new Set(currentAgent() ? agentSkills(pi, currentAgent()!).map(normalizedPath) : [])].sort();
   const fastModeModels = () => { const request: { models?: string[] } = {}; pi.events.emit("piop:fast-mode", request); return request.models ?? []; };
   const fastModeError = (agent: Agent, model: string | undefined) => agent.fastMode === true && (!model || !fastModeModels().includes(model)) ? `Agent "${agent.name}" cannot run because model ${model || "(unset)"} does not support fast mode` : undefined;
-  const publish = (ctx: ExtensionContext) => ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: currentAgent()?.name ?? active, locked, config: { ...config, fastModeModels: fastModeModels() } })}`);
-  const saveState = () => pi.appendEntry(STATE_ENTRY, { active, locked, modelOverride, effortOverride });
+  const publish = (ctx: ExtensionContext) => ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: currentAgent()?.name ?? active, locked: false, saved: !!snapshot, unavailable: !currentAgent(), config: { ...config, fastModeModels: fastModeModels() } })}`);
+  const saveState = () => pi.appendEntry(STATE_ENTRY, { active, locked, modelOverride, effortOverride, snapshot });
   const reload = async (ctx: ExtensionCommandContext) => {
     // Reloading resources does not invalidate the definitions already loaded.
     publish(ctx);
@@ -249,13 +248,20 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const activate = async (agent: Agent, ctx: ExtensionContext, connectMcp: boolean) => {
     activeSystemPrompt = "";
     activeAgentPrompt = "";
-    const path = resolvePromptPath(agent.path_systemprompt);
-    try { activeSystemPrompt = await readFile(path, "utf8"); }
-    catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" cannot read system prompt ${path}: ${error instanceof Error ? error.message : String(error)}`; }
-    if (agent.path_agentprompt) {
-      const path = resolvePromptPath(agent.path_agentprompt);
-      try { activeAgentPrompt = await readFile(path, "utf8"); }
-      catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" cannot read agent prompt ${path}: ${error instanceof Error ? error.message : String(error)}`; }
+    if (snapshot) {
+      activeSystemPrompt = snapshot.systemPrompt;
+      activeAgentPrompt = snapshot.agentPrompt;
+    } else {
+      const path = resolvePromptPath(agent.path_systemprompt);
+      try { activeSystemPrompt = await readFile(path, "utf8"); }
+      catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" cannot read system prompt ${path}: ${error instanceof Error ? error.message : String(error)}`; }
+      if (agent.path_agentprompt) {
+        const path = resolvePromptPath(agent.path_agentprompt);
+        try { activeAgentPrompt = await readFile(path, "utf8"); }
+        catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" cannot read agent prompt ${path}: ${error instanceof Error ? error.message : String(error)}`; }
+      }
+      snapshot = { version: 1, definition: structuredClone({ ...agent, model: agent.model.trim() || runtimeDefaults?.model || "", effort: agent.effort.trim() || runtimeDefaults?.effort || "" }), systemPrompt: activeSystemPrompt, agentPrompt: activeAgentPrompt };
+      saveState();
     }
     try { await extensions.activate(await extensions.prepare(extensionPaths(agent.extensions)), ctx); }
     catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" could not load its piop extensions:\n${error instanceof Error ? error.message : String(error)}`; }
@@ -285,8 +291,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
   const useAgent = async (name: string, ctx: ExtensionContext, connectMcp: boolean) => {
     restore(ctx);
-    const agent = findAgent(name);
-    activeToolError = agent ? await activate(agent, ctx, connectMcp) : `Unknown defined agent: ${name}`;
+    const agent = currentAgent();
+    activeToolError = agent ? await activate(agent, ctx, connectMcp) : `Agent unavailable: "${name}". Select a replacement or general to continue.`;
     if (activeToolError) pi.setActiveTools([]);
     publish(ctx);
     return activeToolError;
@@ -295,7 +301,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const request = value as { ctx: ExtensionContext; ready?: Promise<void> };
     request.ready = Promise.resolve().then(() => {
       const agent = currentAgent();
-      if (!agent) throw new Error(`Unknown defined agent: ${active}`);
+      if (!agent) { pi.setActiveTools([]); publish(request.ctx); return; }
       activeToolError = agentToolError(pi, agent, extensions.tools());
       const mcpTools = pi.getActiveTools().filter((name) => name.startsWith("mcp_"));
       pi.setActiveTools(activeToolError ? [] : [...new Set([...agent.tools, ...extensions.tools(), ...mcpTools])]);
@@ -310,14 +316,15 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const branch = ctx.sessionManager.getBranch();
     const states = branch.flatMap((entry) => entry.type === "custom" && entry.customType === STATE_ENTRY ? [entry.data as SessionAgentState] : []);
     const stored = states.at(-1);
-    active = restoredAgentName(stored?.active);
+    snapshot = stored?.snapshot?.version === 1 ? structuredClone(stored.snapshot) : undefined;
+    active = snapshot?.definition.name ?? restoredAgentName(stored?.active);
     locked = states.some((state) => state?.locked === true) || branch.some((entry) => entry.type === "compaction" || (entry.type === "message" && ["user", "assistant"].includes(entry.message.role)));
     modelOverride = stored?.modelOverride;
     effortOverride = stored?.effortOverride;
     // Selection applies the agent's configuration; MCP startup waits for input.
     publish(ctx);
     const error = await useAgent(active, ctx, false);
-    if (error) throw new Error(error);
+    if (error) ctx.ui.notify(error, "warning");
     publish(ctx);
   });
   pi.on("session_shutdown", (_event, ctx) => { delete process.env.PI_DEFINE_AGENTS_ACTIVE; if (!reloading) ctx.ui.setStatus(STATUS_KEY, undefined); });
@@ -336,8 +343,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
   });
   pi.registerCommand("pi-define-agents-use", { description: "Select a defined agent", handler: async (args, ctx) => {
     const argument = args.trim(); let name = argument; try { const decoded = decode<unknown>(argument); if (typeof decoded === "string") name = decoded; } catch { /* Plain CLI name. */ }
-    requireSessionAgent([name]);
-    if (!locked) await selectAgent(name, ctx);
+    if (!ctx.isIdle()) throw new Error("Wait for the current response before changing agents");
+    await selectAgent(name, ctx);
   }});
   const selectAgent = async (name: string, ctx: ExtensionCommandContext) => {
     if (!findAgent(name)) throw new Error(`Unknown defined agent: ${name}`);
@@ -347,36 +354,26 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (error) throw new Error(error);
     await extensions.prepare(extensionPaths(agent.extensions));
     const previousActive = active;
+    const previousSnapshot = snapshot;
+    const previousModel = modelOverride;
+    const previousEffort = effortOverride;
     const previousSkills = currentSkillPaths();
-    active = name; modelOverride = undefined; effortOverride = undefined;
+    active = name; snapshot = undefined; modelOverride = undefined; effortOverride = undefined;
     if (JSON.stringify(previousSkills) !== JSON.stringify(currentSkillPaths())) {
       const error = await useAgent(active, ctx, false);
-      if (error) { active = previousActive; await useAgent(active, ctx, false); throw new Error(error); }
+      if (error) { active = previousActive; snapshot = previousSnapshot; modelOverride = previousModel; effortOverride = previousEffort; saveState(); await useAgent(active, ctx, false); throw new Error(error); }
       saveState();
       return reload(ctx);
     }
     const activationError = await useAgent(active, ctx, false);
-    if (activationError) { active = previousActive; await useAgent(active, ctx, false); throw new Error(activationError); }
+    if (activationError) { active = previousActive; snapshot = previousSnapshot; modelOverride = previousModel; effortOverride = previousEffort; saveState(); await useAgent(active, ctx, false); throw new Error(activationError); }
     saveState();
   };
   pi.registerCommand("pi-define-agents-config", { description: "Update agent definitions", handler: async (args, ctx) => {
-    const previous = config;
-    const previousActive = active;
-    const previousSkills = currentSkillPaths();
     const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied }, pi);
-    requireSessionAgent(next.agents.map((agent) => agent.name));
-    restore(ctx);
-    for (const agent of next.agents) { const error = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model); if (error) throw new Error(error); }
-    const nextActive = next.agents.find(agent => agent.name === active) ?? next.agents.find(agent => agent.name === "general")!;
-    await extensions.prepare(extensionPaths(nextActive.extensions));
-    await writeConfig(next); config = next;
-    try {
-      if (!findAgent(active)) active = "general";
-      const activationError = await useAgent(active, ctx, false);
-      if (activationError) throw new Error(activationError);
-      saveState();
-      if (JSON.stringify(previousSkills) !== JSON.stringify(currentSkillPaths())) { await reload(ctx); return; }
-    }
-    catch (error) { await writeConfig(previous); config = previous; active = previousActive; await useAgent(active, ctx, false); throw error; }
+    // Global edits only affect future selections. This session keeps its snapshot.
+    await writeConfig(next);
+    config = next;
+    publish(ctx);
   }});
 }

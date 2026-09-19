@@ -22,7 +22,7 @@ export interface ExtensionUiRequest { type: "extension_ui_request"; id: string; 
 export interface Model { provider: string; id: string; name?: string; reasoning?: boolean; contextWindow?: number; input?: ("text" | "image")[]; }
 export interface AgentProfile { name: string; model: string; effort: string; fastMode?: boolean; extensions?: string[]; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: string[]; }
 export interface AgentConfig { agents: AgentProfile[]; fastModeModels?: string[]; }
-export interface DefinedAgentsCapability { version: number; active: string; locked?: boolean; config: AgentConfig; }
+export interface DefinedAgentsCapability { version: number; active: string; locked?: boolean; saved?: boolean; unavailable?: boolean; config: AgentConfig; }
 export interface AgentConfigChange { hostId: string; revision: number; }
 export interface SettingsChange { settings: AppSettings; agentConfigChange?: AgentConfigChange; }
 export interface RpcCommand { id?: string; type: string; [key: string]: unknown; }
