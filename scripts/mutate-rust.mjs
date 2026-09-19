@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { cp, mkdtemp, rm } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,13 +19,28 @@ try {
       filter: source => !['target', 'node_modules', '.git', 'mutants.out', 'mutants.out.old'].includes(basename(source)),
     });
   }
+  // cargo-mutants cannot discover the backend through lib.rs's include! macro.
+  const manifest = join(temporaryRoot, 'src-tauri', 'Cargo.toml');
+  const manifestSource = await readFile(manifest, 'utf8');
+  if (!manifestSource.includes('[lib]\n')) throw new Error('Rust mutation runner requires a library target');
+  await writeFile(manifest, manifestSource.replace('[lib]\n', '[lib]\npath = "src/backend.rs"\n'));
+  const tauriConfig = JSON.parse(process.env.TAURI_CONFIG || '{}');
+  tauriConfig.bundle = { ...tauriConfig.bundle, externalBin: [] };
   const result = spawnSync('cargo', [
     'mutants',
     '--in-place',
+    '--exclude', '**/*tests.rs',
     '--output', join(root, 'reports', 'mutation', 'rust'),
     ...process.argv.slice(2),
   ], {
     cwd: join(temporaryRoot, 'src-tauri'),
+    env: {
+      ...process.env,
+      CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR || join(root, 'src-tauri', 'target'),
+      CARGO_BUILD_JOBS: process.env.CARGO_BUILD_JOBS || '1',
+      RUST_TEST_THREADS: process.env.RUST_TEST_THREADS || '1',
+      TAURI_CONFIG: JSON.stringify(tauriConfig),
+    },
     stdio: 'inherit',
   });
   if (result.error) throw result.error;
