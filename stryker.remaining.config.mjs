@@ -1,0 +1,20 @@
+export default {
+  mutate: [
+    'src/**/*.{ts,tsx}', 'extensions/**/*.ts', 'src-tauri/resources/*.ts',
+    '!extensions/piop-define-agents/index.ts', '!**/*.d.ts',
+  ],
+  testRunner: 'piop-node',
+  plugins: ['./scripts/mutation-node-runner.mjs'],
+  coverageAnalysis: 'perTest',
+  concurrency: 1,
+  timeoutMS: 2000,
+  timeoutFactor: 1.5,
+  dryRunTimeoutMinutes: 3,
+  maxTestRunnerReuse: 0,
+  reporters: ['progress', 'html', 'json', 'piop-checkpoint'],
+  htmlReporter: { fileName: 'reports/mutation/remaining-typescript.html' },
+  jsonReporter: { fileName: 'reports/mutation/remaining-typescript.json' },
+  incremental: true,
+  incrementalFile: 'reports/mutation/remaining-typescript-incremental.json',
+  ignorePatterns: ['src-tauri/target/**', 'src-tauri/voice-host/target/**', 'dist/**', 'dist-mobile/**', 'reports/**'],
+};
