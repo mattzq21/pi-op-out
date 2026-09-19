@@ -7,6 +7,7 @@ import type { ChatMessage } from "../types";
 import type { turnDiff } from "../lib/turnDiff";
 import { textOf, thinkingOf } from "../lib/content";
 import { HookWheel } from "./HookWheel";
+import { VOICE_MESSAGE } from "../lib/voiceMessages";
 import type { HookCounts } from "../lib/hookStats";
 import { cacheHitStats } from "../lib/messages";
 import { openExternalUrl } from "../lib/nativeTransport";
@@ -170,6 +171,7 @@ export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = 
   const cache = cacheHitStats(turnCacheUsage ?? message.usage);
   const responseLabel = `Assistant response${message.timestamp ? ` from ${new Date(message.timestamp).toLocaleString()}` : ` ${message.id.slice(0, 8)}`}`;
   const responseTime = formatMessageTime(message.completedAt ?? message.timestamp);
+  const voiceResponse = message.customType === VOICE_MESSAGE;
   const pausedResponse = message.stopReason === "aborted" && (paused || message.errorMessage === "Response paused");
   const failure = message.stopReason === "aborted" ? (pausedResponse ? undefined : message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
   const branch = async () => {
@@ -185,10 +187,10 @@ export function Message({ message, hookCounts, turnCacheUsage, diff, expanded = 
   return <article className={`message assistant-message ${thinking ? "reasoning-message" : ""}`} aria-label={responseLabel} title={responseTime ? `Responded ${responseTime.full}` : undefined}>
     <div className="message-body">
       {thinking && <div className="reasoning-text"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{thinking}</ReactMarkdown></div>}
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{output}</ReactMarkdown>
+      {voiceResponse ? <div className="voice-response-bubble"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{output}</ReactMarkdown>{message.streaming && <span className="stream-caret" />}</div> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{output}</ReactMarkdown>}
       {failure && <div className="message-failure" role="status"><CircleAlert size={14} /><span>{failure}</span>{onRetry && <button disabled={retrying} onClick={onRetry}>{retrying ? "Retrying…" : "Retry"}</button>}</div>}
       {pausedResponse && <div className="message-paused" role="status"><Pause size={14} /><span>Response paused</span></div>}
-      {message.streaming && <span className="stream-caret" />}
+      {message.streaming && !voiceResponse && <span className="stream-caret" />}
       {diff && <DiffViewer {...diff} />}
       {showActions && !message.streaming && (output.trim().length > 0 || onCreateWorktree) && <div className="message-actions">
         <IconButton label={copyState === "copied" ? `${responseLabel} copied` : copyState === "error" ? `Copy failed for ${responseLabel.toLowerCase()}` : `Copy ${responseLabel.toLowerCase()}`} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>
