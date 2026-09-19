@@ -5,6 +5,7 @@ import type { RemoteHost } from "../types";
 import { isMobile } from "../lib/platform";
 import { openExternalUrl } from "../lib/nativeTransport";
 import { useProviderAuth, type AuthFlow, type AuthNotice, type ProviderAccount } from "../lib/providerAuth";
+import { CustomProviderForm } from "./CustomProviderForm";
 
 type AuthControls = ReturnType<typeof useProviderAuth>;
 type ProviderGroup = {
@@ -70,6 +71,7 @@ function FlowStatus({ flow }: { flow: AuthFlow }) {
 export function ProviderSettings({ hosts, initialHostId = "local" }: { hosts: RemoteHost[]; initialHostId?: string }) {
   const [hostId, setHostId] = useState(initialHostId);
   const [filter, setFilter] = useState("");
+  const [adding, setAdding] = useState(false);
   const auth = useProviderAuth(hostId);
   const active = auth.flow?.status === "pending";
   const disabled = auth.working || active;
@@ -83,8 +85,10 @@ export function ProviderSettings({ hosts, initialHostId = "local" }: { hosts: Re
       <label>Host <select aria-label="Provider host" value={hostId} disabled={disabled} onChange={(event) => setHostId(event.target.value)}><option value="local">{localHostLabel}</option>{hosts.map((host) => <option key={host.id} value={host.id}>{host.name}</option>)}</select></label>
       <label className="section-filter"><Search size={14} /><input aria-label="Filter providers" placeholder="Filter providers" value={filter} onChange={(event) => setFilter(event.target.value)} /></label>
       <button className="section-toggle-all" disabled={auth.loading || disabled} onClick={auth.refresh}><RefreshCw size={14} />Refresh</button>
+      <button className="section-toggle-all provider-add-custom" disabled={disabled || adding} onClick={() => setAdding(true)}>Add custom provider</button>
     </div>
     {auth.error && <p className="provider-error" role="alert">{auth.error}</p>}
+    {adding && <CustomProviderForm key={hostId} working={!!disabled} save={auth.createProvider} close={() => setAdding(false)} />}
     {auth.flow && <LoginPanel flow={auth.flow} auth={auth} />}
     {auth.loading && <div className="empty-small" role="status">Loading providers on {hostName}…</div>}
     <ProviderList providers={providers} auth={auth} disabled={disabled} />

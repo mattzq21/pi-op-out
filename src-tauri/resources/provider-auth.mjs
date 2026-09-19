@@ -1,4 +1,5 @@
-import { realpath as authRealpath, readFile as authReadFile, stat as authStat } from 'node:fs/promises';
+import { realpath as authRealpath, readFile as authReadFile, stat as authStat, mkdir as authMkdir } from 'node:fs/promises';
+import { spawn as authSpawn } from 'node:child_process';
 import { delimiter as authDelimiter, dirname as authDirname, join as authJoin, resolve as authResolve } from 'node:path';
 import { homedir as authHomedir } from 'node:os';
 import { pathToFileURL as authFileUrl } from 'node:url';
@@ -23,8 +24,9 @@ async function providerAuthRuntime(executable) {
       const sdk = await import(authFileUrl(authJoin(directory, 'dist/core/model-runtime.js')).href).catch(() => undefined);
       if (!sdk?.ModelRuntime?.create) break;
       const config = await import(authFileUrl(authJoin(directory, 'dist/config.js')).href);
+      const builtins = await sdk.ModelRuntime.create({ modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
       const runtime = await sdk.ModelRuntime.create({ allowModelNetwork: false }).catch(() => { throw new Error('Could not load provider configuration on this host. Check Pi configuration and file permissions.'); });
-      return { runtime, authPath: config.getAuthPath(), createRuntime: () => sdk.ModelRuntime.create({ allowModelNetwork: false, refreshOnCreate: false }) };
+      return { runtime, builtinIds: new Set(builtins.getProviders().map((provider) => provider.id)), authPath: config.getAuthPath(), createRuntime: () => sdk.ModelRuntime.create({ allowModelNetwork: false, refreshOnCreate: false }) };
     }
     directory = authDirname(directory);
   }
@@ -32,6 +34,127 @@ async function providerAuthRuntime(executable) {
 }
 
 function authText(value) { return typeof value === 'string' ? value.slice(0, 8192) : ''; }
+
+function customProviderConfig(request) {
+  validateCustomProviderEndpoint(request);
+  const config = { name: authText(request.name).trim() || request.providerId, baseUrl: authUrl(request.baseUrl).replace(/\/$/, ''), api: request.api };
+  if (request.noKey === true) { config.apiKey = 'not-required'; config.authHeader = false; }
+  if (request.sessionAffinity === true) config.compat = { sessionAffinityFormat: 'openai' };
+  return config;
+}
+
+function validateCustomProviderEndpoint(request) {
+  if (typeof request.providerId !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,79}$/.test(request.providerId) || request.providerId.includes('--piop-account-')) throw new Error('Use a unique provider ID containing lowercase letters, numbers, hyphens or underscores');
+  if (!['openai-completions', 'openai-responses', 'anthropic-messages'].includes(request.api)) throw new Error('Choose a supported API format');
+  const url = authUrl(request.baseUrl);
+  if (!url || new URL(url).username || new URL(url).password) throw new Error('Enter an HTTP or HTTPS API URL without embedded credentials');
+}
+
+function discoveredModel(entry, known) {
+  if (typeof entry?.id !== 'string' || !entry.id.trim()) throw new Error('The models endpoint returned an invalid model ID');
+  const result = { id: entry.id, name: authText(entry.name || entry.display_name) || entry.id };
+  const baseline = known.find((model) => model.id === entry.id);
+  for (const field of ['reasoning', 'input', 'contextWindow', 'maxTokens']) {
+    if (baseline?.[field] !== undefined) result[field] = baseline[field];
+  }
+  applyDiscoveredCapabilities(result, entry);
+  applyDiscoveredLimits(result, entry);
+  return result;
+}
+
+function applyDiscoveredCapabilities(result, entry) {
+  if (typeof entry.reasoning === 'boolean') result.reasoning = entry.reasoning;
+  if (Array.isArray(entry.input) && entry.input.every((item) => ['text', 'image'].includes(item))) result.input = entry.input;
+}
+
+function applyDiscoveredLimits(result, entry) {
+  const limits = { contextWindow: entry.contextWindow ?? entry.context_length ?? entry.context_window, maxTokens: entry.maxTokens ?? entry.max_output_tokens ?? entry.max_tokens };
+  for (const [field, value] of Object.entries(limits)) if (Number.isSafeInteger(value) && value > 0) result[field] = value;
+}
+
+function discoveryHeaders(config, key, extra) {
+  const headers = { ...extra, accept: 'application/json' };
+  if (key) headers.authorization = `Bearer ${key}`;
+  if (config.api === 'anthropic-messages') {
+    headers['anthropic-version'] = '2023-06-01';
+    if (key) headers['x-api-key'] = key;
+  }
+  return headers;
+}
+
+async function fetchModelPage(url, headers, signal) {
+  let response;
+  try { response = await fetch(url, { headers, signal, redirect: 'error' }); }
+  catch { throw new Error('Could not discover models. Check the API URL and connectivity from the selected host.'); }
+  if (!response.ok) { await response.body?.cancel(); throw new Error(`Model discovery returned HTTP ${response.status}. Check the API URL and key.`); }
+  return readModelCatalog(response);
+}
+
+async function discoverCustomModels(config, key, known, extraHeaders) {
+  const url = new URL(config.baseUrl);
+  url.pathname = `${url.pathname.replace(/\/$/, '')}/models`;
+  const headers = discoveryHeaders(config, key, extraHeaders);
+  const models = new Map();
+  const signal = AbortSignal.timeout(15000);
+  for (let page = 0; page < 50; page++) {
+    const body = await fetchModelPage(url, headers, signal);
+    const entries = Array.isArray(body) ? body : body.data;
+    if (!Array.isArray(entries)) throw new Error('Expected a models endpoint returning a data array');
+    for (const entry of entries) { const model = discoveredModel(entry, known); models.set(model.id, model); }
+    if (!body.has_more) {
+      if (!models.size) throw new Error('The provider returned no models');
+      return [...models.values()].sort((left, right) => left.id.localeCompare(right.id));
+    }
+    if (typeof body.last_id !== 'string' || body.last_id === url.searchParams.get('after_id')) throw new Error('Invalid model catalog pagination');
+    url.searchParams.set('after_id', body.last_id);
+  }
+  throw new Error('Model catalog exceeds the pagination limit');
+}
+
+async function readModelCatalog(response) {
+  let size = 0;
+  const chunks = [];
+  for await (const chunk of response.body) {
+    size += chunk.length;
+    if (size > 10 * 1024 * 1024) throw new Error('Model catalog is too large');
+    chunks.push(chunk);
+  }
+  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { throw new Error('Models endpoint did not return valid JSON'); }
+}
+
+async function saveCustomProvider(path, providerId, config, previous) {
+  await authMkdir(authDirname(path), { recursive: true, mode: 0o700 });
+  const script = `
+    const fs = require('node:fs');
+    const path = process.argv[1];
+    const { providerId, config, previous } = JSON.parse(fs.readFileSync(0, 'utf8'));
+    let data = { providers: {} };
+    try { data = JSON.parse(fs.readFileSync(path, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') process.exit(2); }
+    if (!data || typeof data !== 'object' || Array.isArray(data) || !data.providers || typeof data.providers !== 'object' || Array.isArray(data.providers)) process.exit(2);
+    if (previous) {
+      if (JSON.stringify(data.providers[providerId]) !== JSON.stringify(previous)) process.exit(4);
+      if (JSON.stringify(previous) === JSON.stringify(config)) process.exit(0);
+    } else if (Object.hasOwn(data.providers, providerId)) process.exit(3);
+    Object.defineProperty(data.providers, providerId, { value: config, enumerable: true });
+    const temporary = path + '.' + require('node:crypto').randomUUID();
+    try {
+      fs.writeFileSync(temporary, JSON.stringify(data, null, 2) + '\\n', { mode: 0o600, flag: 'wx' });
+      fs.renameSync(temporary, path);
+    } finally { try { fs.unlinkSync(temporary); } catch {} }
+  `;
+  await new Promise((resolve, reject) => {
+    const child = authSpawn('flock', ['--exclusive', '--wait', '10', `${path}.lock`, process.execPath, '-e', script, path], { stdio: ['pipe', 'ignore', 'ignore'] });
+    child.stdin.on('error', () => {});
+    child.stdin.end(JSON.stringify({ providerId, config, previous }));
+    child.once('error', () => reject(new Error('Could not save the provider. The host requires flock.')));
+    child.once('close', (code) => {
+      if (code === 0) resolve();
+      else if (code === 3) reject(new Error('That provider ID already exists. Choose another ID.'));
+      else reject(new Error('Could not save the provider. Check models.json and host file permissions.'));
+    });
+  });
+}
 function authUrl(value) {
   try { const url = new URL(value); return ['https:', 'http:'].includes(url.protocol) ? url.href : undefined; } catch { return undefined; }
 }
@@ -85,8 +208,9 @@ class ProviderAuthService {
   }
 
   runtime() {
-    this.initializing ??= providerAuthRuntime(this.executable).then(({ runtime, authPath, createRuntime }) => {
+    this.initializing ??= providerAuthRuntime(this.executable).then(({ runtime, builtinIds, authPath, createRuntime }) => {
       this.authPath = authPath;
+      this.builtinIds = builtinIds;
       this.createRuntime = createRuntime;
       this.accounts = new Map();
       return runtime;
@@ -97,9 +221,10 @@ class ProviderAuthService {
   async checkForChanges() {
     this.checkingCredentials ??= (async () => {
       await this.runtime();
+      await this.refreshCustomModels();
       let revision;
       try {
-        revision = await Promise.all([this.authPath, providerAccountsPath(this.authPath)].map(async (path) => {
+        revision = await Promise.all([this.authPath, providerAccountsPath(this.authPath), authJoin(authDirname(this.authPath), 'models.json')].map(async (path) => {
           try { const stat = await authStat(path, { bigint: true }); return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`; }
           catch (error) { if (error.code === 'ENOENT') return 'missing'; throw error; }
         })).then((values) => values.join('|'));
@@ -136,13 +261,15 @@ class ProviderAuthService {
     flow.notices = [];
   }
 
-  async listing() {
+  async listing(refreshModels = false) {
+    if (refreshModels) this.nextCatalogRefresh = 0;
     const runtime = await this.runtime();
+    await this.refreshCustomModels();
     await this.syncAccounts(runtime);
     await runtime.refresh({ allowNetwork: false }).catch(() => { throw new Error('Could not refresh providers on this host. Check Pi configuration.'); });
     const credentials = await runtime.listCredentials().catch(() => { throw new Error('Could not read saved provider status on this host.'); });
     const stored = new Map(credentials.map((credential) => [credential.providerId, credential.type]));
-    return { providers: runtime.getProviders().map((provider) => {
+    return { warning: this.catalogWarning, providers: runtime.getProviders().map((provider) => {
       const status = runtime.getProviderAuthStatus(provider.id);
       const methods = [];
       if (provider.auth.oauth) methods.push({ type: 'oauth', name: provider.auth.oauth.loginLabel || provider.auth.oauth.name, interactive: true });
@@ -245,14 +372,62 @@ class ProviderAuthService {
 
   async handle(owner, request) {
     if (typeof owner !== 'string' || !owner) throw new Error('Login owner is missing');
-    if (request.action === 'list') return this.listing();
+    if (request.action === 'list') return this.listing(request.refreshModels);
     if (request.action === 'begin') return this.begin(owner, request);
     if (request.action === 'logout') return this.logout(request.providerId);
+    if (request.action === 'create') return this.createProvider(request);
     const flow = this.ownedFlow(owner, request.flowId);
     if (request.action === 'poll') return this.snapshot(flow);
     if (request.action === 'reply') return this.reply(flow, request);
     if (request.action === 'cancel') { this.cancel(flow); return this.snapshot(flow); }
     throw new Error('Unknown provider authentication operation');
+  }
+
+  async createProvider(request) {
+    const config = customProviderConfig(request);
+    if (request.noKey !== true && (typeof request.apiKey !== 'string' || !request.apiKey.trim() || request.apiKey.length > 32768)) throw new Error('Enter the API key, or select No API key required');
+    const runtime = await this.runtime();
+    await runtime.refresh({ allowNetwork: false });
+    if (runtime.getProvider(request.providerId)) throw new Error('That provider ID already exists. Choose another ID.');
+    config.models = await discoverCustomModels(config, request.noKey ? undefined : request.apiKey.trim(), runtime.getModels());
+    await saveCustomProvider(authJoin(authDirname(this.authPath), 'models.json'), request.providerId, config);
+    let warning;
+    try {
+      await runtime.refresh({ allowNetwork: false });
+      if (request.noKey !== true) await runtime.login(request.providerId, 'api_key', { prompt: async () => request.apiKey.trim(), notify: () => {} });
+    } catch {
+      warning = 'Provider created, but its login could not be confirmed. Refresh and use Add account to save the key.';
+    }
+    this.changed();
+    return { created: true, warning };
+  }
+
+  async refreshCustomModels() {
+    if (this.refreshingCatalogs) return this.refreshingCatalogs;
+    if (Date.now() < (this.nextCatalogRefresh || 0)) return;
+    this.nextCatalogRefresh = Date.now() + 5 * 60_000;
+    this.refreshingCatalogs = this.updateCustomCatalogs().finally(() => { this.refreshingCatalogs = undefined; });
+    return this.refreshingCatalogs;
+  }
+
+  async updateCustomCatalogs() {
+    const runtime = await this.runtime();
+    await runtime.refresh({ allowNetwork: false });
+    const path = authJoin(authDirname(this.authPath), 'models.json');
+    let data;
+    try { data = JSON.parse(await authReadFile(path, 'utf8')); }
+    catch { return; }
+    const failures = [];
+    await Promise.all(Object.entries(data.providers ?? {}).map(async ([id, config]) => {
+      if (this.builtinIds.has(id) || !authUrl(config.baseUrl) || !['openai-completions', 'openai-responses', 'anthropic-messages'].includes(config.api)) return;
+      try {
+        const resolution = await runtime.getAuth(id);
+        if (!resolution) throw new Error('Provider login is missing');
+        const models = await discoverCustomModels(config, resolution.auth.apiKey, runtime.getModels(), resolution.auth.headers);
+        await saveCustomProvider(path, id, { ...config, models }, config);
+      } catch { failures.push(id); }
+    }));
+    this.catalogWarning = failures.length ? `Could not refresh models for ${failures.join(', ')}. Keeping the last successful catalog.` : undefined;
   }
   async syncAccounts(runtime) {
     this.syncingAccounts ??= (async () => {
