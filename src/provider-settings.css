@@ -29,6 +29,7 @@
 .provider-toolbar > label:first-child { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
 .provider-toolbar select { max-width: 180px; border: 1px solid var(--line); border-radius: 6px; padding: 6px; color: var(--ink); background: var(--surface, transparent); }
 .provider-toolbar button { display: inline-flex; align-items: center; gap: 6px; }
+.provider-toolbar .provider-add-custom { margin-left: auto; }
 .provider-error { color: #d9534f; font-size: 12px; }
 .custom-provider-form > fieldset { border: 0; padding: 0; margin: 16px 0; min-width: 0; }
 .custom-provider-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
