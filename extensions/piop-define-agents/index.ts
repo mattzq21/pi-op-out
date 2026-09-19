@@ -245,7 +245,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     try { const stored = JSON.parse(process.env[DEFAULTS_ENV] || "null"); if (stored?.session === session && typeof stored.model === "string" && typeof stored.effort === "string") runtimeDefaults = { model: stored.model, effort: stored.effort }; } catch { /* Capture clean runtime defaults below. */ }
     if (!runtimeDefaults) saveRuntimeDefaults({ model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "", effort: pi.getThinkingLevel() });
   };
-  const activate = async (agent: Agent, ctx: ExtensionContext, connectMcp: boolean) => {
+  const activate = async (agent: Agent, ctx: ExtensionContext, connectMcp: boolean, persistSnapshot: boolean) => {
     activeSystemPrompt = "";
     activeAgentPrompt = "";
     if (snapshot) {
@@ -261,7 +261,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
         catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" cannot read agent prompt ${path}: ${error instanceof Error ? error.message : String(error)}`; }
       }
       snapshot = { version: 1, definition: structuredClone({ ...agent, model: agent.model.trim() || runtimeDefaults?.model || "", effort: agent.effort.trim() || runtimeDefaults?.effort || "" }), systemPrompt: activeSystemPrompt, agentPrompt: activeAgentPrompt };
-      saveState();
+      if (persistSnapshot) saveState();
     }
     try { await extensions.activate(await extensions.prepare(extensionPaths(agent.extensions)), ctx); }
     catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" could not load its piop extensions:\n${error instanceof Error ? error.message : String(error)}`; }
@@ -289,10 +289,10 @@ export default async function defineAgents(pi: ExtensionAPI) {
     }
     pi.setActiveTools([...tools]); return undefined;
   };
-  const useAgent = async (name: string, ctx: ExtensionContext, connectMcp: boolean) => {
+  const useAgent = async (name: string, ctx: ExtensionContext, connectMcp: boolean, persistSnapshot = true) => {
     restore(ctx);
     const agent = currentAgent();
-    activeToolError = agent ? await activate(agent, ctx, connectMcp) : `Agent unavailable: "${name}". Select a replacement or general to continue.`;
+    activeToolError = agent ? await activate(agent, ctx, connectMcp, persistSnapshot) : `Agent unavailable: "${name}". Select a replacement or general to continue.`;
     if (activeToolError) pi.setActiveTools([]);
     publish(ctx);
     return activeToolError;
@@ -360,13 +360,13 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const previousSkills = currentSkillPaths();
     active = name; snapshot = undefined; modelOverride = undefined; effortOverride = undefined;
     if (JSON.stringify(previousSkills) !== JSON.stringify(currentSkillPaths())) {
-      const error = await useAgent(active, ctx, false);
-      if (error) { active = previousActive; snapshot = previousSnapshot; modelOverride = previousModel; effortOverride = previousEffort; saveState(); await useAgent(active, ctx, false); throw new Error(error); }
+      const error = await useAgent(active, ctx, false, false);
+      if (error) { active = previousActive; snapshot = previousSnapshot; modelOverride = previousModel; effortOverride = previousEffort; await useAgent(active, ctx, false, false); throw new Error(error); }
       saveState();
       return reload(ctx);
     }
-    const activationError = await useAgent(active, ctx, false);
-    if (activationError) { active = previousActive; snapshot = previousSnapshot; modelOverride = previousModel; effortOverride = previousEffort; saveState(); await useAgent(active, ctx, false); throw new Error(activationError); }
+    const activationError = await useAgent(active, ctx, false, false);
+    if (activationError) { active = previousActive; snapshot = previousSnapshot; modelOverride = previousModel; effortOverride = previousEffort; await useAgent(active, ctx, false, false); throw new Error(activationError); }
     saveState();
   };
   pi.registerCommand("pi-define-agents-config", { description: "Update agent definitions", handler: async (args, ctx) => {

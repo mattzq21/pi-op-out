@@ -4,7 +4,7 @@ import { installDom, renderHook, act } from '../dom.mjs';
 import { installTextEditingShortcuts } from '../../src/lib/textEditingShortcuts.ts';
 import { usePendingMessageDrag } from '../../src/lib/usePendingMessageDrag.ts';
 import { useSessionGroups, isTemporaryChatCwd } from '../../src/lib/sessionGroups.ts';
-import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
+import { mockIPC, clearMocks } from '../mock-ipc.mjs';
 import { emit } from '@tauri-apps/api/event';
 
 describe('native text editing shortcuts', () => {

@@ -6,12 +6,31 @@ import type { AppSettings, DefinedAgentsCapability, AgentConfig } from "../../..
 import { app } from "../pageobjects/app.page.js";
 
 type BackendCall = { command: string; args: Record<string, unknown>; mocked: boolean };
+const isUserPrompt = (value: unknown) => {
+  const command = value as { type?: string; message?: string } | undefined;
+  return command?.type === "prompt" && !/^\/(?:fast|pi-desktop-fast-status|pi-define-agents-use)(?:\s|$)/.test(command.message ?? "");
+};
 const installedAgentConfigPath = join(process.env.PIOP_TEST_HOME || (() => { throw new Error("E2E requires an isolated home"); })(), ".piop", "piop-define-agents", "config.json");
 const callBridge = () => $('textarea[aria-label="E2E calls"]');
 const responseBridge = () => $('textarea[aria-label="E2E responses"]');
+const isolatedUsageResponses = {
+  codex_usage: { error: "Usage lookup disabled in conversation fixtures" },
+  opencode_go_usage: { error: "Usage lookup disabled in conversation fixtures" },
+};
+const withSessionSnapshot = (responses: Record<string, unknown>) => {
+  responses = { ...responses };
+  const models = (responses["pi_command:get_available_models"] as { models?: Array<{ provider: string; id: string }> })?.models ?? [];
+  const known = (settings: AppSettings) => ({ ...settings, knownModels: [...new Set([...(settings.knownModels ?? []), ...models.map(model => `${model.provider}/${model.id}`)])] });
+  if (responses.load_app_settings && !(responses.load_app_settings as { error?: unknown }).error) responses.load_app_settings = known(responses.load_app_settings as AppSettings);
+  const saved = responses.save_app_settings as { settings?: AppSettings } | undefined;
+  if (saved?.settings) responses.save_app_settings = { ...saved, settings: known(saved.settings) };
+  const state = responses["pi_command:get_state"];
+  if (!state) return responses;
+  return { ...responses, "pi_command:get_snapshot": { state, history: responses["pi_command:get_entries"] ?? { entries: [], leafId: null }, queue: { pendingMessages: [] }, liveTools: [], sequence: 0, epoch: "e2e" } };
+};
 const mockBackend = async (responses: Record<string, unknown>) => {
   await callBridge().setValue("[]");
-  await responseBridge().setValue(JSON.stringify(responses));
+  await responseBridge().setValue(JSON.stringify(withSessionSnapshot({ ...isolatedUsageResponses, ...responses })));
 };
 const backendCalls = async () => (JSON.parse(await callBridge().getValue() || "[]") as Partial<BackendCall>[]).filter((call) => call && typeof call === "object").map((call) => ({
   command: typeof call.command === "string" ? call.command : "",
@@ -20,13 +39,14 @@ const backendCalls = async () => (JSON.parse(await callBridge().getValue() || "[
 }));
 const updateBackendResponse = async (command: string, response: unknown) => {
   const responses = JSON.parse(await responseBridge().getValue()) as Record<string, unknown>;
-  await responseBridge().setValue(JSON.stringify({ ...responses, [command]: response }));
+  await responseBridge().setValue(JSON.stringify(withSessionSnapshot({ ...responses, [command]: response })));
 };
-const resetBackend = async () => { await callBridge().setValue("[]"); await responseBridge().setValue("{}"); };
+const resetBackend = async () => { await callBridge().setValue("[]"); await responseBridge().setValue(JSON.stringify(isolatedUsageResponses)); };
 const resetApp = async () => {
   await resetBackend();
   await app.refreshForReset();
-  await app.root.waitForDisplayed();
+  try { await app.root.waitForDisplayed({ timeout: 10_000 }); }
+  catch (cause) { throw new Error(`App reset failed: ${await $("body").getText()}`, { cause }); }
   if (await app.conversationsButton.isExisting()) await app.conversationsButton.click();
   await app.waitUntilReady();
   await app.composer.waitForEnabled();
@@ -44,16 +64,16 @@ let defaultSettings: AppSettings;
 before(async () => {
   defaultSettings = await browser.execute(async () => {
     const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: <T>(command: string, args?: unknown) => Promise<T> } }).__TAURI_INTERNALS__;
-    return tauri.invoke<AppSettings>("load_app_settings");
+    return tauri.invoke<AppSettings>("daemon_invoke", { command: "load_app_settings", args: { clientId: "desktop:e2e-settings" } });
   });
 });
 const acceptanceAgents = (): DefinedAgentsCapability => ({
   version: 1,
-  active: "default",
+  active: "general",
   config: {
     agents: [
-      { name: "default", description: "Default acceptance agent", model: "", effort: "high", agentsMd: "", tools: ["read"], skills: [], mcpServers: [] },
-      { name: "reviewer", description: "Reviews acceptance changes", model: "", effort: "off", systemPrompt: "Review carefully.", agentsMd: "", tools: ["read"], skills: [], mcpServers: [] },
+      { name: "general", model: "", effort: "high", path_systemprompt: "sysprompt/default.md", path_agentprompt: "", tools: ["read"], skills: [], mcpServers: [] },
+      { name: "reviewer", model: "", effort: "off", path_systemprompt: "sysprompt/default.md", path_agentprompt: "", tools: ["read"], skills: [], mcpServers: [] },
     ],
   },
 });
@@ -138,12 +158,13 @@ describe("BUGS-3 regressions", () => {
   });
 
   it("reports a failed agent selection", async () => {
+    await startTemporaryConversation({});
     await enableAgents();
-    await mockBackend({ "pi_command:prompt": { error: "Agent switch failed" } });
+    await updateBackendResponse("pi_command:prompt", { error: "Agent switch failed" });
     await $('button[aria-label="Agent"]').click();
     await $('//div[@role="listbox" and @aria-label="Agent options"]//button[.//span[normalize-space(.)="reviewer"]]').click();
 
-    await expect($('button[aria-label="Agent"]')).toHaveText("default");
+    await expect($('button[aria-label="Agent"]')).toHaveText("general");
     await expect($(".error-toast strong")).toHaveText("Could not change agent");
     await expect($(".error-toast span")).toHaveText("Agent switch failed");
   });
@@ -165,7 +186,7 @@ const installedAgents = (): DefinedAgentsCapability => {
   const agents = config.agents ?? [];
   return {
     version: 1,
-    active: agents.some((agent) => agent.name === "default") ? "default" : agents[0]?.name ?? "default",
+    active: agents.some((agent) => agent.name === "general") ? "general" : agents[0]?.name ?? "general",
     config: {
       agents,
     },
@@ -187,10 +208,12 @@ const pressShortcut = (shortcut: string) => browser.execute((value) => {
   window.dispatchEvent(new KeyboardEvent("keydown", { key, ctrlKey: modifiers.includes("ctrl") || (mod && !mac), metaKey: modifiers.includes("meta") || (mod && mac), altKey: modifiers.includes("alt"), shiftKey: modifiers.includes("shift"), bubbles: true }));
 }, shortcut);
 const connectedSessionResponses = (sessionId: string) => ({
+  start_pi: { attached: false, owned: true }, stop_pi: {},
   load_git_diffs: {}, save_git_diffs: {},
   "pi_command:get_state": { model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 0, pendingMessageCount: 0 },
   "pi_command:get_entries": { entries: [], leafId: null }, "pi_command:get_available_models": { models: [{ provider: "e2e", id: "acceptance", name: "Acceptance model" }, { provider: "e2e", id: "alternate", name: "Alternate model" }] },
-  "pi_command:get_available_thinking_levels": { levels: ["off", "high"] }, "pi_command:get_commands": { commands: [] }, "pi_command:get_session_stats": {},
+  "pi_command:get_available_thinking_levels": { levels: ["off", "high"] }, "pi_command:get_commands": { commands: [{ name: "fast", source: "extension", sourceInfo: { source: "npm:pi-openai-fast-mode-piop" } }] }, "pi_command:get_session_stats": {},
+  "pi_command:prompt": {},
   "pi_command:set_auto_compaction": {}, "pi_command:set_auto_retry": {}, "pi_command:set_thinking_level": {},
 });
 const startTemporaryConversation = async (responses: Record<string, unknown>) => {
@@ -205,6 +228,7 @@ const startTemporaryConversation = async (responses: Record<string, unknown>) =>
   await $('button[aria-label="New conversation"]').click();
   await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "create_temporary_chat"));
   await app.composer.waitForEnabled();
+  await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-define-agents-use ")));
 };
 
 describe("Conversation acceptance", () => {
@@ -251,7 +275,7 @@ describe("Conversation acceptance", () => {
     await app.prepareMessage(draft);
     await app.openProjectChooser();
 
-    await expect(app.projectDialogHeading).toHaveText("Open project");
+    await expect(app.projectDialogHeading).toHaveText("Jump to a folder");
     await expect(app.projectDirectory).toBeDisplayed();
     await app.cancelProjectChooser();
 
@@ -259,13 +283,12 @@ describe("Conversation acceptance", () => {
     await expect(app.composer).toHaveValue(draft);
   });
 
-  it("explains that a project path is required", async () => {
+  it("offers the current folder when the folder search is empty", async () => {
     await app.openProjectChooser();
-    await app.chooseDirectoryButton.waitForEnabled();
+    await app.openProjectButton.waitForEnabled();
     await app.projectDirectory.clearValue();
-    await app.openProjectButton.click();
-
-    await expect(app.dialogAlert).toHaveText("Path can't be empty");
+    await expect(app.openProjectButton).toBeEnabled();
+    await expect(app.dialogAlert).not.toBeExisting();
     await app.cancelProjectChooser();
   });
 
@@ -320,7 +343,7 @@ describe("Conversation acceptance", () => {
 
       const menu = $('[role="menu"][aria-label="Acceptance indexed conversation actions"]');
       await expect(menu).toBeDisplayed();
-      await expect(menu.$$("[role='menuitem']")).toBeElementsArrayOfSize(4);
+      await expect(menu.$$("[role='menuitem']")).toBeElementsArrayOfSize(5);
       await expect(session.$('button[aria-label^="Archive "]')).toBeExisting();
       await browser.keys("Escape");
       await expect(menu).not.toBeExisting();
@@ -331,7 +354,7 @@ describe("Conversation acceptance", () => {
   });
 
   it("collapses and restores a project's conversation group", async () => {
-    const indexed = { id: "acceptance-collapse", path: "/tmp/acceptance-collapse.jsonl", name: "Acceptance grouped conversation", project: "Collapsible project", cwd: "/tmp", preview: "Grouped preview", messageCount: 1, hostId: "local" };
+    const indexed = { id: "acceptance-collapse", path: "/tmp/acceptance-collapse.jsonl", name: "Acceptance grouped conversation", project: "Collapsible project", cwd: "/tmp/acceptance-collapse-project", preview: "Grouped preview", messageCount: 1, hostId: "local" };
     await mockBackend({ list_sessions: [indexed] });
     try {
       await app.conversationSearch.setValue(indexed.name);
@@ -467,7 +490,7 @@ describe("Conversation acceptance", () => {
 
       await expect($(".error-toast strong")).toHaveText("Could not archive conversation");
       await expect($(".error-toast span")).toHaveText("Archive destination is unavailable");
-      await expect(session).toBeDisplayed();
+      await expect($(`.session-item[data-session-key="local:${indexed.id}"]`)).toBeDisplayed();
       await $(".error-toast button").click();
     } finally {
       await app.conversationSearch.clearValue();
@@ -556,8 +579,8 @@ describe("Conversation acceptance", () => {
       await app.sendMessageButton.click();
 
       await expect(app.composer).toHaveValue("");
-      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "prompt"));
-      const prompt = (await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "prompt");
+      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => isUserPrompt(args.command)));
+      const prompt = (await backendCalls()).find(({ args }) => isUserPrompt(args.command));
       expect(prompt?.args.command).toEqual({ type: "prompt", message: "Explain the failing build" });
       expect(prompt?.mocked).toBe(true);
     } finally {
@@ -571,14 +594,14 @@ describe("Conversation acceptance", () => {
       await app.prepareMessage("First line");
       await browser.execute(() => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message piop"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true })));
       await expect(app.composer).toHaveValue("First line");
-      expect((await backendCalls()).filter(({ args }) => (args.command as { type?: string })?.type === "prompt")).toHaveLength(0);
+      expect((await backendCalls()).filter(({ args }) => isUserPrompt(args.command))).toHaveLength(0);
       await app.composer.setValue("First line\nSecond line");
       expect((await app.composer.getValue()).replaceAll("\r\n", "\n")).toBe("First line\nSecond line");
 
       await app.composer.setValue("Submit this with Enter");
       await browser.keys("Enter");
-      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "prompt"));
-      expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "prompt")?.args.command).toEqual({ type: "prompt", message: "Submit this with Enter" });
+      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => isUserPrompt(args.command)));
+      expect((await backendCalls()).find(({ args }) => isUserPrompt(args.command))?.args.command).toEqual({ type: "prompt", message: "Submit this with Enter" });
       await expect(app.composer).toHaveValue("");
     } finally {
       await resetBackend();
@@ -647,7 +670,7 @@ describe("Conversation acceptance", () => {
       await retry.waitForClickable();
       await retry.click();
 
-      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "prompt"));
+      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => isUserPrompt(args.command)));
       expect((await backendCalls()).filter(({ args }) => ["fork", "prompt"].includes(String((args.command as { type?: string })?.type))).map(({ args }) => args.command)).toEqual([
         { type: "prompt", message: "Retry this acceptance request" },
       ]);
@@ -672,8 +695,8 @@ describe("Conversation acceptance", () => {
       await app.prepareMessage("Summarize the attachment");
       await app.sendMessageButton.click();
 
-      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "prompt"));
-      const prompt = (await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "prompt");
+      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => isUserPrompt(args.command)));
+      const prompt = (await backendCalls()).find(({ args }) => isUserPrompt(args.command));
       expect(prompt?.args.command).toEqual({ type: "prompt", message: "Summarize the attachment\n\n<file name=\"acceptance-note.txt\">\nAcceptance fixture content.\n</file>" });
       await expect($(".attachments")).not.toBeExisting();
     } finally {
@@ -692,8 +715,8 @@ describe("Conversation acceptance", () => {
       await expect($(".attachments")).toHaveText(expect.stringContaining('report "draft".txt'));
       await app.sendMessageButton.click();
 
-      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "prompt"));
-      expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "prompt")?.args.command).toEqual({ type: "prompt", message: '<file name="report &quot;draft&quot;.txt">\nQuoted filename content\n</file>' });
+      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => isUserPrompt(args.command)));
+      expect((await backendCalls()).find(({ args }) => isUserPrompt(args.command))?.args.command).toEqual({ type: "prompt", message: '<file name="report &quot;draft&quot;.txt">\nQuoted filename content\n</file>' });
     } finally {
       await resetBackend();
     }
@@ -740,8 +763,11 @@ describe("Conversation acceptance", () => {
   });
 
   it("submits an attached image with its encoded payload", async () => {
-    await mockBackend({ "pi_command:get_entries": { entries: [], leafId: null }, "pi_command:fork": {}, "pi_command:prompt": {} });
+    const model = { provider: "e2e", id: "vision", name: "Vision model", input: ["text", "image"] };
+    await mockBackend({ ...connectedSessionResponses("image-session"), "pi_command:get_state": { ...connectedSessionResponses("image-session")["pi_command:get_state"], model }, "pi_command:get_available_models": { models: [model] }, "pi_command:fork": {}, "pi_command:prompt": {} });
     try {
+      await emitPiEvent({ type: "session_switched" });
+      await expect(app.modelPicker).toHaveAttribute("data-value", "e2e/vision");
       await browser.execute(() => {
         const composer = document.querySelector(".composer")!;
         const bytes = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="), (character) => character.charCodeAt(0));
@@ -751,8 +777,8 @@ describe("Conversation acceptance", () => {
       await expect($(".attachments")).toHaveText(expect.stringContaining("pixel.png"));
       await app.sendMessageButton.click();
 
-      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "prompt"));
-      const command = (await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "prompt")?.args.command as { message: string; images: Array<{ data: string; mimeType: string; name: string }> };
+      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => isUserPrompt(args.command)));
+      const command = (await backendCalls()).find(({ args }) => isUserPrompt(args.command))?.args.command as { message: string; images: Array<{ data: string; mimeType: string; name: string }> };
       expect(command.message).toBe("Describe the attached image.");
       expect(command.images).toEqual([{ type: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", mimeType: "image/png", name: "pixel.png" }]);
     } finally {
@@ -827,7 +853,7 @@ describe("Conversation acceptance", () => {
     await emitPiEvent({ type: "tool_execution_end", toolCallId: "acceptance-tool", result: { content: "Tool finished" }, isError: false });
     await expect(tool).toHaveText(expect.stringContaining("Completed"));
     await tool.$("summary").click();
-    await expect(tool.$("pre")).toHaveText("Tool finished");
+    await expect(tool.$(".tool-output pre")).toHaveText("Tool finished");
   });
 
   it("renders a failed tool with its diagnostic output", async () => {
@@ -838,10 +864,11 @@ describe("Conversation acceptance", () => {
     const tool = $('//details[contains(@class,"tool-event")][.//strong[contains(.,"write")]]');
     await expect(tool).toHaveText(expect.stringContaining("Failed"));
     await tool.$("summary").click();
-    await expect(tool.$("pre")).toHaveText("Permission denied");
+    await expect(tool.$(".tool-output pre")).toHaveText("Permission denied");
   });
 
   it("tracks queued steering and follow-up messages from backend events", async () => {
+    await startTemporaryConversation({});
     try {
       await emitPiEvent({ type: "agent_start" });
       await emitPiEvent({ type: "queue_update", steering: [{}, {}], followUp: [{}] });
@@ -852,6 +879,7 @@ describe("Conversation acceptance", () => {
     } finally {
       await emitPiEvent({ type: "queue_update", steering: [], followUp: [] });
       await emitPiEvent({ type: "agent_end" });
+      await resetBackend();
     }
   });
 
@@ -990,7 +1018,7 @@ describe("Conversation acceptance", () => {
   });
 
   it("presents skill references and compacts repeated intermediate work", async () => {
-    const enableDebug = $('button[aria-label="Enable debug mode"]'); if (await enableDebug.isExisting()) await enableDebug.click();
+    const disableDebug = $('button[aria-label="Disable debug mode"]'); if (await disableDebug.isExisting()) await disableDebug.click();
     const history = {
       entries: [
         { type: "message", id: "work-user", parentId: null, message: { role: "user", content: '<skill name="ponytail" location="/tmp/ponytail/SKILL.md">\nReferences are relative to /tmp/ponytail.\n\nhidden skill instructions</skill>\n\nReview the implementation', timestamp: 1_000 } },
@@ -1013,7 +1041,9 @@ describe("Conversation acceptance", () => {
       await work.$("summary").click();
       await expect(work).toHaveText(expect.stringContaining("Inspecting the behavior carefully"));
       await expect(work).toHaveText(expect.stringContaining("read x2"));
-      await work.$(".tool-event summary").click();
+      await $('button[aria-label="Enable debug mode"]').click();
+      await expect(work.$$(".tool-event")).toBeElementsArrayOfSize(2);
+      for (const summary of await work.$$(".tool-event summary")) await summary.click();
       await expect(work).toHaveText(expect.stringContaining("First file inspected"));
       await expect(work).toHaveText(expect.stringContaining("Second file inspected"));
       await expect($('//article[contains(@class,"assistant-message")][contains(.,"The implementation satisfies the acceptance behavior.")]')).toBeDisplayed();
@@ -1044,7 +1074,7 @@ describe("Conversation acceptance", () => {
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "clone"));
       expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "clone")?.args.command).toEqual({ type: "clone" });
-      await expect($(".user-message")).toHaveText("Establish the branch point");
+      await expect($(".user-message .message-body")).toHaveText("Establish the branch point");
       await expect($(".assistant-message")).toHaveText(expect.stringContaining("This response can be branched."));
     } finally {
       await resetBackend();
@@ -1052,7 +1082,7 @@ describe("Conversation acceptance", () => {
   });
 
   it("steers a live response immediately", async () => {
-    await mockBackend({ "pi_command:prompt": {} });
+    await startTemporaryConversation({ "pi_command:steer": {} });
     try {
       await emitPiEvent({ type: "agent_start" });
       await app.prepareMessage("Focus on the acceptance criteria");
@@ -1061,8 +1091,8 @@ describe("Conversation acceptance", () => {
       await expect(app.composer).toHaveValue("");
       await emitPiEvent({ type: "queue_update", steering: ["Focus on the acceptance criteria"], followUp: [] });
       await expect($(".stream-banner")).toHaveText(expect.stringContaining("1 queued"));
-      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "prompt"));
-      expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "prompt")?.args.command).toEqual({ type: "prompt", message: "Focus on the acceptance criteria", streamingBehavior: "steer" });
+      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "steer"));
+      expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "steer")?.args.command).toEqual({ type: "steer", message: "Focus on the acceptance criteria" });
     } finally {
       await emitPiEvent({ type: "queue_update", steering: [], followUp: [] });
       await emitPiEvent({ type: "agent_end" });
@@ -1071,21 +1101,22 @@ describe("Conversation acceptance", () => {
   });
 
   it("queues a follow-up and can stop a streaming response", async () => {
-    await mockBackend({ "pi_command:prompt": {}, "pi_command:abort": {}, "pi_command:clear_queue": { steering: [], followUp: ["Check this after the current response"] } });
+    const pending = { id: "follow-up", message: "Check this after the current response", behavior: "followUp" };
+    await startTemporaryConversation({ "pi_command:follow_up": {}, "pi_command:abort": {}, "pi_command:change_pending": {}, "pi_command:clear_queue": { steering: [], followUp: [pending.message] } });
     try {
       await emitPiEvent({ type: "agent_start" });
       await app.prepareMessage("Check this after the current response");
       // The real runtime publishes its queue before acknowledging the prompt.
-      await emitPiEvent({ type: "queue_update", steering: [], followUp: ["Check this after the current response"] });
+      await emitPiEvent({ type: "queue_update", steering: [], followUp: [pending.message], pendingMessages: [pending] });
       await browser.keys("Enter");
 
       await expect(app.composer).toHaveValue("");
-      await emitPiEvent({ type: "queue_update", steering: [], followUp: ["Check this after the current response"] });
+      await emitPiEvent({ type: "queue_update", steering: [], followUp: [pending.message], pendingMessages: [pending] });
       await expect($(".stream-banner")).toHaveText(expect.stringContaining("1 queued"));
       await $('button[aria-label="Stop piop"]').click();
-      await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => ["prompt", "abort"].includes(String((args.command as { type?: string })?.type))).length === 2);
-      expect((await backendCalls()).filter(({ args }) => ["prompt", "abort"].includes(String((args.command as { type?: string })?.type))).map(({ args }) => args.command)).toEqual([
-        { type: "prompt", message: "Check this after the current response", streamingBehavior: "followUp" }, { type: "abort" },
+      await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => ["follow_up", "abort"].includes(String((args.command as { type?: string })?.type))).length === 2);
+      expect((await backendCalls()).filter(({ args }) => ["follow_up", "abort"].includes(String((args.command as { type?: string })?.type))).map(({ args }) => args.command)).toEqual([
+        { type: "follow_up", message: pending.message }, { type: "abort" },
       ]);
       await $('button[aria-label="Remove queued message: Check this after the current response"]').click();
     } finally {
@@ -1280,7 +1311,7 @@ describe("Conversation acceptance", () => {
       await expect($('[role="option"][aria-selected="true"]')).toHaveText(expect.stringContaining("/compact"));
       await browser.keys("Tab");
       expect((await app.composer.getValue()).trim()).toBe("/compact");
-      expect((await backendCalls()).filter(({ args }) => (args.command as { type?: string })?.type === "prompt")).toHaveLength(0);
+      expect((await backendCalls()).filter(({ args }) => isUserPrompt(args.command))).toHaveLength(0);
     } finally {
       await app.clearMessage();
       await resetBackend();
@@ -1340,9 +1371,9 @@ describe("/btw acceptance", () => {
 
     const split = $('section[aria-label="Split conversation: BTW"]');
     await expect(split).toBeDisplayed();
-    await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "prompt"));
+    await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { message?: string })?.message === "Review the changed API"));
     expect((await backendCalls()).find(({ command }) => command === "start_pi")?.args).toEqual(expect.objectContaining({ cwd: "/tmp/acceptance-btw", forkPath: "/tmp/source-session.jsonl", hostId: "local" }));
-    expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "prompt")?.args.command).toEqual({ type: "prompt", message: "Review the changed API" });
+    expect((await backendCalls()).find(({ args }) => (args.command as { message?: string })?.message === "Review the changed API")?.args.command).toEqual({ type: "prompt", message: "Review the changed API" });
 
     await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { id?: string; type?: string })?.id === "btw-success"));
     expect((await backendCalls()).find(({ args }) => (args.command as { id?: string })?.id === "btw-success")?.args.command).toEqual({ type: "extension_ui_response", id: "btw-success", value: "opened" });
@@ -1392,7 +1423,7 @@ describe("/btw acceptance", () => {
     await mockBackend(runtimeResponses());
     await request("btw-no-answer", { task: "Find an answer", sessionFile: "/tmp/source-session.jsonl", cwd: "/tmp/acceptance-btw" });
     await expect($('section[aria-label="Split conversation: BTW"]')).toBeDisplayed();
-    await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "prompt"));
+    await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => isUserPrompt(args.command)));
 
     await emitPiEvent({ type: "agent_settled" });
     await expect($('section[aria-label="Split conversation: BTW"]')).toBeDisplayed();
@@ -1441,7 +1472,9 @@ describe("Agent profiles acceptance", () => {
   });
 
   it("reveals agent controls when the extension advertises them", async () => {
-    await expect(app.agentPicker).toHaveText("default");
+    await startTemporaryConversation({});
+    await enableAgents();
+    await expect(app.agentPicker).toHaveText("general");
     await app.agentPicker.click();
     const agents = $('[role="listbox"][aria-label="Agent options"]');
     await expect(agents).toHaveText(expect.stringContaining("reviewer"));
@@ -1468,17 +1501,17 @@ describe("Agent profiles acceptance", () => {
     const name = $('input[aria-label="Agent name"]');
     await expect(name).toHaveValue("agent-2");
     await name.setValue("acceptance-agent");
-    await $('input[aria-label="Agent description"]').setValue("Handles acceptance checks");
-    await $('textarea[aria-label="System prompt"]').setValue("Verify observable behavior.");
+    await $('input[aria-label="Agent prompt file"]').setValue("acceptance.md");
+    await $('input[aria-label="System prompt file"]').setValue("system.md");
     await expect($('select[aria-label="Agent default effort"]')).toHaveValue("");
-    await expect($('select[aria-label="Agent default effort"] option:checked')).toHaveText("Use general default");
+    await expect($('select[aria-label="Agent default effort"] option:checked')).toHaveText(expect.stringContaining("Use fallback"));
     await expect($('input[aria-label="Allow read"]')).toBeSelected();
     await expect($('input[aria-label="Allow bash"]')).toBeSelected();
 
     await $('input[aria-label="Allow bash"]').click();
     await expect($('input[aria-label="Allow bash"]')).not.toBeSelected();
-    await expect($('input[aria-label="Agent description"]')).toHaveValue("Handles acceptance checks");
-    await expect($('textarea[aria-label="System prompt"]')).toHaveValue("Verify observable behavior.");
+    await expect($('input[aria-label="Agent prompt file"]')).toHaveValue("acceptance.md");
+    await expect($('input[aria-label="System prompt file"]')).toHaveValue("system.md");
     await $('button[aria-label="Remove acceptance-agent"]').click();
   });
 
@@ -1495,38 +1528,40 @@ describe("Agent profiles acceptance", () => {
     await $('button[aria-label="Remove release-reviewer"]').click();
   });
 
-  it("saves the encoded agent configuration and reconnects", async () => {
+  it("saves the encoded agent configuration using a sessionless writer", async () => {
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
     await mockBackend({
       ...connectedSessionResponses("agents-save"),
-      "pi_command:set_model": {}, "pi_command:prompt": {}, save_app_settings: {}, stop_pi: {}, start_pi: {}, list_sessions: [], load_app_settings: settings,
+      "pi_command:set_model": {}, "pi_command:prompt": {}, save_app_settings: { settings }, stop_pi: {}, start_pi: {}, list_sessions: [], load_app_settings: settings,
     });
     await emitPiEvent({ type: "session_switched" });
     await enableAgents();
     await expect(app.modelPicker).toHaveAttribute("data-options", expect.stringContaining("e2e/acceptance"));
     await app.openSettings();
-    await setSelectValue('select[aria-label="Default model"]', "e2e/acceptance");
-    await expect($('select[aria-label="Default model"]')).toHaveValue("e2e/acceptance");
     await app.openSettingsSection("Agents");
     await $('//div[contains(@class,"agent-list")]//button[.//span[normalize-space(.)="reviewer"]]').click();
-    await $('input[aria-label="Agent description"]').setValue("Reviews the packaged acceptance suite");
+    await $('input[aria-label="Agent prompt file"]').setValue("review-acceptance.md");
 
     await app.saveSettingsButton.click();
     await expect(app.saveSettingsButton).toHaveText("Saved");
     const prompt = (await backendCalls()).find(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-define-agents-config "))?.args.command as { message: string };
     const saved = decodeAgentValue<AgentConfig>(prompt.message.slice("/pi-define-agents-config ".length));
-    expect(saved.agents.find((agent) => agent.name === "reviewer")?.description).toBe("Reviews the packaged acceptance suite");
+    expect(saved.agents.find((agent) => agent.name === "reviewer")?.path_agentprompt).toBe("review-acceptance.md");
     expect((await backendCalls()).filter(({ command }) => command === "save_app_settings")).toHaveLength(1);
     expect((await backendCalls()).some(({ command }) => command === "stop_pi")).toBe(true);
-    expect((await backendCalls()).some(({ command }) => command === "start_pi")).toBe(true);
+    expect((await backendCalls()).some(({ command, args }) => command === "start_pi" && args.noSession === true)).toBe(true);
   });
 
-  it("persists a GUI-created agent through a real native save and reconnect", async () => {
+  it("persists a GUI-created agent through a real native save", async () => {
     const originalConfig = readFileSync(installedAgentConfigPath);
     const agentName = "e2e-persisted-agent";
     try {
       writeFileSync(installedAgentConfigPath, JSON.stringify(acceptanceAgents().config, null, 2));
       await resetBackend();
+      await browser.execute(async settings => {
+        const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
+        await tauri.invoke("daemon_invoke", { command: "save_app_settings", args: { settings, clientId: "desktop:e2e-settings" } });
+      }, defaultSettings);
       await app.refreshForReset();
       await app.waitUntilReady();
       await resetBackend();
@@ -1537,8 +1572,8 @@ describe("Agent profiles acceptance", () => {
       await app.openSettingsSection("Agents");
       await $('//button[normalize-space(.)="Add agent"]').click();
       await $('input[aria-label="Agent name"]').setValue(agentName);
-      await $('input[aria-label="Agent description"]').setValue("Saved by the native acceptance test");
-      await $('textarea[aria-label="System prompt"]').setValue("Verify the saved agent configuration.");
+      await $('input[aria-label="Agent prompt file"]').setValue("sysprompt/default.md");
+      await $('input[aria-label="System prompt file"]').setValue("sysprompt/default.md");
       await expect(app.saveSettingsButton).toBeClickable();
       await app.saveSettingsButton.click();
 
@@ -1551,10 +1586,10 @@ describe("Agent profiles acceptance", () => {
       await expect(app.saveSettingsButton).toHaveText("Saved");
       const saved = JSON.parse(readFileSync(installedAgentConfigPath, "utf8")) as AgentConfig;
       expect(saved.agents.find((agent) => agent.name === agentName)).toMatchObject({
-        description: "Saved by the native acceptance test",
-        systemPrompt: "Verify the saved agent configuration.",
+        path_agentprompt: "sysprompt/default.md",
+        path_systemprompt: "sysprompt/default.md",
       });
-      await browser.waitUntil(async () => (await backendCalls()).some(({ command, mocked }) => command === "start_pi" && !mocked), { timeoutMsg: "Saving the agent did not reconnect the native piop runtime" });
+      await browser.waitUntil(async () => (await backendCalls()).some(({ command, args, mocked }) => command === "start_pi" && args.noSession === true && !mocked), { timeoutMsg: "Saving the agent did not start a sessionless native writer" });
 
       await app.openConversations();
       await app.agentPicker.click();
@@ -1563,19 +1598,19 @@ describe("Agent profiles acceptance", () => {
       await app.openSettings();
       await app.openSettingsSection("Agents");
       await $(`//div[contains(@class,"agent-list")]//button[.//span[normalize-space(.)="${agentName}"]]`).click();
-      await expect($('input[aria-label="Agent description"]')).toHaveValue("Saved by the native acceptance test");
+      await expect($('input[aria-label="Agent prompt file"]')).toHaveValue("sysprompt/default.md");
     } finally {
       writeFileSync(installedAgentConfigPath, originalConfig);
       await resetApp();
     }
   });
 
-  it("restores desktop settings when agent configuration is rejected", async () => {
+  it("preserves desktop settings when agent configuration is rejected", async () => {
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
     const capability = acceptanceAgents();
     await mockBackend({
       ...connectedSessionResponses("agents-rollback"),
-      load_app_settings: settings, save_app_settings: {}, start_pi: {}, stop_pi: {},
+      load_app_settings: settings, save_app_settings: { settings }, start_pi: {}, stop_pi: {},
       "pi_command:set_model": {},
       "pi_command:prompt": { error: "Agent configuration was rejected" },
     });
@@ -1585,18 +1620,16 @@ describe("Agent profiles acceptance", () => {
     await app.automaticRetryToggle.click();
     await app.openSettingsSection("Agents");
     await $('//div[contains(@class,"agent-list")]//button[.//span[normalize-space(.)="reviewer"]]').click();
-    await $('input[aria-label="Agent description"]').setValue("Rejected configuration change");
+    await $('input[aria-label="Agent prompt file"]').setValue("rejected-change.md");
     await app.saveSettingsButton.click();
 
     await expect($(".settings-save [role='alert']")).toHaveText("Agent configuration was rejected");
     const calls = await backendCalls();
     const settingsWrites = calls.filter(({ command }) => command === "save_app_settings");
-    expect(settingsWrites.map(({ args }) => (args.settings as AppSettings).autoRetry)).toEqual([!settings.autoRetry, settings.autoRetry]);
-    expect(settingsWrites.every(({ mocked }) => mocked)).toBe(true);
+    expect(settingsWrites).toHaveLength(0);
     const configurations = calls.filter(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-define-agents-config ")).map(({ args }) => decodeAgentValue<AgentConfig>((args.command as { message: string }).message.slice("/pi-define-agents-config ".length)));
-    expect(configurations).toHaveLength(2);
-    expect(configurations[0].agents.find((agent) => agent.name === "reviewer")?.description).toBe("Rejected configuration change");
-    expect(configurations[1]).toEqual(capability.config);
+    expect(configurations).toHaveLength(1);
+    expect(configurations[0].agents.find((agent) => agent.name === "reviewer")?.path_agentprompt).toBe("rejected-change.md");
   });
 });
 
@@ -1614,7 +1647,7 @@ describe("Settings acceptance", () => {
     const model = { provider, id: modelParts.join("/"), name: "Configured model" };
     await mockBackend({
       ...connectedSessionResponses("settings-save"),
-      load_app_settings: defaultSettings, save_app_settings: {}, start_pi: {}, stop_pi: {},
+      load_app_settings: defaultSettings, save_app_settings: { settings: { ...defaultSettings, autoRetry: !defaultSettings.autoRetry } }, start_pi: {}, stop_pi: {},
       "pi_command:get_state": { ...connectedSessionResponses("settings-save")["pi_command:get_state"], model, thinkingLevel: defaultSettings.defaultThinking },
       "pi_command:get_available_models": { models: [model] },
       "pi_command:get_available_thinking_levels": { levels: [...new Set([defaultSettings.defaultThinking, "high", "off"])] },
@@ -1630,6 +1663,7 @@ describe("Settings acceptance", () => {
 
       await expect(app.saveSettingsButton).toHaveText("Saved");
       await app.automaticRetryToggle.click();
+      await updateBackendResponse("save_app_settings", { settings: defaultSettings });
       await app.saveSettingsButton.click();
       await expect(app.saveSettingsButton).toHaveText("Saved");
       const settingsWrites = (await backendCalls()).filter(({ command }) => command === "save_app_settings");
@@ -1844,14 +1878,14 @@ describe("Project behavior", () => {
       await emitPiEvent({ type: "session_switched" });
       await app.openProjectChooser();
       await setSelectValue('select[aria-label="Machine"]', remote.id);
-      await expect(app.projectDirectory).toHaveValue("/remote/home");
-      await app.chooseDirectoryButton.click();
-
-      const directories = $('[aria-label="Directories"]');
+      await expect(app.projectDirectory).toHaveValue("");
+      const directories = $('[aria-label="Matching folders"]');
       await expect(directories).toBeDisplayed();
+      const folder = directories.$('.//div[@role="option"][.//span[normalize-space(.)="project-a"]]');
+      await folder.waitForDisplayed();
       await updateBackendResponse("list_directories", { path: "/remote/home/project-a", parent: "/remote/home", directories: [] });
-      await directories.$('button=project-a').click();
-      await expect(app.projectDirectory).toHaveValue("/remote/home/project-a");
+      await folder.click();
+      await expect(app.projectDirectory).toHaveValue("project-a/");
       await app.cancelProjectChooser();
     } finally {
       if (await app.projectDialogHeading.isExisting()) await app.cancelProjectChooser();
@@ -1869,7 +1903,7 @@ describe("Project behavior", () => {
       await setSelectValue('select[aria-label="Machine"]', remote.id);
 
       await expect(app.dialogAlert).toHaveText("Remote home directory is unavailable");
-      await expect(app.projectDialogHeading).toHaveText("Open project");
+      await expect(app.projectDialogHeading).toHaveText("Jump to a folder");
       await app.cancelProjectChooser();
     } finally {
       if (await app.projectDialogHeading.isExisting()) await app.cancelProjectChooser();
@@ -1887,11 +1921,10 @@ describe("Project behavior", () => {
       await emitPiEvent({ type: "session_switched" });
       await app.openProjectChooser();
       await setSelectValue('select[aria-label="Machine"]', remote.id);
-      await expect(app.projectDirectory).toHaveValue("/remote/home");
-      await app.chooseDirectoryButton.click();
+      await expect(app.projectDirectory).toHaveValue("");
 
       await expect(app.dialogAlert).toHaveText("Remote directory listing was denied");
-      await expect(app.projectDialogHeading).toHaveText("Open project");
+      await expect(app.projectDialogHeading).toHaveText("Jump to a folder");
       await app.cancelProjectChooser();
     } finally {
       if (await app.projectDialogHeading.isExisting()) await app.cancelProjectChooser();
@@ -1910,7 +1943,7 @@ describe("Project behavior", () => {
       while (await $(".error-toast button").isExisting()) await $(".error-toast button").click();
       await emitPiEvent({ type: "session_switched" });
       await app.openProjectChooser();
-      await app.projectDirectory.setValue("/tmp");
+      await app.setProjectPath("/tmp");
       await app.openProjectButton.click();
 
       await expect(app.projectDialogHeading).not.toBeExisting();
@@ -1935,7 +1968,7 @@ describe("Project behavior", () => {
     try {
       await emitPiEvent({ type: "session_switched" });
       await app.openProjectChooser();
-      await app.projectDirectory.setValue("/tmp");
+      await app.setProjectPath("/tmp");
       await app.openProjectButton.click();
       await expect(app.projectDialogHeading).not.toBeExisting();
       await expect(app.modelPicker).toBeEnabled();
@@ -1978,10 +2011,10 @@ describe("Project behavior", () => {
   });
 
   it("reports a backend connection failure without trapping the user in the chooser", async () => {
-    await mockBackend({ stop_pi: {}, start_pi: { error: "Project runtime unavailable" }, validate_project_directory: "/tmp/acceptance-project" });
+    await mockBackend({ stop_pi: {}, start_pi: { error: "Project runtime unavailable" }, validate_project_directory: "/tmp/acceptance-project", list_directories: { path: "/tmp/acceptance-project", parent: "/tmp", directories: [] } });
     try {
       await app.openProjectChooser();
-      await app.projectDirectory.setValue("/tmp/acceptance-project");
+      await app.setProjectPath("/tmp/acceptance-project");
       await app.openProjectButton.click();
 
       await expect(app.projectDialogHeading).not.toBeExisting();

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
-import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
+import { mockIPC, clearMocks } from '../mock-ipc.mjs';
 import { installDom, renderComponent, enterText, act } from '../dom.mjs';
 import { SessionPanel } from '../../src/components/SessionPanel.tsx';
 

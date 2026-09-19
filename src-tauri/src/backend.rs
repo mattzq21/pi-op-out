@@ -470,7 +470,7 @@ fn default_keybindings() -> HashMap<String, String> {
 }
 
 fn home_dir() -> Result<PathBuf, String> {
-    #[cfg(feature = "webdriver")]
+    #[cfg(feature = "test-home")]
     if let Some(path) = std::env::var_os("PIOP_TEST_HOME") { return Ok(PathBuf::from(path)); }
     std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| "HOME is not set".into())
 }

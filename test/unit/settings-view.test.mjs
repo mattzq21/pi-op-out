@@ -39,13 +39,16 @@ describe('settings editor', () => {
     await click(control('Enable context window cap')); assert.equal(control('Context window cap').disabled, true);
   });
 
-  test('model visibility retains unavailable models and supports filtering and show all', async () => {
+  test('model visibility retains unavailable models and supports filtering and toggling visibility', async () => {
     props.settings.hiddenModels = ['old/missing'];
     await render({ models: [{ provider: 'p', id: 'model', name: 'Current' }] });
+    await section('Models');
     assert.match(document.body.textContent, /Currently unavailable/); assert.equal(control('Show old/missing').getAttribute('aria-checked'), 'false');
     await click(control('Show p/model')); await click(save()); assert.deepEqual(saves[0][0].hiddenModels, ['old/missing', 'p/model']);
     await enterText(control('Filter models'), 'absent'); assert.match(document.body.textContent, /No models match/);
-    await click(button('Show all')); await click(save()); assert.deepEqual(saves[1][0].hiddenModels, []);
+    await enterText(control('Filter models'), '');
+    await click(control('Show old/missing')); await click(control('Show p/model'));
+    await click(save()); assert.deepEqual(saves[1][0].hiddenModels, []);
   });
 
   test('dictionary editing validates active entries and removes inactive references on deletion', async () => {

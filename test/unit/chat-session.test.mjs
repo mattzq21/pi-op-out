@@ -10,7 +10,7 @@ describe('chat session hook', () => {
   beforeEach(async () => {
     dom = installDom(); calls = [];
     responses = new Map([['get_snapshot', snapshot()], ['get_available_models', { models: [{ id: 'model' }] }], ['get_available_thinking_levels', { levels: ['off', 'high'] }], ['get_commands', { commands: [] }], ['get_session_stats', { contextUsage: { tokens: 500, contextWindow: 1000, percent: 50 } }]]);
-    transport = { async command(command) { calls.push(command.type); const response = responses.get(command.type); if (response instanceof Error) throw response; return typeof response === 'function' ? response() : response; } };
+    transport = { subscribe() { return () => {}; }, async command(command) { calls.push(command.type); const response = responses.get(command.type); if (response instanceof Error) throw response; return typeof response === 'function' ? response() : response; } };
     hook = await renderHook(value => useChatSession(value), transport);
   });
   afterEach(async () => { await hook.unmount(); dom.restore(); });
@@ -114,7 +114,7 @@ describe('chat session hook', () => {
   test('changing conversations rejects obsolete refreshes and ignores old event handlers', async () => {
     const pending = Promise.withResolvers(); responses.set('get_snapshot', () => pending.promise);
     const old = hook.current; let operation; await act(async () => { operation = old.refresh(); });
-    await hook.rerender({ command: transport.command });
+    await hook.rerender({ command: transport.command, subscribe: transport.subscribe });
     await act(async () => { old.handleEvent(message('message_start', 'user', 'stale')); pending.resolve(snapshot()); await assert.rejects(operation, /Conversation changed/); await assert.rejects(old.refresh(), /Conversation changed/); });
     assert.deepEqual(hook.current.messages, []);
   });

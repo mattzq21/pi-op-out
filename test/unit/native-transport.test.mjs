@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test, describe, beforeEach, afterEach } from 'node:test';
-import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
+import { mockIPC, clearMocks } from '../mock-ipc.mjs';
 import { emit } from '@tauri-apps/api/event';
 import * as native from '../../src/lib/nativeTransport.ts';
 

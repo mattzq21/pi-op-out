@@ -14,7 +14,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 default = ["desktop"]
 desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-dialog", "dep:gtk", "dep:webkit2gtk"]
 daemon = []
-webdriver = ["desktop", "dep:tauri-plugin-wdio-webdriver"]
+test-home = []
+webdriver = ["desktop", "test-home", "dep:tauri-plugin-wdio-webdriver"]
 
 [[bin]]
 name = "piop"

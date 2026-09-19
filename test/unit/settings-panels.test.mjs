@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, enterText, act } from '../dom.mjs';
-import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
+import { mockIPC, clearMocks } from '../mock-ipc.mjs';
 import { HooksSettings } from '../../src/components/HooksSettings.tsx';
 import { StorageSettings } from '../../src/components/StorageSettings.tsx';
 import { PromptContextBar } from '../../src/components/PromptContextBar.tsx';

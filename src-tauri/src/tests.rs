@@ -626,7 +626,7 @@ fn session_deletion_checks_active_path_and_identity_and_preserves_invalid_traces
     for use_path in [true, false] {
         runtime.active_agents.lock().unwrap().insert("active".into(), AgentAddress {
             host_id: "local".into(), session_id: Some(if use_path { "different" } else { "one" }.into()),
-            session_path: use_path.then(|| path.to_string_lossy().into_owned()), worktree: None, presence_id: None, working: false, messageable: true,
+            session_path: use_path.then(|| path.to_string_lossy().into_owned()), worktree: None, presence_id: None, working: false, messageable: false,
         });
         assert_eq!(delete_session_files(&runtime, path.to_str().unwrap(), "local", None, &root, false).unwrap_err(), "Close the session before deleting it");
         assert_eq!(fs::read_to_string(&path).unwrap(), content);
@@ -3991,6 +3991,7 @@ fn configuration_preparation_reports_failed_writes_and_cleans_temporary_files() 
         assert!(result.is_err());
         assert_eq!(fs::read_to_string(obstruction.join("keep")).unwrap(), "original");
         let files: Vec<_> = fs::read_dir(obstruction.parent().unwrap()).unwrap().map(|entry| entry.unwrap().file_name()).collect();
-        assert_eq!(files.len(), 2, "failed writes must not leave temporary files: {files:?}");
+        assert_eq!(files.len(), if kind == 1 { 3 } else { 2 }, "failed writes must not leave temporary files: {files:?}");
+        if kind == 1 { assert!(files.contains(&std::ffi::OsString::from("provider-accounts.mjs"))); }
     }
 }

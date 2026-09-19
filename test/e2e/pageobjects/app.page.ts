@@ -24,10 +24,9 @@ class AppPage {
   get saveSettingsButton() { return $(".settings-save button"); }
   get projectDialogHeading() { return $("#project-dialog-title"); }
   get extensionDialogHeading() { return $('dialog.extension-dialog:not([aria-labelledby="project-dialog-title"]) h2'); }
-  get projectDirectory() { return $('input[aria-label="Project directory"]'); }
-  get cancelProjectButton() { return $('//dialog//button[normalize-space(.)="Cancel"]'); }
-  get openProjectButton() { return $('//dialog//button[normalize-space(.)="Open project"]'); }
-  get chooseDirectoryButton() { return $(".browse-directory"); }
+  get projectDirectory() { return $('.directory-palette input[role="combobox"]'); }
+  get cancelProjectButton() { return $(".directory-palette-escape"); }
+  get openProjectButton() { return $(".directory-palette-open"); }
   get dialogAlert() { return $('[role="alert"]'); }
   get automaticRetryToggle() { return $('[role="switch"][aria-label="Automatic retry"]'); }
   get addMachineButton() { return $('//button[normalize-space(.)="Add machine"]'); }
@@ -114,6 +113,16 @@ class AppPage {
     await this.cancelProjectButton.waitForEnabled();
     await this.cancelProjectButton.click();
     await this.projectDialogHeading.waitForExist({ reverse: true });
+  }
+
+  async setProjectPath(path: string) {
+    await this.openProjectButton.waitForEnabled();
+    if (await this.projectDirectory.getAttribute("aria-label") === "Folder path relative to home") {
+      await browser.execute(() => document.querySelector('.directory-palette input')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", altKey: true, bubbles: true, cancelable: true })));
+      await browser.waitUntil(async () => await this.projectDirectory.getAttribute("aria-label") === "Search or type a folder path");
+    }
+    await this.projectDirectory.setValue(`${path.replace(/\/$/, "")}/`);
+    await this.openProjectButton.waitForEnabled();
   }
 
   async chooseComposerOption(label: "Agent" | "Model" | "Thinking level" | "Streaming message behavior", option: string) {

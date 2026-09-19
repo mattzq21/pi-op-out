@@ -1,11 +1,15 @@
 import path from "node:path";
 import { createServer } from "node:net";
+import { spawn, type ChildProcess } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 import { existsSync, readFileSync, readdirSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { mkdtempSync, mkdirSync, copyFileSync, chmodSync } from "node:fs";
 import { selectWindowBounds } from "./scripts/window-placement.mjs";
 
 if (process.platform === "linux") process.env.GDK_BACKEND = "x11";
+delete process.env.PIOP_DAEMON_URL;
+delete process.env.PIOP_DAEMON_TOKEN;
 
 const defaultBinary = path.resolve(
   "src-tauri",
@@ -54,6 +58,35 @@ const desktopSettingsPath = path.join(userConfigRoot, "dev.pi.desktop", "setting
 let baselineSessions = new Set<string>();
 let baselineProjects = new Set<string>();
 const baselineNativeConfigs = new Map<string, Buffer | undefined>();
+let fixtureDaemon: ChildProcess | undefined;
+
+const stopFixtureDaemon = async () => {
+  const child = fixtureDaemon;
+  fixtureDaemon = undefined;
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
+  const signal = (name: NodeJS.Signals) => {
+    try { if (process.platform === "win32") child.kill(name); else process.kill(-child.pid!, name); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+  };
+  signal("SIGTERM");
+  if (!await Promise.race([exited.then(() => true), delay(3000).then(() => false)])) { signal("SIGKILL"); await exited; }
+};
+
+const startFixtureDaemon = async () => {
+  const binary = path.join(path.dirname(defaultBinary), process.platform === "win32" ? "piop-daemon.exe" : "piop-daemon");
+  let failure: Error | undefined;
+  fixtureDaemon = spawn(binary, [], { env: { ...process.env, ...fixtureEnvironment, PIOP_MOBILE_BIND: "127.0.0.1:0" }, detached: process.platform !== "win32", stdio: "ignore" });
+  fixtureDaemon.on("error", error => { failure = error; });
+  for (let attempt = 0; attempt < 150; attempt++) {
+    if (failure) throw failure;
+    if (fixtureDaemon.exitCode !== null) throw new Error(`Test daemon exited with code ${fixtureDaemon.exitCode}`);
+    if (existsSync(path.join(fixtureHome, ".piop", "daemon.json"))) return;
+    await delay(100);
+  }
+  await stopFixtureDaemon();
+  throw new Error("Test daemon did not publish its isolated endpoint");
+};
 
 const verifyActualCallModel = () => {
   const [provider, ...modelParts] = actualCallModel.split("/");
@@ -138,15 +171,17 @@ export const config: WebdriverIO.Config = {
     ui: "bdd",
     timeout: 60_000,
   },
-  onPrepare: () => {
+  onPrepare: async () => {
     verifyActualCallModel();
     baselineSessions = new Set(sessionFiles());
     baselineProjects = new Set(markedTestProjects());
     for (const file of [definedAgentsConfigPath, desktopSettingsPath]) {
       baselineNativeConfigs.set(file, existsSync(file) ? readFileSync(file) : undefined);
     }
+    await startFixtureDaemon();
   },
-  onComplete: () => {
+  onComplete: async () => {
+    await stopFixtureDaemon();
     try { cleanupTestSessions(); }
     finally { try { restoreNativeConfigs(); } finally { if (ownsFixtureHome) rmSync(fixtureHome, { recursive: true, force: true }); } }
   },

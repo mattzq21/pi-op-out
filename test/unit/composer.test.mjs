@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, enterText, act } from '../dom.mjs';
 import { Composer } from '../../src/components/Composer.tsx';
-import { mockIPC, mockWindows, clearMocks } from '@tauri-apps/api/mocks';
+import { mockIPC, mockWindows, clearMocks } from '../mock-ipc.mjs';
 import { emit } from '@tauri-apps/api/event';
 
 describe('composer interactions', () => {

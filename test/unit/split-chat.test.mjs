@@ -11,7 +11,7 @@ describe('split conversation lifecycle', () => {
     calls = []; listeners = new Set(); connected = []; released = []; dialogs = [];
     const state = { model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', messageCount: 0, pendingMessageCount: 0 };
     responses = new Map([['get_snapshot', { state, history: { entries: [], leafId: null }, sequence: 0, epoch: 'epoch', liveTools: [], queue: { pendingMessages: [] } }], ['get_available_models', { models: [] }], ['get_available_thinking_levels', { levels: ['off', 'high'] }], ['get_commands', { commands: [] }]]);
-    transport = { connect: async (...args) => connected.push(args), subscribe: handler => { listeners.add(handler); return () => listeners.delete(handler); }, command: async command => { calls.push(command); const result = responses.get(command.type); if (result instanceof Error) throw result; return typeof result === 'function' ? result(command) : result; } };
+    transport = { ownsConversation: () => true, connect: async (...args) => connected.push(args), subscribe: handler => { listeners.add(handler); return () => listeners.delete(handler); }, command: async command => { calls.push(command); const result = responses.get(command.type); if (result instanceof Error) throw result; return typeof result === 'function' ? result(command) : result; } };
     const diffs = {};
     props = { runtimePool: { forSession: () => transport, createEphemeralFork: () => transport, subscribe: () => () => {}, gitDiffs: () => diffs, setInteractive: (_, value) => calls.push({ interactive: value }) }, session: { id: 'session', name: 'Conversation', cwd: '/repo', path: '/session.jsonl', project: 'repo', messageCount: 0 }, settings: { autoCompaction: true, autoRetry: true, dictionaries: [], activeDictionaryIds: [], hiddenModels: [] }, draft: '', onDraftChange: () => {}, onOpenTerminal: () => {}, onDialogRequest: (...args) => dialogs.push(args), onDialogResolved: (...args) => dialogs.push(args), onDialogTransportClosed: async () => {}, onReleaseTransport: async value => released.push(value), onSessionChange: () => {}, onClose: () => {} };
   });
@@ -133,7 +133,7 @@ describe('split conversation lifecycle', () => {
     await extension('setStatus', { statusKey: 'pi-define-agents', statusText: `json:${encodeAgentValue({ config: { agents: [{ name: 'general' }, { name: 'review' }] }, active: 'general' })}` });
     await click(control('Agent')); await click(document.querySelector('[role=option][data-value=review]'));
     assert.ok(calls.some(command => command.type === 'prompt' && command.message === `/pi-define-agents-use ${encodeAgentValue('review')}`));
-    await extension('setStatus', { statusKey: 'pi-define-agents', statusText: 'json:invalid' }); assert.equal(control('Agent').dataset.options, 'default');
-    await extension('setStatus', { statusKey: 'pi-define-agents' }); assert.equal(control('Agent').dataset.options, 'default');
+    await extension('setStatus', { statusKey: 'pi-define-agents', statusText: 'json:invalid' }); assert.equal(control('Agent').dataset.options, '');
+    await extension('setStatus', { statusKey: 'pi-define-agents' }); assert.equal(control('Agent').dataset.options, '');
   });
 });

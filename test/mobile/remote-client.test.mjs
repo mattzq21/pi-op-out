@@ -14,21 +14,20 @@ class FakeSocket {
   receive(value) { this.onmessage?.({ data: JSON.stringify(value) }); }
 }
 beforeEach(() => { globalThis.WebSocket = FakeSocket; FakeSocket.instances = []; });
-const host = { url: 'wss://piop.example.test/mobile', token: 'a'.repeat(48) };
+const host = { url: 'wss://piop.example.test/mobile' };
 async function connected() {
   const client = new RemoteClient(); const promise = client.connect(host);
-  const socket = FakeSocket.instances.at(-1); socket.onopen(); socket.receive({ type: 'ready', protocol: 1 }); await promise;
+  const socket = FakeSocket.instances.at(-1); socket.onopen(); socket.receive({ type: 'ready', protocol: 1, backend: 'daemon' }); await promise;
   return { client, socket };
 }
 test('requires TLS and keeps credentials out of URL', () => {
   assert.equal(validateHost(host), host.url);
   for (const url of ['ws://host', 'https://host', 'wss://user:password@host', 'wss://host?token=secret', 'wss://host#token']) assert.throws(() => validateHost({ ...host, url }));
-  assert.throws(() => validateHost({ ...host, token: 'short' }));
 });
 test('authenticates before resolving connection; correlates out-of-order responses', async () => {
   const { client, socket } = await connected();
   try {
-    assert.deepEqual(socket.sent[0], { type: 'authenticate', token: host.token });
+    assert.deepEqual(socket.sent[0], { type: 'authenticate', mode: 'tailscale' });
     const first = client.invoke('list_sessions'); const second = client.invoke('home_directory', { hostId: 'local' });
     socket.receive({ id: 2, result: '/home/me' }); socket.receive({ id: 1, result: [] });
     assert.deepEqual(await first, []); assert.equal(await second, '/home/me');
@@ -59,8 +58,10 @@ test('host errors propagate; explicit disconnect does not report connection loss
   socket.receive({ id: 1, error: 'Pi missing' }); await rejection;
   client.close(); assert.equal(disconnected, false);
 });
-test('rejects invalid tokens without leaving a pending handshake', async () => {
+test('rejects older desktop endpoints without leaving a pending handshake', async () => {
   const client = new RemoteClient(); const promise = client.connect(host);
-  const rejection = assert.rejects(promise, /pairing token/);
-  FakeSocket.instances.at(-1).close(); await rejection; client.close();
+  const rejection = assert.rejects(promise, /older desktop endpoint/);
+  const socket = FakeSocket.instances.at(-1);
+  socket.onopen(); socket.receive({ type: 'ready', protocol: 1 });
+  await rejection; assert.equal(socket.readyState, 3); client.close();
 });

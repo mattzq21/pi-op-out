@@ -31,6 +31,7 @@ export async function fixture(t) {
     },
   };
   const ctx = {
+    isIdle: () => true,
     model: undefined, modelRegistry: { find() {} }, cwd: dir,
     sessionManager: { getSessionFile: () => join(dir, 'session'), getSessionId: () => dir, getBranch: () => entries },
     ui: { setStatus: (key, value) => statuses.set(key, value), notify() {} },
@@ -160,7 +161,7 @@ test('event bus unsubscription and agent shutdown release active listeners', asy
   assert.deepEqual(f.messages, ['shutdown']);
 });
 
-test('a failed restored agent blocks input and a failed config save preserves the file', async t => {
+test('a failed restored agent blocks input while global config edits preserve the session snapshot', async t => {
   const f = await fixture(t);
   await f.file('prompt.md', 'Prompt');
   const agent = { name: 'general', extensions: ['missing.mjs'], path_systemprompt: 'prompt.md', path_agentprompt: '', model: '', effort: 'high', tools: [], skills: [], mcpServers: [] };
@@ -169,13 +170,15 @@ test('a failed restored agent blocks input and a failed config save preserves th
   t.after(() => { for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key]; Object.assign(process.env, previous); });
   delete process.env.PI_DESKTOP_MCP_CONFIG;
   await (await import(pathToFileURL(join(f.dir, 'index.mjs')))).default(f.pi);
-  await assert.rejects(f.emit('session_start'), /missing.mjs/);
+  await f.emit('session_start');
   assert.deepEqual(await f.emit('input', { text: 'Never infer' }), { action: 'handled' });
   assert.deepEqual(f.activeTools(), []);
-  const before = await readFile(join(f.dir, 'config.json'), 'utf8');
   const config = Buffer.from(JSON.stringify({ agents: [{ ...agent, extensions: ['other-missing.mjs'] }] })).toString('base64url');
-  await assert.rejects(f.commands.get('pi-define-agents-config').handler(config, f.ctx), /other-missing/);
-  assert.equal(await readFile(join(f.dir, 'config.json'), 'utf8'), before);
+  await f.commands.get('pi-define-agents-config').handler(config, f.ctx);
+  assert.deepEqual(JSON.parse(await readFile(join(f.dir, 'config.json'), 'utf8')).agents[0].extensions, ['other-missing.mjs']);
+  assert.deepEqual(await f.emit('input', { text: 'Still unavailable' }), { action: 'handled' });
+  assert.match(JSON.parse(f.statuses.get('piop-input-rejected')).error, /missing.mjs/);
+  assert.deepEqual(f.entries.at(-1).data.snapshot.definition.extensions, ['missing.mjs']);
 });
 
 const stagedExtension = name => `
@@ -277,7 +280,7 @@ async function sessionAgentFixture(t) {
   return f;
 }
 
-test('first input locks the selected agent while model and effort remain editable across restore', async t => {
+test('agent switching requires idle state while model and effort survive restore', async t => {
   const f = await sessionAgentFixture(t);
   await f.emit('session_start');
   assert.equal(f.capability().locked, false);
@@ -285,11 +288,12 @@ test('first input locks the selected agent while model and effort remain editabl
   await f.select('general');
   await f.select('reviewer');
   assert.deepEqual(await f.emit('input', { text: 'Review this' }), { action: 'continue' });
-  assert.equal(f.capability().locked, true);
+  assert.equal(f.capability().locked, false);
   const entries = structuredClone(f.entries);
-  await assert.rejects(f.select('general'), /Start a new session/);
-  await f.select('reviewer');
-  assert.deepEqual(f.entries, entries, 'same-agent selection must not reset overrides or history');
+  f.ctx.isIdle = () => false;
+  await assert.rejects(f.select('general'), /Wait for the current response/);
+  assert.deepEqual(f.entries, entries, 'busy selection must not change history');
+  f.ctx.isIdle = () => true;
   await f.pi.setModel({ provider: 'test', id: 'another-model' });
   f.pi.setThinkingLevel('low');
   await f.emit('thinking_level_select', { level: 'low' });
@@ -302,13 +306,14 @@ test('first input locks the selected agent while model and effort remain editabl
   restored.entries.push(...structuredClone(f.entries));
   await restored.emit('session_start');
   assert.equal(restored.capability().active, 'reviewer');
-  assert.equal(restored.capability().locked, true);
+  assert.equal(restored.capability().locked, false);
   assert.equal(restored.ctx.model.id, 'another-model');
   assert.equal(restored.pi.getThinkingLevel(), 'low');
-  await assert.rejects(restored.select('general'), /Start a new session/);
+  await restored.select('general');
+  assert.equal(restored.capability().active, 'general');
 });
 
-test('legacy conversations retain their latest agent and cannot switch it', async t => {
+test('legacy conversations retain a snapshot when global definitions change and can switch while idle', async t => {
   const f = await sessionAgentFixture(t);
   f.entries.push(
     { type: 'message', message: { role: 'user', content: 'Existing conversation' } },
@@ -316,28 +321,36 @@ test('legacy conversations retain their latest agent and cannot switch it', asyn
   );
   await f.emit('session_start');
   assert.equal(f.capability().active, 'reviewer');
-  assert.equal(f.capability().locked, true);
-  await assert.rejects(f.select('general'), /Start a new session/);
+  assert.equal(f.capability().locked, false);
   const config = JSON.parse(await readFile(join(f.dir, 'config.json'), 'utf8'));
   config.agents = config.agents.filter(agent => agent.name !== 'reviewer');
-  await assert.rejects(f.commands.get('pi-define-agents-config').handler(Buffer.from(JSON.stringify(config)).toString('base64url'), f.ctx), /cannot be removed or renamed/);
+  await f.commands.get('pi-define-agents-config').handler(Buffer.from(JSON.stringify(config)).toString('base64url'), f.ctx);
   assert.equal(f.capability().active, 'reviewer');
+  assert.equal(f.capability().saved, true);
+  await f.select('general');
+  assert.equal(f.capability().active, 'general');
 });
 
-test('a missing restored agent blocks startup instead of silently switching agents', async t => {
+test('a missing restored agent blocks input until a replacement is selected', async t => {
   const f = await sessionAgentFixture(t);
   f.entries.push({ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'removed', locked: true } });
-  await assert.rejects(f.emit('session_start'), /Unknown defined agent: removed/);
-  await assert.rejects(f.select('general'), /Start a new session/);
+  await f.emit('session_start');
+  assert.equal(f.capability().active, 'removed');
+  assert.equal(f.capability().unavailable, true);
+  assert.deepEqual(await f.emit('input', { text: 'Blocked' }), { action: 'handled' });
+  assert.match(JSON.parse(f.statuses.get('piop-input-rejected')).error, /Agent unavailable: "removed"/);
+  await f.select('general');
+  assert.deepEqual(await f.emit('input', { text: 'Continue' }), { action: 'continue' });
 });
 
 
-test('compacted history stays locked and a new empty session allows agent selection', async t => {
+test('compacted history and a new empty session allow idle agent selection', async t => {
   const f = await sessionAgentFixture(t);
   f.entries.push({ type: 'compaction' });
   await f.emit('session_start');
-  assert.equal(f.capability().locked, true);
-  await assert.rejects(f.select('reviewer'), /Start a new session/);
+  assert.equal(f.capability().locked, false);
+  await f.select('reviewer');
+  assert.equal(f.capability().active, 'reviewer');
   f.entries.length = 0;
   f.ctx.sessionManager.getSessionFile = () => join(f.dir, 'new-session');
   await f.emit('session_start');

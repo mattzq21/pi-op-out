@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, act } from '../dom.mjs';
-import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
+import { mockIPC, clearMocks } from '../mock-ipc.mjs';
 import { Message } from '../../src/components/Message.tsx';
 import { DiffViewer } from '../../src/components/DiffViewer.tsx';
 import { HookWheel } from '../../src/components/HookWheel.tsx';
