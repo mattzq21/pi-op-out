@@ -6,6 +6,24 @@ fn argument<T: serde::de::DeserializeOwned>(args: &Value, key: &str) -> Result<T
 }
 
 pub(super) async fn dispatch(app: AppHandle, owner: String, command: String, args: Value) -> Result<Value, String> {
+    let routing_app = app.clone(); let routing_owner = owner.clone(); let routing_command = command.clone(); let routing_args = args.clone();
+    if let Some(result) = tokio::task::spawn_blocking(move || peers::route(&routing_app, &routing_owner, &routing_command, &routing_args)).await.map_err(|error| error.to_string())?? { return Ok(result); }
+    dispatch_local(app, owner, command, args).await
+}
+
+pub(super) async fn dispatch_peer(app: AppHandle, owner: String, command: String, args: Value) -> Result<Value, String> {
+    if args["hostId"].as_str().is_some_and(|id| id != "local") { return Err("Peer connections expose only this daemon's local machine".into()); }
+    if matches!(command.as_str(), "save_app_settings" | "change_session_groups" | "load_session_groups") { return Err("Configure this machine through its own Piop settings".into()); }
+    if command == "list_sessions" {
+        return tokio::task::spawn_blocking(move || peers::local_sessions(&app)).await.map_err(|error| error.to_string())?;
+    }
+    if command == "storage_report" {
+        return tokio::task::spawn_blocking(move || serde_json::to_value(StorageReport { hosts: vec![inspect_storage(None)?] }).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?;
+    }
+    dispatch_local(app, owner, command, args).await
+}
+
+async fn dispatch_local(app: AppHandle, owner: String, command: String, args: Value) -> Result<Value, String> {
     if let Some(id) = args.get("runtimeId").and_then(Value::as_str) {
         if app.state::<PiRuntime>().processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(id).is_some_and(|process| process.window_label != owner) { return Err("Runtime belongs to another connection".into()); }
     }
@@ -13,6 +31,8 @@ pub(super) async fn dispatch(app: AppHandle, owner: String, command: String, arg
         if app.state::<TerminalRuntime>().processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.get(id).is_some_and(|process| process.window_label != owner) { return Err("Terminal belongs to another connection".into()); }
     }
     match command.as_str() {
+        "broker_request" => tokio::task::spawn_blocking(move || peers::local_broker_request(&app, &argument::<String>(&args, "path")?, &argument::<Value>(&args, "body")?)).await.map_err(|error| error.to_string())?,
+        "load_host_settings" => tokio::task::spawn_blocking(move || serde_json::to_value(load_app_settings(app)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
         "provider_auth" => tokio::task::spawn_blocking(move || provider_auth::for_owner(app, owner, argument(&args, "hostId")?, argument(&args, "request")?)).await.map_err(|error| error.to_string())?,
         "open_project_directory" => tokio::task::spawn_blocking(move || open_project_directory(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?).map(|_| Value::Null)).await.map_err(|error| error.to_string())?,
         "voice_configuration" => voice_configuration(app, argument(&args, "runtimeId")?).await,
@@ -20,8 +40,13 @@ pub(super) async fn dispatch(app: AppHandle, owner: String, command: String, arg
         "voice_stop" => voice_stop(app, argument(&args, "runtimeId")?, argument(&args, "callId")?).await.map(|_| Value::Null),
         "voice_mute" => voice_mute(app, argument(&args, "callId")?, argument(&args, "muted")?).map(|_| Value::Null),
         "voice_suppress" => voice_suppress(app, argument(&args, "callId")?, argument(&args, "suppressed")?).map(|_| Value::Null),
-        "start_pi" => tokio::task::spawn_blocking(move || serde_json::to_value(start_pi_for_owner(app.clone(), owner, app.state(), app.state(), argument(&args, "runtimeId")?, argument(&args, "cwd")?, argument(&args, "sessionPath")?, argument(&args, "sessionId")?, argument(&args, "forkPath")?, argument(&args, "noSession")?, argument(&args, "hostId")?, argument(&args, "presence")?, argument(&args, "clientId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "stop_pi" => tokio::task::spawn_blocking(move || serde_json::to_value(stop_pi(app.state(), argument(&args, "runtimeId")?, argument(&args, "discardBlank")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
+        "start_pi" => tokio::task::spawn_blocking(move || (|| { let mut result = start_pi_for_owner(app.clone(), owner, app.state(), app.state(), argument(&args, "runtimeId")?, argument(&args, "cwd")?, argument(&args, "sessionPath")?, argument(&args, "sessionId")?, argument(&args, "forkPath")?, argument(&args, "noSession")?, argument(&args, "hostId")?, argument(&args, "presence")?, argument(&args, "clientId")?)?; result["daemonId"] = json!(daemon_endpoint::identity()?); Ok(result) })()).await.map_err(|error| error.to_string())?,
+        "stop_pi" => tokio::task::spawn_blocking(move || {
+            let id = argument::<String>(&args, "runtimeId")?;
+            let result = if args["preserveRunning"].as_bool().unwrap_or(false) { detach_pi_with(&app.state(), &id, false, true) }
+                else { stop_pi(app.state(), id, argument(&args, "discardBlank")?) }?;
+            serde_json::to_value(result).map_err(|error| error.to_string())
+        }).await.map_err(|error| error.to_string())?,
         "pi_command" => tokio::task::spawn_blocking(move || serde_json::to_value(pi_command(app.clone(), app.state(), app.state(), argument(&args, "runtimeId")?, argument(&args, "command")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
         "pi_presence" => tokio::task::spawn_blocking(move || serde_json::to_value(pi_presence(app.state(), argument(&args, "runtimeId")?, argument(&args, "presence")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
         "start_terminal" => tokio::task::spawn_blocking(move || serde_json::to_value(start_terminal_for_owner(app.clone(), owner, app.state(), argument(&args, "terminalId")?, argument(&args, "sessionKey")?, argument(&args, "cwd")?, argument(&args, "cols")?, argument(&args, "rows")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,

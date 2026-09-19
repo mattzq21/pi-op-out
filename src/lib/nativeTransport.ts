@@ -50,7 +50,7 @@ export class NativeTransport {
   needsDefaults() { return this.fresh; }
   defaultsApplied() { this.fresh = false; }
   connectionTarget(): NativeConnectionTarget { return { cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId }; }
-  async restoreConnection(target: NativeConnectionTarget) { await this.disconnect(); this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId || "local"; await this.connect(); }
+  async restoreConnection(target: NativeConnectionTarget) { await this.disconnect(); this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId || "local"; this.daemonId = undefined; await this.connect(); }
   private readonly runtimeId = globalThis.crypto?.randomUUID?.() ?? `runtime-${Date.now()}-${Math.random()}`;
   voiceRuntimeId() { return this.runtimeId; }
   private queueSnapshot: RpcEvent = { type: "queue_update", steering: [], followUp: [], pendingMessages: [] };
@@ -104,6 +104,7 @@ export class NativeTransport {
   private sessionPath?: string;
   private sessionId?: string;
   private hostId = "local";
+  private daemonId?: string;
   private running = false;
   private temporaryChat = false;
   private temporaryChatUsed = false;
@@ -111,6 +112,7 @@ export class NativeTransport {
   private fastCommands = new Set<string>();
   constructor(target: NativeConnectionTarget = {}) { this.fresh = !target.sessionPath && !target.sessionId; this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId ?? "local"; }
   currentHostId() { return this.hostId; }
+  currentDaemonId() { return this.daemonId; }
   currentCwd() { return this.cwd; }
   currentSessionPath() { return this.sessionPath; }
   isTemporaryChat() { return this.temporaryChat; }
@@ -168,7 +170,8 @@ export class NativeTransport {
     if (version !== this.connectionVersion) { unlisten(); stderrUnlisten(); return; }
     this.unlisten = unlisten; this.stderrUnlisten = stderrUnlisten;
     // Pi can resume by ID before a fresh session has a file on disk.
-    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call<{ attached: boolean; owned?: boolean }>("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }));
+    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call<{ attached: boolean; owned?: boolean; daemonId?: string }>("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }));
+    this.daemonId = attached?.daemonId;
     if (attached?.attached) this.fresh = false;
     this.owns = attached?.owned !== false;
     this.emit({ type: this.owns ? "ownership_acquired" : "ownership_lost" });
@@ -272,7 +275,7 @@ export class NativeTransport {
   createGitWorktree(cwd: string, name: string, hostId = "local") { return call<GitWorktree>("create_git_worktree", { cwd, name, hostId }); }
   removeGitWorktree(cwd: string, hostId = "local", deleteBranch = false) { return call<GitWorktreeRemoval>("remove_git_worktree", { cwd, hostId, deleteBranch }); }
   async runWorktreeSetup(cwd: string, worktreePath: string, hostId = "local", onSetup?: (cancel: (() => Promise<void>) | undefined) => void) {
-    const setupId = await call<string>("prepare_worktree_setup");
+    const setupId = await call<string>("prepare_worktree_setup", { hostId });
     onSetup?.(() => call<void>("cancel_worktree_setup", { setupId }));
     try { await call<void>("run_worktree_setup", { setupId, cwd, worktreePath, hostId }); }
     finally { onSetup?.(undefined); }
@@ -280,6 +283,7 @@ export class NativeTransport {
   async isGitRepository() { if (!this.cwd) return false; return call<boolean>("is_git_repository", { cwd: this.cwd, hostId: this.hostId }); }
   async gitBranch() { if (!this.cwd) return null; const branch = await call<unknown>("git_branch", { cwd: this.cwd, hostId: this.hostId }); return typeof branch === "string" ? branch : null; }
   loadSettings() { return call<AppSettings>("load_app_settings"); }
+  loadHostSettings() { return call<AppSettings>("load_host_settings", { hostId: this.hostId }); }
   loadCodexUsage() { return call<CodexUsage>("codex_usage"); }
   loadOpencodeGoUsage() { return call<OpencodeGoUsage>("opencode_go_usage"); }
   saveSettings(settings: AppSettings, reconnect = true, agentHostId?: string) {

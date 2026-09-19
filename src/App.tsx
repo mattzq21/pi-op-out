@@ -6,7 +6,7 @@ import { FindInPage } from "./components/FindInPage";
 import { ChatView } from "./components/ChatView";
 import { IconButton } from "./components/IconButton";
 import { SessionPanel, type SessionAction } from "./components/SessionPanel";
-import { SettingsView } from "./components/SettingsView";
+import { LocalSettingsView } from "./components/LocalSettingsView";
 import { ExtensionDialog } from "./components/ExtensionDialog";
 import { TerminalView } from "./components/TerminalView";
 import { ProjectDialog } from "./components/ProjectDialog";
@@ -275,6 +275,7 @@ export default function App() {
 
   const configureRuntime = useCallback(async (value: AppSettings) => {
     if (!transport.ownsConversation()) return;
+    if (transport.currentHostId() !== "local") value = await transport.loadHostSettings();
     const [modelResult] = await Promise.allSettled([
       transport.command<{ models: Model[] }>({ type: "get_available_models" }),
       transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }),
@@ -614,20 +615,19 @@ export default function App() {
     catch (reason) { addNotice({ title: "Could not resume piop", message: reason instanceof Error ? reason.message : String(reason) }); }
     finally { pauseResumePending.current.delete(ownerTransport); }
   };
-  const agentSettings: AgentConfig | undefined = definedAgents ? { agents: definedAgents.config.agents, fastModeModels: definedAgents.config.fastModeModels } : undefined;
-  const saveSettings = async (value: AppSettings, nextConfig?: AgentConfig) => {
+  const saveSettings = async (value: AppSettings, nextConfig?: AgentConfig, previousConfig?: AgentConfig) => {
     if (settingsSavePending.current || debugModePending.current) throw new Error("Wait for the current settings save to finish");
     settingsSavePending.current = true; setSettingsSaving(true);
-    try { await applySettings(value, nextConfig); } finally { settingsSavePending.current = false; setSettingsSaving(false); }
+    try { await applySettings(value, nextConfig, previousConfig); } finally { settingsSavePending.current = false; setSettingsSaving(false); }
   };
-  const applySettings = async (value: AppSettings, nextConfig?: AgentConfig) => {
+  const applySettings = async (value: AppSettings, nextConfig?: AgentConfig, previousConfig?: AgentConfig) => {
     if (!settings) throw new Error("Settings are still loading");
     const next = { ...value, debugMode: settings.debugMode };
-    const agentHostId = nextConfig ? transport.currentHostId() : undefined;
+    const agentHostId = nextConfig ? "local" : undefined;
     // Use a separate, sessionless runtime to persist agent definitions without
     // reloading the extension inside a conversation that is still responding.
     const writeAgents = async (configuration: AgentConfig, defaultModel: string) => {
-      const writer = new NativeTransport({ cwd: transport.currentCwd(), hostId: agentHostId });
+      const writer = new NativeTransport({ cwd: "~", hostId: "local" });
       try {
         await writer.connect(undefined, undefined, undefined, undefined, true);
         const [provider, ...modelId] = defaultModel.split("/");
@@ -641,8 +641,8 @@ export default function App() {
       if (nextConfig) { await writeAgents(nextConfig, next.defaultModel); agentsSaved = true; }
       savedChange = await transport.saveSettings(next, false, agentHostId);
     } catch (reason) {
-      if (agentsSaved && agentSettings) {
-        try { await writeAgents(agentSettings, settings.defaultModel); }
+      if (agentsSaved && previousConfig) {
+        try { await writeAgents(previousConfig, settings.defaultModel); }
         catch { throw new Error(`Settings could not be saved, and the agent definitions could not be restored: ${reason instanceof Error ? reason.message : String(reason)}`); }
       }
       throw reason;
@@ -803,7 +803,7 @@ export default function App() {
       </div>
       {terminalOpen && <TerminalView key={`${terminalSessionId}:${activeTerminal.id}`} cwd={terminalCwd} terminals={sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={activeTerminal.id} output={activeTerminal.output} outputEnd={activeTerminal.outputEnd} snapshot={activeTerminal.snapshot} snapshotEnd={activeTerminal.snapshotEnd} started={activeTerminal.started} exited={activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { void transport.writeTerminal(activeTerminal.id, data).catch((reason) => queueTerminalOutput(activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { void transport.resizeTerminal(activeTerminal.id, cols, rows).catch(() => undefined); }} onSnapshot={(value, outputEnd) => saveTerminalSnapshot(terminalSessionId, activeTerminal.id, value, outputEnd)} onDelete={deleteTerminal} onClose={() => { terminalPanelRevision.current += 1; setTerminalOpen(false); }} />}
     </div>
-    {view === "settings" && <SettingsView providerHostId={transport.currentHostId()} pendingSettingsCount={pendingSettingsCount} settings={settings} agentConfig={extensionStateIsCurrent ? agentSettings : undefined} sessions={sessions} models={models} thinkingLevels={thinkingLevels} onSave={saveSettings} onDirtyChange={setSettingsDirty} />}
+    {view === "settings" && <LocalSettingsView pendingSettingsCount={pendingSettingsCount} settings={settings} sessions={sessions} onSave={saveSettings} onDirtyChange={setSettingsDirty} />}
     <FindInPage selector=".chat-panes > .chat-shell" scopeKey={activeConversationKey} onActivate={() => setActivePane("main")} active={activePane === "main" || !splitPane} enabled={view === "chat"} />
     {splitPane && <FindInPage key={splitSessionId} selector=".split-chat .chat-shell" scopeKey={splitSessionId} onActivate={() => setActivePane("split")} active={activePane === "split"} enabled={view === "chat"} />}
     {view === "settings" && <FindInPage selector=".settings-shell" scopeKey="settings" />}

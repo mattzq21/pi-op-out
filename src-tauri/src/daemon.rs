@@ -124,6 +124,8 @@ pub(crate) fn update_settings(app: &AppHandle, runtime: &PiRuntime, settings: &A
 }
 
 pub(crate) fn connect(app: &AppHandle, runtime: &PiRuntime, broker: &BrokerRuntime, settings: &AppSettings, host_id: &str) -> Result<Arc<Daemon>, String> {
+    #[cfg(not(feature = "desktop"))]
+    if host_id != "local" { return Err("Remote workers must be managed through their Piop daemon".into()); }
     let mut daemons = runtime.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?;
     let connection_config = connection_config(settings, host_id)?;
     let host = if host_id == "local" { None } else { Some(remote_host(settings, host_id)?.clone()) };

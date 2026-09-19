@@ -254,16 +254,16 @@ class Session {
     this.publishPresence();
   }
 
-  async detach(runtimeId, discardBlank = false) {
+  async detach(runtimeId, discardBlank = false, preserveRunning = false) {
     const voiceClosed = hostVoice.detach(runtimeId);
     this.views.delete(runtimeId);
     subscriptions.delete(runtimeId);
     this.routeDialogs();
     this.publishPresence();
     await voiceClosed;
-    const stopped = !this.views.size && (this.ephemeral || (discardBlank && !this.submitted && !this.working));
+    const stopped = !preserveRunning && !this.views.size && (this.ephemeral || (discardBlank && !this.submitted && !this.working));
     if (stopped) await this.stop();
-    if (!this.ephemeral && !this.views.size) await ownership.releaseClient(this.identity, this.clientId, () => !this.views.size);
+    if (!this.ephemeral && !this.views.size && !this.configurationBusy()) await ownership.releaseClient(this.identity, this.clientId, () => !this.views.size && !this.configurationBusy());
     return { stopped, submitted: this.submitted };
   }
 
@@ -606,7 +606,7 @@ async function handle(packet) {
   }
   const session = subscriptions.get(runtimeId);
   if (!session) { if (type === 'detach') return { stopped: false }; throw new Error('Pi is not running'); }
-  if (type === 'detach') { attachments.delete(runtimeId); return session.detach(runtimeId, packet.discardBlank); }
+  if (type === 'detach') { attachments.delete(runtimeId); return session.detach(runtimeId, packet.discardBlank, packet.preserveRunning); }
   if (type === 'presence') { session.views.set(runtimeId, packet.presence); session.routeDialogs(); session.publishPresence(); return; }
   const command = packet.command;
   if (command.type === 'extension_ui_response') {

@@ -33,9 +33,10 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
   useEffect(() => {
     const lifecycle = ++lifecycleRef.current; let closing = false; let reconnecting = false; let connectedOnce = false;
     runtimePool.setInteractive(transport, true);
-    const configure = () => Promise.all([
-       transport.command({ type: "set_auto_compaction", enabled: true }), transport.command({ type: "set_auto_retry", enabled: settings.autoRetry })
-    ]);
+    const configure = async () => {
+      const runtimeSettings = transport.currentHostId() === "local" ? settings : await transport.loadHostSettings();
+      await Promise.all([transport.command({ type: "set_auto_compaction", enabled: true }), transport.command({ type: "set_auto_retry", enabled: runtimeSettings.autoRetry })]);
+    };
     const connectRuntime = async (initial: boolean) => {
       if (reconnecting || closing) return;
       reconnecting = true;

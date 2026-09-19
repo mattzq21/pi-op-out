@@ -41,7 +41,7 @@ serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
 walkdir = "2"
-tokio = { version = "1", features = ["io-util", "macros", "process", "sync", "time", "net", "rt-multi-thread", "signal"] }
+tokio = { version = "1", features = ["io-util", "io-std", "macros", "process", "sync", "time", "net", "rt-multi-thread", "signal"] }
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
 futures-util = "0.3"
