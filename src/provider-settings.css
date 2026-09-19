@@ -2,6 +2,7 @@
 .provider-host-label strong { color: var(--text, #e8e5dd); }
 .provider-account { display: flex; justify-content: space-between; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--border, #34322d); }
 .provider-account small { display: block; color: var(--text-muted, #a09c93); margin-top: 5px; overflow-wrap: anywhere; }
+.provider-stored { color: var(--accent); }
 .provider-account-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .provider-account-actions button, .provider-login-panel button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--dark-control, var(--panel)); color: var(--ink); font-size: 12px; font-weight: 600; }
 .provider-account-actions button:hover:not(:disabled), .provider-login-panel button:hover:not(:disabled) { background: var(--dark-control-hover, var(--paper)); border-color: var(--accent); }
