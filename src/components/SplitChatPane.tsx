@@ -57,6 +57,7 @@ export function SplitChatPane({ runtimePool, session, settings, draft, onDraftCh
     const unsubscribe = transport.subscribe((event: RpcEvent) => {
       handleEvent(event);
       if (event.type === "ownership_lost") { updateConnected(false); void onDialogTransportClosed(transport); }
+      if (event.type === "ownership_acquired") updateConnected(true);
       if (event.type === "extension_ui_resolved" && typeof event.id === "string") onDialogResolved(transport, event.id);
       if (event.type === "session_info_changed" || event.type === "session_switched") void refresh().catch(reportControlError);
       if (event.type === "extension_ui_request") { const request = event as unknown as ExtensionUiRequest;

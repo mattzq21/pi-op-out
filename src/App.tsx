@@ -351,6 +351,7 @@ export default function App() {
       }
       if (event.type === "session_info_changed") void refresh();
       if (event.type === "ownership_lost") { updateConnected(false); setDialogs((current) => current.filter((dialog) => dialog.transport !== transport)); }
+      if (event.type === "ownership_acquired") updateConnected(true);
       if (event.type === "disconnected") {
         setDefinedAgents(undefined); setMcpStatuses({}); setStatuses({}); setWidgets({}); document.title = "piop"; setDialogs((current) => current.filter((dialog) => dialog.transport !== transport)); updateConnected(false);
         if (reconnecting) return; reconnecting = true;

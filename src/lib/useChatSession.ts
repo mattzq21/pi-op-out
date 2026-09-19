@@ -10,7 +10,7 @@ type MessageUpdate = (messages: ChatMessage[]) => ChatMessage[];
 const emptyState: AgentState = { model: null, thinkingLevel: "off", isStreaming: false, sessionId: "", messageCount: 0, pendingMessageCount: 0 };
 const rpcContent = (value: unknown): ChatMessage["content"] => (value as { content?: ChatMessage["content"] })?.content ?? "";
 
-export function useChatSession(transport: Pick<NativeTransport, "command" | "subscribe">, initialState: AgentState = emptyState) {
+export function useChatSession(transport: Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation">>, initialState: AgentState = emptyState) {
   const [state, setState] = useState(initialState); const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [models, setModels] = useState<Model[]>([]); const [commands, setCommands] = useState<SlashCommand[]>([]); const [thinkingLevels, setThinkingLevels] = useState<string[]>(["off"]);
   const owner = useRef(transport); owner.current = transport;
@@ -80,6 +80,22 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
     return promise;
   }, [discardPendingUpdates, transport]);
 
+  useEffect(() => {
+    let stopped = false;
+    let viewing = transport.ownsConversation?.() === false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try { await refresh(); } catch { /* Reconnect or the next refresh will retry. */ }
+      if (!stopped && viewing) timer = setTimeout(() => void poll(), 2000);
+    };
+    const unsubscribe = transport.subscribe((event) => {
+      if (event.type === "ownership_lost" && !viewing) { viewing = true; void poll(); }
+      if (event.type === "ownership_acquired" || event.type === "disconnected") { viewing = false; clearTimeout(timer); }
+    });
+    if (viewing) void poll();
+    return () => { stopped = true; clearTimeout(timer); unsubscribe(); };
+  }, [refresh, transport]);
+
   const handleEvent = useCallback((event: RpcEvent) => {
     if (owner.current !== transport) return;
     if (bufferedEvents.current) { bufferedEvents.current.push(event); return; }
@@ -99,7 +115,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
     if (event.type === "pause_state") setState((current) => ({ ...current, isPaused: event.isPaused === true, isPausing: event.isPausing === true, ...(event.isPaused === true && event.isPausing !== true ? { isStreaming: false, activity: undefined } : {}) }));
     if (event.type === "pause_state" && event.isPaused === true && event.isPausing !== true) { flush(); setMessages(checkpointLatestUser); }
     if (event.type === "agent_settled") setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
-    if (event.type === "disconnected" || event.type === "ownership_lost") setState((current) => ({ ...current, isStreaming: false, isPausing: false, activity: undefined }));
+    if (event.type === "disconnected") setState((current) => ({ ...current, isStreaming: false, isPausing: false, activity: undefined }));
     if (event.type === "message_start" || event.type === "message_end") {
       if (event.type === "message_end") flush();
       const rawMessage = (event.message ?? {}) as Record<string, unknown>; const roleKey = String((rawMessage as { role?: unknown }).role ?? "message");

@@ -146,7 +146,11 @@ class Session {
     if (stateChanges.has(event.type)) this.stateRevision++;
     if (this.transient) return;
     const envelope = { ...event, sequence: ++this.sequence, epoch: this.epoch };
-    for (const runtimeId of target ? [target] : this.views.keys()) output({ type: 'event', runtimeId, event: envelope });
+    const viewers = target ? [target] : [...this.views.keys(), ...[...readonlyViews].filter(([runtimeId, view]) => view.id === this.identity && !this.views.has(runtimeId)).map(([runtimeId]) => runtimeId)];
+    for (const runtimeId of viewers) {
+      if (readonlyViews.has(runtimeId) && event.type === 'extension_ui_request' && interactiveMethods.has(event.method)) continue;
+      output({ type: 'event', runtimeId, event: envelope });
+    }
     if (event.type === 'queue_update' || event.type === 'settings_pending') this.publishState();
     if (['agent_settled', 'compaction_end', 'auto_compaction_end', 'queue_update'].includes(event.type)) void this.reconcileConfiguration();
   }
@@ -594,8 +598,9 @@ async function handle(packet) {
     const target = readonlyViews.get(runtimeId);
     if (type === 'detach') { readonlyViews.delete(runtimeId); attachments.delete(runtimeId); return { stopped: false }; }
     if (type === 'presence') return;
-    if (packet.command?.type === 'get_snapshot') return ownership.snapshot(target.id, target.path);
-    if (packet.command?.type === 'get_state') return (await ownership.snapshot(target.id, target.path)).state;
+    const live = [...sessions.values()].find((session) => session.identity === target.id && !session.closed && !session.transient);
+    if (packet.command?.type === 'get_snapshot') return live ? live.execute({ type: 'get_snapshot' }) : ownership.snapshot(target.id, target.path);
+    if (packet.command?.type === 'get_state') return live ? live.execute({ type: 'get_state' }) : (await ownership.snapshot(target.id, target.path)).state;
     throw ownershipError();
   }
   const session = subscriptions.get(runtimeId);
