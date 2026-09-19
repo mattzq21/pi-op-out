@@ -85,9 +85,9 @@ function LoginPanel({ flow, auth }: { flow: AuthFlow; auth: AuthControls }) {
 function ProviderList({ providers, auth, disabled }: { providers: ProviderAccount[]; auth: AuthControls; disabled: boolean }) {
   return <><div className="config-list">{providers.map((provider) => <div className="provider-account" key={provider.id}>
       <div><strong>{provider.name}</strong><small>{provider.configured ? <>Configured{provider.source && <> · <span className={provider.source === "stored" ? "provider-stored" : undefined}>{provider.source}</span></>}</> : "Not configured"}</small></div>
-      <div className="provider-account-actions">{!provider.storedType && provider.methods.filter((method) => method.interactive).map((method) => <button key={method.type} disabled={disabled || auth.loading} onClick={() => void auth.begin(provider.id, method.type)}>{method.type === "oauth" ? `Sign in · ${method.name}` : `Configure · ${method.name}`}</button>)}
+      <div className="provider-account-actions">{!provider.storedType && provider.methods.filter((method) => method.interactive).map((method) => <button key={method.type} disabled={disabled || auth.loading} onClick={() => void auth.begin(provider.id, method.type)}>Add account{provider.methods.filter((entry) => entry.interactive).length > 1 ? ` · ${method.name}` : ""}</button>)}
         {provider.storedType && <button disabled={disabled || auth.loading} onClick={() => void auth.logout(provider.id)}>Remove saved login</button>}
-        {provider.number === 1 && provider.methods.filter((method) => method.interactive).map((method) => <button key={`add:${method.type}`} disabled={disabled || auth.loading} onClick={() => void auth.begin(provider.id, method.type, true)}>Add account{provider.methods.filter((entry) => entry.interactive).length > 1 ? ` · ${method.name}` : ""}</button>)}
+        {provider.number === 1 && provider.storedType && provider.methods.filter((method) => method.interactive).map((method) => <button key={`add:${method.type}`} disabled={disabled || auth.loading} onClick={() => void auth.begin(provider.id, method.type, true)}>Add account{provider.methods.filter((entry) => entry.interactive).length > 1 ? ` · ${method.name}` : ""}</button>)}
         {!provider.methods.some((method) => method.interactive) && <small>Configured through the host environment</small>}
       </div>
     </div>)}</div>
