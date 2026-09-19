@@ -5,15 +5,17 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+const source = join(root, "public/icon.png");
+if (process.argv[2]) copyFileSync(process.argv[2], source);
 const output = mkdtempSync(join(tmpdir(), "piop-icons-"));
 
 try {
   const foreground = join(output, "foreground.svg");
-  writeFileSync(foreground, readFileSync(join(root, "public/icon.svg"), "utf8")
-    .replace('viewBox="0 0 1280 1280"', 'viewBox="-213 -213 1706 1706"'));
+  const image = readFileSync(source).toString("base64");
+  writeFileSync(foreground, `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="-341 -341 1706 1706"><image width="1024" height="1024" href="data:image/png;base64,${image}"/></svg>`);
   const manifest = join(output, "icons.json");
   writeFileSync(manifest, JSON.stringify({
-    default: join(root, "public/icon.svg"),
+    default: source,
     bg_color: "#f3f1ec",
     android_bg: join(root, "scripts/icon-background.svg"),
     android_fg: foreground,
