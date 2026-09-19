@@ -1,28 +1,22 @@
 # Piop
 
-A native Tauri interface for the Pi coding agent, with persistent local or SSH-hosted `pi --mode rpc` sessions.
+## Daemon
 
-## Features
+Requires Node.js, Rust, and Pi. Runs independently of desktop:
 
-- Streaming chat with Markdown, thinking content, tool progress, attachments, and context/cache usage
-- Pause/resume, stop, retry, steering, and queued follow-ups
-- Project-grouped conversation history, search, split panes, and Git worktree branching
-- Model and thinking-level controls, slash commands, and a project terminal
-- Named [agent profiles](extensions/piop-define-agents/README.md) with models, instructions, and tool, skill, and MCP server selections
-- Settings for tools, skills, remote hosts, MCP servers, and compaction
-- Pi extension dialogs, notifications, status lines, and widgets
-- Bundled [web search](extensions/piop-codex-web-search/README.md)
+```bash
+npm ci
+npm run daemon:dev
+```
+
+Uses `~/.piop-dev`, shared with development desktop. For release data, use `npm run daemon` and `~/.piop/tailscale.sock` for Serve. Run only one daemon per data directory.
 
 ## Android
 
-```bash
-# Start desktop and its development daemon
-npm ci
-npm run tauri dev
-```
+Requires Tailscale on the Linux host and phone:
 
 ```bash
-# In another terminal: expose the same daemon to mobile
+# In another terminal: expose the daemon to mobile
 sudo tailscale serve --bg "unix:$HOME/.piop-dev/tailscale.sock"
 tailscale serve status
 
@@ -37,9 +31,9 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 wss://your-host.your-tailnet.ts.net
 ```
 
-## Run
+## Desktop
 
-Install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) and Pi, then run:
+Install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/). Desktop reuses the development daemon or starts it if needed:
 
 ```bash
 npm run tauri dev
