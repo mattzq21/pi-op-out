@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { loadAccountProviders } from "./provider-accounts.mjs";
 
 type Settings = {
   tools: string[];
@@ -22,6 +24,13 @@ function validate(value: Settings): Settings {
 }
 
 export default async function runtimeSettings(pi: ExtensionAPI) {
+  const accountProviders = new Map();
+  const refreshAccounts = async () => {
+    const existing = new Set(accountProviders.keys());
+    await loadAccountProviders(join(getAgentDir(), "auth.json"), () => ModelRuntime.create({ allowModelNetwork: false, refreshOnCreate: false }), accountProviders);
+    for (const [id, provider] of accountProviders) if (!existing.has(id)) pi.registerProvider(provider);
+  };
+  await refreshAccounts();
   processState[key] ??= validate(JSON.parse(await readFile(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "runtime-settings.json"), "utf8")));
   const current = () => processState[key]!;
   const unsubscribe = pi.events.on("piop:runtime-settings", (value) => { (value as { settings?: Settings }).settings = structuredClone(current()); });
@@ -75,6 +84,7 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
       const request = JSON.parse(args) as { id: string };
       if (ctx.mode !== "rpc") return;
       try {
+        await refreshAccounts();
         await ctx.modelRegistry.refresh({ allowNetwork: false });
         ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id: request.id, command: "provider_auth_refresh", success: true })}`);
       } catch {

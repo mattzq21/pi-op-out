@@ -1,0 +1,92 @@
+import { readFile as accountRead, mkdir as accountMkdir } from 'node:fs/promises';
+import { spawn as accountSpawn } from 'node:child_process';
+import { dirname as accountDirname } from 'node:path';
+
+export const providerAccountsPath = (authPath) => `${authPath}.piop-accounts.json`;
+export async function readProviderAccounts(authPath) {
+  try {
+    const records = JSON.parse(await accountRead(providerAccountsPath(authPath), 'utf8'));
+    if (!Array.isArray(records) || records.some((record) => !validProviderAccount(record))) throw new Error('Invalid provider account registry');
+    return records;
+  } catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+}
+function validProviderAccount(record) {
+  return record && typeof record.providerId === 'string' && Number.isSafeInteger(record.number) && record.number >= 2 && record.id === `${record.providerId}--piop-account-${record.number}`;
+}
+
+export async function allocateProviderAccount(authPath, providerId, occupied) {
+  await accountMkdir(accountDirname(authPath), { recursive: true, mode: 0o700 });
+  await readProviderAccounts(authPath);
+  // A host file lock also serializes allocations from separate desktop/daemon processes.
+  const script = `
+    const fs = require('node:fs');
+    const [path, providerId, occupiedJson] = process.argv.slice(1);
+    let records = [];
+    try { records = JSON.parse(fs.readFileSync(path, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    const occupied = new Set(JSON.parse(occupiedJson));
+    let number = Math.max(1, ...records.filter(item => item.providerId === providerId).map(item => item.number)) + 1;
+    while (occupied.has(providerId + '--piop-account-' + number)) number++;
+    const record = { providerId, number, id: providerId + '--piop-account-' + number };
+    records.push(record);
+    const temporary = path + '.' + require('node:crypto').randomUUID();
+    fs.writeFileSync(temporary, JSON.stringify(records), { mode: 0o600 });
+    fs.renameSync(temporary, path);
+    process.stdout.write(JSON.stringify(record));
+  `;
+  const path = providerAccountsPath(authPath);
+  return new Promise((resolve, reject) => {
+    const child = accountSpawn('flock', ['--exclusive', '--wait', '10', `${path}.lock`, process.execPath, '-e', script, path, providerId, JSON.stringify(occupied)], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let output = '';
+    child.stdout.on('data', (chunk) => { output += chunk; });
+    child.once('error', () => reject(new Error('Could not allocate a provider account. The host requires flock.')));
+    child.once('close', (code) => {
+      if (code !== 0) { reject(new Error('Could not save the provider account on this host')); return; }
+      try { resolve(JSON.parse(output)); } catch { reject(new Error('Invalid provider account allocation')); }
+    });
+  });
+}
+
+export function accountProvider(base, record) {
+  const model = (value) => ({ ...value, provider: record.id, name: `${value.name || value.id} #${record.number}` });
+  const original = (value) => ({ ...value, provider: base.id, name: value.name?.replace(/ #\d+$/, '') });
+  // No environment fallback for extra accounts: a missing login must never use #1's key.
+  const apiKey = base.auth.apiKey && { ...base.auth.apiKey, resolve: (input) => input.credential ? base.auth.apiKey.resolve(input) : undefined };
+  if (apiKey?.check) apiKey.check = (input) => input.credential ? base.auth.apiKey.check(input) : undefined;
+  const originalContext = (context) => ({ ...context, messages: context.messages.map((message) => message.provider === record.id ? { ...message, provider: base.id } : message) });
+  const provider = {
+    ...base, id: record.id, name: `${base.name} #${record.number}`, auth: { ...base.auth, apiKey },
+    getModels: () => base.getModels().map(model),
+    stream: (value, context, options) => accountStream(base.stream(original(value), originalContext(context), options), record.id),
+    streamSimple: (value, context, options) => accountStream(base.streamSimple(original(value), originalContext(context), options), record.id),
+  };
+  if (base.filterModels) provider.filterModels = (models, credential) => base.filterModels(models.map(original), credential).map(model);
+  if (base.refreshModels) provider.refreshModels = (context) => base.refreshModels(context);
+  if (base.fetchDeferred) provider.fetchDeferred = (value, handle, options) => accountStream(base.fetchDeferred(original(value), handle, options), record.id);
+  if (base.cancelDeferred) provider.cancelDeferred = (value, handle, options) => base.cancelDeferred(original(value), handle, options);
+  return provider;
+}
+function accountStream(source, provider) {
+  const message = (value) => value ? { ...value, provider } : value;
+  return {
+    async *[Symbol.asyncIterator]() {
+      for await (const event of source) {
+        const next = { ...event };
+        for (const field of ['partial', 'message', 'error']) if (next[field] && typeof next[field] === 'object') next[field] = message(next[field]);
+        yield next;
+      }
+    },
+    result: async () => message(await source.result()),
+  };
+}
+
+export async function loadAccountProviders(authPath, createRuntime, existing = new Map()) {
+  const records = await readProviderAccounts(authPath);
+  for (const record of records) {
+    if (existing.has(record.id)) continue;
+    // Separate provider instances keep credential-dependent catalogs isolated between accounts.
+    const runtime = await createRuntime();
+    const base = runtime.getProvider(record.providerId);
+    if (base) existing.set(record.id, accountProvider(base, record));
+  }
+  return existing;
+}

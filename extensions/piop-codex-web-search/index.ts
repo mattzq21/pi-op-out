@@ -38,7 +38,7 @@ function record(value: unknown): value is RecordValue {
 
 function selectModel(ctx: ExtensionContext) {
   const isCodex = (model: NonNullable<ExtensionContext["model"]>) =>
-    model.provider === "openai-codex" && model.api === "openai-codex-responses";
+    model.provider.replace(/--piop-account-\d+$/, "") === "openai-codex" && model.api === "openai-codex-responses";
   const override = process.env.PIOP_WEB_SEARCH_MODEL?.trim();
   if (!override && ctx.model && isCodex(ctx.model)) return ctx.model;
   const models = ctx.modelRegistry.getAll().filter(isCodex);

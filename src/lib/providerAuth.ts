@@ -4,6 +4,8 @@ import { invoke, listen, type UnlistenFn } from "./platform";
 export interface ProviderAccount {
   id: string;
   name: string;
+  providerId: string;
+  number: number;
   configured: boolean;
   source?: string;
   storedType?: "oauth" | "api_key";
@@ -19,6 +21,7 @@ export interface AuthNotice {
 export interface AuthFlow {
   flowId: string;
   providerId: string;
+  name?: string;
   status: "pending" | "complete" | "cancelled" | "failed";
   notices: AuthNotice[];
   error?: string;
@@ -146,7 +149,7 @@ export function useProviderAuth(hostId: string) {
   return {
     providers, flow, loading, working, error,
     refresh: () => { setError(undefined); setRevision((value) => value + 1); },
-    begin: (providerId: string, authType: string) => perform({ action: "begin", providerId, authType }, true),
+    begin: (providerId: string, authType: string, addAccount = false) => perform({ action: "begin", providerId, authType, addAccount }, true),
     reply: (answer: string) => flow?.prompt ? perform({ action: "reply", flowId: flow.flowId, promptId: flow.prompt.id, answer }) : Promise.resolve(),
     cancel: () => flow ? perform({ action: "cancel", flowId: flow.flowId }) : Promise.resolve(),
     logout,

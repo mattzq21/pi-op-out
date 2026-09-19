@@ -23,7 +23,7 @@ export function toModelRef(model: unknown): ModelRef | undefined {
 }
 
 export function isSupportedProvider(provider: string): boolean {
-  return SUPPORTED_PROVIDER_SET.has(provider);
+  return SUPPORTED_PROVIDER_SET.has(provider.replace(/--piop-account-\d+$/, ""));
 }
 
 export function findMatchingTarget(
@@ -34,7 +34,7 @@ export function findMatchingTarget(
 
   return targets.find(
     (target) =>
-      target.provider === model.provider &&
+      target.provider === model.provider.replace(/--piop-account-\d+$/, "") &&
       target.model === model.id &&
       isSupportedProvider(target.provider),
   );

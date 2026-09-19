@@ -73,7 +73,7 @@ export function ProviderSettings({ hosts, initialHostId = "local" }: { hosts: Re
 
 function LoginPanel({ flow, auth }: { flow: AuthFlow; auth: AuthControls }) {
   return <div className="provider-login-panel" aria-label="Provider login">
-    <strong>{auth.providers.find((provider) => provider.id === flow.providerId)?.name ?? flow.providerId}</strong>
+    <strong>{flow.name ?? auth.providers.find((provider) => provider.id === flow.providerId)?.name ?? flow.providerId}</strong>
     <FlowStatus flow={flow} />
     {flow.notices.map((notice, index) => <LoginNotice key={`${index}:${notice.url ?? notice.message}`} notice={notice} />)}
     {flow.prompt && <LoginPrompt key={flow.prompt.id} prompt={flow.prompt} working={auth.working} reply={auth.reply} />}
@@ -86,6 +86,7 @@ function ProviderList({ providers, auth, disabled }: { providers: ProviderAccoun
       <div><strong>{provider.name}</strong><small>{provider.configured ? `Configured${provider.source ? ` · ${provider.source}` : ""}` : "Not configured"}</small></div>
       <div className="provider-account-actions">{provider.methods.filter((method) => method.interactive).map((method) => <button key={method.type} disabled={disabled || auth.loading} onClick={() => void auth.begin(provider.id, method.type)}>{method.type === "oauth" ? `Sign in · ${method.name}` : `Configure · ${method.name}`}</button>)}
         {provider.storedType && <button disabled={disabled || auth.loading} onClick={() => void auth.logout(provider.id)}>Remove saved login</button>}
+        {provider.number === 1 && provider.methods.filter((method) => method.interactive).map((method) => <button key={`add:${method.type}`} disabled={disabled || auth.loading} onClick={() => void auth.begin(provider.id, method.type, true)}>Add account{provider.methods.filter((entry) => entry.interactive).length > 1 ? ` · ${method.name}` : ""}</button>)}
         {!provider.methods.some((method) => method.interactive) && <small>Configured through the host environment</small>}
       </div>
     </div>)}</div>

@@ -24,7 +24,7 @@ async function providerAuthRuntime(executable) {
       if (!sdk?.ModelRuntime?.create) break;
       const config = await import(authFileUrl(authJoin(directory, 'dist/config.js')).href);
       const runtime = await sdk.ModelRuntime.create({ allowModelNetwork: false }).catch(() => { throw new Error('Could not load provider configuration on this host. Check Pi configuration and file permissions.'); });
-      return { runtime, authPath: config.getAuthPath() };
+      return { runtime, authPath: config.getAuthPath(), createRuntime: () => sdk.ModelRuntime.create({ allowModelNetwork: false, refreshOnCreate: false }) };
     }
     directory = authDirname(directory);
   }
@@ -85,8 +85,10 @@ class ProviderAuthService {
   }
 
   runtime() {
-    this.initializing ??= providerAuthRuntime(this.executable).then(({ runtime, authPath }) => {
+    this.initializing ??= providerAuthRuntime(this.executable).then(({ runtime, authPath, createRuntime }) => {
       this.authPath = authPath;
+      this.createRuntime = createRuntime;
+      this.accounts = new Map();
       return runtime;
     }).catch((error) => { this.initializing = undefined; throw error; });
     return this.initializing;
@@ -97,8 +99,10 @@ class ProviderAuthService {
       await this.runtime();
       let revision;
       try {
-        const stat = await authStat(this.authPath, { bigint: true });
-        revision = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+        revision = await Promise.all([this.authPath, providerAccountsPath(this.authPath)].map(async (path) => {
+          try { const stat = await authStat(path, { bigint: true }); return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`; }
+          catch (error) { if (error.code === 'ENOENT') return 'missing'; throw error; }
+        })).then((values) => values.join('|'));
       } catch (error) {
         if (error.code !== 'ENOENT') throw new Error('Could not check provider credentials on this host');
         revision = 'missing';
@@ -112,7 +116,7 @@ class ProviderAuthService {
   }
 
   snapshot(flow) {
-    return { flowId: flow.id, providerId: flow.providerId, status: flow.status, notices: flow.notices, prompt: flow.prompt, error: flow.error };
+    return { flowId: flow.id, providerId: flow.providerId, name: flow.name, status: flow.status, notices: flow.notices, prompt: flow.prompt, error: flow.error };
   }
 
   cancelOwner(owner) {
@@ -134,6 +138,7 @@ class ProviderAuthService {
 
   async listing() {
     const runtime = await this.runtime();
+    await this.syncAccounts(runtime);
     await runtime.refresh({ allowNetwork: false }).catch(() => { throw new Error('Could not refresh providers on this host. Check Pi configuration.'); });
     const credentials = await runtime.listCredentials().catch(() => { throw new Error('Could not read saved provider status on this host.'); });
     const stored = new Map(credentials.map((credential) => [credential.providerId, credential.type]));
@@ -142,25 +147,41 @@ class ProviderAuthService {
       const methods = [];
       if (provider.auth.oauth) methods.push({ type: 'oauth', name: provider.auth.oauth.loginLabel || provider.auth.oauth.name, interactive: true });
       if (provider.auth.apiKey) methods.push({ type: 'api_key', name: provider.auth.apiKey.name, interactive: Boolean(provider.auth.apiKey.login) });
-      return { id: provider.id, name: provider.name, configured: status.configured, source: status.label ?? status.source, storedType: stored.get(provider.id), methods };
-    }).filter((provider) => provider.methods.length).sort((left, right) => left.name.localeCompare(right.name)) };
+      const account = this.accountRecords.find((record) => record.id === provider.id);
+      return { id: provider.id, providerId: account?.providerId ?? provider.id, number: account?.number ?? 1, name: account ? provider.name : `${provider.name} #1`, configured: status.configured, source: status.label ?? status.source, storedType: stored.get(provider.id), methods };
+    }).filter((provider) => provider.methods.length).sort((left, right) => left.providerId.localeCompare(right.providerId) || left.number - right.number) };
   }
 
   async begin(owner, request) {
     const runtime = await this.runtime();
-    const provider = runtime.getProvider(request.providerId);
+    await this.syncAccounts(runtime);
+    let provider = runtime.getProvider(request.providerId);
     if (!provider) throw new Error('Provider is unavailable on this host');
     if (!['oauth', 'api_key'].includes(request.authType) || !provider.auth[request.authType === 'oauth' ? 'oauth' : 'apiKey']?.login) throw new Error('This provider uses credentials configured on the host');
     this.prune();
     if (this.flows.size >= 32) throw new Error('Too many login attempts. Try again later.');
     if (this.busy.has(provider.id)) throw new Error('A credential operation is already running for this provider');
-    const flow = { id: authUuid(), owner, providerId: provider.id, controller: new AbortController(), status: 'pending', notices: [], createdAt: Date.now() };
+    if (request.addAccount) provider = await this.addAccount(runtime, provider.id);
+    const flow = { id: authUuid(), owner, providerId: provider.id, name: this.accounts.has(provider.id) ? provider.name : `${provider.name} #1`, controller: new AbortController(), status: 'pending', notices: [], createdAt: Date.now() };
     this.flows.set(flow.id, flow);
     this.busy.add(provider.id);
     const timer = setTimeout(() => this.cancel(flow), 10 * 60_000);
     timer.unref();
     void this.login(runtime, flow, request.authType).finally(() => { clearTimeout(timer); this.busy.delete(provider.id); });
     return this.snapshot(flow);
+  }
+
+  async addAccount(runtime, id) {
+    const baseId = this.accountRecords.find((record) => record.id === id)?.providerId ?? id;
+    const credentials = await runtime.listCredentials();
+    const occupied = [...runtime.getProviders().map((item) => item.id), ...credentials.map((item) => item.providerId)];
+    const record = await allocateProviderAccount(this.authPath, baseId, occupied);
+    await this.syncAccounts(runtime);
+    if (!runtime.getProvider(record.id)) await this.syncAccounts(runtime);
+    const provider = runtime.getProvider(record.id);
+    if (!provider) throw new Error('Could not initialize the new provider account');
+    this.changed();
+    return provider;
   }
 
   async login(runtime, flow, type) {
@@ -174,6 +195,7 @@ class ProviderAuthService {
           if (notice) flow.notices = [...flow.notices.slice(-15), notice];
         },
       });
+      if (this.accounts.has(flow.providerId)) await runtime.refresh({ providers: [flow.providerId], allowNetwork: true, signal: flow.controller.signal });
       flow.status = 'complete';
     } catch (error) {
       if (error?.operation === 'login' && error?.credential) {
@@ -211,6 +233,7 @@ class ProviderAuthService {
 
   async logout(providerId) {
     const runtime = await this.runtime();
+    await this.syncAccounts(runtime);
     if (!runtime.getProvider(providerId)) throw new Error('Provider is unavailable on this host');
     if (this.busy.has(providerId)) throw new Error('Finish or cancel the current login first');
     this.busy.add(providerId);
@@ -230,5 +253,14 @@ class ProviderAuthService {
     if (request.action === 'reply') return this.reply(flow, request);
     if (request.action === 'cancel') { this.cancel(flow); return this.snapshot(flow); }
     throw new Error('Unknown provider authentication operation');
+  }
+  async syncAccounts(runtime) {
+    this.syncingAccounts ??= (async () => {
+      this.accountRecords = await readProviderAccounts(this.authPath);
+      const previous = new Set(this.accounts.keys());
+      await loadAccountProviders(this.authPath, this.createRuntime, this.accounts);
+      for (const [id, provider] of this.accounts) if (!previous.has(id)) runtime.registerNativeProvider(provider);
+    })().finally(() => { this.syncingAccounts = undefined; });
+    await this.syncingAccounts;
   }
 }
