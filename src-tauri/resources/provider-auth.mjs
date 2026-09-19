@@ -1,4 +1,4 @@
-import { realpath as authRealpath, readFile as authReadFile } from 'node:fs/promises';
+import { realpath as authRealpath, readFile as authReadFile, stat as authStat } from 'node:fs/promises';
 import { delimiter as authDelimiter, dirname as authDirname, join as authJoin, resolve as authResolve } from 'node:path';
 import { homedir as authHomedir } from 'node:os';
 import { pathToFileURL as authFileUrl } from 'node:url';
@@ -22,7 +22,9 @@ async function providerAuthRuntime(executable) {
     if (['@earendil-works/pi-coding-agent', '@mariozechner/pi-coding-agent'].includes(metadata?.name)) {
       const sdk = await import(authFileUrl(authJoin(directory, 'dist/core/model-runtime.js')).href).catch(() => undefined);
       if (!sdk?.ModelRuntime?.create) break;
-      return sdk.ModelRuntime.create({ allowModelNetwork: false }).catch(() => { throw new Error('Could not load provider configuration on this host. Check Pi configuration and file permissions.'); });
+      const config = await import(authFileUrl(authJoin(directory, 'dist/config.js')).href);
+      const runtime = await sdk.ModelRuntime.create({ allowModelNetwork: false }).catch(() => { throw new Error('Could not load provider configuration on this host. Check Pi configuration and file permissions.'); });
+      return { runtime, authPath: config.getAuthPath() };
     }
     directory = authDirname(directory);
   }
@@ -78,11 +80,35 @@ class ProviderAuthService {
     this.changed = changed;
     this.flows = new Map();
     this.busy = new Set();
+    this.credentialTimer = setInterval(() => { void this.checkForChanges().catch(() => undefined); }, 2000);
+    this.credentialTimer.unref();
   }
 
   runtime() {
-    this.initializing ??= providerAuthRuntime(this.executable).catch((error) => { this.initializing = undefined; throw error; });
+    this.initializing ??= providerAuthRuntime(this.executable).then(({ runtime, authPath }) => {
+      this.authPath = authPath;
+      return runtime;
+    }).catch((error) => { this.initializing = undefined; throw error; });
     return this.initializing;
+  }
+
+  async checkForChanges() {
+    this.checkingCredentials ??= (async () => {
+      await this.runtime();
+      let revision;
+      try {
+        const stat = await authStat(this.authPath, { bigint: true });
+        revision = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw new Error('Could not check provider credentials on this host');
+        revision = 'missing';
+      }
+      if (revision !== this.credentialRevision) {
+        this.credentialRevision = revision;
+        this.changed();
+      }
+    })().finally(() => { this.checkingCredentials = undefined; });
+    return this.checkingCredentials;
   }
 
   snapshot(flow) {
@@ -94,6 +120,7 @@ class ProviderAuthService {
   }
 
   shutdown() {
+    clearInterval(this.credentialTimer);
     for (const flow of this.flows.values()) this.cancel(flow);
   }
 

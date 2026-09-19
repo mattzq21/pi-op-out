@@ -33,6 +33,7 @@ cognitive_complexity = "warn"
 tauri-build = { version = "2", features = [], optional = true }
 
 [dependencies]
+libc = "0.2"
 tauri = { version = "2", features = [], optional = true }
 tauri-plugin-dialog = { version = "2", optional = true }
 serde = { version = "1", features = ["derive"] }

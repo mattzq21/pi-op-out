@@ -4,7 +4,6 @@ fn register_test_process(runtime: &PiRuntime, connection: &Arc<Daemon>, id: &str
     runtime.processes.lock().unwrap().insert(id.into(), PiProcess {
         daemon: connection.clone(), window_label: "main".into(),
         blank_cleanup: BlankSessionCleanup { path: None, id: None, host: None, submitted: true },
-        _session_claim: None,
     });
     runtime.active_agents.lock().unwrap().insert(id.into(), AgentAddress {
         host_id: "local".into(), session_id: Some(id.into()), session_path: None,

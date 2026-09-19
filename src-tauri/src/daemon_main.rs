@@ -1,5 +1,6 @@
 #[cfg(not(feature = "desktop"))]
 fn main() {
+    piop_lib::run_session_worker();
     if let Err(error) = piop_lib::run_daemon() {
         eprintln!("piop-daemon: {error}");
         std::process::exit(1);

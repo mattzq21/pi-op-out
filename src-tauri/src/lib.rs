@@ -49,7 +49,6 @@ struct PiProcess {
     daemon: Arc<daemon::Daemon>,
     window_label: String,
     blank_cleanup: BlankSessionCleanup,
-    _session_claim: Option<Arc<SessionClaim>>,
 }
 
 struct BlankSessionCleanup { path: Option<String>, id: Option<String>, host: Option<RemoteHost>, submitted: bool }
@@ -145,7 +144,6 @@ struct BrokerRuntime {
     busy: Arc<Mutex<HashSet<String>>>,
     jobs: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
     cancelled: Arc<Mutex<HashSet<String>>>,
-    session_claims: Arc<Mutex<HashMap<String, std::sync::Weak<SessionClaim>>>>,
 }
 
 impl Default for BrokerRuntime {
@@ -157,7 +155,6 @@ impl Default for BrokerRuntime {
             busy: Arc::new(Mutex::new(HashSet::new())),
             jobs: Arc::new(Mutex::new(HashMap::new())),
             cancelled: Arc::new(Mutex::new(HashSet::new())),
-            session_claims: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -168,23 +165,16 @@ impl Drop for BusyAgent {
     fn drop(&mut self) { if let Ok(mut busy) = self.busy.lock() { busy.remove(&self.key); } }
 }
 
-struct SessionClaim {
-    _file: fs::File,
-}
-
 fn claims_dir() -> Result<PathBuf, String> {
     let dir = home_dir()?.join(STORAGE_DIRECTORY).join("session-claims");
     ensure_private_dir(&dir)?;
     Ok(dir)
 }
 
-fn claim_session(broker: &BrokerRuntime, session_path: &str) -> Result<Arc<SessionClaim>, String> {
-    let canonical = fs::canonicalize(session_path).map_err(|error| error.to_string())?;
-    let key = canonical.to_string_lossy().into_owned();
-    let mut claims = broker.session_claims.lock().map_err(|_| "Session broker lock was poisoned")?;
-    if let Some(claim) = claims.get(&key).and_then(std::sync::Weak::upgrade) { return Ok(claim); }
+fn claim_session_id(id: &str) -> Result<fs::File, String> {
+    let id = Uuid::parse_str(id).map_err(|_| "Invalid session identity")?.to_string();
     let dir = claims_dir()?;
-    let name = format!("{}.json", hash_claim_key(canonical.to_string_lossy().as_bytes()));
+    let name = format!("id-{}.lock", hash_claim_key(id.as_bytes()));
     let file = dir.join(&name);
     // Keep the inode in place: unlinking a locked file would permit a second owner.
     let mut options = OpenOptions::new(); options.read(true).write(true).create(true).truncate(false);
@@ -195,12 +185,43 @@ fn claim_session(broker: &BrokerRuntime, session_path: &str) -> Result<Arc<Sessi
         fs::TryLockError::WouldBlock => "This conversation is open in another window or daemon".to_string(),
         fs::TryLockError::Error(error) => format!("Could not lock the session claim: {error}"),
     })?;
-    let claim = Arc::new(SessionClaim { _file: handle });
-    claims.insert(key, Arc::downgrade(&claim));
-    Ok(claim)
+    Ok(handle)
 }
 
-/// Collision-resistant name for a canonical session path.
+pub fn run_session_worker() {
+    if std::env::args_os().nth(1).as_deref() != Some(std::ffi::OsStr::new("--piop-session-worker")) { return; }
+    let error = exec_session_worker().unwrap_err();
+    eprintln!("piop session: {error}");
+    std::process::exit(1);
+}
+
+#[cfg(unix)]
+fn exec_session_worker() -> Result<(), String> {
+    use std::os::{fd::AsRawFd, unix::process::CommandExt};
+    let mut arguments = std::env::args_os().skip(2);
+    let program = arguments.next().ok_or("Missing Pi executable")?;
+    let mut arguments: Vec<_> = arguments.collect();
+    let value = |flag: &str| arguments.iter().rposition(|arg| arg == flag).and_then(|index| arguments.get(index + 1)).map(|arg| arg.to_string_lossy().into_owned());
+    let id = if let Some(path) = value("--session") {
+        let mut line = String::new();
+        BufReader::new(fs::File::open(path).map_err(|error| error.to_string())?).take(64 * 1024).read_line(&mut line).map_err(|error| error.to_string())?;
+        serde_json::from_str::<Value>(&line).map_err(|error| error.to_string())?["id"].as_str().ok_or("Missing session identity")?.to_owned()
+    } else if let Some(id) = value("--session-id") { id } else {
+        let id = Uuid::new_v4().to_string();
+        arguments.extend(["--session-id".into(), id.clone().into()]);
+        id
+    };
+    let claim = claim_session_id(&id)?;
+    // exec preserves the PID and transfers the lock to Pi until that worker exits.
+    let fd = claim.as_raw_fd();
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } < 0 { return Err(std::io::Error::last_os_error().to_string()); }
+    Err(Command::new(program).args(arguments).exec().to_string())
+}
+
+#[cfg(not(unix))]
+fn exec_session_worker() -> Result<(), String> { Err("Session worker locking requires a Unix host".into()) }
+
 fn hash_claim_key(bytes: &[u8]) -> String {
     use sha2::Digest;
     use std::fmt::Write;
@@ -2394,7 +2415,7 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
     if host_id == "local" {
          let (mcp_extension, mcp_config) = prepare_mcp_bridge(settings)?; let context_window_cap_extension = prepare_context_window_cap_extension(settings)?; let session_cost_limit_extension = prepare_session_cost_limit_extension(settings)?; let diff_watch_extension = prepare_diff_watch_extension()?; let trace_reader_extension = prepare_trace_reader()?; let openai_cache_lineage_extension = prepare_openai_cache_lineage_extension()?; let codex_web_search_extension = prepare_codex_web_search_extension()?; let defined_agents_extension = prepare_defined_agents_extension()?; let pi_path = pi_executable();
         let session_dir = ensure_desktop_sessions_dir(&desktop_home)?;
-        let mut command = Command::new(&pi_path); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY); command.arg(if is_rpc { "--mode" } else { "--print" }); if is_rpc { command.arg("rpc"); }
+        let mut command = Command::new(std::env::current_exe().map_err(|error| error.to_string())?); command.args([std::ffi::OsStr::new("--piop-session-worker"), pi_path.as_os_str()]); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY); command.arg(if is_rpc { "--mode" } else { "--print" }); if is_rpc { command.arg("rpc"); }
         command.arg("--extension").arg(prepare_rtk_extension()?);
          command.arg("--extension").arg(prepare_runtime_settings(settings)?).arg("--session-dir").arg(session_dir).arg("--approve").arg("--no-skills").arg("--extension").arg(prepare_hooks_extension()?).arg("--extension").arg(mcp_extension).arg("--extension").arg(prepare_session_broker()?).arg("--extension").arg(&trace_reader_extension).arg("--extension").arg(&context_window_cap_extension).arg("--extension").arg(&session_cost_limit_extension).arg("--extension").arg(&diff_watch_extension).arg("--extension").arg(prepare_fast_mode_extension()?).arg("--extension").arg(&openai_cache_lineage_extension).arg("--extension").arg(&codex_web_search_extension).arg("--extension").arg(&defined_agents_extension)
              .env("PI_DESKTOP_DEFINED_AGENTS_EXTENSION", &defined_agents_extension).env("PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION", &codex_web_search_extension).env("PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION", &context_window_cap_extension).env("PI_DESKTOP_SESSION_COST_LIMIT_EXTENSION", &session_cost_limit_extension).env("PI_DESKTOP_TRACE_READER_EXTENSION", &trace_reader_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config).env("PI_DESKTOP_BROKER_URL", format!("http://127.0.0.1:{broker_port}")).env("PI_DESKTOP_BROKER_TOKEN", &broker_token).env("PI_DESKTOP_HOST_ID", host_id);
@@ -2435,10 +2456,15 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
      let remote = format!("cd {} && PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} PI_DESKTOP_DEFINED_AGENTS_EXTENSION=\"$HOME/{STORAGE_DIRECTORY}/piop-define-agents/index.ts\" PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION=\"$HOME/{STORAGE_DIRECTORY}/piop-codex-web-search.ts\" PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION=\"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/index.ts\" PI_DESKTOP_SESSION_COST_LIMIT_EXTENSION=\"$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit/index.ts\" PI_DESKTOP_TRACE_READER_EXTENSION=\"$HOME/{STORAGE_DIRECTORY}/piop-trace-reader.ts\" PI_DESKTOP_MCP_CONFIG=\"$HOME/{STORAGE_DIRECTORY}/mcp-servers.json\" PI_DESKTOP_BROKER_URL={} PI_DESKTOP_BROKER_TOKEN={}{} exec {}", remote_directory_path(cwd), shell_quote(&format!("http://127.0.0.1:{remote_port}")), shell_quote(&broker_token), rpc_environment, arguments.join(" "));
     if daemon_port.is_some() {
         let mut command = Command::new("sh");
+        command.env("PIOP_REMOTE_SESSION_CLAIMS", STORAGE_DIRECTORY);
         command.args(["-c", &format!("{remote} \"$@\""), "piop"]).args(session_arguments);
         return Ok(command);
     }
-    let mut command = remote_broker_command(host, broker_port, remote_port); command.arg(remote_login_command(&remote)); Ok(command)
+    let session_path = match launch { PiLaunch::Print { session_path, .. } => session_path, _ => return Err("Remote RPC requires a host daemon".into()) };
+    let id = Uuid::parse_str(&session_identity(settings, host_id, session_path)?).map_err(|_| "Invalid session identity")?.to_string();
+    let lock = format!("\"$HOME/{STORAGE_DIRECTORY}/session-claims/id-{}.lock\"", hash_claim_key(id.as_bytes()));
+    let locked = format!("umask 077 && mkdir -p \"$HOME/{STORAGE_DIRECTORY}/session-claims\" && exec flock --nonblock --no-fork {lock} sh -c {}", shell_quote(&remote));
+    let mut command = remote_broker_command(host, broker_port, remote_port); command.arg(remote_login_command(&locked)); Ok(command)
 }
 
 #[cfg(feature = "desktop")]
@@ -2463,9 +2489,6 @@ fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, 
         Some(session_identity(&settings, &host_id, path)?)
     } else { None };
     let _agent_claim = claim_id.as_deref().map(|id| claim_agent(&broker, &host_id, id)).transpose()?;
-    // Desktop and the standalone daemon each own a broker, so saved conversations
-    // are claimed on disk. A live claim on this host rejects a second attach.
-    let session_claim = (host_id == "local").then_some(session_path.as_deref()).flatten().map(|path| claim_session(&broker, path)).transpose()?;
     let daemon = daemon::connect(&app, &runtime, &broker, &settings, &host_id)?;
     let launch_session_path = ephemeral_path.as_deref().or(session_path.as_deref());
     let launch_fork_path = if ephemeral_path.is_some() { None } else { fork_path.as_deref() };
@@ -2476,7 +2499,7 @@ fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, 
         .max().unwrap_or(0) * 1000 + 30_000;
     let result = daemon.request(json!({"type":"attach","runtimeId":runtime_id,"sessionKey":claim_id.unwrap_or_else(|| runtime_id.clone()),"spec":daemon::spec(&command),"timeout":command_timeout,"ephemeral":ephemeral,"cwd":cwd,"presence":presence.unwrap_or_else(|| json!({}))}))?;
     let blank_cleanup = BlankSessionCleanup { path: session_path.clone(), id: session_id.clone(), host: if host_id == "local" { None } else { Some(remote_host(&settings, &host_id)?.clone()) }, submitted: ephemeral };
-    runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { daemon, window_label: owner, blank_cleanup, _session_claim: session_claim });
+    runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { daemon, window_label: owner, blank_cleanup });
     runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id, AgentAddress { host_id, session_id, session_path, worktree: None, presence_id: None, working: false, messageable: false });
     Ok(result)
 }
@@ -2519,22 +2542,15 @@ fn pi_command(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRun
     let command_type = command["type"].as_str().unwrap_or_default().to_owned();
     let _lifecycle = if command_type == "switch_session" { Some(runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?) } else { None };
     let mut _claim = None;
-    let mut switch_claim = None;
     if command_type == "switch_session" {
         let path = command["sessionPath"].as_str().ok_or("Session path is required")?;
         let host_id = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.get(&runtime_id).map(|agent| agent.host_id.clone()).ok_or("Unknown Pi runtime")?;
         let settings = load_app_settings(app)?;
         let path = desktop_session_file(&settings, &host_id, path)?;
         _claim = Some(claim_agent(&broker, &host_id, &session_identity(&settings, &host_id, &path)?)?);
-        switch_claim = (host_id == "local").then(|| claim_session(&broker, &path)).transpose()?;
         command["sessionPath"] = json!(path);
     }
     let result = execute_pi_command(&runtime, &runtime_id, command)?;
-    if command_type == "switch_session" && result["cancelled"].as_bool() != Some(true) {
-        if let Some(claim) = switch_claim {
-            if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(&runtime_id) { process._session_claim = Some(claim); }
-        }
-    }
     if command_type == "voice_history" {
         if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(&runtime_id) { process.blank_cleanup.submitted = true; }
     }
@@ -3343,16 +3359,15 @@ fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &Ses
     if remaining == 0 || broker.closing.load(Ordering::SeqCst) { return Err("Agent message expired or app is closing".into()); }
     let deadline = Instant::now() + Duration::from_millis(remaining.min(120_000));
     let runtime = app.state::<PiRuntime>();
-    let (settings, _claim, _session_claim) = {
+    let (settings, _claim) = {
         let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
         let settings = load_app_settings(app.clone())?;
         let claim = claim_agent(broker, &session.host_id, &session.id)?;
-        let session_claim = (session.host_id == "local").then_some(session.path.as_str()).map(|path| claim_session(broker, path)).transpose()?;
         let daemon = runtime.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?.get(&session.host_id).cloned();
         if let Some(daemon) = daemon.filter(|daemon| daemon.alive.load(Ordering::SeqCst)) {
             daemon.request(json!({"type":"retire","sessionKey":session.id,"sessionPath":session.path}))?;
         }
-        (settings, claim, session_claim)
+        (settings, claim)
     };
     if Instant::now() >= deadline { return Err("Agent message expired".into()); }
     let mut command = build_pi_command(broker, &settings, &session.host_id, PiLaunch::Print { cwd: &session.cwd, session_path: &session.path }, None)?;

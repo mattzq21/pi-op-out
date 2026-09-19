@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdirSync } from 'node:fs';
 import { link, mkdtemp, open, readFile, rm } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 
 const sessions = new Map();
 const subscriptions = new Map();
@@ -49,7 +50,10 @@ function applyAssistantMessageDelta(message, event) {
 
 class Session {
   constructor(key, spec, timeout, ephemeral, transient = false) {
+    const identityIndex = spec.args.lastIndexOf('--session-id');
+    if (!spec.args.includes('--session') && identityIndex < 0) spec = { ...spec, args: [...spec.args, '--session-id', randomUUID()] };
     this.key = key;
+    this.identity = spec.args.includes('--session') ? key : spec.args[spec.args.lastIndexOf('--session-id') + 1];
     this.spec = spec;
     this.timeout = timeout;
     this.ephemeral = ephemeral;
@@ -71,7 +75,8 @@ class Session {
     this.queue = new SessionQueue((command) => this.execute(command), (event) => this.publish(event));
     this.queue.pendingMessages = retryMessages.get(key) ?? [];
     retryMessages.delete(key);
-    this.child = spawn(spec.program, spec.args, { cwd: spec.cwd || undefined, env: { ...process.env, ...spec.env, PI_DESKTOP_GIT_CAPTURE_SCRIPT: ephemeral ? '' : gitCaptureScript }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const launch = workerLaunch(spec, this.identity);
+    this.child = spawn(launch.program, launch.args, { cwd: spec.cwd || undefined, env: { ...process.env, ...spec.env, PI_DESKTOP_GIT_CAPTURE_SCRIPT: ephemeral ? '' : gitCaptureScript }, stdio: ['pipe', 'pipe', 'pipe'] });
     this.ready = new Promise((resolve, reject) => { this.child.once('spawn', resolve); this.child.once('error', reject); });
     this.ready.catch(() => undefined);
     this.child.stdin.on('error', () => {});
@@ -79,10 +84,11 @@ class Session {
       try { this.receive(JSON.parse(line)); } catch (error) { output({ type: 'diagnostic', line: errorText(error) }); }
     });
     createInterface({ input: this.child.stderr }).on('line', (line) => {
+      if (!this.state) this.startupError = line;
       for (const runtimeId of this.views.keys()) output({ type: 'stderr', runtimeId, line });
     });
     this.child.once('error', (error) => this.finish(errorText(error)));
-    this.child.once('close', () => this.finish('Pi disconnected before responding'));
+    this.child.once('close', () => this.finish(this.startupError || 'Pi disconnected before responding'));
   }
 
   finish(error) {
@@ -298,7 +304,7 @@ class Session {
   }
 
   raw(command, requestType = command.type, snapshotState) {
-    if (this.closed) return Promise.reject(new Error('Pi is not running'));
+    if (this.closed) return Promise.reject(new Error(this.startupError || 'Pi is not running'));
     const id = randomUUID();
     if (requestType === 'prompt') { this.inputRejection = undefined; this.commandErrors.clear(); }
     let wire = { ...command, id };
@@ -318,13 +324,19 @@ class Session {
     });
   }
 
+  async refreshProviderModels() {
+    let force = false;
+    try { await providerAuth?.checkForChanges(); }
+    catch { force = true; }
+    if (!force && (providerAuthRevision === 0 || this.providerAuthRevision === providerAuthRevision)) return;
+    const revision = providerAuthRevision;
+    await this.raw({ type: 'provider_auth_refresh' });
+    this.providerAuthRevision = revision;
+  }
+
   async execute(command) {
     if (command.type === 'force_stop') return this.stop();
-    if (command.type === 'get_available_models' && this.providerAuthRevision !== providerAuthRevision && providerAuthRevision > 0) {
-      const revision = providerAuthRevision;
-      await this.raw({ type: 'provider_auth_refresh' });
-      this.providerAuthRevision = revision;
-    }
+    if (command.type === 'get_available_models') await this.refreshProviderModels();
     if (command.type === 'get_snapshot') {
       const deadline = Date.now() + this.timeout;
       for (;;) {
@@ -363,9 +375,33 @@ function sessionSpec(spec, flag, value) {
   return { ...spec, args: [...args, flag, value] };
 }
 
+function workerLaunch(spec, identity) {
+  if (!spec.env?.PIOP_REMOTE_SESSION_CLAIMS) return spec;
+  const directory = join(homedir(), spec.env.PIOP_REMOTE_SESSION_CLAIMS, 'session-claims');
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const hash = createHash('sha256').update(identity.toLowerCase()).digest('hex').slice(0, 40);
+  return { program: 'flock', args: ['--nonblock', '--no-fork', join(directory, `id-${hash}.lock`), spec.program, ...spec.args] };
+}
+
+async function sessionIdentity(spec, fallback) {
+  const index = spec.args.lastIndexOf('--session');
+  if (index < 0) {
+    const idIndex = spec.args.lastIndexOf('--session-id');
+    return idIndex < 0 ? fallback : spec.args[idIndex + 1];
+  }
+  const file = await open(spec.args[index + 1], 'r');
+  try {
+    const buffer = Buffer.alloc(64 * 1024);
+    const { bytesRead } = await file.read(buffer);
+    const id = JSON.parse(buffer.subarray(0, bytesRead).toString().split('\n')[0]).id;
+    if (typeof id !== 'string' || !id) throw new Error('Missing session identity');
+    return id;
+  } finally { await file.close(); }
+}
+
 async function forkSession(session, runtimeId, command, state) {
   const directory = await mkdtemp(join(tmpdir(), 'piop-branch-'));
-  let worker, next, publishedPath, pendingPath;
+  let worker, next, pendingPath;
   let pendingCreated = false;
   let committed = false;
   try {
@@ -391,7 +427,7 @@ async function forkSession(session, runtimeId, command, state) {
       await output.writeFile(JSON.stringify({ ...header, parentSession: state.sessionFile }) + '\n');
       await output.writeFile(content.subarray(newline + 1));
     } finally { await output.close(); }
-    await link(pendingPath, destination); publishedPath = destination;
+    await link(pendingPath, destination);
     next = new Session(branch.sessionId, sessionSpec(session.spec, '--session', destination), session.timeout, session.ephemeral, true);
     next.cwd = session.cwd; next.reservedPath = destination; sessions.set(next.key, next);
     const opened = await next.execute({ type: 'get_state' });
@@ -408,7 +444,7 @@ async function forkSession(session, runtimeId, command, state) {
     try {
       if (worker) await worker.stop();
       if (!committed && next) await next.stop();
-      if (!committed && publishedPath) await rm(publishedPath, { force: true });
+      // A published branch may already have been opened by another backend.
     } finally {
       try { if (pendingCreated) await rm(pendingPath, { force: true }); }
       finally {
@@ -441,15 +477,17 @@ async function handle(packet) {
   }
   if (type === 'attach') {
     if (subscriptions.has(runtimeId)) return { attached: true };
-    let session = sessions.get(packet.sessionKey);
+    const identity = await sessionIdentity(packet.spec, packet.sessionKey);
+    const findSession = () => [...sessions.values()].find((candidate) => candidate.identity === identity && !candidate.closed);
+    let session = findSession();
     if (session?.transient) throw new Error('This conversation branch is still being prepared');
-    if (session?.stopPromise) { await session.stopPromise; session = sessions.get(packet.sessionKey); }
+    if (session?.stopPromise) { await session.stopPromise; session = findSession(); }
     if (!session || session.closed) {
-      session = new Session(packet.sessionKey, packet.spec, packet.timeout, packet.ephemeral);
+      session = new Session(identity, packet.spec, packet.timeout, packet.ephemeral);
       session.cwd = packet.cwd;
-      sessions.set(packet.sessionKey, session);
+      sessions.set(identity, session);
     }
-    await session.ready;
+    await session.execute({ type: 'get_state' });
     session.attach(runtimeId, packet.presence);
     void session.reconcileConfiguration(true);
     return { attached: session.views.size > 1 || session.submitted };
@@ -493,7 +531,8 @@ async function handle(packet) {
     const flag = command.type === 'new_session' ? '--session-id' : command.type === 'switch_session' ? '--session' : '--fork';
     const value = command.type === 'new_session' ? key : command.type === 'switch_session' ? command.sessionPath : state.sessionFile;
     if (!value) throw new Error('The conversation has no session file');
-    let next = command.type === 'switch_session' ? [...sessions.values()].find((candidate) => candidate.state?.sessionFile === value || candidate.reservedPath === value) : undefined;
+    if (command.type === 'switch_session') key = await sessionIdentity(sessionSpec(session.spec, flag, value), key);
+    let next = command.type === 'switch_session' ? [...sessions.values()].find((candidate) => !candidate.closed && candidate.identity === key) : undefined;
     if (next?.transient) throw new Error('This conversation branch is still being prepared');
     const created = !next;
     if (!next) { next = new Session(key, sessionSpec(session.spec, flag, value), session.timeout, session.ephemeral); next.cwd = session.cwd; sessions.set(key, next); }
