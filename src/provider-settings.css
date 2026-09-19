@@ -36,6 +36,5 @@
 .custom-provider-form .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .custom-provider-form input:not([type="checkbox"]), .custom-provider-form select { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--dark-control, var(--panel)); color: var(--ink); }
 .custom-provider-check { display: flex; align-items: center; gap: 8px; margin: 12px 0; font-size: 13px; }
-.custom-provider-model { min-width: 0; border: 1px solid var(--line); border-radius: 6px; padding: 12px; margin: 12px 0; }
 .custom-provider-form small { color: var(--muted); }
 @media (max-width: 720px) { .custom-provider-grid { grid-template-columns: 1fr; } }

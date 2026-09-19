@@ -27,10 +27,9 @@ export interface AuthFlow {
   error?: string;
   prompt?: { id: string; type: "text" | "secret" | "select" | "manual_code"; message: string; placeholder?: string; options?: Array<{ id: string; label: string; description?: string }> };
 }
-interface Listing { providers: ProviderAccount[] }
+interface Listing { providers: ProviderAccount[]; warning?: string }
 export interface CustomProviderInput {
   providerId: string; name: string; baseUrl: string; api: string; apiKey: string; noKey: boolean; sessionAffinity: boolean;
-  models: Array<{ id: string; name: string; contextWindow: number; maxTokens: number; reasoning: boolean; images: boolean }>;
 }
 const call = <T>(hostId: string, request: Record<string, unknown>) => invoke<T>("provider_auth", { hostId, request });
 const message = (reason: unknown) => reason instanceof Error ? reason.message : String(reason);
@@ -49,6 +48,7 @@ export function useProviderAuth(hostId: string) {
   const generation = useRef(0);
   const active = useRef<{ hostId: string; flowId: string } | undefined>(undefined);
   const requestPending = useRef(false);
+  const refreshModels = useRef(false);
 
   useEffect(() => {
     generation.current++;
@@ -65,7 +65,9 @@ export function useProviderAuth(hostId: string) {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    void call<Listing>(hostId, { action: "list" }).then((listing) => { if (!cancelled) setProviders(listing.providers); })
+    const discover = refreshModels.current;
+    refreshModels.current = false;
+    void call<Listing>(hostId, { action: "list", refreshModels: discover }).then((listing) => { if (!cancelled) { setProviders(listing.providers); if (listing.warning) setError(listing.warning); } })
       .catch((reason) => { if (!cancelled) setError(message(reason)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -166,7 +168,7 @@ export function useProviderAuth(hostId: string) {
 
   return {
     providers, flow, loading, working, error,
-    refresh: () => { setError(undefined); setRevision((value) => value + 1); },
+    refresh: () => { refreshModels.current = true; setError(undefined); setRevision((value) => value + 1); },
     begin: (providerId: string, authType: string, addAccount = false) => perform({ action: "begin", providerId, authType, addAccount }, true),
     reply: (answer: string) => flow?.prompt ? perform({ action: "reply", flowId: flow.flowId, promptId: flow.prompt.id, answer }) : Promise.resolve(),
     cancel: () => flow ? perform({ action: "cancel", flowId: flow.flowId }) : Promise.resolve(),
