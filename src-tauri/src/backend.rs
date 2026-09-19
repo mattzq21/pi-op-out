@@ -2412,6 +2412,15 @@ enum PiLaunch<'a> {
     Print { cwd: &'a str, session_path: &'a str },
 }
 
+fn session_worker_executable() -> Result<PathBuf, String> {
+    // Keep using this daemon's executable after a rebuild unlinks its original
+    // path. The explicit PID also works when Node launches the worker for us.
+    #[cfg(target_os = "linux")]
+    { Ok(PathBuf::from(format!("/proc/{}/exe", std::process::id()))) }
+    #[cfg(not(target_os = "linux"))]
+    { std::env::current_exe().map_err(|error| error.to_string()) }
+}
+
 fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &str, launch: PiLaunch<'_>, daemon_port: Option<u16>) -> Result<Command, String> {
     let (broker_port, broker_token) = broker_environment(broker)?;
     let desktop_home = home_dir()?;
@@ -2420,7 +2429,7 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
     if host_id == "local" {
          let (mcp_extension, mcp_config) = prepare_mcp_bridge(settings)?; let context_window_cap_extension = prepare_context_window_cap_extension(settings)?; let session_cost_limit_extension = prepare_session_cost_limit_extension(settings)?; let diff_watch_extension = prepare_diff_watch_extension()?; let trace_reader_extension = prepare_trace_reader()?; let openai_cache_lineage_extension = prepare_openai_cache_lineage_extension()?; let codex_web_search_extension = prepare_codex_web_search_extension()?; let defined_agents_extension = prepare_defined_agents_extension()?; let pi_path = pi_executable();
         let session_dir = ensure_desktop_sessions_dir(&desktop_home)?;
-        let mut command = Command::new(std::env::current_exe().map_err(|error| error.to_string())?); command.args([std::ffi::OsStr::new("--piop-session-worker"), pi_path.as_os_str()]); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY); command.arg(if is_rpc { "--mode" } else { "--print" }); if is_rpc { command.arg("rpc"); }
+        let mut command = Command::new(session_worker_executable()?); command.args([std::ffi::OsStr::new("--piop-session-worker"), pi_path.as_os_str()]); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY); command.arg(if is_rpc { "--mode" } else { "--print" }); if is_rpc { command.arg("rpc"); }
         command.arg("--extension").arg(prepare_rtk_extension()?);
          command.arg("--extension").arg(prepare_runtime_settings(settings)?).arg("--session-dir").arg(session_dir).arg("--approve").arg("--no-skills").arg("--extension").arg(prepare_hooks_extension()?).arg("--extension").arg(mcp_extension).arg("--extension").arg(prepare_session_broker()?).arg("--extension").arg(&trace_reader_extension).arg("--extension").arg(&context_window_cap_extension).arg("--extension").arg(&session_cost_limit_extension).arg("--extension").arg(&diff_watch_extension).arg("--extension").arg(prepare_fast_mode_extension()?).arg("--extension").arg(&openai_cache_lineage_extension).arg("--extension").arg(&codex_web_search_extension).arg("--extension").arg(&defined_agents_extension)
              .env("PI_DESKTOP_DEFINED_AGENTS_EXTENSION", &defined_agents_extension).env("PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION", &codex_web_search_extension).env("PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION", &context_window_cap_extension).env("PI_DESKTOP_SESSION_COST_LIMIT_EXTENSION", &session_cost_limit_extension).env("PI_DESKTOP_TRACE_READER_EXTENSION", &trace_reader_extension).env("PI_DESKTOP_MCP_CONFIG", mcp_config).env("PI_DESKTOP_BROKER_URL", format!("http://127.0.0.1:{broker_port}")).env("PI_DESKTOP_BROKER_TOKEN", &broker_token).env("PI_DESKTOP_HOST_ID", host_id);
