@@ -118,7 +118,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .message-failure { display: flex; align-items: center; gap: 7px; color: #c64f38; font-size: 12px; }.message-failure button { margin-left: 5px; border: 1px solid currentColor; border-radius: 6px; background: transparent; color: inherit; padding: 4px 9px; font: inherit; cursor: pointer; }.message-failure button:hover { background: #c64f3812; }
 .message-paused { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
 .reasoning-text, .reasoning-text strong { font-size: 13px; font-weight: 400; }
-.reasoning-text { color: #302e2a; }
+.reasoning-text { color: #302e2a; font-style: italic; }
 .reasoning-text, :is(.work-group-content, .active-work-content) .message-body { line-height: 1.4; }
 .reasoning-message:has(+ :where(.reasoning-message)) { margin-bottom: 3px; }
 :is(.reasoning-text, .work-group-content .message-body, .active-work-content .message-body) > :is(p, h1, h2, h3, h4, h5, h6, ul, ol, blockquote) { margin-top: 0; margin-bottom: 3px; }
