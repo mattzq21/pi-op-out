@@ -9,7 +9,7 @@ html[data-mobile] .app { padding-top: calc(52px + env(safe-area-inset-top)); }
 .mobile-connect h1 { margin: 0; font: 38px/1.12 "Instrument Serif", Georgia, serif; }
 .mobile-connect p { margin: 0; line-height: 1.55; color: #aaa69e; }
 .mobile-connect label { display: grid; gap: 8px; font-size: 14px; }
-.mobile-connect input { width: 100%; min-height: 48px; border: 1px solid #48453e; border-radius: 9px; padding: 12px; background: #24231f; color: #eee; font-size: 16px; }
+.mobile-connect input, .mobile-connect select { width: 100%; min-height: 48px; border: 1px solid #48453e; border-radius: 9px; padding: 12px; background: #24231f; color: #eee; font-size: 16px; }
 .mobile-connect .mobile-connect-hint { font-size: 12px; }
 .mobile-connect [role=alert] { color: #f19b89; }
 .mobile-connect .primary-button { min-height: 48px; }

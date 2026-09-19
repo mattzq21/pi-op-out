@@ -6,7 +6,11 @@ use tokio_tungstenite::tungstenite::{Message, protocol::WebSocketConfig};
 
 const MAX_MESSAGE: usize = 32 * 1024 * 1024;
 
+#[path = "tailscale_auth.rs"]
+mod tailscale_auth;
+
 pub(super) fn start(app: AppHandle) -> Result<(), String> {
+    let tailscale = tailscale_auth::configuration()?;
     let token = std::env::var("PIOP_MOBILE_TOKEN").unwrap_or_else(|_| daemon_endpoint::read().map(|endpoint| endpoint.token).unwrap_or_else(|_| format!("{}{}", Uuid::new_v4(), Uuid::new_v4())));
     if token.len() < 32 { return Err("PIOP_MOBILE_TOKEN must contain at least 32 characters".into()); }
     let bind = std::env::var("PIOP_MOBILE_BIND").unwrap_or_else(|_| if DEVELOPMENT { "127.0.0.1:9848" } else { "127.0.0.1:9847" }.into());
@@ -22,10 +26,11 @@ pub(super) fn start(app: AppHandle) -> Result<(), String> {
             }
         });
     }
+    let connections = Arc::new(Semaphore::new(8));
+    let jobs = Arc::new(Semaphore::new(16));
+    tailscale_auth::start(tailscale, app.clone(), events.clone(), connections.clone(), jobs.clone())?;
     crate::platform::async_runtime::spawn(async move {
         let Ok(listener) = tokio::net::TcpListener::from_std(listener) else { return; };
-        let connections = Arc::new(Semaphore::new(8));
-        let jobs = Arc::new(Semaphore::new(16));
         while let Ok((stream, _)) = listener.accept().await {
             let Ok(permit) = connections.clone().try_acquire_owned() else { continue; };
             let app = app.clone(); let token = token.clone(); let events = events.clone(); let jobs = jobs.clone();
@@ -57,7 +62,11 @@ async fn authenticate_socket(stream: tokio::net::TcpStream, token: &str) -> Resu
 }
 
 async fn connection(app: AppHandle, stream: tokio::net::TcpStream, token: String, events: broadcast::Sender<Value>, jobs: Arc<Semaphore>) -> Result<(), String> {
-    let mut socket = authenticate_socket(stream, &token).await?;
+    let socket = authenticate_socket(stream, &token).await?;
+    serve_connection(app, socket, events, jobs).await
+}
+
+async fn serve_connection<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(app: AppHandle, mut socket: tokio_tungstenite::WebSocketStream<S>, events: broadcast::Sender<Value>, jobs: Arc<Semaphore>) -> Result<(), String> {
     let mut events = events.subscribe();
     socket.send(Message::Text(json!({"type":"ready", "protocol":1, "backend":"daemon"}).to_string().into())).await.map_err(|error| error.to_string())?;
     let (responses, mut receiver) = tokio::sync::mpsc::channel::<Value>(32);
