@@ -85,7 +85,7 @@ export function ChatView(props: Props) {
     } catch { return []; }
   }, [mcpLoading]);
   const activity = mcpLoading ? undefined : props.state.activity;
-  const statuses = Object.entries(props.statuses).filter(([key]) => !["pi-desktop-fast-mode", "pi-desktop-mcp-loading"].includes(key)).map(([, text]) => text);
+  const statuses = Object.entries(props.statuses).filter(([key]) => !["pi-desktop-hook-stats", "pi-desktop-fast-mode", "pi-desktop-mcp-loading"].includes(key)).map(([, text]) => text);
   const projectName = props.projectCwd?.split(/[\\/]/).filter(Boolean).at(-1);
   const retryable = ownsConversation && !props.controlsDisabled && !props.state.isStreaming && !props.state.isPaused && !props.state.isPausing;
   const abortedTurn = retryable ? findReplaceableAbortedTurn(props.messages) : undefined;
