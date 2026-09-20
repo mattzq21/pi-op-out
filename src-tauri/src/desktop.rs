@@ -52,6 +52,7 @@ fn ensure_private_dir(path: &Path) -> Result<(), String> {
 fn new_window(app: AppHandle, target: Value) -> Result<String, String> {
     let (label, path) = conversation_window_target(&target)?;
     tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(path.into()))
+        .background_color(tauri::window::Color(24, 24, 23, 255))
         .title(APP_TITLE).inner_size(1280.0, 800.0).min_inner_size(900.0, 640.0)
         .build().map_err(|error| error.to_string())?;
     Ok(label)
