@@ -10,7 +10,7 @@ import { IconButton } from "./IconButton";
 import { Toggle } from "./Toggle";
 import { isMobile } from "../lib/platform";
 
-export type Section = "providers" | "general" | "models" | "storage" | "environment" | "agents" | "machines" | "keybinds" | "display" | "connections";
+export type Section = "providers" | "general" | "models" | "storage" | "environment" | "agents" | "machines" | "keybinds" | "connections";
 export const sections = [
   { id: "general" as const, label: "General", icon: Settings2 },
   { id: "models" as const, label: "Models", icon: Cpu },
@@ -20,10 +20,9 @@ export const sections = [
   { id: "keybinds" as const, label: "Keybinds", icon: Keyboard },
   { id: "machines" as const, label: "Machines", icon: Server },
   { id: "agents" as const, label: "Agents", icon: Bot },
-  { id: "display" as const, label: "Display", icon: Settings2 },
   ...(isMobile ? [{ id: "connections" as const, label: "Hosts", icon: Server }] : []),
 ];
-export const clientSections = new Set<Section>(["models", "keybinds", "display", "connections"]);
+export const clientSections = new Set<Section>(["models", "keybinds", "connections"]);
 const isBuiltInAgent = (agent: AgentProfile) => agent.name === "general";
 const firstEditableAgent = (agents: AgentProfile[]) => {
   const editableIndex = agents.findIndex((agent) => !isBuiltInAgent(agent));
@@ -164,7 +163,6 @@ export function SettingsView({ selectedSection, embedded = false, resourceError,
    return <main className={dirty ? "settings-shell has-unsaved" : "settings-shell"}><header className="settings-header"><div><p className="eyebrow">piop</p><h1>{scope === "client" ? "Client settings" : `${daemonLabel} settings`}</h1><p>Client preferences stay on this device. Daemon settings belong to the machine running piop.</p></div><div className="settings-save">{dirty && !saving && <small role="status" className="unsaved-badge"><span aria-hidden="true" />Unsaved changes</small>}{pendingSettingsCount > 0 && !dirty && <small role="status">Saved · waiting for {pendingSettingsCount} session{pendingSettingsCount === 1 ? "" : "s"} to apply changes</small>}{(saveError || validationError || fastModeValidationError) && <small role="alert">{saveError || validationError || fastModeValidationError}</small>}<button className={dirty && !saving && formValid ? "primary-button needs-save" : "primary-button"} disabled={saving || !dirty || !formValid} onClick={() => void save()}>{saved && !dirty ? <Check size={15} /> : <Save size={15} />}{saved && !dirty ? "Saved" : saving ? "Saving…" : "Save changes"}</button></div></header>
     <div className={embedded ? "settings-layout settings-layout-embedded" : "settings-layout"}>{!embedded && <nav className="settings-nav"><label className="search settings-search"><Search size={15} /><input autoFocus type="search" aria-label="Search settings" placeholder="Search settings" value={settingsQuery} onChange={(event) => setSettingsQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setSettingsQuery(""); } }} /></label>{[{ label: "This client", client: true }, { label: daemonLabel, client: false }].map((group) => { const items = matchingSections.filter((item) => clientSections.has(item.id) === group.client); return items.length ? <div className="settings-nav-group" key={group.label}><p className="eyebrow">{group.label}</p>{items.map((item) => <button key={item.id} className={visibleSection === item.id ? "active" : ""} aria-current={visibleSection === item.id ? "page" : undefined} onClick={() => setSection(item.id)}><item.icon size={16} /><span>{item.label}</span></button>)}</div> : null; })}</nav>}
       <section className="settings-content">
-        {visibleSection === "display" && <SettingsSection title="Display" description="Preferences saved on this client."><SettingRow icon={<Settings2 />} title="Debug display" description="Show additional runtime details in conversations."><Toggle label="Debug display" checked={draft.debugMode} onChange={(debugMode) => patch({ debugMode })} /></SettingRow></SettingsSection>}
         {visibleSection === "connections" && <SettingsSection title="Hosts" description="Saved daemon connections are stored on this device."><button className="secondary-button" disabled={dirty || saving} onClick={() => window.dispatchEvent(new Event("piop-mobile-disconnect"))}>Manage saved hosts</button>{dirty && <p>Save your changes before switching hosts.</p>}</SettingsSection>}
         {!matchingSections.length && <div className="empty-small" role="status">No settings match your search.</div>}
         {visibleSection === "providers" && <ProviderSettings key={providerHostId} hosts={providerHosts ?? settings.hosts} initialHostId={providerHostId} fixedHost />}
