@@ -125,7 +125,7 @@ export class SessionRuntimePool {
       const cwd = transport.currentCwd() || "";
       const previous = this.liveSessions.get(transport);
       const projectDetails = previous?.cwd === cwd && previous.hostId === transport.currentHostId() ? { projectKind: previous.projectKind, projectRoot: previous.projectRoot, cwdExists: previous.cwdExists } : {};
-      this.liveSessions.set(transport, { ...projectDetails, id: state.sessionId, path: state.sessionFile || "", name: retainedName(state, prompt, previous), project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, ...retainedActivity(state, previous, prompt, lastMessageAt), hostId: transport.currentHostId() });
+      this.liveSessions.set(transport, { ...projectDetails, id: state.sessionId, path: state.sessionFile || "", name: retainedName(state, prompt, previous), project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, ...retainedActivity(state, previous, prompt, lastMessageAt), daemonId: transport.currentDaemonId(), hostId: transport.currentHostId() });
       this.liveRevision += 1; this.notify();
     }).catch((reason) => this.errorHandler?.(`Could not list the retained session: ${reason instanceof Error ? reason.message : String(reason)}`));
   }
@@ -190,14 +190,15 @@ export class SessionRuntimePool {
   }
 
   forSession(session: SessionSummary) {
-    const hostId = session.hostId ?? "local"; const key = sessionKey(hostId, session.id);
-    const existing = this.sessions.get(key); if (existing) return existing;
+    const hostId = session.hostId ?? "local"; const key = sessionKey(session.daemonId ?? hostId, session.id);
+    const existing = this.sessions.get(key) ?? this.sessions.get(sessionKey(hostId, session.id)); if (existing) return existing;
     const transport = this.create({ cwd: session.cwd, sessionPath: session.path, hostId }); this.sessions.set(key, transport); return transport;
   }
 
   bind(hostId: string, sessionId: string, transport: NativeTransport) {
     for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key);
     if (!sessionId) { this.publishSessionStates(); return; }
+    this.sessions.set(sessionKey(transport.currentDaemonId() ?? hostId, sessionId), transport);
     this.sessions.set(sessionKey(hostId, sessionId), transport);
     const state = this.diffState(transport); const sessionPath = transport.currentSessionPath();
     if (state.persistence === "session" && sessionPath) void this.loadSavedDiffs(transport, sessionPath);
@@ -238,7 +239,7 @@ export class SessionRuntimePool {
   }
 
   async remove(session: SessionSummary) {
-    const key = sessionKey(session.hostId ?? "local", session.id); const transport = this.sessions.get(key); this.sessions.delete(key);
+    const key = sessionKey(session.daemonId ?? session.hostId ?? "local", session.id); const transport = this.sessions.get(key); this.sessions.delete(key);
     if (transport) await this.release(transport);
   }
 

@@ -257,8 +257,13 @@ function attachedSpec(packet, cwd) {
     : { ...packet.spec, cwd: cwd || packet.spec.cwd };
 }
 
+function expandSessionHome(cwd) {
+  return cwd === "~" ? homedir() : cwd?.startsWith("~/") ? join(homedir(), cwd.slice(2)) : cwd;
+}
+
 async function attachedSession(packet, guard, identity) {
-  const cwd = guard.saved?.header.cwd || packet.cwd;
+  const requestedCwd = guard.saved?.header.cwd || packet.cwd;
+  const cwd = expandSessionHome(requestedCwd);
   const spec = attachedSpec(packet, cwd);
   const findSession = () => [...sessions.values()].find((candidate) => candidate.identity === identity && !candidate.closed);
   let session = findSession();
@@ -325,7 +330,7 @@ async function handle(packet) {
   }
   const session = subscriptions.get(runtimeId);
   if (!session) { if (type === 'detach') return { stopped: false }; throw new Error('Pi is not running'); }
-  if (type === 'detach') { attachments.delete(runtimeId); return session.detach(runtimeId, packet.discardBlank); }
+  if (type === 'detach') { attachments.delete(runtimeId); return session.detach(runtimeId, packet.discardBlank, packet.preserveRunning); }
   if (type === 'presence') { session.views.set(runtimeId, packet.presence); session.routeDialogs(); session.publishPresence(); return; }
   const command = packet.command;
   return executeSessionCommand(session, runtimeId, command);

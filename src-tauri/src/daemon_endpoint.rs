@@ -13,6 +13,14 @@ pub(crate) fn read() -> Result<Endpoint, String> {
 }
 
 #[cfg(not(feature = "desktop"))]
+pub(crate) fn identity() -> Result<String, String> {
+    let path = home_dir()?.join(STORAGE_DIRECTORY).join("daemon-id");
+    if !path.exists() { atomic_write_private(&path, Uuid::new_v4().to_string().as_bytes())?; }
+    let value = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    Uuid::parse_str(value.trim()).map(|id| id.to_string()).map_err(|_| "Invalid daemon identity".into())
+}
+
+#[cfg(not(feature = "desktop"))]
 pub(crate) fn claim() -> Result<fs::File, String> {
     let directory = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&directory)?;

@@ -68,21 +68,21 @@ function FlowStatus({ flow }: { flow: AuthFlow }) {
   return <p role="status">Waiting for provider login…</p>;
 }
 
-export function ProviderSettings({ hosts, initialHostId = "local" }: { hosts: RemoteHost[]; initialHostId?: string }) {
+export function ProviderSettings({ hosts, initialHostId = "local", fixedHost = false }: { hosts: RemoteHost[]; initialHostId?: string; fixedHost?: boolean }) {
   const [hostId, setHostId] = useState(initialHostId);
   const [filter, setFilter] = useState("");
   const [adding, setAdding] = useState(false);
   const auth = useProviderAuth(hostId);
   const active = auth.flow?.status === "pending";
   const disabled = auth.working || active;
-  useEffect(() => { if (hostId !== "local" && !hosts.some((host) => host.id === hostId)) setHostId("local"); }, [hostId, hosts]);
+  useEffect(() => { if (!fixedHost && hostId !== "local" && !hosts.some((host) => host.id === hostId)) setHostId("local"); }, [hostId, hosts, fixedHost]);
   const hostName = selectedHostName(hosts, hostId);
   const providers = providerGroups(auth.providers).filter((group) => `${group.name} ${group.base.providerId} ${group.accounts.map((account) => account.name).join(" ")}`.toLowerCase().includes(filter.toLowerCase().trim()))
     .sort((left, right) => Number(right.accounts.length > 0) - Number(left.accounts.length > 0));
   return <div className="settings-section provider-settings">
     <div className="section-title"><div><h2>Providers</h2><p>Sign in to providers on the machine running Pi. Credentials stay on that host and remain available after you disconnect.</p></div></div>
     <div className="provider-toolbar">
-      <label>Host <select aria-label="Provider host" value={hostId} disabled={disabled} onChange={(event) => setHostId(event.target.value)}><option value="local">{localHostLabel}</option>{hosts.map((host) => <option key={host.id} value={host.id}>{host.name}</option>)}</select></label>
+      {!fixedHost && <label>Host <select aria-label="Provider host" value={hostId} disabled={disabled} onChange={(event) => setHostId(event.target.value)}><option value="local">{localHostLabel}</option>{hosts.map((host) => <option key={host.id} value={host.id}>{host.name}</option>)}</select></label>}
       <label className="section-filter"><Search size={14} /><input aria-label="Filter providers" placeholder="Filter providers" value={filter} onChange={(event) => setFilter(event.target.value)} /></label>
       <button className="section-toggle-all" disabled={auth.loading || disabled} onClick={auth.refresh}><RefreshCw size={14} />Refresh</button>
       <button className="section-toggle-all provider-add-custom" disabled={disabled || adding} onClick={() => setAdding(true)}>Add custom provider</button>

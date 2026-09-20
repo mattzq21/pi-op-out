@@ -51,23 +51,27 @@ fn authenticated(value: &Value, expected: &str) -> bool {
     difference == 0 && value.get("type").and_then(Value::as_str) == Some("authenticate")
 }
 
-async fn authenticate_socket(stream: tokio::net::TcpStream, token: &str) -> Result<tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>, String> {
+async fn authenticate_socket(stream: tokio::net::TcpStream, token: &str) -> Result<(tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>, bool), String> {
     let config = WebSocketConfig::default().max_message_size(Some(MAX_MESSAGE)).max_frame_size(Some(MAX_MESSAGE));
     let mut socket = tokio::time::timeout(Duration::from_secs(10), tokio_tungstenite::accept_async_with_config(stream, Some(config))).await.map_err(|_| "Handshake timeout")?.map_err(|error| error.to_string())?;
     let first = tokio::time::timeout(Duration::from_secs(10), socket.next()).await.map_err(|_| "Authentication timeout")?.ok_or("Connection closed")?.map_err(|error| error.to_string())?;
     let value: Value = serde_json::from_str(first.to_text().map_err(|_| "Expected authentication")?).map_err(|_| "Invalid authentication")?;
     if !authenticated(&value, token) { let _ = socket.close(None).await; return Err("Unauthorized".into()); }
-    Ok(socket)
+    Ok((socket, value["scope"] == "peer"))
 }
 
 async fn connection(app: AppHandle, stream: tokio::net::TcpStream, token: String, events: broadcast::Sender<Value>, jobs: Arc<Semaphore>) -> Result<(), String> {
-    let socket = authenticate_socket(stream, &token).await?;
-    serve_connection(app, socket, events, jobs).await
+    let (socket, peer) = authenticate_socket(stream, &token).await?;
+    serve_connection_mode(app, socket, events, jobs, peer).await
 }
 
-async fn serve_connection<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(app: AppHandle, mut socket: tokio_tungstenite::WebSocketStream<S>, events: broadcast::Sender<Value>, jobs: Arc<Semaphore>) -> Result<(), String> {
+async fn serve_connection<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(app: AppHandle, socket: tokio_tungstenite::WebSocketStream<S>, events: broadcast::Sender<Value>, jobs: Arc<Semaphore>) -> Result<(), String> {
+    serve_connection_mode(app, socket, events, jobs, false).await
+}
+
+async fn serve_connection_mode<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(app: AppHandle, mut socket: tokio_tungstenite::WebSocketStream<S>, events: broadcast::Sender<Value>, jobs: Arc<Semaphore>, peer: bool) -> Result<(), String> {
     let mut events = events.subscribe();
-    socket.send(Message::Text(json!({"type":"ready", "protocol":1, "backend":"daemon"}).to_string().into())).await.map_err(|error| error.to_string())?;
+    socket.send(Message::Text(json!({"type":"ready", "protocol":1, "backend":"daemon", "peerProtocol":1, "daemonId":daemon_endpoint::identity()?}).to_string().into())).await.map_err(|error| error.to_string())?;
     let (responses, mut receiver) = tokio::sync::mpsc::channel::<Value>(32);
     let mut pending = tokio::task::JoinSet::new();
     let owner = format!("client:{}", Uuid::new_v4());
@@ -92,7 +96,7 @@ async fn serve_connection<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpi
                                 let app = app.clone(); let responses = responses.clone(); let command = command.to_owned(); let owner = owner.clone();
                                 pending.spawn(async move {
                                     let _permit = permit;
-                                    let result = super::mobile_commands::dispatch(app, owner, command, args).await;
+                                    let result = if peer { super::mobile_commands::dispatch_peer(app, owner, command, args).await } else { super::mobile_commands::dispatch(app, owner, command, args).await };
                                     let response = match result { Ok(data) => json!({"id":id,"result":data}), Err(error) => json!({"id":id,"error":error}) };
                                     let _ = responses.send(response).await;
                                 });
@@ -104,7 +108,10 @@ async fn serve_connection<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpi
                     _ => None,
                 }
             },
-            event = events.recv() => match event { Ok(event) => Some(Message::Text(event.to_string().into())), Err(_) => break },
+            event = events.recv() => match event {
+                Ok(event) if peer && (event["payload"]["_peer"] == true || event["event"] == "pi://settings-changed" || event["event"] == "pi://groups-changed") => None,
+                Ok(event) => Some(Message::Text(event.to_string().into())), Err(_) => break
+            },
             Some(response) = receiver.recv() => Some(Message::Text(response.to_string().into())),
             Some(_) = pending.join_next(), if !pending.is_empty() => None,
             _ = heartbeat.tick() => {
@@ -117,8 +124,11 @@ async fn serve_connection<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpi
         }
     }
     let _ = tokio::time::timeout(Duration::from_secs(2), socket.close(None)).await;
-    // Finish in-flight mutations before detaching; never replay them after reconnect.
+    // Hide disconnected viewers immediately so dialogs can move to a returning
+    // client. Preserve workers, finish mutations, then catch any late attaches.
     drop(receiver);
+    let cleanup_app = app.clone(); let cleanup_owner = owner.clone();
+    tokio::task::spawn_blocking(move || detach_owner(&cleanup_app, &cleanup_owner, false)).await.map_err(|error| error.to_string())?;
     while pending.join_next().await.is_some() {}
     tokio::task::spawn_blocking(move || {
         detach_owner(&app, &owner, false);

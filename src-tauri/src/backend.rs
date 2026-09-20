@@ -2,6 +2,10 @@
 mod mobile;
 #[cfg(not(feature = "desktop"))]
 mod mobile_commands;
+#[cfg(not(feature = "desktop"))]
+mod peers;
+#[cfg(not(feature = "desktop"))]
+mod daemon_stdio;
 mod platform;
 mod daemon_endpoint;
 #[cfg(feature = "desktop")]
@@ -241,7 +245,7 @@ impl Drop for BrokerWriter {
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum ProjectKind { NoRepo, Main, Worktree }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SessionSummary {
     id: String,
@@ -271,21 +275,6 @@ struct RemoteHost {
     target: String,
     #[serde(default = "default_pi_path")]
     pi_path: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DictionaryEntry {
-    word: String,
-    replacement: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PromptDictionary {
-    id: String,
-    name: String,
-    entries: Vec<DictionaryEntry>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -425,10 +414,6 @@ struct AppSettings {
     skills: Vec<Value>,
     #[serde(default)]
     hosts: Vec<RemoteHost>,
-    #[serde(default)]
-    dictionaries: Vec<PromptDictionary>,
-    #[serde(default)]
-    active_dictionary_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -752,18 +737,6 @@ fn atomic_write_private(path: &Path, body: &[u8]) -> Result<(), String> {
     result
 }
 
-fn validate_dictionaries(settings: &AppSettings) -> Result<(), String> {
-    let mut ids = HashSet::new();
-    for dictionary in &settings.dictionaries { if dictionary.id.trim().is_empty() || !ids.insert(dictionary.id.as_str()) { return Err("Every dictionary needs a unique id".into()); } }
-    let mut active_ids = HashSet::new();
-    for id in &settings.active_dictionary_ids { if !ids.contains(id.as_str()) { return Err("Active dictionary was not found".into()); } if !active_ids.insert(id.as_str()) { return Err("A dictionary can only be active once".into()); } }
-    let mut keys = HashSet::new();
-    for dictionary in settings.dictionaries.iter().filter(|dictionary| active_ids.contains(dictionary.id.as_str())) {
-        for entry in &dictionary.entries { let key = entry.word.trim(); if key.is_empty() { continue; } if !keys.insert(key) { return Err(format!("Key '{key}' appears more than once in active dictionaries")); } }
-    }
-    Ok(())
-}
-
 fn canonical_shortcut(shortcut: &str) -> Result<Option<String>, String> {
     // A single trailing "+" denotes the "+" key itself: "Ctrl++" -> ["ctrl", "+"].
     let mut raw: Vec<&str> = shortcut.split('+').collect();
@@ -962,7 +935,7 @@ fn default_settings() -> AppSettings {
             json!({"name":"read_trace","description":"Extract clean user and final assistant messages from a Pi trace","enabled":true,"builtin":false}),
             codex_web_search_tool(),
         ]).collect(),
-        skills: vec![], hosts: vec![], dictionaries: vec![], active_dictionary_ids: vec![],
+        skills: vec![], hosts: vec![],
     }
 }
 
@@ -1119,7 +1092,6 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
         if !settings.tools.iter().any(|existing| existing["name"] == tool["name"]) { settings.tools.push(tool); }
     }
     merge_discovered_skills(&mut settings);
-    validate_dictionaries(&settings)?;
     Ok(settings)
 }
 
@@ -1156,13 +1128,14 @@ fn save_app_settings(app: AppHandle, mut settings: AppSettings, agent_host_id: O
         || settings_path(&app),
         |settings| daemon::invalidate_changed(&app, &runtime, settings),
         |settings| daemon::update_settings(&app, &runtime, settings))?;
+    #[cfg(not(feature = "desktop"))]
+    peers::invalidate(&app);
     let _ = app.emit("pi://settings-changed", &change);
     Ok(change)
 }
 
 fn validate_settings_for_save(settings: &AppSettings) -> Result<(), String> {
     if settings.context_window_cap < 1000 { return Err("Context window cap must be a whole number of at least 1000".into()); }
-    validate_dictionaries(settings)?;
     validate_keybindings(settings)?;
     if settings.hosts.len() > MAX_REMOTE_HOSTS { return Err(format!("At most {MAX_REMOTE_HOSTS} remote machines can be configured")); }
     let mut host_ids = HashSet::new();
@@ -2354,6 +2327,8 @@ fn session_worker_executable() -> Result<PathBuf, String> {
 }
 
 fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &str, launch: PiLaunch<'_>, daemon_port: Option<u16>) -> Result<Command, String> {
+    #[cfg(not(feature = "desktop"))]
+    if host_id != "local" { return Err("Remote Pi must be launched by its owning daemon".into()); }
     let (broker_port, broker_token) = broker_environment(broker)?;
     let desktop_home = home_dir()?;
     let is_rpc = matches!(launch, PiLaunch::Rpc { .. });
@@ -2450,10 +2425,14 @@ fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, 
 }
 
 fn detach_pi(runtime: &PiRuntime, runtime_id: &str, discard_blank: bool) -> Result<bool, String> {
+    detach_pi_with(runtime, runtime_id, discard_blank, false)
+}
+
+fn detach_pi_with(runtime: &PiRuntime, runtime_id: &str, discard_blank: bool, preserve_running: bool) -> Result<bool, String> {
     let mut stopped = false;
     let process = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.remove(runtime_id);
     if let Some(mut process) = process {
-        let result = process.daemon.request(json!({"type":"detach","runtimeId":runtime_id,"discardBlank":discard_blank}))?;
+        let result = process.daemon.request(json!({"type":"detach","runtimeId":runtime_id,"discardBlank":discard_blank,"preserveRunning":preserve_running}))?;
         if result["stopped"].as_bool() == Some(true) {
             stopped = true;
             process.blank_cleanup.submitted |= result["submitted"].as_bool().unwrap_or(false);
@@ -2999,6 +2978,10 @@ fn parse_remote_directories(output: &[u8]) -> Result<DirectoryListing, String> {
     Ok(DirectoryListing { path: current.to_string_lossy().into_owned(), parent: current.parent().map(|parent| parent.to_string_lossy().into_owned()), directories })
 }
 
+#[cfg(not(feature = "desktop"))]
+fn collect_sessions(app: &AppHandle, index: &SessionIndexRuntime) -> Result<Vec<SessionSummary>, String> { peers::all_summaries(app, index) }
+
+#[cfg(feature = "desktop")]
 fn collect_sessions(app: &AppHandle, index: &SessionIndexRuntime) -> Result<Vec<SessionSummary>, String> {
     let home = home_dir()?; let root = ensure_desktop_sessions_dir(&home)?;
     let sessions = list_local_sessions(index, &root)?;
@@ -3426,7 +3409,9 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
             let host_id = value.get("hostId").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("hostId is required")?;
             let session_id = value.get("sessionId").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("sessionId is required")?;
             let message = value.get("message").and_then(Value::as_str).filter(|value| !value.trim().is_empty()).ok_or("message is required")?;
-            let sessions = collect_sessions(&app, &session_index)?;
+            #[cfg(not(feature = "desktop"))]
+            if host_id != "local" { return peers::forward_broker(&app, host_id, "/message", value.clone()); }
+            let sessions = if host_id == "local" { list_local_sessions(&session_index, &ensure_desktop_sessions_dir(&home_dir()?)?)? } else { collect_sessions(&app, &session_index)? };
             let session = resolve_agent(&sessions, host_id, session_id)?;
             dispatch_agent_message(&app, &broker, session, message, request_id, value.get("deadline").and_then(Value::as_u64).unwrap_or_else(|| SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis() as u64 + 120_000), value["clientId"].as_str().ok_or("Conversation client is missing")?).map(|reply| json!({"reply":reply}))
         })();
@@ -3445,6 +3430,8 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
         ("POST", "/worktrees/create") => (|| {
             let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid worktree request")?;
             let host_id = value["hostId"].as_str().ok_or("hostId is required")?;
+            #[cfg(not(feature = "desktop"))]
+            if host_id != "local" { return peers::forward_broker(&app, host_id, "/worktrees/create", value.clone()); }
             let cwd = value["cwd"].as_str().ok_or("cwd is required")?;
             let name = value["name"].as_str().ok_or("name is required")?;
             let settings = load_app_settings(app.clone())?;
@@ -3457,6 +3444,8 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
         ("POST", "/worktrees/remove") => (|| {
             let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid worktree request")?;
             let host_id = value["hostId"].as_str().ok_or("hostId is required")?;
+            #[cfg(not(feature = "desktop"))]
+            if host_id != "local" { return peers::forward_broker(&app, host_id, "/worktrees/remove", value.clone()); }
             let cwd = value["cwd"].as_str().ok_or("cwd is required")?;
             let removed = remove_git_worktree_blocking(app.clone(), cwd.into(), Some(host_id.into()), value["deleteBranch"].as_bool().unwrap_or(false))?;
             serde_json::to_value(removed).map_err(|error| error.to_string())
@@ -3468,6 +3457,8 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
             let mut cancelled = broker.cancelled.lock().map_err(|_| "Broker cancellation lock was poisoned")?;
             if cancelled.len() >= BROKER_QUEUE_DEPTH * 2 { cancelled.clear(); }
             cancelled.insert(request_id.to_string()); drop(cancelled);
+            #[cfg(not(feature = "desktop"))]
+            peers::cancel_message(&app, request_id)?;
             if let Some(child) = broker.jobs.lock().map_err(|_| "Broker job lock was poisoned")?.get(request_id) { if let Ok(mut child) = child.lock() { let _ = child.kill(); } }
             Ok(json!({"cancelled":true}))
         })(),
@@ -3513,7 +3504,9 @@ fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), Str
 
 #[cfg(not(feature = "desktop"))]
 pub fn run_daemon() -> Result<(), String> {
+    if std::env::args().nth(1).as_deref() == Some("--stdio-client") { return daemon_stdio::run(); }
     let _instance = daemon_endpoint::claim()?;
+    daemon_endpoint::identity()?;
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().map_err(|error| error.to_string())?;
     runtime.block_on(async {
         let app = AppHandle::new();
@@ -3535,16 +3528,20 @@ pub fn run_daemon() -> Result<(), String> {
 }
 
 fn detach_owner(app: &AppHandle, owner: &str, discard_blank: bool) {
+    #[cfg(not(feature = "desktop"))]
+    peers::detach_owner(app, owner);
     let runtime = app.state::<PiRuntime>();
     provider_auth::cancel_owner(&runtime, owner);
     let ids = runtime.processes.lock().map(|processes| processes.iter().filter(|(_, process)| process.window_label == owner).map(|(id, _)| id.clone()).collect::<Vec<_>>()).unwrap_or_default();
-    for id in ids { let _ = detach_pi(&runtime, &id, discard_blank); }
+    for id in ids { let _ = detach_pi_with(&runtime, &id, discard_blank, !discard_blank); }
     let terminals = app.state::<TerminalRuntime>();
     let ids = terminals.processes.lock().map(|processes| processes.iter().filter(|(_, process)| process.window_label == owner).map(|(id, _)| id.clone()).collect::<Vec<_>>()).unwrap_or_default();
     let _ = stop_terminals(&terminals, &ids);
 }
 
 fn shutdown_backend(app: &AppHandle) {
+    #[cfg(not(feature = "desktop"))]
+    peers::shutdown(app);
     app.state::<voice::VoiceRuntime>().shutdown();
     let broker = app.state::<BrokerRuntime>();
     broker.closing.store(true, Ordering::SeqCst);

@@ -36,7 +36,7 @@ function formatDate(timestamp: number) {
 
 function archiveKey(host: HostStorage, archive: ArchivedConversation) { return `${host.hostId}:${archive.path}`; }
 
-export function StorageSettings() {
+export function StorageSettings({ hostId }: { hostId?: string }) {
   const [report, setReport] = useState<StorageReport>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
@@ -49,7 +49,7 @@ export function StorageSettings() {
     pendingRefreshes.current += 1;
     setLoading(true); setError(undefined);
     try {
-      const next = await loadStorageReport();
+      const next = await loadStorageReport(hostId);
       if (generation === refreshGeneration.current) setReport(next);
     } catch (reason) {
       if (generation === refreshGeneration.current) setError(reason instanceof Error ? reason.message : String(reason));
@@ -57,7 +57,7 @@ export function StorageSettings() {
       pendingRefreshes.current -= 1;
       if (pendingRefreshes.current === 0) setLoading(false);
     }
-  }, []);
+  }, [hostId]);
   useEffect(() => { void refresh(); }, [refresh]);
 
   const removeArchives = async (host: HostStorage, archives: ArchivedConversation[]) => {

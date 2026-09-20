@@ -273,17 +273,21 @@ class Session {
     this.publishPresence();
   }
 
-  async detach(runtimeId, discardBlank = false) {
+  async detach(runtimeId, discardBlank = false, preserveRunning = false) {
     const voiceClosed = hostVoice.detach(runtimeId);
     this.views.delete(runtimeId);
     subscriptions.delete(runtimeId);
     this.routeDialogs();
     this.publishPresence();
     await voiceClosed;
-    const stopped = !this.views.size && (this.ephemeral || (discardBlank && !this.submitted && !this.working));
+    const stopped = !preserveRunning && !this.views.size && (this.ephemeral || (discardBlank && !this.submitted && !this.working));
     if (stopped) await this.stop();
-    if (!this.ephemeral && !this.views.size) await ownership.releaseClient(this.identity, this.clientId, () => !this.views.size);
+    await this.releaseUnusedOwnership();
     return { stopped, submitted: this.submitted };
+  }
+
+  async releaseUnusedOwnership() {
+    if (!this.ephemeral && !this.views.size && !this.configurationBusy()) await ownership.releaseClient(this.identity, this.clientId, () => !this.views.size && !this.configurationBusy());
   }
 
   receive(event) {

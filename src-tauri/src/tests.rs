@@ -691,28 +691,6 @@ fn keybinding_validation_rejects_duplicates_and_reserved_search_shortcuts() {
     assert_eq!(settings.keybindings["focusComposer"], "Alt+E");
 }
 
-fn dictionaries(values: Value, active: &[&str]) -> AppSettings {
-    let mut settings = default_settings();
-    settings.dictionaries = serde_json::from_value(values).unwrap();
-    settings.active_dictionary_ids = active.iter().map(|id| (*id).to_owned()).collect();
-    settings
-}
-
-#[test]
-fn dictionary_validation_limits_collision_checks_to_active_dictionaries() {
-    let entries = json!([{"id":"one","name":"One","entries":[{"word":" cat ","replacement":"dog"},{"word":" ","replacement":"blank"}]},{"id":"two","name":"Two","entries":[{"word":"cat","replacement":"kitten"}]}]);
-    assert!(validate_dictionaries(&dictionaries(entries.clone(), &["one"])).is_ok());
-    assert!(validate_dictionaries(&dictionaries(entries.clone(), &["one", "two"])).unwrap_err().contains("cat"));
-    assert!(validate_dictionaries(&dictionaries(entries.clone(), &["missing"])).unwrap_err().contains("not found"));
-    assert!(validate_dictionaries(&dictionaries(entries, &["one", "one"])).unwrap_err().contains("only be active once"));
-    for ids in [["", "two"], ["same", "same"]] {
-        let settings = dictionaries(json!([{"id":ids[0],"name":"One","entries":[]},{"id":ids[1],"name":"Two","entries":[]}]), &[]);
-        assert!(validate_dictionaries(&settings).unwrap_err().contains("unique id"));
-    }
-}
-
-
-
 #[test]
 fn frontmatter_respects_the_header_boundary_and_quoted_values() {
     let text = "---\nignored line\nother: value\nname: 'A skill'\n---\nname: wrong";
@@ -2748,8 +2726,7 @@ fn settings_save_validation_enforces_context_and_delegates_other_configuration_c
     settings.context_window_cap = 999;
     assert!(validate_settings_for_save(&settings).unwrap_err().contains("at least 1000"));
     settings.context_window_cap = 1000; assert!(validate_settings_for_save(&settings).is_ok());
-    settings.active_dictionary_ids = vec!["missing".into()]; assert!(validate_settings_for_save(&settings).unwrap_err().contains("dictionary"));
-    settings.active_dictionary_ids.clear(); settings.keybindings.insert("newConversation".into(), "Ctrl+G".into());
+    settings.keybindings.insert("newConversation".into(), "Ctrl+G".into());
     assert!(validate_settings_for_save(&settings).is_err()); settings.keybindings = default_keybindings();
 }
 

@@ -137,7 +137,8 @@ class ConversationOwnership {
     const saved = await this.locate(id, options.path || record?.path, options.archived);
     this.assertAvailable(record, saved, options);
     const otherClient = Boolean(record?.client && record.client !== client);
-    const handoff = Boolean(record && (record.client !== client || record.endpoint !== this.endpoint || options.mutation));
+    const returningClient = !record?.client && record?.previousClient === client && record?.endpoint === this.endpoint && record?.token === this.token;
+    const handoff = Boolean(record && ((!returningClient && record.client !== client) || record.endpoint !== this.endpoint || options.mutation));
     const next = { client, endpoint: this.endpoint, token: this.token, path: saved?.path, deleted: false };
     return { record, saved, denied: otherClient && !options.take, handoff, next };
   }
@@ -154,7 +155,7 @@ class ConversationOwnership {
       if (!unused() || record?.client !== client || record.endpoint !== this.endpoint || record.token !== this.token || record.deleted) return;
       // Keep the worker endpoint so a new owner fences any background work,
       // but no longer require an explicit takeover from the disconnected client.
-      await this.write(id, { ...record, client: null });
+      await this.write(id, { ...record, client: null, previousClient: client });
     } finally { await unlock(); }
   }
 

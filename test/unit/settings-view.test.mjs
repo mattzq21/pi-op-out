@@ -8,7 +8,7 @@ describe('settings editor', () => {
   let dom, view, props, saves, dirty;
   beforeEach(() => {
     dom = installDom(); saves = []; dirty = [];
-    props = { settings: { worktreeSetupScripts: [], defaultAgent: 'general', defaultModel: 'p/model', hiddenModels: [], defaultThinking: 'off', defaultFastMode: false, contextWindowCap: 10000, contextWindowCapEnabled: true, autoCompaction: true, autoRetry: true, debugMode: false, keybindings: { ...defaultKeybindings }, tools: [], skills: [], hosts: [], dictionaries: [], activeDictionaryIds: [] }, onSave: async (...args) => saves.push(args), onDirtyChange: value => dirty.push(value) };
+    props = { settings: { worktreeSetupScripts: [], defaultAgent: 'general', defaultModel: 'p/model', hiddenModels: [], defaultThinking: 'off', defaultFastMode: false, contextWindowCap: 10000, contextWindowCapEnabled: true, autoCompaction: true, autoRetry: true, debugMode: false, keybindings: { ...defaultKeybindings }, tools: [], skills: [], hosts: [] }, onSave: async (...args) => saves.push(args), onDirtyChange: value => dirty.push(value) };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; dom.restore(); });
   async function render(extra = {}) { props = { ...props, ...extra }; if (view) await view.rerender(props); else view = await renderComponent(SettingsView, props); }
@@ -51,17 +51,6 @@ describe('settings editor', () => {
     await click(save()); assert.deepEqual(saves[1][0].hiddenModels, []);
   });
 
-  test('dictionary editing validates active entries and removes inactive references on deletion', async () => {
-    await render(); await section('Dictionaries'); await click(button('Add dictionary'));
-    await enterText(control('Dictionary name'), 'Glossary'); await click(control('Enable Glossary')); await click(button('Add word'));
-    assert.match(document.querySelector('[role=alert]').textContent, /both a word and replacement/);
-    await enterText(control('Word 1'), 'api'); await enterText(control('Replacement 1'), 'interface');
-    await click(button('Add word')); await enterText(control('Word 2'), 'api'); await enterText(control('Replacement 2'), 'duplicate');
-    assert.match(document.querySelector('[role=alert]').textContent, /appears more than once/); assert.equal(control('Word 1').getAttribute('aria-invalid'), 'true');
-    await click(control('Remove entry 2')); await click(save());
-    assert.deepEqual(saves[0][0].dictionaries[0].entries, [{ word: 'api', replacement: 'interface' }]); assert.equal(saves[0][0].activeDictionaryIds[0], saves[0][0].dictionaries[0].id);
-    await click(control('Remove Glossary')); await click(save()); assert.deepEqual(saves[1][0].dictionaries, []); assert.deepEqual(saves[1][0].activeDictionaryIds, []);
-  });
 
   test('MCP HTTP validation rejects bad URLs, headers and timeouts before saving', async () => {
     await render({ agentConfig: { agents: [profile('general')] } }); await section('Agents'); await click(button('Add MCP server')); await enterText(control('Server name'), 'Search');

@@ -1,6 +1,6 @@
 import { accountModelName } from "../lib/providerAccounts";
 import { useEffect, useRef, useState } from "react";
-import { BookOpen, Bot, Check, CircleGauge, CirclePlus, Cpu, HardDrive, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Wrench, Zap } from "lucide-react";
+import { Bot, Check, CircleGauge, CirclePlus, Cpu, HardDrive, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Wrench, Zap } from "lucide-react";
 import { StorageSettings } from "./StorageSettings";
 import { ProviderSettings } from "./ProviderSettings";
 import type { AgentProfile, AppSettings, McpServer, Model, AgentConfig, RemoteHost, SessionSummary } from "../types";
@@ -8,9 +8,10 @@ import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutFromEvent, shortcutsConflict, type KeybindAction } from "../lib/keybindings";
 import { IconButton } from "./IconButton";
 import { Toggle } from "./Toggle";
+import { isMobile } from "../lib/platform";
 
-type Section = "providers" | "general" | "models" | "storage" | "environment" | "dictionaries" | "agents" | "machines" | "keybinds";
-const sections = [
+export type Section = "providers" | "general" | "models" | "storage" | "environment" | "agents" | "machines" | "keybinds" | "connections";
+export const sections = [
   { id: "general" as const, label: "General", icon: Settings2 },
   { id: "models" as const, label: "Models", icon: Cpu },
   { id: "providers" as const, label: "Providers", icon: ShieldCheck },
@@ -18,9 +19,10 @@ const sections = [
   { id: "environment" as const, label: "Worktree scripts", icon: Wrench },
   { id: "keybinds" as const, label: "Keybinds", icon: Keyboard },
   { id: "machines" as const, label: "Machines", icon: Server },
-  { id: "dictionaries" as const, label: "Dictionaries", icon: BookOpen },
   { id: "agents" as const, label: "Agents", icon: Bot },
+  ...(isMobile ? [{ id: "connections" as const, label: "Hosts", icon: Server }] : []),
 ];
+export const clientSections = new Set<Section>(["models", "keybinds", "connections"]);
 const isBuiltInAgent = (agent: AgentProfile) => agent.name === "general";
 const firstEditableAgent = (agents: AgentProfile[]) => {
   const editableIndex = agents.findIndex((agent) => !isBuiltInAgent(agent));
@@ -30,6 +32,11 @@ const firstEditableAgent = (agents: AgentProfile[]) => {
 function settingsSnapshot(settings: AppSettings, agentConfig?: AgentConfig) {
   const stable = (value: unknown): unknown => Array.isArray(value) ? value.map(stable) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, stable(item)])) : value;
   return JSON.stringify(stable({ settings, agentConfig }));
+}
+
+function agentEditsSnapshot(config?: AgentConfig) {
+  const stable = (value: unknown): unknown => Array.isArray(value) ? value.map(stable) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, stable(item)])) : value;
+  return JSON.stringify(stable(config?.agents.map((item) => item.extensions ? { ...item, extensions: item.extensions.map((path) => path.trim()).filter(Boolean) } : item)));
 }
 
 function validAgentMcp(servers: McpServer[]) { return servers.length <= 32 && new Set(servers.map((server) => server.id)).size === servers.length && servers.every((server) => !mcpServerError(server)); }
@@ -62,20 +69,21 @@ function firstValidationError(checks: Array<() => string | undefined>) {
   for (const check of checks) { const error = check(); if (error) return error; }
 }
 
-type SettingsViewProps = { providerHostId?: string; settings: AppSettings; pendingSettingsCount?: number; agentConfig?: AgentConfig; sessions?: SessionSummary[]; models?: Model[]; thinkingLevels?: string[]; onSave: (settings: AppSettings, agentConfig?: AgentConfig) => Promise<void>; onDirtyChange?: (dirty: boolean) => void };
-function settingsViewDefaults({ providerHostId = "local", settings, pendingSettingsCount = 0, agentConfig: incomingConfiguration, sessions = [], models = [], thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"], onSave, onDirtyChange }: SettingsViewProps) {
-  return { providerHostId, settings, pendingSettingsCount, incomingConfiguration, sessions, models, thinkingLevels, onSave, onDirtyChange };
+type SettingsViewProps = { selectedSection?: Section; embedded?: boolean; resourceError?: string; scope?: "client" | "daemon"; daemonLabel?: string; providerHosts?: RemoteHost[]; onSavingChange?: (saving: boolean) => void; providerHostId?: string; settings: AppSettings; pendingSettingsCount?: number; agentConfig?: AgentConfig; sessions?: SessionSummary[]; models?: Model[]; thinkingLevels?: string[]; onSave: (settings: AppSettings, agentConfig?: AgentConfig) => Promise<void>; onDirtyChange?: (dirty: boolean) => void };
+function settingsViewDefaults({ selectedSection, embedded = false, resourceError, scope = "daemon", daemonLabel = "Local daemon", providerHosts, onSavingChange, providerHostId = "local", settings, pendingSettingsCount = 0, agentConfig: incomingConfiguration, sessions = [], models = [], thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"], onSave, onDirtyChange }: SettingsViewProps) {
+  return { selectedSection, embedded, resourceError, scope, daemonLabel, providerHosts, onSavingChange, providerHostId, settings, pendingSettingsCount, incomingConfiguration, sessions, models, thinkingLevels, onSave, onDirtyChange };
 }
 
 export function SettingsView(props: SettingsViewProps) {
-  const { providerHostId, settings, pendingSettingsCount, incomingConfiguration, sessions, models, thinkingLevels, onSave, onDirtyChange } = settingsViewDefaults(props);
+  const { selectedSection, embedded, resourceError, scope, daemonLabel, providerHosts, onSavingChange, providerHostId, settings, pendingSettingsCount, incomingConfiguration, sessions, models, thinkingLevels, onSave, onDirtyChange } = settingsViewDefaults(props);
   const [saving, setSaving] = useState(false);
+  useEffect(() => { onSavingChange?.(saving); return () => onSavingChange?.(false); }, [saving, onSavingChange]);
   // Saving reloads extensions. Keep the last discovered capabilities until the
   // save finishes, then reconcile actual removals against the fresh discovery.
   const capabilitiesBeforeSave = useRef({ configuration: incomingConfiguration });
   if (!saving) capabilitiesBeforeSave.current = { configuration: incomingConfiguration };
   const agentConfig = saving ? capabilitiesBeforeSave.current.configuration : incomingConfiguration;
-  const [draft, setDraft] = useState(() => structuredClone(settings)); const [agentDrafts, setAgentDrafts] = useState(() => structuredClone(agentConfig?.agents ?? [])); const [agentIndex, setAgentIndex] = useState(() => firstEditableAgent(agentConfig?.agents ?? [])); const [section, setSection] = useState<Section>("general"); const [saved, setSaved] = useState(false); const savingRef = useRef(false); const [saveError, setSaveError] = useState<string>();
+  const [draft, setDraft] = useState(() => structuredClone(settings)); const [agentDrafts, setAgentDrafts] = useState(() => structuredClone(agentConfig?.agents ?? [])); const [agentIndex, setAgentIndex] = useState(() => firstEditableAgent(agentConfig?.agents ?? [])); const [section, setSection] = useState<Section>(scope === "client" ? "keybinds" : "general"); const [saved, setSaved] = useState(false); const savingRef = useRef(false); const [saveError, setSaveError] = useState<string>();
   const [modelFilter, setModelFilter] = useState("");
   const [settingsQuery, setSettingsQuery] = useState("");
   const [pastHeader, setPastHeader] = useState(false);
@@ -88,14 +96,14 @@ export function SettingsView(props: SettingsViewProps) {
     return () => window.removeEventListener("scroll", onScroll, true);
   }, []);
   const baselineSettingsRef = useRef(settingsSnapshot(settings));
-  const baselineAgentConfigRef = useRef(JSON.stringify(agentConfig));
-  const agentConfigSnapshot = JSON.stringify(agentConfig);
+  const baselineAgentConfigRef = useRef(agentEditsSnapshot(agentConfig));
+  const agentConfigSnapshot = agentEditsSnapshot(agentConfig);
   const incomingAgentConfigRef = useRef(agentConfigSnapshot);
   const [hasAgentConfigDraft, setHasAgentConfigDraft] = useState(agentConfig !== undefined);
   const currentAgentConfig = hasAgentConfigDraft ? { agents: agentDrafts.map(item => item.extensions ? { ...item, extensions: item.extensions.map(path => path.trim()).filter(Boolean) } : item), fastModeModels: agentConfig?.fastModeModels } : undefined;
   const currentSnapshot = settingsSnapshot(draft, currentAgentConfig);
   const currentSnapshotRef = useRef(currentSnapshot); currentSnapshotRef.current = currentSnapshot;
-  const agentConfigDirty = JSON.stringify(currentAgentConfig) !== baselineAgentConfigRef.current;
+  const agentConfigDirty = agentEditsSnapshot(currentAgentConfig) !== baselineAgentConfigRef.current;
   const dirty = settingsSnapshot(draft) !== baselineSettingsRef.current || agentConfigDirty;
   useEffect(() => { onDirtyChange?.(dirty); return () => onDirtyChange?.(false); }, [dirty, currentSnapshot, saving, onDirtyChange]);
   useEffect(() => { if (dirty) setSaved(false); }, [dirty]);
@@ -109,23 +117,21 @@ export function SettingsView(props: SettingsViewProps) {
     setHasAgentConfigDraft(next !== undefined);
     setAgentDrafts(next?.agents ?? []);
     setAgentIndex(firstEditableAgent(next?.agents ?? []));
-    baselineAgentConfigRef.current = JSON.stringify(next);
+    baselineAgentConfigRef.current = agentEditsSnapshot(next);
   }, [agentConfigDirty, agentConfig, agentConfigSnapshot]);
-  useEffect(() => { if (!agentConfig && section === "agents") setSection("general"); }, [agentConfig, section]);
   const patch = (value: Partial<AppSettings>) => setDraft((current) => ({ ...current, ...value }));
-  const save = async () => { if (savingRef.current || !dirty) return; savingRef.current = true; setSaving(true); setSaveError(undefined); try { await onSave(draft, agentConfigDirty ? currentAgentConfig : undefined); baselineSettingsRef.current = settingsSnapshot(draft); if (agentConfigDirty) baselineAgentConfigRef.current = JSON.stringify(currentAgentConfig); setSaved(currentSnapshotRef.current === currentSnapshot); window.setTimeout(() => setSaved(false), 1600); } catch (reason) { setSaveError(reason instanceof Error ? reason.message : String(reason)); } finally { savingRef.current = false; setSaving(false); } };
+  const save = async () => { if (savingRef.current || !dirty) return; savingRef.current = true; setSaving(true); setSaveError(undefined); try { await onSave(draft, agentConfigDirty ? currentAgentConfig : undefined); baselineSettingsRef.current = settingsSnapshot(draft); if (agentConfigDirty) baselineAgentConfigRef.current = agentEditsSnapshot(currentAgentConfig); setSaved(currentSnapshotRef.current === currentSnapshot); window.setTimeout(() => setSaved(false), 1600); } catch (reason) { setSaveError(reason instanceof Error ? reason.message : String(reason)); } finally { savingRef.current = false; setSaving(false); } };
   const nextAgentSuffixRef = useRef(agentDrafts.length);
   const addMcp = () => { if (agent) updateAgent({ mcpServers: [...agent.mcpServers, { id: uid("mcp"), name: "New server", transport: "stdio", command: "npx", args: "", enabled: true }] }); };
   const updateMcp = (id: string, value: Partial<McpServer>) => { if (agent) updateAgent({ mcpServers: agent.mcpServers.map((server) => server.id === id ? { ...server, ...value } : server) }); };
   const removeMcp = (id: string) => { if (agent) updateAgent({ mcpServers: agent.mcpServers.filter((server) => server.id !== id) }); };
-  const addHost = () => setDraft((current) => ({ ...current, hosts: [...current.hosts, { id: uid("host"), name: "New machine", target: "", piPath: "pi" }] }));
+  const addHost = () => setDraft((current) => ({ ...current, hosts: [...current.hosts, { id: uid("host"), name: "New machine", target: "", piPath: "piop-daemon" }] }));
   const updateHost = (id: string, value: Partial<RemoteHost>) => setDraft((current) => ({ ...current, hosts: current.hosts.map((host) => host.id === id ? { ...host, ...value } : host) }));
   const removeHost = (host: RemoteHost) => {
     const count = sessions.filter((session) => session.hostId === host.id).length;
     if (settings.hosts.some((item) => item.id === host.id) && !window.confirm(`Remove ${host.name}? ${count ? `${count} indexed conversation${count === 1 ? "" : "s"} depend${count === 1 ? "s" : ""}` : "Conversations may depend"} on this machine and will become unavailable.`)) return;
     setDraft((current) => ({ ...current, hosts: current.hosts.filter((item) => item.id !== host.id) }));
   };
-  const addDictionary = () => setDraft((current) => { const id = uid("dictionary"); return { ...current, dictionaries: [...current.dictionaries, { id, name: "New dictionary", entries: [] }] }; });
   const agent = agentDrafts[agentIndex];
   const agentFastModeEnabled = agent?.fastMode ?? draft.defaultFastMode;
   const updateAgent = (value: Partial<AgentProfile>) => setAgentDrafts((current) => current.map((item, index) => index === agentIndex ? { ...item, ...value } : item));
@@ -148,16 +154,6 @@ export function SettingsView(props: SettingsViewProps) {
     return { availableModelIds, hiddenModels, modelChoices, filteredModelChoices, modelDiscoveryUnavailable, thinkingDiscoveryUnavailable, agentsValid, defaultAgentAvailable, invalidHost, invalidMcp };
   };
   const { availableModelIds, hiddenModels, modelChoices, filteredModelChoices, modelDiscoveryUnavailable, thinkingDiscoveryUnavailable, agentsValid, defaultAgentAvailable, invalidHost, invalidMcp } = validateAgentResources();
-  const validateDictionaries = () => {
-    const activeDictionaryIds = new Set(draft.activeDictionaryIds);
-    const dictionaryKeyCounts = new Map<string, number>();
-    draft.dictionaries.filter((dictionary) => activeDictionaryIds.has(dictionary.id)).forEach((dictionary) => dictionary.entries.forEach((entry) => { const key = entry.word.trim(); if (key) dictionaryKeyCounts.set(key, (dictionaryKeyCounts.get(key) ?? 0) + 1); }));
-    const duplicateDictionaryKeys = new Set([...dictionaryKeyCounts].filter(([, count]) => count > 1).map(([key]) => key));
-    const invalidDictionary = draft.dictionaries.find((dictionary) => !dictionary.name.trim());
-    const invalidActiveDictionaryEntry = draft.dictionaries.find((dictionary) => activeDictionaryIds.has(dictionary.id) && dictionary.entries.some((entry) => !entry.word.trim() || !entry.replacement.trim()));
-    return { activeDictionaryIds, dictionaryKeyCounts, duplicateDictionaryKeys, invalidDictionary, invalidActiveDictionaryEntry };
-  };
-  const { activeDictionaryIds, dictionaryKeyCounts, duplicateDictionaryKeys, invalidDictionary, invalidActiveDictionaryEntry } = validateDictionaries();
   const validateShortcuts = () => {
     const shortcutList = Object.values(draft.keybindings).filter((shortcut) => shortcut.trim());
     const duplicateShortcuts = new Set<string>();
@@ -179,15 +175,14 @@ export function SettingsView(props: SettingsViewProps) {
     const duplicateHostNames = duplicateNames(draft.hosts);
     const reservedLocalHostName = draft.hosts.some((host) => host.name.trim().toLowerCase() === "local");
     const duplicateMcpNames = duplicateNames(agent?.mcpServers ?? []);
-    const duplicateDictionaryNames = duplicateNames(draft.dictionaries);
     const duplicateAgentNames = duplicateNames(agentDrafts);
     const invalidAgentModel = modelDiscoveryUnavailable ? undefined : agentDrafts.find((item) => item.model && !availableModelIds.has(item.model));
     const invalidAgentEffort = thinkingDiscoveryUnavailable ? undefined : agentDrafts.find((item) => item.effort && !thinkingLevels.includes(item.effort));
     const emptyAgent = agentDrafts.find((item) => !item.name.trim());
     const missingAgentPrompt = agentDrafts.find((item) => !item.path_systemprompt?.trim());
-    return { contextWindowValid, duplicateNames, duplicateHostNames, reservedLocalHostName, duplicateMcpNames, duplicateDictionaryNames, duplicateAgentNames, invalidAgentModel, invalidAgentEffort, emptyAgent, missingAgentPrompt };
+    return { contextWindowValid, duplicateNames, duplicateHostNames, reservedLocalHostName, duplicateMcpNames, duplicateAgentNames, invalidAgentModel, invalidAgentEffort, emptyAgent, missingAgentPrompt };
   };
-  const { contextWindowValid, duplicateNames, duplicateHostNames, reservedLocalHostName, duplicateMcpNames, duplicateDictionaryNames, duplicateAgentNames, invalidAgentModel, invalidAgentEffort, emptyAgent, missingAgentPrompt } = validateSettingsNames();
+  const { contextWindowValid, duplicateNames, duplicateHostNames, reservedLocalHostName, duplicateMcpNames, duplicateAgentNames, invalidAgentModel, invalidAgentEffort, emptyAgent, missingAgentPrompt } = validateSettingsNames();
   const validationError = firstValidationError([
     () => !defaultAgentAvailable ? `Default agent is unavailable: ${draft.defaultAgent}` : undefined,
     () => !contextWindowValid ? "Context window cap must be a whole number of at least 1000" : undefined,
@@ -198,10 +193,6 @@ export function SettingsView(props: SettingsViewProps) {
     () => agentDrafts.some((item) => item.mcpServers.length > 32) ? "At most 32 MCP servers can be configured per agent" : undefined,
     () => duplicateMcpNames.size ? `MCP server name “${[...duplicateMcpNames][0]}” is used more than once` : undefined,
     () => invalidMcp ? `${invalidMcp.name.trim() || "MCP server"}: ${mcpServerError(invalidMcp)}` : undefined,
-    () => invalidDictionary ? "Dictionary name is required" : undefined,
-    () => duplicateDictionaryNames.size ? `Dictionary name “${[...duplicateDictionaryNames][0]}” is used more than once` : undefined,
-    () => invalidActiveDictionaryEntry ? `${invalidActiveDictionaryEntry.name}: enabled entries require both a word and replacement` : undefined,
-    () => duplicateDictionaryKeys.size ? `Dictionary key “${[...duplicateDictionaryKeys][0]}” appears more than once in active dictionaries` : undefined,
     () => unsafeShortcut ? `Shortcut “${unsafeShortcut}” must include a modifier key` : undefined,
     () => duplicateShortcuts.size ? `Shortcut “${[...duplicateShortcuts][0]}” is assigned more than once` : undefined,
     () => !agentDrafts.some(isBuiltInAgent) && agentConfig ? "The built-in general agent is required" : undefined,
@@ -217,8 +208,8 @@ export function SettingsView(props: SettingsViewProps) {
     const fastModeValidationError = invalidFastModeAgent ? `${invalidFastModeAgent.name}: model ${invalidFastModeAgent.model || draft.defaultModel} does not support fast mode` : undefined;
     const formValid = agentsValid && !validationError && !fastModeValidationError;
     const searchTerms = settingsQuery.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-    const matchingSections = sections.filter((item) => (item.id !== "agents" || Boolean(agentConfig)) && searchTerms.every((term) => item.label.toLocaleLowerCase().includes(term)));
-    const visibleSection = matchingSections.some((item) => item.id === section) ? section : matchingSections[0]?.id;
+    const matchingSections = sections.filter((item) => clientSections.has(item.id) === (scope === "client") && searchTerms.every((term) => item.label.toLocaleLowerCase().includes(term)));
+    const visibleSection = selectedSection ?? (matchingSections.some((item) => item.id === section) ? section : matchingSections[0]?.id);
 
     return { invalidFastModeAgent, fastModeValidationError, formValid, searchTerms, matchingSections, visibleSection };
   };
@@ -235,7 +226,7 @@ export function SettingsView(props: SettingsViewProps) {
       };
       return (<div className="settings-save">{renderUnsavedBadge()}{renderPendingSettingsCount()}{renderSaveButton()}{renderSaveButtonLabel()}</div>);
     };
-    return (<header className="settings-header"><div><p className="eyebrow">piop</p><h1>Settings</h1><p>Configure how piop works across your projects.</p></div>{renderSaveControls()}</header>);
+    return (<header className="settings-header"><div><p className="eyebrow">piop</p><h1>{scope === "client" ? "Client settings" : daemonLabel + " settings"}</h1><p>Client preferences stay on this device. Daemon settings belong to the machine running piop.</p></div>{renderSaveControls()}</header>);
   };
   const renderSettingsLayout = () => {
     const renderSettingsContent = () => {
@@ -244,9 +235,9 @@ export function SettingsView(props: SettingsViewProps) {
         {(draft.worktreeSetupScripts ?? []).map((script, index, scripts) => {
           const update = (value: Partial<typeof script>) => patch({ worktreeSetupScripts: scripts.map((item) => item.id === script.id ? { ...item, ...value } : item) });
           return <div className="setup-script" key={script.id}>
+            <p>Runs on {daemonLabel}.{script.hostId && script.hostId !== "local" && <> This older script targets another machine. <button onClick={() => update({ hostId: "local", projectPath: "" })}>Assign to this daemon</button></>}</p>
             <div className="section-actions"><strong>Script {index + 1}</strong><Toggle label={`Enable ${script.name}`} checked={script.enabled} onChange={(enabled) => update({ enabled })} /><button disabled={index === 0} onClick={() => { const reordered = [...scripts];[reordered[index - 1], reordered[index]] = [reordered[index], reordered[index - 1]]; patch({ worktreeSetupScripts: reordered }); }}>Move up</button><button onClick={() => patch({ worktreeSetupScripts: scripts.filter((item) => item.id !== script.id) })}>Remove</button></div>
             <label className="field"><span>Name</span><input aria-label={`Script ${index + 1} name`} value={script.name} onChange={(event) => update({ name: event.target.value })} /></label>
-            <label className="field"><span>Machine</span><select aria-label={`Script ${index + 1} machine`} value={script.hostId ?? "local"} onChange={(event) => update({ hostId: event.target.value, projectPath: "" })}><option value="local">Local</option>{draft.hosts.map((host) => <option key={host.id} value={host.id}>{host.name}</option>)}{script.hostId && script.hostId !== "local" && !draft.hosts.some((host) => host.id === script.hostId) && <option value={script.hostId}>Unavailable machine</option>}</select></label>
             <label className="field"><span>Project directory</span><input aria-label={`Script ${index + 1} project directory`} list={`setup-projects-${script.id}`} placeholder="Absolute path to the repository" value={script.projectPath ?? ""} onChange={(event) => update({ projectPath: event.target.value })} /></label>
             <datalist id={`setup-projects-${script.id}`}>{[...new Set(sessions.filter((session) => (session.hostId ?? "local") === (script.hostId ?? "local") && session.projectKind !== "no-repo").map((session) => session.projectRoot ?? session.cwd))].map((path) => <option key={path} value={path} />)}</datalist>
             {!script.projectPath?.trim() && <p className="empty-small">Choose a project directory to run this script. Unassigned scripts are kept but do not run.</p>}
@@ -267,14 +258,6 @@ export function SettingsView(props: SettingsViewProps) {
         <div className="config-list">{filteredModelChoices.map((model) => <div className="config-row model-row" key={model.id}><span className="config-icon"><Cpu size={16} /></span><span><strong>{model.name}</strong><small>{model.id}{!availableModelIds.has(model.id) ? " · Currently unavailable" : ""}</small></span><Toggle label={`Show ${model.id}`} checked={!hiddenModels.has(model.id)} onChange={(visible) => setDraft((current) => ({ ...current, hiddenModels: visible ? current.hiddenModels.filter((id) => id !== model.id) : [...current.hiddenModels, model.id] }))} /></div>)}</div>
         {!filteredModelChoices.length && <div className="empty-small">{modelChoices.length ? "No models match your search." : "No models discovered. Connect to a session to manage model visibility."}</div>}
       </SettingsSection>);
-      const renderDictionaries = () => (visibleSection === "dictionaries" && <SettingsSection title="Dictionaries" description="Highlight configured words while typing and replace them only when a prompt is submitted." headerAction={<button className="secondary-button" onClick={addDictionary}><CirclePlus size={15} />Add dictionary</button>}>
-        <div className="dictionary-list">{draft.dictionaries.map((dictionary) => <div className="mcp-card dictionary-card" key={dictionary.id}>
-          <div className="dictionary-card-head"><span className="config-icon dictionary"><BookOpen size={16} /></span><input aria-label="Dictionary name" aria-invalid={duplicateDictionaryNames.has(dictionary.name.trim().toLowerCase())} value={dictionary.name} onChange={(event) => setDraft((current) => ({ ...current, dictionaries: current.dictionaries.map((item) => item.id === dictionary.id ? { ...item, name: event.target.value } : item) }))} /><Toggle label={`${draft.activeDictionaryIds.includes(dictionary.id) ? "Disable" : "Enable"} ${dictionary.name}`} checked={draft.activeDictionaryIds.includes(dictionary.id)} onChange={(enabled) => patch({ activeDictionaryIds: enabled ? [...draft.activeDictionaryIds, dictionary.id] : draft.activeDictionaryIds.filter((id) => id !== dictionary.id) })} /><IconButton label={`Remove ${dictionary.name}`} onClick={() => setDraft((current) => ({ ...current, activeDictionaryIds: current.activeDictionaryIds.filter((id) => id !== dictionary.id), dictionaries: current.dictionaries.filter((item) => item.id !== dictionary.id) }))}><Trash2 size={15} /></IconButton></div>
-          <div className="dictionary-entries">{dictionary.entries.map((entry, entryIndex) => <div className="dictionary-entry" key={entryIndex}><input aria-label={`Word ${entryIndex + 1}`} aria-invalid={activeDictionaryIds.has(dictionary.id) && duplicateDictionaryKeys.has(entry.word.trim())} placeholder="Word" value={entry.word} onChange={(event) => setDraft((current) => ({ ...current, dictionaries: current.dictionaries.map((item) => item.id === dictionary.id ? { ...item, entries: item.entries.map((candidate, index) => index === entryIndex ? { ...candidate, word: event.target.value } : candidate) } : item) }))} /><span>→</span><input aria-label={`Replacement ${entryIndex + 1}`} placeholder="Replacement" value={entry.replacement} onChange={(event) => setDraft((current) => ({ ...current, dictionaries: current.dictionaries.map((item) => item.id === dictionary.id ? { ...item, entries: item.entries.map((candidate, index) => index === entryIndex ? { ...candidate, replacement: event.target.value } : candidate) } : item) }))} /><IconButton label={`Remove entry ${entryIndex + 1}`} onClick={() => setDraft((current) => ({ ...current, dictionaries: current.dictionaries.map((item) => item.id === dictionary.id ? { ...item, entries: item.entries.filter((_, index) => index !== entryIndex) } : item) }))}><Trash2 size={14} /></IconButton></div>)}</div>
-          <button className="secondary-button dictionary-add-entry" onClick={() => setDraft((current) => ({ ...current, dictionaries: current.dictionaries.map((item) => item.id === dictionary.id ? { ...item, entries: [...item.entries, { word: "", replacement: "" }] } : item) }))}><CirclePlus size={14} />Add word</button>
-        </div>)}</div>
-        {!draft.dictionaries.length && <div className="empty-small">Add a dictionary to get started.</div>}
-      </SettingsSection>);
       const renderAgents = () => {
         const renderAgentEditor = () => {
           const renderAgentFields = () => {
@@ -293,7 +276,8 @@ export function SettingsView(props: SettingsViewProps) {
               <AgentAllowlist title="Tools">{draft.tools.map((tool) => <label key={tool.name}><input type="checkbox" aria-label={`Allow ${tool.name}`} checked={agent.tools.includes(tool.name)} onChange={() => toggleAgentResource("tools", tool.name)} />{tool.name}</label>)}</AgentAllowlist><AgentAllowlist title="Skills">{draft.skills.map((skill) => <label key={skill.path}><input type="checkbox" aria-label={`Allow ${skill.name}`} checked={agent.skills.includes(skill.path)} onChange={() => toggleAgentResource("skills", skill.path)} />{skill.name}</label>)}</AgentAllowlist><div className="agent-mcp-settings"><h3>MCP servers</h3><div className="mcp-list">{agent.mcpServers.map((server) => { const fieldError = mcpServerError(server); return <div className="mcp-card" key={server.id}><div className="mcp-card-head"><span className="config-icon mcp"><PlugZap size={16} /></span><input aria-label="Server name" aria-invalid={!server.name.trim() || duplicateMcpNames.has(server.name.trim().toLowerCase())} value={server.name} onChange={(e) => updateMcp(server.id, { name: e.target.value })} /><Toggle label={`Enable ${server.name}`} checked={server.enabled} onChange={(enabled) => updateMcp(server.id, { enabled })} /><IconButton label={`Remove ${server.name}`} onClick={() => removeMcp(server.id)}><Trash2 size={15} /></IconButton></div>{fieldError && <small className="mcp-error" role="alert">{fieldError}</small>}<div className="field"><span>Transport</span><div className="mcp-transport-toggle" role="group" aria-label={`${server.name} transport`}>{(["stdio", "http"] as const).map((transport) => <button key={transport} type="button" aria-pressed={(server.transport ?? "stdio") === transport} onClick={() => updateMcp(server.id, { transport })}>{transport === "stdio" ? "stdio" : "HTTP"}</button>)}</div></div><label className="field"><span>Startup timeout (seconds)</span><input type="number" min={1} max={600} step={1} aria-label={`${server.name} startup timeout`} value={server.startupTimeoutSec ?? 10} onChange={(event) => { const value = event.target.value; updateMcp(server.id, { startupTimeoutSec: Number(value) }); }} /></label>{(server.transport ?? "stdio") === "stdio" ? <div className="command-fields stdio-fields"><label><span>Command</span><input aria-invalid={!server.command.trim()} value={server.command} onChange={(e) => updateMcp(server.id, { command: e.target.value })} /></label><label><span>Arguments</span><input value={server.args} onChange={(e) => updateMcp(server.id, { args: e.target.value })} /></label></div> : <div className="command-fields http-fields"><label><span>URL</span><input type="url" aria-invalid={Boolean(fieldError?.includes("URL"))} placeholder="https://example.com/mcp" value={server.url ?? ""} onChange={(e) => updateMcp(server.id, { url: e.target.value })} /></label><label><span>Headers (JSON)</span><input aria-invalid={Boolean(fieldError?.startsWith("Headers"))} placeholder={'{"Authorization":"Bearer …"}'} value={server.headers ?? ""} onChange={(e) => updateMcp(server.id, { headers: e.target.value })} /></label></div>}</div>; })}</div><button className="secondary-button" disabled={agent.mcpServers.length >= 32} onClick={addMcp}><CirclePlus size={15} />Add MCP server</button></div>
             </div>);
           };
-          return (<div className="agent-editor"><div className="agent-list">{agentDrafts.map((item, index) => <button key={`${item.name}-${index}`} className={index === agentIndex ? "active" : ""} onClick={() => setAgentIndex(index)}><Bot size={14} /><span>{item.name}</span>{isBuiltInAgent(item) && <small>Built in</small>}</button>)}</div>
+          return ({!agentConfig && <p role={resourceError ? "alert" : "status"}>{resourceError ? "Could not load agent definitions: " + resourceError : "Loading agent definitions…"}</p>}
+          <div className="agent-editor"><div className="agent-list">{agentDrafts.map((item, index) => <button key={`${item.name}-${index}`} className={index === agentIndex ? "active" : ""} onClick={() => setAgentIndex(index)}><Bot size={14} /><span>{item.name}</span>{isBuiltInAgent(item) && <small>Built in</small>}</button>)}</div>
             {renderAgentFields()}
           </div>);
         };
@@ -303,19 +287,19 @@ export function SettingsView(props: SettingsViewProps) {
       };
       return (<section className="settings-content">
         {!matchingSections.length && <div className="empty-small" role="status">No settings match your search.</div>}
-        {visibleSection === "providers" && <ProviderSettings hosts={settings.hosts} initialHostId={providerHostId} />}
+        {visibleSection === "providers" && <ProviderSettings key={providerHostId} hosts={providerHosts ?? settings.hosts} initialHostId={providerHostId} fixedHost />}
         {renderWorktreeScripts()}
         {renderGeneral()}
         {renderModels()}
-        {renderDictionaries()}
+        {visibleSection === "connections" && <SettingsSection title="Hosts" description="Saved daemon connections are stored on this device."><button className="secondary-button" disabled={dirty || saving} onClick={() => window.dispatchEvent(new Event("piop-mobile-disconnect"))}>Manage saved hosts</button>{dirty && <p>Save your changes before switching hosts.</p>}</SettingsSection>}
         {renderAgents()}
-        {visibleSection === "storage" && <StorageSettings />}
-        {visibleSection === "machines" && <SettingsSection title="Machines" description="Run projects through Pi installations reachable with SSH."><div className="mcp-list"><div className="mcp-card"><div className="mcp-card-head"><span className="config-icon mcp"><Server size={16} /></span><strong>Local</strong><code>This machine</code></div></div>{draft.hosts.map((host) => <div className="mcp-card" key={host.id}><div className="mcp-card-head"><span className="config-icon mcp"><Server size={16} /></span><input aria-label="Machine name" aria-invalid={!host.name.trim() || host.name.trim().toLowerCase() === "local" || duplicateHostNames.has(host.name.trim().toLowerCase())} value={host.name} onChange={(event) => updateHost(host.id, { name: event.target.value })} /><IconButton label={`Remove ${host.name}`} onClick={() => removeHost(host)}><Trash2 size={15} /></IconButton></div><div className="command-fields"><label><span>SSH target</span><input aria-label={`${host.name} SSH target`} aria-invalid={!host.target.trim()} placeholder="user@example.com" value={host.target} onChange={(event) => updateHost(host.id, { target: event.target.value })} /></label><label><span>Pi executable</span><input aria-label={`${host.name} Pi executable`} aria-invalid={!host.piPath.trim()} placeholder="pi" value={host.piPath} onChange={(event) => updateHost(host.id, { piPath: event.target.value })} /></label></div></div>)}</div><button className="secondary-button" disabled={draft.hosts.length >= 16} onClick={addHost}><CirclePlus size={15} />Add machine</button></SettingsSection>}
+        {visibleSection === "storage" && <StorageSettings hostId={providerHostId} />}
+        {visibleSection === "machines" && <SettingsSection title="Machines" description="Connect to Piop daemons over SSH. Sessions and configuration stay on each machine."><div className="mcp-list"><div className="mcp-card"><div className="mcp-card-head"><span className="config-icon mcp"><Server size={16} /></span><strong>Local</strong><code>This machine</code></div></div>{draft.hosts.map((host) => <div className="mcp-card" key={host.id}><div className="mcp-card-head"><span className="config-icon mcp"><Server size={16} /></span><input aria-label="Machine name" aria-invalid={!host.name.trim() || host.name.trim().toLowerCase() === "local" || duplicateHostNames.has(host.name.trim().toLowerCase())} value={host.name} onChange={(event) => updateHost(host.id, { name: event.target.value })} /><IconButton label={`Remove ${host.name}`} onClick={() => removeHost(host)}><Trash2 size={15} /></IconButton></div><div className="command-fields"><label><span>SSH target</span><input aria-label={`${host.name} SSH target`} aria-invalid={!host.target.trim()} placeholder="user@example.com" value={host.target} onChange={(event) => updateHost(host.id, { target: event.target.value })} /></label><label><span>Piop daemon executable</span><input aria-label={`${host.name} Piop daemon executable`} aria-invalid={!host.piPath.trim()} placeholder="piop-daemon" value={host.piPath === "pi" ? "piop-daemon" : host.piPath.endsWith("/pi") ? `${host.piPath.slice(0, -2)}piop-daemon` : host.piPath} onChange={(event) => updateHost(host.id, { piPath: event.target.value })} /></label></div></div>)}</div><button className="secondary-button" disabled={draft.hosts.length >= 16} onClick={addHost}><CirclePlus size={15} />Add machine</button></SettingsSection>}
         {visibleSection === "keybinds" && <SettingsSection title="Keybinds" description="Customize global application shortcuts."><div className="keybind-list">{keybindDefinitions.map((binding) => <label className="keybind-row" key={binding.action}><span><strong>{binding.label}</strong><small>{binding.description}</small></span><KeybindInput action={binding.action} value={draft.keybindings[binding.action]} invalid={duplicateShortcuts.has(draft.keybindings[binding.action].trim().toLowerCase())} onChange={(shortcut) => setDraft((current) => ({ ...current, keybindings: { ...current.keybindings, [binding.action]: shortcut } }))} /></label>)}</div><button className="secondary-button" onClick={() => patch({ keybindings: { ...defaultKeybindings } })}><RotateCcw size={15} />Restore defaults</button></SettingsSection>}
 
       </section>);
     };
-    return (<div className="settings-layout"><nav className="settings-nav"><label className="search settings-search"><Search size={15} /><input autoFocus type="search" aria-label="Search settings" placeholder="Search settings" value={settingsQuery} onChange={(event) => setSettingsQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setSettingsQuery(""); } }} /></label>{matchingSections.map((item) => <button key={item.id} className={visibleSection === item.id ? "active" : ""} aria-current={visibleSection === item.id ? "page" : undefined} onClick={() => setSection(item.id)}><item.icon size={16} /><span>{item.label}</span></button>)}</nav>
+    return (<div className={embedded ? "settings-layout settings-layout-embedded" : "settings-layout"}>{!embedded && <nav className="settings-nav"><label className="search settings-search"><Search size={15} /><input autoFocus type="search" aria-label="Search settings" placeholder="Search settings" value={settingsQuery} onChange={(event) => setSettingsQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setSettingsQuery(""); } }} /></label>{matchingSections.map((item) => <button key={item.id} className={visibleSection === item.id ? "active" : ""} aria-current={visibleSection === item.id ? "page" : undefined} onClick={() => setSection(item.id)}><item.icon size={16} /><span>{item.label}</span></button>)}</nav>}
       {renderSettingsContent()}</div>);
   };
   const renderSettingsSaveFab = () => (dirty && pastHeader && <div className="settings-save-fab"><button className={dirty && !saving && formValid ? "primary-button needs-save" : "primary-button"} disabled={saving || !dirty || !formValid} onClick={() => void save()}><Save size={15} />{saving ? "Saving…" : "Save changes"}</button></div>);

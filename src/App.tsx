@@ -10,7 +10,7 @@ import { FindInPage } from "./components/FindInPage";
 import { ChatView } from "./components/ChatView";
 import { IconButton } from "./components/IconButton";
 import { SessionPanel, type SessionAction } from "./components/SessionPanel";
-import { SettingsView } from "./components/SettingsView";
+import { LocalSettingsView } from "./components/LocalSettingsView";
 import { ExtensionDialog } from "./components/ExtensionDialog";
 import { TerminalView } from "./components/TerminalView";
 import { ProjectDialog } from "./components/ProjectDialog";
@@ -20,6 +20,7 @@ import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
 
 import { updateSessionGroups, type SessionGroup } from "./lib/sessionGroups";
 import { listen, isMobile } from "./lib/platform";
+import { withClientSettings } from "./lib/clientSettings";
 import { NativeTransport, initialWindowTarget, openSessionWindow } from "./lib/nativeTransport";
 import { SessionRuntimePool, useTurnDiffs } from "./lib/sessionRuntimePool";
 import { useChatSession } from "./lib/useChatSession";
@@ -202,10 +203,16 @@ export default function App() {
 
   useEffect(() => {
     const pending = listen<SettingsChange>("pi://settings-changed", ({ payload }) => {
-      applyRuntimeSettings(payload.settings);
-      if (!settingsSavePending.current && !settingsDirtyRef.current) setSettings(payload.settings);
+      const next = withClientSettings(payload.settings);
+      applyRuntimeSettings(next);
+      if (!settingsSavePending.current && !settingsDirtyRef.current) setSettings(next);
     });
-    return () => { void pending.then((unlisten) => unlisten()); };
+    const updateClientPreferences = (event: StorageEvent) => {
+      if (event.key !== "piop-client-settings" || settingsSavePending.current || settingsDirtyRef.current) return;
+      setSettings((current) => current ? withClientSettings(current) : current);
+    };
+    window.addEventListener("storage", updateClientPreferences);
+    return () => { void pending.then((unlisten) => unlisten()); window.removeEventListener("storage", updateClientPreferences); };
   }, [applyRuntimeSettings]);
 
   const refresh = useCallback(async (hostId?: string) => {
@@ -224,6 +231,7 @@ export default function App() {
 
   const configureRuntime = useCallback(async (value: AppSettings) => {
     if (!transport.ownsConversation()) return;
+    if (transport.currentHostId() !== "local") value = await transport.loadHostSettings();
     const [modelResult] = await Promise.allSettled([
       transport.command<{ models: Model[] }>({ type: "get_available_models" }),
       transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }),
@@ -456,20 +464,19 @@ export default function App() {
     catch (reason) { addNotice({ title: "Could not resume piop", message: reason instanceof Error ? reason.message : String(reason) }); }
     finally { pauseResumePending.current.delete(ownerTransport); }
   };
-  const agentSettings = definedAgentSettings(definedAgents);
-  const saveSettings = async (value: AppSettings, nextConfig?: AgentConfig) => {
+  const saveSettings = async (value: AppSettings, nextConfig?: AgentConfig, previousConfig?: AgentConfig) => {
     if (settingsSavePending.current || debugModePending.current) throw new Error("Wait for the current settings save to finish");
     settingsSavePending.current = true; setSettingsSaving(true);
-    try { await applySettings(value, nextConfig); } finally { settingsSavePending.current = false; setSettingsSaving(false); }
+    try { await applySettings(value, nextConfig, previousConfig); } finally { settingsSavePending.current = false; setSettingsSaving(false); }
   };
-  const applySettings = async (value: AppSettings, nextConfig?: AgentConfig) => {
+  const applySettings = async (value: AppSettings, nextConfig?: AgentConfig, previousConfig?: AgentConfig) => {
     if (!settings) throw new Error("Settings are still loading");
-    const next = { ...value, debugMode: settings.debugMode };
-    const agentHostId = nextConfig ? transport.currentHostId() : undefined;
+    const next = value;
+    const agentHostId = nextConfig ? "local" : undefined;
     // Use a separate, sessionless runtime to persist agent definitions without
     // reloading the extension inside a conversation that is still responding.
     const writeAgents = async (configuration: AgentConfig, defaultModel: string) => {
-      const writer = new NativeTransport({ cwd: transport.currentCwd(), hostId: agentHostId });
+      const writer = new NativeTransport({ cwd: "~", hostId: "local" });
       try {
         await writer.connect(undefined, undefined, undefined, undefined, true);
         const [provider, ...modelId] = defaultModel.split("/");
@@ -483,8 +490,8 @@ export default function App() {
       if (nextConfig) { await writeAgents(nextConfig, next.defaultModel); agentsSaved = true; }
       savedChange = await transport.saveSettings(next, false, agentHostId);
     } catch (reason) {
-      if (agentsSaved && agentSettings) {
-        try { await writeAgents(agentSettings, settings.defaultModel); }
+      if (agentsSaved && previousConfig) {
+        try { await writeAgents(previousConfig, settings.defaultModel); }
         catch { throw new Error(`Settings could not be saved, and the agent definitions could not be restored: ${reason instanceof Error ? reason.message : String(reason)}`); }
       }
       throw reason;
@@ -661,7 +668,7 @@ export default function App() {
   const chatAgentProps = () => { if (!extensionStateIsCurrent) return { agents: [], activeAgent: undefined, agentLocked: false, agentSaved: false, agentUnavailable: false }; return { agents: definedAgents?.config.agents ?? [], activeAgent: definedAgents?.active, agentLocked: definedAgents?.locked, agentSaved: definedAgents?.saved, agentUnavailable: definedAgents?.unavailable }; };
   const renderChatWorkspace = () => {
     const renderChatPanes = () => {
-      const renderChatView = () => (<ChatView voiceTransport={transport} key={activeConversationKey} state={state} messages={messages} gitDiffs={gitDiffs} debug={settings.debugMode} {...chatAgentProps()} dictionaries={settings.dictionaries.filter((item) => settings.activeDictionaryIds.includes(item.id))} models={models.filter((model) => !settings.hiddenModels.includes(`${model.provider}/${model.id}`))} commands={[{ name: "branch-off", description: "Branch conversation [number back, default 0]", source: "builtin" }, { name: "worktree", description: "Create worktree [number back, default 0] [name]", source: "builtin" }, ...commands.filter((command) => !["branch-off", "worktree"].includes(command.name))]} thinkingLevels={thinkingLevels} widgets={extensionStateIsCurrent ? Object.values(widgets).flat() : []} statuses={extensionStateIsCurrent ? statuses : {}} projectCwd={projectCwd} controlsDisabled={!connected} selectionBtw draft={composerDraft} onDraftChange={(value) => setComposerDraft(activeConversationKey, value)} focusRequest={mainComposerFocusRequest} onActivate={() => setActivePane("main")} uploads={composerUploads} onUploadsChange={(update) => setComposerUploads(transport, update)} onSend={send} onChangePending={(id, behavior) => transport.changePendingMessage(id, behavior)} onAbort={abortInteraction} onPause={pauseInteraction} onResume={resumeInteraction} onOpenTerminal={() => { terminalPanelRevision.current += 1; setActivePane("main"); setTerminalTarget({ sessionKey: activeConversationKey, cwd: projectCwd, hostId: activeHostId }); setTerminalOpen(true); }} onOpenProject={chooseChatProject} onClearProject={clearChatProject} onBranch={branch} onForkAndForget={isGitRepository === false && projectCwd ? forkAndForget : undefined} onCreateWorktree={isGitRepository && projectCwd ? (message) => setWorktreeTarget({ cwd: projectCwd, hostId: activeHostId, message, transport }) : undefined} onAgent={setAgent} onModel={setModel} onToggleFastMode={() => enqueueControl(transport, () => transport.toggleFastMode())} onThinking={setThinking} />);
+      const renderChatView = () => (<ChatView voiceTransport={transport} key={activeConversationKey} state={state} messages={messages} gitDiffs={gitDiffs} debug={settings.debugMode} {...chatAgentProps()} models={models.filter((model) => !settings.hiddenModels.includes(`${model.provider}/${model.id}`))} commands={[{ name: "branch-off", description: "Branch conversation [number back, default 0]", source: "builtin" }, { name: "worktree", description: "Create worktree [number back, default 0] [name]", source: "builtin" }, ...commands.filter((command) => !["branch-off", "worktree"].includes(command.name))]} thinkingLevels={thinkingLevels} widgets={extensionStateIsCurrent ? Object.values(widgets).flat() : []} statuses={extensionStateIsCurrent ? statuses : {}} projectCwd={projectCwd} controlsDisabled={!connected} selectionBtw draft={composerDraft} onDraftChange={(value) => setComposerDraft(activeConversationKey, value)} focusRequest={mainComposerFocusRequest} onActivate={() => setActivePane("main")} uploads={composerUploads} onUploadsChange={(update) => setComposerUploads(transport, update)} onSend={send} onChangePending={(id, behavior) => transport.changePendingMessage(id, behavior)} onAbort={abortInteraction} onPause={pauseInteraction} onResume={resumeInteraction} onOpenTerminal={() => { terminalPanelRevision.current += 1; setActivePane("main"); setTerminalTarget({ sessionKey: activeConversationKey, cwd: projectCwd, hostId: activeHostId }); setTerminalOpen(true); }} onOpenProject={chooseChatProject} onClearProject={clearChatProject} onBranch={branch} onForkAndForget={isGitRepository === false && projectCwd ? forkAndForget : undefined} onCreateWorktree={isGitRepository && projectCwd ? (message) => setWorktreeTarget({ cwd: projectCwd, hostId: activeHostId, message, transport }) : undefined} onAgent={setAgent} onModel={setModel} onToggleFastMode={() => enqueueControl(transport, () => transport.toggleFastMode())} onThinking={setThinking} />);
       const renderSplitChatPane = () => (splitPane && <SplitChatPane key={splitPane.key} runtimePool={runtimePool} session={splitPane.session} settings={settings} draft={splitComposerDraft} onDraftChange={setSplitComposerDraft} focusRequest={splitComposerFocusRequest} onActivate={() => setActivePane("split")} onOpenTerminal={() => { terminalPanelRevision.current += 1; setActivePane("split"); setTerminalTarget({ sessionKey: splitSessionId, cwd: splitPane.session.cwd, hostId: splitPane.session.hostId ?? "local" }); setTerminalOpen(true); }} onDialogRequest={queueExtensionDialog} onDialogResolved={resolveExtensionDialog} onDialogTransportClosed={closeTransportDialogs} onReleaseTransport={releaseSplitTransport} onSessionChange={(next, owner) => { const nextKey = `${next.hostId ?? "local"}:${next.id}`; rekeyConversationUi(splitSessionId, nextKey, owner); setTerminalTarget((current) => current?.sessionKey === splitSessionId ? { ...current, sessionKey: nextKey } : current); setSplitPane((current) => current?.key === splitPane.key ? { ...current, session: next } : current); }} forkFrom={splitPane.btw?.forkFrom} initialPrompt={splitPane.btw?.task} onReady={splitPane.btw ? () => respondToBtw(splitPane.btw!.requestId, { value: "opened" }) : undefined} onFailed={splitPane.btw ? () => respondToBtw(splitPane.btw!.requestId, { cancelled: true }) : undefined} onClose={closeSplitPane} />);
       return (<div className={`chat-panes ${splitPane ? "split" : ""}`}>
         {renderChatView()}
@@ -673,7 +680,7 @@ export default function App() {
       {terminalOpen && <TerminalView key={`${terminalSessionId}:${activeTerminal.id}`} cwd={terminalCwd} terminals={sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={activeTerminal.id} output={activeTerminal.output} outputEnd={activeTerminal.outputEnd} snapshot={activeTerminal.snapshot} snapshotEnd={activeTerminal.snapshotEnd} started={activeTerminal.started} exited={activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { void transport.writeTerminal(activeTerminal.id, data).catch((reason) => queueTerminalOutput(activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { void transport.resizeTerminal(activeTerminal.id, cols, rows).catch(() => undefined); }} onSnapshot={(value, outputEnd) => saveTerminalSnapshot(terminalSessionId, activeTerminal.id, value, outputEnd)} onDelete={deleteTerminal} onClose={() => { terminalPanelRevision.current += 1; setTerminalOpen(false); }} />}
     </div>);
   };
-  const renderSettingsView = () => (view === "settings" && <SettingsView providerHostId={transport.currentHostId()} pendingSettingsCount={pendingSettingsCount} settings={settings} agentConfig={extensionStateIsCurrent ? agentSettings : undefined} sessions={sessions} models={models} thinkingLevels={thinkingLevels} onSave={saveSettings} onDirtyChange={setSettingsDirty} />);
+  const renderSettingsView = () => (view === "settings" && <LocalSettingsView pendingSettingsCount={pendingSettingsCount} settings={settings} sessions={sessions} onSave={saveSettings} onDirtyChange={setSettingsDirty} />);
   const renderToastStack = () => ((error || notices.length > 0) && <div className="toast-stack">
       {error && <div className="error-toast" role="alert"><strong>piop could not connect</strong><span>{error}</span><button onClick={reconnectMain} disabled={reconnectPending.current.has(transport)}>Retry</button><button aria-label="Dismiss connection error" onClick={() => setError(undefined)}>×</button></div>}
       {notices.map((notice) => <div className="error-toast" role="alert" key={notice.id}><strong>{notice.title}</strong><span>{notice.message}</span><button aria-label={`Dismiss ${notice.title}`} onClick={() => setNotices((current) => current.filter((item) => item.id !== notice.id))}>×</button></div>)}

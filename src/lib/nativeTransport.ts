@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import { applyAssistantMessageEvent, normalizeMessage, type PiEntry } from "./messages";
+import { preserveDaemonPreferences, saveClientSettings, withClientSettings } from "./clientSettings";
 import type { ChatMessage } from "../types";
 import { invoke, listen, type UnlistenFn } from "./platform";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -35,7 +36,19 @@ export interface GitWorktree { branch: string; path: string; }
 export interface GitWorktreeRemoval { branch?: string; branchDeleted: boolean; warning?: string; }
 
 export const openExternalUrl = (url: string) => call<void>("open_external_url", { url });
-export const loadStorageReport = () => call<StorageReport>("storage_report");
+export const loadStorageReport = async (hostId?: string) => {
+  if (hostId === undefined) return call<StorageReport>("storage_report");
+  let report: StorageReport;
+  try { report = await call<StorageReport>("host_storage_report", { hostId }); }
+  catch (reason) {
+    if (!String(reason).includes("Command is not available on the daemon: host_storage_report")) throw reason;
+    const legacy = await call<StorageReport>("storage_report");
+    const hosts = legacy.hosts.filter((host) => host.hostId === hostId);
+    if (!hosts.length) throw new Error("This daemon did not return storage information for the selected machine. Update its Piop daemon and retry.");
+    return { hosts };
+  }
+  return hostId === undefined ? report : { hosts: report.hosts.map((host) => ({ ...host, hostId })) };
+};
 export const deleteArchivedConversation = (sessionPath: string, hostId = "local") => call<void>("delete_archived_session", { sessionPath, hostId });
 
 export class NativeTransport {
@@ -54,7 +67,7 @@ export class NativeTransport {
   needsDefaults() { return this.fresh; }
   defaultsApplied() { this.fresh = false; }
   connectionTarget(): NativeConnectionTarget { return { cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId }; }
-  async restoreConnection(target: NativeConnectionTarget) { await this.disconnect(); this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId || "local"; await this.connect(); }
+  async restoreConnection(target: NativeConnectionTarget) { await this.disconnect(); this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId || "local"; this.daemonId = undefined; await this.connect(); }
   private readonly runtimeId = globalThis.crypto?.randomUUID?.() ?? `runtime-${Date.now()}-${Math.random()}`;
   voiceRuntimeId() { return this.runtimeId; }
   private queueSnapshot: RpcEvent = { type: "queue_update", steering: [], followUp: [], pendingMessages: [] };
@@ -108,6 +121,7 @@ export class NativeTransport {
   private sessionPath?: string;
   private sessionId?: string;
   private hostId = "local";
+  private daemonId?: string;
   private running = false;
   private temporaryChat = false;
   private temporaryChatUsed = false;
@@ -115,6 +129,7 @@ export class NativeTransport {
   private fastCommands = new Set<string>();
   constructor(target: NativeConnectionTarget = {}) { this.fresh = !target.sessionPath && !target.sessionId; this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId ?? "local"; }
   currentHostId() { return this.hostId; }
+  currentDaemonId() { return this.daemonId; }
   currentCwd() { return this.cwd; }
   currentSessionPath() { return this.sessionPath; }
   isTemporaryChat() { return this.temporaryChat; }
@@ -200,8 +215,17 @@ export class NativeTransport {
     const pending = this.establishConnection(forkPath, ephemeral); this.connectPromise = pending;
     try { await pending; } finally { if (this.connectPromise === pending) this.connectPromise = undefined; }
   }
+  private async resolveHomeDirectory(version: number) {
+    if (this.cwd === "~" || this.cwd?.startsWith("~/")) {
+      const home = await this.homeDirectory(this.hostId);
+      if (version !== this.connectionVersion) return;
+      this.cwd = this.cwd === "~" ? home : home.replace(/\/$/, "") + "/" + this.cwd.slice(2);
+    }
+  }
   private async establishConnection(forkPath?: string, _ephemeral = false) {
     const version = ++this.connectionVersion;
+    await this.resolveHomeDirectory(version);
+    if (version !== this.connectionVersion) return;
     if (!await this.ensureConnectionDirectory(version)) return;
     this.fastStatusCommand = undefined; this.fastCommands.clear();
     this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.stderrLines = [];
@@ -219,7 +243,8 @@ export class NativeTransport {
     if (version !== this.connectionVersion) { unlisten(); stderrUnlisten(); return; }
     this.unlisten = unlisten; this.stderrUnlisten = stderrUnlisten;
     // Pi can resume by ID before a fresh session has a file on disk.
-    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call<{ attached: boolean; owned?: boolean }>("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }));
+    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call<{ attached: boolean; owned?: boolean; daemonId?: string }>("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }));
+    this.daemonId = attached?.daemonId;
     this.connectedOwnership(attached);
     if (version === this.connectionVersion) {
       this.running = true;
@@ -308,20 +333,40 @@ export class NativeTransport {
   createGitWorktree(cwd: string, name: string, hostId = "local") { return call<GitWorktree>("create_git_worktree", { cwd, name, hostId }); }
   removeGitWorktree(cwd: string, hostId = "local", deleteBranch = false) { return call<GitWorktreeRemoval>("remove_git_worktree", { cwd, hostId, deleteBranch }); }
   async runWorktreeSetup(cwd: string, worktreePath: string, hostId = "local", onSetup?: (cancel: (() => Promise<void>) | undefined) => void) {
-    const setupId = await call<string>("prepare_worktree_setup");
+    const setupId = await call<string>("prepare_worktree_setup", { hostId });
     onSetup?.(() => call<void>("cancel_worktree_setup", { setupId }));
     try { await call<void>("run_worktree_setup", { setupId, cwd, worktreePath, hostId }); }
     finally { onSetup?.(undefined); }
   }
   async isGitRepository() { if (!this.cwd) return false; return call<boolean>("is_git_repository", { cwd: this.cwd, hostId: this.hostId }); }
   async gitBranch() { if (!this.cwd) return null; const branch = await call<unknown>("git_branch", { cwd: this.cwd, hostId: this.hostId }); return typeof branch === "string" ? branch : null; }
-  loadSettings() { return call<AppSettings>("load_app_settings"); }
+  async loadSettings() { const settings = withClientSettings(await call<AppSettings>("load_app_settings")); saveClientSettings(settings); return settings; }
+  async loadHostSettings() {
+    if (this.hostId === "local") return call<AppSettings>("load_app_settings");
+    try { return await call<AppSettings>("load_host_settings", { hostId: this.hostId }); }
+    catch (reason) {
+      if (String(reason).includes("Command is not available on the daemon: load_host_settings")) throw new Error("The connected or selected remote Piop daemon is older than this client. Update the daemon to access remote settings.");
+      throw reason;
+    }
+  }
+  async saveHostSettings(settings: AppSettings, agentsChanged = false) {
+    try { return await call<SettingsChange>("save_host_settings", { hostId: this.hostId, settings, agentsChanged }); }
+    catch (reason) {
+      if (String(reason).includes("Command is not available on the daemon: save_host_settings")) throw new Error("The connected or selected remote Piop daemon needs updating before it can save remote settings.");
+      throw reason;
+    }
+  }
   loadCodexUsage() { return call<CodexUsage>("codex_usage"); }
   loadOpencodeGoUsage() { return call<OpencodeGoUsage>("opencode_go_usage"); }
   saveSettings(settings: AppSettings, reconnect = true, agentHostId?: string) {
     const save = async () => {
-      const previous = await this.loadSettings(); const connection = { cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId };
-      const change = await call<SettingsChange>("save_app_settings", { settings, agentHostId }); if (!reconnect) return change;
+      const previous = await call<AppSettings>("load_app_settings"); const connection = { cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId };
+      const daemonSettings = preserveDaemonPreferences(settings, previous);
+      const daemonChanged = JSON.stringify(daemonSettings) !== JSON.stringify(previous) || Boolean(agentHostId);
+      const change = daemonChanged ? await call<SettingsChange>("save_app_settings", { settings: daemonSettings, agentHostId }) : { settings: previous };
+      saveClientSettings(settings);
+      change.settings = withClientSettings(change.settings);
+      if (!reconnect || !daemonChanged) return change;
       try { if (this.hostId !== "local" && !settings.hosts.some((host) => host.id === this.hostId)) { this.hostId = "local"; this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined; this.temporaryChat = false; this.temporaryChatUsed = false; } await this.disconnect(); await this.connect(); }
       catch (reason) {
         await call<void>("save_app_settings", { settings: previous }); this.cwd = connection.cwd; this.sessionPath = connection.sessionPath; this.sessionId = connection.sessionId; this.hostId = connection.hostId;
