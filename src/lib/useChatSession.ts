@@ -1,18 +1,17 @@
 import { mergeSpokenMessages, voiceEntry } from "./voiceMessages";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
+import { useSessionMemory } from "./sessionMemory";
 import type { AgentState, ChatMessage, Model, PromptContextInfo, RpcEvent, SlashCommand } from "../types";
 import type { NativeTransport } from "./nativeTransport";
 import { appendFileChanges, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
 import { contextUsageAfterCompaction } from "./contextUsage";
 
-interface SessionSnapshot { state: AgentState; history: { entries: PiEntry[]; leafId: string | null }; sequence: number; epoch: string; liveTools: RpcEvent[]; queue: RpcEvent; }
+interface SessionSnapshot { revision: string; state: AgentState; history: { entries: PiEntry[]; leafId: string | null; omittedEntries?: number }; sequence: number; epoch: string; liveTools: RpcEvent[]; queue: RpcEvent; }
 type MessageUpdate = (messages: ChatMessage[]) => ChatMessage[];
 const emptyState: AgentState = { model: null, thinkingLevel: "off", isStreaming: false, sessionId: "", messageCount: 0, pendingMessageCount: 0 };
-const rpcContent = (value: unknown): ChatMessage["content"] => (value as { content?: ChatMessage["content"] })?.content ?? "";
 
 export function useChatSession(transport: Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation">>, initialState: AgentState = emptyState) {
-  const [state, setState] = useState(initialState); const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [models, setModels] = useState<Model[]>([]); const [commands, setCommands] = useState<SlashCommand[]>([]); const [thinkingLevels, setThinkingLevels] = useState<string[]>(["off"]);
+  const { state, setState, messages, setMessages, models, setModels, commands, setCommands, thinkingLevels, setThinkingLevels, memory } = useSessionMemory(transport, initialState);
   const owner = useRef(transport); owner.current = transport;
   const refreshOperation = useRef<{ transport: typeof transport; promise: Promise<AgentState>; buffer: RpcEvent[] } | undefined>(undefined);
   const bufferedEvents = useRef<RpcEvent[] | undefined>(undefined);
@@ -29,7 +28,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
     }
     activeMessageIds.current.set(roleKey, liveId);
   };
-  const flush = useCallback(() => { if (frame.current !== undefined) cancelAnimationFrame(frame.current); frame.current = undefined; const updates = pendingUpdates.current.splice(0); if (updates.length) setMessages((current) => updates.reduce((next, update) => update(next), current)); }, []);
+  const flush = useCallback(() => { if (frame.current !== undefined) cancelAnimationFrame(frame.current); frame.current = undefined; const updates = pendingUpdates.current.splice(0); if (updates.length) setMessages((current) => updates.reduce((next, update) => update(next), current)); }, [setMessages]);
   const queue = useCallback((update: MessageUpdate) => { pendingUpdates.current.push(update); if (frame.current === undefined) frame.current = requestAnimationFrame(flush); }, [flush]);
   const discardPendingUpdates = useCallback(() => { if (frame.current !== undefined) cancelAnimationFrame(frame.current); frame.current = undefined; pendingUpdates.current.length = 0; }, []);
   useEffect(() => discardPendingUpdates, [discardPendingUpdates]);
@@ -41,7 +40,12 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
     const buffer: RpcEvent[] = []; bufferedEvents.current = buffer;
     const restoreHistory = (snapshot: SessionSnapshot) => {
       for (const entry of snapshot.history.entries) { const marker = resumeMarker(entry); if (marker) resumeMarkers.current.add(marker); }
-      const nextMessages = branchMessages(snapshot.history.entries, snapshot.history.leafId);
+      const previous = new Map(memory.getSnapshot().messages.filter((message) => message.outputLoaded && message.toolStatus !== "running").map((message) => [message.deferredOutput, message]));
+      const nextMessages = branchMessages(snapshot.history.entries, snapshot.history.leafId).map((message) => {
+        const cached = previous.get(message.deferredOutput);
+        return cached ? { ...message, content: cached.content, details: cached.details, outputLoaded: true, loadOutput: cached.loadOutput } : message;
+      });
+      if (snapshot.history.omittedEntries) nextMessages.unshift({ id: "client-memory-limit", role: "system", content: "Older history was omitted to fit this client's memory limit. The full conversation remains on the host." });
       activeAssistantId.current = [...nextMessages].reverse().find((message) => message.role === "assistant" && message.streaming)?.id;
       activeMessageIds.current.clear();
       for (const message of nextMessages.filter((message) => message.streaming)) trackLiveId(message.role, message.id);
@@ -65,6 +69,13 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
     };
     const promise = (async () => {
       try {
+        const { revision } = await transport.command<{ revision: string }>({ type: "get_session_revision" });
+        if (owner.current !== transport) throw new Error("Conversation changed");
+        if (memory.revision === revision) {
+          for (const message of memory.getSnapshot().messages.filter((message) => message.streaming)) trackLiveId(message.role, message.id);
+          activeAssistantId.current = [...memory.getSnapshot().messages].reverse().find((message) => message.role === "assistant" && message.streaming)?.id;
+          return memory.getSnapshot().state;
+        }
         const [snapshot, modelResult, thinkingResult, commandResult, statsResult] = await Promise.all([
           transport.command<SessionSnapshot>({ type: "get_snapshot" }),
           transport.command<{ models: Model[] }>({ type: "get_available_models" }).catch(() => undefined),
@@ -78,9 +89,12 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
           return refresh();
         }
         discardPendingUpdates();
-        restoreHistory(snapshot);
-        setState({ ...snapshot.state, pendingMessages: snapshot.queue.pendingMessages as AgentState["pendingMessages"], ...(statsResult ? { contextUsage: statsResult.contextUsage } : {}) });
-        restoreCapabilities(modelResult, thinkingResult, commandResult);
+        memory.batch(() => {
+          restoreHistory(snapshot);
+          setState({ ...snapshot.state, pendingMessages: snapshot.queue.pendingMessages as AgentState["pendingMessages"], ...(statsResult ? { contextUsage: statsResult.contextUsage } : {}) });
+          restoreCapabilities(modelResult, thinkingResult, commandResult);
+        });
+        memory.markRevision(snapshot.revision);
         bufferedEvents.current = undefined;
         replaySnapshotEvents(snapshot);
         return snapshot.state;
@@ -90,7 +104,7 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
     })();
     refreshOperation.current = { transport, promise, buffer };
     return promise;
-  }, [discardPendingUpdates, transport]);
+  }, [discardPendingUpdates, transport, memory, setMessages, setState, setModels, setCommands, setThinkingLevels]);
 
   useEffect(() => {
     let stopped = false;
@@ -172,11 +186,11 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
       setMessages((current) => [...current.filter((item) => item.id !== message.id), message]);
     };
     const handleToolExecutionUpdate = () => {
-      queue((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.partialResult), toolStatus: "running" } : item));
+      queue((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: "", details: undefined, outputLoaded: false, outputVersion: Number(event.sequence), toolStatus: "running" } : item));
     };
     const handleToolExecutionEnd = () => {
       flush();
-      setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: rpcContent(event.result), details: (event.result as { details?: unknown })?.details, toolStatus: event.isError ? "error" : "done" } : item));
+      setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: "", details: undefined, outputLoaded: false, outputVersion: Number(event.sequence), toolStatus: event.isError ? "error" : "done" } : item));
     };
     const handleQueueUpdate = () => {
       setState((current) => ({ ...current, pendingMessages: event.pendingMessages as AgentState["pendingMessages"], pendingMessageCount: [...((event.steering as unknown[]) ?? []), ...((event.followUp as unknown[]) ?? [])].length }));
@@ -214,7 +228,11 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
       "thinking_level_changed": handleThinkingLevelChanged
     };
     if (Object.hasOwn(handlers, event.type)) handlers[event.type]();
-  }, [flush, queue, transport]);
+    if (typeof event.revision === "string" && memory.revision === event.previousRevision && !["session_info_changed", "session_switched", "settings_applied", "disconnected", "model_select"].includes(event.type)) {
+      flush();
+      memory.markRevision(event.revision);
+    }
+  }, [flush, queue, transport, setState, setMessages, memory]);
 
   eventHandler.current = handleEvent;
   return { state, setState, messages, setMessages, models, commands, thinkingLevels, refresh, handleEvent, discardPendingUpdates };

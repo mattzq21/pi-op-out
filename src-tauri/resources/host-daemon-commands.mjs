@@ -168,14 +168,27 @@ async function handleSessionCommand(packet) {
   return session.execute(packet.command);
 }
 
+async function readSavedConversation(target, command) {
+  if (command.type === 'get_session_revision') return ownership.revision(target.id, target.path);
+  const snapshot = await ownership.snapshot(target.id, target.path);
+  const readers = {
+    get_snapshot: () => snapshot,
+    get_entries: () => snapshot.history,
+    get_state: () => snapshot.state,
+    get_tool_output: () => toolOutputPage(snapshot.history.entries.find((entry) => entry.message?.role === 'toolResult' && entry.message.toolCallId === command.toolCallId)?.message, command),
+  };
+  return readers[command.type]();
+}
+
 async function handleReadonly(packet) {
   const { runtimeId, type } = packet;
   const target = readonlyViews.get(runtimeId);
   if (type === 'detach') { readonlyViews.delete(runtimeId); attachments.delete(runtimeId); return { stopped: false }; }
   if (type === 'presence') return;
   const live = [...sessions.values()].find((session) => session.identity === target.id && !session.closed && !session.transient);
-  if (packet.command?.type === 'get_snapshot') return live ? live.execute({ type: 'get_snapshot' }) : ownership.snapshot(target.id, target.path);
-  if (packet.command?.type === 'get_state') return live ? live.execute({ type: 'get_state' }) : (await ownership.snapshot(target.id, target.path)).state;
+  if (['get_snapshot', 'get_entries', 'get_state', 'get_session_revision', 'get_tool_output'].includes(packet.command?.type)) {
+    return live ? live.execute(packet.command) : readSavedConversation(target, packet.command);
+  }
   throw ownershipError();
 }
 

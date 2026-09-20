@@ -1,7 +1,6 @@
 /// <reference types="vite/client" />
-import { applyAssistantMessageEvent, normalizeMessage, type PiEntry } from "./messages";
+import { forgetSession, retainSessionResource } from "./sessionMemory";
 import { preserveDaemonPreferences, saveClientSettings, withClientSettings } from "./clientSettings";
-import type { ChatMessage } from "../types";
 import { invoke, listen, type UnlistenFn } from "./platform";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { GroupChange, SessionGroups, SessionGroupSeed } from "./sessionGroups";
@@ -61,7 +60,6 @@ export class NativeTransport {
     this.emit({ type: "session_info_changed" });
     this.emit({ type: "settings_applied" });
   }
-  private liveAssistant?: ChatMessage;
   private ephemeral = false;
   private fresh = true;
   needsDefaults() { return this.fresh; }
@@ -141,13 +139,6 @@ export class NativeTransport {
     if (event.type === "disconnected") this.daemonSettingsPending = false;
     if (event.type === "agent_start" || (event.type === "message_start" && (event.message as { role?: string })?.role === "user")) this.temporaryChatUsed = true;
   }
-  private retainAssistant(event: RpcEvent) {
-    if (event.type === "session_switched") this.liveAssistant = undefined;
-    if ((event.type === "message_start" || event.type === "message_end") && (event.message as { role?: string })?.role === "assistant") this.liveAssistant = { ...normalizeMessage(event.message as Record<string, unknown>, undefined, undefined, this.liveAssistantId()), streaming: event.type === "message_start" };
-    if (event.type === "message_update" && event.assistantMessageEvent && this.liveAssistant) this.liveAssistant = applyAssistantMessageEvent(this.liveAssistant, event.assistantMessageEvent);
-
-  }
-  private liveAssistantId() { return this.liveAssistant?.streaming ? this.liveAssistant.id : `live-assistant-${crypto.randomUUID()}`; }
   private retainExtensionState(event: RpcEvent) {
     if (event.type === "extension_ui_resolved" && typeof event.id === "string") this.retainedRequests.delete(event.id);
     if (event.type === "extension_ui_request" && event.method === "setStatus" && typeof event.statusKey === "string") {
@@ -165,16 +156,7 @@ export class NativeTransport {
     return command;
   }
   private retainCommandSession(command: RpcCommand, result: unknown) {
-    if (command.type === "get_state" || command.type === "get_snapshot") { const state = (command.type === "get_snapshot" ? (result as { state: unknown }).state : result) as { sessionFile?: string; sessionId?: string }; if (this.sessionId && this.sessionId !== state.sessionId) this.liveAssistant = undefined; this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; }
-  }
-  private appendLiveHistory(command: RpcCommand, result: unknown) {
-    if (command.type === "get_entries") {
-      const history = result as { entries: Array<{ message?: { role?: string; timestamp?: number; deliveryBehavior?: string } }> };
-      const live = this.liveAssistant; const branch = result as { entries: PiEntry[]; leafId: string | null };
-      if (live?.streaming && !history.entries.some((entry) => entry.message?.role === "assistant" && entry.message.timestamp === live.timestamp)) {
-        branch.entries.push({ type: "message", id: live.id, parentId: branch.leafId, message: live } as PiEntry); branch.leafId = live.id;
-      }
-    }
+    if (command.type === "get_state" || command.type === "get_snapshot") { const state = (command.type === "get_snapshot" ? (result as { state: unknown }).state : result) as { sessionFile?: string; sessionId?: string }; if (this.sessionId && this.sessionId !== state.sessionId) forgetSession(this); this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; }
   }
   private async discoverFastCommands(result: unknown) {
     const { commands } = result as { commands: Array<{ name: string; source: string; sourceInfo?: { source?: string; path?: string } }> };
@@ -194,9 +176,14 @@ export class NativeTransport {
   }
   private emit(event: RpcEvent) {
     this.trackSessionActivity(event);
-    this.retainAssistant(event);
     this.retainExtensionState(event);
     if (event.type === "queue_update") this.queueSnapshot = event;
+    if (["queue_update", "extension_ui_request", "extension_ui_resolved"].includes(event.type)) {
+      retainSessionResource(this, "transport", [this.queueSnapshot, ...this.retainedStatuses.values(), ...this.retainedRequests.values()], () => {
+        this.queueSnapshot = { type: "queue_update", steering: [], followUp: [], pendingMessages: [] };
+        this.retainedStatuses.clear(); this.retainedRequests.clear();
+      });
+    }
     for (const listener of [...this.listeners]) {
       try {
         listener(event);
@@ -304,7 +291,6 @@ export class NativeTransport {
     try {
       const result = await call<T>("pi_command", { runtimeId: this.runtimeId, command });
       this.retainCommandSession(command, result);
-      this.appendLiveHistory(command, result);
       this.resetChangedSession(command, result);
       if (command.type === "get_commands") await this.discoverFastCommands(result);
       if (command.type === "prompt") await this.afterPrompt(command);
@@ -316,7 +302,7 @@ export class NativeTransport {
     }
   }
   private resetChangedSession(command: RpcCommand, result: unknown) {
-    if (["new_session", "switch_session", "fork", "clone"].includes(command.type) && !(result as { cancelled?: boolean })?.cancelled) { this.liveAssistant = undefined; this.sessionId = undefined; }
+    if (["new_session", "switch_session", "fork", "clone"].includes(command.type) && !(result as { cancelled?: boolean })?.cancelled) { forgetSession(this); this.sessionId = undefined; }
   }
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); listener(this.queueView()); this.retainedStatuses.forEach((event) => listener(event)); this.retainedRequests.forEach((event) => listener(event)); return () => this.listeners.delete(listener); }
   listSessions() { return call<SessionSummary[]>("list_sessions"); }

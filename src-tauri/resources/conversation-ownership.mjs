@@ -75,32 +75,36 @@ class ConversationOwnership {
     await ownershipRename(temporary, path);
   }
 
-  async locate(id, path, archived = false) {
+  async locate(id, path, archived = false, metadataOnly = false) {
     const root = await optionalOwnershipPath(ownershipJoin(this.root, archived ? 'archived' : 'sessions'));
     if (!root) return undefined;
     const candidates = path ? [path] : (await ownershipList(root)).filter((name) => name.endsWith('.jsonl')).map((name) => ownershipJoin(root, name));
     for (const candidate of candidates) {
-      const saved = await this.readCandidate(id, candidate, root);
+      const saved = await this.readCandidate(id, candidate, root, metadataOnly);
       if (saved) return saved;
     }
     return undefined;
   }
 
-  async readCandidate(id, candidate, root) {
+  async readCandidate(id, candidate, root, metadataOnly = false) {
     const file = await optionalOwnershipPath(candidate);
     if (!file) return undefined;
     if (!file.startsWith(root + ownershipSeparator) || !file.endsWith('.jsonl')) throw new Error('Invalid conversation path');
     try {
       const handle = await ownershipOpen(file, 'r');
       let header;
+      let revision;
       try {
         const buffer = Buffer.alloc(64 * 1024);
         const { bytesRead } = await handle.read(buffer);
         try { header = JSON.parse(buffer.subarray(0, bytesRead).toString().split('\n')[0]); } catch { return undefined; }
+        const stat = await handle.stat({ bigint: true });
+        revision = `${id}:${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
       } finally { await handle.close(); }
       if (header.id !== id) return undefined;
+      if (metadataOnly) return { path: file, header, revision };
       const lines = (await ownershipRead(file, 'utf8')).trimEnd().split('\n');
-      return { path: file, header, lines };
+      return { path: file, header, lines, revision };
     } catch (error) { if (error.code === 'ENOENT') return undefined; throw error; }
   }
 
@@ -170,7 +174,13 @@ class ConversationOwnership {
     const saved = await this.locate(id, path);
     const entries = [];
     for (const line of saved?.lines.slice(1) ?? []) { try { entries.push(JSON.parse(line)); } catch { /* A writer may be appending its final line. */ } }
-    return { state: { sessionId: id, sessionFile: saved?.path, model: null, thinkingLevel: 'off', isStreaming: false, pendingMessageCount: 0, messageCount: entries.filter((entry) => entry.type === 'message').length }, history: { entries, leafId: entries.at(-1)?.id ?? null }, sequence: 0, epoch: `readonly:${id}`, liveTools: [], queue: { type: 'queue_update', steering: [], followUp: [], pendingMessages: [] } };
+    const revision = saved?.revision ?? `missing:${id}`;
+    return { revision, state: { sessionId: id, sessionFile: saved?.path, model: null, thinkingLevel: 'off', isStreaming: false, pendingMessageCount: 0, messageCount: entries.filter((entry) => entry.type === 'message').length }, history: { entries, leafId: entries.at(-1)?.id ?? null }, sequence: 0, epoch: `readonly:${id}`, liveTools: [], queue: { type: 'queue_update', steering: [], followUp: [], pendingMessages: [] } };
+  }
+
+  async revision(id, path) {
+    const saved = await this.locate(id, path, false, true);
+    return { revision: saved?.revision ?? `missing:${id}` };
   }
 
   shutdown() { this.server.close(); for (const child of this.lockChildren) child.kill(); }

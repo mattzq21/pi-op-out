@@ -1,0 +1,221 @@
+import { useCallback, useSyncExternalStore, type SetStateAction } from "react";
+import type { AgentState, ChatMessage, Model, SlashCommand } from "../types";
+import type { NativeTransport } from "./nativeTransport";
+
+const SESSION_LIMIT = 256 * 1024 * 1024;
+const CACHE_LIMIT = 512 * 1024 * 1024;
+const SESSION_COUNT = 20;
+type Transport = Pick<NativeTransport, "command" | "subscribe">;
+interface CachedSession {
+  state: AgentState;
+  messages: ChatMessage[];
+  models: Model[];
+  commands: SlashCommand[];
+  thinkingLevels: string[];
+  resources: Record<string, unknown>;
+}
+const stores = new WeakMap<Transport, SessionMemory>();
+const fifo = new Map<SessionMemory, number>();
+const measured = new WeakMap<object, number>();
+let outputTransfers: Promise<void> = Promise.resolve();
+
+// Conservative retained-data accounting; strings are charged as UTF-16 and
+// objects include allocation overhead. Shared immutable values may be overcounted.
+function bytes(value: unknown): number {
+  if (typeof value === "string") return 24 + value.length * 2;
+  if (!value || typeof value !== "object") return 16;
+  const previous = measured.get(value);
+  if (previous !== undefined) return previous;
+  let size = 64;
+  for (const [key, item] of Object.entries(value)) size += 32 + key.length * 2 + bytes(item);
+  measured.set(value, size);
+  return size;
+}
+
+function enforceCacheLimit() {
+  let total = [...fifo.values()].reduce((sum, size) => sum + size, 0);
+  for (const [store, size] of fifo) {
+    if (fifo.size <= SESSION_COUNT && total <= CACHE_LIMIT) break;
+    fifo.delete(store);
+    total -= size;
+    store.evict();
+  }
+}
+
+function initialSnapshot(state: AgentState): CachedSession {
+  return { state, messages: [], models: [], commands: [], thinkingLevels: ["off"], resources: {} };
+}
+
+export class SessionMemory {
+  private value: CachedSession;
+  private listeners = new Set<() => void>();
+  private loaded = new Set<string>();
+  private loading = new Map<string, Promise<void>>();
+  private generation = 0;
+  private omitted = 0;
+  private reserved = 0;
+  private batching = 0;
+  private resourceReleases = new Map<string, () => void>();
+  revision?: string;
+  constructor(private transport: Transport, private initialState: AgentState) {
+    this.value = initialSnapshot(initialState);
+  }
+  getSnapshot = () => this.value;
+  subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
+  private notify() { for (const listener of this.listeners) listener(); }
+
+  evict() {
+    this.generation++;
+    this.revision = undefined;
+    this.loaded.clear();
+    this.loading.clear();
+    this.omitted = 0;
+    this.reserved = 0;
+    this.value = initialSnapshot(this.initialState);
+    for (const release of this.resourceReleases.values()) release();
+    this.resourceReleases.clear();
+    this.notify();
+  }
+
+  retainResource(key: string, value: unknown, release: () => void) {
+    this.value = { ...this.value, resources: { ...this.value.resources, [key]: value } };
+    this.resourceReleases.set(key, release);
+    this.commit();
+  }
+
+  private dropResources() {
+    for (const release of this.resourceReleases.values()) release();
+    this.resourceReleases.clear();
+    this.value = { ...this.value, resources: {} };
+  }
+
+  private dropOutput(id: string) {
+    this.loaded.delete(id);
+    this.value = { ...this.value, messages: this.value.messages.map((message) => message.deferredOutput === id
+      ? { ...message, content: "", details: undefined, outputLoaded: false } : message) };
+  }
+
+  private trim() {
+    let size = bytes(this.value) + this.reserved;
+    for (const id of this.loaded) {
+      if (size <= SESSION_LIMIT) break;
+      this.dropOutput(id);
+      size = bytes(this.value) + this.reserved;
+    }
+    if (size <= SESSION_LIMIT) return size;
+    this.dropResources();
+    size = bytes(this.value) + this.reserved;
+    if (size <= SESSION_LIMIT) return size;
+    const messages = this.value.messages.filter((message) => message.id !== "client-memory-limit");
+    let removed = 0;
+    while (removed < messages.length && size > SESSION_LIMIT - 1024) {
+      size -= bytes(messages[removed]) + 32;
+      removed++;
+    }
+    this.omitted += removed;
+    const notice: ChatMessage = { id: "client-memory-limit", role: "system", content: `${this.omitted} older messages were removed from this client's memory. The full conversation remains on the host.` };
+    this.value = { ...this.value, messages: [notice, ...messages.slice(removed)] };
+    const remaining = new Set(this.value.messages.map((message) => message.deferredOutput));
+    for (const id of this.loaded) if (!remaining.has(id)) this.loaded.delete(id);
+    size = bytes(this.value) + this.reserved;
+    if (size > SESSION_LIMIT) { this.value = initialSnapshot(this.initialState); this.revision = undefined; }
+    return bytes(this.value) + this.reserved;
+  }
+
+  private commit() {
+    if (this.batching) return;
+    fifo.set(this, this.trim()); // Updating an existing entry preserves FIFO order.
+    enforceCacheLimit();
+    this.notify();
+  }
+
+  private decorate(message: ChatMessage): ChatMessage {
+    if (message.role !== "tool") return message;
+    const id = message.deferredOutput ?? message.toolCallId ?? message.id;
+    const loadOutput = message.loadOutput ?? (() => this.loadOutput(id));
+    if (message.outputLoaded) return { ...message, deferredOutput: id, loadOutput };
+    return { ...message, content: "", details: undefined, deferredOutput: id, outputLoaded: false, loadOutput };
+  }
+
+  markRevision(revision: string) { if (fifo.has(this)) this.revision = revision; }
+
+  batch(update: () => void) {
+    this.batching++;
+    try { update(); } finally { this.batching--; this.commit(); }
+  }
+
+  set<K extends keyof CachedSession>(key: K, update: SetStateAction<CachedSession[K]>) {
+    const next = typeof update === "function" ? (update as (current: CachedSession[K]) => CachedSession[K])(this.value[key]) : update;
+    this.value = { ...this.value, [key]: key === "messages" ? (next as ChatMessage[]).map((message) => this.decorate(message)) : next };
+    this.commit();
+  }
+
+  private outputVersion(id: string) { return this.value.messages.find((message) => message.deferredOutput === id)?.outputVersion; }
+
+  private async fetchOutput(id: string, generation: number) {
+    const version = this.outputVersion(id);
+    let serialized = "";
+    let revision: string | undefined;
+    for (;;) {
+      const page = await this.transport.command<{ chunk: string; length: number; revision: string }>({ type: "get_tool_output", toolCallId: id, offset: serialized.length, revision });
+      if (generation !== this.generation) return;
+      // Leave room for both the transfer string and its decoded representation.
+      if (page.length * 6 > SESSION_LIMIT) throw new Error("This tool output exceeds the client memory limit.");
+      this.reserved = page.length * 6;
+      this.commit();
+      if (generation !== this.generation) return;
+      revision = page.revision;
+      serialized += page.chunk;
+      if (serialized.length >= page.length) break;
+      if (!page.chunk) throw new Error("Incomplete tool output");
+    }
+    const output = JSON.parse(serialized) as Pick<ChatMessage, "content" | "details">;
+    if (generation !== this.generation) return;
+    if (this.outputVersion(id) !== version) throw new Error("Tool output changed while loading. Reload the output.");
+    this.reserved = 0;
+    this.loaded.delete(id); this.loaded.add(id);
+    this.set("messages", (messages) => messages.map((message) => message.deferredOutput === id ? { ...message, ...output, outputLoaded: true } : message));
+    if (!this.value.messages.some((message) => message.deferredOutput === id && message.outputLoaded)) throw new Error("This tool output could not fit in the client memory limit.");
+  }
+
+  private loadOutput(id: string) {
+    if (this.value.messages.some((message) => message.deferredOutput === id && message.outputLoaded)) return Promise.resolve();
+    const previous = this.loading.get(id);
+    if (previous) return previous;
+    const generation = this.generation;
+    const request = outputTransfers.then(() => generation === this.generation ? this.fetchOutput(id, generation) : undefined).finally(() => {
+      if (this.loading.get(id) === request) this.loading.delete(id);
+      if (generation === this.generation) { this.reserved = 0; if (fifo.has(this)) this.commit(); }
+    });
+    outputTransfers = request.catch(() => undefined);
+    this.loading.set(id, request);
+    return request;
+  }
+}
+
+export function forgetSession(transport: Transport) {
+  const store = stores.get(transport);
+  if (store) { fifo.delete(store); store.evict(); }
+}
+
+const emptyState: AgentState = { model: null, thinkingLevel: "off", isStreaming: false, sessionId: "", messageCount: 0, pendingMessageCount: 0 };
+function memoryFor(transport: Transport, initialState = emptyState) {
+  let store = stores.get(transport);
+  if (!store) { store = new SessionMemory(transport, initialState); stores.set(transport, store); }
+  return store;
+}
+
+export function retainSessionResource(transport: Transport, key: string, value: unknown, release: () => void) {
+  memoryFor(transport).retainResource(key, value, release);
+}
+
+export function useSessionMemory(transport: Transport, initialState: AgentState) {
+  const memory = memoryFor(transport, initialState);
+  const snapshot = useSyncExternalStore(memory.subscribe, memory.getSnapshot);
+  const setState = useCallback((update: SetStateAction<AgentState>) => memory.set("state", update), [memory]);
+  const setMessages = useCallback((update: SetStateAction<ChatMessage[]>) => memory.set("messages", update), [memory]);
+  const setModels = useCallback((update: SetStateAction<Model[]>) => memory.set("models", update), [memory]);
+  const setCommands = useCallback((update: SetStateAction<SlashCommand[]>) => memory.set("commands", update), [memory]);
+  const setThinkingLevels = useCallback((update: SetStateAction<string[]>) => memory.set("thinkingLevels", update), [memory]);
+  return { ...snapshot, memory, setState, setMessages, setModels, setCommands, setThinkingLevels };
+}

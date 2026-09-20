@@ -1,4 +1,4 @@
-import { isValidElement, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
+import { isValidElement, useEffect, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronRight, CircleAlert, Copy, FolderGit2, GitBranch, Pause, Undo2, Wrench } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
@@ -150,7 +150,43 @@ function ToolLabel({ message, toolCount, status }: { message: ChatMessage; toolC
   return <><Wrench size={14} /><span><strong>{message.toolName || "tool"}{toolCount > 1 ? ` x${toolCount}` : ""}</strong><small>{status === "running" ? "Running…" : status === "error" ? "Failed" : "Completed"}</small></span></>;
 }
 
-export function Message({ message, turnCacheUsage, diff, expanded = false, showActions = true, toolCount = 1, debug = false, paused = false, onBranch, onForkAndForget, onCreateWorktree, onRetry, retrying = false }: Props) {
+function ToolPayload({ message, loading, error, retry }: { message: ChatMessage; loading: boolean; error?: string; retry: () => void }) {
+  const input = toolInputLines(message);
+  const output = textOf(message.content);
+  return <>
+    {input !== undefined && <div className="tool-payload"><div className="tool-payload-label">In</div><div className="tool-input" aria-label="Tool arguments"><pre>{input}</pre></div></div>}
+    {loading && <div role="status">Loading output…</div>}
+    {error && <div role="alert">{error} <button onClick={retry}>Retry</button></div>}
+    {output && <div className="tool-payload"><div className="tool-payload-label">Out</div><div className="tool-output" aria-label="Tool output"><pre>{output}</pre></div></div>}
+    {!loading && !error && message.deferredOutput && !message.outputLoaded && <button onClick={retry}>Load output</button>}
+  </>;
+}
+
+function ToolResult({ message, toolCount, debug }: Pick<Props, "message" | "toolCount" | "debug">) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string>();
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    if (!open || !message.loadOutput) return;
+    let active = true;
+    const timer = setTimeout(() => {
+      setLoading(true); setError(undefined);
+      void message.loadOutput!().catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : String(reason)); })
+        .finally(() => { if (active) setLoading(false); });
+    }, message.toolStatus === "running" ? 300 : 0);
+    return () => { active = false; clearTimeout(timer); };
+  }, [open, message.loadOutput, message.outputVersion, message.toolStatus, retry]);
+  const status = message.toolStatus ?? "done";
+  const label = <ToolLabel message={message} toolCount={toolCount ?? 1} status={status} />;
+  if (!debug) return <div className={`tool-event ${status}`}><div className="tool-summary">{label}</div></div>;
+  return <details className={`tool-event ${status}`} open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <summary className="tool-summary">{label}<ChevronRight size={12} className="tool-chevron" aria-hidden="true" /></summary>
+    {open && <ToolPayload message={message} loading={loading} error={error} retry={() => setRetry((value) => value + 1)} />}
+  </details>;
+}
+
+export function Message({ message, turnCacheUsage, diff, showActions = true, toolCount = 1, debug = false, paused = false, onBranch, onForkAndForget, onCreateWorktree, onRetry, retrying = false }: Props) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   const [branching, setBranching] = useState(false);
   const branchingRef = useRef(false);
@@ -168,14 +204,6 @@ export function Message({ message, turnCacheUsage, diff, expanded = false, showA
     window.setTimeout(() => setCopyState("idle"), 1800);
   };
   if (message.role === "system") return <div className="command-result" role="status">{textOf(message.content)}</div>;
-  const renderToolMessage = () => {
-    const output = textOf(message.content);
-    const status = message.toolStatus ?? "done";
-    const label = <ToolLabel message={message} toolCount={toolCount} status={status} />;
-    if (!debug) return <div className={`tool-event ${status}`}><div className="tool-summary">{label}</div></div>;
-    const inputLines = toolInputLines(message);
-    return <details className={`tool-event ${status}`} open={status === "running" || (expanded && status !== "done")}><summary className="tool-summary">{label}<ChevronRight size={12} className="tool-chevron" aria-hidden="true" /></summary>{inputLines !== undefined && <div className="tool-payload"><div className="tool-payload-label">In</div><div className="tool-input" aria-label="Tool arguments"><pre>{inputLines}</pre></div></div>}{output && <div className="tool-payload"><div className="tool-payload-label">Out</div><div className="tool-output" aria-label="Tool output"><pre>{output}</pre></div></div>}</details>;
-  };
   const renderUserMessage = () => {
     const { skills, text, literalSkill } = userMessageParts(textOf(message.content));
     const sentTime = formatMessageTime(message.timestamp);
@@ -189,7 +217,7 @@ export function Message({ message, turnCacheUsage, diff, expanded = false, showA
       </div>
     </article>;
   };
-  if (message.role === "tool") return renderToolMessage();
+  if (message.role === "tool") return <ToolResult message={message} toolCount={toolCount} debug={debug} />;
   if (message.role === "user") return renderUserMessage();
   const output = textOf(message.content);
   const thinking = thinkingOf(message.content);

@@ -17,7 +17,42 @@ const retryMessages = new Map();
 let desiredConfiguration;
 const interactiveMethods = new Set(['input', 'editor', 'select', 'confirm']);
 const stateChanges = new Set(['session_info_changed', 'session_switched', 'model_select', 'thinking_level_changed', 'agent_start', 'agent_end', 'agent_settled', 'message_start', 'message_end', 'entry_appended', 'pause_state', 'compaction_start', 'compaction_end', 'auto_compaction_start', 'auto_compaction_end']);
-const output = (packet) => process.stdout.write(JSON.stringify(packet) + '\n');
+function clientPayload(_key, value) {
+  if (!value || typeof value !== 'object') return value;
+  if (Array.isArray(value.entries) && Object.hasOwn(value, 'leafId')) return clientHistory(value);
+  if (value.role === 'toolResult') return { ...value, content: '', details: undefined, deferredOutput: value.toolCallId };
+  if (typeof value.type === 'string' && value.type.startsWith('tool_execution_')) {
+    const deferred = { content: '', deferredOutput: value.toolCallId };
+    return { ...value, ...(value.result ? { result: deferred } : {}), ...(value.partialResult ? { partialResult: deferred } : {}) };
+  }
+  return value;
+}
+
+function clientHistory(history) {
+  // Bound initial transfers too, after removing tool bodies. Allow headroom for
+  // the decoded history and normalized messages to coexist during installation.
+  const limit = 256 * 1024 * 1024;
+  const entries = [];
+  let size = 0;
+  for (let index = history.entries.length - 1; index >= 0; index--) {
+    const entry = history.entries[index];
+    const cost = JSON.stringify(entry, clientPayload).length * 4 + 256;
+    if (size + cost > limit) break;
+    size += cost; entries.push(entry);
+  }
+  return { ...history, entries: entries.reverse(), omittedEntries: history.entries.length - entries.length };
+}
+const output = (packet) => process.stdout.write(JSON.stringify(packet, clientPayload) + '\n');
+
+function toolOutputPage(message, command) {
+  if (!message) throw new Error('Tool output is not available yet');
+  const serialized = JSON.stringify({ content: message.content ?? '', details: message.details });
+  const revision = createHash('sha256').update(serialized).digest('hex');
+  if (command.revision && command.revision !== revision) throw new Error('Tool output changed; reopen it to reload');
+  const offset = Number(command.offset ?? 0);
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > serialized.length) throw new Error('Invalid output offset');
+  return { revision, length: serialized.length, chunk: serialized.slice(offset, offset + 524288) };
+}
 const errorText = (error) => error instanceof Error ? error.message : String(error);
 async function releaseConversation(id, intent) {
   if (ownershipReleases.has(id)) return ownershipReleases.get(id);
@@ -123,6 +158,7 @@ class Session {
     this.tools = new Map();
     this.sequence = 0;
     this.stateRevision = 0;
+    this.contentRevision = 0;
     this.epoch = randomUUID();
     this.commandErrors = new Map();
     this.working = false;
@@ -162,9 +198,11 @@ class Session {
 
   publish(event, target) {
     if (!target) hostVoice.agentEvent(this, event);
+    const previousRevision = this.clientRevision();
     if (stateChanges.has(event.type)) this.stateRevision++;
+    this.advanceContentRevision(event);
     if (this.transient) return;
-    const envelope = { ...event, sequence: ++this.sequence, epoch: this.epoch };
+    const envelope = { ...event, previousRevision, revision: this.clientRevision(), sequence: ++this.sequence, epoch: this.epoch };
     const viewers = target ? [target] : [...this.views.keys(), ...[...readonlyViews].filter(([runtimeId, view]) => view.id === this.identity && !this.views.has(runtimeId)).map(([runtimeId]) => runtimeId)];
     for (const runtimeId of viewers) {
       if (this.hideInteractiveEvent(runtimeId, event)) continue;
@@ -176,6 +214,12 @@ class Session {
 
   settingsPending() {
     return Boolean(desiredConfiguration && this.appliedConfiguration !== desiredConfiguration);
+  }
+
+  clientRevision() { return `${this.epoch}:${this.contentRevision}`; }
+
+  advanceContentRevision(event) {
+    if (stateChanges.has(event.type) || ['message_update', 'tool_execution_start', 'tool_execution_update', 'tool_execution_end', 'queue_update', 'settings_applied', 'extension_ui_request'].includes(event.type)) this.contentRevision++;
   }
 
   configurationBusy(state = {}) {
@@ -338,7 +382,7 @@ class Session {
       }
     }
     const queue = this.queue.queueView();
-    request.resolve({ history, sequence: this.sequence, stateRevision: this.stateRevision, epoch: this.epoch, liveTools: [...this.tools.values()], queue, state: { ...request.snapshotState, isStreaming: this.working, viewers: [...this.views.values()].filter((view) => view.visible).length, pendingMessageCount: queue.steering.length + queue.followUp.length } });
+    request.resolve({ history, revision: this.clientRevision(), sequence: this.sequence, stateRevision: this.stateRevision, epoch: this.epoch, liveTools: [...this.tools.values()], queue, state: { ...request.snapshotState, isStreaming: this.working, viewers: [...this.views.values()].filter((view) => view.visible).length, pendingMessageCount: queue.steering.length + queue.followUp.length } });
   }
 
   retainState(event) {
@@ -498,15 +542,14 @@ class Session {
     this.providerAuthRevision = revision;
   }
 
-  async execute(command) {
-    if (command.type === 'force_stop') return this.stop();
-    if (command.type === 'get_available_models') await this.refreshProviderModels();
-    if (command.type === 'get_snapshot') {
-      return this.collectSnapshot();
-    }
-    if (command.type === 'get_state') {
-      return this.collectState(command);
-    }
+  async collectToolOutput(command) {
+      const partial = this.tools.get(command.toolCallId)?.partialResult;
+      const history = partial ? undefined : await this.raw({ type: 'get_entries' });
+      const message = partial ?? history.entries.find((entry) => entry.message?.role === 'toolResult' && entry.message.toolCallId === command.toolCallId)?.message;
+      return toolOutputPage(message, command);
+  }
+
+  async executeWorkerCommand(command) {
     if (this.submitsMessage(command)) this.submitted = true;
     const runtimeSettingsKey = this.runtimeSettingsKey(command);
     if (runtimeSettingsKey !== undefined && this.appliedRuntimeSettings?.key === runtimeSettingsKey) return this.appliedRuntimeSettings.result;
@@ -514,6 +557,20 @@ class Session {
     if (runtimeSettingsKey !== undefined) this.appliedRuntimeSettings = { key: runtimeSettingsKey, result };
     await this.retainCommandResult(command, result);
     return result;
+  }
+
+  async execute(command) {
+    const readers = {
+      get_session_revision: () => ({ revision: this.clientRevision() }),
+      get_tool_output: () => this.collectToolOutput(command),
+      get_snapshot: () => this.collectSnapshot(),
+      get_entries: async () => (await this.collectSnapshot()).history,
+      get_state: () => this.collectState(command),
+      force_stop: () => this.stop(),
+    };
+    if (Object.hasOwn(readers, command.type)) return readers[command.type]();
+    if (command.type === 'get_available_models') await this.refreshProviderModels();
+    return this.executeWorkerCommand(command);
   }
 }
 
