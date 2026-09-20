@@ -169,7 +169,7 @@ export function Message(componentProps: Props) {
       {renderMessageActions()}
     </div>);
   };
-  const renderAssistantMessage = () => (<article class={`message assistant-message ${thinking() ? "reasoning-message" : ""}`} aria-label={metadata().responseLabel} title={metadata().responseTime ? `Responded ${(metadata().responseTime)!.full}` : undefined}>
+  const renderAssistantMessage = () => (<article class={`message assistant-message ${thinking() ? "reasoning-message" : ""}`} aria-label={metadata().responseLabel}>
     {renderMessageBody()}
   </article>);
   return <>{componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? (<ToolResult message={componentProps.message} toolCount={(componentProps.toolCount === undefined ? 1 : componentProps.toolCount)} debug={(componentProps.debug === undefined ? false : componentProps.debug)} />) : componentProps.message.role === "user" ? (renderUserMessage()) : (renderAssistantMessage())}</>;
