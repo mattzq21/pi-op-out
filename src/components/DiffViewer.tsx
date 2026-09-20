@@ -16,7 +16,7 @@ export function DiffViewer(componentProps: ReturnType<typeof turnDiff>) {
   return <>{!safeFiles().length && !safeWarnings().length ? (null) : (<section class="diff-viewer" aria-label="File changes">
     <div class="diff-summary"><FileDiff size={16} /><strong>Changes</strong><span><Files size={13} />{safeFiles().length} {safeFiles().length === 1 ? "file" : "files"}</span><em class="diff-additions">+{additions()}</em><em class="diff-deletions">−{deletions()}</em></div>
     {<Key each={safeWarnings()} by={(warning) => warning}>{(warning, index) => <div class="diff-line meta" >{warning()}</div>}</Key>}
-    <div class="diff-files" onMouseLeave={(event) => { if (!event.currentTarget.contains(document.activeElement)) setPreviewId(undefined); }} onFocusOut={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setPreviewId(undefined); }}>
+    <div class="diff-files" onMouseLeave={() => setPreviewId(undefined)} onFocusOut={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setPreviewId(undefined); }}>
       <nav aria-label="Changed files">{<Key each={safeFiles()} by={(file) => file.id}>{(file, index) => <button class="diff-file-chip" type="button"  title={file().path} onMouseEnter={() => setPreviewId(file().id)} onFocus={() => setPreviewId(file().id)}><span>{file().path}</span><small><b>+{count(file().additions)}</b> <i>−{count(file().deletions)}</i></small></button>}</Key>}</nav>
       {preview() && <section class="diff-file">
         <header><span>{(preview())!.path}</span><small><b>+{count((preview())!.additions)}</b><i>−{count((preview())!.deletions)}</i></small></header>
