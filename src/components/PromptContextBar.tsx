@@ -34,7 +34,9 @@ function contextSections(context: PromptContextInfo) {
 export const PromptContextBar = function PromptContextBar(componentProps: { context: PromptContextInfo }) {
   const [active, setActive] = createSignal<Section>();
   const sections = createMemo(() => (contextSections(componentProps.context)));
-  const percent = createMemo(() => (shares(contextTokens(componentProps.context))));
+  const tokens = createMemo(() => contextTokens(componentProps.context));
+  const totalTokens = createMemo(() => Object.values(tokens()).reduce((sum, value) => sum + value, 0));
+  const percent = createMemo(() => shares(tokens()));
   const wheelStyle = createMemo(() => ({ "--prompt-system": `${percent().system}%`, "--prompt-instructions": `${percent().system + percent().instructions}%`, "--prompt-tools": `${percent().system + percent().instructions + percent().tools}%` } as CSSProperties));
   const toggle = (section: Section) => setActive((current) => current === section ? undefined : section);
   const renderPromptContextContent = () => (active() && <div class={`prompt-context-content ${(active())!}`}>
@@ -49,7 +51,7 @@ export const PromptContextBar = function PromptContextBar(componentProps: { cont
       <button class="instructions" aria-expanded={active() === "instructions"} onClick={() => toggle("instructions")}>Instructions <small>{percent().instructions}%</small></button>
       <button class="tools" aria-expanded={active() === "tools"} onClick={() => toggle("tools")}>Tools <small>{percent().tools}%</small></button>
       <button class="skills" aria-expanded={active() === "skills"} onClick={() => toggle("skills")}>Skills <small>{percent().skills}%</small></button>
-      <span class="prompt-context-wheel" style={wheelStyle()} title={`System ${percent().system}% · Instructions ${percent().instructions}% · Tools ${percent().tools}% · Skills ${percent().skills}%`} aria-label={`Prompt context: system ${percent().system}%, instructions ${percent().instructions}%, tools ${percent().tools}%, skills ${percent().skills}%`} />
+      <span class="prompt-context-wheel" style={wheelStyle()} title={`Total context: ${totalTokens().toLocaleString()} tokens`} aria-label={`Total context: ${totalTokens().toLocaleString()} tokens`} />
     </div>
     {renderPromptContextContent()}
   </section>;
