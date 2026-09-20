@@ -101,16 +101,16 @@ export function SettingsView(props: SettingsViewProps) {
     window.addEventListener("scroll", onScroll, true);
     return () => window.removeEventListener("scroll", onScroll, true);
   }, () => []);
-  const baselineSettingsRef = createRef(settingsSnapshot(settingsProps().settings));
-  const baselineAgentConfigRef = createRef(agentEditsSnapshot(agentConfig()));
+  const [baselineSettings, setBaselineSettings] = createSignal(settingsSnapshot(settingsProps().settings));
+  const [baselineAgentConfig, setBaselineAgentConfig] = createSignal(agentEditsSnapshot(agentConfig()));
   const agentConfigSnapshot = createMemo(() => (agentEditsSnapshot(agentConfig())));
   const incomingAgentConfigRef = createRef(agentConfigSnapshot());
   const [hasAgentConfigDraft, setHasAgentConfigDraft] = createSignal(agentConfig() !== undefined);
   const currentAgentConfig = createMemo(() => (hasAgentConfigDraft() ? { agents: agentDrafts().map(item => item.extensions ? { ...item, extensions: item.extensions.map(path => path.trim()).filter(Boolean) } : item), fastModeModels: agentConfig()?.fastModeModels } : undefined));
   const currentSnapshot = createMemo(() => (settingsSnapshot(draft(), currentAgentConfig())));
   const currentSnapshotRef = createRef(currentSnapshot()); createComputed(() => { currentSnapshotRef.current = currentSnapshot(); });
-  const agentConfigDirty = createMemo(() => (agentEditsSnapshot(currentAgentConfig()) !== baselineAgentConfigRef.current));
-  const dirty = createMemo(() => (settingsSnapshot(draft()) !== baselineSettingsRef.current || agentConfigDirty()));
+  const agentConfigDirty = createMemo(() => (agentEditsSnapshot(currentAgentConfig()) !== baselineAgentConfig()));
+  const dirty = createMemo(() => (settingsSnapshot(draft()) !== baselineSettings() || agentConfigDirty()));
   createDependencyEffect(() => {
     const capturedSettingsProps = { ...settingsProps() }; const capturedDirty = dirty();
  capturedSettingsProps.onDirtyChange?.(capturedDirty); return () => capturedSettingsProps.onDirtyChange?.(false); }, () => [dirty(), currentSnapshot(), saving(), settingsProps().onDirtyChange]);
@@ -127,12 +127,12 @@ export function SettingsView(props: SettingsViewProps) {
     setHasAgentConfigDraft(next !== undefined);
     setAgentDrafts(next?.agents ?? []);
     setAgentIndex(firstEditableAgent(next?.agents ?? []));
-    baselineAgentConfigRef.current = agentEditsSnapshot(next);
+    setBaselineAgentConfig(agentEditsSnapshot(next));
   }, () => [agentConfigDirty(), agentConfig(), agentConfigSnapshot()]);
   const patch = (value: Partial<AppSettings>) => setDraft((current) => ({ ...current, ...value }));
   const save = async () => {
     const capturedDirty = dirty(); const capturedSettingsProps = { ...settingsProps() }; const capturedDraft = draft(); const capturedAgentConfigDirty = agentConfigDirty(); const capturedCurrentAgentConfig = currentAgentConfig(); const capturedCurrentSnapshot = currentSnapshot();
- if (savingRef.current || !capturedDirty) return; savingRef.current = true; setSaving(true); setSaveError(undefined); try { await capturedSettingsProps.onSave(capturedDraft, capturedAgentConfigDirty ? capturedCurrentAgentConfig : undefined); baselineSettingsRef.current = settingsSnapshot(capturedDraft); if (capturedAgentConfigDirty) baselineAgentConfigRef.current = agentEditsSnapshot(capturedCurrentAgentConfig); setSaved(currentSnapshotRef.current === capturedCurrentSnapshot); window.setTimeout(() => setSaved(false), 1600); } catch (reason) { setSaveError(reason instanceof Error ? reason.message : String(reason)); } finally { savingRef.current = false; setSaving(false); } };
+ if (savingRef.current || !capturedDirty) return; savingRef.current = true; setSaving(true); setSaveError(undefined); try { await capturedSettingsProps.onSave(capturedDraft, capturedAgentConfigDirty ? capturedCurrentAgentConfig : undefined); setBaselineSettings(settingsSnapshot(capturedDraft)); if (capturedAgentConfigDirty) setBaselineAgentConfig(agentEditsSnapshot(capturedCurrentAgentConfig)); setSaved(currentSnapshotRef.current === capturedCurrentSnapshot); window.setTimeout(() => setSaved(false), 1600); } catch (reason) { setSaveError(reason instanceof Error ? reason.message : String(reason)); } finally { savingRef.current = false; setSaving(false); } };
   const nextAgentSuffixRef = createRef(agentDrafts().length);
   const addMcp = () => { if (agent()) updateAgent({ mcpServers: [...agent().mcpServers, { id: uid("mcp"), name: "New server", transport: "stdio", command: "npx", args: "", enabled: true }] }); };
   const updateMcp = (id: string, value: Partial<McpServer>) => { if (agent()) updateAgent({ mcpServers: agent().mcpServers.map((server) => server.id === id ? { ...server, ...value } : server) }); };
@@ -149,7 +149,7 @@ export function SettingsView(props: SettingsViewProps) {
   const updateAgent = (value: Partial<AgentProfile>) => setAgentDrafts((current) => current.map((item, index) => index === agentIndex() ? { ...item, ...value } : item));
   const toggleAgentResource = (key: "tools" | "skills", value: string) => { if (agent()) updateAgent({ [key]: agent()[key].includes(value) ? agent()[key].filter((item) => item !== value) : [...agent()[key], value] }); };
   const renameAgent = (name: string) => { if (!agent() || (!isBuiltInAgent(agent()) && name.trim().toLowerCase() === "general")) return; if ((draft().defaultAgent ?? "general") === agent().name) patch({ defaultAgent: name }); updateAgent({ name }); };
-  const addAgent = () => { let suffix = nextAgentSuffixRef.current; while (agentDrafts().some((item) => item.name.toLowerCase() === `agent-${suffix}`)) suffix += 1; nextAgentSuffixRef.current = suffix + 1; const next: AgentProfile = { name: `agent-${suffix}`, model: "", effort: "", path_systemprompt: "sysprompt/default.md", path_agentprompt: "", tools: draft().tools.filter((item) => item.enabled).map((item) => item.name), skills: draft().skills.filter((item) => item.enabled).map((item) => item.path), mcpServers: [] }; setAgentDrafts((current) => [...current, next]); setAgentIndex(agentDrafts().length); };
+  const addAgent = () => { let suffix = nextAgentSuffixRef.current; while (agentDrafts().some((item) => item.name.toLowerCase() === `agent-${suffix}`)) suffix += 1; nextAgentSuffixRef.current = suffix + 1; const next: AgentProfile = { name: `agent-${suffix}`, model: "", effort: "", path_systemprompt: "sysprompt/default.md", path_agentprompt: "", tools: draft().tools.filter((item) => item.enabled).map((item) => item.name), skills: draft().skills.filter((item) => item.enabled).map((item) => item.path), mcpServers: [] }; setAgentDrafts((current) => [...current, next]); setAgentIndex(agentDrafts().length - 1); };
   const removeAgent = () => { if (!agent() || isBuiltInAgent(agent())) return; if (draft().defaultAgent === agent().name) patch({ defaultAgent: "general" }); const next = agentDrafts().filter((_, index) => index !== agentIndex()); setAgentDrafts(next); setAgentIndex(firstEditableAgent(next)); };
   const validateAgentResources = () => {
     const availableModelIds = new Set(settingsProps().models.map((model) => `${model.provider}/${model.id}`));
@@ -273,7 +273,7 @@ export function SettingsView(props: SettingsViewProps) {
       const renderAgents = () => {
         const renderAgentEditor = () => {
           const renderAgentFields = () => {
-            const renderAgentNameRow = () => (<div class="agent-name-row"><label class="field"><span>Agent name</span><input aria-label="Agent name" aria-invalid={!isBuiltInAgent(agent()) && (!agent().name.trim() || agent().name.trim().toLowerCase() === "general" || nameValidation().duplicateAgentNames.has(agent().name.trim().toLowerCase()))} disabled={isBuiltInAgent(agent())} value={agent().name} onInput={(event) => renameAgent(event.target.value.replace(/[^a-zA-Z0-9_-]/g, ""))} /></label><IconButton label={`Remove ${agent().name}`} disabled={isBuiltInAgent(agent())} onClick={removeAgent}><Trash2 size={15} /></IconButton></div>);
+            const renderAgentNameRow = () => (<div class="agent-name-row"><label class="field"><span>Agent name</span><input aria-label="Agent name" aria-invalid={!isBuiltInAgent(agent()) && (!agent().name.trim() || agent().name.trim().toLowerCase() === "general" || nameValidation().duplicateAgentNames.has(agent().name.trim().toLowerCase()))} disabled={isBuiltInAgent(agent())} value={agent().name} onInput={(event) => { renameAgent(event.currentTarget.value.replace(/[^a-zA-Z0-9_-]/g, "")); event.currentTarget.value = agent().name; }} /></label><IconButton label={`Remove ${agent().name}`} disabled={isBuiltInAgent(agent())} onClick={removeAgent}><Trash2 size={15} /></IconButton></div>);
             const renderAgentDefaults = () => {
               const renderAgentModel = () => (<label class="field"><span>Default model</span><select aria-label="Agent default model" value={agent().model} onChange={(event) => updateAgent({ model: event.target.value })}><option value="">Use fallback ({draft().defaultModel})</option>{agent().model && !agentValidation().availableModelIds.has(agent().model) && <option value={agent().model} disabled>Unavailable: {agent().model}</option>}{<Key each={settingsProps().models} by={(model) => `${model.provider}/${model.id}`}>{(model, index) => <option  value={`${model().provider}/${model().id}`}>{accountModelName(model(), settingsProps().models)}</option>}</Key>}</select></label>);
               const renderAgentFastMode = () => (<div class="field general-fast-mode" title={agent().fastMode === undefined ? "Using the fallback fast mode setting" : "Fast mode default for this agent"}><span>Fast mode</span><div><button type="button" class={`fast-mode-indicator${agentFastModeEnabled() ? " active" : ""}`} aria-label="Agent fast mode" aria-description={agent().fastMode === undefined ? "Using fallback setting" : agentFastModeEnabled() ? "Fast mode on" : "Fast mode off"} aria-pressed={agentFastModeEnabled()} aria-invalid={agent().fastMode === true && !(agentConfig()?.fastModeModels ?? []).includes(agent().model || draft().defaultModel)} onClick={() => updateAgent({ fastMode: !agentFastModeEnabled() })}><Zap size={22} strokeWidth={1.5} fill={agentFastModeEnabled() ? "currentColor" : "none"} aria-hidden="true" /></button></div></div>);

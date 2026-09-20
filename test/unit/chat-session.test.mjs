@@ -6,10 +6,10 @@ import { useChatSession } from '../../src/lib/useChatSession.ts';
 describe('chat session hook', () => {
   let dom, hook, transport, responses, calls;
   const initialState = { model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', messageCount: 0, pendingMessageCount: 0 };
-  const snapshot = (extra = {}) => ({ state: initialState, history: { entries: [], leafId: null }, sequence: 10, epoch: 'epoch', liveTools: [], queue: { pendingMessages: [] }, ...extra });
+  const snapshot = (extra = {}) => ({ revision: 'snapshot', state: initialState, history: { entries: [], leafId: null }, sequence: 10, epoch: 'epoch', liveTools: [], queue: { pendingMessages: [] }, ...extra });
   beforeEach(async () => {
     dom = installDom(); calls = [];
-    responses = new Map([['get_snapshot', snapshot()], ['get_available_models', { models: [{ id: 'model' }] }], ['get_available_thinking_levels', { levels: ['off', 'high'] }], ['get_commands', { commands: [] }], ['get_session_stats', { contextUsage: { tokens: 500, contextWindow: 1000, percent: 50 } }]]);
+    responses = new Map([['get_session_revision', { revision: 'changed' }], ['get_tool_payload', { chunk: JSON.stringify({ content: 'persisted', details: { diff: 'patch' }, toolInput: { path: 'a' } }), length: 0, revision: 'payload' }], ['get_snapshot', snapshot()], ['get_available_models', { models: [{ id: 'model' }] }], ['get_available_thinking_levels', { levels: ['off', 'high'] }], ['get_commands', { commands: [] }], ['get_session_stats', { contextUsage: { tokens: 500, contextWindow: 1000, percent: 50 } }]]);
     transport = { subscribe() { return () => {}; }, async command(command) { calls.push(command.type); const response = responses.get(command.type); if (response instanceof Error) throw response; return typeof response === 'function' ? response() : response; } };
     hook = await renderHook(value => useChatSession(value), transport);
   });
@@ -29,20 +29,21 @@ describe('chat session hook', () => {
     assert.ok(hook.current.messages[0].completedAt > 0);
   });
 
-  test('tool results preserve execution arguments and snapshot metadata across final messages', async () => {
+  test('tool payloads load on demand while snapshot metadata survives final messages', async () => {
     await send({ type: 'tool_execution_start', toolCallId: 'call', toolName: 'edit', args: { path: 'a' } }, { type: 'tool_execution_update', toolCallId: 'call', partialResult: { content: 'partial' } });
-    await dom.flushFrames(); assert.equal(hook.current.messages[0].content, 'partial');
+    await dom.flushFrames(); assert.equal(hook.current.messages[0].content, ''); assert.equal(hook.current.messages[0].toolInput, undefined);
     await send({ type: 'tool_execution_end', toolCallId: 'call', result: { content: 'done', details: { diff: 'patch' } }, isError: false });
     assert.equal(hook.current.messages[0].toolStatus, 'done');
     await send({ type: 'entry_appended', entry: { type: 'custom', customType: 'piop-file-changes', id: 'snap', data: { cwd: '/repo', patch: 'patch', paths: ['a'], toolCallIds: ['call'] } } });
     await send(message('message_end', 'toolResult', 'persisted', { toolCallId: 'call' }));
     assert.equal(hook.current.messages.length, 1);
+    await act(() => hook.current.messages[0].loadToolPayload());
     assert.deepEqual(hook.current.messages[0].toolInput, { path: 'a' });
     assert.deepEqual(hook.current.messages[0].details, { diff: 'patch' });
     assert.equal(hook.current.messages[0].fileChanges[0].id, 'snap');
     await send({ type: 'tool_execution_start', toolCallId: 'call', toolName: 'read' }, { type: 'tool_execution_end', toolCallId: 'call', isError: true });
     assert.equal(hook.current.messages.length, 1); assert.equal(hook.current.messages[0].toolStatus, 'error');
-    assert.equal(hook.current.messages[0].content, ''); assert.deepEqual(hook.current.messages[0].toolInput, {});
+    assert.equal(hook.current.messages[0].content, ''); assert.equal(hook.current.messages[0].toolInput, undefined);
   });
 
   test('pause checkpoints the latest user, hides synthetic resume input and retains prompt context', async () => {
@@ -113,7 +114,7 @@ describe('chat session hook', () => {
 
   test('changing conversations rejects obsolete refreshes and ignores old event handlers', async () => {
     const pending = Promise.withResolvers(); responses.set('get_snapshot', () => pending.promise);
-    const old = hook.current; let operation; await act(async () => { operation = old.refresh(); });
+    const old = { ...hook.current }; let operation; await act(async () => { operation = old.refresh(); });
     await hook.rerender({ command: transport.command, subscribe: transport.subscribe });
     await act(async () => { old.handleEvent(message('message_start', 'user', 'stale')); pending.resolve(snapshot()); await assert.rejects(operation, /Conversation changed/); await assert.rejects(old.refresh(), /Conversation changed/); });
     assert.deepEqual(hook.current.messages, []);
@@ -132,7 +133,7 @@ describe('chat session hook', () => {
     const entries = [{ type: 'custom', id: 'marker', parentId: null, customType: 'pi-desktop-resume', data: { message: 'resume' } }, { type: 'message', id: 'assistant', parentId: 'marker', message: { role: 'assistant', content: 'partial', streaming: true, timestamp: 100 } }];
     responses.set('get_snapshot', snapshot({ history: { entries, leafId: 'assistant' }, liveTools: [{ type: 'tool_execution_start', toolCallId: 'call', toolName: 'read', partialResult: { content: 'live output' } }] }));
     await act(async () => hook.current.refresh()); await dom.flushFrames();
-    assert.equal(hook.current.messages[1].content, 'live output');
+    assert.equal(hook.current.messages[1].content, ''); assert.equal(hook.current.messages[1].deferredToolPayload, 'call');
     await send(message('message_start', 'user', 'resume'), message('message_end', 'assistant', 'done'));
     assert.equal(hook.current.messages.length, 2); assert.equal(hook.current.messages[0].id, 'assistant'); assert.equal(hook.current.messages[0].content, 'done');
   });

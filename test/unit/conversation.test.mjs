@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { setTimeout as delay } from 'node:timers/promises';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, act } from '../dom.mjs';
 import { ChatView } from '../../src/components/ChatView.tsx';
@@ -18,7 +19,7 @@ describe('conversation behavior', () => {
   async function selectText(element = document.querySelector('.message-body p'), top = 100) {
     const range = document.createRange(); range.selectNodeContents(element);
     range.getClientRects = () => [{ left: 10, top, bottom: top + 20, width: 100, height: 20 }];
-    await act(async () => { window.getSelection().removeAllRanges(); window.getSelection().addRange(range); document.dispatchEvent(new Event('selectionchange')); });
+    await act(async () => { window.getSelection().removeAllRanges(); window.getSelection().addRange(range); await delay(0); document.dispatchEvent(new Event('selectionchange')); });
   }
 
   test('settled turns compact repeated tools and separate reasoning from the final answer', async () => {
@@ -26,11 +27,14 @@ describe('conversation behavior', () => {
     await render({ messages });
     assert.equal(document.querySelectorAll('.conversation-turn').length, 1);
     assert.equal(document.querySelector('.work-group').open, false);
+    assert.equal(document.querySelector('.work-group-content'), null);
+    await act(() => { const group = document.querySelector('.work-group'); group.open = true; group.dispatchEvent(new Event('toggle')); });
     assert.match(document.querySelector('.work-group').textContent, /Worked for 1min 1s.*read x2.*Consider the evidence/s);
     assert.doesNotMatch(document.querySelector('.work-group').textContent, /Final answer/);
     assert.equal(document.querySelectorAll('.assistant-message').length, 2);
     assert.equal(document.querySelector('[role=status]').textContent, 'Saved');
     await render({ debug: true });
+    await act(() => { for (const details of document.querySelectorAll('details.tool-event')) { details.open = true; details.dispatchEvent(new Event('toggle')); } });
     assert.equal(document.querySelectorAll('[aria-label="Tool output"]').length, 2);
     assert.doesNotMatch(document.body.textContent, /read x2/);
   });
@@ -135,7 +139,7 @@ describe('conversation behavior', () => {
     await click(document.querySelector('[aria-label="Selected project: project"]')); await click(document.querySelector('[aria-label="Clear project"]')); assert.equal(opened, 1); assert.equal(cleared, 1);
     assert.equal(document.querySelector('.extension-widget').textContent, 'widget'); assert.equal(document.querySelector('.extension-status').textContent, 'Ready'); assert.equal(document.querySelector('.runtime-activity').textContent, 'Preparing');
     await render({ statuses: { 'pi-desktop-mcp-loading': 'Loading server' } }); assert.equal(document.querySelector('.runtime-activity'), null);
-    await click(document.querySelector('[aria-label="Send message"]')); assert.equal(document.querySelector('.mcp-pending-message').textContent, 'Question');
+    await click(document.querySelector('[aria-label="Send message"]')); assert.equal(document.querySelector('.mcp-pending-message').textContent.trim(), 'Question');
     await act(async () => pending.resolve()); assert.equal(document.querySelector('.mcp-pending-message'), null);
   });
 });

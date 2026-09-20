@@ -41,7 +41,7 @@ describe('settings editor', () => {
 
   test('model visibility retains unavailable models and supports filtering and toggling visibility', async () => {
     props.settings.hiddenModels = ['old/missing'];
-    await render({ models: [{ provider: 'p', id: 'model', name: 'Current' }] });
+    await render({ scope: 'client', models: [{ provider: 'p', id: 'model', name: 'Current' }] });
     await section('Models');
     assert.match(document.body.textContent, /Currently unavailable/); assert.equal(control('Show old/missing').getAttribute('aria-checked'), 'false');
     await click(control('Show p/model')); await click(save()); assert.deepEqual(saves[0][0].hiddenModels, ['old/missing', 'p/model']);
@@ -93,18 +93,18 @@ describe('settings editor', () => {
     await click(control('Remove Remote')); assert.match(confirmations[0], /2 indexed conversations depend/); assert.ok(control('Remove Remote'));
     window.confirm = () => true; await click(control('Remove Remote')); assert.equal(control('Remove Remote'), null);
     await click(button('Add machine')); await enterText(control('Machine name'), 'Local'); assert.match(document.querySelector('[role=alert]').textContent, /reserved/);
-    await enterText(control('Machine name'), 'Build'); await enterText(control('Build SSH target'), 'builder@host'); await enterText(control('Build Pi executable'), '/opt/pi'); await click(save());
+    await enterText(control('Machine name'), 'Build'); await enterText(control('Build SSH target'), 'builder@host'); await enterText(control('Build Piop daemon executable'), '/opt/pi'); await click(save());
     assert.equal(saves[0][0].hosts[0].target, 'builder@host'); assert.equal(saves[0][0].hosts[0].piPath, '/opt/pi');
   });
 
-  test('worktree scripts preserve execution order and clear project paths when machines change', async () => {
+  test('worktree scripts preserve execution order and use projects on the selected daemon', async () => {
     props.settings.hosts = [{ id: 'remote', name: 'Remote', target: 'host', piPath: 'pi' }];
     await render({ sessions: [{ cwd: '/repo', projectRoot: '/repo' }, { cwd: '/repo/sub', projectRoot: '/repo' }, { cwd: '/remote', hostId: 'remote' }, { cwd: '/skip', projectKind: 'no-repo' }] });
     await section('Worktree scripts'); await click(button('Add script')); await enterText(control('Script 1 name'), 'Install'); await enterText(control('Script 1 project directory'), '/repo');
     await enterText(control('Script 1 setup Bash code'), 'npm ci'); await enterText(control('Script 1 cleanup Bash code'), 'cleanup');
     assert.deepEqual([...document.querySelectorAll('datalist option')].map(option => option.value), ['/repo']);
-    await select('Script 1 machine', 'remote'); assert.equal(control('Script 1 project directory').value, ''); assert.deepEqual([...document.querySelectorAll('datalist option')].map(option => option.value), ['/remote']);
-    await enterText(control('Script 1 project directory'), '/remote'); await click(button('Add script')); await enterText(control('Script 2 name'), 'Prepare');
+    assert.equal(control('Script 1 machine'), null);
+    await click(button('Add script')); await enterText(control('Script 2 name'), 'Prepare');
     await click([...document.querySelectorAll('.setup-script')][1].querySelectorAll('button')[1]);
     assert.equal(control('Script 1 name').value, 'Prepare'); await click(save());
     assert.deepEqual(saves[0][0].worktreeSetupScripts.map(script => script.name), ['Prepare', 'Install']); assert.equal(saves[0][0].worktreeSetupScripts[1].cleanupScript, 'cleanup');
@@ -112,7 +112,7 @@ describe('settings editor', () => {
   });
 
   test('shortcut recording detects collisions, allows clearing, and restores defaults', async () => {
-    await render(); await section('Keybinds'); const input = control('New conversation shortcut');
+    await render({ scope: 'client' }); await section('Keybinds'); const input = control('New conversation shortcut');
     const key = async (key, extra = {}) => { const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra }); await act(async () => input.dispatchEvent(event)); return event; };
     assert.equal((await key('Tab')).defaultPrevented, false); await key('b', { ctrlKey: true }); assert.match(document.querySelector('[role=alert]').textContent, /assigned more than once/);
     await key('Backspace'); assert.equal(input.value, ''); assert.equal(document.querySelector('[role=alert]'), null);
@@ -166,6 +166,6 @@ describe('settings editor', () => {
     const pending = Promise.withResolvers();
     await render({ agentConfig: { agents: [profile('general'), profile('review')] }, onSave: () => pending.promise }); await section('Agents'); await enterText(control('Agent prompt file'), 'new.md'); await click(save());
     await render({ agentConfig: undefined }); assert.ok(control('Agent name')); assert.equal(control('Agent prompt file').value, 'new.md');
-    await act(async () => pending.resolve()); assert.equal(control('Agent name'), null); assert.ok(control('Automatic retry'));
+    await act(async () => pending.resolve()); assert.equal(control('Agent name'), null); assert.match(document.body.textContent, /Loading/);
   });
 });

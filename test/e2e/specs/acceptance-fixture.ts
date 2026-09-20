@@ -32,7 +32,7 @@ export const withSessionSnapshot = (responses: Record<string, unknown>) => {
   if (saved?.settings) responses.save_app_settings = { ...saved, settings: known(saved.settings) };
   const state = responses["pi_command:get_state"];
   if (!state) return responses;
-  return { ...responses, "pi_command:get_snapshot": { state, history: responses["pi_command:get_entries"] ?? { entries: [], leafId: null }, queue: { pendingMessages: [] }, liveTools: [], sequence: 0, epoch: "e2e" } };
+  return { ...responses, "pi_command:get_session_revision": { revision: "changed" }, "pi_command:get_snapshot": { revision: "snapshot", state, history: responses["pi_command:get_entries"] ?? { entries: [], leafId: null }, queue: { pendingMessages: [] }, liveTools: [], sequence: 0, epoch: "e2e" } };
 };
 
 export const mockBackend = async (responses: Record<string, unknown>) => {

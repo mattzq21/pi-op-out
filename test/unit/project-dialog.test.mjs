@@ -65,7 +65,7 @@ describe('project directory palette', () => {
     props.onHomeDirectory = async () => '/home/me'; props.onChooseDirectory = async () => null;
     await mount(); await advance(t); assert.match(document.querySelector('[role=alert]').textContent, /Could not list this folder/);
     props.onChooseDirectory = async () => { throw 'listing failed'; }; await view.rerender(props);
-    await enterText(input(), '/different/'); await advance(t); assert.equal(document.querySelector('[role=alert]').textContent, 'listing failed');
+    await enterText(input(), '/different/'); await advance(t); assert.equal(document.querySelector('[role=alert]').textContent, 'Could not list this folder. Try another path.');
   });
 
   test('Windows home paths expand separators and folders outside home open without suggestions', async t => {

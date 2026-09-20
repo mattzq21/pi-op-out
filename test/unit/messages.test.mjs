@@ -50,16 +50,16 @@ test('streamed text and reasoning build immutable content and accept final repla
   for (const contentIndex of [undefined, -1, 0.5, '0', NaN]) assert.equal(applyAssistantMessageEvent(original, { type: 'text_start', contentIndex }), original);
 });
 
-test('streamed tool calls preserve identity and replace partial JSON with parsed arguments', () => {
+test('streamed tool calls preserve identity without retaining arguments', () => {
   let message = { role: 'assistant', content: '' };
   message = applyAssistantMessageEvent(message, { type: 'toolcall_start', contentIndex: 0, id: 'call', toolName: 'read' });
   message = applyAssistantMessageEvent(message, { type: 'toolcall_delta', contentIndex: 0, delta: '{"path":' });
   message = applyAssistantMessageEvent(message, { type: 'toolcall_delta', contentIndex: 0, delta: '"a"}' });
-  assert.deepEqual(message.content[0], { type: 'toolCall', id: 'call', name: 'read', arguments: {}, partialArgs: '{"path":"a"}' });
+  assert.deepEqual(message.content[0], { type: 'toolCall', id: 'call', name: 'read', arguments: {}, partialArgs: '' });
   message = applyAssistantMessageEvent(message, { type: 'toolcall_end', contentIndex: 0, toolCall: { arguments: { path: 'a' } } });
-  assert.deepEqual(message.content[0], { type: 'toolCall', id: 'call', name: 'read', arguments: { path: 'a' } });
+  assert.deepEqual(message.content[0], { type: 'toolCall', id: 'call', name: 'read', arguments: {} });
   message = applyAssistantMessageEvent(message, { type: 'toolcall_delta', contentIndex: 0 });
-  assert.equal(message.content[0].partialArgs, '');
+  assert.equal(message.content[0].partialArgs, undefined);
   message = applyAssistantMessageEvent(message, { type: 'toolcall_end', contentIndex: 1, toolCall: { id: 'next', name: 'write', arguments: 'invalid' } });
   assert.deepEqual(message.content[1], { type: 'toolCall', id: 'next', name: 'write', arguments: {} });
   message = applyAssistantMessageEvent(message, { type: 'toolcall_start', contentIndex: 2 });
@@ -115,7 +115,7 @@ test('cache statistics include writes and enforce both relative and absolute hit
 
 const msg = (id, parentId, role, content = '', extra = {}) => ({ type: 'message', id, parentId, message: { role, content, timestamp: 100, ...extra } });
 const custom = (id, parentId, customType, data) => ({ type: 'custom', id, parentId, customType, data });
-test('branch reconstruction follows ancestry, hides resume prompts and attaches tool inputs and context', () => {
+test('branch reconstruction follows ancestry, hides resume prompts and attaches context without eager tool inputs', () => {
   const entries = [
     msg('u', null, 'user', 'question'),
     custom('context', 'u', 'pi-desktop-prompt-context', { tokens: 100 }),
@@ -132,7 +132,7 @@ test('branch reconstruction follows ancestry, hides resume prompts and attaches 
   assert.deepEqual(result.map(message => message.id), ['u', 'a', 't', 'final']);
   assert.deepEqual(result[0].promptContext, { tokens: 100 });
   assert.equal(result[0].contextCheckpoint, true);
-  assert.deepEqual(result[2].toolInput, { path: 'a' });
+  assert.equal(result[2].toolInput, undefined);
   assert.equal(result[2].fileChanges[0].id, 'files');
   assert.equal(entries[0].message.contextCheckpoint, undefined);
   assert.deepEqual(branchMessages(entries, null), []);

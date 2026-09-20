@@ -39,9 +39,11 @@ describe('message rendering', () => {
     await render({ role: 'system', content: 'status message' }); assert.equal(document.querySelector('[role=status]').textContent, 'status message');
     const message = { id: 'tool', role: 'tool', toolName: 'read', content: 'private output', toolInput: { path: '/repo/a' } };
     await view.rerender({ message, toolCount: 3 }); assert.match(document.body.textContent, /read x3Completed/); assert.equal(document.querySelector('pre'), null);
-    await view.rerender({ message, debug: true }); assert.match(control('Tool arguments').textContent, /"path": "\/repo\/a"/); assert.equal(control('Tool output').textContent, 'private output');
+    await view.rerender({ message, debug: true }); assert.equal(control('Tool arguments'), null); assert.equal(control('Tool output'), null);
     assert.equal(document.querySelector('details').open, false);
-    await view.rerender({ message: { ...message, toolStatus: 'running' }, debug: true }); assert.equal(document.querySelector('details').open, true); assert.match(document.body.textContent, /Running/);
+    await view.rerender({ message: { ...message, toolStatus: 'running' }, debug: true }); assert.equal(document.querySelector('details').open, false); assert.match(document.body.textContent, /Running/);
+    await act(() => { const details = document.querySelector('details'); details.open = true; details.dispatchEvent(new Event('toggle')); });
+    assert.match(control('Tool arguments').textContent, /"path": "\/repo\/a"/); assert.equal(control('Tool output').textContent, 'private output');
     await view.rerender({ message: { ...message, toolStatus: 'error', toolInput: null }, debug: true, expanded: true }); assert.equal(document.querySelector('details').open, true); assert.equal(control('Tool arguments').textContent, 'null');
     await view.rerender({ message: { ...message, toolName: undefined, content: '', toolInput: undefined }, debug: true }); assert.equal(control('Tool arguments'), null); assert.equal(control('Tool output'), null); assert.match(document.body.textContent, /tool/);
   });
@@ -131,7 +133,7 @@ describe('message rendering', () => {
 
   test('reasoning and cache totals accompany completed assistant responses', async () => {
     await render({ role: 'assistant', timestamp: 1000, content: [{ type: 'thinking', thinking: 'Reasoning' }, { type: 'text', text: 'Answer' }], usage: { input: 1000, cacheRead: 1000 } }, { debug: true, turnCacheUsage: { input: 1000, cacheRead: 3000 } });
-    assert.equal(document.querySelector('.reasoning-text').textContent, 'Reasoning'); assert.equal(document.querySelector('.cache-hit-rate').textContent, 'Cache 75%');
+    assert.equal(document.querySelector('.reasoning-text').textContent.trim(), 'Reasoning'); assert.equal(document.querySelector('.cache-hit-rate').textContent, 'Cache 75%');
     assert.match(document.querySelector('.cache-hit-rate').title, /across all calls/);
     await click(document.querySelector('.message-actions .icon-button')); assert.deepEqual(copied, ['Answer']);
   });

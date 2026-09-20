@@ -112,7 +112,7 @@ describe('conversation sidebar', () => {
     groups.groups.push({ id: 'custom', name: 'Research' }); localStorage.setItem('pi-desktop-collapsed-projects', JSON.stringify(['custom']));
     await render(); const heading = document.querySelector('[data-drop-project-key=custom]'); hit(heading);
     await mouse(row('a'), 'mousedown'); await mouse(window, 'mousemove', 50, 60); await mouse(window, 'mouseup');
-    assert.deepEqual(changes.at(-1), { type: 'assign', key: 'local:a', group: 'custom' }); assert.equal(row('a').parentElement.dataset.projectKey, 'custom'); assert.equal(heading.querySelector('.project-label').getAttribute('aria-expanded'), 'true');
+    assert.deepEqual(changes.at(-1), { type: 'assign', key: 'local:a', group: 'custom' }); assert.equal(row('a').parentElement.dataset.projectKey, 'custom'); assert.equal(document.querySelector('[data-drop-project-key=custom] .project-label').getAttribute('aria-expanded'), 'true');
   });
 
   test('drag cancellation and invalid targets preserve assignments and stop auto scrolling', async () => {

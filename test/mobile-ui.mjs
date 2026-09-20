@@ -29,7 +29,7 @@ try {
    const data={load_app_settings:settings,create_temporary_chat:{cwd:'/tmp/project',sessionId:'mobile-test'},list_sessions:[],load_session_groups:{version:1,groups:[],assignments:{}},voice_configuration:{authenticated:false,helperAvailable:true},codex_usage:{remainingPercent:80},opencode_go_usage:{rolling:{status:'ok',remainingPercent:70},weekly:{status:'ok',remainingPercent:45},monthly:{status:'ok',remainingPercent:30}},start_pi:{attached:true},home_directory:'/home/test',is_git_repository:false};
    let result=data[m.command]??{};
    if(m.command==='pi_command') {
-   const responses={get_snapshot:{state,history:{entries:[],leafId:null},queue:{pendingMessages:[]},liveTools:[],sequence:0,epoch:1},get_state:state,get_available_models:{models:[state.model]},get_available_thinking_levels:{levels:['high']},get_commands:{commands:[]},get_session_stats:{}};
+   const responses={get_session_revision:{revision:'changed'},get_snapshot:{revision:'snapshot',state,history:{entries:[],leafId:null},queue:{pendingMessages:[]},liveTools:[],sequence:0,epoch:1},get_state:state,get_available_models:{models:[state.model]},get_available_thinking_levels:{levels:['high']},get_commands:{commands:[]},get_session_stats:{}};
     result=responses[m.args.command.type]??{};
    }
    if(m.command==='save_app_settings') { savedSettings.push(m.args.settings); result={settings:m.args.settings}; }
@@ -52,8 +52,7 @@ try {
  assert.equal(usageBadges[0].go,true);
  assert.match(usageBadges[0].label,/OpenCode Go usage remaining: 70%/);
  assert.match(usageBadges[1].label,/Codex usage remaining: 80%/);
- for (let attempt = 0; attempt < 40 && !savedSettings.some(saved => (saved.knownModels ?? []).includes('test/model')); attempt++) await new Promise(resolve => setTimeout(resolve, 250));
- assert.ok(savedSettings.some(saved => (saved.knownModels ?? []).includes('test/model')), 'seen models are recorded for hide-by-default');
+ await page.waitForFunction(() => (JSON.parse(localStorage.getItem('piop-client-settings') ?? '{}').knownModels ?? []).includes('test/model'));
  await page.getByRole('textbox',{name:'Message piop'}).fill('First line');
  await page.getByRole('textbox',{name:'Message piop'}).press('Enter');
  assert.equal(await page.getByRole('textbox',{name:'Message piop'}).inputValue(),'First line\n');
@@ -61,7 +60,7 @@ try {
  assert.equal(await page.evaluate(()=>document.body.scrollWidth<=innerWidth),true);
  await page.getByRole('button',{name:'Toggle conversations'}).click();
  await page.getByRole('button',{name:'Settings',exact:true}).click();
- await page.getByRole('heading',{name:'Settings',exact:true}).waitFor();
+ await page.getByRole('heading',{name:'Client settings',exact:true}).waitFor();
  await page.screenshot({path:join(screenshots,'settings.png')});
  assert.equal(await page.evaluate(()=>document.body.scrollWidth<=innerWidth),true);
  await page.getByRole('button',{name:'Toggle conversations'}).click();

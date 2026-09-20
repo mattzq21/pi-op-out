@@ -1,11 +1,11 @@
 import { render } from "solid-js/web";
 import App from "./App";
 import { MobileApp } from "./components/MobileApp";
-import "./index.css";
 import { isMobile } from "./lib/platform";
 import { installTextEditingShortcuts } from "./lib/textEditingShortcuts";
-import "./mobile.css";
 import "./styles.css";
+import "./index.css";
+import "./mobile.css";
 
 if (isMobile) document.documentElement.dataset.mobile = "true";
 

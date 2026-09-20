@@ -9,9 +9,9 @@ registerHooks({
   load(url, context, nextLoad) {
     const pathname = new URL(url).pathname;
     if (pathname.endsWith('.css')) return { format: 'module', source: '', shortCircuit: true };
-    if (pathname.endsWith('.tsx')) {
+    if (/\.tsx?$/.test(pathname) && !pathname.includes('/node_modules/')) {
       const source = readFileSync(new URL(url), 'utf8').replaceAll('import.meta.env.MODE', '(globalThis.__PIOP_TEST_MODE__ ?? "test")').replaceAll('import.meta.hot', 'globalThis.__PIOP_TEST_HOT__');
-      const result = transformSync(source, { filename: fileURLToPath(url), babelrc: false, configFile: false, presets: [[solid, { generate: 'dom', hydratable: false }], [typescript, { onlyRemoveTypeImports: false }]], sourceMaps: 'inline' });
+      const result = transformSync(source, { filename: fileURLToPath(url), babelrc: false, configFile: false, presets: [[solid, { generate: 'dom', hydratable: false, delegateEvents: false }], [typescript, { onlyRemoveTypeImports: false }]], sourceMaps: 'inline' });
       return { format: 'module', source: result.code, shortCircuit: true };
     }
     const result = nextLoad(url, context);

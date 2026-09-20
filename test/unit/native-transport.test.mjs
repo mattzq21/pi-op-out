@@ -7,6 +7,8 @@ import * as native from '../../src/lib/nativeTransport.ts';
 describe('native transport', () => {
 let calls, responses, transports;
 beforeEach(() => {
+  const storage = new Map();
+  globalThis.localStorage = { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, String(value)) };
   globalThis.window = Object.assign(new EventTarget(), { crypto: globalThis.crypto, location: { search: '' } });
   globalThis.document = Object.assign(new EventTarget(), { visibilityState: 'visible', hasFocus: () => true });
   calls = []; transports = [];
@@ -25,7 +27,7 @@ beforeEach(() => {
 afterEach(async () => {
   for (const transport of transports) await transport.disconnect();
   clearMocks();
-  delete globalThis.window; delete globalThis.document; delete globalThis.__PIOP_TEST_MODE__;
+  delete globalThis.window; delete globalThis.document; delete globalThis.localStorage; delete globalThis.__PIOP_TEST_MODE__;
 });
 const transport = (target = { cwd: '/repo' }) => { const value = new native.NativeTransport(target); transports.push(value); return value; };
 const commands = name => calls.filter(call => call.command === name);
@@ -86,9 +88,11 @@ test('unused temporary chats are removed on disposal while used chats survive', 
 
 test('disconnect during temporary-chat allocation cleans up without starting a process', async () => {
   const pending = Promise.withResolvers();
-  responses.set('create_temporary_chat', () => pending.promise);
+  const started = Promise.withResolvers();
+  responses.set('create_temporary_chat', () => { started.resolve(); return pending.promise; });
   const client = transport({});
   const connecting = client.connect();
+  await started.promise;
   await client.disconnect();
   pending.resolve({ cwd: '/tmp/late', sessionId: 'late' });
   await connecting;
@@ -125,7 +129,7 @@ test('subscriptions replay queue, statuses and unresolved dialogs, and filter ot
   assert.equal(client.hasPendingSettings(), false);
 });
 
-test('live assistant streaming survives history refresh until persisted and resets on session switches', async () => {
+test('history refresh uses daemon entries without retaining a second live assistant copy', async () => {
   const client = transport();
   await client.connect();
   const send = event => emit('pi://event', event);
@@ -133,10 +137,7 @@ test('live assistant streaming survives history refresh until persisted and rese
   await send({ type: 'message_start', message: { role: 'assistant', timestamp: 123, content: '' } });
   await send({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'hello' } });
   const history = await client.command({ type: 'get_entries' });
-  assert.equal(history.entries.length, 1);
-  assert.equal(history.entries[0].parentId, 'parent');
-  assert.equal(history.entries[0].message.content[0].text, 'hello');
-  assert.equal(history.leafId, history.entries[0].id);
+  assert.deepEqual(history, { entries: [], leafId: 'parent' });
   responses.set('pi_command:get_entries', () => ({ entries: [{ message: { role: 'assistant', timestamp: 123 } }], leafId: 'persisted' }));
   assert.equal((await client.command({ type: 'get_entries' })).entries.length, 1);
   responses.set('pi_command:get_entries', () => ({ entries: [], leafId: null }));
@@ -206,10 +207,10 @@ test('fast-mode discovery uses package provenance and refreshes compatibility st
 
 test('settings save rolls back persisted values and connection after reconnect failure', async () => {
   const client = transport({ cwd: '/repo', hostId: 'remote', sessionId: 'id' });
-  const previous = { hosts: [{ id: 'remote', target: 'before' }] };
-  const next = { hosts: [{ id: 'remote', target: 'after' }] };
+  const previous = { hosts: [{ id: 'remote', target: 'before' }], keybindings: {}, hiddenModels: [], knownModels: [], debugMode: false };
+  const next = { ...previous, hosts: [{ id: 'remote', target: 'after' }] };
   responses.set('load_app_settings', previous);
-  responses.set('save_app_settings', { reconnect: true });
+  responses.set('save_app_settings', ({ settings }) => ({ settings, reconnect: true }));
   let attempts = 0;
   responses.set('start_pi', () => { if (++attempts === 1) throw new Error('cannot connect'); return { attached: true }; });
   await assert.rejects(client.saveSettings(next), /cannot connect/);
@@ -313,7 +314,7 @@ test('native command adapters send explicit host, path and terminal arguments an
   ];
   for (const [method, args, command, expected] of cases) {
     responses.set(command, { result: command });
-    assert.deepEqual(await client[method](...args), { result: command }, method);
+    assert.deepEqual(await client[method](...args), method === 'loadSettings' ? { result: command, keybindings: undefined, hiddenModels: undefined, knownModels: undefined, debugMode: undefined } : { result: command }, method);
     assert.deepEqual(commands(command).at(-1).args, expected ?? {}, method);
   }
   const functions = [

@@ -45,13 +45,13 @@ export function Markdown(props: { children: string }) {
   const [menu, setMenu] = createSignal<LinkMenu>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   let root: HTMLDivElement | undefined;
-  let menuElement: HTMLDivElement | undefined;
+  const [menuElement, setMenuElement] = createSignal<HTMLDivElement>();
   onCleanup(() => timers.forEach(clearTimeout));
   const close = (restoreFocus = false) => { if (restoreFocus) menu()?.returnFocus?.focus({ preventScroll: true }); setMenu(undefined); };
   createEffect(() => {
     const current = menu();
-    if (!current || !menuElement) return;
-    const element = menuElement;
+    const element = menuElement();
+    if (!current || !element) return;
     const bounds = element.getBoundingClientRect();
     element.style.left = `${Math.max(8, Math.min(current.x, window.innerWidth - bounds.width - 8))}px`;
     element.style.top = `${Math.max(8, Math.min(current.y, window.innerHeight - bounds.height - 8))}px`;
@@ -78,11 +78,17 @@ export function Markdown(props: { children: string }) {
     });
   });
   const copyCode = async (button: HTMLButtonElement) => {
+    button.closest(".code-block")?.querySelector("[role=status]")?.remove();
     try {
       await navigator.clipboard.writeText((button.closest(".code-block")?.querySelector("code")?.textContent ?? "").replace(/\n$/, ""));
       button.textContent = "✓"; button.setAttribute("aria-label", "Code copied");
-    } catch { button.textContent = "!"; button.setAttribute("aria-label", "Copy failed"); }
-    const timer = setTimeout(() => { button.textContent = "⧉"; button.setAttribute("aria-label", "Copy code"); timers.delete(timer); }, 1800);
+    } catch {
+      button.textContent = "!"; button.setAttribute("aria-label", "Copy failed");
+      const feedback = document.createElement("span");
+      feedback.className = "copy-feedback"; feedback.setAttribute("role", "status"); feedback.textContent = "Could not copy";
+      button.closest(".code-block")?.append(feedback);
+    }
+    const timer = setTimeout(() => { button.textContent = "⧉"; button.setAttribute("aria-label", "Copy code"); button.closest(".code-block")?.querySelector("[role=status]")?.remove(); timers.delete(timer); }, 1800);
     timers.add(timer);
   };
   const click = (event: MouseEvent) => {
@@ -91,7 +97,7 @@ export function Markdown(props: { children: string }) {
     if (link) {
       event.preventDefault();
       const url = webUrl(link.href);
-      if (event.button === 0 && url) { setError(undefined); void openExternalUrl(url).catch(reason => setError(`Could not open link: ${String(reason)}`)); }
+      if (event.button === 0 && url) { setError(undefined); void openExternalUrl(url).catch(reason => setError(`Could not open link: ${reason instanceof Error ? reason.message : String(reason)}`)); }
     }
     const button = event.target.closest<HTMLButtonElement>("button.code-copy");
     if (button) void copyCode(button);
@@ -113,7 +119,7 @@ export function Markdown(props: { children: string }) {
   return <>
     <div ref={root} class="markdown-content" innerHTML={html()} onClick={click} onContextMenu={contextMenu} onAuxClick={event => event.preventDefault()} />
     <Show when={menu()}>{current => <Portal mount={root?.closest(".app") ?? document.body}>
-      <div ref={menuElement} class="conversation-menu link-context-menu" role="menu" aria-label="Link actions" style={{ left: `${current().x}px`, top: `${current().y}px` }} onContextMenu={event => event.preventDefault()}>
+      <div ref={setMenuElement} class="conversation-menu link-context-menu" role="menu" aria-label="Link actions" style={{ left: `${current().x}px`, top: `${current().y}px` }} onContextMenu={event => event.preventDefault()}>
         <button type="button" role="menuitem" onClick={() => void copyLink()}><Copy size={14} />Copy link</button>
       </div>
     </Portal>}</Show>
