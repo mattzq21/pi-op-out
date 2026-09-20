@@ -45,6 +45,19 @@ type AppEventsContext = {
 export function useAppEvents(options: Accessor<AppEventsContext>) {
   createDependencyEffect(() => { const capturedOptions = options();
     let cancelled = false; let reconnecting = false; const refreshTimers = new Set<number>();
+    const loadSelectedSession = async () => {
+      const current = () => !cancelled && capturedOptions.activeTransportRef.current === capturedOptions.transport;
+      await capturedOptions.transport.connect();
+      if (!current()) return;
+      const settings = await capturedOptions.refresh();
+      if (!current()) return;
+      await capturedOptions.configureRuntime(settings);
+      if (!current()) return;
+      await capturedOptions.refreshSession();
+      if (!current()) return;
+      capturedOptions.setError(undefined);
+      capturedOptions.updateConnected(true);
+    };
     const unsubscribe = capturedOptions.transport.subscribe((event: RpcEvent) => {
       capturedOptions.handleEvent(event);
       const handleExtensionUiResolved = () => {
@@ -154,7 +167,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         reconnecting = true;
         window.setTimeout(() => {
           if (cancelled) return; const diagnostic = capturedOptions.transport.lastDiagnostic();
-          void capturedOptions.transport.connect().then(() => capturedOptions.refresh()).then((value) => capturedOptions.configureRuntime(value)).then(() => capturedOptions.refreshSession()).then(() => { if (!cancelled) { capturedOptions.setError(undefined); capturedOptions.updateConnected(true); } }).catch((reason: unknown) => { if (!cancelled) { const message = reason instanceof Error ? reason.message : String(reason); capturedOptions.setError(diagnostic && !message.includes(diagnostic) ? `${message}\n${diagnostic}` : message); } }).finally(() => { reconnecting = false; });
+          void loadSelectedSession().catch((reason: unknown) => { if (!cancelled) { const message = reason instanceof Error ? reason.message : String(reason); capturedOptions.setError(diagnostic && !message.includes(diagnostic) ? `${message}\n${diagnostic}` : message); } }).finally(() => { reconnecting = false; });
         }, 50);
       };
       const handlers: Record<string, () => void> = {
@@ -173,7 +186,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
       };
       if (Object.hasOwn(handlers, event.type)) handlers[event.type]();
     });
-    capturedOptions.transport.connect().then(() => capturedOptions.refresh()).then((value) => capturedOptions.configureRuntime(value)).then(() => capturedOptions.refreshSession()).then(() => { if (!cancelled) { capturedOptions.setError(undefined); capturedOptions.updateConnected(true); } }).catch((reason: unknown) => { if (!cancelled) capturedOptions.setError(reason instanceof Error ? reason.message : String(reason)); });
+    loadSelectedSession().catch((reason: unknown) => { if (!cancelled) capturedOptions.setError(reason instanceof Error ? reason.message : String(reason)); });
     return () => { cancelled = true; refreshTimers.forEach(window.clearTimeout); unsubscribe(); if (capturedOptions.terminalOutputFrame.current !== undefined) window.clearTimeout(capturedOptions.terminalOutputFrame.current); capturedOptions.terminalOutputFrame.current = undefined; capturedOptions.queuedTerminalOutput.current.clear(); };
   }, () => [options().addNotice, options().configureRuntime, options().handleEvent, options().queueExtensionDialog, options().queueTerminalOutput, options().refresh, options().refreshSession, options().transport]);
 }

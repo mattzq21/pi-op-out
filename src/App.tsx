@@ -212,7 +212,7 @@ export default function App() {
   }, () => [applyRuntimeSettings]);
   const refresh = async (hostId?: string) => { const capturedTransport = transport(); const capturedSession = { ...chatSession() }; const capturedRuntimePool = runtimePool();
     void syncSessionIndex();
-    const settingsRequest = capturedTransport.loadSettings().then((nextSettings) => { applyRuntimeSettings(nextSettings); setSettings(nextSettings); return nextSettings; });
+    const settingsRequest = capturedTransport.loadSettings().then((nextSettings) => { if (activeTransportRef.current !== capturedTransport) throw new Error("Conversation changed"); applyRuntimeSettings(nextSettings); setSettings(nextSettings); return nextSettings; });
     const [nextState, nextSettings] = await Promise.all([capturedSession.refresh(), settingsRequest]); capturedRuntimePool.bind(hostId ?? capturedTransport.currentHostId(), nextState.sessionId, capturedTransport);
     const group = pendingSessionGroups.current.get(capturedTransport);
     if (group && nextState.sessionId) {
@@ -224,23 +224,31 @@ export default function App() {
     return nextSettings;
   };
   const configureRuntime = async (value: AppSettings) => { const capturedTransport = transport();
-    if (!capturedTransport.ownsConversation()) return;
+    const current = () => activeTransportRef.current === capturedTransport;
+    if (!current() || !capturedTransport.ownsConversation()) return;
     if (capturedTransport.currentHostId() !== "local") value = await capturedTransport.loadHostSettings();
+    if (!current()) return;
     const [modelResult] = await Promise.allSettled([
       capturedTransport.command<{ models: Model[] }>({ type: "get_available_models" }),
       capturedTransport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }),
     ]);
+    if (!current()) return;
     await Promise.all([
       capturedTransport.command({ type: "set_auto_compaction", enabled: true }),
       capturedTransport.command({ type: "set_auto_retry", enabled: value.autoRetry }),
     ]);
+    if (!current()) return;
     const availableModels = modelResult.status === "fulfilled" ? modelResult.value.models : [];
     if (capturedTransport.needsDefaults()) {
       const defaultModel = availableModels.find((model) => `${model.provider}/${model.id}` === value.defaultModel);
       if (defaultModel) await capturedTransport.command({ type: "set_model", provider: defaultModel.provider, modelId: defaultModel.id });
+      if (!current()) return;
       const { levels } = await capturedTransport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" });
+      if (!current()) return;
       if (levels.includes(value.defaultThinking)) await capturedTransport.command({ type: "set_thinking_level", level: value.defaultThinking });
+      if (!current()) return;
       await capturedTransport.setFastMode(value.defaultFastMode);
+      if (!current()) return;
       await capturedTransport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(value.defaultAgent ?? "general")}` });
       capturedTransport.defaultsApplied();
     }

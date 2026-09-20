@@ -29,7 +29,16 @@ export function useChatSession(transport: Accessor<Pick<NativeTransport, "comman
 function createChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation">>>, initialState: Accessor<AgentState>) {
   const session = useSessionMemory(() => (transport()), () => (initialState()));
   const owner = createRef<ReturnType<typeof transport> | undefined>(transport());
-  onCleanup(() => { owner.current = undefined; });
+  const loading = new AbortController();
+  onCleanup(() => { owner.current = undefined; loading.abort(); });
+  const load = <T,>(command: Parameters<ReturnType<typeof transport>["command"]>[0]): Promise<T> => {
+    if (loading.signal.aborted) return Promise.reject(new Error("Conversation changed"));
+    return new Promise<T>((resolve, reject) => {
+      const cancel = () => reject(new Error("Conversation changed"));
+      loading.signal.addEventListener("abort", cancel, { once: true });
+      transport().command<T>(command).then(resolve, reject).finally(() => loading.signal.removeEventListener("abort", cancel));
+    });
+  };
   const capabilityRequest = createRef(0);
   const refreshOperation = createRef<{ transport: ReturnType<typeof transport>; promise: Promise<AgentState>; buffer: RpcEvent[] } | undefined>(undefined);
   const bufferedEvents = createRef<RpcEvent[] | undefined>(undefined);
@@ -87,7 +96,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     };
     const promise = (async () => { const capturedTransport = transport();
       try {
-        const { revision } = await capturedTransport.command<{ revision: string }>({ type: "get_session_revision" });
+        const { revision } = await load<{ revision: string }>({ type: "get_session_revision" });
         if (owner.current !== capturedTransport) throw new Error("Conversation changed");
         if (session.memory.revision === revision) {
           for (const message of session.memory.getSnapshot().messages.filter((message) => message.streaming)) trackLiveId(message.role, message.id);
@@ -95,12 +104,12 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
           return session.memory.getSnapshot().state;
         }
         const request = ++capabilityRequest.current;
-        const snapshotRequest = capturedTransport.command<SessionSnapshot>({ type: "get_snapshot" });
+        const snapshotRequest = load<SessionSnapshot>({ type: "get_snapshot" });
         const capabilities = () => Promise.all([
-          capturedTransport.command<{ models: Model[] }>({ type: "get_available_models" }).catch(() => undefined),
-          capturedTransport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }).catch(() => undefined),
-          capturedTransport.command<{ commands: SlashCommand[] }>({ type: "get_commands" }).catch(() => undefined),
-          capturedTransport.command<{ contextUsage?: AgentState["contextUsage"] }>({ type: "get_session_stats" }).catch(() => undefined),
+          load<{ models: Model[] }>({ type: "get_available_models" }).catch(() => undefined),
+          load<{ levels: string[] }>({ type: "get_available_thinking_levels" }).catch(() => undefined),
+          load<{ commands: SlashCommand[] }>({ type: "get_commands" }).catch(() => undefined),
+          load<{ contextUsage?: AgentState["contextUsage"] }>({ type: "get_session_stats" }).catch(() => undefined),
         ]);
         const snapshot = await snapshotRequest;
         if (owner.current !== capturedTransport || bufferedEvents.current !== buffer) throw new Error("Conversation changed");
