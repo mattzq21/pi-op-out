@@ -13,6 +13,7 @@ import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 import { cacheHitStats } from "../lib/messages";
 import { turnDiff } from "../lib/turnDiff";
 import { DiffViewer } from "./DiffViewer";
+import { DeferredTurn } from "./DeferredTurn";
 
 interface Props { voiceTransport?: NativeTransport; state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; debug?: boolean; agents?: AgentProfile[]; activeAgent?: string; agentLocked?: boolean; agentSaved?: boolean; agentUnavailable?: boolean; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; selectionBtw?: boolean; draft?: string; onDraftChange?: (value: string) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: SetStateAction<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onPause: () => void | Promise<void>; onResume: () => void | Promise<void>; onOpenTerminal?: () => void; onOpenProject: () => void; onClearProject?: () => void; onBranch: (message: ChatMessage) => void; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
 
@@ -174,7 +175,7 @@ export function ChatView(props: Props) {
         lastScrollTop.current = element.scrollTop;
       }}><div className="conversation">
         {!messages.length && !mcpLoading && <div className="empty-chat"><span>πop</span></div>}
-        {turns.map((turn, index) => <ConversationTurn key={turnKey(turn, index)} messages={turn} gitDiffs={props.gitDiffs} cwd={props.projectCwd} debug={props.debug ?? false} active={props.state.isStreaming && index === turns.length - 1} retryable={retryable && index === turns.length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index === turns.length - 1} onRetry={onRetry} onBranch={onBranch} onForkAndForget={props.onForkAndForget ? onForkAndForget : undefined} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} />)}
+        {turns.map((turn, index) => <DeferredTurn key={turnKey(turn, index)} scrollRoot={messagesRef} eager={index >= turns.length - 3}><ConversationTurn messages={turn} gitDiffs={props.gitDiffs} cwd={props.projectCwd} debug={props.debug ?? false} active={props.state.isStreaming && index === turns.length - 1} retryable={retryable && index === turns.length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index === turns.length - 1} onRetry={onRetry} onBranch={onBranch} onForkAndForget={props.onForkAndForget ? onForkAndForget : undefined} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} /></DeferredTurn>)}
         {mcpLoading && <section className="mcp-pending-turn" aria-label="Message waiting for MCP" aria-busy="true">
           {submittedMessage && <div className="mcp-pending-message"><Message message={submittedMessage} showActions={false} /></div>}
           <div className="mcp-loading-list" role="status">{props.debug ? loadingServers.map((server) => <div className="mcp-loading" key={server.id}><LoaderCircle className="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading {server.name}</span></div>) : <div className="mcp-loading"><LoaderCircle className="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading MCPs</span></div>}</div>
@@ -273,6 +274,7 @@ function ConversationTurnView({ messages, gitDiffs, cwd, debug, active, retryabl
     return turnDiff(messages, final ? gitDiffs?.[final.id] : undefined, cwd);
   }, [messages, gitDiffs, cwd]);
   const [retryError, setRetryError] = useState<string>();
+  const [workOpen, setWorkOpen] = useState(false);
   const [retrying, setRetrying] = useState(false); const retryingRef = useRef(false);
   const userIndex = messages.findIndex((message) => message.role === "user");
   const promptContext = userIndex >= 0 && messages[userIndex].deliveryBehavior !== "steer" ? messages[userIndex].promptContext : undefined;
@@ -287,7 +289,8 @@ function ConversationTurnView({ messages, gitDiffs, cwd, debug, active, retryabl
     return [{ ...reasoningMessage, id: `${message.id}:reasoning`, content: [{ type: "thinking" as const, thinking: finalThinking }], stopReason: undefined, errorMessage: undefined }];
   });
   const userMessages = messages.filter((message) => message.role === "user");
-  const workContent = renderMessages(intermediate, true, true, debug, paused, false);
+  const workContent = workOpen ? renderMessages(intermediate, true, true, debug, paused, false) : null;
+  const hasWork = intermediate.some((message) => !invisibleAssistant(message));
   const reasoningOnly = compactCompletedTools(intermediate).every(({ message }) => message.role === "assistant" && hasVisibleText(thinkingOf(message.content)) && !hasVisibleText(textOf(message.content)) && message.stopReason !== "error" && message.stopReason !== "aborted");
   const finalMessage = finalIndex >= 0 ? { ...messages[finalIndex], content: textOf(messages[finalIndex].content) } : undefined;
   const turnCacheUsage = messages.reduce((total, message) => {
@@ -305,8 +308,9 @@ function ConversationTurnView({ messages, gitDiffs, cwd, debug, active, retryabl
 
   if (messages.length === 1 && messages[0].customType === VOICE_MESSAGE) return <section className="conversation-turn"><Message message={messages[0]} debug={debug} /></section>;
   const renderPromptContextBar = () => (debug && promptContext && <PromptContextBar context={promptContext} />);
+  const renderWorkGroup = () => hasWork && <details className="work-group" open={workOpen} onToggle={(event) => setWorkOpen(event.currentTarget.open)}><summary>{reasoningOnly ? "Reasoning" : workedFor ? `Worked for ${workedFor}` : "Work"}<ChevronRight size={12} className="work-group-chevron" aria-hidden="true" /></summary>{workOpen && <div className={`work-group-content${reasoningOnly ? " reasoning-group-content" : ""}`}>{workContent}</div>}</details>;
   const renderActiveWorkContent = () => (active || paused ? <div className="active-work-content">{renderMessages(messages.filter((message) => message.role !== "user"), true, false, debug, paused)}</div> : <>
-    {workContent.length > 0 && <details className="work-group"><summary>{reasoningOnly ? "Reasoning" : workedFor ? `Worked for ${workedFor}` : "Work"}<ChevronRight size={12} className="work-group-chevron" aria-hidden="true" /></summary><div className={`work-group-content${reasoningOnly ? " reasoning-group-content" : ""}`}>{workContent}</div></details>}
+    {renderWorkGroup()}
     {finalMessage && <Message message={finalMessage} turnCacheUsage={turnCacheUsage} diff={changes} debug={debug} paused={paused} onBranch={onBranch} onForkAndForget={onForkAndForget} onCreateWorktree={worktreeResponse} retrying={retrying} onRetry={retryPrompt ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(onRetry(retryPrompt, undefined, retryImages)).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
     {retryError && <div className="message-failure retry-error" role="alert">Retry failed: {retryError}</div>}
     {renderMessages(messages.filter((message) => message.role === "system"), false)}

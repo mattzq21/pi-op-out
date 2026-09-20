@@ -48,6 +48,7 @@ function initialSnapshot(state: AgentState): CachedSession {
 
 function stripToolArguments(message: ChatMessage): ChatMessage {
   if (!Array.isArray(message.content)) return message;
+  if (!message.content.some((part) => part.type === "toolCall" && (part.partialArgs || Object.keys(part.arguments ?? {}).length))) return message;
   return { ...message, content: message.content.map((part) => part.type === "toolCall"
     ? { type: "toolCall", id: part.id, name: part.name, arguments: {} } : part) };
 }
@@ -62,6 +63,7 @@ export class SessionMemory {
   private reserved = 0;
   private batching = 0;
   private resourceReleases = new Map<string, () => void>();
+  private decorated = new WeakMap<ChatMessage, ChatMessage>();
   revision?: string;
   constructor(private transport: Transport, private initialState: AgentState) {
     this.value = initialSnapshot(initialState);
@@ -136,6 +138,15 @@ export class SessionMemory {
   }
 
   private decorate(message: ChatMessage): ChatMessage {
+    const cached = this.decorated.get(message);
+    if (cached) return cached;
+    const result = this.decorateMessage(message);
+    this.decorated.set(message, result);
+    this.decorated.set(result, result);
+    return result;
+  }
+
+  private decorateMessage(message: ChatMessage): ChatMessage {
     if (message.role !== "tool") return stripToolArguments(message);
     const id = message.deferredToolPayload ?? message.toolCallId ?? message.id;
     const loadToolPayload = message.loadToolPayload ?? (() => this.loadToolPayload(id));

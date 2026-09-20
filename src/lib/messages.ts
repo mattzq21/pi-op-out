@@ -91,8 +91,8 @@ function entryBranch(entries: PiEntry[], leafId: string | null): PiEntry[] {
     if (!byId.has((entry as PiEntry).id)) byId.set((entry as PiEntry).id, entry as PiEntry);
   }
   const branch: PiEntry[] = []; const visited = new Set<string>(); let cursor = leafId;
-  while (cursor && !visited.has(cursor)) { visited.add(cursor); const entry = byId.get(cursor); if (!entry) break; branch.unshift(entry); cursor = entry.parentId; }
-  return branch;
+  while (cursor && !visited.has(cursor)) { visited.add(cursor); const entry = byId.get(cursor); if (!entry) break; branch.push(entry); cursor = entry.parentId; }
+  return branch.reverse();
 }
 
 function appendPromptContext(messages: ChatMessage[], entry: PiEntry) {

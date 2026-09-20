@@ -13,6 +13,7 @@ const emptyState: AgentState = { model: null, thinkingLevel: "off", isStreaming:
 export function useChatSession(transport: Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation">>, initialState: AgentState = emptyState) {
   const { state, setState, messages, setMessages, models, setModels, commands, setCommands, thinkingLevels, setThinkingLevels, memory } = useSessionMemory(transport, initialState);
   const owner = useRef(transport); owner.current = transport;
+  const capabilityRequest = useRef(0);
   const refreshOperation = useRef<{ transport: typeof transport; promise: Promise<AgentState>; buffer: RpcEvent[] } | undefined>(undefined);
   const bufferedEvents = useRef<RpcEvent[] | undefined>(undefined);
   const eventHandler = useRef<(event: RpcEvent) => void>(() => undefined);
@@ -76,13 +77,15 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
           activeAssistantId.current = [...memory.getSnapshot().messages].reverse().find((message) => message.role === "assistant" && message.streaming)?.id;
           return memory.getSnapshot().state;
         }
-        const [snapshot, modelResult, thinkingResult, commandResult, statsResult] = await Promise.all([
-          transport.command<SessionSnapshot>({ type: "get_snapshot" }),
+        const request = ++capabilityRequest.current;
+        const snapshotRequest = transport.command<SessionSnapshot>({ type: "get_snapshot" });
+        const capabilities = () => Promise.all([
           transport.command<{ models: Model[] }>({ type: "get_available_models" }).catch(() => undefined),
           transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }).catch(() => undefined),
           transport.command<{ commands: SlashCommand[] }>({ type: "get_commands" }).catch(() => undefined),
           transport.command<{ contextUsage?: AgentState["contextUsage"] }>({ type: "get_session_stats" }).catch(() => undefined),
         ]);
+        const snapshot = await snapshotRequest;
         if (owner.current !== transport || bufferedEvents.current !== buffer) throw new Error("Conversation changed");
         if (buffer.some((event) => (event.type === "session_switched" && event.epoch !== snapshot.epoch) || (event.type === "session_info_changed" && Number(event.sequence) > snapshot.sequence))) {
           refreshOperation.current = undefined; bufferedEvents.current = undefined;
@@ -91,12 +94,18 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
         discardPendingUpdates();
         memory.batch(() => {
           restoreHistory(snapshot);
-          setState({ ...snapshot.state, pendingMessages: snapshot.queue.pendingMessages as AgentState["pendingMessages"], ...(statsResult ? { contextUsage: statsResult.contextUsage } : {}) });
-          restoreCapabilities(modelResult, thinkingResult, commandResult);
+          setState({ ...snapshot.state, pendingMessages: snapshot.queue.pendingMessages as AgentState["pendingMessages"] });
         });
         memory.markRevision(snapshot.revision);
         bufferedEvents.current = undefined;
         replaySnapshotEvents(snapshot);
+        void capabilities().then(([modelResult, thinkingResult, commandResult, statsResult]) => {
+          if (owner.current !== transport || capabilityRequest.current !== request || !memory.revision) return;
+          memory.batch(() => {
+            restoreCapabilities(modelResult, thinkingResult, commandResult);
+            if (statsResult) setState((current) => ({ ...current, contextUsage: statsResult.contextUsage }));
+          });
+        }).catch(() => undefined);
         return snapshot.state;
       } finally {
         finishRefresh();
