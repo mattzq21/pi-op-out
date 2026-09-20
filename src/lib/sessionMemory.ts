@@ -17,7 +17,7 @@ interface CachedSession {
 const stores = new WeakMap<Transport, SessionMemory>();
 const fifo = new Map<SessionMemory, number>();
 const measured = new WeakMap<object, number>();
-let outputTransfers: Promise<void> = Promise.resolve();
+let toolPayloadTransfers: Promise<void> = Promise.resolve();
 
 // Conservative retained-data accounting; strings are charged as UTF-16 and
 // objects include allocation overhead. Shared immutable values may be overcounted.
@@ -44,6 +44,12 @@ function enforceCacheLimit() {
 
 function initialSnapshot(state: AgentState): CachedSession {
   return { state, messages: [], models: [], commands: [], thinkingLevels: ["off"], resources: {} };
+}
+
+function stripToolArguments(message: ChatMessage): ChatMessage {
+  if (!Array.isArray(message.content)) return message;
+  return { ...message, content: message.content.map((part) => part.type === "toolCall"
+    ? { type: "toolCall", id: part.id, name: part.name, arguments: {} } : part) };
 }
 
 export class SessionMemory {
@@ -89,17 +95,17 @@ export class SessionMemory {
     this.value = { ...this.value, resources: {} };
   }
 
-  private dropOutput(id: string) {
+  private dropToolPayload(id: string) {
     this.loaded.delete(id);
-    this.value = { ...this.value, messages: this.value.messages.map((message) => message.deferredOutput === id
-      ? { ...message, content: "", details: undefined, outputLoaded: false } : message) };
+    this.value = { ...this.value, messages: this.value.messages.map((message) => message.deferredToolPayload === id
+      ? { ...message, content: "", details: undefined, toolInput: undefined, toolPayloadLoaded: false } : message) };
   }
 
   private trim() {
     let size = bytes(this.value) + this.reserved;
     for (const id of this.loaded) {
       if (size <= SESSION_LIMIT) break;
-      this.dropOutput(id);
+      this.dropToolPayload(id);
       size = bytes(this.value) + this.reserved;
     }
     if (size <= SESSION_LIMIT) return size;
@@ -115,7 +121,7 @@ export class SessionMemory {
     this.omitted += removed;
     const notice: ChatMessage = { id: "client-memory-limit", role: "system", content: `${this.omitted} older messages were removed from this client's memory. The full conversation remains on the host.` };
     this.value = { ...this.value, messages: [notice, ...messages.slice(removed)] };
-    const remaining = new Set(this.value.messages.map((message) => message.deferredOutput));
+    const remaining = new Set(this.value.messages.map((message) => message.deferredToolPayload));
     for (const id of this.loaded) if (!remaining.has(id)) this.loaded.delete(id);
     size = bytes(this.value) + this.reserved;
     if (size > SESSION_LIMIT) { this.value = initialSnapshot(this.initialState); this.revision = undefined; }
@@ -130,11 +136,11 @@ export class SessionMemory {
   }
 
   private decorate(message: ChatMessage): ChatMessage {
-    if (message.role !== "tool") return message;
-    const id = message.deferredOutput ?? message.toolCallId ?? message.id;
-    const loadOutput = message.loadOutput ?? (() => this.loadOutput(id));
-    if (message.outputLoaded) return { ...message, deferredOutput: id, loadOutput };
-    return { ...message, content: "", details: undefined, deferredOutput: id, outputLoaded: false, loadOutput };
+    if (message.role !== "tool") return stripToolArguments(message);
+    const id = message.deferredToolPayload ?? message.toolCallId ?? message.id;
+    const loadToolPayload = message.loadToolPayload ?? (() => this.loadToolPayload(id));
+    if (message.toolPayloadLoaded) return { ...message, deferredToolPayload: id, loadToolPayload };
+    return { ...message, content: "", details: undefined, toolInput: undefined, deferredToolPayload: id, toolPayloadLoaded: false, loadToolPayload };
   }
 
   markRevision(revision: string) { if (fifo.has(this)) this.revision = revision; }
@@ -150,44 +156,44 @@ export class SessionMemory {
     this.commit();
   }
 
-  private outputVersion(id: string) { return this.value.messages.find((message) => message.deferredOutput === id)?.outputVersion; }
+  private toolPayloadVersion(id: string) { return this.value.messages.find((message) => message.deferredToolPayload === id)?.toolPayloadVersion; }
 
-  private async fetchOutput(id: string, generation: number) {
-    const version = this.outputVersion(id);
+  private async fetchToolPayload(id: string, generation: number) {
+    const version = this.toolPayloadVersion(id);
     let serialized = "";
     let revision: string | undefined;
     for (;;) {
-      const page = await this.transport.command<{ chunk: string; length: number; revision: string }>({ type: "get_tool_output", toolCallId: id, offset: serialized.length, revision });
+      const page = await this.transport.command<{ chunk: string; length: number; revision: string }>({ type: "get_tool_payload", toolCallId: id, offset: serialized.length, revision });
       if (generation !== this.generation) return;
       // Leave room for both the transfer string and its decoded representation.
-      if (page.length * 6 > SESSION_LIMIT) throw new Error("This tool output exceeds the client memory limit.");
+      if (page.length * 6 > SESSION_LIMIT) throw new Error("This tool payload exceeds the client memory limit.");
       this.reserved = page.length * 6;
       this.commit();
       if (generation !== this.generation) return;
       revision = page.revision;
       serialized += page.chunk;
       if (serialized.length >= page.length) break;
-      if (!page.chunk) throw new Error("Incomplete tool output");
+      if (!page.chunk) throw new Error("Incomplete tool payload");
     }
-    const output = JSON.parse(serialized) as Pick<ChatMessage, "content" | "details">;
+    const output = JSON.parse(serialized) as Pick<ChatMessage, "content" | "details" | "toolInput">;
     if (generation !== this.generation) return;
-    if (this.outputVersion(id) !== version) throw new Error("Tool output changed while loading. Reload the output.");
+    if (this.toolPayloadVersion(id) !== version) throw new Error("Tool payload changed while loading. Reload the tool payload.");
     this.reserved = 0;
     this.loaded.delete(id); this.loaded.add(id);
-    this.set("messages", (messages) => messages.map((message) => message.deferredOutput === id ? { ...message, ...output, outputLoaded: true } : message));
-    if (!this.value.messages.some((message) => message.deferredOutput === id && message.outputLoaded)) throw new Error("This tool output could not fit in the client memory limit.");
+    this.set("messages", (messages) => messages.map((message) => message.deferredToolPayload === id ? { ...message, ...output, toolPayloadLoaded: true } : message));
+    if (!this.value.messages.some((message) => message.deferredToolPayload === id && message.toolPayloadLoaded)) throw new Error("This tool payload could not fit in the client memory limit.");
   }
 
-  private loadOutput(id: string) {
-    if (this.value.messages.some((message) => message.deferredOutput === id && message.outputLoaded)) return Promise.resolve();
+  private loadToolPayload(id: string) {
+    if (this.value.messages.some((message) => message.deferredToolPayload === id && message.toolPayloadLoaded)) return Promise.resolve();
     const previous = this.loading.get(id);
     if (previous) return previous;
     const generation = this.generation;
-    const request = outputTransfers.then(() => generation === this.generation ? this.fetchOutput(id, generation) : undefined).finally(() => {
+    const request = toolPayloadTransfers.then(() => generation === this.generation ? this.fetchToolPayload(id, generation) : undefined).finally(() => {
       if (this.loading.get(id) === request) this.loading.delete(id);
       if (generation === this.generation) { this.reserved = 0; if (fifo.has(this)) this.commit(); }
     });
-    outputTransfers = request.catch(() => undefined);
+    toolPayloadTransfers = request.catch(() => undefined);
     this.loading.set(id, request);
     return request;
   }

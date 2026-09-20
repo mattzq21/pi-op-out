@@ -155,10 +155,10 @@ function ToolPayload({ message, loading, error, retry }: { message: ChatMessage;
   const output = textOf(message.content);
   return <>
     {input !== undefined && <div className="tool-payload"><div className="tool-payload-label">In</div><div className="tool-input" aria-label="Tool arguments"><pre>{input}</pre></div></div>}
-    {loading && <div role="status">Loading output…</div>}
+    {loading && <div role="status">Loading tool input and output…</div>}
     {error && <div role="alert">{error} <button onClick={retry}>Retry</button></div>}
     {output && <div className="tool-payload"><div className="tool-payload-label">Out</div><div className="tool-output" aria-label="Tool output"><pre>{output}</pre></div></div>}
-    {!loading && !error && message.deferredOutput && !message.outputLoaded && <button onClick={retry}>Load output</button>}
+    {!loading && !error && message.deferredToolPayload && !message.toolPayloadLoaded && <button onClick={retry}>Load input and output</button>}
   </>;
 }
 
@@ -168,15 +168,15 @@ function ToolResult({ message, toolCount, debug }: Pick<Props, "message" | "tool
   const [error, setError] = useState<string>();
   const [retry, setRetry] = useState(0);
   useEffect(() => {
-    if (!open || !message.loadOutput) return;
+    if (!open || !message.loadToolPayload) return;
     let active = true;
     const timer = setTimeout(() => {
       setLoading(true); setError(undefined);
-      void message.loadOutput!().catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : String(reason)); })
+      void message.loadToolPayload!().catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : String(reason)); })
         .finally(() => { if (active) setLoading(false); });
     }, message.toolStatus === "running" ? 300 : 0);
     return () => { active = false; clearTimeout(timer); };
-  }, [open, message.loadOutput, message.outputVersion, message.toolStatus, retry]);
+  }, [open, message.loadToolPayload, message.toolPayloadVersion, message.toolStatus, retry]);
   const status = message.toolStatus ?? "done";
   const label = <ToolLabel message={message} toolCount={toolCount ?? 1} status={status} />;
   if (!debug) return <div className={`tool-event ${status}`}><div className="tool-summary">{label}</div></div>;

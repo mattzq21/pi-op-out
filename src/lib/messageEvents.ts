@@ -25,7 +25,7 @@ function toolCall(current: ContentPart, event: AssistantEvent, index: number) {
 function finishToolCall(current: ContentPart, event: AssistantEvent, index: number): ContentPart {
   if (!event.toolCall) return current;
   const tool = toolCall(current, event, index);
-  return { type: 'toolCall', id: event.toolCall.id || tool.id, name: event.toolCall.name || tool.name, arguments: event.toolCall.arguments && typeof event.toolCall.arguments === 'object' ? event.toolCall.arguments as Record<string, unknown> : {} };
+  return { type: 'toolCall', id: event.toolCall.id || tool.id, name: event.toolCall.name || tool.name, arguments: {} };
 }
 
 const handlers: Record<string, (current: ContentPart, event: AssistantEvent, index: number) => ContentPart> = {
@@ -36,10 +36,7 @@ const handlers: Record<string, (current: ContentPart, event: AssistantEvent, ind
   thinking_delta: (current, event) => ({ type: 'thinking', thinking: `${current?.type === 'thinking' ? current.thinking : ''}${event.delta || ''}` }),
   thinking_end: (_, event) => ({ type: 'thinking', thinking: event.content || '' }),
   toolcall_start: toolCall,
-  toolcall_delta: (current, event, index) => {
-    const tool = toolCall(current, event, index);
-    return { ...tool, partialArgs: `${tool.partialArgs || ''}${event.delta || ''}` };
-  },
+  toolcall_delta: toolCall,
   toolcall_end: finishToolCall,
 };
 

@@ -175,7 +175,7 @@ async function readSavedConversation(target, command) {
     get_snapshot: () => snapshot,
     get_entries: () => snapshot.history,
     get_state: () => snapshot.state,
-    get_tool_output: () => toolOutputPage(snapshot.history.entries.find((entry) => entry.message?.role === 'toolResult' && entry.message.toolCallId === command.toolCallId)?.message, command),
+    get_tool_payload: () => toolPayloadPage(savedToolPayload(snapshot.history.entries, command.toolCallId), command),
   };
   return readers[command.type]();
 }
@@ -186,7 +186,7 @@ async function handleReadonly(packet) {
   if (type === 'detach') { readonlyViews.delete(runtimeId); attachments.delete(runtimeId); return { stopped: false }; }
   if (type === 'presence') return;
   const live = [...sessions.values()].find((session) => session.identity === target.id && !session.closed && !session.transient);
-  if (['get_snapshot', 'get_entries', 'get_state', 'get_session_revision', 'get_tool_output'].includes(packet.command?.type)) {
+  if (['get_snapshot', 'get_entries', 'get_state', 'get_session_revision', 'get_tool_payload'].includes(packet.command?.type)) {
     return live ? live.execute(packet.command) : readSavedConversation(target, packet.command);
   }
   throw ownershipError();

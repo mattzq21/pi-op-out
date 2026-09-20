@@ -127,16 +127,5 @@ export function branchMessages(entries: PiEntry[], leafId: string | null): ChatM
     const message = visibleEntryMessage(entry, resumeMarkers);
     if (message) messages.push(message);
   }
-  return withToolInputs(mergeSpokenMessages(messages, spoken));
-}
-
-function withToolInputs(messages: ChatMessage[]) {
-  const toolInputs = new Map<string, unknown>();
-  for (const message of messages) if (message.role === "assistant" && Array.isArray(message.content)) for (const part of message.content) {
-    if (part.type === "toolCall") toolInputs.set(part.id, part.arguments);
-  }
-  return messages.map((message) => {
-    const toolCallId = (message as ChatMessage & { toolCallId?: string }).toolCallId;
-    return message.role === "tool" && toolCallId && toolInputs.has(toolCallId) ? { ...message, toolInput: toolInputs.get(toolCallId) } : message;
-  });
+  return mergeSpokenMessages(messages, spoken);
 }

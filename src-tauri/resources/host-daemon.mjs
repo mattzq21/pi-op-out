@@ -20,10 +20,17 @@ const stateChanges = new Set(['session_info_changed', 'session_switched', 'model
 function clientPayload(_key, value) {
   if (!value || typeof value !== 'object') return value;
   if (Array.isArray(value.entries) && Object.hasOwn(value, 'leafId')) return clientHistory(value);
-  if (value.role === 'toolResult') return { ...value, content: '', details: undefined, deferredOutput: value.toolCallId };
+  if (value.role === 'toolResult') return { ...value, content: '', details: undefined, toolInput: undefined, deferredToolPayload: value.toolCallId };
+  return clientToolPayload(value);
+}
+
+function clientToolPayload(value) {
+  if (value.type === 'toolCall') return { type: 'toolCall', id: value.id, name: value.name };
+  if (value.type === 'toolcall_delta') return { ...value, delta: undefined };
+  if (value.type === 'toolcall_end' && value.toolCall) return { ...value, toolCall: { id: value.toolCall.id, name: value.toolCall.name } };
   if (typeof value.type === 'string' && value.type.startsWith('tool_execution_')) {
-    const deferred = { content: '', deferredOutput: value.toolCallId };
-    return { ...value, ...(value.result ? { result: deferred } : {}), ...(value.partialResult ? { partialResult: deferred } : {}) };
+    const deferred = { content: '', deferredToolPayload: value.toolCallId };
+    return { ...value, args: undefined, ...(value.result ? { result: deferred } : {}), ...(value.partialResult ? { partialResult: deferred } : {}) };
   }
   return value;
 }
@@ -44,11 +51,29 @@ function clientHistory(history) {
 }
 const output = (packet) => process.stdout.write(JSON.stringify(packet, clientPayload) + '\n');
 
-function toolOutputPage(message, command) {
-  if (!message) throw new Error('Tool output is not available yet');
-  const serialized = JSON.stringify({ content: message.content ?? '', details: message.details });
+function savedToolCall(message, id) {
+  if (!Array.isArray(message?.content)) return undefined;
+  return message.content.find((part) => part.type === 'toolCall' && part.id === id);
+}
+
+function savedToolPayload(entries, id) {
+  let toolInput;
+  let result;
+  for (const entry of entries) {
+    const message = entry.message;
+    if (message?.role === 'toolResult' && message.toolCallId === id) result = message;
+    const call = savedToolCall(message, id);
+    if (call) toolInput = call.arguments;
+  }
+  if (!result && toolInput === undefined) return undefined;
+  return { ...(result ?? { content: '' }), toolInput };
+}
+
+function toolPayloadPage(message, command) {
+  if (!message) throw new Error('Tool input and output are not available yet');
+  const serialized = JSON.stringify({ content: message.content ?? '', details: message.details, toolInput: message.toolInput });
   const revision = createHash('sha256').update(serialized).digest('hex');
-  if (command.revision && command.revision !== revision) throw new Error('Tool output changed; reopen it to reload');
+  if (command.revision && command.revision !== revision) throw new Error('Tool payload changed; reopen it to reload');
   const offset = Number(command.offset ?? 0);
   if (!Number.isSafeInteger(offset) || offset < 0 || offset > serialized.length) throw new Error('Invalid output offset');
   return { revision, length: serialized.length, chunk: serialized.slice(offset, offset + 524288) };
@@ -542,11 +567,11 @@ class Session {
     this.providerAuthRevision = revision;
   }
 
-  async collectToolOutput(command) {
-      const partial = this.tools.get(command.toolCallId)?.partialResult;
-      const history = partial ? undefined : await this.raw({ type: 'get_entries' });
-      const message = partial ?? history.entries.find((entry) => entry.message?.role === 'toolResult' && entry.message.toolCallId === command.toolCallId)?.message;
-      return toolOutputPage(message, command);
+  async collectToolPayload(command) {
+    const live = this.tools.get(command.toolCallId);
+    if (live) return toolPayloadPage({ ...live.partialResult, toolInput: live.args }, command);
+    const history = await this.raw({ type: 'get_entries' });
+    return toolPayloadPage(savedToolPayload(history.entries, command.toolCallId), command);
   }
 
   async executeWorkerCommand(command) {
@@ -562,7 +587,7 @@ class Session {
   async execute(command) {
     const readers = {
       get_session_revision: () => ({ revision: this.clientRevision() }),
-      get_tool_output: () => this.collectToolOutput(command),
+      get_tool_payload: () => this.collectToolPayload(command),
       get_snapshot: () => this.collectSnapshot(),
       get_entries: async () => (await this.collectSnapshot()).history,
       get_state: () => this.collectState(command),

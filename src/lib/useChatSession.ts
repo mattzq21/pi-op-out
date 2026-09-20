@@ -40,10 +40,10 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
     const buffer: RpcEvent[] = []; bufferedEvents.current = buffer;
     const restoreHistory = (snapshot: SessionSnapshot) => {
       for (const entry of snapshot.history.entries) { const marker = resumeMarker(entry); if (marker) resumeMarkers.current.add(marker); }
-      const previous = new Map(memory.getSnapshot().messages.filter((message) => message.outputLoaded && message.toolStatus !== "running").map((message) => [message.deferredOutput, message]));
+      const previous = new Map(memory.getSnapshot().messages.filter((message) => message.toolPayloadLoaded && message.toolStatus !== "running").map((message) => [message.deferredToolPayload, message]));
       const nextMessages = branchMessages(snapshot.history.entries, snapshot.history.leafId).map((message) => {
-        const cached = previous.get(message.deferredOutput);
-        return cached ? { ...message, content: cached.content, details: cached.details, outputLoaded: true, loadOutput: cached.loadOutput } : message;
+        const cached = previous.get(message.deferredToolPayload);
+        return cached ? { ...message, content: cached.content, details: cached.details, toolInput: cached.toolInput, toolPayloadLoaded: true, loadToolPayload: cached.loadToolPayload } : message;
       });
       if (snapshot.history.omittedEntries) nextMessages.unshift({ id: "client-memory-limit", role: "system", content: "Older history was omitted to fit this client's memory limit. The full conversation remains on the host." });
       activeAssistantId.current = [...nextMessages].reverse().find((message) => message.role === "assistant" && message.streaming)?.id;
@@ -182,15 +182,15 @@ export function useChatSession(transport: Pick<NativeTransport, "command" | "sub
       else if (event.message) { const rawMessage = (event.message ?? {}) as Record<string, unknown>; const roleKey = String((rawMessage as { role?: unknown }).role ?? "message"); let liveId = activeMessageIds.current.get(roleKey); if (!liveId) { liveId = nextLiveMessageId(roleKey); trackLiveId(roleKey, liveId); } const message = { ...normalizeMessage(rawMessage, undefined, undefined, liveId), streaming: true }; queue((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? message : item) : [...current, message]); }
     };
     const handleToolExecutionStart = () => {
-      const message: ChatMessage = { id: String(event.toolCallId), role: "tool", toolName: String(event.toolName), toolStatus: "running", toolInput: event.args ?? {}, content: "", timestamp: Date.now() };
+      const message: ChatMessage = { id: String(event.toolCallId), role: "tool", toolName: String(event.toolName), toolStatus: "running", content: "", timestamp: Date.now() };
       setMessages((current) => [...current.filter((item) => item.id !== message.id), message]);
     };
     const handleToolExecutionUpdate = () => {
-      queue((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: "", details: undefined, outputLoaded: false, outputVersion: Number(event.sequence), toolStatus: "running" } : item));
+      queue((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: "", details: undefined, toolPayloadLoaded: false, toolPayloadVersion: Number(event.sequence), toolStatus: "running" } : item));
     };
     const handleToolExecutionEnd = () => {
       flush();
-      setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: "", details: undefined, outputLoaded: false, outputVersion: Number(event.sequence), toolStatus: event.isError ? "error" : "done" } : item));
+      setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: "", details: undefined, toolPayloadLoaded: false, toolPayloadVersion: Number(event.sequence), toolStatus: event.isError ? "error" : "done" } : item));
     };
     const handleQueueUpdate = () => {
       setState((current) => ({ ...current, pendingMessages: event.pendingMessages as AgentState["pendingMessages"], pendingMessageCount: [...((event.steering as unknown[]) ?? []), ...((event.followUp as unknown[]) ?? [])].length }));
