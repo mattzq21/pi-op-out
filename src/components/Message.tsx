@@ -111,14 +111,14 @@ export function Message(componentProps: Props) {
     window.setTimeout(() => setCopyState("idle"), 1800);
   };
 
-  const renderUserMessage = () => {
-    const { skills, text, literalSkill } = userMessageParts(textOf(componentProps.message.content));
-    const sentTime = formatMessageTime(componentProps.message.timestamp);
-    return <article class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`} title={sentTime ? `Sent ${sentTime.full}` : undefined}>
-      <div class="message-body">{<Key each={skills} by={(skill) => skill}>{(skill, index) => <span class="skill-reference" >${skill()}</span>}</Key>}{text && (literalSkill ? <span class="literal-skill-content">{text}</span> : <Markdown>{text}</Markdown>)}</div>
+  const UserMessage = () => {
+    const parts = createMemo(() => userMessageParts(textOf(componentProps.message.content)));
+    const sentTime = createMemo(() => formatMessageTime(componentProps.message.timestamp));
+    return <article class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`} title={sentTime() ? `Sent ${sentTime()!.full}` : undefined}>
+      <div class="message-body">{<Key each={parts().skills} by={(skill) => skill}>{(skill, index) => <span class="skill-reference" >${skill()}</span>}</Key>}{parts().text && (parts().literalSkill ? <span class="literal-skill-content">{parts().text}</span> : <Markdown>{parts().text}</Markdown>)}</div>
       {Array.isArray(componentProps.message.content) && <Index each={componentProps.message.content.flatMap(part => part.type === "image" ? [part] : [])}>{(part, index) => part().type === "image" && part().data && part().mimeType && /^image\/(png|jpeg|gif|webp)$/.test(part().mimeType) ? <img  src={`data:${part().mimeType};base64,${part().data}`} alt="Sent attachment" style={{ "max-width": "100%", "max-height": cssPixels(320), "object-fit": "contain" }} /> : null}</Index>}
       <div class="message-actions">
-        {sentTime && <span class="message-time" title={sentTime.full}>{sentTime.short}</span>}
+        {sentTime() && <span class="message-time" title={sentTime()!.full}>{sentTime()!.short}</span>}
         <MessageCopyButton state={copyState()} copy={copy} />
         {copyState() === "error" && <span class="copy-feedback" role="status">Could not copy message</span>}
       </div>
@@ -172,5 +172,5 @@ export function Message(componentProps: Props) {
   const renderAssistantMessage = () => (<article class={`message assistant-message ${thinking() ? "reasoning-message" : ""}`} aria-label={metadata().responseLabel}>
     {renderMessageBody()}
   </article>);
-  return <>{componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? (<ToolResult message={componentProps.message} toolCount={(componentProps.toolCount === undefined ? 1 : componentProps.toolCount)} debug={(componentProps.debug === undefined ? false : componentProps.debug)} />) : componentProps.message.role === "user" ? (renderUserMessage()) : (renderAssistantMessage())}</>;
+  return <>{componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? (<ToolResult message={componentProps.message} toolCount={(componentProps.toolCount === undefined ? 1 : componentProps.toolCount)} debug={(componentProps.debug === undefined ? false : componentProps.debug)} />) : componentProps.message.role === "user" ? (<UserMessage />) : (renderAssistantMessage())}</>;
 }
