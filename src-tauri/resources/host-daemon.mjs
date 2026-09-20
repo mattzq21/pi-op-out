@@ -558,7 +558,8 @@ async function handle(packet) {
     const guard = packet.ephemeral ? { owned: true, release: async () => {} } : await ownership.begin(identity, packet.clientId, { take: packet.takeOwnership, path, create: !path });
     if (!guard.owned) { readonlyViews.set(runtimeId, { id: identity, path }); return { attached: true, owned: false }; }
     try {
-    const cwd = guard.saved?.header.cwd || packet.cwd;
+    const requestedCwd = guard.saved?.header.cwd || packet.cwd;
+    const cwd = requestedCwd === '~' ? homedir() : requestedCwd?.startsWith('~/') ? join(homedir(), requestedCwd.slice(2)) : requestedCwd;
     const spec = packet.spec.env?.PIOP_REMOTE_SESSION_CLAIMS
       ? { ...packet.spec, env: { ...packet.spec.env, PIOP_SESSION_CWD: cwd || '~' } }
       : { ...packet.spec, cwd: cwd || packet.spec.cwd };

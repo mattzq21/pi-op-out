@@ -166,6 +166,11 @@ export class NativeTransport {
   }
   private async establishConnection(forkPath?: string, _ephemeral = false) {
     const version = ++this.connectionVersion;
+    if (this.cwd === "~" || this.cwd?.startsWith("~/")) {
+      const home = await this.homeDirectory(this.hostId);
+      if (version !== this.connectionVersion) return;
+      this.cwd = this.cwd === "~" ? home : `${home.replace(/\/$/, "")}/${this.cwd.slice(2)}`;
+    }
     if (this.cwd === undefined && this.sessionPath === undefined) { const chat = await call<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId: this.hostId, e2e: import.meta.env.MODE === "e2e" }); if (version !== this.connectionVersion) { await call<void>("remove_temporary_chat", { path: chat.cwd, hostId: this.hostId }); return; } this.cwd = chat.cwd; this.sessionId = chat.sessionId; this.temporaryChat = true; }
     this.fastStatusCommand = undefined; this.fastCommands.clear();
     this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.stderrLines = [];
