@@ -2856,13 +2856,12 @@ fn home_directory(app: AppHandle, host_id: String) -> Result<String, String> {
 fn create_local_temporary_chat(home: &Path, session_id: &str) -> Result<PathBuf, String> {
     let cwd = home.join(STORAGE_DIRECTORY).join("tmp").join(session_id);
     fs::create_dir_all(&cwd).map_err(|error| format!("Could not create temporary chat directory: {error}"))?;
-    fs::write(cwd.join(".pi-desktop-temporary-chat"), b"").map_err(|error| format!("Could not mark temporary chat directory: {error}"))?;
     Ok(cwd)
 }
 
 fn temporary_chat_id(path: &str) -> Option<&str> {
     let value = Path::new(path); let id = value.file_name()?.to_str()?;
-    Uuid::parse_str(id).ok()?;
+    if Uuid::parse_str(id).ok()?.to_string() != id { return None; }
     (value.parent()?.file_name()?.to_str()? == "tmp" && value.parent()?.parent()?.file_name()?.to_str()? == STORAGE_DIRECTORY).then_some(id)
 }
 
@@ -2877,7 +2876,7 @@ fn remove_temporary_chat(app: AppHandle, path: String, host_id: String) -> Resul
 
 fn remove_remote_temporary_chat(path: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
     temporary_chat_id(path).ok_or("Refusing to remove a directory not created as a temporary chat")?;
-    let script = format!("candidate={}; root=\"$HOME/{STORAGE_DIRECTORY}/tmp\"; [ \"$(dirname -- \"$candidate\")\" = \"$root\" ] && [ -f \"$candidate/.pi-desktop-temporary-chat\" ] && rm -rf -- \"$candidate\"", shell_quote(path));
+    let script = format!("candidate={}; root=\"$HOME/{STORAGE_DIRECTORY}/tmp\"; [ \"$(dirname -- \"$candidate\")\" = \"$root\" ] && [ ! -L \"$HOME/{STORAGE_DIRECTORY}\" ] && [ ! -L \"$root\" ] && [ ! -L \"$candidate\" ] && {{ [ ! -e \"$candidate\" ] || {{ [ -d \"$candidate\" ] && rm -rf -- \"$candidate\"; }}; }}", shell_quote(path));
     let output = command(script).output().map_err(|error| format!("Could not remove temporary chat directory on {host_name}: {error}"))?;
     if !output.status.success() { return Err(format!("Could not remove temporary chat directory on {host_name}: {}", String::from_utf8_lossy(&output.stderr).trim())); }
     Ok(())
@@ -2888,8 +2887,15 @@ fn remove_local_temporary_chat(home: &Path, path: &str) -> Result<(), String> {
     let expected_root = home.join(STORAGE_DIRECTORY).join("tmp");
     let candidate = PathBuf::from(path);
     if candidate.parent() != Some(expected_root.as_path()) { return Err("Refusing to remove a directory outside the temporary chat root".into()); }
-    if !candidate.join(".pi-desktop-temporary-chat").is_file() { return Err("Refusing to remove an unmarked directory".into()); }
-    if candidate.exists() { fs::remove_dir_all(candidate).map_err(|error| format!("Could not remove temporary chat directory: {error}"))?; }
+    for directory in [home.join(STORAGE_DIRECTORY), expected_root, candidate.clone()] {
+        match fs::symlink_metadata(directory) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => return Err("Refusing to remove a temporary chat through a symlink or non-directory".into()),
+            Ok(_) => {},
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(format!("Could not inspect temporary chat directory: {error}")),
+        }
+    }
+    fs::remove_dir_all(candidate).map_err(|error| format!("Could not remove temporary chat directory: {error}"))?;
     Ok(())
 }
 
@@ -2907,12 +2913,20 @@ fn validate_local_project_directory(path: String) -> Result<String, String> {
     if path.trim().is_empty() { return Err("Path can't be empty".into()); }
     let metadata = fs::metadata(&path).map_err(|error| format!("Could not open project directory: {error}"))?;
     if !metadata.is_dir() { return Err("Project path is not a directory".into()); }
+    let canonical = fs::canonicalize(&path).map_err(|error| format!("Could not open project directory: {error}"))?;
+    let home = home_dir()?;
+    for name in [".piop", ".piop-dev"] {
+        let storage = home.join(name);
+        if Path::new(&path).starts_with(&storage) || canonical.starts_with(storage.canonicalize().unwrap_or(storage)) {
+            return Err("Piop storage directories cannot be selected as projects".into());
+        }
+    }
     Ok(path)
 }
 
 fn validate_remote_project_directory(path: String, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<String, String> {
     if path.trim().is_empty() { return Err("Path can't be empty".into()); }
-    let script = format!("test -d {0} && cd {0} && pwd -P", shell_quote(&path));
+    let script = format!("test -d {0} && cd {0} || exit 1; candidate=$(pwd -P); for storage in \"$HOME/.piop\" \"$HOME/.piop-dev\"; do [ ! -d \"$storage\" ] || storage=$(cd \"$storage\" && pwd -P); case \"$candidate\" in \"$storage\"|\"$storage\"/*) echo 'Piop storage directories cannot be selected as projects' >&2; exit 1;; esac; done; printf '%s\\n' \"$candidate\"", shell_quote(&path));
     let output = command(script).output().map_err(|error| format!("Could not validate project directory on {host_name}: {error}"))?;
     if !output.status.success() { return Err(format!("Could not open project directory on {host_name}: {}", String::from_utf8_lossy(&output.stderr).trim())); }
     Ok(path)
@@ -2933,7 +2947,8 @@ fn create_temporary_chat(app: AppHandle, host_id: String, e2e: Option<bool>) -> 
 }
 
 fn create_remote_temporary_chat(session_id: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<String, String> {
-    let remote = format!("mkdir -p \"$HOME/{STORAGE_DIRECTORY}/tmp/{session_id}\" && : > \"$HOME/{STORAGE_DIRECTORY}/tmp/{session_id}/.pi-desktop-temporary-chat\" && cd \"$HOME/{STORAGE_DIRECTORY}/tmp/{session_id}\" && pwd -P");
+    Uuid::parse_str(session_id).map_err(|_| "Invalid temporary chat session ID")?;
+    let remote = format!("mkdir -p \"$HOME/{STORAGE_DIRECTORY}/tmp/{session_id}\" && cd \"$HOME/{STORAGE_DIRECTORY}/tmp/{session_id}\" && pwd -P");
     let output = command(remote).output().map_err(|error| format!("Could not create temporary chat directory on {host_name}: {error}"))?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
