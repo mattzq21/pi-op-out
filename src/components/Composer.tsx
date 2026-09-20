@@ -395,7 +395,7 @@ export function Composer(props: Props) {
       const renderComposerTools = () => (<div class="composer-tools">{visualProps.voiceControls}{composer().onOpenTerminal && <IconButton title="" label="Open terminal" disabled={composer().controlsDisabled} onClick={(composer().onOpenTerminal)!}><TerminalSquare size={17} /></IconButton>}{composer().contextUsage && <ContextWheel usage={(composer().contextUsage)!} />}{composer().sessionCache && <span class={`session-cache-hit${(composer().sessionCache)!.low ? " low" : ""}`}>Cache {(composer().sessionCache)!.rate}%</span>}</div>);
       const renderComposerActions = () => {
         const renderMobileSteer = () => (isMobile && composer().streaming && <button class="mobile-steer" disabled={composer().controlsDisabled || !hasVisibleText(value())} onClick={() => void submit("steer")}>Steer</button>);
-        const renderAgentPicker = () => (<ContainedPicker label="Agent" selectedLabel={composer().agentUnavailable ? `Agent unavailable: ${composer().activeAgent}` : `${composer().activeAgent ?? "general"}${composer().agentSaved ? " · saved" : ""}`} value={composer().activeAgent ?? "general"} disabled={composer().agentLocked || composer().streaming || controls().inputDisabled} menuWidth={240} centered options={composer().agents.map((agent) => ({ value: agent.name, label: agent.name, detail: agent.name === composer().activeAgent && composer().agentSaved ? "Use latest definition" : agent.name === "general" && composer().agentUnavailable ? "Continue with default agent" : undefined }))} onChange={composer().onAgent} />);
+        const renderAgentPicker = () => (<ContainedPicker label="Agent" selectedLabel={composer().agentUnavailable ? `Agent unavailable: ${composer().activeAgent}` : `${composer().activeAgent ?? "general"}${composer().agentSaved ? " · saved" : ""}`} value={composer().activeAgent ?? "general"} disabled={composer().agentLocked || composer().streaming || controls().inputDisabled} menuMinWidth={130} centered compact options={composer().agents.map((agent) => ({ value: agent.name, label: agent.name }))} onChange={composer().onAgent} />);
         const renderFastModeIndicator = () => (fastModeSupported() && <button type="button" class={`fast-mode-indicator${fastModeEnabled() ? " active" : ""}`} aria-label="Fast mode" aria-description={(composer().fastModeStatus)!} aria-pressed={fastModeEnabled()} aria-busy={togglingFastMode()} disabled={controls().inputDisabled || togglingFastMode()} onClick={() => void toggleFastMode()}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled() ? "currentColor" : "none"} aria-hidden="true" /></button>);
         const renderModelPicker = () => (<ContainedPicker label="Model" selectedLabel={composer().model ? displayModelName((composer().model)!, composer().models) : undefined} value={composer().model ? `${(composer().model)!.provider}/${(composer().model)!.id}` : ""} disabled={composer().streaming || controls().inputDisabled} options={composer().models.map((item) => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item, composer().models), detail: providerAccountLabel(item.provider) }))} onChange={(value) => { const next = composer().models.find((item) => `${item.provider}/${item.id}` === value); if (next) composer().onModel(next); }} />);
         const renderStopButton = () => ((composer().streaming || composer().paused || composer().pausing) && <IconButton title="" label="Stop piop" class="stop-compact" disabled={controls().stopDisabled} onClick={() => void control("abort")}><CircleStop size={17} /></IconButton>);
@@ -494,11 +494,11 @@ export function Composer(props: Props) {
 
 type PickerOption = { value: string; label: string; detail?: string; disabled?: boolean };
 
-function pickerDefaults({ label, selectedLabel, value, options, disabled, menuWidth = 200, centered = false, compact = false, onChange }: { label: string; selectedLabel?: string; value: string; options: PickerOption[]; disabled?: boolean; menuWidth?: number; centered?: boolean; compact?: boolean; onChange: (value: string) => void }) {
+function pickerDefaults({ label, selectedLabel, value, options, disabled, menuWidth = 200, centered = false, compact = false, onChange }: { label: string; selectedLabel?: string; value: string; options: PickerOption[]; disabled?: boolean; menuWidth?: number; menuMinWidth?: number; centered?: boolean; compact?: boolean; onChange: (value: string) => void }) {
   return { label, selectedLabel, value, options, disabled, menuWidth, centered, compact, onChange };
 }
 
-function ContainedPicker(props: { label: string; selectedLabel?: string; value: string; options: PickerOption[]; disabled?: boolean; menuWidth?: number; centered?: boolean; compact?: boolean; onChange: (value: string) => void }) {
+function ContainedPicker(props: { label: string; selectedLabel?: string; value: string; options: PickerOption[]; disabled?: boolean; menuWidth?: number; menuMinWidth?: number; centered?: boolean; compact?: boolean; onChange: (value: string) => void }) {
   const picker = createMemo(() => (pickerDefaults(props)));
   const [menuStyle, setMenuStyle] = createSignal<CSSProperties>();
   const [activeIndex, setActiveIndex] = createSignal(0);
@@ -515,11 +515,18 @@ function ContainedPicker(props: { label: string; selectedLabel?: string; value: 
     if (menuStyle()) return close();
     optionChosenRef.current = false;
     const rect = trigger.current?.getBoundingClientRect(); if (!rect) return;
-    const width = Math.min(picker().menuWidth, window.innerWidth - 16);
+    const width = Math.min(props.menuMinWidth ?? picker().menuWidth, window.innerWidth - 16);
+    const right = Math.max(8, Math.min(window.innerWidth - rect.right, window.innerWidth - width - 8));
     const selectedIndex = picker().options.findIndex((option) => option.value === picker().value && !option.disabled);
     const index = Math.max(0, selectedIndex >= 0 ? selectedIndex : picker().options.findIndex((option) => !option.disabled));
     setActiveIndex(index);
-    setMenuStyle({ left: cssPixels(Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))), bottom: cssPixels(window.innerHeight - rect.top + 6), width: cssPixels(width), "max-height": cssPixels(Math.max(0, rect.top - 14)) });
+    setMenuStyle({
+      ...(props.menuMinWidth === undefined
+        ? { left: cssPixels(Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))), width: cssPixels(width) }
+        : { right: cssPixels(right), width: "max-content", "min-width": cssPixels(width), "max-width": cssPixels(window.innerWidth - right - 8) }),
+      bottom: cssPixels(window.innerHeight - rect.top + 6),
+      "max-height": cssPixels(Math.max(0, rect.top - 14)),
+    });
     requestAnimationFrame(() => optionRefs.current[index]?.focus());
   };
   createDependencyEffect(() => { const capturedMenuStyle = menuStyle();
