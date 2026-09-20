@@ -33,7 +33,16 @@ export interface GitWorktreeRemoval { branch?: string; branchDeleted: boolean; w
 
 export const openExternalUrl = (url: string) => call<void>("open_external_url", { url });
 export const loadStorageReport = async (hostId?: string) => {
-  const report = await call<StorageReport>(hostId === undefined ? "storage_report" : "host_storage_report", hostId === undefined ? undefined : { hostId });
+  if (hostId === undefined) return call<StorageReport>("storage_report");
+  let report: StorageReport;
+  try { report = await call<StorageReport>("host_storage_report", { hostId }); }
+  catch (reason) {
+    if (!String(reason).includes("Command is not available on the daemon: host_storage_report")) throw reason;
+    const legacy = await call<StorageReport>("storage_report");
+    const hosts = legacy.hosts.filter((host) => host.hostId === hostId);
+    if (!hosts.length) throw new Error("This daemon did not return storage information for the selected machine. Update its Piop daemon and retry.");
+    return { hosts };
+  }
   return hostId === undefined ? report : { hosts: report.hosts.map((host) => ({ ...host, hostId })) };
 };
 export const deleteArchivedConversation = (sessionPath: string, hostId = "local") => call<void>("delete_archived_session", { sessionPath, hostId });
@@ -287,8 +296,21 @@ export class NativeTransport {
   async isGitRepository() { if (!this.cwd) return false; return call<boolean>("is_git_repository", { cwd: this.cwd, hostId: this.hostId }); }
   async gitBranch() { if (!this.cwd) return null; const branch = await call<unknown>("git_branch", { cwd: this.cwd, hostId: this.hostId }); return typeof branch === "string" ? branch : null; }
   async loadSettings() { const settings = withClientSettings(await call<AppSettings>("load_app_settings")); saveClientSettings(settings); return settings; }
-  loadHostSettings() { return call<AppSettings>("load_host_settings", { hostId: this.hostId }); }
-  saveHostSettings(settings: AppSettings, agentsChanged = false) { return call<SettingsChange>("save_host_settings", { hostId: this.hostId, settings, agentsChanged }); }
+  async loadHostSettings() {
+    if (this.hostId === "local") return call<AppSettings>("load_app_settings");
+    try { return await call<AppSettings>("load_host_settings", { hostId: this.hostId }); }
+    catch (reason) {
+      if (String(reason).includes("Command is not available on the daemon: load_host_settings")) throw new Error("The connected or selected remote Piop daemon is older than this client. Update the daemon to access remote settings.");
+      throw reason;
+    }
+  }
+  async saveHostSettings(settings: AppSettings, agentsChanged = false) {
+    try { return await call<SettingsChange>("save_host_settings", { hostId: this.hostId, settings, agentsChanged }); }
+    catch (reason) {
+      if (String(reason).includes("Command is not available on the daemon: save_host_settings")) throw new Error("The connected or selected remote Piop daemon needs updating before it can save remote settings.");
+      throw reason;
+    }
+  }
   loadCodexUsage() { return call<CodexUsage>("codex_usage"); }
   loadOpencodeGoUsage() { return call<OpencodeGoUsage>("opencode_go_usage"); }
   saveSettings(settings: AppSettings, reconnect = true, agentHostId?: string) {
