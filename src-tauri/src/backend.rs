@@ -501,7 +501,7 @@ fn codex_usage_values(response: &Value) -> Option<CodexUsage> {
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 fn codex_usage() -> Result<CodexUsage, String> {
-    query_codex_usage(&mut Command::new(codex_executable()))
+    query_codex_usage(Command::new(codex_executable()).current_dir(home_dir()?))
 }
 
 fn query_codex_usage(command: &mut Command) -> Result<CodexUsage, String> {
