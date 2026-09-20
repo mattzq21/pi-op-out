@@ -8,7 +8,7 @@
       "path_agentprompt": "~/.piop/agents/default.md",
       "tools": ["read", "bash", "edit", "write", "grep", "find", "ls"],
       "skills": [],
-      "extensions": ["~/.piop/extensions/piop-ponytail.ts"],
+      "extensions": ["./pony-agent/index.ts"],
       "mcpServers": []
     }
   ]
