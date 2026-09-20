@@ -381,7 +381,7 @@ export function Composer(props: Props) {
       const renderComposerTools = () => (<div className="composer-tools">{voiceControls}{onOpenTerminal && <IconButton title="" label="Open terminal" disabled={controlsDisabled} onClick={onOpenTerminal}><TerminalSquare size={17} /></IconButton>}{contextUsage && <ContextWheel usage={contextUsage} />}{sessionCache && <span className={`session-cache-hit${sessionCache.low ? " low" : ""}`}>Cache {sessionCache.rate}%</span>}</div>);
       const renderComposerActions = () => {
         const renderMobileSteer = () => (isMobile && streaming && <button className="mobile-steer" disabled={controlsDisabled || !hasVisibleText(value)} onClick={() => void submit("steer")}>Steer</button>);
-        const renderAgentPicker = () => (<ContainedPicker label="Agent" selectedLabel={agentUnavailable ? `Agent unavailable: ${activeAgent}` : `${activeAgent ?? "general"}${agentSaved ? " · saved" : ""}`} value={activeAgent ?? "general"} disabled={agentLocked || streaming || inputDisabled} menuWidth={130} centered compact options={agents.map((agent) => ({ value: agent.name, label: agent.name }))} onChange={onAgent} />);
+        const renderAgentPicker = () => (<ContainedPicker label="Agent" selectedLabel={agentUnavailable ? `Agent unavailable: ${activeAgent}` : `${activeAgent ?? "general"}${agentSaved ? " · saved" : ""}`} value={activeAgent ?? "general"} disabled={agentLocked || streaming || inputDisabled} menuMinWidth={130} centered compact options={agents.map((agent) => ({ value: agent.name, label: agent.name }))} onChange={onAgent} />);
         const renderFastModeIndicator = () => (fastModeSupported && <button type="button" className={`fast-mode-indicator${fastModeEnabled ? " active" : ""}`} aria-label="Fast mode" aria-description={fastModeStatus} aria-pressed={fastModeEnabled} aria-busy={togglingFastMode} disabled={inputDisabled || togglingFastMode} onClick={() => void toggleFastMode()}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled ? "currentColor" : "none"} aria-hidden="true" /></button>);
         const renderModelPicker = () => (<ContainedPicker label="Model" selectedLabel={model ? displayModelName(model, models) : undefined} value={model ? `${model.provider}/${model.id}` : ""} disabled={streaming || inputDisabled} options={models.map((item) => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item, models), detail: providerAccountLabel(item.provider) }))} onChange={(value) => { const next = models.find((item) => `${item.provider}/${item.id}` === value); if (next) onModel(next); }} />);
         const renderStopButton = () => ((streaming || paused || pausing) && <IconButton title="" label="Stop piop" className="stop-compact" disabled={stopDisabled} onClick={() => void control("abort")}><CircleStop size={17} /></IconButton>);
@@ -484,7 +484,7 @@ function pickerDefaults({ label, selectedLabel, value, options, disabled, menuWi
   return { label, selectedLabel, value, options, disabled, menuWidth, centered, compact, onChange };
 }
 
-function ContainedPicker(props: { label: string; selectedLabel?: string; value: string; options: PickerOption[]; disabled?: boolean; menuWidth?: number; centered?: boolean; compact?: boolean; onChange: (value: string) => void }) {
+function ContainedPicker(props: { label: string; selectedLabel?: string; value: string; options: PickerOption[]; disabled?: boolean; menuWidth?: number; menuMinWidth?: number; centered?: boolean; compact?: boolean; onChange: (value: string) => void }) {
   const { label, selectedLabel, value, options, disabled, menuWidth, centered, compact, onChange } = pickerDefaults(props);
   const [menuStyle, setMenuStyle] = useState<CSSProperties>();
   const [activeIndex, setActiveIndex] = useState(0);
@@ -499,11 +499,18 @@ function ContainedPicker(props: { label: string; selectedLabel?: string; value: 
     if (menuStyle) return close();
     optionChosenRef.current = false;
     const rect = trigger.current?.getBoundingClientRect(); if (!rect) return;
-    const width = Math.min(menuWidth, window.innerWidth - 16);
+    const width = Math.min(props.menuMinWidth ?? menuWidth, window.innerWidth - 16);
+    const right = Math.max(8, Math.min(window.innerWidth - rect.right, window.innerWidth - width - 8));
     const selectedIndex = options.findIndex((option) => option.value === value && !option.disabled);
     const index = Math.max(0, selectedIndex >= 0 ? selectedIndex : options.findIndex((option) => !option.disabled));
     setActiveIndex(index);
-    setMenuStyle({ left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)), bottom: window.innerHeight - rect.top + 6, width, maxHeight: Math.max(0, rect.top - 14) });
+    setMenuStyle({
+      ...(props.menuMinWidth === undefined
+        ? { left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)), width }
+        : { right, width: "max-content", minWidth: width, maxWidth: window.innerWidth - right - 8 }),
+      bottom: window.innerHeight - rect.top + 6,
+      maxHeight: Math.max(0, rect.top - 14),
+    });
     requestAnimationFrame(() => optionRefs.current[index]?.focus());
   };
   useEffect(() => {
