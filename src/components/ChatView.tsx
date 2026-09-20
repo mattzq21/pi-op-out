@@ -11,7 +11,7 @@ import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
 import { hasVisibleText, textOf, thinkingOf } from "../lib/content";
 import { cacheHitStats } from "../lib/messages";
 import { turnDiff } from "../lib/turnDiff";
-import type { AgentProfile, AgentState, ChatMessage, ComposerUpload, GitDiffSnapshots, ImageAttachment, Model, SlashCommand } from "../types";
+import type { AgentProfile, AgentState, ChatMessage, ComposerUpload, GitDiffSnapshots, ImageAttachment, Model, PromptContextInfo, SlashCommand } from "../types";
 import { Composer } from "./Composer";
 import { DeferredTurn } from "./DeferredTurn";
 import { DiffViewer } from "./DiffViewer";
@@ -175,7 +175,7 @@ export function ChatView(props: Props) {
         lastScrollTop.current = element.scrollTop;
       }}><div class="conversation">
         {!messages().length && !mcpLoading() && <div class="empty-chat"><span>πop</span></div>}
-        {<Key each={turns()} by={turn => turn[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn  scrollRoot={messagesRef} eager={index() >= turns().length - 3}><ConversationTurn messages={turn()} gitDiffs={props.gitDiffs} cwd={props.projectCwd} debug={props.debug ?? false} active={props.state.isStreaming && index() === turns().length - 1} retryable={retryable() && index() === turns().length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index() === turns().length - 1} onRetry={onRetry} onBranch={onBranch} onForkAndForget={props.onForkAndForget ? onForkAndForget : undefined} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} /></DeferredTurn>}</Key>}
+        {<Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn  scrollRoot={messagesRef} eager={index() >= turns().length - 3}><ConversationTurn messages={turn().messages} promptContexts={turn().promptContexts} gitDiffs={props.gitDiffs} cwd={props.projectCwd} debug={props.debug ?? false} active={props.state.isStreaming && index() === turns().length - 1} retryable={retryable() && index() === turns().length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index() === turns().length - 1} onRetry={onRetry} onBranch={onBranch} onForkAndForget={props.onForkAndForget ? onForkAndForget : undefined} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} /></DeferredTurn>}</Key>}
         {mcpLoading() && <section class="mcp-pending-turn" aria-label="Message waiting for MCP" aria-busy="true">
           {submittedMessage() && <div class="mcp-pending-message"><Message message={(submittedMessage())!} showActions={false} /></div>}
           <div class="mcp-loading-list" role="status">{props.debug ? <Key each={loadingServers()} by={(server) => server.id}>{(server, index) => <div class="mcp-loading" ><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading {server().name}</span></div>}</Key> : <div class="mcp-loading"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading MCPs</span></div>}</div>
@@ -201,11 +201,30 @@ export function ChatView(props: Props) {
 }
 
 function groupTurns(messages: ChatMessage[]) {
-  return messages.reduce<ChatMessage[][]>((turns, message) => {
+  const groups = messages.reduce<ChatMessage[][]>((turns, message) => {
     if (message.role === "user" || message.customType === VOICE_MESSAGE || turns.at(-1)?.at(-1)?.customType === VOICE_MESSAGE || message.customType === "pi-desktop-btw" || turns.length === 0) turns.push([]);
     turns[turns.length - 1].push(message);
     return turns;
   }, []);
+  const turns = groups.map(messages => ({ messages, promptContexts: [] as PromptContextInfo[] }));
+  for (const [index, group] of groups.entries()) {
+    for (const prompt of group) {
+      if (prompt.role !== "user" || !prompt.promptContext) continue;
+      if (prompt.customType !== VOICE_MESSAGE) {
+        turns[index].promptContexts.push(prompt.promptContext);
+        continue;
+      }
+      const promptedAt = prompt.promptTimestamp ?? prompt.promptContext.userTimestamp ?? prompt.timestamp;
+      // Voice replies have their own turns. Put Pi's context above the first
+      // regular-agent work after the delegated prompt, not above the transcript.
+      const target = turns.slice(index + 1).find(turn => turn.messages.some(message =>
+        message.customType !== VOICE_MESSAGE && (message.role === "assistant" || message.role === "tool") &&
+        (promptedAt === undefined || message.timestamp === undefined || message.timestamp >= promptedAt)
+      ));
+      target?.promptContexts.push(prompt.promptContext);
+    }
+  }
+  return turns;
 }
 
 function formatWorkedFor(startedAt?: number, completedAt?: number) {
@@ -265,7 +284,7 @@ function MessageList(props: { messages: ChatMessage[]; expanded: boolean; compac
   return <Key each={compactCompletedTools(props.messages, (props.compact ?? true) && !props.debug)} by={entry => entry.message.id}>{entry => <Message message={entry().message} toolCount={entry().count} showActions={props.showActions ?? true} expanded={props.expanded} debug={props.debug} paused={props.paused} />}</Key>;
 }
 
-type ConversationTurnProps = { messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; cwd?: string; debug: boolean; active: boolean; retryable: boolean; paused: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"]; onForkAndForget?: Props["onForkAndForget"]; onCreateWorktree?: Props["onCreateWorktree"] };
+type ConversationTurnProps = { messages: ChatMessage[]; promptContexts: PromptContextInfo[]; gitDiffs?: GitDiffSnapshots; cwd?: string; debug: boolean; active: boolean; retryable: boolean; paused: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"]; onForkAndForget?: Props["onForkAndForget"]; onCreateWorktree?: Props["onCreateWorktree"] };
 
 function ConversationTurn(componentProps: ConversationTurnProps) {
   const changes = createMemo(() => {
@@ -276,7 +295,6 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const [workOpen, setWorkOpen] = createSignal(false);
   const [retrying, setRetrying] = createSignal(false); const retryingRef = createRef(false);
   const userIndex = createMemo(() => (componentProps.messages.findIndex((message) => message.role === "user")));
-  const promptContext = createMemo(() => (userIndex() >= 0 && (componentProps.messages[userIndex()].deliveryBehavior !== "steer" || componentProps.messages[userIndex()].customType === VOICE_MESSAGE) ? componentProps.messages[userIndex()].promptContext : undefined));
 
   const finalIndex = createMemo(() => (finalResponseIndex(componentProps.messages)));
   const finalThinking = createMemo(() => (finalIndex() >= 0 ? thinkingOf(componentProps.messages[finalIndex()].content) : ""));
@@ -304,7 +322,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const retryPrompt = createMemo(() => (retryTurn()?.prompt));
   const retryImages = createMemo(() => (retryAttachments(retryTurn())));
 
-  const renderPromptContextBar = () => (componentProps.debug && promptContext() && <PromptContextBar context={(promptContext())!} />);
+  const renderPromptContextBar = () => (componentProps.debug && <Index each={componentProps.promptContexts}>{context => <PromptContextBar context={context()} />}</Index>);
   const renderWorkGroup = () => hasWork() && <details class="work-group" open={workOpen()} onToggle={(event) => setWorkOpen(event.currentTarget.open)}><summary>{reasoningOnly() ? "Reasoning" : workedFor() ? `Worked for ${workedFor()}` : "Work"}<ChevronRight size={12} class="work-group-chevron" aria-hidden="true" /></summary>{workOpen() && <div class={`work-group-content${reasoningOnly() ? " reasoning-group-content" : ""}`}><MessageList messages={intermediate()} expanded debug={componentProps.debug} paused={componentProps.paused} showActions={false} /></div>}</details>;
   const renderActiveWorkContent = () => (componentProps.active || componentProps.paused ? <div class="active-work-content"><MessageList messages={componentProps.messages.filter(message => message.role !== "user")} expanded compact={false} debug={componentProps.debug} paused={componentProps.paused} /></div> : <>
     {renderWorkGroup()}
@@ -313,7 +331,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     <MessageList messages={componentProps.messages.filter(message => message.role === "system")} expanded={false} />
   </>);
   const renderDiffViewer = () => ((componentProps.active || componentProps.paused || !finalMessage()) && <DiffViewer {...changes()} />);
-  return <>{componentProps.messages.length === 1 && componentProps.messages[0].customType === VOICE_MESSAGE ? (<section class="conversation-turn"><Message message={componentProps.messages[0]} debug={componentProps.debug} />{renderPromptContextBar()}</section>) : (<section class="conversation-turn">
+  return <>{componentProps.messages.length === 1 && componentProps.messages[0].customType === VOICE_MESSAGE ? (<section class="conversation-turn"><Message message={componentProps.messages[0]} debug={componentProps.debug} /></section>) : (<section class="conversation-turn">
     {<Key each={userMessages()} by={(message) => message.id}>{(message, index) => <Message  message={message()} debug={componentProps.debug} />}</Key>}
     {renderPromptContextBar()}
     {renderActiveWorkContent()}
