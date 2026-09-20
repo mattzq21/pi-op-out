@@ -59,7 +59,6 @@ export function ChatView(props: Props) {
   const followLatest = createRef(true);
   const lastScrollTop = createRef(0);
   const touchY = createRef<number | undefined>(undefined);
-  const shell = createRef<HTMLElement>(null);
   const composerStack = createRef<HTMLDivElement>(null);
   const [selectionBtwTip, setSelectionBtwTip] = createSignal<SelectionBtwTip>();
   const [askingSelection, setAskingSelection] = createSignal(false);
@@ -116,12 +115,10 @@ export function ChatView(props: Props) {
   createDependencyEffect(scrollToLatest, () => [scrollToLatest, messages(), props.gitDiffs, props.state.isStreaming, mcpLoading(), submittedMessage()]);
   createDependencyEffect(() => {
     const composer = composerStack.current;
-    const chatShell = shell.current;
-    if (!composer || !chatShell) return;
-    const updateHeight = () => { chatShell.style.setProperty("--composer-height", `${composer.getBoundingClientRect().height}px`); scrollToLatest(); };
-    updateHeight();
+    if (!composer) return;
+    scrollToLatest();
     if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(updateHeight);
+    const observer = new ResizeObserver(scrollToLatest);
     observer.observe(composer);
     return () => observer.disconnect();
   }, () => [props.readOnly, scrollToLatest]);
@@ -183,7 +180,6 @@ export function ChatView(props: Props) {
           {submittedMessage() && <div class="mcp-pending-message"><Message message={(submittedMessage())!} showActions={false} /></div>}
           <div class="mcp-loading-list" role="status">{props.debug ? <Key each={loadingServers()} by={(server) => server.id}>{(server, index) => <div class="mcp-loading" ><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading {server().name}</span></div>}</Key> : <div class="mcp-loading"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading MCPs</span></div>}</div>
         </section>}
-        <div class="scroll-anchor" />
       </div></div>);
     const renderSelectionBtwTip = () => (selectionBtwTip() && <button type="button" class={`selection-btw-tip${(selectionBtwTip())!.below ? " below" : ""}${selectionBtwError() ? " error" : ""}`} style={{ left: cssPixels((selectionBtwTip())!.left), top: cssPixels((selectionBtwTip())!.top) }} aria-label="Ask about selected text in a side chat with /btw" aria-live="polite" disabled={askingSelection()} onPointerDown={(event) => event.preventDefault()} onClick={() => void askSelectionInBtw()}><span>{askingSelection() ? "Opening side chat…" : selectionBtwError() ? "Could not open side chat" : "Ask in side chat"}</span><kbd>/btw</kbd></button>);
     const renderComposerStack = () => {
@@ -199,7 +195,7 @@ export function ChatView(props: Props) {
       {renderComposerStack()}
     </div>);
   };
-  return <main ref={element => { shell.current = element; }} class={`chat-shell${ownsConversation() ? "" : " conversation-unowned"}`} oncapture:focus={props.onActivate} oncapture:pointerdown={props.onActivate}>
+  return <main class={`chat-shell${ownsConversation() ? "" : " conversation-unowned"}`} oncapture:focus={props.onActivate} oncapture:pointerdown={props.onActivate}>
     {renderConversationContent()}
   </main>;
 }
