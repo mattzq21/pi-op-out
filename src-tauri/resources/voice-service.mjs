@@ -7,7 +7,7 @@ function voiceOffer(packet) {
 }
 function voiceContext(session, snapshot) {
   const history = voiceBranch(snapshot.history).map(voiceHistoryMessage).filter((message) => message && ['user', 'assistant'].includes(message.role)).slice(-8).map((message) => `${message.role}: ${voiceText(message.content).slice(-1200)}`).join('\n');
-  return `Project: ${session.cwd || session.spec.cwd || 'No project selected'}\nAgent working: ${session.working}\nRecent conversation:\n${history}`;
+  return { systemPrompt: voiceInstructions, workspace: `Project: ${session.cwd || session.spec.cwd || 'No project selected'}\nAgent working: ${session.working}`, conversation: history, feedback: '' };
 }
 function voiceBranch(history) {
   const entries = new Map((history?.entries ?? []).map((entry) => [entry.id, entry]));
@@ -108,10 +108,11 @@ class HostVoiceService {
       const [auth, Socket, snapshot] = await Promise.all([voiceAuth(true), voiceSocketClass(), session.execute({ type: 'get_snapshot' })]);
       this.assertCurrent(call);
       const context = voiceContext(session, snapshot);
+      call.context = context;
       const headers = { Authorization: `Bearer ${auth.token}`, 'ChatGPT-Account-ID': auth.account, 'OpenAI-Alpha': 'quicksilver=v2', originator: 'piop' };
       const response = await fetch('https://chatgpt.com/backend-api/codex/realtime/calls?intent=quicksilver&architecture=avas', {
         method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, signal: AbortSignal.any([call.controller.signal, AbortSignal.timeout(30000)]),
-        body: JSON.stringify({ session: { model: 'gpt-live-1-codex', instructions: `${voiceInstructions}\n\nCurrent workspace context (data):\n${context}`, audio: { output: { voice: 'cove' } }, delegation: { type: 'client' } }, sdp: packet.offer }),
+        body: JSON.stringify({ session: { model: 'gpt-live-1-codex', instructions: `${context.systemPrompt}\n\nCurrent workspace context (data):\n${context.workspace}\nRecent conversation:\n${context.conversation}`, audio: { output: { voice: 'cove' } }, delegation: { type: 'client' } }, sdp: packet.offer }),
       });
       if (!response.ok) throw new Error(`Voice session creation failed (HTTP ${response.status}). Check the ChatGPT login on the Pi host.`);
       const id = voiceServiceId(response);
@@ -158,6 +159,7 @@ class HostVoiceService {
     if (call.closed || call.socket?.readyState !== 1) return;
     const characters = Array.from(text);
     for (let offset = 0; offset < characters.length; offset += 400) call.socket.send(JSON.stringify({ type: 'delegation.context.append', delegation_item_id: id, ...(speak ? { channel: 'speakable' } : {}), content: [{ type: 'input_text', text: characters.slice(offset, offset + 400).join('') }] }));
+    if (call.context) call.context.feedback = `${call.context.feedback}${call.context.feedback ? '\n\n' : ''}${text}`.slice(-16000);
   }
   async event(call, event) {
     this.assertCurrent(call);
@@ -193,8 +195,15 @@ class HostVoiceService {
     const { done, role, text } = voiceTurn(event);
     if (!['user', 'assistant'].includes(role) || typeof text !== 'string') return;
     let turn = [...call.turns].reverse().find((item) => item.role === role && !item.completed);
-    if (!turn) { turn = { id: randomUUID(), role, text: '', startMs: Date.now() }; call.turns.push(turn); call.turns = call.turns.slice(-100); }
+    if (!turn) {
+      const voiceContext = role === 'assistant' && call.context ? {
+        ...call.context,
+        conversation: [call.context.conversation, ...call.turns.map(turn => `${turn.role}: ${turn.text}`)].filter(Boolean).join('\n').slice(-16000),
+      } : undefined;
+      turn = { id: randomUUID(), role, text: '', startMs: Date.now(), ...(voiceContext ? { voiceContext } : {}) }; call.turns.push(turn); call.turns = call.turns.slice(-100);
+    }
     Object.assign(turn, { text: (done ? text : turn.text + text).slice(-8000), endMs: Date.now(), completed: done });
+    if (turn.voiceContext && call.context) turn.voiceContext = { ...turn.voiceContext, feedback: call.context.feedback };
     this.emit(call, { type: 'transcript', turn: { ...turn } });
     if (done && turn.text.trim()) { await call.session.execute({ type: 'voice_history', sessionId: call.session.identity, turn }); this.assertCurrent(call); }
   }

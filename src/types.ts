@@ -1,6 +1,6 @@
 export type Role = "user" | "assistant" | "tool" | "system";
 export type ContentPart = ImageAttachment | { type: "text"; text: string } | { type: "thinking"; thinking: string } | { type: "toolCall"; id: string; name: string; arguments: Record<string, unknown>; partialArgs?: string };
-export interface ChatMessage { deliveryBehavior?: "steer" | "followUp"; id: string; entryId?: string; role: Role; content: string | ContentPart[]; customType?: string; timestamp?: number; completedAt?: number; model?: string; streaming?: boolean; stopReason?: "stop" | "length" | "toolUse" | "error" | "aborted"; errorMessage?: string; toolName?: string; toolInput?: unknown; toolStatus?: "running" | "done" | "error"; promptContext?: PromptContextInfo; promptTimestamp?: number; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning?: number; totalTokens: number }; }
+export interface ChatMessage { deliveryBehavior?: "steer" | "followUp"; id: string; entryId?: string; role: Role; content: string | ContentPart[]; customType?: string; timestamp?: number; completedAt?: number; model?: string; streaming?: boolean; stopReason?: "stop" | "length" | "toolUse" | "error" | "aborted"; errorMessage?: string; toolName?: string; toolInput?: unknown; toolStatus?: "running" | "done" | "error"; promptContext?: PromptContextInfo; voiceContext?: VoicePromptContext; promptTimestamp?: number; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning?: number; totalTokens: number }; }
 export interface SessionSummary { id: string; daemonId?: string; isRunning?: boolean; groupId?: string | null; path: string; name: string; project: string; cwd: string; cwdExists?: boolean; projectRoot?: string | null; projectKind?: "no-repo" | "main" | "worktree" | null; preview: string; messageCount: number; lastMessageAt: number; apiCost: number; hostId?: string; hostName?: string; }
 export interface StorageCategory { id: "active-conversations" | "archived-conversations" | "project-checkpoints" | "git-diff-snapshots" | "temporary-chats"; byteSize: number; itemCount: number; estimated?: boolean; }
 export interface ArchivedConversation { id: string; path: string; name: string; cwd: string; modifiedAt: number; byteSize: number; deletable: boolean; deleteError?: string; }
@@ -8,6 +8,7 @@ export interface HostStorage { hostId: string; hostName: string; categories: Sto
 export interface StorageReport { hosts: HostStorage[]; }
 export interface ChatMessage { contextCheckpoint?: boolean; }
 export interface ContextUsage { tokens: number | null; contextWindow: number; percent: number | null; }
+export interface VoicePromptContext { systemPrompt: string; workspace: string; conversation: string; feedback: string; }
 export interface PromptContextInfo {
   userTimestamp?: number;
   systemPrompt: string;

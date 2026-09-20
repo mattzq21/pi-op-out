@@ -411,7 +411,9 @@ function registerVoiceHistory(pi: ExtensionAPI) {
         const turn = request.turn;
         if (!id || ctx.mode !== "rpc" || request.sessionId !== ctx.sessionManager.getSessionId()) throw new Error("Voice conversation changed");
         if (!validSpokenTurn(turn)) throw new Error("Invalid spoken turn");
-        pi.appendEntry("piop-voice", { id: turn.id, role: turn.role, text: turn.text, startMs: turn.startMs, endMs: turn.endMs, completed: true });
+        const voiceContext = turn.voiceContext;
+        if (voiceContext !== undefined && (!voiceContext || !["systemPrompt", "workspace", "conversation", "feedback"].every(key => typeof voiceContext[key] === "string" && voiceContext[key].length <= 16000))) throw new Error("Invalid voice context");
+        pi.appendEntry("piop-voice", { id: turn.id, role: turn.role, text: turn.text, startMs: turn.startMs, endMs: turn.endMs, completed: true, ...(voiceContext ? { voiceContext } : {}) });
         const manager = ctx.sessionManager as unknown as { isPersisted(): boolean; flushed: boolean; _rewriteFile(): void };
         if (manager.isPersisted() && !manager.flushed) { manager._rewriteFile(); manager.flushed = true; }
         ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id, success: true, data: {} })}`);

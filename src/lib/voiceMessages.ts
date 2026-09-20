@@ -1,10 +1,10 @@
-import type { ChatMessage } from "../types";
+import type { ChatMessage, VoicePromptContext } from "../types";
 import type { PiEntry } from "./messages";
 
 export const VOICE_MESSAGE = "piop-voice";
-export interface SpokenMessage { id: string; role: "user" | "assistant"; text: string; startMs: number; endMs: number; completed?: boolean }
+export interface SpokenMessage { id: string; role: "user" | "assistant"; text: string; startMs: number; endMs: number; completed?: boolean; voiceContext?: VoicePromptContext }
 export function spokenMessage(turn: SpokenMessage): ChatMessage {
-  return { id: `voice:${turn.id}`, role: turn.role, content: turn.text, timestamp: turn.startMs, completedAt: turn.completed ? turn.endMs : undefined, streaming: !turn.completed, customType: VOICE_MESSAGE };
+  return { id: `voice:${turn.id}`, role: turn.role, content: turn.text, timestamp: turn.startMs, completedAt: turn.completed ? turn.endMs : undefined, streaming: !turn.completed, customType: VOICE_MESSAGE, voiceContext: turn.voiceContext };
 }
 export function voiceEntry(entry: PiEntry): ChatMessage | undefined {
   if (entry.type !== "custom" || entry.customType !== VOICE_MESSAGE) return;

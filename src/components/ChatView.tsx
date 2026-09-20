@@ -17,6 +17,7 @@ import { DeferredTurn } from "./DeferredTurn";
 import { DiffViewer } from "./DiffViewer";
 import { Message } from "./Message";
 import { PromptContextBar } from "./PromptContextBar";
+import { VoiceContextBar } from "./VoiceContextBar";
 
 interface Props { voiceTransport?: NativeTransport; state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; debug?: boolean; agents?: AgentProfile[]; activeAgent?: string; agentLocked?: boolean; agentSaved?: boolean; agentUnavailable?: boolean; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; selectionBtw?: boolean; draft?: string; onDraftChange?: (value: string) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onPause: () => void | Promise<void>; onResume: () => void | Promise<void>; onOpenTerminal?: () => void; onOpenProject: () => void; onClearProject?: () => void; onBranch: (message: ChatMessage) => void; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
 
@@ -331,7 +332,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     <MessageList messages={componentProps.messages.filter(message => message.role === "system")} expanded={false} />
   </>);
   const renderDiffViewer = () => ((componentProps.active || componentProps.paused || !finalMessage()) && <DiffViewer {...changes()} />);
-  return <>{componentProps.messages.length === 1 && componentProps.messages[0].customType === VOICE_MESSAGE ? (<section class="conversation-turn"><Message message={componentProps.messages[0]} debug={componentProps.debug} /></section>) : (<section class="conversation-turn">
+  return <>{componentProps.messages.length === 1 && componentProps.messages[0].customType === VOICE_MESSAGE ? (<section class="conversation-turn">{componentProps.debug && componentProps.messages[0].role === "assistant" && <VoiceContextBar context={componentProps.messages[0].voiceContext} />}<Message message={componentProps.messages[0]} debug={componentProps.debug} /></section>) : (<section class="conversation-turn">
     {<Key each={userMessages()} by={(message) => message.id}>{(message, index) => <Message  message={message()} debug={componentProps.debug} />}</Key>}
     {renderPromptContextBar()}
     {renderActiveWorkContent()}
