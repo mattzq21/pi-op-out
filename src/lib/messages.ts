@@ -78,7 +78,8 @@ export function normalizeMessage(message: Record<string, unknown> | null | undef
   const source = (message && typeof message === "object" ? message : {}) as Record<string, unknown>;
   const stamp = messageTimestamp(source);
   const completionStamp = completedAt ? Date.parse(completedAt) : NaN;
-  return { ...(source as unknown as ChatMessage), ...(source.role === "user" ? { content: visibleUserContent(source.content) as ChatMessage["content"] } : {}), id: messageIdentity(source, stamp, entryId, fallbackId), entryId, role: messageRole(source), toolStatus: source.role === "toolResult" ? ((source as { isError?: unknown }).isError ? "error" : "done") : undefined, timestamp: stamp, ...(Number.isFinite(completionStamp) ? { completedAt: completionStamp } : {}), ...parseVoicePrompt(source) };
+  const voicePrompt = parseVoicePrompt(source);
+  return { ...(source as unknown as ChatMessage), ...(source.role === "user" ? { content: visibleUserContent(source.content) as ChatMessage["content"] } : {}), id: messageIdentity(source, stamp, entryId, fallbackId), entryId, role: messageRole(source), toolStatus: source.role === "toolResult" ? ((source as { isError?: unknown }).isError ? "error" : "done") : undefined, timestamp: stamp, ...(Number.isFinite(completionStamp) ? { completedAt: completionStamp } : {}), ...voicePrompt, ...(voicePrompt ? { promptTimestamp: stamp } : {}) };
 }
 
 export { applyAssistantMessageEvent } from "./messageEvents";

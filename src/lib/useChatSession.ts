@@ -170,7 +170,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
           const context = JSON.parse(event.statusText.slice(5)) as PromptContextInfo;
           if (typeof context.userTimestamp === "number") {
             liveRevision.current += 1;
-            session.setMessages((current) => current.map((message) => message.role === "user" && message.timestamp === context.userTimestamp && !message.promptContext ? { ...message, promptContext: context } : message));
+            session.setMessages((current) => current.map((message) => message.role === "user" && (message.promptTimestamp ?? message.timestamp) === context.userTimestamp && !message.promptContext ? { ...message, promptContext: context } : message));
           }
         } catch { /* Ignore malformed extension status data. */ }
       }

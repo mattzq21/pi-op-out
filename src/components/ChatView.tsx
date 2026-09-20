@@ -276,7 +276,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const [workOpen, setWorkOpen] = createSignal(false);
   const [retrying, setRetrying] = createSignal(false); const retryingRef = createRef(false);
   const userIndex = createMemo(() => (componentProps.messages.findIndex((message) => message.role === "user")));
-  const promptContext = createMemo(() => (userIndex() >= 0 && componentProps.messages[userIndex()].deliveryBehavior !== "steer" ? componentProps.messages[userIndex()].promptContext : undefined));
+  const promptContext = createMemo(() => (userIndex() >= 0 && (componentProps.messages[userIndex()].deliveryBehavior !== "steer" || componentProps.messages[userIndex()].customType === VOICE_MESSAGE) ? componentProps.messages[userIndex()].promptContext : undefined));
 
   const finalIndex = createMemo(() => (finalResponseIndex(componentProps.messages)));
   const finalThinking = createMemo(() => (finalIndex() >= 0 ? thinkingOf(componentProps.messages[finalIndex()].content) : ""));
@@ -313,7 +313,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     <MessageList messages={componentProps.messages.filter(message => message.role === "system")} expanded={false} />
   </>);
   const renderDiffViewer = () => ((componentProps.active || componentProps.paused || !finalMessage()) && <DiffViewer {...changes()} />);
-  return <>{componentProps.messages.length === 1 && componentProps.messages[0].customType === VOICE_MESSAGE ? (<section class="conversation-turn"><Message message={componentProps.messages[0]} debug={componentProps.debug} /></section>) : (<section class="conversation-turn">
+  return <>{componentProps.messages.length === 1 && componentProps.messages[0].customType === VOICE_MESSAGE ? (<section class="conversation-turn"><Message message={componentProps.messages[0]} debug={componentProps.debug} />{renderPromptContextBar()}</section>) : (<section class="conversation-turn">
     {<Key each={userMessages()} by={(message) => message.id}>{(message, index) => <Message  message={message()} debug={componentProps.debug} />}</Key>}
     {renderPromptContextBar()}
     {renderActiveWorkContent()}
