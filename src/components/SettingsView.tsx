@@ -35,6 +35,11 @@ function settingsSnapshot(settings: AppSettings, agentConfig?: AgentConfig) {
   return JSON.stringify(stable({ settings, agentConfig }));
 }
 
+function agentEditsSnapshot(config?: AgentConfig) {
+  const stable = (value: unknown): unknown => Array.isArray(value) ? value.map(stable) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, stable(item)])) : value;
+  return JSON.stringify(stable(config?.agents.map((item) => item.extensions ? { ...item, extensions: item.extensions.map((path) => path.trim()).filter(Boolean) } : item)));
+}
+
 function mcpServerError(server: McpServer) {
   if (!server.name.trim()) return "Server name is required";
   if (server.startupTimeoutSec !== undefined && (!Number.isInteger(server.startupTimeoutSec) || server.startupTimeoutSec < 1 || server.startupTimeoutSec > 600)) return "Startup timeout must be a whole number between 1 and 600 seconds";
@@ -73,14 +78,14 @@ export function SettingsView({ selectedSection, embedded = false, resourceError,
     return () => window.removeEventListener("scroll", onScroll, true);
   }, []);
   const baselineSettingsRef = useRef(settingsSnapshot(settings));
-  const baselineAgentConfigRef = useRef(JSON.stringify(agentConfig));
-  const agentConfigSnapshot = JSON.stringify(agentConfig);
+  const baselineAgentConfigRef = useRef(agentEditsSnapshot(agentConfig));
+  const agentConfigSnapshot = agentEditsSnapshot(agentConfig);
   const incomingAgentConfigRef = useRef(agentConfigSnapshot);
   const [hasAgentConfigDraft, setHasAgentConfigDraft] = useState(agentConfig !== undefined);
   const currentAgentConfig = hasAgentConfigDraft ? { agents: agentDrafts.map(item => item.extensions ? { ...item, extensions: item.extensions.map(path => path.trim()).filter(Boolean) } : item), fastModeModels: agentConfig?.fastModeModels } : undefined;
   const currentSnapshot = settingsSnapshot(draft, currentAgentConfig);
   const currentSnapshotRef = useRef(currentSnapshot); currentSnapshotRef.current = currentSnapshot;
-  const agentConfigDirty = JSON.stringify(currentAgentConfig) !== baselineAgentConfigRef.current;
+  const agentConfigDirty = agentEditsSnapshot(currentAgentConfig) !== baselineAgentConfigRef.current;
   const dirty = settingsSnapshot(draft) !== baselineSettingsRef.current || agentConfigDirty;
   useEffect(() => { onDirtyChange?.(dirty); return () => onDirtyChange?.(false); }, [dirty, currentSnapshot, saving, onDirtyChange]);
   useEffect(() => { if (dirty) setSaved(false); }, [dirty]);
@@ -94,10 +99,10 @@ export function SettingsView({ selectedSection, embedded = false, resourceError,
     setHasAgentConfigDraft(next !== undefined);
     setAgentDrafts(next?.agents ?? []);
     setAgentIndex(firstEditableAgent(next?.agents ?? []));
-    baselineAgentConfigRef.current = JSON.stringify(next);
+    baselineAgentConfigRef.current = agentEditsSnapshot(next);
   }, [agentConfigDirty, agentConfig, agentConfigSnapshot]);
   const patch = (value: Partial<AppSettings>) => setDraft((current) => ({ ...current, ...value }));
-  const save = async () => { if (savingRef.current || !dirty) return; savingRef.current = true; setSaving(true); setSaveError(undefined); try { await onSave(draft, agentConfigDirty ? currentAgentConfig : undefined); baselineSettingsRef.current = settingsSnapshot(draft); if (agentConfigDirty) baselineAgentConfigRef.current = JSON.stringify(currentAgentConfig); setSaved(currentSnapshotRef.current === currentSnapshot); window.setTimeout(() => setSaved(false), 1600); } catch (reason) { setSaveError(reason instanceof Error ? reason.message : String(reason)); } finally { savingRef.current = false; setSaving(false); } };
+  const save = async () => { if (savingRef.current || !dirty) return; savingRef.current = true; setSaving(true); setSaveError(undefined); try { await onSave(draft, agentConfigDirty ? currentAgentConfig : undefined); baselineSettingsRef.current = settingsSnapshot(draft); if (agentConfigDirty) baselineAgentConfigRef.current = agentEditsSnapshot(currentAgentConfig); setSaved(currentSnapshotRef.current === currentSnapshot); window.setTimeout(() => setSaved(false), 1600); } catch (reason) { setSaveError(reason instanceof Error ? reason.message : String(reason)); } finally { savingRef.current = false; setSaving(false); } };
   const nextAgentSuffixRef = useRef(agentDrafts.length);
   const addMcp = () => { if (agent) updateAgent({ mcpServers: [...agent.mcpServers, { id: uid("mcp"), name: "New server", transport: "stdio", command: "npx", args: "", enabled: true }] }); };
   const updateMcp = (id: string, value: Partial<McpServer>) => { if (agent) updateAgent({ mcpServers: agent.mcpServers.map((server) => server.id === id ? { ...server, ...value } : server) }); };
