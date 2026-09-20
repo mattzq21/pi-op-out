@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
+import solid from "vite-plugin-solid";
 
 const projectRoot = fileURLToPath(new URL(".", import.meta.url));
 const developmentBranch = (() => {
@@ -13,7 +13,7 @@ const developmentBranch = (() => {
 })();
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [solid()],
   define: { __PIOP_DEVELOPMENT_BRANCH__: JSON.stringify(developmentBranch) },
   clearScreen: false,
   envPrefix: ["VITE_", "TAURI_ENV_"],

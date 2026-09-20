@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { type Accessor, createSignal } from "solid-js";
+import { createDependencyEffect, createRef } from "../lib/solid";
+
 import { invoke, listen, type UnlistenFn } from "./platform";
 
 export interface ProviderAccount {
@@ -37,20 +39,20 @@ const cancelFlow = (hostId: string, flowId: string) => call<AuthFlow>(hostId, { 
 const INTERRUPTED = "Provider login was interrupted on the host. Start again.";
 const TRANSIENT_HINT = "Host is busy";
 
-export function useProviderAuth(hostId: string) {
-  const [providers, setProviders] = useState<ProviderAccount[]>([]);
-  const [flow, setFlow] = useState<AuthFlow>();
-  const [loading, setLoading] = useState(true);
-  const [working, setWorking] = useState(false);
-  const [error, setError] = useState<string>();
-  const [revision, setRevision] = useState(0);
-  const [tick, setTick] = useState(0);
-  const generation = useRef(0);
-  const active = useRef<{ hostId: string; flowId: string } | undefined>(undefined);
-  const requestPending = useRef(false);
-  const refreshModels = useRef(false);
+export function useProviderAuth(hostId: Accessor<string>) {
+  const [providers, setProviders] = createSignal<ProviderAccount[]>([]);
+  const [flow, setFlow] = createSignal<AuthFlow>();
+  const [loading, setLoading] = createSignal(true);
+  const [working, setWorking] = createSignal(false);
+  const [error, setError] = createSignal<string>();
+  const [revision, setRevision] = createSignal(0);
+  const [tick, setTick] = createSignal(0);
+  const generation = createRef(0);
+  const active = createRef<{ hostId: string; flowId: string } | undefined>(undefined);
+  const requestPending = createRef(false);
+  const refreshModels = createRef(false);
 
-  useEffect(() => {
+  createDependencyEffect(() => {
     generation.current++;
     setProviders([]); setFlow(undefined); setLoading(true); setWorking(false); setError(undefined);
     requestPending.current = false;
@@ -60,46 +62,46 @@ export function useProviderAuth(hostId: string) {
       active.current = undefined;
       if (previous) void cancelFlow(previous.hostId, previous.flowId).catch(() => undefined);
     };
-  }, [hostId]);
+  }, () => [hostId()]);
 
-  useEffect(() => {
+  createDependencyEffect(() => { const capturedHostId = hostId();
     let cancelled = false;
     setLoading(true);
     const discover = refreshModels.current;
     refreshModels.current = false;
-    void call<Listing>(hostId, { action: "list", refreshModels: discover }).then((listing) => { if (!cancelled) { setProviders(listing.providers); if (listing.warning) setError(listing.warning); } })
+    void call<Listing>(capturedHostId, { action: "list", refreshModels: discover }).then((listing) => { if (!cancelled) { setProviders(listing.providers); if (listing.warning) setError(listing.warning); } })
       .catch((reason) => { if (!cancelled) setError(message(reason)); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [hostId, revision]);
+  }, () => [hostId(), revision()]);
 
-  useEffect(() => {
+  createDependencyEffect(() => { const capturedHostId = hostId();
     let unlisten: UnlistenFn | undefined;
     let cancelled = false;
     void listen<{ hostId: string }>("pi://provider-auth-changed", ({ payload }) => {
-      if (cancelled || payload.hostId !== hostId) return;
+      if (cancelled || payload.hostId !== capturedHostId) return;
       setTick((value) => value + 1);
       setRevision((value) => value + 1);
     }).then((stop) => {
       if (cancelled) void stop(); else unlisten = stop;
     }).catch(() => undefined);
     return () => { cancelled = true; unlisten?.(); };
-  }, [hostId]);
+  }, () => [hostId()]);
 
   const receive = (next: AuthFlow) => {
     setFlow(next);
-    if (next.status === "pending") active.current = { hostId, flowId: next.flowId };
+    if (next.status === "pending") active.current = { hostId: hostId(), flowId: next.flowId };
     else { active.current = undefined; setRevision((value) => value + 1); }
   };
 
-  useEffect(() => {
-    if (!flow || flow.status !== "pending" || working) return;
+  createDependencyEffect(() => { const capturedFlow = flow(); const capturedWorking = working(); const capturedHostId = hostId();
+    if (!capturedFlow || (capturedFlow)!.status !== "pending" || capturedWorking) return;
     let cancelled = false;
     let failures = 0;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       try {
-        const next = await call<AuthFlow>(hostId, { action: "poll", flowId: flow.flowId });
+        const next = await call<AuthFlow>(capturedHostId, { action: "poll", flowId: (capturedFlow)!.flowId });
         if (cancelled) return;
         setError(undefined); setFlow(next);
         failures = 0;
@@ -111,7 +113,7 @@ export function useProviderAuth(hostId: string) {
         const reasonText = message(reason);
         const lost = failures >= 2 && !reasonText.includes(TRANSIENT_HINT);
         if (lost) {
-          void cancelFlow(hostId, flow.flowId).catch(() => undefined);
+          void cancelFlow(capturedHostId, (capturedFlow)!.flowId).catch(() => undefined);
           active.current = undefined;
           setFlow(undefined);
           setRevision((value) => value + 1);
@@ -124,41 +126,41 @@ export function useProviderAuth(hostId: string) {
     };
     timer = setTimeout(() => void poll(), 400);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [hostId, flow?.flowId, flow?.status, working, tick]);
+  }, () => [hostId(), flow()?.flowId, flow()?.status, working(), tick()]);
 
-  const perform = async (request: Record<string, unknown>, begin = false) => {
+  const perform = async (request: Record<string, unknown>, begin = false) => { const capturedHostId = hostId();
     if (requestPending.current) return;
     requestPending.current = true;
     const current = generation.current;
     setWorking(true); setError(undefined);
     if (begin) setFlow(undefined);
     try {
-      const result = await call<AuthFlow>(hostId, request);
+      const result = await call<AuthFlow>(capturedHostId, request);
       if (current === generation.current) receive(result);
-      else if (begin) void cancelFlow(hostId, result.flowId).catch(() => undefined);
+      else if (begin) void cancelFlow(capturedHostId, result.flowId).catch(() => undefined);
     } catch (reason) { if (current === generation.current) setError(message(reason)); }
     finally { if (current === generation.current) { setWorking(false); requestPending.current = false; } }
   };
 
-  const logout = async (providerId: string) => {
+  const logout = async (providerId: string) => { const capturedHostId = hostId();
     if (requestPending.current) return;
     requestPending.current = true;
     const current = generation.current;
     setWorking(true); setError(undefined); setFlow(undefined);
     try {
-      const result = await call<Listing>(hostId, { action: "logout", providerId });
+      const result = await call<Listing>(capturedHostId, { action: "logout", providerId });
       if (current === generation.current) setProviders(result.providers);
     } catch (reason) { if (current === generation.current) setError(message(reason)); }
     finally { if (current === generation.current) { setWorking(false); requestPending.current = false; } }
   };
 
-  const createProvider = async (input: CustomProviderInput) => {
+  const createProvider = async (input: CustomProviderInput) => { const capturedHostId = hostId();
     if (requestPending.current) return false;
     requestPending.current = true;
     const current = generation.current;
     setWorking(true); setError(undefined); setFlow(undefined);
     try {
-      const result = await call<{ created: boolean; warning?: string }>(hostId, { action: "create", ...input });
+      const result = await call<{ created: boolean; warning?: string }>(capturedHostId, { action: "create", ...input });
       if (current !== generation.current) return false;
       setError(result.warning); setRevision((value) => value + 1);
       return result.created;
@@ -167,11 +169,11 @@ export function useProviderAuth(hostId: string) {
   };
 
   return {
-    providers, flow, loading, working, error,
+    get providers() { return providers(); }, get flow() { return flow(); }, get loading() { return loading(); }, get working() { return working(); }, get error() { return error(); },
     refresh: () => { refreshModels.current = true; setError(undefined); setRevision((value) => value + 1); },
     begin: (providerId: string, authType: string, addAccount = false) => perform({ action: "begin", providerId, authType, addAccount }, true),
-    reply: (answer: string) => flow?.prompt ? perform({ action: "reply", flowId: flow.flowId, promptId: flow.prompt.id, answer }) : Promise.resolve(),
-    cancel: () => flow ? perform({ action: "cancel", flowId: flow.flowId }) : Promise.resolve(),
-    logout, createProvider,
+    reply: (answer: string) => flow()?.prompt ? perform({ action: "reply", flowId: (flow())!.flowId, promptId: (flow())!.prompt!.id, answer }) : Promise.resolve(),
+    cancel: () => flow() ? perform({ action: "cancel", flowId: (flow())!.flowId }) : Promise.resolve(),
+    get logout() { return logout; }, get createProvider() { return createProvider; },
   };
 }

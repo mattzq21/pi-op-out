@@ -1,9 +1,12 @@
 import { JSDOM } from 'jsdom';
-import { act, createElement } from 'react';
+import { createComponent, createRoot, createSignal } from 'solid-js';
+import { render } from 'solid-js/web';
+
+export async function act(action) { await action(); await Promise.resolve(); }
 
 export function installDom() {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost', pretendToBeVisual: true });
-  const values = { window: dom.window, document: dom.window.document, localStorage: dom.window.localStorage, navigator: dom.window.navigator, IS_REACT_ACT_ENVIRONMENT: true };
+  const values = { window: dom.window, document: dom.window.document, localStorage: dom.window.localStorage, navigator: dom.window.navigator };
   for (const key of ['HTMLElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Element', 'Node', 'NodeFilter', 'MutationObserver', 'KeyboardEvent', 'MouseEvent', 'Event']) values[key] = dom.window[key];
   values.getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
   const frames = new Map(); let frame = 0;
@@ -28,28 +31,21 @@ export function installDom() {
   };
 }
 
-// React detects browser event support when react-dom is first imported.
-const bootstrap = installDom();
-const { createRoot } = await import('react-dom/client');
-bootstrap.restore();
-
 export async function renderHook(hook, initialProps) {
-  const container = document.createElement('div'); document.body.append(container);
-  const root = createRoot(container); let value;
-  function Probe({ props }) { value = hook(props); return null; }
-  const render = async props => { await act(async () => root.render(createElement(Probe, { props }))); };
-  await render(initialProps);
-  return { get current() { return value; }, rerender: render, async unmount() { await act(async () => root.unmount()); container.remove(); } };
+  const [props, setProps] = createSignal(initialProps);
+  let value, dispose;
+  await act(() => createRoot(stop => { dispose = stop; value = hook(props); }));
+  return { get current() { return value; }, async rerender(next) { await act(() => setProps(() => next)); }, async unmount() { await act(dispose); } };
 }
-
-export { act };
 
 export async function renderComponent(Component, props) {
   const container = document.createElement('div'); document.body.append(container);
-  const root = createRoot(container);
-  const rerender = async next => { await act(async () => root.render(createElement(Component, next))); };
-  await rerender(props);
-  return { container, rerender, async unmount() { await act(async () => root.unmount()); container.remove(); } };
+  const [current, setCurrent] = createSignal(props);
+  const liveProps = new Proxy({}, { get: (_, key) => current()[key], has: (_, key) => key in current(), ownKeys: () => Reflect.ownKeys(current()), getOwnPropertyDescriptor: () => ({ configurable: true, enumerable: true }) });
+  let dispose;
+  await act(() => { dispose = render(() => createComponent(Component, liveProps), container); });
+  const rerender = async next => { await act(() => setCurrent(() => next)); };
+  return { container, rerender, async unmount() { await act(dispose); container.remove(); } };
 }
 
 export async function enterText(input, value) {

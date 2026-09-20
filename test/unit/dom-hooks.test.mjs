@@ -55,7 +55,7 @@ describe('pending-message dragging', () => {
     queue.getBoundingClientRect = () => ({ left: 0, right: 300, top: 0, bottom: 200 });
     messages.forEach((message, index) => { const row = document.createElement('div'); row.dataset.pendingId = message.id; row.getBoundingClientRect = () => ({ top: index * 30, height: 30 }); queue.append(row); });
     handle = document.createElement('button'); queue.firstChild.append(handle);
-    hook = await renderHook(props => usePendingMessageDrag(props.messages, props.disabled, (...args) => moves.push(args)), { messages, disabled: false });
+    hook = await renderHook(props => usePendingMessageDrag(() => props().messages, () => props().disabled, () => (...args) => moves.push(args)), { messages, disabled: false });
   });
   afterEach(async () => { await hook.unmount(); dom.restore(); });
   const begin = async (id = 'a', extra = {}) => act(async () => hook.current.begin({ button: 0, pointerId: 1, clientX: 100, clientY: 15, currentTarget: handle, preventDefault() {}, ...extra }, id));

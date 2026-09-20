@@ -1,111 +1,18 @@
-import { isValidElement, useEffect, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import { Check, ChevronRight, CircleAlert, Copy, FolderGit2, GitBranch, Pause, Undo2, Wrench } from "lucide-react";
-import ReactMarkdown, { type Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
-import type { ChatMessage } from "../types";
-import type { turnDiff } from "../lib/turnDiff";
+import { Key } from "@solid-primitives/keyed";
+import { createMemo, createSignal, Index } from "solid-js";
+import { createDependencyEffect, createRef, cssPixels } from "../lib/solid";
+
+import { Check, ChevronRight, CircleAlert, Copy, FolderGit2, GitBranch, Pause, Undo2, Wrench } from "lucide-solid";
 import { textOf, thinkingOf } from "../lib/content";
-import { VOICE_MESSAGE } from "../lib/voiceMessages";
 import { cacheHitStats } from "../lib/messages";
-import { openExternalUrl } from "../lib/nativeTransport";
-import { IconButton } from "./IconButton";
+import type { turnDiff } from "../lib/turnDiff";
+import { VOICE_MESSAGE } from "../lib/voiceMessages";
+import type { ChatMessage } from "../types";
 import { DiffViewer } from "./DiffViewer";
+import { IconButton } from "./IconButton";
+import { Markdown } from "./Markdown";
 
 interface Props { message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; diff?: ReturnType<typeof turnDiff>; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
-
-function nodeText(node: ReactNode): string {
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(nodeText).join("");
-  if (isValidElement<{ children?: ReactNode }>(node)) return nodeText(node.props.children);
-  return "";
-}
-
-function CodeBlock({ children, node: _node, ...props }: ComponentPropsWithoutRef<"pre"> & { node?: unknown }) {
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
-  const copy = async () => {
-    try {
-      if (!navigator.clipboard) throw new Error("Clipboard access is unavailable");
-      await navigator.clipboard.writeText(nodeText(children).replace(/\n$/, ""));
-      setCopyState("copied");
-    } catch {
-      setCopyState("error");
-    }
-    window.setTimeout(() => setCopyState("idle"), 1800);
-  };
-  return <div className="code-block"><pre {...props}>{children}</pre>{copyState === "error" && <span className="copy-feedback" role="status">Could not copy</span>}<IconButton label={copyState === "copied" ? "Code copied" : copyState === "error" ? "Copy failed" : "Copy code"} className="code-copy" onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton></div>;
-}
-
-function MarkdownLink({ children, href }: ComponentPropsWithoutRef<"a">) {
-  const [error, setError] = useState<string>();
-  const [menu, setMenu] = useState<{ x: number; y: number; returnFocus?: HTMLElement }>();
-  const linkRef = useRef<HTMLAnchorElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    if (!menu || !menuRef.current) return;
-    const element = menuRef.current;
-    const bounds = element.getBoundingClientRect();
-    element.style.left = `${Math.max(8, Math.min(menu.x, window.innerWidth - bounds.width - 8))}px`;
-    element.style.top = `${Math.max(8, Math.min(menu.y, window.innerHeight - bounds.height - 8))}px`;
-    element.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
-    const close = () => setMenu(undefined);
-    const outside = (event: Event) => { if (!element.contains(event.target as Node)) close(); };
-    const keydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" || event.key === "Tab") {
-        if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); }
-        menu.returnFocus?.focus({ preventScroll: true }); close();
-      } else if (["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) event.preventDefault();
-    };
-    window.addEventListener("pointerdown", outside, true);
-    window.addEventListener("contextmenu", outside, true);
-    window.addEventListener("keydown", keydown, true);
-    window.addEventListener("scroll", close, true);
-    window.addEventListener("resize", close);
-    window.addEventListener("blur", close);
-    return () => {
-      window.removeEventListener("pointerdown", outside, true);
-      window.removeEventListener("contextmenu", outside, true);
-      window.removeEventListener("keydown", keydown, true);
-      window.removeEventListener("scroll", close, true);
-      window.removeEventListener("resize", close);
-      window.removeEventListener("blur", close);
-    };
-  }, [menu]);
-  let url: string | undefined;
-  try {
-    const parsed = new URL(href ?? "");
-    if (parsed.protocol === "https:" || parsed.protocol === "http:") url = parsed.href;
-  } catch { /* Relative and non-web destinations remain readable text. */ }
-  if (!url) return <span className="message-link" title={href}>{children}</span>;
-  const copyLink = async () => {
-    setError(undefined);
-    try {
-      if (!navigator.clipboard) throw new Error("Clipboard access is unavailable");
-      await navigator.clipboard.writeText(url);
-    } catch { setError("Could not copy link"); }
-    menu?.returnFocus?.focus({ preventScroll: true }); setMenu(undefined);
-  };
-  return <><a ref={linkRef} className="message-link" href={url} title={`Click to open in browser\n${url}`} onContextMenu={(event) => {
-    event.preventDefault();
-    const bounds = event.currentTarget.getBoundingClientRect();
-    setMenu({ x: event.clientX || bounds.left, y: event.clientY || bounds.bottom, returnFocus: document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget });
-  }} onAuxClick={(event) => event.preventDefault()} onClick={(event) => {
-    event.preventDefault();
-    if (event.button !== 0) return;
-    setError(undefined);
-    void openExternalUrl(url).catch((reason) => setError(`Could not open link: ${reason instanceof Error ? reason.message : String(reason)}`));
-  }}>{children}</a>{menu && createPortal(<div ref={menuRef} className="conversation-menu link-context-menu" role="menu" aria-label="Link actions" style={{ left: menu.x, top: menu.y }} onContextMenu={(event) => event.preventDefault()}>
-    <button type="button" role="menuitem" onClick={() => void copyLink()}><Copy size={14} />Copy link</button>
-  </div>, linkRef.current?.closest(".app") ?? document.body)}{error && <span className="message-link-error" role="alert"> {error}</span>}</>;
-}
-
-const markdownComponents: Components = {
-  pre: CodeBlock,
-  // Open web links only through an explicit gesture and the native browser
-  // launcher. Remote Markdown images never load in the application webview.
-  a: MarkdownLink,
-  img: ({ alt }) => <span className="message-image-placeholder" role="img" aria-label={alt || "Blocked remote image"}>[Image: {alt || "blocked"}]</span>,
-};
 
 function userMessageParts(content: string) {
   const invocation = content.match(/^<skill\s+name="([^"]+)"\s+location="[^"]+">\nReferences are relative to [^\n]+\.\n\n[\s\S]*?<\/skill>(?:\n\n([\s\S]*))?$/i);
@@ -142,129 +49,128 @@ function toolInputLines(message: ChatMessage) {
   return input && message.toolInput !== null && typeof message.toolInput === "object" && !Array.isArray(message.toolInput) ? input.slice(1, -1).replace(/^\n|\n$/g, "").replace(/^  /gm, "") : input;
 }
 
-function MessageCopyButton({ state, copy }: { state: "idle" | "copied" | "error"; copy: () => Promise<void> }) {
-  return <IconButton label={state === "copied" ? "Message copied" : state === "error" ? "Copy failed" : "Copy message"} onClick={copy}>{state === "copied" ? <Check size={14} /> : state === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>;
+function MessageCopyButton(componentProps: { state: "idle" | "copied" | "error"; copy: () => Promise<void> }) {
+  return <IconButton label={componentProps.state === "copied" ? "Message copied" : componentProps.state === "error" ? "Copy failed" : "Copy message"} onClick={componentProps.copy}>{componentProps.state === "copied" ? <Check size={14} /> : componentProps.state === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>;
 }
 
-function ToolLabel({ message, toolCount, status }: { message: ChatMessage; toolCount: number; status: string }) {
-  return <><Wrench size={14} /><span><strong>{message.toolName || "tool"}{toolCount > 1 ? ` x${toolCount}` : ""}</strong><small>{status === "running" ? "Running…" : status === "error" ? "Failed" : "Completed"}</small></span></>;
+function ToolLabel(componentProps: { message: ChatMessage; toolCount: number; status: string }) {
+  return <><Wrench size={14} /><span><strong>{componentProps.message.toolName || "tool"}{componentProps.toolCount > 1 ? ` x${componentProps.toolCount}` : ""}</strong><small>{componentProps.status === "running" ? "Running…" : componentProps.status === "error" ? "Failed" : "Completed"}</small></span></>;
 }
 
-function ToolPayload({ message, loading, error, retry }: { message: ChatMessage; loading: boolean; error?: string; retry: () => void }) {
-  const input = toolInputLines(message);
-  const output = textOf(message.content);
+function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; error?: string; retry: () => void }) {
+  const input = createMemo(() => (toolInputLines(componentProps.message)));
+  const output = createMemo(() => (textOf(componentProps.message.content)));
   return <>
-    {input !== undefined && <div className="tool-payload"><div className="tool-payload-label">In</div><div className="tool-input" aria-label="Tool arguments"><pre>{input}</pre></div></div>}
-    {loading && <div role="status">Loading tool input and output…</div>}
-    {error && <div role="alert">{error} <button onClick={retry}>Retry</button></div>}
-    {output && <div className="tool-payload"><div className="tool-payload-label">Out</div><div className="tool-output" aria-label="Tool output"><pre>{output}</pre></div></div>}
-    {!loading && !error && message.deferredToolPayload && !message.toolPayloadLoaded && <button onClick={retry}>Load input and output</button>}
+    {input() !== undefined && <div class="tool-payload"><div class="tool-payload-label">In</div><div class="tool-input" aria-label="Tool arguments"><pre>{(input())!}</pre></div></div>}
+    {componentProps.loading && <div role="status">Loading tool input and output…</div>}
+    {componentProps.error && <div role="alert">{(componentProps.error)!} <button onClick={componentProps.retry}>Retry</button></div>}
+    {output() && <div class="tool-payload"><div class="tool-payload-label">Out</div><div class="tool-output" aria-label="Tool output"><pre>{output()}</pre></div></div>}
+    {!componentProps.loading && !componentProps.error && componentProps.message.deferredToolPayload && !componentProps.message.toolPayloadLoaded && <button onClick={componentProps.retry}>Load input and output</button>}
   </>;
 }
 
-function ToolResult({ message, toolCount, debug }: Pick<Props, "message" | "toolCount" | "debug">) {
-  const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string>();
-  const [retry, setRetry] = useState(0);
-  useEffect(() => {
-    if (!open || !message.loadToolPayload) return;
+function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug">) {
+  const [open, setOpen] = createSignal(false);
+  const [loading, setLoading] = createSignal(false);
+  const [error, setError] = createSignal<string>();
+  const [retry, setRetry] = createSignal(0);
+  createDependencyEffect(() => { const capturedOpen = open(); const capturedMessage0 = componentProps.message;
+    if (!capturedOpen || !capturedMessage0.loadToolPayload) return;
     let active = true;
     const timer = setTimeout(() => {
       setLoading(true); setError(undefined);
-      void message.loadToolPayload!().catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : String(reason)); })
+      void capturedMessage0.loadToolPayload!().catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : String(reason)); })
         .finally(() => { if (active) setLoading(false); });
-    }, message.toolStatus === "running" ? 300 : 0);
+    }, capturedMessage0.toolStatus === "running" ? 300 : 0);
     return () => { active = false; clearTimeout(timer); };
-  }, [open, message.loadToolPayload, message.toolPayloadVersion, message.toolStatus, retry]);
-  const status = message.toolStatus ?? "done";
-  const label = <ToolLabel message={message} toolCount={toolCount ?? 1} status={status} />;
-  if (!debug) return <div className={`tool-event ${status}`}><div className="tool-summary">{label}</div></div>;
-  return <details className={`tool-event ${status}`} open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
-    <summary className="tool-summary">{label}<ChevronRight size={12} className="tool-chevron" aria-hidden="true" /></summary>
-    {open && <ToolPayload message={message} loading={loading} error={error} retry={() => setRetry((value) => value + 1)} />}
-  </details>;
+  }, () => [open(), componentProps.message.loadToolPayload, componentProps.message.toolPayloadVersion, componentProps.message.toolStatus, retry()]);
+  const status = createMemo(() => (componentProps.message.toolStatus ?? "done"));
+  const label = createMemo(() => (<ToolLabel message={componentProps.message} toolCount={componentProps.toolCount ?? 1} status={status()} />));
+
+  return <>{!componentProps.debug ? (<div class={`tool-event ${status()}`}><div class="tool-summary">{label()}</div></div>) : (<details class={`tool-event ${status()}`} open={open()} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <summary class="tool-summary">{label()}<ChevronRight size={12} class="tool-chevron" aria-hidden="true" /></summary>
+    {open() && <ToolPayload message={componentProps.message} loading={loading()} error={error()} retry={() => setRetry((value) => value + 1)} />}
+  </details>)}</>;
 }
 
-export function Message({ message, turnCacheUsage, diff, showActions = true, toolCount = 1, debug = false, paused = false, onBranch, onForkAndForget, onCreateWorktree, onRetry, retrying = false }: Props) {
-  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
-  const [branching, setBranching] = useState(false);
-  const branchingRef = useRef(false);
-  const [forgetting, setForgetting] = useState(false);
-  const forgettingRef = useRef(false);
+export function Message(componentProps: Props) {
+  const [copyState, setCopyState] = createSignal<"idle" | "copied" | "error">("idle");
+  const [branching, setBranching] = createSignal(false);
+  const branchingRef = createRef(false);
+  const [forgetting, setForgetting] = createSignal(false);
+  const forgettingRef = createRef(false);
 
-  const copy = async () => {
+  const copy = async () => { const capturedMessage0 = componentProps.message;
     try {
       if (!navigator.clipboard) throw new Error("Clipboard access is unavailable");
-      await navigator.clipboard.writeText(textOf(message.content));
+      await navigator.clipboard.writeText(textOf(capturedMessage0.content));
       setCopyState("copied");
     } catch {
       setCopyState("error");
     }
     window.setTimeout(() => setCopyState("idle"), 1800);
   };
-  if (message.role === "system") return <div className="command-result" role="status">{textOf(message.content)}</div>;
+
   const renderUserMessage = () => {
-    const { skills, text, literalSkill } = userMessageParts(textOf(message.content));
-    const sentTime = formatMessageTime(message.timestamp);
-    return <article className={`message user-message${message.deliveryBehavior === "steer" ? " steering-message" : ""}`} title={sentTime ? `Sent ${sentTime.full}` : undefined}>
-      <div className="message-body">{skills.map((skill) => <span className="skill-reference" key={skill}>${skill}</span>)}{text && (literalSkill ? <span className="literal-skill-content">{text}</span> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{text}</ReactMarkdown>)}</div>
-      {Array.isArray(message.content) && message.content.map((part, index) => part.type === "image" && part.data && part.mimeType && /^image\/(png|jpeg|gif|webp)$/.test(part.mimeType) ? <img key={index} src={`data:${part.mimeType};base64,${part.data}`} alt="Sent attachment" style={{ maxWidth: "100%", maxHeight: 320, objectFit: "contain" }} /> : null)}
-      <div className="message-actions">
-        {sentTime && <span className="message-time" title={sentTime.full}>{sentTime.short}</span>}
-        <MessageCopyButton state={copyState} copy={copy} />
-        {copyState === "error" && <span className="copy-feedback" role="status">Could not copy message</span>}
+    const { skills, text, literalSkill } = userMessageParts(textOf(componentProps.message.content));
+    const sentTime = formatMessageTime(componentProps.message.timestamp);
+    return <article class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`} title={sentTime ? `Sent ${sentTime.full}` : undefined}>
+      <div class="message-body">{<Key each={skills} by={(skill) => skill}>{(skill, index) => <span class="skill-reference" >${skill()}</span>}</Key>}{text && (literalSkill ? <span class="literal-skill-content">{text}</span> : <Markdown>{text}</Markdown>)}</div>
+      {Array.isArray(componentProps.message.content) && <Index each={componentProps.message.content.flatMap(part => part.type === "image" ? [part] : [])}>{(part, index) => part().type === "image" && part().data && part().mimeType && /^image\/(png|jpeg|gif|webp)$/.test(part().mimeType) ? <img  src={`data:${part().mimeType};base64,${part().data}`} alt="Sent attachment" style={{ "max-width": "100%", "max-height": cssPixels(320), "object-fit": "contain" }} /> : null}</Index>}
+      <div class="message-actions">
+        {sentTime && <span class="message-time" title={sentTime.full}>{sentTime.short}</span>}
+        <MessageCopyButton state={copyState()} copy={copy} />
+        {copyState() === "error" && <span class="copy-feedback" role="status">Could not copy message</span>}
       </div>
     </article>;
   };
-  if (message.role === "tool") return <ToolResult message={message} toolCount={toolCount} debug={debug} />;
-  if (message.role === "user") return renderUserMessage();
-  const output = textOf(message.content);
-  const thinking = thinkingOf(message.content);
-  const { cache, responseLabel, responseTime } = responseMetadata(message, turnCacheUsage);
-  const voiceResponse = message.customType === VOICE_MESSAGE;
-  const { pausedResponse, failure } = responseFailure(message, paused);
-  const branch = async () => {
-    if (!onBranch || branchingRef.current || forgettingRef.current) return;
+
+  const output = createMemo(() => (textOf(componentProps.message.content)));
+  const thinking = createMemo(() => (thinkingOf(componentProps.message.content)));
+  const metadata = createMemo(() => (responseMetadata(componentProps.message, componentProps.turnCacheUsage)));
+  const voiceResponse = createMemo(() => (componentProps.message.customType === VOICE_MESSAGE));
+  const failureState = createMemo(() => (responseFailure(componentProps.message, (componentProps.paused === undefined ? false : componentProps.paused))));
+  const branch = async () => { const capturedOnBranch0 = componentProps.onBranch; const capturedMessage1 = componentProps.message;
+    if (!capturedOnBranch0 || branchingRef.current || forgettingRef.current) return;
     branchingRef.current = true; setBranching(true);
-    try { await onBranch(message); } finally { branchingRef.current = false; setBranching(false); }
+    try { await (capturedOnBranch0)!(capturedMessage1); } finally { branchingRef.current = false; setBranching(false); }
   };
-  const forkAndForget = async () => {
-    if (!onForkAndForget || branchingRef.current || forgettingRef.current) return;
+  const forkAndForget = async () => { const capturedOnForkAndForget0 = componentProps.onForkAndForget; const capturedMessage1 = componentProps.message;
+    if (!capturedOnForkAndForget0 || branchingRef.current || forgettingRef.current) return;
     forgettingRef.current = true; setForgetting(true);
-    try { await onForkAndForget(message); } finally { forgettingRef.current = false; setForgetting(false); }
+    try { await (capturedOnForkAndForget0)!(capturedMessage1); } finally { forgettingRef.current = false; setForgetting(false); }
   };
   const renderMessageBody = () => {
-    const renderVoiceResponseBubble = () => (voiceResponse ? <div className="voice-response-bubble"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{output}</ReactMarkdown>{message.streaming && <span className="stream-caret" />}</div> : <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{output}</ReactMarkdown>);
-    const renderMessageFailure = () => (failure && <div className="message-failure" role="status"><CircleAlert size={14} /><span>{failure}</span>{onRetry && <button disabled={retrying} onClick={onRetry}>{retrying ? "Retrying…" : "Retry"}</button>}</div>);
-    const renderStreamCaret = () => (message.streaming && !voiceResponse && <span className="stream-caret" />);
+    const renderVoiceResponseBubble = () => (voiceResponse() ? <div class="voice-response-bubble"><Markdown>{output()}</Markdown>{componentProps.message.streaming && <span class="stream-caret" />}</div> : <Markdown>{output()}</Markdown>);
+    const renderMessageFailure = () => (failureState().failure && <div class="message-failure" role="status"><CircleAlert size={14} /><span>{(failureState().failure)!}</span>{componentProps.onRetry && <button disabled={(componentProps.retrying === undefined ? false : componentProps.retrying)} onClick={(componentProps.onRetry)!}>{(componentProps.retrying === undefined ? false : componentProps.retrying) ? "Retrying…" : "Retry"}</button>}</div>);
+    const renderStreamCaret = () => (componentProps.message.streaming && !voiceResponse() && <span class="stream-caret" />);
     const renderMessageActions = () => {
-      const renderCopyResponse = () => (<IconButton label={copyState === "copied" ? `${responseLabel} copied` : copyState === "error" ? `Copy failed for ${responseLabel.toLowerCase()}` : `Copy ${responseLabel.toLowerCase()}`} onClick={copy}>{copyState === "copied" ? <Check size={14} /> : copyState === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>);
-      const renderBranchAction = () => (onBranch && <button className="branch-button" aria-label={`Branch from ${responseLabel.toLowerCase()}`} title="Branch from here" disabled={branching || forgetting} onClick={() => void branch()}><GitBranch size={14} /></button>);
-      const renderForkAndForgetAction = () => (onForkAndForget && <button className="branch-button" aria-label={`Fork and forget from ${responseLabel.toLowerCase()}`} title="Fork and forget from here" disabled={branching || forgetting} onClick={() => void forkAndForget()}><Undo2 size={14} /></button>);
-      const renderCacheHitRate = () => (debug && cache && <span className={`cache-hit-rate${cache.low ? " low" : ""}`} title={`${cache.cachedTokens.toLocaleString()} of ${cache.promptTokens.toLocaleString()} prompt tokens read from cache${turnCacheUsage ? " across all calls in this response" : ""}`}>Cache {cache.rate}%</span>);
-      return (showActions && !message.streaming && (output.trim().length > 0 || onCreateWorktree) && <div className="message-actions">
+      const renderCopyResponse = () => (<IconButton label={copyState() === "copied" ? `${metadata().responseLabel} copied` : copyState() === "error" ? `Copy failed for ${metadata().responseLabel.toLowerCase()}` : `Copy ${metadata().responseLabel.toLowerCase()}`} onClick={copy}>{copyState() === "copied" ? <Check size={14} /> : copyState() === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>);
+      const renderBranchAction = () => (componentProps.onBranch && <button class="branch-button" aria-label={`Branch from ${metadata().responseLabel.toLowerCase()}`} title="Branch from here" disabled={branching() || forgetting()} onClick={() => void branch()}><GitBranch size={14} /></button>);
+      const renderForkAndForgetAction = () => (componentProps.onForkAndForget && <button class="branch-button" aria-label={`Fork and forget from ${metadata().responseLabel.toLowerCase()}`} title="Fork and forget from here" disabled={branching() || forgetting()} onClick={() => void forkAndForget()}><Undo2 size={14} /></button>);
+      const renderCacheHitRate = () => ((componentProps.debug === undefined ? false : componentProps.debug) && metadata().cache && <span class={`cache-hit-rate${(metadata().cache)!.low ? " low" : ""}`} title={`${(metadata().cache)!.cachedTokens.toLocaleString()} of ${(metadata().cache)!.promptTokens.toLocaleString()} prompt tokens read from cache${componentProps.turnCacheUsage ? " across all calls in this response" : ""}`}>Cache {(metadata().cache)!.rate}%</span>);
+      return ((componentProps.showActions === undefined ? true : componentProps.showActions) && !componentProps.message.streaming && (output().trim().length > 0 || componentProps.onCreateWorktree) && <div class="message-actions">
         {renderCopyResponse()}
-        {copyState === "error" && <span className="copy-feedback" role="status">Could not copy response</span>}
+        {copyState() === "error" && <span class="copy-feedback" role="status">Could not copy response</span>}
         {renderBranchAction()}
         {renderForkAndForgetAction()}
-        {onCreateWorktree && <button className="branch-button" aria-label="Create Git worktree" title="Create Git worktree after this response" onClick={() => onCreateWorktree(message)}><FolderGit2 size={14} /></button>}
+        {componentProps.onCreateWorktree && <button class="branch-button" aria-label="Create Git worktree" title="Create Git worktree after this response" onClick={() => (componentProps.onCreateWorktree)!(componentProps.message)}><FolderGit2 size={14} /></button>}
         {renderCacheHitRate()}
-        {responseTime && <span className="message-time" title={responseTime.full}>{responseTime.short}</span>}
+        {metadata().responseTime && <span class="message-time" title={(metadata().responseTime)!.full}>{(metadata().responseTime)!.short}</span>}
       </div>);
     };
-    return (<div className="message-body">
-      {thinking && <div className="reasoning-text"><ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{thinking}</ReactMarkdown></div>}
+    return (<div class="message-body">
+      {thinking() && <div class="reasoning-text"><Markdown>{thinking()}</Markdown></div>}
       {renderVoiceResponseBubble()}
       {renderMessageFailure()}
-      {pausedResponse && <div className="message-paused" role="status"><Pause size={14} /><span>Response paused</span></div>}
+      {failureState().pausedResponse && <div class="message-paused" role="status"><Pause size={14} /><span>Response paused</span></div>}
       {renderStreamCaret()}
-      {diff && <DiffViewer {...diff} />}
+      {componentProps.diff && <DiffViewer {...(componentProps.diff)!} />}
       {renderMessageActions()}
     </div>);
   };
-  const renderAssistantMessage = () => (<article className={`message assistant-message ${thinking ? "reasoning-message" : ""}`} aria-label={responseLabel} title={responseTime ? `Responded ${responseTime.full}` : undefined}>
+  const renderAssistantMessage = () => (<article class={`message assistant-message ${thinking() ? "reasoning-message" : ""}`} aria-label={metadata().responseLabel} title={metadata().responseTime ? `Responded ${(metadata().responseTime)!.full}` : undefined}>
     {renderMessageBody()}
   </article>);
-  return renderAssistantMessage();
+  return <>{componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? (<ToolResult message={componentProps.message} toolCount={(componentProps.toolCount === undefined ? 1 : componentProps.toolCount)} debug={(componentProps.debug === undefined ? false : componentProps.debug)} />) : componentProps.message.role === "user" ? (renderUserMessage()) : (renderAssistantMessage())}</>;
 }

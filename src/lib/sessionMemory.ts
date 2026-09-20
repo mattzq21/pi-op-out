@@ -1,4 +1,6 @@
-import { useCallback, useSyncExternalStore, type SetStateAction } from "react";
+import { type Accessor, createMemo } from "solid-js";
+import { createSubscription, type StateUpdate } from "../lib/solid";
+
 import type { AgentState, ChatMessage, Model, SlashCommand } from "../types";
 import type { NativeTransport } from "./nativeTransport";
 
@@ -161,7 +163,7 @@ export class SessionMemory {
     try { update(); } finally { this.batching--; this.commit(); }
   }
 
-  set<K extends keyof CachedSession>(key: K, update: SetStateAction<CachedSession[K]>) {
+  set<K extends keyof CachedSession>(key: K, update: StateUpdate<CachedSession[K]>) {
     const next = typeof update === "function" ? (update as (current: CachedSession[K]) => CachedSession[K])(this.value[key]) : update;
     this.value = { ...this.value, [key]: key === "messages" ? (next as ChatMessage[]).map((message) => this.decorate(message)) : next };
     this.commit();
@@ -226,13 +228,13 @@ export function retainSessionResource(transport: Transport, key: string, value: 
   memoryFor(transport).retainResource(key, value, release);
 }
 
-export function useSessionMemory(transport: Transport, initialState: AgentState) {
-  const memory = memoryFor(transport, initialState);
-  const snapshot = useSyncExternalStore(memory.subscribe, memory.getSnapshot);
-  const setState = useCallback((update: SetStateAction<AgentState>) => memory.set("state", update), [memory]);
-  const setMessages = useCallback((update: SetStateAction<ChatMessage[]>) => memory.set("messages", update), [memory]);
-  const setModels = useCallback((update: SetStateAction<Model[]>) => memory.set("models", update), [memory]);
-  const setCommands = useCallback((update: SetStateAction<SlashCommand[]>) => memory.set("commands", update), [memory]);
-  const setThinkingLevels = useCallback((update: SetStateAction<string[]>) => memory.set("thinkingLevels", update), [memory]);
-  return { ...snapshot, memory, setState, setMessages, setModels, setCommands, setThinkingLevels };
+export function useSessionMemory(transport: Accessor<Transport>, initialState: Accessor<AgentState>) {
+  const memory = createMemo(() => (memoryFor(transport(), initialState())));
+  const snapshot = createSubscription(() => memory().subscribe, () => memory().getSnapshot);
+  const setState = (update: StateUpdate<AgentState>) => memory().set("state", update);
+  const setMessages = (update: StateUpdate<ChatMessage[]>) => memory().set("messages", update);
+  const setModels = (update: StateUpdate<Model[]>) => memory().set("models", update);
+  const setCommands = (update: StateUpdate<SlashCommand[]>) => memory().set("commands", update);
+  const setThinkingLevels = (update: StateUpdate<string[]>) => memory().set("thinkingLevels", update);
+  return { get state() { return snapshot().state; }, get messages() { return snapshot().messages; }, get models() { return snapshot().models; }, get commands() { return snapshot().commands; }, get thinkingLevels() { return snapshot().thinkingLevels; }, get resources() { return snapshot().resources; }, get memory() { return memory(); }, setState, setMessages, setModels, setCommands, setThinkingLevels };
 }

@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { type Accessor, createComputed, createSignal } from "solid-js";
+import { createDependencyEffect, createRef, type PointerEvent } from "../lib/solid";
+
 import type { PendingMessage, PendingMessageAction } from "../types";
 
 type Drop = { id: string; targetId?: string; edge?: "before" | "after" };
@@ -11,16 +13,18 @@ function changesPosition(peers: PendingMessage[], id: string, destination: Drop)
   return to + (destination.edge === "after" ? 1 : 0) - (from < to ? 1 : 0) !== from;
 }
 
-export function usePendingMessageDrag(messages: PendingMessage[], disabled: boolean, onMove: (id: string, action: PendingMessageAction) => void) {
-  const latest = useRef({ messages, disabled, onMove });
-  latest.current = { messages, disabled, onMove };
-  const active = useRef<Drag | undefined>(undefined);
-  const cleanup = useRef<() => void>(() => undefined);
-  const [drop, setDrop] = useState<Drop>();
-  useEffect(() => () => cleanup.current(), []);
-  useEffect(() => { if (disabled || (active.current && !messages.some((item) => item.id === active.current?.id))) { cleanup.current(); setDrop(undefined); } }, [disabled, messages]);
+export function usePendingMessageDrag(messages: Accessor<PendingMessage[]>, disabled: Accessor<boolean>, onMove: Accessor<(id: string, action: PendingMessageAction) => void>) {
+  const latest = createRef({ messages: messages(), disabled: disabled(), onMove: onMove() });
+  createComputed(() => { latest.current = { messages: messages(), disabled: disabled(), onMove: onMove() }; });
+  const active = createRef<Drag | undefined>(undefined);
+  const cleanup = createRef<() => void>(() => undefined);
+  const [drop, setDrop] = createSignal<Drop>();
+  createDependencyEffect(() => () => cleanup.current(), () => []);
+  createDependencyEffect(() => {
+    const capturedDisabled = disabled(); const capturedMessages = messages();
+ if (capturedDisabled || (active.current && !capturedMessages.some((item) => item.id === active.current?.id))) { cleanup.current(); setDrop(undefined); } }, () => [disabled(), messages()]);
 
-  const begin = (event: ReactPointerEvent<HTMLButtonElement>, id: string) => {
+  const begin = (event: PointerEvent<HTMLButtonElement>, id: string) => {
     if (event.button !== 0 || latest.current.disabled) return;
     const source = latest.current.messages.find((item) => item.id === id && !item.retry);
     const queue = event.currentTarget.closest<HTMLElement>(".pending-messages");
@@ -85,5 +89,5 @@ export function usePendingMessageDrag(messages: PendingMessage[], disabled: bool
       active.current = undefined; cleanup.current = () => undefined;
     };
   };
-  return { drop, begin };
+  return { get drop() { return drop(); }, get begin() { return begin; } };
 }

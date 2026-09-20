@@ -1,7 +1,9 @@
-import { useEffect, type SetStateAction } from "react";
+import { type Accessor } from "solid-js";
+import { createDependencyEffect, type Dispatch, type StateUpdate } from "./lib/solid";
+
 import { NativeTransport } from "./lib/nativeTransport";
 import { appendTerminalOutput as retainTerminalOutput } from "./lib/terminalOutput";
-import type { ChatMessage, CodexUsage, ExtensionUiRequest, OpencodeGoUsage, DefinedAgentsCapability, AgentConfig, SessionSummary } from "./types";
+import type { AgentConfig, ChatMessage, CodexUsage, DefinedAgentsCapability, ExtensionUiRequest, OpencodeGoUsage, SessionSummary } from "./types";
 
 const staleExtensionContext = "This extension ctx is stale after session replacement or reload.";
 
@@ -76,8 +78,9 @@ function normalizeCodexUsage(value: unknown): CodexUsage | undefined {
   return typeof (value as { remainingPercent?: unknown }).remainingPercent === "number" ? (value as CodexUsage) : undefined;
 }
 
-function LimitBadge({ label, prefix, go, detail, remainingPercent, resetAt }: { label: string; prefix?: string; go?: boolean; detail?: string; remainingPercent: number; resetAt?: number }) {
-  return <span className={go ? "codex-usage opencode-go-usage" : "codex-usage"} role="status" aria-label={`${label} usage remaining: ${remainingPercent}%${resetAt ? `, resets ${formatCodexReset(resetAt)}` : ""}${detail ? ` (${detail})` : ""}`} title={`${label} usage remaining`}><span>{prefix}{remainingPercent}%<span className="codex-usage-left"> left</span></span>{resetAt && <span className="codex-usage-reset"><span className="codex-usage-separator"> · </span>{formatCodexReset(resetAt)}</span>}</span>;
+function LimitBadge(componentProps: { label: string; prefix?: string; go?: boolean; detail?: string; remainingPercent: number; resetAt?: number; clock?: number }) {
+  const resetLabel = () => { componentProps.clock; return componentProps.resetAt ? formatCodexReset(componentProps.resetAt) : ""; };
+  return <span class={componentProps.go ? "codex-usage opencode-go-usage" : "codex-usage"} role="status" aria-label={`${componentProps.label} usage remaining: ${componentProps.remainingPercent}%${componentProps.resetAt ? `, resets ${resetLabel()}` : ""}${componentProps.detail ? ` (${(componentProps.detail)!})` : ""}`} title={`${componentProps.label} usage remaining`}><span>{componentProps.prefix}{componentProps.remainingPercent}%<span class="codex-usage-left"> left</span></span>{componentProps.resetAt && <span class="codex-usage-reset"><span class="codex-usage-separator"> · </span>{resetLabel()}</span>}</span>;
 }
 
 function goUsageBadge(usage?: OpencodeGoUsage) { return usage === undefined ? undefined : { window: usage.rolling, detail: usageWindowsDescription(usage) }; }
@@ -88,22 +91,22 @@ function splitConversationKey(pane?: SplitPaneState) { return pane ? `${pane.ses
 
 function terminalConversationKey(target: TerminalTarget | undefined, fallback: string) { return target?.sessionKey ?? fallback; }
 
-function AppLoading({ error }: { error?: string }) {
-  return <main className="app app-loading dark" role={error ? "alert" : "status"}>
-    <p className="eyebrow">piop</p>
-    <h1>{error ? "Could not load settings" : "Loading settings…"}</h1>
-    {error && <p>{error}</p>}
+function AppLoading(componentProps: { error?: string }) {
+  return <main class="app app-loading dark" role={componentProps.error ? "alert" : "status"}>
+    <p class="eyebrow">piop</p>
+    <h1>{componentProps.error ? "Could not load settings" : "Loading settings…"}</h1>
+    {componentProps.error && <p>{(componentProps.error)!}</p>}
   </main>;
 }
 
-function useUsageClock(codexUsage: CodexUsage | undefined, opencodeGoUsage: OpencodeGoUsage | undefined, setUsageClock: React.Dispatch<SetStateAction<number>>) {
-  useEffect(() => {
-    if (!codexUsage?.resetAt && !opencodeGoUsage?.rolling.resetAt && !opencodeGoUsage?.weekly.resetAt && !opencodeGoUsage?.monthly.resetAt) return;
-    const timer = window.setInterval(() => setUsageClock((value) => value + 1), 60_000);
+function useUsageClock(codexUsage: Accessor<CodexUsage | undefined>, opencodeGoUsage: Accessor<OpencodeGoUsage | undefined>, setUsageClock: Accessor<Dispatch<StateUpdate<number>>>) {
+  createDependencyEffect(() => { const capturedCodexUsage = codexUsage(); const capturedOpencodeGoUsage = opencodeGoUsage(); const capturedSetUsageClock = setUsageClock();
+    if (!capturedCodexUsage?.resetAt && !capturedOpencodeGoUsage?.rolling.resetAt && !capturedOpencodeGoUsage?.weekly.resetAt && !capturedOpencodeGoUsage?.monthly.resetAt) return;
+    const timer = window.setInterval(() => capturedSetUsageClock((value) => value + 1), 60_000);
     return () => window.clearInterval(timer);
-  }, [codexUsage?.resetAt, opencodeGoUsage?.rolling.resetAt, opencodeGoUsage?.weekly.resetAt, opencodeGoUsage?.monthly.resetAt]);
+  }, () => [codexUsage()?.resetAt, opencodeGoUsage()?.rolling.resetAt, opencodeGoUsage()?.weekly.resetAt, opencodeGoUsage()?.monthly.resetAt]);
 }
 
 function definedAgentSettings(capability?: DefinedAgentsCapability): AgentConfig | undefined { return capability ? { agents: capability.config.agents, fastModeModels: capability.config.fastModeModels } : undefined; }
-export type { TerminalTabState, SessionTerminals, QueuedTerminalOutput, BtwRequest, SplitPaneState, OwnedExtensionDialog, RenameTarget, WorktreeTarget, TerminalTarget };
-export { staleExtensionContext, BTW_REQUEST_TITLE, PROMPT_CONTEXT_STATUS_KEY, MCP_STATUS_KEY, MAX_TERMINALS, windowInstanceId, initialTerminals, appendTerminalOutputs, selectedProjectCwd, formatCodexReset, usageWindowsDescription, normalizeOpencodeGoUsage, normalizeCodexUsage, LimitBadge, goUsageBadge, dialogOwnerName, splitConversationKey, terminalConversationKey, AppLoading, useUsageClock, definedAgentSettings };
+export { appendTerminalOutputs,AppLoading,BTW_REQUEST_TITLE,definedAgentSettings,dialogOwnerName,formatCodexReset,goUsageBadge,initialTerminals,LimitBadge,MAX_TERMINALS,MCP_STATUS_KEY,normalizeCodexUsage,normalizeOpencodeGoUsage,PROMPT_CONTEXT_STATUS_KEY,selectedProjectCwd,splitConversationKey,staleExtensionContext,terminalConversationKey,usageWindowsDescription,useUsageClock,windowInstanceId };
+export type { BtwRequest,OwnedExtensionDialog,QueuedTerminalOutput,RenameTarget,SessionTerminals,SplitPaneState,TerminalTabState,TerminalTarget,WorktreeTarget };

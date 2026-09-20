@@ -1,10 +1,12 @@
-import { useSyncExternalStore } from "react";
+import { type Accessor } from "solid-js";
+import { createSubscription } from "../lib/solid";
+
 import type { AgentState, AppSettings, ExtensionUiRequest, GitDiffSnapshots, RpcEvent, SessionSummary } from "../types";
-import { NativeTransport, type NativeConnectionTarget } from "./nativeTransport";
-import { branchMessages, type PiEntry } from "./messages";
 import { textOf } from "./content";
-import { mergeDiffSnapshots } from "./turnDiff";
+import { branchMessages, type PiEntry } from "./messages";
+import { NativeTransport, type NativeConnectionTarget } from "./nativeTransport";
 import { forgetSession, retainSessionResource } from "./sessionMemory";
+import { mergeDiffSnapshots } from "./turnDiff";
 
 const sessionKey = (hostId: string, sessionId: string) => `${hostId}:${sessionId}`;
 const EMPTY_DIFFS: GitDiffSnapshots = {};
@@ -260,4 +262,4 @@ export class SessionRuntimePool {
   async disconnectAll() { await Promise.allSettled([...this.transports].map((transport) => transport.dispose())); }
 }
 
-export function useTurnDiffs(pool: SessionRuntimePool, transport: NativeTransport) { return useSyncExternalStore((listener) => pool.subscribe(listener), () => pool.gitDiffs(transport)); }
+export function useTurnDiffs(pool: Accessor<SessionRuntimePool>, transport: Accessor<NativeTransport>) { return createSubscription(() => (listener) => pool().subscribe(listener), () => () => pool().gitDiffs(transport())); }

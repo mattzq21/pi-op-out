@@ -1,7 +1,9 @@
 import { registerHooks } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import ts from 'typescript';
+import { transformSync } from '@babel/core';
+import solid from 'babel-preset-solid';
+import typescript from '@babel/preset-typescript';
 
 registerHooks({
   load(url, context, nextLoad) {
@@ -9,8 +11,8 @@ registerHooks({
     if (pathname.endsWith('.css')) return { format: 'module', source: '', shortCircuit: true };
     if (pathname.endsWith('.tsx')) {
       const source = readFileSync(new URL(url), 'utf8').replaceAll('import.meta.env.MODE', '(globalThis.__PIOP_TEST_MODE__ ?? "test")').replaceAll('import.meta.hot', 'globalThis.__PIOP_TEST_HOT__');
-      const result = ts.transpileModule(source, { fileName: fileURLToPath(url), compilerOptions: { jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext, inlineSourceMap: true, inlineSources: true } });
-      return { format: 'module', source: result.outputText, shortCircuit: true };
+      const result = transformSync(source, { filename: fileURLToPath(url), babelrc: false, configFile: false, presets: [[solid, { generate: 'dom', hydratable: false }], [typescript, { onlyRemoveTypeImports: false }]], sourceMaps: 'inline' });
+      return { format: 'module', source: result.code, shortCircuit: true };
     }
     const result = nextLoad(url, context);
     if (url.endsWith('/src/lib/nativeTransport.ts') || url.endsWith('/src/lib/platform.ts')) {
@@ -19,6 +21,7 @@ registerHooks({
     return result;
   },
   resolve(specifier, context, nextResolve) {
+    if (specifier === 'solid-js' || specifier.startsWith('solid-js/')) return nextResolve(specifier, { ...context, conditions: [...context.conditions.filter(condition => condition !== 'node'), 'browser'] });
     if (['@xterm/xterm', '@xterm/addon-fit', '@xterm/addon-serialize'].includes(specifier)) return nextResolve(new URL('./terminal-runtime.mjs', import.meta.url).href, context);
     try { return nextResolve(specifier, context); }
     catch (error) {

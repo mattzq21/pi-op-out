@@ -1,5 +1,7 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { splitProps } from "solid-js";
+import { type ButtonHTMLAttributes, type JSXElement } from "../lib/solid";
 
-export function IconButton({ label, children, className = "", ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; children: ReactNode }) {
-  return <button className={`icon-button ${className}`} aria-label={label} title={label} {...props}>{children}</button>;
+export function IconButton(componentProps: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; children: JSXElement }) {
+  const [, props] = splitProps(componentProps, ["label", "children", "class"]);
+  return <button class={`icon-button ${(componentProps.class === undefined ? "" : componentProps.class)}`} aria-label={componentProps.label} title={componentProps.label} {...props}>{componentProps.children}</button>;
 }

@@ -1,29 +1,30 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { createSignal, createUniqueId } from "solid-js";
+import { createDependencyEffect, createRef } from "../lib/solid";
 
-export function RemoveGroupDialog({ name, onRemove, onCancel }: { name: string; onRemove: () => Promise<void>; onCancel: () => void }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const pendingRef = useRef(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>();
-  const titleId = useId();
-  const descriptionId = useId();
-  useEffect(() => {
+export function RemoveGroupDialog(componentProps: { name: string; onRemove: () => Promise<void>; onCancel: () => void }) {
+  const dialogRef = createRef<HTMLDialogElement>(null);
+  const pendingRef = createRef(false);
+  const [pending, setPending] = createSignal(false);
+  const [error, setError] = createSignal<string>();
+  const titleId = createUniqueId();
+  const descriptionId = createUniqueId();
+  createDependencyEffect(() => {
     const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
     const dialog = dialogRef.current;
     dialog?.showModal();
     return () => { dialog?.close(); returnFocus?.focus(); };
-  }, []);
-  const remove = async () => {
+  }, () => []);
+  const remove = async () => { const capturedOnRemove0 = componentProps.onRemove;
     if (pendingRef.current) return;
     pendingRef.current = true; setPending(true); setError(undefined);
-    try { await onRemove(); }
+    try { await capturedOnRemove0(); }
     catch (reason) { setError(String(reason)); }
     finally { pendingRef.current = false; setPending(false); }
   };
-  return <dialog ref={dialogRef} className="extension-dialog" aria-labelledby={titleId} aria-describedby={descriptionId} onCancel={(event) => { event.preventDefault(); if (!pendingRef.current) onCancel(); }}>
-    <h2 id={titleId}>Remove group “{name}”?</h2>
+  return <dialog ref={element => { dialogRef.current = element; }} class="extension-dialog" aria-labelledby={titleId} aria-describedby={descriptionId} onCancel={(event) => { event.preventDefault(); if (!pendingRef.current) componentProps.onCancel(); }}>
+    <h2 id={titleId}>Remove group “{componentProps.name}”?</h2>
     <p id={descriptionId}>All its chats will move outside all groups. No chats or directories will be deleted.</p>
-    {error && <p className="dialog-error" role="alert">{error}</p>}
-    <div className="dialog-actions"><button autoFocus disabled={pending} onClick={onCancel}>Cancel</button><button className="primary-button" disabled={pending} onClick={() => void remove()}>{pending ? "Removing…" : "Remove group"}</button></div>
+    {error() && <p class="dialog-error" role="alert">{(error())!}</p>}
+    <div class="dialog-actions"><button autofocus disabled={pending()} onClick={componentProps.onCancel}>Cancel</button><button class="primary-button" disabled={pending()} onClick={() => void remove()}>{pending() ? "Removing…" : "Remove group"}</button></div>
   </dialog>;
 }

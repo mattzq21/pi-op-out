@@ -1,10 +1,10 @@
 import type { TerminalTarget } from "./appSupport";
-import { type SetStateAction } from "react";
+import { type Dispatch, type RefObject, type StateUpdate } from "./lib/solid";
+
+import { branchMessages, type PiEntry } from "./lib/messages";
 import { NativeTransport } from "./lib/nativeTransport";
 import { SessionRuntimePool } from "./lib/sessionRuntimePool";
 import type { AgentState, AppSettings, ChatMessage, SessionSummary } from "./types";
-import { branchMessages, type PiEntry } from "./lib/messages";
-import type { Dispatch, RefObject } from "react";
 
 type Context = {
   transport: NativeTransport;
@@ -16,11 +16,11 @@ type Context = {
   messages: ChatMessage[];
   rekeyConversationUi: (previousKey: string, nextKey: string, ownerTransport: NativeTransport, moveTerminals?: boolean, copyDraft?: boolean) => void;
   activeTransportRef: RefObject<NativeTransport>;
-  setActiveCwd: Dispatch<SetStateAction<string | undefined>>;
-  setTerminalOpen: Dispatch<SetStateAction<boolean>>;
-  setTerminalTarget: Dispatch<SetStateAction<TerminalTarget | undefined>>;
-  setState: Dispatch<SetStateAction<AgentState>>;
-  setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
+  setActiveCwd: Dispatch<StateUpdate<string | undefined>>;
+  setTerminalOpen: Dispatch<StateUpdate<boolean>>;
+  setTerminalTarget: Dispatch<StateUpdate<TerminalTarget | undefined>>;
+  setState: Dispatch<StateUpdate<AgentState>>;
+  setMessages: Dispatch<StateUpdate<ChatMessage[]>>;
   updateConnected: (value: boolean) => void;
   configureRuntime: (value: AppSettings) => Promise<void>;
   transportConversationKeys: RefObject<Map<NativeTransport, string>>;

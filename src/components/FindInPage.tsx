@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowUp, Search, X } from "lucide-react";
+import { createSignal, Index } from "solid-js";
+import { createDependencyEffect, createRef, cssPixels } from "../lib/solid";
+
+import { ArrowDown, ArrowUp, Search, X } from "lucide-solid";
 
 type Match = { range: Range };
 type Box = { left: number; top: number; width: number; height: number; active: boolean };
@@ -82,55 +84,57 @@ function findShortcutBlocked(event: KeyboardEvent, enabled: boolean) {
   return !enabled || event.isComposing || Boolean(document.querySelector("dialog[open]"));
 }
 
-export function FindInPage({ selector, scopeKey, active = true, enabled = true, onActivate }: { selector: string; scopeKey: string; active?: boolean; enabled?: boolean; onActivate?: () => void }) {
-  const [open, setOpen] = useState(false);
-  const [placement, setPlacement] = useState<{ top: number; right: number; maxWidth: number }>();
-  const bar = useRef<HTMLElement>(null);
-  const [query, setQuery] = useState("");
-  const [matches, setMatches] = useState<Match[]>([]);
-  const [index, setIndex] = useState(0);
-  const [boxes, setBoxes] = useState<Box[]>([]);
-  const input = useRef<HTMLInputElement>(null);
-  const previousFocus = useRef<HTMLElement | null>(null);
-  const selected = useRef<Match | undefined>(undefined);
-  const close = useCallback(() => {
+export function FindInPage(componentProps: { selector: string; scopeKey: string; active?: boolean; enabled?: boolean; onActivate?: () => void }) {
+  const [open, setOpen] = createSignal(false);
+  const [placement, setPlacement] = createSignal<{ top: number; right: number; maxWidth: number }>();
+  const bar = createRef<HTMLElement>(null);
+  const [query, setQuery] = createSignal("");
+  const [matches, setMatches] = createSignal<Match[]>([]);
+  const [index, setIndex] = createSignal(0);
+  const [boxes, setBoxes] = createSignal<Box[]>([]);
+  const input = createRef<HTMLInputElement>(null);
+  const previousFocus = createRef<HTMLElement | null>(null);
+  const selected = createRef<Match | undefined>(undefined);
+  const close = () => {
     setOpen(false);
     if (previousFocus.current?.isConnected) previousFocus.current.focus({ preventScroll: true });
-  }, []);
-  const move = useCallback((direction: number) => {
-    if (!matches.length) return;
-    const next = (index + direction + matches.length) % matches.length;
-    selected.current = matches[next]; setIndex(next); reveal(matches[next].range);
-  }, [index, matches]);
+  };
+  const move = (direction: number) => {
+    if (!matches().length) return;
+    const next = (index() + direction + matches().length) % matches().length;
+    selected.current = matches()[next]; setIndex(next); reveal(matches()[next].range);
+  };
 
-  useEffect(() => {
+  createDependencyEffect(() => { const capturedOpen = open(); const capturedEnabled0 = componentProps.enabled; const capturedSelector1 = componentProps.selector; const capturedActive2 = componentProps.active;
+    const enabled = capturedEnabled0 ?? true;
+    const active = capturedActive2 ?? true;
     const onKey = (event: KeyboardEvent) => {
       if (findShortcutBlocked(event, enabled)) return;
-      const root = document.querySelector<HTMLElement>(selector);
+      const root = document.querySelector<HTMLElement>(capturedSelector1);
       if (!ownsFindShortcut(event, root, bar.current, active)) return;
       if (isFindShortcut(event)) {
         event.preventDefault(); event.stopImmediatePropagation();
 
-        if (!open) previousFocus.current = document.activeElement as HTMLElement;
+        if (!capturedOpen) previousFocus.current = document.activeElement as HTMLElement;
         setOpen(true);
         requestAnimationFrame(() => { input.current?.focus(); input.current?.select(); });
-      } else if (open && event.key === "Escape") {
+      } else if (capturedOpen && event.key === "Escape") {
         event.preventDefault(); event.stopImmediatePropagation(); close();
-      } else if (open && event.key === "F3") {
+      } else if (capturedOpen && event.key === "F3") {
         event.preventDefault(); event.stopImmediatePropagation(); move(event.shiftKey ? -1 : 1);
       }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [open, close, move, selector, active, enabled]);
+  }, () => [open(), close, move, componentProps.selector, (componentProps.active === undefined ? true : componentProps.active), (componentProps.enabled === undefined ? true : componentProps.enabled)]);
 
-  useLayoutEffect(() => {
-    if (!open || !enabled) { setMatches([]); setBoxes([]); return; }
-    const root = document.querySelector<HTMLElement>(selector);
+  createDependencyEffect(() => { const capturedOpen = open(); const capturedQuery = query(); const capturedEnabled0 = componentProps.enabled; const capturedSelector1 = componentProps.selector;
+    if (!capturedOpen || !(capturedEnabled0 === undefined ? true : capturedEnabled0)) { setMatches([]); setBoxes([]); return; }
+    const root = document.querySelector<HTMLElement>(capturedSelector1);
     if (!root) { setMatches([]); setBoxes([]); return; }
     let timer = 0;
     const scan = (keepCurrent: boolean) => {
-      const next = findMatches(root, query), old = keepCurrent ? selected.current?.range : undefined;
+      const next = findMatches(root, capturedQuery), old = keepCurrent ? selected.current?.range : undefined;
       const found = old ? next.findIndex(item => item.range.startContainer === old.startContainer && item.range.startOffset === old.startOffset) : -1;
       const active = Math.max(0, found);
       selected.current = next[active]; setMatches(next); setIndex(active);
@@ -142,17 +146,17 @@ export function FindInPage({ selector, scopeKey, active = true, enabled = true, 
     });
     observer.observe(root, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["open", "hidden", "class", "style"] });
     return () => { observer.disconnect(); window.clearTimeout(timer); };
-  }, [open, query, selector, scopeKey, enabled]);
+  }, () => [open(), query(), componentProps.selector, componentProps.scopeKey, (componentProps.enabled === undefined ? true : componentProps.enabled)]);
 
-  useLayoutEffect(() => {
-    if (!open || !enabled) return;
+  createDependencyEffect(() => { const capturedOpen = open(); const capturedMatches = matches(); const capturedIndex = index(); const capturedEnabled0 = componentProps.enabled; const capturedSelector1 = componentProps.selector;
+    if (!capturedOpen || !(capturedEnabled0 === undefined ? true : capturedEnabled0)) return;
     let frame = 0;
     const draw = () => {
       frame = 0;
-      const bounds = document.querySelector(selector)?.getBoundingClientRect();
+      const bounds = document.querySelector(capturedSelector1)?.getBoundingClientRect();
       if (bounds) setPlacement({ top: bounds.top + 8, right: window.innerWidth - bounds.right + 8, maxWidth: Math.max(0, bounds.width - 16) });
       const next: Box[] = [];
-      matches.forEach(({ range }, matchIndex) => {
+      capturedMatches.forEach(({ range }, matchIndex) => {
         if (!range.startContainer.isConnected) return;
         let left = 0, top = 0, right = window.innerWidth, bottom = window.innerHeight;
         for (let parent = range.startContainer.parentElement; parent; parent = parent.parentElement) {
@@ -168,7 +172,7 @@ export function FindInPage({ selector, scopeKey, active = true, enabled = true, 
         for (const rect of range.getClientRects()) {
           const x = Math.max(left, rect.left), y = Math.max(top, rect.top);
           const width = Math.min(right, rect.right) - x, height = Math.min(bottom, rect.bottom) - y;
-          if (width > 0 && height > 0) next.push({ left: x, top: y, width, height, active: matchIndex === index });
+          if (width > 0 && height > 0) next.push({ left: x, top: y, width, height, active: matchIndex === capturedIndex });
         }
       });
       setBoxes(next);
@@ -178,23 +182,22 @@ export function FindInPage({ selector, scopeKey, active = true, enabled = true, 
     document.addEventListener("scroll", schedule, true);
     window.addEventListener("resize", schedule);
     const observer = new ResizeObserver(schedule);
-    const root = document.querySelector<HTMLElement>(selector);
+    const root = document.querySelector<HTMLElement>(capturedSelector1);
     if (root) observer.observe(root);
     return () => { cancelAnimationFrame(frame); observer.disconnect(); document.removeEventListener("scroll", schedule, true); window.removeEventListener("resize", schedule); };
-  }, [open, matches, index, selector, scopeKey, enabled]);
+  }, () => [open(), matches(), index(), componentProps.selector, componentProps.scopeKey, (componentProps.enabled === undefined ? true : componentProps.enabled)]);
 
-  if (!open || !enabled) return null;
-  return <>
-    <div className="find-highlights" aria-hidden="true">{boxes.map((box, i) => <span key={i} className={box.active ? "active" : undefined} style={{ left: box.left, top: box.top, width: box.width, height: box.height }} />)}</div>
-    <section ref={bar} onFocusCapture={onActivate} onPointerDownCapture={onActivate} style={placement} className="find-bar" aria-label="Find in page" role="search">
+  return <>{!open() || !(componentProps.enabled === undefined ? true : componentProps.enabled) ? (null) : (<>
+    <div class="find-highlights" aria-hidden="true">{<Index each={boxes()}>{(box, i) => <span  class={box().active ? "active" : undefined} style={{ left: cssPixels(box().left), top: cssPixels(box().top), width: cssPixels(box().width), height: cssPixels(box().height) }} />}</Index>}</div>
+    <section ref={element => { bar.current = element; }} oncapture:focus={componentProps.onActivate} oncapture:pointerdown={componentProps.onActivate} style={placement() ? { top: `${placement()!.top}px`, right: `${placement()!.right}px`, "max-width": `${placement()!.maxWidth}px` } : undefined} class="find-bar" aria-label="Find in page" role="search">
       <Search size={15} aria-hidden="true" />
-      <input ref={input} aria-label="Find in page" placeholder="Find in page…" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => {
-        if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); event.stopPropagation(); move(event.shiftKey ? -1 : 1); }
+      <input ref={element => { input.current = element; }} aria-label="Find in page" placeholder="Find in page…" value={query()} onInput={event => setQuery(event.target.value)} onKeyDown={event => {
+        if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); event.stopPropagation(); move(event.shiftKey ? -1 : 1); }
       }} />
-      <span className="find-count" role="status">{query ? matches.length ? `${index + 1} / ${matches.length}` : "No matches" : ""}</span>
-      <button aria-label="Previous match" title="Previous match (Shift+Enter)" disabled={!matches.length} onClick={() => move(-1)}><ArrowUp size={15} /></button>
-      <button aria-label="Next match" title="Next match (Enter)" disabled={!matches.length} onClick={() => move(1)}><ArrowDown size={15} /></button>
+      <span class="find-count" role="status">{query() ? matches().length ? `${index() + 1} / ${matches().length}` : "No matches" : ""}</span>
+      <button aria-label="Previous match" title="Previous match (Shift+Enter)" disabled={!matches().length} onClick={() => move(-1)}><ArrowUp size={15} /></button>
+      <button aria-label="Next match" title="Next match (Enter)" disabled={!matches().length} onClick={() => move(1)}><ArrowDown size={15} /></button>
       <button aria-label="Close find" title="Close (Escape)" onClick={close}><X size={15} /></button>
     </section>
-  </>;
+  </>)}</>;
 }

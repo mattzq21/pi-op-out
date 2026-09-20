@@ -1,72 +1,73 @@
-import type { Dispatch, RefObject } from "react";
-import { useEffect, type SetStateAction } from "react";
-import { NativeTransport } from "./lib/nativeTransport";
+import { type Accessor } from "solid-js";
+import { createDependencyEffect, type Dispatch, type RefObject, type StateUpdate } from "./lib/solid";
+
+import { BTW_REQUEST_TITLE, MCP_STATUS_KEY, PROMPT_CONTEXT_STATUS_KEY, staleExtensionContext, type OwnedExtensionDialog, type QueuedTerminalOutput, type SessionTerminals, type SplitPaneState, type TerminalTarget } from "./appSupport";
 import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "./lib/agentProtocol";
-import type { AgentState, AppSettings, ExtensionUiRequest, DefinedAgentsCapability, RpcEvent } from "./types";
-import { staleExtensionContext, type SessionTerminals, type QueuedTerminalOutput, type SplitPaneState, type OwnedExtensionDialog, type TerminalTarget, BTW_REQUEST_TITLE, PROMPT_CONTEXT_STATUS_KEY, MCP_STATUS_KEY } from "./appSupport";
+import { NativeTransport } from "./lib/nativeTransport";
+import type { AgentState, AppSettings, DefinedAgentsCapability, ExtensionUiRequest, RpcEvent } from "./types";
 
 type AppEventsContext = {
   transport: NativeTransport;
   handleEvent: (event: RpcEvent) => void;
-  setDialogs: Dispatch<SetStateAction<OwnedExtensionDialog[]>>;
+  setDialogs: Dispatch<StateUpdate<OwnedExtensionDialog[]>>;
   refresh: (hostId?: string) => Promise<AppSettings>;
   queueTerminalOutput: (terminalId: string, data: string) => void;
-  setTerminalsBySession: Dispatch<SetStateAction<Record<string, SessionTerminals>>>;
+  setTerminalsBySession: Dispatch<StateUpdate<Record<string, SessionTerminals>>>;
   addNotice: (notice: { title: string; message: string; }) => void;
   activeTransportRef: RefObject<NativeTransport>;
   pendingBtwRequest: RefObject<{ id: string; transport: NativeTransport; } | undefined>;
-  setSplitPane: Dispatch<SetStateAction<SplitPaneState | undefined>>;
+  setSplitPane: Dispatch<StateUpdate<SplitPaneState | undefined>>;
   activeHostIdRef: RefObject<string>;
-  setExtensionOwner: Dispatch<SetStateAction<NativeTransport>>;
-  setDefinedAgents: Dispatch<SetStateAction<DefinedAgentsCapability | undefined>>;
+  setExtensionOwner: Dispatch<StateUpdate<NativeTransport>>;
+  setDefinedAgents: Dispatch<StateUpdate<DefinedAgentsCapability | undefined>>;
   refreshSession: () => Promise<AgentState>;
-  setStatuses: Dispatch<SetStateAction<Record<string, string>>>;
-  setWidgets: Dispatch<SetStateAction<Record<string, string[]>>>;
-  setComposerDrafts: Dispatch<SetStateAction<Record<string, string>>>;
+  setStatuses: Dispatch<StateUpdate<Record<string, string>>>;
+  setWidgets: Dispatch<StateUpdate<Record<string, string[]>>>;
+  setComposerDrafts: Dispatch<StateUpdate<Record<string, string>>>;
   transportConversationKeys: RefObject<Map<NativeTransport, string>>;
   terminalSessionIdRef: RefObject<string>;
-  setActivePane: Dispatch<SetStateAction<"main" | "split">>;
-  setMainComposerFocusRequest: Dispatch<SetStateAction<number>>;
+  setActivePane: Dispatch<StateUpdate<"main" | "split">>;
+  setMainComposerFocusRequest: Dispatch<StateUpdate<number>>;
   queueExtensionDialog: (request: ExtensionUiRequest, ownerTransport: NativeTransport, owner: string) => void;
   mainDialogOwnerRef: RefObject<string>;
-  setActiveHostId: Dispatch<SetStateAction<string>>;
-  setActiveCwd: Dispatch<SetStateAction<string | undefined>>;
+  setActiveHostId: Dispatch<StateUpdate<string>>;
+  setActiveCwd: Dispatch<StateUpdate<string | undefined>>;
   activateConversationKey: (key: string) => void;
-  setTerminalOpen: Dispatch<SetStateAction<boolean>>;
-  setTerminalTarget: Dispatch<SetStateAction<TerminalTarget | undefined>>;
+  setTerminalOpen: Dispatch<StateUpdate<boolean>>;
+  setTerminalTarget: Dispatch<StateUpdate<TerminalTarget | undefined>>;
   configureRuntime: (value: AppSettings) => Promise<void>;
-  setError: Dispatch<SetStateAction<string | undefined>>;
+  setError: Dispatch<StateUpdate<string | undefined>>;
   updateConnected: (value: boolean) => void;
   terminalOutputFrame: RefObject<number | undefined>;
   queuedTerminalOutput: RefObject<Map<string, QueuedTerminalOutput>>;
 };
 
-export function useAppEvents({ transport, handleEvent, setDialogs, refresh, queueTerminalOutput, setTerminalsBySession, addNotice, activeTransportRef, pendingBtwRequest, setSplitPane, activeHostIdRef, setExtensionOwner, setDefinedAgents, refreshSession, setStatuses, setWidgets, setComposerDrafts, transportConversationKeys, terminalSessionIdRef, setActivePane, setMainComposerFocusRequest, queueExtensionDialog, mainDialogOwnerRef, setActiveHostId, setActiveCwd, activateConversationKey, setTerminalOpen, setTerminalTarget, configureRuntime, setError, updateConnected, terminalOutputFrame, queuedTerminalOutput }: AppEventsContext) {
-  useEffect(() => {
+export function useAppEvents(options: Accessor<AppEventsContext>) {
+  createDependencyEffect(() => { const capturedOptions = options();
     let cancelled = false; let reconnecting = false; const refreshTimers = new Set<number>();
-    const unsubscribe = transport.subscribe((event: RpcEvent) => {
-      handleEvent(event);
+    const unsubscribe = capturedOptions.transport.subscribe((event: RpcEvent) => {
+      capturedOptions.handleEvent(event);
       const handleExtensionUiResolved = () => {
-        setDialogs((current) => current.filter((dialog) => dialog.transport !== transport || dialog.request.id !== event.id));
+        capturedOptions.setDialogs((current) => current.filter((dialog) => dialog.transport !== capturedOptions.transport || dialog.request.id !== event.id));
       };
       const handleMessageEnd = () => {
-        const timer = window.setTimeout(() => { refreshTimers.delete(timer); if (!cancelled) void refresh().catch(() => undefined); }, 30);
+        const timer = window.setTimeout(() => { refreshTimers.delete(timer); if (!cancelled) void capturedOptions.refresh().catch(() => undefined); }, 30);
         refreshTimers.add(timer);
       };
       const handleTerminalOutput = () => {
-        queueTerminalOutput(String(event.terminalId ?? ""), String(event.data ?? ""));
+        capturedOptions.queueTerminalOutput(String(event.terminalId ?? ""), String(event.data ?? ""));
       };
       const handleTerminalExit = () => {
-        setTerminalsBySession((current) => Object.fromEntries(Object.entries(current).map(([sessionId, session]) => [sessionId, { ...session, tabs: session.tabs.map((terminal) => terminal.id === event.terminalId ? { ...terminal, exited: true } : terminal) }])));
+        capturedOptions.setTerminalsBySession((current) => Object.fromEntries(Object.entries(current).map(([sessionId, session]) => [sessionId, { ...session, tabs: session.tabs.map((terminal) => terminal.id === event.terminalId ? { ...terminal, exited: true } : terminal) }])));
       };
       const handleExtensionError = () => {
         const message = String(event.error ?? "An extension failed");
-        if (!message.startsWith(staleExtensionContext)) addNotice({ title: "Extension error", message });
+        if (!message.startsWith(staleExtensionContext)) capturedOptions.addNotice({ title: "Extension error", message });
       };
       const handleExtensionUiRequest = () => {
         const request = event as unknown as ExtensionUiRequest;
-        if (transport !== activeTransportRef.current) return;
-        const notifyExtension = () => { if (!event.inputRejected) addNotice({ title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "piop extension", message: request.message || "Notification" }); };
+        if (capturedOptions.transport !== capturedOptions.activeTransportRef.current) return;
+        const notifyExtension = () => { if (!event.inputRejected) capturedOptions.addNotice({ title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "piop extension", message: request.message || "Notification" }); };
         const btwPayload = () => {
           const payload = JSON.parse(request.placeholder || "{}") as { task?: unknown; sessionFile?: unknown; cwd?: unknown };
           if (typeof payload.task !== "string" || !payload.task.trim() || typeof payload.sessionFile !== "string" || !payload.sessionFile) throw new Error("Invalid /btw branch request");
@@ -76,43 +77,43 @@ export function useAppEvents({ transport, handleEvent, setDialogs, refresh, queu
           try {
             const payload = btwPayload();
             const cwd = typeof payload.cwd === "string" && payload.cwd ? payload.cwd : ".";
-            const previous = pendingBtwRequest.current;
+            const previous = capturedOptions.pendingBtwRequest.current;
             if (previous && previous.id !== request.id) void previous.transport.command({ type: "extension_ui_response", id: previous.id, cancelled: true }).catch(() => undefined);
-            pendingBtwRequest.current = { id: request.id, transport };
-            setSplitPane({
+            capturedOptions.pendingBtwRequest.current = { id: request.id, transport: capturedOptions.transport };
+            capturedOptions.setSplitPane({
               key: crypto.randomUUID(),
-              session: { id: `btw-${request.id}`, path: "", name: "BTW", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task, messageCount: 0, lastMessageAt: Date.now(), apiCost: 0, hostId: activeHostIdRef.current },
+              session: { id: `btw-${request.id}`, path: "", name: "BTW", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task, messageCount: 0, lastMessageAt: Date.now(), apiCost: 0, hostId: capturedOptions.activeHostIdRef.current },
               btw: { task: payload.task, forkFrom: payload.sessionFile, requestId: request.id },
             });
           } catch (reason) {
-            void transport.command({ type: "extension_ui_response", id: request.id, cancelled: true });
-            addNotice({ title: "Could not start /btw", message: reason instanceof Error ? reason.message : String(reason) });
+            void capturedOptions.transport.command({ type: "extension_ui_response", id: request.id, cancelled: true });
+            capturedOptions.addNotice({ title: "Could not start /btw", message: reason instanceof Error ? reason.message : String(reason) });
           }
         };
         const setDefinedAgentStatus = () => {
-          setExtensionOwner(transport);
+          capturedOptions.setExtensionOwner(capturedOptions.transport);
           try {
             const capability = request.statusText?.startsWith("json:") ? decodeAgentValue<DefinedAgentsCapability>(request.statusText.slice(5)) : undefined;
-            setDefinedAgents(capability);
-            if (capability) void refreshSession().catch(() => undefined);
-          } catch { setDefinedAgents(undefined); }
+            capturedOptions.setDefinedAgents(capability);
+            if (capability) void capturedOptions.refreshSession().catch(() => undefined);
+          } catch { capturedOptions.setDefinedAgents(undefined); }
         };
         const setExtensionStatus = () => {
-          setExtensionOwner(transport);
-          setStatuses((current) => { const next = { ...current }; if (request.statusText) next[request.statusKey!] = request.statusText; else delete next[request.statusKey!]; return next; });
+          capturedOptions.setExtensionOwner(capturedOptions.transport);
+          capturedOptions.setStatuses((current) => { const next = { ...current }; if (request.statusText) next[request.statusKey!] = request.statusText; else delete next[request.statusKey!]; return next; });
         };
         const setExtensionWidget = () => {
-          setExtensionOwner(transport);
-          setWidgets((current) => { const next = { ...current }; if (request.widgetLines) next[request.widgetKey!] = (Array.isArray(request.widgetLines) ? request.widgetLines : []).filter((line): line is string => typeof line === "string").map((line) => line.slice(0, 500)).slice(0, 50); else delete next[request.widgetKey!]; return next; });
+          capturedOptions.setExtensionOwner(capturedOptions.transport);
+          capturedOptions.setWidgets((current) => { const next = { ...current }; if (request.widgetLines) next[request.widgetKey!] = (Array.isArray(request.widgetLines) ? request.widgetLines : []).filter((line): line is string => typeof line === "string").map((line) => line.slice(0, 500)).slice(0, 50); else delete next[request.widgetKey!]; return next; });
         };
         const setExtensionTitle = () => { document.title = request.title || "piop"; };
         const setEditorText = () => {
-          setComposerDrafts((current) => { const key = transportConversationKeys.current.get(transport) ?? terminalSessionIdRef.current; const next = { ...current }; if (request.text && !next[key]) next[key] = request.text; return next; });
-          setActivePane("main");
-          setMainComposerFocusRequest((value) => value + 1);
+          capturedOptions.setComposerDrafts((current) => { const key = capturedOptions.transportConversationKeys.current.get(capturedOptions.transport) ?? capturedOptions.terminalSessionIdRef.current; const next = { ...current }; if (request.text && !next[key]) next[key] = request.text; return next; });
+          capturedOptions.setActivePane("main");
+          capturedOptions.setMainComposerFocusRequest((value) => value + 1);
         };
         const handleStatus = () => { if (request.statusKey === DEFINED_AGENTS_STATUS_KEY) return setDefinedAgentStatus(); if (request.statusKey === MCP_STATUS_KEY) return; if (request.statusKey && request.statusKey !== PROMPT_CONTEXT_STATUS_KEY) return setExtensionStatus(); };
-        const openExtensionDialog = () => { queueExtensionDialog(request, transport, mainDialogOwnerRef.current); };
+        const openExtensionDialog = () => { capturedOptions.queueExtensionDialog(request, capturedOptions.transport, capturedOptions.mainDialogOwnerRef.current); };
         if (request.method === "notify") return notifyExtension();
         if (request.method === "input" && request.title === BTW_REQUEST_TITLE) return openBtw();
         if (request.method === "setStatus") return handleStatus();
@@ -121,39 +122,39 @@ export function useAppEvents({ transport, handleEvent, setDialogs, refresh, queu
         if (Object.hasOwn(otherMethods, request.method)) return otherMethods[request.method]();
       };
       const handleSessionSwitched = () => {
-        void refresh().catch(() => undefined);
+        void capturedOptions.refresh().catch(() => undefined);
       };
       const handleSettingsApplied = () => {
-        if (transport.currentHostId() !== activeHostIdRef.current) {
+        if (capturedOptions.transport.currentHostId() !== capturedOptions.activeHostIdRef.current) {
           const conversationKey = `local:draft-${crypto.randomUUID()}`;
-          setActiveHostId(transport.currentHostId()); setActiveCwd(transport.currentCwd());
-          transportConversationKeys.current.set(transport, conversationKey); activateConversationKey(conversationKey);
-          setTerminalOpen(false); setTerminalTarget(undefined);
+          capturedOptions.setActiveHostId(capturedOptions.transport.currentHostId()); capturedOptions.setActiveCwd(capturedOptions.transport.currentCwd());
+          capturedOptions.transportConversationKeys.current.set(capturedOptions.transport, conversationKey); capturedOptions.activateConversationKey(conversationKey);
+          capturedOptions.setTerminalOpen(false); capturedOptions.setTerminalTarget(undefined);
         }
-        void refresh().then((value) => configureRuntime(value)).then(() => { setError(undefined); updateConnected(true); }).catch((reason) => setError(String(reason)));
+        void capturedOptions.refresh().then((value) => capturedOptions.configureRuntime(value)).then(() => { capturedOptions.setError(undefined); capturedOptions.updateConnected(true); }).catch((reason) => capturedOptions.setError(String(reason)));
       };
       const handleSessionInfoChanged = () => {
-        void refresh();
+        void capturedOptions.refresh();
       };
       const handleOwnershipLost = () => {
-        updateConnected(false);
-        setDialogs((current) => current.filter((dialog) => dialog.transport !== transport));
+        capturedOptions.updateConnected(false);
+        capturedOptions.setDialogs((current) => current.filter((dialog) => dialog.transport !== capturedOptions.transport));
       };
       const handleOwnershipAcquired = () => {
-        updateConnected(true);
+        capturedOptions.updateConnected(true);
       };
       const handleDisconnected = () => {
-        setDefinedAgents(undefined);
-        setStatuses({});
-        setWidgets({});
+        capturedOptions.setDefinedAgents(undefined);
+        capturedOptions.setStatuses({});
+        capturedOptions.setWidgets({});
         document.title = "piop";
-        setDialogs((current) => current.filter((dialog) => dialog.transport !== transport));
-        updateConnected(false);
+        capturedOptions.setDialogs((current) => current.filter((dialog) => dialog.transport !== capturedOptions.transport));
+        capturedOptions.updateConnected(false);
         if (reconnecting) return;
         reconnecting = true;
         window.setTimeout(() => {
-          if (cancelled) return; const diagnostic = transport.lastDiagnostic();
-          void transport.connect().then(() => refresh()).then((value) => configureRuntime(value)).then(() => refreshSession()).then(() => { if (!cancelled) { setError(undefined); updateConnected(true); } }).catch((reason: unknown) => { if (!cancelled) { const message = reason instanceof Error ? reason.message : String(reason); setError(diagnostic && !message.includes(diagnostic) ? `${message}\n${diagnostic}` : message); } }).finally(() => { reconnecting = false; });
+          if (cancelled) return; const diagnostic = capturedOptions.transport.lastDiagnostic();
+          void capturedOptions.transport.connect().then(() => capturedOptions.refresh()).then((value) => capturedOptions.configureRuntime(value)).then(() => capturedOptions.refreshSession()).then(() => { if (!cancelled) { capturedOptions.setError(undefined); capturedOptions.updateConnected(true); } }).catch((reason: unknown) => { if (!cancelled) { const message = reason instanceof Error ? reason.message : String(reason); capturedOptions.setError(diagnostic && !message.includes(diagnostic) ? `${message}\n${diagnostic}` : message); } }).finally(() => { reconnecting = false; });
         }, 50);
       };
       const handlers: Record<string, () => void> = {
@@ -172,7 +173,7 @@ export function useAppEvents({ transport, handleEvent, setDialogs, refresh, queu
       };
       if (Object.hasOwn(handlers, event.type)) handlers[event.type]();
     });
-    transport.connect().then(() => refresh()).then((value) => configureRuntime(value)).then(() => refreshSession()).then(() => { if (!cancelled) { setError(undefined); updateConnected(true); } }).catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); });
-    return () => { cancelled = true; refreshTimers.forEach(window.clearTimeout); unsubscribe(); if (terminalOutputFrame.current !== undefined) window.clearTimeout(terminalOutputFrame.current); terminalOutputFrame.current = undefined; queuedTerminalOutput.current.clear(); };
-  }, [addNotice, configureRuntime, handleEvent, queueExtensionDialog, queueTerminalOutput, refresh, refreshSession, transport]);
+    capturedOptions.transport.connect().then(() => capturedOptions.refresh()).then((value) => capturedOptions.configureRuntime(value)).then(() => capturedOptions.refreshSession()).then(() => { if (!cancelled) { capturedOptions.setError(undefined); capturedOptions.updateConnected(true); } }).catch((reason: unknown) => { if (!cancelled) capturedOptions.setError(reason instanceof Error ? reason.message : String(reason)); });
+    return () => { cancelled = true; refreshTimers.forEach(window.clearTimeout); unsubscribe(); if (capturedOptions.terminalOutputFrame.current !== undefined) window.clearTimeout(capturedOptions.terminalOutputFrame.current); capturedOptions.terminalOutputFrame.current = undefined; capturedOptions.queuedTerminalOutput.current.clear(); };
+  }, () => [options().addNotice, options().configureRuntime, options().handleEvent, options().queueExtensionDialog, options().queueTerminalOutput, options().refresh, options().refreshSession, options().transport]);
 }

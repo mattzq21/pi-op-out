@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { createSignal } from "solid-js";
+import { createDependencyEffect, createRef, cssPixels, type JSXElement, type RefObject } from "../lib/solid";
 
 type ViewportObserver = { observer: IntersectionObserver; callbacks: Map<Element, () => void> };
 const observers = new WeakMap<Element, ViewportObserver>();
@@ -23,19 +24,19 @@ function observeTurn(root: Element, element: Element, reveal: () => void) {
   };
 }
 
-// History stays in the session cache. Only Markdown/React rendering waits for
+// History stays in the session cache. Only Markdown rendering waits for
 // the viewport. Keep visited turns mounted to preserve expanded work and tools.
-export function DeferredTurn({ children, scrollRoot, eager }: { children: ReactNode; scrollRoot: RefObject<HTMLDivElement | null>; eager: boolean }) {
-  const element = useRef<HTMLDivElement>(null);
-  const [revealed, setRevealed] = useState(eager);
-  useEffect(() => {
-    if (revealed) return;
-    const root = scrollRoot.current;
+export function DeferredTurn(componentProps: { children: JSXElement; scrollRoot: RefObject<HTMLDivElement | null>; eager: boolean }) {
+  const element = createRef<HTMLDivElement>(null);
+  const [revealed, setRevealed] = createSignal(componentProps.eager);
+  createDependencyEffect(() => { const capturedRevealed = revealed(); const capturedScrollRoot0 = componentProps.scrollRoot;
+    if (capturedRevealed) return;
+    const root = capturedScrollRoot0.current;
     const target = element.current;
     if (!root || !target || typeof IntersectionObserver === "undefined") { setRevealed(true); return; }
     return observeTurn(root, target, () => setRevealed(true));
-  }, [revealed, scrollRoot]);
-  return <div ref={element} style={{ contentVisibility: "auto", containIntrinsicSize: "auto 180px", minHeight: revealed || eager ? undefined : 180 }}>
-    {(revealed || eager) && children}
+  }, () => [revealed(), componentProps.scrollRoot]);
+  return <div ref={node => { element.current = node; }} style={{ "content-visibility": "auto", "contain-intrinsic-size": "auto 180px", "min-height": cssPixels(revealed() || componentProps.eager ? undefined : 180) }}>
+    {(revealed() || componentProps.eager) && componentProps.children}
   </div>;
 }

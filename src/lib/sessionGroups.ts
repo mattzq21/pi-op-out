@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { listen } from "./platform";
+import { type Accessor, createMemo, createSignal } from "solid-js";
+import { createDependencyEffect, createRef } from "../lib/solid";
+
 import type { SessionSummary } from "../types";
 import { changeSessionGroups, loadSessionGroups } from "./nativeTransport";
+import { listen } from "./platform";
 
 export interface SessionGroup { id: string; name: string; cwd?: string | null; hostId?: string | null; hostName?: string | null; projectKind?: "no-repo" | "main" | "worktree" | null; }
 export interface SessionGroups { groups: SessionGroup[]; assignments: Record<string, string | null>; removedProjects: string[]; }
@@ -67,32 +69,32 @@ function legacyAssignments(groups: Map<string, SessionGroup>, locations: unknown
   return assignments;
 }
 
-export function useSessionGroups(sessions: SessionSummary[]) {
-  const [state, setState] = useState<SessionGroups>();
-  const [error, setError] = useState<string>();
-  const mounted = useRef(false);
-  useEffect(() => {
+export function useSessionGroups(sessions: Accessor<SessionSummary[]>) {
+  const [state, setState] = createSignal<SessionGroups>();
+  const [error, setError] = createSignal<string>();
+  const mounted = createRef(false);
+  createDependencyEffect(() => {
     mounted.current = true;
     const listener = (value: SessionGroups) => { setState(value); setError(undefined); };
     listeners.add(listener);
     const stop = listen<SessionGroups>("pi://groups-changed", ({ payload }) => listener(payload));
     return () => { mounted.current = false; listeners.delete(listener); void stop.then((unlisten) => unlisten()); };
-  }, []);
-  const seedsJson = JSON.stringify(sessions.filter((session) => !isTemporaryChatCwd(session.cwd)).map((session): SessionGroupSeed => ({
+  }, () => []);
+  const seedsJson = createMemo(() => (JSON.stringify(sessions().filter((session) => !isTemporaryChatCwd(session.cwd)).map((session): SessionGroupSeed => ({
     sessionKey: `${session.hostId ?? "local"}:${session.id}`,
     project: { id: `${session.hostId ?? "local"}:${session.projectRoot ?? session.cwd}`, name: session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project, cwd: session.projectRoot ?? session.cwd, hostId: session.hostId ?? "local", hostName: session.hostName ?? session.hostId ?? "Local", projectKind: session.projectKind },
-  })).sort((a, b) => a.sessionKey.localeCompare(b.sessionKey)));
-  useEffect(() => {
-    const seeds: SessionGroupSeed[] = JSON.parse(seedsJson);
+  })).sort((a, b) => a.sessionKey.localeCompare(b.sessionKey)))));
+  createDependencyEffect(() => { const capturedSeedsJson = seedsJson();
+    const seeds: SessionGroupSeed[] = JSON.parse(capturedSeedsJson);
     void enqueue(async () => publish(await loadSessionGroups(seeds, legacyGroups(seeds)))).catch((reason) => { if (mounted.current) setError(String(reason)); });
-  }, [seedsJson]);
-  const change = useCallback(async (update: GroupChange) => {
+  }, () => [seedsJson()]);
+  const change = async (update: GroupChange) => {
     try {
       await updateSessionGroups(update);
     } catch (reason) {
       if (mounted.current) setError(String(reason));
       throw reason;
     }
-  }, []);
-  return { state, error, change };
+  };
+  return { get state() { return state(); }, get error() { return error(); }, get change() { return change; } };
 }
