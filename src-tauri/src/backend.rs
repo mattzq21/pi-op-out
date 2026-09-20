@@ -3519,6 +3519,29 @@ fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), Str
 }
 
 #[cfg(not(feature = "desktop"))]
+async fn wait_for_desktop_exit() {
+    if !DEVELOPMENT || !std::env::args().any(|argument| argument == "--parent-stdin") {
+        return std::future::pending::<()>().await;
+    }
+    let (closed, receiver) = tokio::sync::oneshot::channel();
+    thread::spawn(move || {
+        use std::io::Read;
+        let mut input = std::io::stdin().lock();
+        let mut buffer = [0u8; 64];
+        loop {
+            match input.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(_) => {},
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
+            }
+        }
+        let _ = closed.send(());
+    });
+    let _ = receiver.await;
+}
+
+#[cfg(not(feature = "desktop"))]
 pub fn run_daemon() -> Result<(), String> {
     if std::env::args().nth(1).as_deref() == Some("--stdio-client") { return daemon_stdio::run(); }
     let _instance = daemon_endpoint::claim()?;
@@ -3534,10 +3557,14 @@ pub fn run_daemon() -> Result<(), String> {
             tokio::select! {
                 result = tokio::signal::ctrl_c() => result.map_err(|error| error.to_string())?,
                 _ = terminate.recv() => {},
+                _ = wait_for_desktop_exit() => {},
             }
         }
         #[cfg(not(unix))]
-        tokio::signal::ctrl_c().await.map_err(|error| error.to_string())?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => result.map_err(|error| error.to_string())?,
+            _ = wait_for_desktop_exit() => {},
+        }
         tokio::task::spawn_blocking(move || shutdown_backend(&app)).await.map_err(|error| error.to_string())?;
         Ok(())
     })

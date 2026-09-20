@@ -25,7 +25,7 @@ async fn open() -> Result<(Socket, Value), String> {
 
 async fn connect() -> Result<(Socket, Value), String> {
     if let Ok(socket) = open().await { return Ok(socket); }
-    let directory = home_dir()?.join(STORAGE_DIRECTORY);
+    let directory = daemon_endpoint::directory()?;
     ensure_private_dir(&directory)?;
     let log_path = directory.join("daemon.log");
     let log = OpenOptions::new().create(true).append(true).open(&log_path).map_err(|error| error.to_string())?;

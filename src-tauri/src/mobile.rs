@@ -12,7 +12,7 @@ mod tailscale_auth;
 pub(super) fn start(app: AppHandle) -> Result<(), String> {
     let token = std::env::var("PIOP_MOBILE_TOKEN").unwrap_or_else(|_| daemon_endpoint::read().map(|endpoint| endpoint.token).unwrap_or_else(|_| format!("{}{}", Uuid::new_v4(), Uuid::new_v4())));
     if token.len() < 32 { return Err("PIOP_MOBILE_TOKEN must contain at least 32 characters".into()); }
-    let bind = std::env::var("PIOP_MOBILE_BIND").unwrap_or_else(|_| if DEVELOPMENT { "127.0.0.1:9848" } else { "127.0.0.1:9847" }.into());
+    let bind = std::env::var("PIOP_MOBILE_BIND").unwrap_or_else(|_| if DEVELOPMENT { "127.0.0.1:0" } else { "127.0.0.1:9847" }.into());
     let listener = TcpListener::bind(&bind).map_err(|error| format!("Mobile endpoint: {error}"))?;
     listener.set_nonblocking(true).map_err(|error| error.to_string())?;
     daemon_endpoint::publish(listener.local_addr().map_err(|error| error.to_string())?, token.clone())?;

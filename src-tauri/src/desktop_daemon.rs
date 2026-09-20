@@ -159,17 +159,24 @@ async fn open(endpoint: &daemon_endpoint::Endpoint) -> Result<Socket, String> {
 async fn local_socket(app: &AppHandle) -> Result<Socket, String> {
     if let Ok(endpoint) = daemon_endpoint::read() { if let Ok(socket) = open(&endpoint).await { return Ok(socket); } }
     let executable = daemon_executable(app)?;
-    let directory = home_dir()?.join(STORAGE_DIRECTORY);
+    let directory = daemon_endpoint::directory()?;
     ensure_private_dir(&directory)?;
     let log_path = directory.join("daemon.log");
     let log = OpenOptions::new().create(true).append(true).open(&log_path).map_err(|error| error.to_string())?;
     set_private_file_permissions(&log_path)?;
     let mut command = Command::new(executable);
     command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(log);
+    if DEVELOPMENT { command.arg("--parent-stdin").stdin(Stdio::piped()); }
     #[cfg(unix)]
     { use std::os::unix::process::CommandExt; command.process_group(0); }
     let mut child = command.spawn().map_err(|error| format!("Could not start Piop daemon: {error}"))?;
-    thread::spawn(move || { let _ = child.wait(); });
+    thread::spawn(move || {
+        // Keep the pipe open for the client's lifetime, even if all windows
+        // temporarily detach. OS closure also covers crashes and dev reloads.
+        let lifetime = child.stdin.take();
+        let _ = child.wait();
+        drop(lifetime);
+    });
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     while tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(100)).await;
