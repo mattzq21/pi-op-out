@@ -250,6 +250,8 @@ pub(crate) enum ProjectKind { NoRepo, Main, Worktree }
 #[serde(rename_all = "camelCase")]
 struct SessionSummary {
     id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    subagent_parent_id: Option<String>,
     group_id: Option<String>,
     path: String,
     name: String,
@@ -941,7 +943,7 @@ fn default_settings() -> AppSettings {
 }
 
 fn session_operation_tools() -> Vec<Value> {
-    [("fork_session", "Fork a conversation in any project"), ("create_worktree", "Create a Git worktree"), ("remove_worktree", "Remove an unused Git worktree")].into_iter().map(|(name, description)| json!({"name":name,"description":description,"enabled":true,"builtin":false})).collect()
+    [("fork_session", "Fork a conversation in any project"), ("create_worktree", "Create a Git worktree"), ("remove_worktree", "Remove an unused Git worktree"), ("subagent", "Delegate parallel tasks to agents with saved transcripts")].into_iter().map(|(name, description)| json!({"name":name,"description":description,"enabled":true,"builtin":false})).collect()
 }
 
 fn codex_web_search_tool() -> Value {
@@ -2412,7 +2414,9 @@ fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, 
     let claim_id = if ephemeral { None } else if let Some(id) = session_id.as_deref() { Some(id.to_string()) } else if let Some(path) = session_path.as_deref() {
         Some(session_identity(&settings, &host_id, path)?)
     } else { None };
-    let _agent_claim = claim_id.as_deref().map(|id| claim_agent(&broker, &host_id, id)).transpose()?;
+    let read_only = presence.as_ref().is_some_and(|value| value["readOnly"] == true);
+    if read_only && (session_path.is_none() || ephemeral || fork_path.is_some()) { return Err("A read-only view requires a saved conversation".into()); }
+    let _agent_claim = if read_only { None } else { claim_id.as_deref().map(|id| claim_agent(&broker, &host_id, id)).transpose()? };
     let daemon = daemon::connect(&app, &runtime, &broker, &settings, &host_id)?;
     let launch_session_path = ephemeral_path.as_deref().or(session_path.as_deref());
     let launch_fork_path = if ephemeral_path.is_some() { None } else { fork_path.as_deref() };
@@ -2780,7 +2784,7 @@ fn read_session_summaries_with(candidates: &[(String, String, u64, u64)], host: 
             let Some((_, fingerprint, modified_at, _)) = batch.iter().find(|item| item.0 == path) else { continue };
             let string = |key| value.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
             let cwd = string("cwd"); let project = Path::new(&cwd).file_name().and_then(|name| name.to_str()).unwrap_or("Workspace").to_owned();
-            let summary = SessionSummary { group_id: None, id: string("id"), path: path.to_owned(), name: string("name"), project, cwd, cwd_exists: true, project_kind: None, project_root: None, modified_at: *modified_at, preview: string("preview"), message_count: value.get("messageCount").and_then(Value::as_u64).unwrap_or(0) as usize, last_message_at: value.get("lastMessageAt").and_then(Value::as_u64).unwrap_or(0), api_cost: value.get("apiCost").and_then(Value::as_f64).unwrap_or(0.0), host_id: host.map(|host| host.id.clone()).unwrap_or_else(|| "local".into()), host_name: host.map(|host| host.name.clone()).unwrap_or_else(|| "Local".into()) };
+            let summary = SessionSummary { group_id: None, subagent_parent_id: value.get("subagentParentId").and_then(Value::as_str).map(str::to_owned), id: string("id"), path: path.to_owned(), name: string("name"), project, cwd, cwd_exists: true, project_kind: None, project_root: None, modified_at: *modified_at, preview: string("preview"), message_count: value.get("messageCount").and_then(Value::as_u64).unwrap_or(0) as usize, last_message_at: value.get("lastMessageAt").and_then(Value::as_u64).unwrap_or(0), api_cost: value.get("apiCost").and_then(Value::as_f64).unwrap_or(0.0), host_id: host.map(|host| host.id.clone()).unwrap_or_else(|| "local".into()), host_name: host.map(|host| host.name.clone()).unwrap_or_else(|| "Local".into()) };
             result.insert(path.to_owned(), CachedSession { fingerprint: fingerprint.clone(), summary });
         }
         cursor = end;
@@ -3322,7 +3326,7 @@ fn agent_is_active(session: &SessionSummary, agent: &AgentAddress) -> bool {
 fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &SessionSummary, message: &str, request_id: &str, deadline_ms: u64, client_id: &str) -> Result<String, String> {
     let remaining = deadline_ms.saturating_sub(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis() as u64);
     if remaining == 0 || broker.closing.load(Ordering::SeqCst) { return Err("Agent message expired or app is closing".into()); }
-    let deadline = Instant::now() + Duration::from_millis(remaining.min(120_000));
+    let deadline = Instant::now() + Duration::from_millis(remaining.min(600_000));
     let runtime = app.state::<PiRuntime>();
     let (settings, _claim, _ownership) = {
         let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
@@ -3375,7 +3379,7 @@ fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &Ses
         }
         if Instant::now() >= deadline {
             if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); }
-            break Err("Agent message timed out after 120 seconds".to_string());
+            break Err("Agent message exceeded its deadline".to_string());
         }
         thread::sleep(Duration::from_millis(25));
     };
