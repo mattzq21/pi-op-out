@@ -13,7 +13,6 @@ import { hasVisibleText } from "../lib/content";
 import { usePendingMessageDrag } from "../lib/usePendingMessageDrag";
 import type { AgentProfile, ComposerUpload, ContextUsage, ImageAttachment, Model, SlashCommand } from "../types";
 import { IconButton } from "./IconButton";
-import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
 
 interface Props {
   voiceControls?: JSXElement;
@@ -61,6 +60,7 @@ const UPLOAD_COUNT_LIMIT = 12;
 const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const TEXT_MIME_TYPES = new Set(["application/json", "application/xml", "application/javascript", "application/typescript", "application/x-sh", "application/x-yaml", "application/toml"]);
 const TEXT_EXTENSIONS = /\.(?:txt|md|mdx|json|jsonl|ya?ml|toml|xml|csv|tsv|js|jsx|ts|tsx|css|scss|html?|py|rs|go|java|kt|kts|c|cc|cpp|cxx|h|hpp|sh|bash|zsh|fish|sql|graphql|gql|ini|conf|env|log)$/i;
+const COMPOSER_MAX_HEIGHT = 130;
 const displayModelName = (model: Model, models: Model[]) => accountModelName(model, models).replace(/^gpt-/i, "");
 const skillName = (command: SlashCommand) => command.source === "skill" ? command.name.replace(/^skill:/, "") : undefined;
 const skillReference = (value: string) => value.match(/(?:^|[\s([{])\$([a-zA-Z0-9_-]*)$/)?.[1]?.toLowerCase();
@@ -185,7 +185,7 @@ export function Composer(props: Props) {
   const controls = createMemo(() => (composerControlState(composer().controlsDisabled, controlAction(), composer().pausing, stopping())));
   const [selectedMatch, setSelectedMatch] = createSignal(0);
   const [paletteDismissed, setPaletteDismissed] = createSignal(false);
-  const ref = createRef<CodeEditorHandle>(null);
+  const ref = createRef<HTMLTextAreaElement>(null);
   const composerRef = createRef<HTMLDivElement>(null);
   const selectedCommandRef = createRef<HTMLButtonElement>(null);
   const [draggingFiles, setDraggingFiles] = createSignal(false);
@@ -228,6 +228,20 @@ export function Composer(props: Props) {
     };
   }, () => []);
 
+  const resizeEditor = () => {
+    const editor = ref.current; if (!editor) return;
+    editor.style.height = "auto";
+    const contentHeight = Math.max(editor.scrollHeight, 31);
+    editor.style.height = `${Math.min(contentHeight, COMPOSER_MAX_HEIGHT)}px`;
+    editor.style.overflowY = contentHeight > COMPOSER_MAX_HEIGHT ? "auto" : "hidden";
+  };
+  createDependencyEffect(resizeEditor, () => [value()]);
+
+  createDependencyEffect(() => {
+    const resize = () => resizeEditor();
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, () => []);
   createDependencyEffect(() => {
     const capturedComposer = { ...composer() };
  if (capturedComposer.focusRequest) ref.current?.focus(); }, () => [composer().focusRequest]);
@@ -355,13 +369,13 @@ export function Composer(props: Props) {
     else setValue(`/${command.name} `);
     ref.current?.focus();
   };
-  const handlePaletteKey = (event: KeyboardEvent) => {
+  const handlePaletteKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Escape" && matches().length) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true); return true; }
     if (matches().length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches().length) % matches().length); return true; }
     if (canPickCommand(event) && matches()[selectedMatch()]) { event.preventDefault(); chooseCommand(matches()[selectedMatch()]); return true; }
     return false;
   };
-  const handleEditorKey = (event: KeyboardEvent) => {
+  const handleEditorKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.isComposing || handlePaletteKey(event)) return;
     if (event.key === "Enter" && !event.shiftKey && (!isMobile || event.ctrlKey)) { event.preventDefault(); event.stopPropagation(); void submit(event.ctrlKey ? "steer" : "followUp"); }
   };
@@ -376,13 +390,7 @@ export function Composer(props: Props) {
     const renderComposerDropHint = () => (draggingFiles() && !controls().inputDisabled && <div class="composer-drop-hint" role="status">Drop files to attach</div>);
     const renderCommandPalette = () => (matches().length > 0 && <div class="command-palette" role="listbox" aria-label={skillQuery() === undefined ? "piop commands" : "piop skills"}>{<Key each={matches()} by={(command) => `${command.source}:${command.name}`}>{(command, index) => <button ref={element => { if (index() === selectedMatch()) selectedCommandRef.current = element; }} role="option" aria-selected={index() === selectedMatch()}  type="button" onClick={() => chooseCommand(command())}><span><strong>{skillQuery() !== undefined ? `$${skillName(command())}` : `/${command().name}`}</strong>{command().description && <small>{command().description}</small>}</span></button>}</Key>}</div>);
     const renderComposerEditor = () => (<div class="composer-editor">
-        <CodeEditor ref={editor => { ref.current = editor; }} compact label="Message piop" disabled={composer().controlsDisabled} placeholder={composer().controlsDisabled ? "Connecting to piop…" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} onChange={(value) => { setPaletteDismissed(false); setValue(value); }} onKeyDown={handleEditorKey} onPaste={(event) => {
-          const files = Array.from(event.clipboardData?.files ?? []);
-          if (!files.length) return;
-          event.preventDefault(); event.stopPropagation();
-          if (controls().inputDisabled) return;
-          void addFiles(files).catch((reason) => setUploadError(reason instanceof Error ? reason.message : String(reason)));
-        }} />
+        <textarea ref={element => { ref.current = element; }} aria-label="Message piop" disabled={composer().controlsDisabled} placeholder={composer().controlsDisabled ? "Connecting to piop…" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onInput={(event) => { setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
       </div>);
     const renderComposerBar = () => {
       const renderComposerTools = () => (<div class="composer-tools">{visualProps.voiceControls}<DictationControls disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); ref.current?.focus(); }} />{composer().onOpenTerminal && <IconButton title="" label="Open terminal" disabled={composer().controlsDisabled} onClick={(composer().onOpenTerminal)!}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage} keyed>{usage => <ContextWheel usage={usage} />}</Show><Show when={composer().sessionCache} keyed>{cache => <span class={`session-cache-hit${cache.low ? " low" : ""}`}>Cache {cache.rate}%</span>}</Show></div>);

@@ -4,6 +4,8 @@ import { Marked } from "marked";
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { openExternalUrl } from "../lib/nativeTransport";
+import { fileReference, type FileReference } from "../lib/projectFiles";
+import { detectFileLinks } from "../lib/fileLinks";
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
 function webUrl(href: string) {
@@ -18,7 +20,7 @@ const parser = new Marked({
     link({ href, tokens }) {
       const text = this.parser.parseInline(tokens);
       const url = webUrl(href);
-      return url ? `<a class="message-link" href="${escapeHtml(url)}" title="Click to open in browser&#10;${escapeHtml(url)}">${text}</a>` : `<span class="message-link" title="${escapeHtml(href)}">${text}</span>`;
+      return url ? `<a class="message-link" href="${escapeHtml(url)}" title="Click to open in browser&#10;${escapeHtml(url)}">${text}</a>` : `<span class="message-link"${fileReference(href) ? ` data-file-reference="${escapeHtml(href)}"` : ""} title="${escapeHtml(href)}">${text}</span>`;
     },
     code({ text, lang }) {
       const language = lang?.split(/\s/)[0];
@@ -29,18 +31,19 @@ const parser = new Marked({
 
 let purifier: ReturnType<typeof DOMPurify> | undefined;
 let purifierWindow: Window | undefined;
-export function markdownHtml(source: string) {
+export function markdownHtml(source: string, detectFiles = false) {
   if (!purifier || purifierWindow !== window) { purifier = DOMPurify(window); purifierWindow = window; }
-  return purifier.sanitize(parser.parse(source, { async: false }), {
+  const html = purifier.sanitize(parser.parse(source, { async: false }), {
     USE_PROFILES: { html: true },
     FORBID_TAGS: ["img", "video", "audio", "source", "iframe", "form", "style"],
     FORBID_ATTR: ["style", "src", "srcset", "id", "name"],
   });
+  return detectFiles ? detectFileLinks(html) : html;
 }
 
 type LinkMenu = { href: string; x: number; y: number; returnFocus?: HTMLElement };
-export function Markdown(props: { children: string }) {
-  const html = createMemo(() => markdownHtml(props.children));
+export function Markdown(props: { children: string; onOpenFile?: (file: FileReference) => void }) {
+  const html = createMemo(() => markdownHtml(props.children, Boolean(props.onOpenFile)));
   const [error, setError] = createSignal<string>();
   const [menu, setMenu] = createSignal<LinkMenu>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -93,6 +96,13 @@ export function Markdown(props: { children: string }) {
   };
   const click = (event: MouseEvent) => {
     if (!(event.target instanceof Element)) return;
+    const fileLink = event.target.closest<HTMLButtonElement>("button.file-link");
+    if (fileLink) {
+      event.preventDefault();
+      const reference = fileReference(fileLink.dataset.fileReference ?? "");
+      if (reference) props.onOpenFile?.(reference);
+      return;
+    }
     const link = event.target.closest<HTMLAnchorElement>("a");
     if (link) {
       event.preventDefault();

@@ -11,8 +11,9 @@ import type { ChatMessage } from "../types";
 import { DiffViewer } from "./DiffViewer";
 import { IconButton } from "./IconButton";
 import { Markdown } from "./Markdown";
+import type { FileReference } from "../lib/projectFiles";
 
-interface Props { message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; diff?: ReturnType<typeof turnDiff>; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
+interface Props { message: ChatMessage; onOpenFile?: (file: FileReference) => void; turnCacheUsage?: { input: number; cacheRead: number }; diff?: ReturnType<typeof turnDiff>; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
 
 function userMessageParts(content: string) {
   const invocation = content.match(/^<skill\s+name="([^"]+)"\s+location="[^"]+">\nReferences are relative to [^\n]+\.\n\n[\s\S]*?<\/skill>(?:\n\n([\s\S]*))?$/i);
@@ -141,7 +142,7 @@ export function Message(componentProps: Props) {
     try { await (capturedOnForkAndForget0)!(capturedMessage1); } finally { forgettingRef.current = false; setForgetting(false); }
   };
   const renderMessageBody = () => {
-    const renderVoiceResponseBubble = () => (voiceResponse() ? <div class="voice-response-bubble"><Markdown>{output()}</Markdown>{componentProps.message.streaming && <span class="stream-caret" />}</div> : <Markdown>{output()}</Markdown>);
+    const renderVoiceResponseBubble = () => (voiceResponse() ? <div class="voice-response-bubble"><Markdown>{output()}</Markdown>{componentProps.message.streaming && <span class="stream-caret" />}</div> : <Markdown onOpenFile={componentProps.onOpenFile}>{output()}</Markdown>);
     const renderMessageFailure = () => (failureState().failure && <div class="message-failure" role="status"><CircleAlert size={14} /><span>{(failureState().failure)!}</span>{componentProps.onRetry && <button disabled={(componentProps.retrying === undefined ? false : componentProps.retrying)} onClick={(componentProps.onRetry)!}>{(componentProps.retrying === undefined ? false : componentProps.retrying) ? "Retrying…" : "Retry"}</button>}</div>);
     const renderStreamCaret = () => (componentProps.message.streaming && !voiceResponse() && <span class="stream-caret" />);
     const renderMessageActions = () => {
