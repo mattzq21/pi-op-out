@@ -28,7 +28,7 @@ function formatBytes(bytes: number) {
 function itemCount(category: StorageCategory) {
   const item = categoryDetails[category.id]?.item ?? "item";
   const count = Number.isFinite(category.itemCount) ? category.itemCount : 0;
-  return `${count} ${item}${count === 1 ? "" : "s"}`;
+  return `${count} ${count === 1 ? item : item === "directory" ? "directories" : `${item}s`}`;
 }
 
 function formatDate(timestamp: number) {

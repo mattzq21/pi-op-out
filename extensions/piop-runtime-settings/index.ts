@@ -97,6 +97,7 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
       try {
         await refreshAccounts();
         await ctx.modelRegistry.refresh({ allowNetwork: false });
+        pi.events.emit("piop:models-refreshed", { ctx });
         ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id: request.id, command: "provider_auth_refresh", success: true })}`);
       } catch {
         ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id: request.id, command: "provider_auth_refresh", success: false, error: "Could not refresh provider models. Reopen the conversation to retry." })}`);

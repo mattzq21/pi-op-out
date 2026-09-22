@@ -127,6 +127,7 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
   let cap = initial ? (initial.contextWindowCapEnabled ? initial.contextWindowCap : undefined) : await loadCap();
   const originalWindows = new Map<{ contextWindow: number }, number>();
   pi.on("input", (event, ctx) => {
+    capModel(ctx.model);
     if (cap === undefined || event.text.startsWith("/")) return;
     const budgets = SettingsManager.create(ctx.cwd, undefined, { projectTrusted: ctx.isProjectTrusted() }).getCompactionSettings();
     const minimum = budgets.reserveTokens + budgets.keepRecentTokens + 1;
@@ -155,6 +156,8 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
     capModel(ctx.model);
   };
   pi.on("session_shutdown", () => { for (const [model, original] of originalWindows) model.contextWindow = original; });
+  const unsubscribeModels = pi.events.on("piop:models-refreshed", (value) => { capModel((value as { ctx: ExtensionContext }).ctx.model); });
+  pi.on("session_shutdown", () => { unsubscribeModels(); });
   const publishPromptContext = (ctx: ExtensionContext, messages: unknown[]) => {
     const branch = ctx.sessionManager.getBranch();
     const resumeMessages = new Set(branch.flatMap((entry) => {
@@ -202,6 +205,7 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
   });
 
   pi.on("before_agent_start", (event, ctx) => {
+    capModel(ctx.model);
     if (process.env.PI_DEFINE_AGENTS_ACTIVE === "1") return;
     const projectContext = movableProjectContext(event.systemPrompt, ctx.cwd);
     const previous = latestCustomMessage(ctx.sessionManager.buildContextEntries(), PROJECT_CONTEXT_MESSAGE);

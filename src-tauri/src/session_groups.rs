@@ -42,6 +42,7 @@ pub struct SessionSeed {
 pub enum GroupChange {
     Create { name: String },
     Project { project: SessionGroup, key: Option<String> },
+    Relocate { project: SessionGroup, key: String },
     InspectProject { id: String, #[serde(rename = "projectKind")] project_kind: super::ProjectKind },
     Rename { id: String, name: String },
     Remove { id: String },
@@ -133,6 +134,23 @@ fn change_with(change: GroupChange, path: impl FnOnce() -> Result<PathBuf, Strin
 fn change_at(path: &PathBuf, change: GroupChange) -> Result<SessionGroups, String> {
     let mut state = read(path)?.ok_or("Session groups have not loaded yet")?;
     match change {
+        GroupChange::Relocate { project, key } => {
+            if project.cwd.as_ref().is_none_or(|cwd| cwd.is_empty()) { return Err("Enter a project directory".into()); }
+            let previous = state.assignments.get(&key).cloned();
+            let old_id = previous.clone().flatten();
+            let automatic = old_id.as_ref().is_some_and(|id| state.groups.iter().any(|group| &group.id == id && group.cwd.is_some()));
+            if previous.is_none() || automatic {
+                state.removed_projects.remove(&project.id);
+                state.assignments.insert(key, Some(project.id.clone()));
+                if !state.groups.iter().any(|group| group.id == project.id) { state.groups.insert(0, project); }
+                if let Some(old_id) = old_id {
+                    if !state.assignments.values().any(|id| id.as_ref() == Some(&old_id)) {
+                        state.groups.retain(|group| group.id != old_id);
+                        state.removed_projects.insert(old_id);
+                    }
+                }
+            }
+        },
         GroupChange::InspectProject { id, project_kind } => {
             if !state.removed_projects.contains(&id) {
                 if let Some(group) = state.groups.iter_mut().find(|group| group.id == id) { group.project_kind = Some(project_kind); }

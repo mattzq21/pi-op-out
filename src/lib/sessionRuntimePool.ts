@@ -145,7 +145,7 @@ export class SessionRuntimePool {
   private updateActivity(transport: NativeTransport, event: RpcEvent) {
     if (event.type === "runtime_presence") { if (event.isStreaming) this.runningTransports.add(transport); else this.runningTransports.delete(transport); }
     if (event.type === "agent_start" || event.type === "message_start") { this.runningTransports.add(transport); this.unseenTransports.delete(transport); }
-    if (event.type === "agent_settled") { this.runningTransports.delete(transport); if (transport !== this.activeTransport) this.unseenTransports.add(transport); }
+    if (event.type === "agent_settled") { this.runningTransports.delete(transport); if (transport !== this.activeTransport && !this.interactiveTransports.has(transport)) this.unseenTransports.add(transport); }
     if (event.type === "disconnected") { this.runningTransports.delete(transport); }
   }
 
@@ -189,7 +189,7 @@ export class SessionRuntimePool {
   activate(transport?: NativeTransport) { const previous = this.activeTransport; this.activeTransport = transport; if (previous && previous !== transport) previous.setVisible(this.interactiveTransports.has(previous)); if (transport) { transport.setVisible(true); this.unseenTransports.delete(transport); } this.publishSessionStates(); }
 
   setErrorHandler(handler?: (message: string) => void) { this.errorHandler = handler; }
-  setInteractive(transport: NativeTransport, interactive: boolean) { if (interactive) this.interactiveTransports.add(transport); else this.interactiveTransports.delete(transport); transport.setVisible(interactive || transport === this.activeTransport); }
+  setInteractive(transport: NativeTransport, interactive: boolean) { if (interactive) { this.interactiveTransports.add(transport); this.unseenTransports.delete(transport); } else this.interactiveTransports.delete(transport); transport.setVisible(interactive || transport === this.activeTransport); this.publishSessionStates(); }
   isRunning(transport: NativeTransport) { return this.runningTransports.has(transport); }
   isRetained(transport: NativeTransport) { return this.retainedTransports.has(transport); }
   isAnyRunning() { return this.runningTransports.size > 0; }
@@ -209,10 +209,18 @@ export class SessionRuntimePool {
   }
   pendingSettingsCount() { return [...this.transports].filter((transport) => transport.hasPendingSettings()).length; }
 
-  async copySavedDiffs(transport: NativeTransport, sourcePath: string | undefined, destinationPath: string | undefined, retainedMessageIds?: ReadonlySet<string>) {
+  async captureMemoryDiffs(transport: NativeTransport) {
+    const state = this.diffState(transport);
+    if (state.persistence !== "memory") return undefined;
+    const saved = await state.load?.promise;
+    return { ...saved, ...state.snapshots };
+  }
+
+  async copySavedDiffs(transport: NativeTransport, sourcePath: string | undefined, destinationPath: string | undefined, retainedMessageIds?: ReadonlySet<string>, sourceSnapshots?: GitDiffSnapshots) {
     if (!sourcePath || !destinationPath || sourcePath === destinationPath) return;
     const state = this.diffState(transport); const hostId = transport.currentHostId(); const key = `${hostId}:${destinationPath}`;
-    const operation = transport.loadGitDiffs(sourcePath, hostId).then(async (source) => {
+    const source = sourceSnapshots ? Promise.resolve(sourceSnapshots) : state.persistence === "memory" ? this.captureMemoryDiffs(transport).then((snapshots) => snapshots ?? EMPTY_DIFFS) : transport.loadGitDiffs(sourcePath, hostId);
+    const operation = source.then(async (source) => {
       const snapshots = retainedMessageIds ? Object.fromEntries(Object.entries(source).filter(([id]) => retainedMessageIds.has(id))) : source;
       await transport.saveGitDiffs(destinationPath, snapshots, hostId);
       return snapshots;
@@ -224,7 +232,7 @@ export class SessionRuntimePool {
       if (state.load?.promise === promise) { state.load = undefined; this.notify(); }
       return EMPTY_DIFFS;
     });
-    state.path = key; state.snapshots = EMPTY_DIFFS; state.load = { key, promise }; this.notify();
+    state.persistence = "session"; state.path = key; state.snapshots = EMPTY_DIFFS; state.load = { key, promise }; this.notify();
     await operation; await promise;
   }
 

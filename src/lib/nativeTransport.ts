@@ -66,6 +66,7 @@ export class NativeTransport {
     this.emit({ type: "settings_applied" });
   }
   private ephemeral = false;
+  isEphemeral() { return this.ephemeral; }
   private fresh = true;
   needsDefaults() { return this.fresh; }
   defaultsApplied() { this.fresh = false; }
@@ -165,6 +166,9 @@ export class NativeTransport {
   }
   private retainCommandSession(command: RpcCommand, result: unknown) {
     if (command.type === "get_state" || command.type === "get_snapshot") { const state = (command.type === "get_snapshot" ? (result as { state: unknown }).state : result) as { sessionFile?: string; sessionId?: string }; if (this.sessionId && this.sessionId !== state.sessionId) forgetSession(this); this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; }
+    if (command.type === "get_snapshot") {
+      for (const event of (result as { extensionState?: RpcEvent[] }).extensionState ?? []) this.emit(event);
+    }
   }
   private async discoverFastCommands(result: unknown) {
     const { commands } = result as { commands: Array<{ name: string; source: string; sourceInfo?: { source?: string; path?: string } }> };

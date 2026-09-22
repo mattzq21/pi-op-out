@@ -15,22 +15,24 @@ interface Props {
   onCancel: () => void;
 }
 
-const folderName = (path: string) => path.split(/[\\/]/).filter(Boolean).at(-1) || path;
-const withSeparator = (path: string) => /[\\/]$/.test(path) ? path : path + (path.includes("\\") ? "\\" : "/");
+const isWindowsPath = (path: string) => /^(?:[a-z]:[\\/]|\\\\)/i.test(path);
+const isAbsolutePath = (path: string) => path.startsWith("/") || isWindowsPath(path);
+const folderName = (path: string) => path.split(isWindowsPath(path) ? /[\\/]/ : /\//).filter(Boolean).at(-1) || path;
+const withSeparator = (path: string) => (isWindowsPath(path) ? /[\\/]$/ : /\/$/).test(path) ? path : path + (isWindowsPath(path) ? "\\" : "/");
 const displayPath = (path: string, home: string) => {
   if (!home) return path;
-  const normalized = path.replace(/\\/g, "/");
-  const root = home.replace(/\\/g, "/").replace(/\/+$/, "");
+  const normalized = isWindowsPath(home) ? path.replace(/\\/g, "/") : path;
+  const root = (isWindowsPath(home) ? home.replace(/\\/g, "/") : home).replace(/\/+$/, "");
   return normalized === root || normalized === root + "/" ? "~/" : normalized.startsWith(root + "/") ? "~/" + normalized.slice(root.length + 1) : path;
 };
 const expandHome = (path: string, home: string) => {
   if (path === "~") return home;
-  if (!/^~[\\/]/.test(path)) return path;
-  return home ? withSeparator(home) + (home.includes("\\") ? path.slice(2).replace(/\//g, "\\") : path.slice(2)) : "";
+  if (!(isWindowsPath(home) ? /^~[\\/]/ : /^~\//).test(path)) return path;
+  return home ? withSeparator(home) + (isWindowsPath(home) ? path.slice(2).replace(/\//g, "\\") : path.slice(2)) : "";
 };
 
 function parentPath(typedParent: string, homePath: string, basePath: string) {
-  return /^~[\\/]/.test(typedParent) ? expandHome(typedParent, homePath) : !typedParent ? basePath : /^(?:[\\/]|[a-z]:[\\/])/i.test(typedParent) ? typedParent : basePath ? withSeparator(basePath) + typedParent : typedParent;
+  return (isWindowsPath(homePath) ? /^~[\\/]/ : /^~\//).test(typedParent) ? expandHome(typedParent, homePath) : !typedParent ? basePath : isAbsolutePath(typedParent) ? typedParent : basePath ? withSeparator(basePath) + typedParent : typedParent;
 }
 
 function isHistoryShortcut(event: KeyboardEvent) {
@@ -58,7 +60,7 @@ export function ProjectDialog(componentProps: Props) {
   const openingRef = createRef(false);
   const [active, setActive] = createSignal(0);
   const [browseRequest, setBrowseRequest] = createSignal(0);
-  const separator = createMemo(() => (Math.max(query().lastIndexOf("/"), query().lastIndexOf("\\"))));
+  const separator = createMemo(() => (Math.max(query().lastIndexOf("/"), isWindowsPath(homePath()) || isWindowsPath(query()) ? query().lastIndexOf("\\") : -1)));
   const typedParent = createMemo(() => (separator() < 0 ? "" : query().slice(0, separator() + 1)));
   const parent = createMemo(() => (parentPath(typedParent(), homePath(), basePath())));
   const fragment = createMemo(() => (query().slice(separator() + 1)));
@@ -155,14 +157,14 @@ export function ProjectDialog(componentProps: Props) {
     const move = () => { event.preventDefault(); setActive((index) => results().length ? (index + (event.key === "ArrowDown" ? 1 : -1) + results().length) % results().length : 0); };
     const handlers: Record<string, () => void> = {
       ArrowDown: move, ArrowUp: move,
-      Enter: () => { event.preventDefault(); if (fragment() && selected()) void open(selected()); else if (query().trim()) void open(expandHome(query() === "~" || /^(?:~[\\/]|[\\/]|[a-z]:[\\/])/i.test(query()) ? query() : withSeparator(basePath()) + query(), homePath())); },
+      Enter: () => { event.preventDefault(); if (fragment() && selected()) void open(selected()); else if (query()) void open(expandHome(query() === "~" || query().startsWith("~/") || isWindowsPath(homePath()) && query().startsWith("~\\") || isAbsolutePath(query()) ? query() : withSeparator(basePath()) + query(), homePath())); },
       Tab: () => { if (!event.shiftKey && selected() && !loading()) { event.preventDefault(); browse(selected()); } },
       Backspace: () => { if (event.altKey && listing()?.parent) { event.preventDefault(); browse((listing())!.parent!); } },
     };
     if (Object.hasOwn(handlers, event.key)) handlers[event.key]();
   };
 
-  const renderDirectoryPaletteSearch = () => (<div class="directory-palette-search"><Search size={20} />{hasHomePrefix() && <span class="directory-palette-prefix" aria-hidden="true">~/</span>}<input ref={element => { inputRef.current = element; }} autofocus role="combobox" aria-label={hasHomePrefix() ? "Folder path relative to home" : "Search or type a folder path"} aria-autocomplete="list" aria-expanded="true" aria-controls="directory-palette-results" aria-activedescendant={!loading() && selected() ? "directory-result-" + active() : undefined} autocomplete="off" spellcheck={false} placeholder="Type a folder path…" readOnly={opening()} value={hasHomePrefix() ? query().slice(2) : query()} onInput={(event) => { changeQuery(hasHomePrefix() ? "~/" + event.target.value.replace(/^~[\\/]/, "") : event.target.value); }} onKeyDown={handlePathKey} /></div>);
+  const renderDirectoryPaletteSearch = () => (<div class="directory-palette-search"><Search size={20} />{hasHomePrefix() && <span class="directory-palette-prefix" aria-hidden="true">~/</span>}<input ref={element => { inputRef.current = element; }} autofocus role="combobox" aria-label={hasHomePrefix() ? "Folder path relative to home" : "Search or type a folder path"} aria-autocomplete="list" aria-expanded="true" aria-controls="directory-palette-results" aria-activedescendant={!loading() && selected() ? "directory-result-" + active() : undefined} autocomplete="off" spellcheck={false} placeholder="Type a folder path…" readOnly={opening()} value={hasHomePrefix() ? query().slice(2) : query()} onInput={(event) => { const value = event.target.value; changeQuery(hasHomePrefix() && !isAbsolutePath(value) && !value.startsWith("~") ? "~/" + value : value); }} onKeyDown={handlePathKey} /></div>);
   const renderDirectoryPaletteCaption = () => (<div class="directory-palette-caption"><span>{loading() ? "Finding folders…" : fragment() ? results().length + " matching folders" : "Continue into a folder"}</span><span>Tab to complete · Enter to open</span></div>);
   const renderDirectoryPaletteResults = () => (<div id="directory-palette-results" class="directory-palette-results" role="listbox" aria-label="Matching folders" aria-busy={loading()}>
       {!loading() && <Key each={results()} by={(path) => path}>{(path, index) => <div id={"directory-result-" + index()}  role="option" aria-selected={index() === active()} class="directory-palette-result" onMouseDown={(event) => event.preventDefault()} onMouseMove={() => setActive(index())} onClick={() => { if (!opening()) browse(path()); }}><Folder size={17} /><span>{folderName(path())}</span></div>}</Key>}

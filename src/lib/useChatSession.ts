@@ -187,6 +187,10 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     };
     const handleAgentSettled = () => {
       session.setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
+      const revision = liveRevision.current;
+      void load<{ contextUsage?: AgentState["contextUsage"] }>({ type: "get_session_stats" }).then((stats) => {
+        if (owner.current === transport() && revision === liveRevision.current) session.setState((current) => ({ ...current, contextUsage: stats.contextUsage }));
+      }).catch(() => undefined);
     };
     const handleDisconnected = () => {
       session.setState((current) => ({ ...current, isStreaming: false, isCompacting: false, isPausing: false, activity: undefined }));

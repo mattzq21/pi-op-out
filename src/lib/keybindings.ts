@@ -30,7 +30,7 @@ export function shortcutError(shortcut: string) {
   const parsed = parseShortcut(shortcut);
   if (!parsed || parsed.key === "control") return `Shortcut “${shortcut}” needs exactly one non-modifier key`;
   if (!parsed.mod && !parsed.ctrl && !parsed.meta && !parsed.alt) return `Shortcut “${shortcut}” needs Ctrl, Alt, or Meta`;
-  if (parsed.key === "g" && !parsed.alt && !parsed.shift && (parsed.mod || parsed.ctrl || parsed.meta)) return `Shortcut “${shortcut}” is reserved for conversation search`;
+  if ((parsed.key === "f" || parsed.key === "g") && !parsed.alt && !parsed.shift && (parsed.mod || parsed.ctrl || parsed.meta)) return `Shortcut “${shortcut}” is reserved for search`;
   return undefined;
 }
 

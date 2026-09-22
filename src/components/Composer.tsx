@@ -326,7 +326,7 @@ export function Composer(props: Props) {
   const controlsBlocked = () => composer().controlsDisabled || composer().compacting || composer().pausing || controlActionRef.current || stoppingRef.current;
   const canSubmit = (message: string, images: ImageAttachment[]) => {
     if (images.length && !supportsImagesRef.current) { setImageInputError(true); return false; }
-    return Boolean((message || images.length) && !sendingRef.current);
+    return Boolean((hasVisibleText(message) || images.length) && !sendingRef.current);
   };
   const restoreSubmission = (submittedValue: string, submittedUploads: ComposerUpload[], reason: unknown, changeDraft: (value: StateUpdate<string>) => void, changeUploads: (value: StateUpdate<ComposerUpload[]>) => void) => {
     changeDraft((newerDraft) => newerDraft && newerDraft !== submittedValue ? `${submittedValue}\n\n${newerDraft}` : submittedValue);
@@ -520,15 +520,18 @@ function ContainedPicker(props: { label: string; selectedLabel?: string; value: 
     if (menuStyle()) return close();
     optionChosenRef.current = false;
     const rect = trigger.current?.getBoundingClientRect(); if (!rect) return;
-    const width = Math.min(props.menuMinWidth ?? picker().menuWidth, window.innerWidth - 16);
-    const right = Math.max(8, Math.min(window.innerWidth - rect.right, window.innerWidth - width - 8));
+    const pane = root.current?.closest(".chat-shell")?.getBoundingClientRect();
+    const leftEdge = Math.max(8, (pane?.left ?? 0) + 8);
+    const rightEdge = Math.min(window.innerWidth - 8, (pane?.right ?? window.innerWidth) - 8);
+    const width = Math.max(0, Math.min(props.menuMinWidth ?? picker().menuWidth, rightEdge - leftEdge));
+    const right = window.innerWidth - Math.min(rightEdge, Math.max(rect.right, leftEdge + width));
     const selectedIndex = picker().options.findIndex((option) => option.value === picker().value && !option.disabled);
     const index = Math.max(0, selectedIndex >= 0 ? selectedIndex : picker().options.findIndex((option) => !option.disabled));
     setActiveIndex(index);
     setMenuStyle({
       ...(props.menuMinWidth === undefined
-        ? { left: cssPixels(Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))), width: cssPixels(width) }
-        : { right: cssPixels(right), width: "max-content", "min-width": cssPixels(width), "max-width": cssPixels(window.innerWidth - right - 8) }),
+        ? { left: cssPixels(Math.max(leftEdge, Math.min(rect.right - width, rightEdge - width))), width: cssPixels(width) }
+        : { right: cssPixels(right), width: "max-content", "min-width": cssPixels(width), "max-width": cssPixels(window.innerWidth - right - leftEdge) }),
       bottom: cssPixels(window.innerHeight - rect.top + 6),
       "max-height": cssPixels(Math.max(0, rect.top - 14)),
     });

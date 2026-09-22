@@ -189,7 +189,7 @@ export function SettingsView(props: SettingsViewProps) {
   const updateAgent = (value: Partial<AgentProfile>) => setAgentDrafts((current) => current.map((item, index) => index === agentIndex() ? { ...item, ...value } : item));
   const toggleAgentResource = (key: "tools" | "skills", value: string) => { if (agent()) updateAgent({ [key]: agent()[key].includes(value) ? agent()[key].filter((item) => item !== value) : [...agent()[key], value] }); };
   const renameAgent = (name: string) => { if (!agent() || (!isBuiltInAgent(agent()) && name.trim().toLowerCase() === "general")) return; if ((draft().defaultAgent ?? "general") === agent().name) patch({ defaultAgent: name }); updateAgent({ name }); };
-  const addAgent = () => { let suffix = nextAgentSuffixRef.current; while (agentDrafts().some((item) => item.name.toLowerCase() === `agent-${suffix}`)) suffix += 1; nextAgentSuffixRef.current = suffix + 1; const next: AgentProfile = { name: `agent-${suffix}`, model: "", effort: "", path_systemprompt: "sysprompt/default.md", path_agentprompt: "", tools: draft().tools.filter((item) => item.enabled).map((item) => item.name), skills: draft().skills.filter((item) => item.enabled).map((item) => item.path), mcpServers: [] }; setAgentDrafts((current) => [...current, next]); setAgentIndex(agentDrafts().length - 1); };
+  const addAgent = () => { if (!agentConfig() || saving()) return; let suffix = nextAgentSuffixRef.current; while (agentDrafts().some((item) => item.name.toLowerCase() === `agent-${suffix}`)) suffix += 1; nextAgentSuffixRef.current = suffix + 1; const next: AgentProfile = { name: `agent-${suffix}`, model: "", effort: "", path_systemprompt: "sysprompt/default.md", path_agentprompt: "", tools: draft().tools.filter((item) => item.enabled).map((item) => item.name), skills: draft().skills.filter((item) => item.enabled).map((item) => item.path), mcpServers: [] }; setAgentDrafts((current) => [...current, next]); setAgentIndex(agentDrafts().length - 1); };
   const removeAgent = () => { if (!agent() || isBuiltInAgent(agent())) return; if (draft().defaultAgent === agent().name) patch({ defaultAgent: "general" }); const next = agentDrafts().filter((_, index) => index !== agentIndex()); setAgentDrafts(next); setAgentIndex(firstEditableAgent(next)); };
   const agentLevels = (item: AgentProfile) => {
     const model = settingsProps().models.find((model) => `${model.provider}/${model.id}` === (item.model || draft().defaultModel));
@@ -245,7 +245,7 @@ export function SettingsView(props: SettingsViewProps) {
   const nameValidation = createMemo(() => (validateSettingsNames()));
   const validationError = createMemo(() => (firstValidationError([
     () => !agentValidation().defaultAgentAvailable ? `Default agent is unavailable: ${draft().defaultAgent}` : undefined,
-    () => !nameValidation().contextWindowValid ? "Context window cap must be a whole number of at least 1000" : undefined,
+    () => !nameValidation().contextWindowValid ? "Context window cap must be a whole number from 1000 to 10000000" : undefined,
     () => draft().hosts.length > 16 ? "At most 16 remote machines can be configured" : undefined,
     () => nameValidation().reservedLocalHostName ? "The machine name “Local” is reserved for this machine" : undefined,
     () => nameValidation().duplicateHostNames.size ? `Machine name “${[...nameValidation().duplicateHostNames][0]}” is used more than once` : undefined,
@@ -341,7 +341,7 @@ export function SettingsView(props: SettingsViewProps) {
             {renderAgentFields()}
           </div></>);
         };
-        return (formValidation().visibleSection === "agents" && <SettingsSection title="Agents" description="Choose defaults, instructions, and the resources each agent may see." headerAction={<button class="secondary-button" onClick={addAgent}><CirclePlus size={15} />Add agent</button>}>
+        return (formValidation().visibleSection === "agents" && <SettingsSection title="Agents" description="Choose defaults, instructions, and the resources each agent may see." headerAction={<button class="secondary-button" disabled={!agentConfig() || saving()} onClick={addAgent}><CirclePlus size={15} />Add agent</button>}>
           {renderAgentEditor()}
         </SettingsSection>);
       };

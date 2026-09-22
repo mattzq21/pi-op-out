@@ -77,8 +77,9 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
       const nextSettings = await ownerTransport.loadSettings(); await configureRuntime(nextSettings); nextState = await ownerTransport.command<AgentState>({ type: "get_state" }); const history = await ownerTransport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" });
       return { nextState, history };
     };
+    let sourceDiffs: import("./types").GitDiffSnapshots | undefined;
     const copyBranchDiffs = async (nextState: AgentState, history: { entries: PiEntry[]; leafId: string | null }) => {
-      try { await runtimePool.copySavedDiffs(ownerTransport, sourcePath, nextState.sessionFile, new Set(branchMessages(history.entries, history.leafId).map((entry) => entry.id))); }
+      try { await runtimePool.copySavedDiffs(ownerTransport, sourcePath, nextState.sessionFile, new Set(branchMessages(history.entries, history.leafId).map((entry) => entry.id)), sourceDiffs); }
       catch (reason) { addNotice({ title: "Conversation branched, but project changes could not be copied", message: reason instanceof Error ? reason.message : String(reason) }); }
 
     };
@@ -94,6 +95,7 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
     };
     let forked = false;
     try {
+      sourceDiffs = await runtimePool.captureMemoryDiffs(ownerTransport);
       if (!await forkSource()) return false;
       forked = true;
       let nextState = await ownerTransport.command<AgentState>({ type: "get_state" });

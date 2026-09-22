@@ -424,7 +424,7 @@ class Session {
       }
     }
     const queue = this.queue.queueView();
-    request.resolve({ history, revision: this.clientRevision(), sequence: this.sequence, stateRevision: this.stateRevision, epoch: this.epoch, liveTools: [...this.tools.values()], queue, state: { ...request.snapshotState, isStreaming: this.working, viewers: [...this.views.values()].filter((view) => view.visible).length, pendingMessageCount: queue.steering.length + queue.followUp.length } });
+    request.resolve({ history, revision: this.clientRevision(), sequence: this.sequence, stateRevision: this.stateRevision, epoch: this.epoch, liveTools: [...this.tools.values()], extensionState: [...this.statuses.values()], queue, state: { ...request.snapshotState, isStreaming: this.working, viewers: [...this.views.values()].filter((view) => view.visible).length, pendingMessageCount: queue.steering.length + queue.followUp.length } });
   }
 
   retainState(event) {

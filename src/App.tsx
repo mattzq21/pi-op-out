@@ -87,6 +87,7 @@ export default function App() {
     // Selecting a split conversation transfers its runtime to the main pane.
     if (activeTransportRef.current === ownerTransport) return;
     await closeTransportDialogs(ownerTransport);
+    if (ownerTransport.currentSessionPath() && (uploadsByTransport().get(ownerTransport)?.length ?? 0) > 0) return;
     if (activeTransportRef.current !== ownerTransport) await capturedRuntimePool.release(ownerTransport);
   };
   const [statuses, setStatuses] = createSignal<Record<string, string>>({}); const [widgets, setWidgets] = createSignal<Record<string, string[]>>({});
@@ -166,16 +167,12 @@ export default function App() {
     setTerminalsBySession((current) => { if (!(previousKey in current)) return current; const next = { ...current, [canonicalKey]: current[previousKey] }; delete next[previousKey]; return next; });
     transportConversationKeys.current.set(capturedTransport, canonicalKey); activateConversationKey(canonicalKey);
   }, () => [activeHostId(), chatSession().state.sessionId, transport()]);
-  createDependencyEffect(() => {
-    document.title = "piop";
-    setStatuses({}); setWidgets({});
-  }, () => [transport()]);
   createDependencyEffect(() => { const capturedTransport = transport();
     let cancelled = false;
     setIsGitRepository(undefined);
     void capturedTransport.isGitRepository().then((isRepository) => { if (!cancelled) setIsGitRepository(isRepository); }).catch(() => undefined);
     return () => { cancelled = true; };
-  }, () => [transport()]);
+  }, () => [transport(), sessions().find((session) => session.id === chatSession().state.sessionId && (session.hostId ?? "local") === activeHostId())?.projectKind]);
   useUsageClock(() => (codexUsage()), () => (opencodeGoUsage()), () => (setUsageClock));
   createDependencyEffect(() => { const capturedSettings = settings(); const capturedSession = { ...chatSession() }; const capturedTransport = transport();
     if (!capturedSettings || capturedSession.models.length === 0 || settingsSavePending.current) return;
@@ -307,9 +304,11 @@ export default function App() {
     if (branchCommand) {
       return sendBranchCommand(branchCommand, images);
     }
+    try {
     if (behavior) { await ownerTransport.command({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...(images.length ? { images } : {}) }); return; }
     await capturedTransport.command({ type: "prompt", message: text, ...(images.length ? { images } : {}) });
     return true;
+    } catch (reason) { addNotice({ title: "Could not send message", message: reason instanceof Error ? reason.message : String(reason) }); throw reason; }
   };
   const respondToBtw = (requestId: string, response: { value?: string; cancelled?: boolean }) => {
     const pending = pendingBtwRequest.current; if (!pending || pending.id !== requestId) return;
@@ -330,6 +329,11 @@ export default function App() {
     const previousTransport = transport();
     const previousKey = transportConversationKeys.current.get(previousTransport);
     const hasUnsentWork = transportHasDraft(previousTransport, previousKey) || previousTransport.hasTerminalActivity() || Boolean(previousKey && conversationTerminalIds(previousKey).length);
+    if (previousTransport !== nextTransport && previousKey && hasUnsentWork && !runtimePool().isRetained(previousTransport) && chatSession().state.messageCount === 0 && chatSession().messages.length === 0) {
+      const hostId = previousTransport.currentHostId(); const id = previousKey.slice(hostId.length + 1); const draft = composerDrafts()[previousKey] ?? ""; const cwd = previousTransport.currentCwd() ?? "";
+      runtimePool().bind(hostId, id, previousTransport);
+      runtimePool().setLiveSession(previousTransport, { id, hostId, path: previousTransport.currentSessionPath() ?? "", cwd, project: cwd.split("/").filter(Boolean).at(-1) ?? "Workspace", name: hasVisibleText(draft) ? draft.slice(0, 60) : "Unsent draft", preview: draft, messageCount: 0, lastMessageAt: Date.now(), apiCost: 0 });
+    }
     const discardPrevious = previousTransport !== nextTransport && !runtimePool().isRetained(previousTransport) && !chatSession().state.isStreaming && chatSession().state.messageCount === 0 && chatSession().messages.length === 0 && !hasUnsentWork;
     activeTransportRef.current = nextTransport; runtimePool().activate(nextTransport); setTransport(nextTransport);
     if (discardPrevious) {
@@ -461,7 +465,7 @@ export default function App() {
     if (!canLeaveSettings()) return undefined;
     if (window.matchMedia("(max-width: 700px)").matches) setPanelOpen(false);
     const selectedKey = `${session.hostId ?? "local"}:${session.id}`; if (archivePending.current.has(selectedKey)) return undefined;
-    const hostId = session.hostId ?? "local"; if (isSelectedSession(session)) { if (!connected()) void transport().connect().then(() => refresh()).then((value) => configureRuntime(value)).then(() => chatSession().refresh()).then(() => { setError(undefined); updateConnected(true); }).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason))); return transport(); }
+    const hostId = session.hostId ?? "local"; if (isSelectedSession(session)) { if (!connected()) reconnectMain(); return transport(); }
     if (isSplitSession(session)) closeSplitPane();
     if (session.cwdExists === false) { relocationActionRef.current = "select"; setRelocationError(undefined); setRelocatingSession(session); return undefined; }
     const nextTransport = runtimePool().forSession(session);
@@ -538,7 +542,7 @@ export default function App() {
  try { await capturedTransport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(name)}` }); } catch (reason) { addNotice({ title: "Could not change agent", message: reason instanceof Error ? reason.message : String(reason) }); } };
   const openProject = async (cwd: string, hostId: string) => {
     const capturedTransport = transport(); const capturedSession = { ...chatSession() }; const capturedRuntimePool = runtimePool(); const capturedComposerState = { ...composerState() };
- if (!canLeaveSettings()) return; const request = projectOpenRequest.current; const validatedCwd = await capturedTransport.validateProjectDirectory(cwd.trim(), hostId); if (!projectOpenRef.current || request !== projectOpenRequest.current) return; const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setTerminalOpen(false); updateConnected(false); setDefinedAgents(undefined); capturedSession.discardPendingUpdates(); activateConversationKey(conversationKey); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); const nextTransport = capturedRuntimePool.create({ cwd: validatedCwd, hostId }); transportConversationKeys.current.set(nextTransport, conversationKey); setComposerDraft(conversationKey, capturedComposerState.composerDraft); setComposerUploads(nextTransport, capturedComposerState.composerUploads); activateTransport(nextTransport); };
+ if (!canLeaveSettings()) return; const request = projectOpenRequest.current; const validatedCwd = await capturedTransport.validateProjectDirectory(cwd, hostId); if (!projectOpenRef.current || request !== projectOpenRequest.current) return; const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setTerminalOpen(false); updateConnected(false); setDefinedAgents(undefined); capturedSession.discardPendingUpdates(); activateConversationKey(conversationKey); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); const nextTransport = capturedRuntimePool.create({ cwd: validatedCwd, hostId }); transportConversationKeys.current.set(nextTransport, conversationKey); setComposerDraft(conversationKey, capturedComposerState.composerDraft); setComposerUploads(nextTransport, capturedComposerState.composerUploads); activateTransport(nextTransport); };
   const chooseChatProject = () => { projectOpenRequest.current += 1; setProjectOpen(true); };
   const openSplitPane = (session: SessionSummary) => { closeSplitPane(); setSplitPane({ key: crypto.randomUUID(), session }); };
   const openSessionDirectory = async (session: SessionSummary) => { const capturedTransport = transport();
@@ -602,7 +606,7 @@ export default function App() {
     return;
   };
   const cloneSelectedSession = async (session: SessionSummary, selectedTransport: NativeTransport) => { const capturedRuntimePool = runtimePool(); const capturedSession = { ...chatSession() };
-    const sourcePath = session.path; const previousKey = `${session.hostId ?? "local"}:${session.id}`; try { await selectedTransport.connect(); const cloned = await selectedTransport.command<{ cancelled?: boolean }>({ type: "clone" }); if (cloned.cancelled) return; const nextState = await selectedTransport.command<AgentState>({ type: "get_state" }); capturedRuntimePool.bind(session.hostId ?? "local", nextState.sessionId, selectedTransport); rekeyConversationUi(previousKey, `${session.hostId ?? "local"}:${nextState.sessionId}`, selectedTransport, true, true); const sourceTransport = capturedRuntimePool.forSession(session); setUploadsByTransport((current) => { const next = new Map(current); next.set(sourceTransport, [...(current.get(selectedTransport) ?? [])]); return next; }); const history = await selectedTransport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }); const nextMessages = branchMessages(history.entries, history.leafId); if (activeTransportRef.current === selectedTransport) { capturedSession.setState(nextState); capturedSession.setMessages(nextMessages); updateConnected(true); } try { await capturedRuntimePool.copySavedDiffs(selectedTransport, sourcePath, nextState.sessionFile, new Set(nextMessages.map((entry) => entry.id))); } catch (reason) { addNotice({ title: "Conversation cloned, but project changes could not be copied", message: reason instanceof Error ? reason.message : String(reason) }); } await syncSessionIndex(); } catch (reason) { addNotice({ title: "Could not clone conversation", message: reason instanceof Error ? reason.message : String(reason) }); }
+    const sourcePath = session.path; const previousKey = `${session.hostId ?? "local"}:${session.id}`; try { await selectedTransport.connect(); const sourceDiffs = await capturedRuntimePool.captureMemoryDiffs(selectedTransport); const cloned = await selectedTransport.command<{ cancelled?: boolean }>({ type: "clone" }); if (cloned.cancelled) return; const nextState = await selectedTransport.command<AgentState>({ type: "get_state" }); capturedRuntimePool.bind(session.hostId ?? "local", nextState.sessionId, selectedTransport); rekeyConversationUi(previousKey, `${session.hostId ?? "local"}:${nextState.sessionId}`, selectedTransport, true, true); if (!selectedTransport.isEphemeral()) { const sourceTransport = capturedRuntimePool.forSession(session); setUploadsByTransport((current) => { const next = new Map(current); next.set(sourceTransport, [...(current.get(selectedTransport) ?? [])]); return next; }); } const history = await selectedTransport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }); const nextMessages = branchMessages(history.entries, history.leafId); if (activeTransportRef.current === selectedTransport) { capturedSession.setState(nextState); capturedSession.setMessages(nextMessages); updateConnected(true); } try { await capturedRuntimePool.copySavedDiffs(selectedTransport, sourcePath, nextState.sessionFile, new Set(nextMessages.map((entry) => entry.id)), sourceDiffs); } catch (reason) { addNotice({ title: "Conversation cloned, but project changes could not be copied", message: reason instanceof Error ? reason.message : String(reason) }); } await syncSessionIndex(); } catch (reason) { addNotice({ title: "Could not clone conversation", message: reason instanceof Error ? reason.message : String(reason) }); }
   };
   const cloneSession = async (session: SessionSummary, action: SessionAction) => {
     const actionKey = `${action}:${session.hostId ?? "local"}:${session.id}`; if (sessionActionPending.current.has(actionKey)) return; sessionActionPending.current.add(actionKey);
@@ -653,7 +657,7 @@ export default function App() {
   const reconnectMain = () => {
     const ownerTransport = transport(); const ownerKey = activeConversationKeyRef.current;
     if (reconnectPending.current.has(ownerTransport)) return; reconnectPending.current.add(ownerTransport); setError(undefined); updateConnected(false);
-    void ownerTransport.connect().then(() => ownerTransport.loadSettings()).then((value) => configureRuntime(value)).then(async () => {
+    void ownerTransport.connect().then(() => ownerTransport.loadSettings()).then((value) => activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey ? configureRuntime(value) : undefined).then(async () => {
     const capturedSession = { ...chatSession() };
  if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) await capturedSession.refresh(); }).then(() => { if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) { setError(undefined); updateConnected(true); void syncSessionIndex(); } }).catch((reason) => { if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) setError(reason instanceof Error ? reason.message : String(reason)); }).finally(() => { reconnectPending.current.delete(ownerTransport); });
   };
@@ -724,9 +728,29 @@ export default function App() {
     const capturedActiveDialog = activeDialog();
  await capturedActiveDialog.transport.command({ type: "extension_ui_response", id: capturedActiveDialog.request.id, ...response }); setDialogs((current) => current.filter((item) => item !== capturedActiveDialog)); }} />}</Rerun>);
   const renderProjectDialog = () => (projectOpen() && <ProjectDialog initialPath={projectCwd() ?? ""} hosts={(settings())!.hosts} initialHostId={activeHostId()} onHomeDirectory={resolveHomeDirectory} onChooseDirectory={(currentPath, hostId) => transport().listDirectories(hostId, currentPath || undefined)} onOpen={openProject} onCancel={() => { projectOpenRef.current = false; setProjectOpen(false); }} />);
-  const renderRelocationDialog = () => (relocatingSession() && <Rerun on={() => activeDialog()?.queueId}>{(_key) => <ExtensionDialog request={{ type: "extension_ui_request", id: `relocate-${(relocatingSession())!.id}`, method: "input", title: "Locate conversation project", message: `The original project directory no longer exists: ${(relocatingSession())!.cwd}. Enter its new location to open this conversation.`, error: relocationError(), placeholder: "Replacement project directory", prefill: sessions().find((session) => session.id === chatSession().state.sessionId && (session.hostId ?? "local") === activeHostId() && session.cwdExists !== false)?.cwd || "" }} onRespond={async (response) => {
-    const capturedRelocatingSession = relocatingSession(); const capturedTransport = transport(); const capturedRuntimePool = runtimePool();
- if (response.cancelled) { setRelocationError(undefined); setRelocatingSession(undefined); return; } const cwd = typeof response.value === "string" ? response.value.trim() : ""; if (!hasVisibleText(cwd)) { setRelocationError("Path can't be empty"); return; } const session = (capturedRelocatingSession)!; const action = relocationActionRef.current; const relocated = { ...session, cwd, cwdExists: true }; setRelocationError(undefined); try { await capturedTransport.relocateSession(session.path, cwd, session.hostId); const owner = capturedRuntimePool.forSession(session); await owner.restoreConnection({ cwd, sessionPath: session.path, hostId: session.hostId }); setRelocatingSession(undefined); if (action === "split") openSplitPane(relocated); else if (action === "rename") setRenameSession({ session: relocated, transport: capturedRuntimePool.forSession(relocated) }); else selectSession(relocated); } catch (reason) { setRelocationError(reason instanceof Error ? reason.message : String(reason)); } }} />}</Rerun>);
+  const renderRelocationDialog = () => (relocatingSession() && <Rerun on={() => relocatingSession()?.id}>{(_key) => <ExtensionDialog request={{ type: "extension_ui_request", id: `relocate-${(relocatingSession())!.id}`, method: "input", title: "Locate conversation project", message: `The original project directory no longer exists: ${(relocatingSession())!.cwd}. Enter its new location to open this conversation.`, error: relocationError(), placeholder: "Replacement project directory", prefill: sessions().find((session) => session.id === chatSession().state.sessionId && (session.hostId ?? "local") === activeHostId() && session.cwdExists !== false)?.cwd || "" }} onRespond={async (response) => {
+    const session = relocatingSession()!; const ownerTransport = transport(); const pool = runtimePool(); const action = relocationActionRef.current;
+    if (response.cancelled) { setRelocationError(undefined); setRelocatingSession(undefined); return; }
+    const cwd = typeof response.value === "string" ? response.value : "";
+    if (!hasVisibleText(cwd)) { setRelocationError("Path can't be empty"); return; }
+    setRelocationError(undefined);
+    try {
+      await ownerTransport.relocateSession(session.path, cwd, session.hostId);
+      const relocated = (await ownerTransport.listSessions()).find((item) => item.id === session.id && (item.hostId ?? "local") === (session.hostId ?? "local"));
+      if (!relocated) throw new Error("The relocated conversation could not be found. Refresh the conversation list and retry.");
+      const hostId = session.hostId ?? "local"; const projectPath = relocated.projectRoot ?? relocated.cwd;
+      try { await updateSessionGroups({ type: "relocate", key: `${hostId}:${session.id}`, project: { id: `${hostId}:${projectPath}`, name: projectPath.split("/").filter(Boolean).at(-1) ?? relocated.project, cwd: projectPath, hostId, hostName: relocated.hostName, projectKind: relocated.projectKind } }); }
+      catch (reason) { addNotice({ title: "Project relocated, but its sidebar group could not be updated", message: String(reason) }); }
+      setSessions((current) => current.map((item) => item.id === session.id && (item.hostId ?? "local") === hostId ? relocated : item));
+      const owner = pool.forSession(session);
+      pool.setLiveSession(owner, relocated);
+      await owner.restoreConnection({ cwd: relocated.cwd, sessionPath: session.path, hostId });
+      setRelocatingSession(undefined);
+      if (action === "split") openSplitPane(relocated);
+      else if (action === "rename") setRenameSession({ session: relocated, transport: owner });
+      else selectSession(relocated);
+    } catch (reason) { setRelocationError(reason instanceof Error ? reason.message : String(reason)); }
+  }} />}</Rerun>);
   const renderWorktreeDialog = () => (worktreeTarget() && <WorktreeDialog projectPath={(worktreeTarget())!.cwd} fromProject={!(worktreeTarget())!.message} beforePrompt={(worktreeTarget())!.message?.role === "user"} onCancel={() => setWorktreeTarget(undefined)} onCreate={(name, onSetup) => createWorktree((worktreeTarget())!, name, onSetup)} />);
   return <>{!settings() ? (<AppLoading error={error()} />) : (<div class={`app dark ${panelOpen() && view() === "chat" ? "mobile-panel-open" : ""}`}>
     <div class="mobile-navigation"><button aria-label="Toggle conversations" aria-expanded={panelOpen() && view() === "chat"} onClick={() => { if (canLeaveSettings()) { setView("chat"); setPanelOpen((value) => !value); } }}>☰</button></div>

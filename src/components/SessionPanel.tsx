@@ -243,7 +243,7 @@ export function SessionPanel(props: Props) {
       try { localStorage.setItem(SESSION_ORDERS_KEY, JSON.stringify(next)); } catch { /* Persistence is best-effort. */ }
       return next;
     });
-    void storedGroups.change({ type: "assign", key: drag.sessionKey, group: destinationKey === RECENT_KEY ? null : destinationKey }).catch(() => undefined);
+    return storedGroups.change({ type: "assign", key: drag.sessionKey, group: destinationKey === RECENT_KEY ? null : destinationKey }).catch(() => undefined);
   };
   const placeSidebarEntry = (token: string, beforeToken: string | null) => {
     const currentEntries = sidebarEntriesRef.current;
@@ -329,16 +329,21 @@ export function SessionPanel(props: Props) {
   const activeProjectKey = createMemo(() => (selectedProjectKey()));
   const moveSessionByKeyboard = (drag: DraggedSession, direction: -1 | 1, betweenGroups: boolean) => {
     const sourceSessions = groupedSessionsRef.current.get(drag.projectKey) ?? [];
+    const focused = document.activeElement;
+    const restoreFocus = () => requestAnimationFrame(() => {
+      if (document.activeElement !== document.body && document.activeElement !== focused) return;
+      sessionScrollRef.current?.querySelector<HTMLElement>(`[data-session-key="${CSS.escape(drag.sessionKey)}"] .session-main`)?.focus({ preventScroll: true });
+    });
     if (betweenGroups) {
       const destinationKeys = keyboardSidebarEntries().filter((token) => token.startsWith("group:")).map((token) => token.slice("group:".length));
       const sourceIndex = destinationKeys.indexOf(drag.projectKey); const destinationKey = destinationKeys[sourceIndex + direction];
       if (!destinationKey) return;
-      moveSession(drag, destinationKey, groupedSessionsRef.current.get(destinationKey) ?? []); expandProject(destinationKey);
+      void moveSession(drag, destinationKey, groupedSessionsRef.current.get(destinationKey) ?? [])?.then(restoreFocus); expandProject(destinationKey);
       return;
     }
     const sourceIndex = sourceSessions.findIndex((session) => sessionKey(session) === drag.sessionKey); const target = sourceSessions[sourceIndex + direction];
     if (!target) return;
-    moveSession(drag, drag.projectKey, sourceSessions, sessionKey(target), direction < 0 ? "before" : "after");
+    void moveSession(drag, drag.projectKey, sourceSessions, sessionKey(target), direction < 0 ? "before" : "after")?.then(restoreFocus);
   };
   const startMouseDrag = (event: MouseEvent<HTMLElement>, drag: DraggedItem) => {
     if (normalizedQuery() || event.button !== 0) return;

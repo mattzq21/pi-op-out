@@ -108,6 +108,7 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
     // Pi can restart its agent loop to drain queued messages after an abort.
     // Keep those runs aborted until every queued message (including images) is saved.
     if (isPausing) { ctx.abort(); return; }
+    pauseStopped = false;
     if (isPaused) { persistPause(false); publishPause(); }
   });
   pi.on("message_start", (event) => {
@@ -123,7 +124,11 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
     if (event.message.role !== "assistant") return;
     const content = [...completedBlocks].sort(([left], [right]) => left - right).map(([, block]) => block);
     completedBlocks.clear();
-    if (isPausing && (event.message.stopReason === "aborted" || (event.message.stopReason === "error" && ctx.signal?.aborted))) return { message: { ...event.message, stopReason: "aborted", errorMessage: "Response paused" } };
+    if ((isPausing || pauseStopped) && (event.message.stopReason === "aborted" || (event.message.stopReason === "error" && (ctx.signal?.aborted || event.message.errorMessage === "This operation was aborted")))) {
+      if (isPausing && !pauseStopped) return { message: { ...event.message, stopReason: "aborted", errorMessage: "Response paused" } };
+      const message: StoppedAssistantMessage = { ...event.message, stopReason: "aborted", errorMessage: undefined, content, piopCompletedBlocks: true };
+      return { message };
+    }
     if (event.message.stopReason === "aborted") {
       const message: StoppedAssistantMessage = { ...event.message, content, piopCompletedBlocks: true };
       return { message };

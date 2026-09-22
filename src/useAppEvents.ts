@@ -45,6 +45,7 @@ type AppEventsContext = {
 export function useAppEvents(options: Accessor<AppEventsContext>) {
   createDependencyEffect(() => { const capturedOptions = options();
     let cancelled = false; let reconnecting = false; const refreshTimers = new Set<number>();
+    document.title = "piop"; capturedOptions.setStatuses({}); capturedOptions.setWidgets({});
     const loadSelectedSession = async () => {
       const current = () => !cancelled && capturedOptions.activeTransportRef.current === capturedOptions.transport;
       await capturedOptions.transport.connect();
@@ -138,16 +139,18 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         void capturedOptions.refresh().catch(() => undefined);
       };
       const handleSettingsApplied = () => {
+        const current = () => !cancelled && capturedOptions.activeTransportRef.current === capturedOptions.transport;
+        if (!current()) return;
         if (capturedOptions.transport.currentHostId() !== capturedOptions.activeHostIdRef.current) {
           const conversationKey = `local:draft-${crypto.randomUUID()}`;
           capturedOptions.setActiveHostId(capturedOptions.transport.currentHostId()); capturedOptions.setActiveCwd(capturedOptions.transport.currentCwd());
           capturedOptions.transportConversationKeys.current.set(capturedOptions.transport, conversationKey); capturedOptions.activateConversationKey(conversationKey);
           capturedOptions.setTerminalOpen(false); capturedOptions.setTerminalTarget(undefined);
         }
-        void capturedOptions.refresh().then((value) => capturedOptions.configureRuntime(value)).then(() => { capturedOptions.setError(undefined); capturedOptions.updateConnected(true); }).catch((reason) => capturedOptions.setError(String(reason)));
+        void capturedOptions.refresh().then((value) => current() ? capturedOptions.configureRuntime(value) : undefined).then(() => { if (current()) { capturedOptions.setError(undefined); capturedOptions.updateConnected(true); } }).catch((reason) => { if (current()) capturedOptions.setError(String(reason)); });
       };
       const handleSessionInfoChanged = () => {
-        void capturedOptions.refresh();
+        void capturedOptions.refresh().catch(() => undefined);
       };
       const handleOwnershipLost = () => {
         capturedOptions.updateConnected(false);
