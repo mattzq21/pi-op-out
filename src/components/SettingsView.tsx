@@ -13,6 +13,7 @@ import { IconButton } from "./IconButton";
 import { ProviderSettings } from "./ProviderSettings";
 import { StorageSettings } from "./StorageSettings";
 import { Toggle } from "./Toggle";
+import { CodeEditor } from "./CodeEditor";
 
 export type Section = "providers" | "general" | "models" | "storage" | "environment" | "agents" | "machines" | "keybinds" | "connections";
 export const sections = [
@@ -253,8 +254,8 @@ export function SettingsView(props: SettingsViewProps) {
             <label class="field"><span>Project directory</span><input aria-label={`Script ${index() + 1} project directory`} list={`setup-projects-${script().id}`} placeholder="Absolute path to the repository" value={script().projectPath ?? ""} onInput={(event) => update({ projectPath: event.target.value })} /></label>
             <datalist id={`setup-projects-${script().id}`}>{<Key each={[...new Set(settingsProps().sessions.filter((session) => (session.hostId ?? "local") === (script().hostId ?? "local") && session.projectKind !== "no-repo").map((session) => session.projectRoot ?? session.cwd))]} by={(path) => path}>{(path, index) => <option  value={path()} />}</Key>}</datalist>
             {!script().projectPath?.trim() && <p class="empty-small">Choose a project directory to run this script. Unassigned scripts are kept but do not run.</p>}
-            <label class="field"><span>Setup Bash script</span><textarea class="setup-script-code" aria-label={`Script ${index() + 1} setup Bash code`} rows={8} spellcheck={false} placeholder={'npm ci\n# Or copy files from "$PIOP_SOURCE_TREE_PATH"'} value={script().script} onInput={(event) => update({ script: event.target.value })} /></label>
-            <label class="field"><span>Cleanup Bash script</span><textarea class="setup-script-code" aria-label={`Script ${index() + 1} cleanup Bash code`} rows={8} spellcheck={false} placeholder={'# Remove resources created for "$PIOP_WORKTREE_BRANCH"'} value={script().cleanupScript ?? ""} onInput={(event) => update({ cleanupScript: event.target.value })} /></label>
+            <div class="field"><span>Setup Bash script</span><CodeEditor language="shell" label={`Script ${index() + 1} setup Bash code`} placeholder={'npm ci\n# Or copy files from "$PIOP_SOURCE_TREE_PATH"'} value={script().script} onChange={(script) => update({ script })} /></div>
+            <div class="field"><span>Cleanup Bash script</span><CodeEditor language="shell" label={`Script ${index() + 1} cleanup Bash code`} placeholder={'# Remove resources created for "$PIOP_WORKTREE_BRANCH"'} value={script().cleanupScript ?? ""} onChange={(cleanupScript) => update({ cleanupScript })} /></div>
           </div>;
         }}</Key>}
         {!draft().worktreeSetupScripts?.length && <div class="empty-small">Add scripts to prepare new worktrees and clean up their external resources before deletion.</div>}
