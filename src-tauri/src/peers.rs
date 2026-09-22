@@ -165,6 +165,7 @@ pub(crate) fn local_sessions(app: &AppHandle) -> Result<Value, String> {
 pub(crate) fn all_summaries(app: &AppHandle, index: &SessionIndexRuntime) -> Result<Vec<SessionSummary>, String> {
     let sessions = list_local_sessions(index, &ensure_desktop_sessions_dir(&home_dir()?)?)?;
     let hosts = load_app_settings(app.clone())?.hosts;
+    let successful = Mutex::new(HashMap::new());
     let mut result = collect_host_sessions(sessions, hosts.clone(), |host| {
         let result = connect(app, &host.id).and_then(|connection| connection.invoke("list_sessions", json!({})).map(|value| (connection, value)));
         let (connection, value) = match result {
@@ -183,13 +184,13 @@ pub(crate) fn all_summaries(app: &AppHandle, index: &SessionIndexRuntime) -> Res
         }
         let mut rows: Vec<SessionSummary> = serde_json::from_value(value).map_err(|error| error.to_string())?;
         for row in &mut rows { row.host_id = host.id.clone(); row.host_name = host.name.clone(); row.group_id = None; }
+        successful.lock().map_err(|_| "Peer listings unavailable")?.insert(host.id.clone(), connection.daemon_id.clone());
         Ok(rows)
     }, session_groups::attach_assignments)?;
-    let state = app.state::<PeerRuntime>();
-    let connections = state.connections.lock().map_err(|_| "Peer connections unavailable")?;
+    let successful = successful.lock().map_err(|_| "Peer listings unavailable")?;
     let mut canonical = HashMap::new();
-    for host in hosts { if let Some((_, connection)) = connections.get(&host.id) { canonical.entry(connection.daemon_id.clone()).or_insert(host.id); } }
-    result.retain(|session| session.host_id == "local" || connections.get(&session.host_id).is_some_and(|(_, connection)| canonical.get(&connection.daemon_id) == Some(&session.host_id)));
+    for host in hosts { if let Some(daemon_id) = successful.get(&host.id) { canonical.entry(daemon_id.clone()).or_insert(host.id); } }
+    result.retain(|session| session.host_id == "local" || successful.get(&session.host_id).is_some_and(|daemon_id| canonical.get(daemon_id) == Some(&session.host_id)));
     Ok(result)
 }
 

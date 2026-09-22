@@ -30,7 +30,7 @@ export interface RpcCommand { id?: string; type: string; [key: string]: unknown;
 export interface RpcEvent { type: string; [key: string]: unknown; }
 export interface ToolConfig { name: string; description: string; enabled: boolean; builtin?: boolean; }
 export interface SkillConfig { name: string; path: string; description: string; enabled: boolean; userInvokedOnly?: boolean; }
-export interface McpServer { id: string; name: string; transport?: "stdio" | "http"; command: string; args: string; url?: string; headers?: string; enabled: boolean; startupTimeoutSec?: number; status?: "starting" | "connected" | "stopped" | "error"; error?: string; }
+export interface McpServer { id: string; name: string; transport?: "stdio" | "http"; command: string; args: string; url?: string; headers?: string; enabled: boolean; startupTimeoutSec?: number; injectAgentId?: boolean; status?: "starting" | "connected" | "stopped" | "error"; error?: string; }
 export interface RemoteHost { id: string; name: string; target: string; piPath: string; }
 export interface DirectoryListing { path: string; parent?: string; directories: string[]; }
 export interface SlashCommand { name: string; description?: string; source: "builtin" | "extension" | "prompt" | "skill"; sourceInfo?: { source?: string }; }

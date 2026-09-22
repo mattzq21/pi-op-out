@@ -174,14 +174,14 @@ export function SessionPanel(props: Props) {
       if (!group.cwd || group.projectKind || projectKindInspectionsRef.current.has(group.id)) continue;
       projectKindInspectionsRef.current.add(group.id);
       void gitProjectKind(group.cwd, group.hostId ?? "local")
-        .then((projectKind) => storedGroups.change({ type: "project", project: { ...group, projectKind } }))
+        .then((projectKind) => storedGroups.change({ type: "inspectProject", id: group.id, projectKind }))
         .catch(() => undefined);
     }
   }, () => [storedGroups.change, storedGroups.state?.groups]);
   const inferredWorktreeGroup = createMemo(() => (savedGroups().find((group) => group.cwd && group.projectKind !== "worktree" && panel().sessions.some((session) => (session.hostId ?? "local") === (group.hostId ?? "local") && session.cwd === group.cwd && session.projectKind === "worktree"))));
   createDependencyEffect(() => { const capturedInferredWorktreeGroup = inferredWorktreeGroup();
     if (!capturedInferredWorktreeGroup) return;
-    void storedGroups.change({ type: "project", project: { ...(capturedInferredWorktreeGroup)!, projectKind: "worktree" } }).catch(() => undefined);
+    void storedGroups.change({ type: "inspectProject", id: capturedInferredWorktreeGroup.id, projectKind: "worktree" }).catch(() => undefined);
   }, () => [storedGroups.change, inferredWorktreeGroup()?.id]);
   const groupNameTaken = (name: string, excludedId?: string) => sidebarCollator.compare(RECENT_LABEL, name.trim()) === 0 || storedGroups.state?.groups.some((group) => group.id !== excludedId && sidebarCollator.compare(group.name.trim(), name.trim()) === 0);
   const validateGroupName = (name: string) => {

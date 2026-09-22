@@ -277,9 +277,10 @@ function registerTurnCapture(pi: ExtensionAPI) {
   const snapshot = async (cwd: string) => {
     try {
       const { stdout } = await runFile(process.execPath, ["-e", script], { cwd, maxBuffer: 64 * 1024 });
-      const [root, tree] = stdout.trimEnd().split("\n");
-      if (!root || !tree) throw new Error("Git snapshot was incomplete");
-      return JSON.stringify({ root, tree });
+      const capture = JSON.parse(stdout);
+      if (!capture || typeof capture.root !== "string" || !capture.root || typeof capture.repository_root !== "string" || !capture.repository_root
+        || typeof capture.tree !== "string" || !/^[a-f0-9]{40,64}$/i.test(capture.tree)) throw new Error("Git snapshot was incomplete");
+      return JSON.stringify({ root: capture.root, tree: capture.tree, repository_root: capture.repository_root });
     } catch (error) {
       if ([3, 4, 6].includes(Number((error as { code?: unknown }).code))) return null;
       throw error;
@@ -461,7 +462,16 @@ function forkHistory(ctx: ExtensionContext, entryId?: string) {
   const complete = (entry: typeof branch[number]) => entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason !== "toolUse" && !entry.message.content.some((part) => part.type === "toolCall");
   const entry = entryId ? branch.find((entry) => entry.id === entryId) : [...branch].reverse().find(complete);
   if (entryId && (!entry || !complete(entry))) throw new Error("entryId must identify a completed assistant response on the current branch");
-  return entry ? branch.slice(0, branch.indexOf(entry) + 1) : [];
+  if (!entry) return [];
+  const retained = branch.slice(0, branch.indexOf(entry) + 1);
+  const ids = new Set(retained.map((item) => item.id));
+  const checkpoint = branch.slice(branch.indexOf(entry) + 1).find((item) => item.type === "custom" && item.customType === "pi-project-files-watch-snapshot"
+    && (item.data as { responseEntryIds?: string[] })?.responseEntryIds?.includes(entry.id));
+  if (checkpoint?.type === "custom") {
+    const data = checkpoint.data as { responseEntryIds: string[] };
+    retained.push({ ...checkpoint, parentId: entry.id, data: { ...data, responseEntryIds: data.responseEntryIds.filter((id) => ids.has(id)) } });
+  }
+  return retained;
 }
 
 async function writeFork(path: string, entries: unknown[]) {

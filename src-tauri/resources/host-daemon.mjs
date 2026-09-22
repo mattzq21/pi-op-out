@@ -234,7 +234,11 @@ class Session {
       output({ type: 'event', runtimeId, event: envelope });
     }
     if (event.type === 'queue_update' || event.type === 'settings_pending') this.publishState();
-    if (['agent_settled', 'compaction_end', 'auto_compaction_end', 'queue_update'].includes(event.type)) void this.reconcileConfiguration();
+    if (['agent_settled', 'compaction_end', 'auto_compaction_end', 'queue_update'].includes(event.type)) {
+      void this.reconcileConfiguration().then(() => this.releaseUnusedOwnership()).catch((error) => {
+        output({ type: 'diagnostic', line: `Could not release unused ownership for ${this.key}: ${errorText(error)}` });
+      });
+    }
   }
 
   settingsPending() {
@@ -356,7 +360,8 @@ class Session {
   }
 
   async releaseUnusedOwnership() {
-    if (!this.ephemeral && !this.views.size && !this.configurationBusy()) await ownership.releaseClient(this.identity, this.clientId, () => !this.views.size && !this.configurationBusy());
+    const unused = () => !this.views.size && !this.configurationBusy() && !this.configurationPromise && !this.dialogs.size && !this.pauseState?.isPausing;
+    if (!this.ephemeral && unused()) await ownership.releaseClient(this.identity, this.clientId, unused);
   }
 
   receive(event) {

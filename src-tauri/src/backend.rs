@@ -85,6 +85,7 @@ enum EphemeralSession {
 }
 
 struct TerminalProcess {
+    generation: Uuid,
     session_key: String,
     cwd: String,
     host_id: String,
@@ -1724,7 +1725,7 @@ fn create_git_worktree(app: AppHandle, cwd: String, name: String, host_id: Optio
         let root = String::from_utf8_lossy(&located.stdout).trim().to_string();
         let project = Path::new(&root).file_name().ok_or("Git repository directory has no name")?.to_string_lossy();
         let branch = worktree_branch_name(&project, name);
-        let script = format!(r#"root={root}; branch={branch}; git check-ref-format --branch "$branch" >/dev/null || {{ printf 'Invalid Git branch name: %s' "$branch" >&2; exit 1; }}; git -C "$root" show-ref --verify --quiet "refs/heads/$branch" && {{ printf 'Git branch already exists: %s' "$branch" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git branches' >&2; exit 1; }}; parent=$(dirname -- "$root"); target="$parent/$branch"; if [ -e "$target" ] || [ -L "$target" ]; then printf 'Worktree directory already exists: %s' "$target" >&2; exit 1; fi; worktrees=$(git -C "$root" worktree list --porcelain) || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; printf '%s\n' "$worktrees" | grep -Fqx "worktree $target" && {{ printf 'Git worktree is already registered: %s' "$target" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; temporary=$(mktemp -d "${{TMPDIR:-/tmp}}/pi-desktop-worktree.XXXXXX") || exit 1; created=0; cleanup() {{ status=$?; rm -rf -- "$temporary"; if [ "$status" -ne 0 ] && [ "$created" -eq 1 ]; then git -C "$root" worktree remove --force "$target" >/dev/null 2>&1; git -C "$root" branch -D "$branch" >/dev/null 2>&1; fi; exit "$status"; }}; trap cleanup EXIT; has_head=0; if git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then has_head=1; fi; : > "$temporary/changes.patch"; if [ "$has_head" -eq 1 ]; then mkfifo "$temporary/patch.pipe" || exit 1; git -C "$root" diff --binary --no-textconv --no-ext-diff HEAD -- > "$temporary/patch.pipe" 2> "$temporary/diff-error" & diff_pid=$!; head -c {patch_plus_one} < "$temporary/patch.pipe" > "$temporary/changes.patch"; wait "$diff_pid"; diff_status=$?; rm -f -- "$temporary/patch.pipe"; patch_bytes=$(wc -c < "$temporary/changes.patch"); [ "$patch_bytes" -le {max_patch} ] || {{ printf 'Git changes are too large to copy' >&2; exit 1; }}; [ "$diff_status" -eq 0 ] || {{ cat "$temporary/diff-error" >&2; printf 'Could not capture Git changes' >&2; exit 1; }}; fi; git -C "$root" ls-files -z --others --exclude-standard $(test "$has_head" -eq 0 && printf %s --cached) -- > "$temporary/untracked" || exit 1; created=1; if [ "$has_head" -eq 1 ]; then git -C "$root" worktree add -b "$branch" "$target" >/dev/null || exit 1; else git -C "$root" worktree add --orphan -b "$branch" "$target" >/dev/null || exit 1; fi; created=1; if [ -s "$temporary/changes.patch" ]; then git -C "$target" apply --whitespace=nowarn "$temporary/changes.patch" || exit 1; fi; if [ -s "$temporary/untracked" ]; then tar -C "$root" --exclude=.git --null -T "$temporary/untracked" -cf "$temporary/untracked.tar" || exit 1; tar -C "$target" -xf "$temporary/untracked.tar" || exit 1; fi; printf '%s\n%s\n' "$branch" "$target""#,
+        let script = format!(r#"root={root}; branch={branch}; git check-ref-format --branch "$branch" >/dev/null || {{ printf 'Invalid Git branch name: %s' "$branch" >&2; exit 1; }}; git -C "$root" show-ref --verify --quiet "refs/heads/$branch" && {{ printf 'Git branch already exists: %s' "$branch" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git branches' >&2; exit 1; }}; parent=$(dirname -- "$root"); target="$parent/$branch"; if [ -e "$target" ] || [ -L "$target" ]; then printf 'Worktree directory already exists: %s' "$target" >&2; exit 1; fi; worktrees=$(git -C "$root" worktree list --porcelain) || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; printf '%s\n' "$worktrees" | grep -Fqx "worktree $target" && {{ printf 'Git worktree is already registered: %s' "$target" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; temporary=$(mktemp -d "${{TMPDIR:-/tmp}}/pi-desktop-worktree.XXXXXX") || exit 1; created=0; cleanup() {{ status=$?; rm -rf -- "$temporary"; if [ "$status" -ne 0 ] && [ "$created" -eq 1 ]; then git -C "$root" worktree remove --force "$target" >/dev/null 2>&1; git -C "$root" branch -D "$branch" >/dev/null 2>&1; fi; exit "$status"; }}; trap cleanup EXIT; has_head=0; if git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then has_head=1; fi; : > "$temporary/changes.patch"; if [ "$has_head" -eq 1 ]; then mkfifo "$temporary/patch.pipe" || exit 1; git -C "$root" diff --binary --no-textconv --no-ext-diff HEAD -- > "$temporary/patch.pipe" 2> "$temporary/diff-error" & diff_pid=$!; head -c {patch_plus_one} < "$temporary/patch.pipe" > "$temporary/changes.patch"; wait "$diff_pid"; diff_status=$?; rm -f -- "$temporary/patch.pipe"; patch_bytes=$(wc -c < "$temporary/changes.patch"); [ "$patch_bytes" -le {max_patch} ] || {{ printf 'Git changes are too large to copy' >&2; exit 1; }}; [ "$diff_status" -eq 0 ] || {{ cat "$temporary/diff-error" >&2; printf 'Could not capture Git changes' >&2; exit 1; }}; fi; git -C "$root" ls-files -z --others --exclude-standard $(test "$has_head" -eq 0 && printf %s --cached) -- > "$temporary/untracked" || exit 1; if [ "$has_head" -eq 1 ]; then git -C "$root" worktree add -b "$branch" "$target" >/dev/null || exit 1; else git -C "$root" worktree add --orphan -b "$branch" "$target" >/dev/null || exit 1; fi; created=1; if [ -s "$temporary/changes.patch" ]; then git -C "$target" apply --whitespace=nowarn "$temporary/changes.patch" || exit 1; fi; if [ -s "$temporary/untracked" ]; then tar -C "$root" --exclude=.git --null -T "$temporary/untracked" -cf "$temporary/untracked.tar" || exit 1; tar -C "$target" -xf "$temporary/untracked.tar" || exit 1; fi; printf '%s\n%s\n' "$branch" "$target""#,
             root = shell_quote(&root), branch = shell_quote(&branch),
             patch_plus_one = MAX_GIT_PATCH_BYTES + 1, max_patch = MAX_GIT_PATCH_BYTES);
         let output = run_limited(ssh(host).arg(script), 64 * 1024, &format!("Could not create Git worktree on {}", host.name))?;
@@ -1763,8 +1764,6 @@ fn create_local_git_worktree(cwd: &str, name: &str) -> Result<GitWorktree, Strin
     let output = run_limited(&mut add_worktree, 64 * 1024, "Could not create Git worktree")?;
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        if local_worktree_is_registered(&root, &target).unwrap_or(false) { let _ = Command::new("git").arg("-C").arg(&root).args(["worktree", "remove", "--force"]).arg(&target).status(); }
-        let _ = Command::new("git").arg("-C").arg(&root).args(["branch", "-D", &branch]).status();
         return Err(if error.is_empty() { "Could not create Git worktree".into() } else { error });
     }
     let copy_result = (|| {
@@ -2556,14 +2555,24 @@ fn start_terminal_with(runtime: &TerminalRuntime, terminal_id: String, session_k
     let mut reader = pair.master.try_clone_reader().map_err(|error| error.to_string())?;
     let mut writer = pair.master.take_writer().map_err(|error| error.to_string())?;
     let event_id = terminal_id.clone(); let terminal_processes = runtime.processes.clone();
+    let generation = Uuid::new_v4();
     thread::spawn(move || {
-        stream_terminal_output(&mut reader, &event_id, &mut emit);
-        if let Some(mut process) = terminal_processes.lock().ok().and_then(|mut values| values.remove(&event_id)) { let _ = process.child.wait(); }
-        emit(json!({ "type": "terminal_exit", "terminalId": event_id }));
+        stream_terminal_output(&mut reader, &event_id, |packet| {
+            if let Ok(values) = terminal_processes.lock() {
+                if values.get(&event_id).is_some_and(|process| process.generation == generation) { emit(packet); }
+            }
+        });
+        let finished = terminal_processes.lock().ok().and_then(|mut values| {
+            if !values.get(&event_id).is_some_and(|process| process.generation == generation) { return None; }
+            let process = values.remove(&event_id);
+            emit(json!({ "type": "terminal_exit", "terminalId": event_id }));
+            process
+        });
+        if let Some(mut process) = finished { let _ = process.child.wait(); }
     });
     let (input, queued) = mpsc::sync_channel::<String>(32);
     thread::spawn(move || write_terminal_queue(&mut writer, queued));
-    processes.insert(terminal_id, TerminalProcess { session_key, cwd, host_id, window_label, master: pair.master, child, writer: input });
+    processes.insert(terminal_id, TerminalProcess { generation, session_key, cwd, host_id, window_label, master: pair.master, child, writer: input });
     Ok(())
 }
 
@@ -2860,9 +2869,11 @@ fn create_local_temporary_chat(home: &Path, session_id: &str) -> Result<PathBuf,
     Ok(cwd)
 }
 
-fn orchestrator_chat() -> Result<Value, String> {
+fn orchestrator_chat(app: AppHandle) -> Result<Value, String> {
+    let settings = read_settings_at(&settings_path(&app)?)?;
     let output = node_command().arg("-e").arg(include_str!("../resources/orchestrator-chat.cjs"))
-        .arg(home_dir()?.join(STORAGE_DIRECTORY)).output().map_err(|error| error.to_string())?;
+        .arg(home_dir()?.join(STORAGE_DIRECTORY)).arg(&settings.default_model).arg(&settings.default_thinking)
+        .output().map_err(|error| error.to_string())?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())
 }
@@ -3281,7 +3292,8 @@ fn relocate_session(app: AppHandle, session_path: String, cwd: String, host_id: 
 
 fn relocate_remote_session(session_path: &str, cwd: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
     let session = shell_quote(session_path); let replacement = shell_quote(cwd.trim());
-    let script = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) || exit 1; path=$(realpath -- {session}) || exit 1; case "$path" in "$root"/*.jsonl) ;; *) printf 'Refusing to relocate a non-desktop session file' >&2; exit 1 ;; esac; replacement={replacement}; [ -d "$replacement" ] || {{ printf 'Project directory does not exist: %s' "$replacement" >&2; exit 1; }}; PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e 'const fs=require("fs"); const [path,cwd]=process.argv.slice(1); const content=fs.readFileSync(path,"utf8"); const newline=content.indexOf("\n"); const first=newline<0?content:content.slice(0,newline); const rest=newline<0?"":content.slice(newline+1); const header=JSON.parse(first); if(header.type!=="session") throw new Error("Invalid session header"); header.cwd=cwd; const temporary=path+"."+process.pid+".tmp"; try {{ fs.writeFileSync(temporary,JSON.stringify(header)+(newline<0?"":"\n"+rest),{{mode:fs.statSync(path).mode}}); fs.renameSync(temporary,path); }} catch(error) {{ try {{ fs.unlinkSync(temporary); }} catch {{}} throw error; }}' "$path" "$replacement""#);
+    let relocate = shell_quote(include_str!("../resources/relocate-session.cjs"));
+    let script = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) || exit 1; path=$(realpath -- {session}) || exit 1; case "$path" in "$root"/*.jsonl) ;; *) printf 'Refusing to relocate a non-desktop session file' >&2; exit 1 ;; esac; replacement={replacement}; [ -d "$replacement" ] || {{ printf 'Project directory does not exist: %s' "$replacement" >&2; exit 1; }}; node -e {relocate} "$path" "$replacement""#);
     let output = run_limited(&mut command(script), 64 * 1024, &format!("Could not relocate conversation on {host_name}"))?;
     if output.status.success() { return Ok(()); }
     let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -3292,23 +3304,10 @@ fn relocate_local_session(home: &Path, session_path: &str, cwd: &str) -> Result<
     let replacement = PathBuf::from(cwd.trim());
     if !replacement.is_dir() { return Err(format!("Project directory does not exist: {}", replacement.display())); }
     let path = local_desktop_session_file_at(home, session_path)?;
-    let content = fs::read_to_string(&path).map_err(|error| format!("Could not read session: {error}"))?;
-    let (first, rest) = content.split_once('\n').unwrap_or((&content, ""));
-    let mut header: Value = serde_json::from_str(first).map_err(|error| format!("Invalid session header: {error}"))?;
-    if header.get("type").and_then(Value::as_str) != Some("session") { return Err("File is not a Pi session".into()); }
-    header.as_object_mut().ok_or("Invalid session header")?.insert("cwd".into(), Value::String(replacement.to_string_lossy().into_owned()));
-    let first = serde_json::to_string(&header).map_err(|error| error.to_string())?;
-    let updated = if rest.is_empty() { first } else { format!("{first}\n{rest}") };
-    let permissions = fs::metadata(&path).map_err(|error| format!("Could not inspect session: {error}"))?.permissions();
-    let temporary = path.with_extension(format!("jsonl.{}.tmp", Uuid::new_v4()));
-    let result = (|| {
-        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(|error| format!("Could not prepare relocated session: {error}"))?;
-        file.set_permissions(permissions).map_err(|error| format!("Could not preserve session permissions: {error}"))?;
-        file.write_all(updated.as_bytes()).and_then(|_| file.sync_all()).map_err(|error| format!("Could not write relocated session: {error}"))?;
-        fs::rename(&temporary, &path).map_err(|error| format!("Could not commit relocated session: {error}"))
-    })();
-    if result.is_err() { let _ = fs::remove_file(&temporary); }
-    result
+    let output = run_limited(node_command().arg("-e").arg(include_str!("../resources/relocate-session.cjs")).arg(&path).arg(&replacement), 64 * 1024, "Could not relocate conversation")?;
+    if output.status.success() { return Ok(()); }
+    let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(if error.is_empty() { "Could not relocate conversation".into() } else { error })
 }
 
 fn resolve_agent<'a>(sessions: &'a [SessionSummary], host_id: &str, session_id: &str) -> Result<&'a SessionSummary, String> {

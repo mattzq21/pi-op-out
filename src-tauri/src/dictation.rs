@@ -134,12 +134,5 @@ pub(crate) async fn dictate(app: AppHandle, audio: String) -> Result<Value, Stri
     let runtime = app.state::<DictationRuntime>();
     let _permit = runtime.busy.try_acquire().map_err(|_| "Dictation is busy. Try again shortly.")?;
     let engine = runtime.engine.lock().map_err(|_| "Dictation is unavailable")?.clone().ok_or("Dictation is unavailable")?;
-    match transcribe(&engine, &wav, Duration::from_secs(180)).await {
-        Ok(text) => Ok(json!({"text":text})),
-        Err(error) => {
-            if let Ok(mut current) = runtime.engine.lock() { *current = None; }
-            publish(&app);
-            Err(error)
-        }
-    }
+    transcribe(&engine, &wav, Duration::from_secs(180)).await.map(|text| json!({"text":text}))
 }

@@ -41,7 +41,7 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
   let limit: number | undefined;
 
   const restoreLimit = (ctx: CostContext) => {
-    const entry = ctx.sessionManager.getEntries().find((entry) => entry.type === "custom" && entry.customType === LIMIT_ENTRY);
+    const entry = [...ctx.sessionManager.getBranch()].reverse().find((entry) => entry.type === "custom" && entry.customType === LIMIT_ENTRY);
     if (entry?.type === "custom") {
       const saved = (entry.data as { limit?: unknown } | undefined)?.limit;
       if (saved !== null && saved !== undefined && !validAmount(saved)) throw new Error("Invalid saved session cost limit");

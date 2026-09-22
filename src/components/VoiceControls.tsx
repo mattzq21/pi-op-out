@@ -1,4 +1,4 @@
-import { createMemo, createSignal } from "solid-js";
+import { createMemo, createSignal, Show } from "solid-js";
 import { createSubscription } from "../lib/solid";
 
 import { Mic, MicOff, PhoneOff, Volume2, VolumeX } from "lucide-solid";
@@ -6,7 +6,7 @@ import type { NativeTransport } from "../lib/nativeTransport";
 import { voiceConfiguration, voiceSession, type VoiceSnapshot } from "../lib/voiceSession";
 import type { AgentState, ChatMessage } from "../types";
 
-interface Props { transport: NativeTransport; state: AgentState; messages: ChatMessage[]; disabled?: boolean }
+interface Props { transport: NativeTransport; state: AgentState; messages: ChatMessage[]; canStart: boolean; disabled?: boolean }
 const phaseLabel = { idle: "Voice", connecting: "Connecting voice…", connected: "Voice connected", closing: "Ending voice…" };
 
 function AudioButtons(componentProps: { voice: VoiceSnapshot; busy: boolean; run: (action: () => Promise<unknown>) => Promise<void> }) {
@@ -39,18 +39,19 @@ export function VoiceControls(componentProps: Props) {
     try { await action(); } catch (reason) { report(reason); } finally { setBusy(false); }
   };
   const start = async () => { const capturedTransport0 = componentProps.transport; const capturedState1 = componentProps.state;
+    if (!componentProps.canStart || componentProps.disabled) return;
     const config = await voiceConfiguration(capturedTransport0);
     if (!config.authenticated) throw new Error(config.error || "Sign in with codex login to use voice.");
     if (!config.helperAvailable) throw new Error("The voice helper is missing. Rebuild Piop with voice support.");
     await voiceSession.start(capturedTransport0, capturedState1);
   };
   const visibleError = createMemo(() => (error() || (ownsCall() ? voice().error : undefined)));
-  return <div class="voice-controls">
+  return <Show when={active() || componentProps.canStart}><div class="voice-controls">
     <div class="voice-toolbar">
       {active() ? <CallToolbar voice={voice()} ownsCall={ownsCall()} busy={busy()} run={run} /> : <>
         <button type="button" disabled={componentProps.disabled || busy()} onClick={() => void run(start)}><Mic size={14} />Voice</button>
       </>}
     </div>
     {visibleError() && <div class="voice-error" role="alert">{(visibleError())!}</div>}
-  </div>;
+  </div></Show>;
 }

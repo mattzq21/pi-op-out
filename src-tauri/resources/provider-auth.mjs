@@ -423,7 +423,11 @@ class ProviderAuthService {
       try {
         const resolution = await runtime.getAuth(id);
         if (!resolution) throw new Error('Provider login is missing');
-        const models = await discoverCustomModels(config, resolution.auth.apiKey, runtime.getModels(), resolution.auth.headers);
+        const discovered = await discoverCustomModels(config, resolution.auth.apiKey, runtime.getModels(), resolution.auth.headers);
+        const saved = new Map((config.models ?? []).map((model) => [model.id, model]));
+        const models = discovered.map((model) => ({ ...model, ...saved.get(model.id) }));
+        const discoveredIds = new Set(discovered.map((model) => model.id));
+        models.push(...[...saved.values()].filter((model) => !discoveredIds.has(model.id)));
         await saveCustomProvider(path, id, { ...config, models }, config);
       } catch { failures.push(id); }
     }));
@@ -432,9 +436,9 @@ class ProviderAuthService {
   async syncAccounts(runtime) {
     this.syncingAccounts ??= (async () => {
       this.accountRecords = await readProviderAccounts(this.authPath);
-      const previous = new Set(this.accounts.keys());
+      const previous = new Map(this.accounts);
       await loadAccountProviders(this.authPath, this.createRuntime, this.accounts);
-      for (const [id, provider] of this.accounts) if (!previous.has(id)) runtime.registerNativeProvider(provider);
+      for (const [id, provider] of this.accounts) if (previous.get(id) !== provider) runtime.registerNativeProvider(provider);
     })().finally(() => { this.syncingAccounts = undefined; });
     await this.syncingAccounts;
   }

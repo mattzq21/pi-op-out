@@ -447,7 +447,7 @@ export default function diffWatch(pi: ExtensionAPI) {
 
   pi.on("session_start", (event, ctx) => {
     runStart = undefined;
-    if (event.reason !== "fork") return;
+    if (event.reason !== "fork" && !ctx.sessionManager.getHeader()?.parentSession) return;
     snapshotQueue = snapshotQueue.then(async () => {
       await inheritSnapshot(ctx, ctx.sessionManager.getHeader()?.parentSession ?? event.previousSessionFile);
       const root = await repositoryRoot(ctx.cwd);

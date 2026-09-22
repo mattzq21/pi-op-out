@@ -263,7 +263,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       "thinking_level_changed": handleThinkingLevelChanged
     };
     if (Object.hasOwn(handlers, event.type)) handlers[event.type]();
-    if (typeof event.revision === "string" && session.memory.revision === event.previousRevision && !["session_info_changed", "session_switched", "settings_applied", "disconnected", "model_select"].includes(event.type)) {
+    if (typeof event.revision === "string" && session.memory.revision === event.previousRevision && !["entry_appended", "message_end", "agent_settled", "session_info_changed", "session_switched", "settings_applied", "disconnected", "model_select"].includes(event.type)) {
       flush();
       session.memory.markRevision(event.revision);
     }

@@ -35,7 +35,7 @@ interface Props {
   contextUsage?: ContextUsage;
   controlsDisabled?: boolean;
   draft?: string;
-  onDraftChange?: (value: string) => void;
+  onDraftChange?: (value: StateUpdate<string>) => void;
   uploads?: ComposerUpload[];
   onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void;
   restoredDraft?: { id: string; value: string };
@@ -249,7 +249,7 @@ export function Composer(props: Props) {
     const capturedComposer = { ...composer() }; const capturedValue = value();
  if (capturedComposer.restoredDraft && (capturedComposer.restoredDraft)!.id !== restoredDraftId.current) { restoredDraftId.current = (capturedComposer.restoredDraft)!.id; if (!capturedValue) setValue((capturedComposer.restoredDraft)!.value); } }, () => [composer().restoredDraft]);
 
-  const addFiles = async (files: FileList | File[] | null, initialErrors: string[] = []) => { const capturedUploads = uploads();
+  const addFiles = async (files: FileList | File[] | null, initialErrors: string[] = [], commitUploads = composer().onUploadsChange ?? setLocalUploads) => { const capturedUploads = uploads();
     if (!files) return;
     setUploadError(undefined);
     const next: ComposerUpload[] = [];
@@ -264,7 +264,7 @@ export function Composer(props: Props) {
       next.push(upload);
       totalBytes += file.size;
     }
-    updateUploads((current) => {
+    commitUploads((current) => {
       const accepted: ComposerUpload[] = [];
       let currentBytes = current.reduce((total, upload) => total + upload.byteSize, 0);
       for (const upload of next) {
@@ -278,6 +278,7 @@ export function Composer(props: Props) {
     });
   };
   const addPaths = async (paths: string[], cancelled = () => false) => {
+    const commitUploads = composer().onUploadsChange ?? setLocalUploads;
     const files: File[] = [];
     const errors = paths.length > UPLOAD_COUNT_LIMIT ? [`Only ${UPLOAD_COUNT_LIMIT} attachments are allowed; extra files were skipped`] : [];
     for (const path of paths.slice(0, UPLOAD_COUNT_LIMIT)) {
@@ -285,7 +286,7 @@ export function Composer(props: Props) {
       try { files.push(await readDroppedFile(path)); }
       catch (reason) { errors.push(reason instanceof Error ? reason.message : String(reason)); }
     }
-    if (!cancelled()) await addFiles(files, errors);
+    if (!cancelled()) await addFiles(files, errors, commitUploads);
   };
   const nativeDropRef = createRef({ inputDisabled: controls().inputDisabled, addPaths });
   createDependencyEffect(() => {
@@ -325,10 +326,9 @@ export function Composer(props: Props) {
     if (images.length && !supportsImagesRef.current) { setImageInputError(true); return false; }
     return Boolean((message || images.length) && !sendingRef.current);
   };
-  const restoreSubmission = (submittedValue: string, submittedUploads: ComposerUpload[], reason: unknown) => {
-    const newerDraft = ref.current?.value || "";
-    setValue(newerDraft && newerDraft !== submittedValue ? `${submittedValue}\n\n${newerDraft}` : submittedValue);
-    updateUploads((current) => [...submittedUploads.filter((item) => !current.some((other) => other.id === item.id)), ...current]);
+  const restoreSubmission = (submittedValue: string, submittedUploads: ComposerUpload[], reason: unknown, changeDraft: (value: StateUpdate<string>) => void, changeUploads: (value: StateUpdate<ComposerUpload[]>) => void) => {
+    changeDraft((newerDraft) => newerDraft && newerDraft !== submittedValue ? `${submittedValue}\n\n${newerDraft}` : submittedValue);
+    changeUploads((current) => [...submittedUploads.filter((item) => !current.some((other) => other.id === item.id)), ...current]);
     setUploadError(reason instanceof Error ? reason.message : String(reason));
   };
   const submit = async (behavior: "steer" | "followUp" = "followUp") => { const capturedUploads = uploads(); const capturedValue = value(); const capturedComposer = { ...composer() };
@@ -340,12 +340,14 @@ export function Composer(props: Props) {
     if (!canSubmit(message, images)) return;
     sendingRef.current = true; setSending(true); setUploadError(undefined);
     const submittedValue = capturedValue; const submittedUploads = capturedUploads;
+    const changeDraft = capturedComposer.onDraftChange ?? setLocalValue;
+    const changeUploads = capturedComposer.onUploadsChange ?? setLocalUploads;
     setValue(""); updateUploads([]);
     try {
       const accepted = await capturedComposer.onSend(message || "Describe the attached image.", capturedComposer.streaming ? behavior : undefined, images);
       if (accepted === false) throw new Error("Message was not submitted");
     } catch (reason) {
-      restoreSubmission(submittedValue, submittedUploads, reason);
+      restoreSubmission(submittedValue, submittedUploads, reason, changeDraft, changeUploads);
     } finally { sendingRef.current = false; setSending(false); }
   };
   const abort = async () => { const capturedComposer = { ...composer() }; const capturedControlAction = controlAction();

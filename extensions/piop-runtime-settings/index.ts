@@ -25,9 +25,9 @@ function validate(value: Settings): Settings {
 export default async function runtimeSettings(pi: ExtensionAPI) {
   const accountProviders = new Map();
   const refreshAccounts = async () => {
-    const existing = new Set(accountProviders.keys());
+    const existing = new Map(accountProviders);
     await loadAccountProviders(join(getAgentDir(), "auth.json"), () => ModelRuntime.create({ allowModelNetwork: false, refreshOnCreate: false }), accountProviders);
-    for (const [id, provider] of accountProviders) if (!existing.has(id)) pi.registerProvider(provider);
+    for (const [id, provider] of accountProviders) if (existing.get(id) !== provider) pi.registerProvider(provider);
   };
   await refreshAccounts();
   processState[key] ??= validate(JSON.parse(await readFile(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "runtime-settings.json"), "utf8")));

@@ -14,6 +14,7 @@ type ServerConfig = {
   headers?: string | Record<string, string>;
   enabled: boolean;
   startupTimeoutSec?: number;
+  injectAgentId?: boolean;
 };
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -47,9 +48,10 @@ async function discoverTools(client: Client, signal: AbortSignal) {
   return discovered;
 }
 
-function toolParameters(inputSchema: Awaited<ReturnType<Client["listTools"]>>["tools"][number]["inputSchema"]) {
+function toolParameters(inputSchema: Awaited<ReturnType<Client["listTools"]>>["tools"][number]["inputSchema"], inject = false) {
   const schema = inputSchema ?? { type: "object", properties: {} };
-  const injectAgentId = Object.hasOwn(schema.properties ?? {}, "agent_id");
+  const agentId = schema.properties?.agent_id;
+  const injectAgentId = inject && agentId !== null && typeof agentId === "object" && agentId.type === "string";
   const parameters = injectAgentId ? {
     ...schema,
     properties: Object.fromEntries(Object.entries(schema.properties ?? {}).filter(([key]) => key !== "agent_id")),
@@ -191,7 +193,7 @@ export default async function mcpBridge(pi: ExtensionAPI) {
         if (shutdown.signal.aborted) throw new Error("MCP bridge has shut down");
         for (const tool of discovered) {
           const name = registeredName(server.id, tool.name);
-          const { injectAgentId, parameters } = toolParameters(tool.inputSchema);
+          const { injectAgentId, parameters } = toolParameters(tool.inputSchema, server.injectAgentId);
           connection.tools.push(name);
           pi.registerTool({
             name, label: `${server.name} · ${tool.name}`, description: tool.description || `Run ${tool.name} on the ${server.name} MCP server`,

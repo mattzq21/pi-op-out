@@ -42,6 +42,7 @@ pub struct SessionSeed {
 pub enum GroupChange {
     Create { name: String },
     Project { project: SessionGroup, key: Option<String> },
+    InspectProject { id: String, #[serde(rename = "projectKind")] project_kind: super::ProjectKind },
     Rename { id: String, name: String },
     Remove { id: String },
     Assign { key: String, group: Option<String> },
@@ -132,6 +133,11 @@ fn change_with(change: GroupChange, path: impl FnOnce() -> Result<PathBuf, Strin
 fn change_at(path: &PathBuf, change: GroupChange) -> Result<SessionGroups, String> {
     let mut state = read(path)?.ok_or("Session groups have not loaded yet")?;
     match change {
+        GroupChange::InspectProject { id, project_kind } => {
+            if !state.removed_projects.contains(&id) {
+                if let Some(group) = state.groups.iter_mut().find(|group| group.id == id) { group.project_kind = Some(project_kind); }
+            }
+        }
         GroupChange::Project { project, key } => {
             if project.cwd.as_ref().is_none_or(|cwd| cwd.trim().is_empty()) { return Err("Enter a project directory".into()); }
             state.removed_projects.remove(&project.id);
