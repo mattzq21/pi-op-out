@@ -55,22 +55,24 @@ fn new_window(app: AppHandle, target: Value) -> Result<String, String> {
         .background_color(tauri::window::Color(24, 24, 23, 255))
         .title(APP_TITLE).inner_size(1280.0, 800.0).min_inner_size(900.0, 640.0)
         .build().map_err(|error| error.to_string())?;
-    let _ = configure_dictation_microphone(&window);
+    configure_dictation_microphone(&window)?;
     Ok(label)
 }
 
 fn configure_dictation_microphone(window: &tauri::WebviewWindow) -> Result<(), String> {
     #[cfg(target_os = "linux")]
-    window.with_webview(|webview| {
+    let dev_url = window.app_handle().config().build.dev_url.clone();
+    #[cfg(target_os = "linux")]
+    window.with_webview(move |webview| {
         use gtk::prelude::Cast;
         use webkit2gtk::{PermissionRequestExt, SettingsExt, UserMediaPermissionRequest, UserMediaPermissionRequestExt, WebViewExt};
         let view = webview.inner();
         if let Some(settings) = WebViewExt::settings(&view) { settings.set_enable_media_stream(true); }
-        view.connect_permission_request(|view, request| {
+        view.connect_permission_request(move |view, request| {
             let trusted = view.uri().and_then(|uri| reqwest::Url::parse(&uri).ok()).is_some_and(|url| {
                 url.scheme() == "tauri" && url.host_str() == Some("localhost")
                     || matches!(url.scheme(), "http" | "https") && url.host_str() == Some("tauri.localhost")
-                    || DEVELOPMENT && url.scheme() == "http" && url.host_str() == Some("localhost") && url.port() == Some(1423)
+                    || DEVELOPMENT && dev_url.as_ref().is_some_and(|configured| url.origin() == configured.origin())
             });
             if trusted && request.downcast_ref::<UserMediaPermissionRequest>().is_some_and(|media| media.is_for_audio_device() && !media.is_for_video_device()) {
                 request.allow(); true
@@ -200,7 +202,7 @@ pub fn run() {
     #[cfg(feature = "webdriver")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
     builder.plugin(tauri_plugin_dialog::init()).manage(voice::VoiceRuntime::default()).manage(desktop_daemon::DesktopDaemon::default()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
-        for window in app.webview_windows().values() { let _ = configure_dictation_microphone(window); }
+        for window in app.webview_windows().values() { configure_dictation_microphone(window)?; }
         #[cfg(target_os = "linux")]
         if let Some((label, focus)) = start_window.as_ref() {
             use gtk::prelude::GtkWindowExt;
