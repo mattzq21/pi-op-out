@@ -127,7 +127,60 @@ function affectedPaths(name: string | undefined, input: Record<string, unknown>)
   return paths;
 }
 
+function registerToolRevisions(pi: ExtensionAPI) {
+  type Revision = { path: string; absolute: string; before: string };
+  const fingerprint = (content: string | null) => createHash("sha256").update(JSON.stringify(content)).digest("hex");
+  const mutation = (name: string) => ["edit", "write", "apply_patch", "bash", "exec_command"].includes(name.split(".").at(-1)!);
+  let active = 0;
+  let generation = 0;
+  let pending: { id: string; generation: number; revisions: Revision[] } | undefined;
+  const reset = () => { active = 0; generation++; pending = undefined; };
+  const compare = async (revisions: Revision[]) => {
+    const changes = [];
+    for (const before of revisions) {
+      try {
+        if (await canonicalPath(before.absolute) !== before.path) continue;
+        const after = fingerprint(await textFile(before.path));
+        if (before.before !== after) changes.push({ path: before.path, before: before.before, after });
+      } catch { /* Never infer an edit/revert from incomplete captures. */ }
+    }
+    return changes;
+  };
+  pi.on("session_start", reset);
+  pi.on("session_tree", reset);
+  pi.on("agent_settled", reset);
+  pi.on("tool_call", async (event, ctx) => {
+    if (!mutation(event.toolName)) return;
+    active++; generation++; pending = undefined;
+    if (active !== 1) return;
+    const probe: { enabled?: boolean } = {};
+    pi.events.emit("piop:loop-detection-enabled", probe);
+    if (!probe.enabled) return;
+    const current = { id: event.toolCallId, generation, revisions: [] as Revision[] };
+    const paths = affectedPaths(event.toolName.split(".").at(-1), event.input);
+    if (paths.length > 32) return;
+    for (const path of new Set(paths)) {
+      try {
+        const absolute = absoluteToolPath(path, ctx.cwd);
+        const canonical = await canonicalPath(absolute);
+        current.revisions.push({ path: canonical, absolute, before: fingerprint(await textFile(canonical)) });
+      } catch { /* Uncertain, binary, or oversized contents do not establish a revision. */ }
+    }
+    if (generation === current.generation) pending = current;
+  });
+  pi.on("tool_result", async (event, ctx) => {
+    if (!mutation(event.toolName)) return;
+    const current = pending; pending = undefined;
+    try {
+      if (!current || current.id !== event.toolCallId || event.isError) return;
+      const changes = await compare(current.revisions);
+      if (generation === current.generation && changes.length) pi.events.emit("piop:tool-file-changes", { ctx, changes });
+    } finally { active = Math.max(0, active - 1); }
+  });
+}
+
 export function registerFileChanges(pi: ExtensionAPI) {
+  registerToolRevisions(pi);
   let capture = newCapture();
   const journals = new Map<string, Journal>();
 
