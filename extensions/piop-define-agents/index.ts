@@ -50,8 +50,8 @@ Guidelines:
 - Be concise in your responses
 - Show file paths clearly when working with files`;
 
-const sessionTools = ["fork_session", "create_worktree", "remove_worktree", "subagent"];
-type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; orchestratorDefaultApplied?: boolean; subagentsDefaultApplied?: boolean };
+const sessionTools = ["fork_session", "create_worktree", "remove_worktree"];
+type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; orchestratorDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; subagentProfileDefaultApplied?: boolean };
 const development = process.env.PIOP_STORAGE_DIRECTORY === ".piop-dev";
 const fallbackConfig: Config = { agents: [{ name: "general", model: "", effort: development ? "medium" : "high", fastMode: development ? false : undefined, path_systemprompt: DEFAULT_PROMPT_PATH, path_agentprompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
 function defaultAgent(pi: ExtensionAPI): Agent {
@@ -171,7 +171,7 @@ function normalize(value: Partial<Config>, pi: ExtensionAPI): Config {
   }
   const unique = supplied.filter((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) === index);
   const agents = unique.some((agent) => agent.name === "general") ? unique : [defaultAgent(pi), ...unique];
-  return { agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, orchestratorDefaultApplied: value.orchestratorDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true };
+  return { agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, orchestratorDefaultApplied: value.orchestratorDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, subagentProfileDefaultApplied: value.subagentProfileDefaultApplied === true };
 }
 
 async function readConfig(pi: ExtensionAPI): Promise<Config> {
@@ -194,17 +194,21 @@ function migrateSessionTools(config: Config, pi: ExtensionAPI) {
   config.sessionToolsDefaultApplied = true;
   return true;
 }
-function migrateSubagents(config: Config, pi: ExtensionAPI) {
-  if (!config.subagentsDefaultApplied && desktopList(pi, "tools")?.includes("subagent")) {
-    for (const agent of config.agents) if (!agent.tools.includes("subagent")) agent.tools.push("subagent");
-    config.subagentsDefaultApplied = true;
-    return true;
+function migrateSubagents(config: Config) {
+  if (config.subagentProfileDefaultApplied) return false;
+  const general = config.agents.find((agent) => agent.name === "general");
+  if (!general) return false;
+  if (!config.agents.some((agent) => agent.name === "subagents")) {
+    config.agents.push({ ...structuredClone(general), name: "subagents", tools: [...new Set([...general.tools, "subagent"])] });
   }
-  return false;
+  general.tools = general.tools.filter((tool) => tool !== "subagent");
+  config.subagentsDefaultApplied = true;
+  config.subagentProfileDefaultApplied = true;
+  return true;
 }
 async function loadConfig(pi: ExtensionAPI): Promise<Config> {
   const config = await readConfig(pi);
-  let changed = [migrateSessionTools(config, pi), migrateSubagents(config, pi)].some(Boolean);
+  let changed = [migrateSessionTools(config, pi), migrateSubagents(config)].some(Boolean);
   for (const agent of config.agents) {
     if (!agent.tools.some((tool) => tool === "exec_command" || tool === "apply_patch")) continue;
     agent.tools = [...new Set(agent.tools.flatMap((tool) => tool === "exec_command"
@@ -458,7 +462,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
   pi.registerCommand("pi-define-agents-config", {
     description: "Update agent definitions", handler: async (args, ctx) => {
-      const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied, orchestratorDefaultApplied: config.orchestratorDefaultApplied, subagentsDefaultApplied: config.subagentsDefaultApplied }, pi);
+      const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied, orchestratorDefaultApplied: config.orchestratorDefaultApplied, subagentsDefaultApplied: config.subagentsDefaultApplied, subagentProfileDefaultApplied: config.subagentProfileDefaultApplied }, pi);
       if (!next.agents.some((agent) => agent.name === VOICE_ORCHESTRATOR_NAME)) next.agents.push(structuredClone(config.agents.find((agent) => agent.name === VOICE_ORCHESTRATOR_NAME)!));
       // Global edits only affect future selections. This session keeps its snapshot.
       await writeConfig(next);
