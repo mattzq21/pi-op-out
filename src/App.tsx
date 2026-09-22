@@ -1,5 +1,5 @@
 import { Key, Rerun } from "@solid-primitives/keyed";
-import { ArrowLeft, Bug, FolderPlus, GitBranch, MessageSquare, Server, Settings } from "lucide-solid";
+import { ArrowLeft, Bug, FolderPlus, GitBranch, MessageSquare, Mic, Server, Settings } from "lucide-solid";
 import { createComputed, createMemo, createSignal } from "solid-js";
 import { appendTerminalOutputs, AppLoading, dialogOwnerName, goUsageBadge, initialTerminals, LimitBadge, MAX_TERMINALS, normalizeCodexUsage, normalizeOpencodeGoUsage, selectedProjectCwd, splitConversationKey, terminalConversationKey, useUsageClock, type OwnedExtensionDialog, type QueuedTerminalOutput, type RenameTarget, type SessionTerminals, type SplitPaneState, type TerminalTarget, type WorktreeTarget } from "./appSupport";
 import { createBranchConversation } from "./branchConversation";
@@ -20,7 +20,8 @@ import { hasVisibleText, textOf } from "./lib/content";
 import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
 import { branchMessages, type PiEntry } from "./lib/messages";
 import { recordSeenModels } from "./lib/modelVisibility";
-import { initialWindowTarget, NativeTransport, openSessionWindow } from "./lib/nativeTransport";
+import { initialWindowTarget, NativeTransport, openOrchestratorChat, openSessionWindow } from "./lib/nativeTransport";
+import { ORCHESTRATOR_SESSION_ID, VOICE_ORCHESTRATOR_AGENT } from "./lib/orchestrator";
 import { isMobile, listen } from "./lib/platform";
 import { updateSessionGroups, type SessionGroup } from "./lib/sessionGroups";
 import { SessionRuntimePool, useTurnDiffs } from "./lib/sessionRuntimePool";
@@ -54,6 +55,8 @@ export default function App() {
     if (previous) runtimePool().queueSettingsChange(previous, next);
   };
   const [definedAgents, setDefinedAgents] = createSignal<DefinedAgentsCapability>();
+  const [openingOrchestrator, setOpeningOrchestrator] = createSignal(false);
+  const isOrchestrator = () => activeHostId() === "local" && chatSession().state.sessionId === ORCHESTRATOR_SESSION_ID;
   const settingsSavePending = createRef(false); const [settingsSaving, setSettingsSaving] = createSignal(false);
   const [debugModeSaving, setDebugModeSaving] = createSignal(false);
   const debugModePending = createRef(false);
@@ -249,7 +252,7 @@ export default function App() {
       if (!current()) return;
       await capturedTransport.setFastMode(value.defaultFastMode);
       if (!current()) return;
-      await capturedTransport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(value.defaultAgent ?? "general")}` });
+      await capturedTransport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(value.defaultAgent === VOICE_ORCHESTRATOR_AGENT ? "general" : value.defaultAgent ?? "general")}` });
       capturedTransport.defaultsApplied();
     }
   };
@@ -423,13 +426,24 @@ export default function App() {
     finally { branchPending.current.delete(pendingKey); }
   };
   const confirmNewSession = (clearProject: boolean) => clearProject || !(hasVisibleText(composerState().composerDraft) || composerState().composerUploads.length) || window.confirm("Start a new conversation and discard the unsent draft?");
-  const newSessionTarget = (clearProject: boolean, group?: SessionGroup) => ({ hostId: group ? group.hostId ?? "local" : activeHostIdRef.current, projectCwd: group ? group.cwd ?? undefined : clearProject ? undefined : selectedProjectCwd(activeCwd(), transport().isTemporaryChat()) });
+  const newSessionTarget = (clearProject: boolean, group?: SessionGroup) => ({ hostId: group ? group.hostId ?? "local" : activeHostIdRef.current, projectCwd: group ? group.cwd ?? undefined : clearProject || isOrchestrator() ? undefined : selectedProjectCwd(activeCwd(), transport().isTemporaryChat()) });
   const createSessionTransport = (cwd: string | undefined, hostId: string) => runtimePool().create(cwd ? { cwd, hostId } : { hostId });
   const reportNewSessionFailure = (reason: unknown, conversationKey: string) => { if (activeConversationKeyRef.current === conversationKey) { updateConnected(false); setError(reason instanceof Error ? reason.message : String(reason)); } };
   const startNewSession = async (clearProject = false, group?: SessionGroup) => {
     const capturedSession = { ...chatSession() }; const capturedRuntimePool = runtimePool(); const capturedComposerState = { ...composerState() };
  if (newSessionPending.current || !canLeaveSettings()) return; if (!confirmNewSession(clearProject)) return; newSessionPending.current = true; const { hostId, projectCwd } = newSessionTarget(clearProject, group); const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; activateConversationKey(conversationKey); setView("chat"); closeSplitPane(); setTerminalOpen(false); setTerminalTarget(undefined); updateConnected(false); setDefinedAgents(undefined); capturedSession.discardPendingUpdates(); const nextTransport = createSessionTransport(projectCwd, hostId); transportConversationKeys.current.set(nextTransport, conversationKey); if (group) pendingSessionGroups.current.set(nextTransport, group.id); try { const cwd = projectCwd ?? await nextTransport.prepareTemporaryChat(hostId); if (activeConversationKeyRef.current !== conversationKey) { transportConversationKeys.current.delete(nextTransport); void capturedRuntimePool.release(nextTransport); return; } if (clearProject) { setComposerDraft(conversationKey, capturedComposerState.composerDraft); setComposerUploads(nextTransport, capturedComposerState.composerUploads); } setActiveCwd(cwd); setActiveHostId(hostId); activateTransport(nextTransport); } catch (reason) { transportConversationKeys.current.delete(nextTransport); void capturedRuntimePool.release(nextTransport); reportNewSessionFailure(reason, conversationKey); } finally { newSessionPending.current = false; } };
   const newSession = () => startNewSession();
+  const showOrchestrator = async () => {
+    if (openingOrchestrator() || !canLeaveSettings()) return;
+    setOpeningOrchestrator(true);
+    try {
+      const session = await openOrchestratorChat();
+      setView("chat");
+      closeSplitPane();
+      selectSession(session);
+    } catch (reason) { addNotice({ title: "Could not open Orchestrator", message: String(reason) }); }
+    finally { setOpeningOrchestrator(false); }
+  };
   const clearChatProject = () => startNewSession(true);
   const isSplitSession = (session: SessionSummary) => splitPane()?.session.id === session.id && ((splitPane())!.session.hostId ?? "local") === (session.hostId ?? "local");
   const isSelectedSession = (session: SessionSummary) => session.id === chatSession().state.sessionId && (session.hostId ?? "local") === activeHostId();
@@ -669,15 +683,15 @@ export default function App() {
   });
   const extensionStateIsCurrent = createMemo(() => (extensionOwner() === transport()));
   const activeDialog = createMemo(() => (dialogs()[0]));
-  const projectCwd = createMemo(() => (selectedProjectCwd(activeCwd(), transport().isTemporaryChat())));
+  const projectCwd = createMemo(() => (selectedProjectCwd(activeCwd(), transport().isTemporaryChat() || isOrchestrator())));
   const renderMobileSidebarBackdrop = () => (panelOpen() && view() === "chat" && <button class="mobile-sidebar-backdrop" aria-label="Close conversations" onClick={() => setPanelOpen(false)} />);
   const renderSidebar = () => {
-    const renderNavigation = () => (<nav><IconButton label="New conversation" onClick={newSession}><MessageSquare size={18} /></IconButton><IconButton label="New session group" onClick={() => { if (!canLeaveSettings()) return; setView("chat"); setPanelOpen(true); setQuery(""); setCreateGroupRequest((request) => request + 1); }}><FolderPlus size={18} /></IconButton><IconButton label={(settings())!.debugMode ? "Disable debug mode" : "Enable debug mode"} class={(settings())!.debugMode ? "active" : ""} disabled={debugModeSaving() || settingsSaving()} onClick={toggleDebugMode}><Bug size={18} /></IconButton><IconButton label={view() === "settings" ? "Go back" : "Settings"} class={view() === "settings" ? "active" : ""} onClick={() => { if (view() !== "settings") { setView("settings"); return; } if (canLeaveSettings()) setView("chat"); }}>{view() === "settings" ? <ArrowLeft size={19} /> : <Settings size={19} />}</IconButton>{isMobile && <IconButton label="Host" onClick={() => { if (canLeaveSettings()) window.dispatchEvent(new Event("piop-mobile-disconnect")); }}><Server size={18} /></IconButton>}</nav>);
-    const renderSessionPanel = () => (view() === "chat" && panelOpen() && <SessionPanel sessions={[...sessions(), ...liveSessions().filter((live) => !archivedSessionKeys.current.has(`${live.hostId ?? "local"}:${live.id}`) && !sessions().some((saved) => saved.id === live.id && saved.hostId === live.hostId))]} activeId={chatSession().state.sessionId} activeHostId={activeHostId()} runningSessions={runningSessions()} unseenSessions={unseenSessions()} query={query()} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} onNewChat={(group) => void startNewSession(false, group)} onCreateWorktree={(cwd, hostId) => setWorktreeTarget({ cwd, hostId, transport: transport() })} onDeleteWorktree={deleteWorktree} createGroupRequest={createGroupRequest()} onCreateGroupHandled={handleCreateGroup} />);
+    const renderNavigation = () => (<nav><IconButton label="Orchestrator" class={view() === "chat" && isOrchestrator() ? "active" : ""} disabled={openingOrchestrator()} onClick={() => void showOrchestrator()}><Mic size={18} /></IconButton><IconButton label="New conversation" onClick={newSession}><MessageSquare size={18} /></IconButton><IconButton label="New session group" onClick={() => { if (!canLeaveSettings()) return; setView("chat"); setPanelOpen(true); setQuery(""); setCreateGroupRequest((request) => request + 1); }}><FolderPlus size={18} /></IconButton><IconButton label={(settings())!.debugMode ? "Disable debug mode" : "Enable debug mode"} class={(settings())!.debugMode ? "active" : ""} disabled={debugModeSaving() || settingsSaving()} onClick={toggleDebugMode}><Bug size={18} /></IconButton><IconButton label={view() === "settings" ? "Go back" : "Settings"} class={view() === "settings" ? "active" : ""} onClick={() => { if (view() !== "settings") { setView("settings"); return; } if (canLeaveSettings()) setView("chat"); }}>{view() === "settings" ? <ArrowLeft size={19} /> : <Settings size={19} />}</IconButton>{isMobile && <IconButton label="Host" onClick={() => { if (canLeaveSettings()) window.dispatchEvent(new Event("piop-mobile-disconnect")); }}><Server size={18} /></IconButton>}</nav>);
+    const renderSessionPanel = () => (view() === "chat" && panelOpen() && <SessionPanel sessions={[...sessions().filter((session) => session.id !== ORCHESTRATOR_SESSION_ID), ...liveSessions().filter((live) => live.id !== ORCHESTRATOR_SESSION_ID && !archivedSessionKeys.current.has(`${live.hostId ?? "local"}:${live.id}`) && !sessions().some((saved) => saved.id === live.id && saved.hostId === live.hostId))]} activeId={chatSession().state.sessionId} activeHostId={activeHostId()} runningSessions={runningSessions()} unseenSessions={unseenSessions()} query={query()} onQuery={setQuery} onSelect={selectSession} onAction={sessionAction} onNewChat={(group) => void startNewSession(false, group)} onCreateWorktree={(cwd, hostId) => setWorktreeTarget({ cwd, hostId, transport: transport() })} onDeleteWorktree={deleteWorktree} createGroupRequest={createGroupRequest()} onCreateGroupHandled={handleCreateGroup} />);
     const renderUsageBadges = () => (<div class="rail-bottom">{opencodeGoBadge() && <LimitBadge clock={usageClock()} label="OpenCode Go" prefix="Go " go detail={(opencodeGoBadge())!.detail} remainingPercent={(opencodeGoBadge())!.window.remainingPercent} resetAt={(opencodeGoBadge())!.window.resetAt} />}{codexUsage() !== undefined && <LimitBadge clock={usageClock()} label="Codex" remainingPercent={(codexUsage())!.remainingPercent} resetAt={(codexUsage())!.resetAt} />}</div>);
     return (<ResizableSidebar compact={view() === "settings" || !panelOpen()}><div class="rail-branch" title={`piop development branch: ${__PIOP_DEVELOPMENT_BRANCH__}`}><GitBranch size={13} /><span>{__PIOP_DEVELOPMENT_BRANCH__}</span></div>{renderNavigation()}{renderSessionPanel()}{renderUsageBadges()}</ResizableSidebar>);
   };
-  const chatAgentProps = () => { if (!extensionStateIsCurrent()) return { agents: [], activeAgent: undefined, agentLocked: false, agentSaved: false, agentUnavailable: false }; return { agents: definedAgents()?.config.agents ?? [], activeAgent: definedAgents()?.active, agentLocked: definedAgents()?.locked, agentSaved: definedAgents()?.saved, agentUnavailable: definedAgents()?.unavailable }; };
+  const chatAgentProps = () => { if (!extensionStateIsCurrent()) return { agents: [], activeAgent: undefined, agentLocked: false, agentSaved: false, agentUnavailable: false }; return { agents: (definedAgents()?.config.agents ?? []).filter((agent) => isOrchestrator() || agent.name !== VOICE_ORCHESTRATOR_AGENT), activeAgent: definedAgents()?.active, agentLocked: isOrchestrator() || definedAgents()?.locked, agentSaved: definedAgents()?.saved, agentUnavailable: definedAgents()?.unavailable }; };
   const renderChatWorkspace = () => {
     const renderChatPanes = () => {
       const renderChatView = () => (<Rerun on={() => activeConversationKey()}>{() => <ChatView voiceTransport={transport()}  state={chatSession().state} messages={chatSession().messages} gitDiffs={gitDiffs()} debug={(settings())!.debugMode} {...chatAgentProps()} models={chatSession().models.filter((model) => !(settings())!.hiddenModels.includes(`${model.provider}/${model.id}`))} commands={[{ name: "branch-off", description: "Branch conversation [number back, default 0]", source: "builtin" }, { name: "worktree", description: "Create worktree [number back, default 0] [name]", source: "builtin" }, ...chatSession().commands.filter((command) => !["branch-off", "worktree"].includes(command.name))]} thinkingLevels={chatSession().thinkingLevels} widgets={extensionStateIsCurrent() ? Object.values(widgets()).flat() : []} statuses={extensionStateIsCurrent() ? statuses() : {}} projectCwd={projectCwd()} controlsDisabled={!connected()} selectionBtw draft={composerState().composerDraft} onDraftChange={(value) => setComposerDraft(activeConversationKey(), value)} focusRequest={mainComposerFocusRequest()} onActivate={() => setActivePane("main")} uploads={composerState().composerUploads} onUploadsChange={(update) => setComposerUploads(transport(), update)} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abortInteraction} onPause={pauseInteraction} onResume={resumeInteraction} onOpenTerminal={() => { terminalPanelRevision.current += 1; setActivePane("main"); setTerminalTarget({ sessionKey: activeConversationKey(), cwd: projectCwd(), hostId: activeHostId() }); setTerminalOpen(true); }} onOpenProject={chooseChatProject} onClearProject={clearChatProject} onBranch={branch} onForkAndForget={isGitRepository() === false && projectCwd() ? forkAndForget : undefined} onCreateWorktree={isGitRepository() && projectCwd() ? (message) => setWorktreeTarget({ cwd: (projectCwd())!, hostId: activeHostId(), message, transport: transport() }) : undefined} onAgent={setAgent} onModel={setModel} onToggleFastMode={() => enqueueControl(transport(), () => transport().toggleFastMode())} onThinking={setThinking} />}</Rerun>);

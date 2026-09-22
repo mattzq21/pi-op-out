@@ -100,6 +100,7 @@ class HostVoiceService {
     voiceOffer(packet);
     const session = subscriptions.get(packet.runtimeId);
     if (!session || readonlyViews.has(packet.runtimeId)) throw new Error('Take ownership of the conversation before starting voice');
+    if (session.identity !== '00000000-0000-4000-8000-000000000001') throw new Error('Open Orchestrator to use voice');
     if ([...this.calls.values()].some((call) => call.session === session) || this.calls.has(packet.callId)) throw new Error('End the current voice call first');
     const call = { id: packet.callId, runtimeId: packet.runtimeId, session, pending: [], active: [], seen: new Set(), turns: [], queue: Promise.resolve(), controller: new AbortController() };
     this.calls.set(call.id, call);

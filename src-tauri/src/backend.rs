@@ -2860,6 +2860,13 @@ fn create_local_temporary_chat(home: &Path, session_id: &str) -> Result<PathBuf,
     Ok(cwd)
 }
 
+fn orchestrator_chat() -> Result<Value, String> {
+    let output = node_command().arg("-e").arg(include_str!("../resources/orchestrator-chat.cjs"))
+        .arg(home_dir()?.join(STORAGE_DIRECTORY)).output().map_err(|error| error.to_string())?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())
+}
+
 fn temporary_chat_id(path: &str) -> Option<&str> {
     let value = Path::new(path); let id = value.file_name()?.to_str()?;
     Uuid::parse_str(id).ok()?;

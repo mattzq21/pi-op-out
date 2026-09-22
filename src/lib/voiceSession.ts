@@ -2,6 +2,7 @@ import { invoke, listen, isMobile, type UnlistenFn } from "./platform";
 import type { AgentState } from "../types";
 import type { NativeTransport } from "./nativeTransport";
 import type { SpokenMessage } from "./voiceMessages";
+import { ORCHESTRATOR_SESSION_ID } from "./orchestrator";
 
 export type VoicePhase = "idle" | "connecting" | "connected" | "closing";
 export type VoiceTranscript = SpokenMessage;
@@ -36,6 +37,7 @@ export class VoiceSession {
   connectionLost() { if (this.id) { this.cleanup(); this.report("Host connection ended. Start a new voice call after reconnecting."); } }
 
   async start(transport: NativeTransport, state: AgentState) {
+    if (state.sessionId !== ORCHESTRATOR_SESSION_ID || transport.currentHostId() !== "local") throw new Error("Open Orchestrator to use voice");
     if (this.snapshot.phase !== "idle") throw new Error("End the current voice call first");
     if (!state.sessionId || !transport.ownsConversation()) throw new Error("Connect and take ownership of this conversation before starting voice");
     const id = crypto.randomUUID(); this.id = id;

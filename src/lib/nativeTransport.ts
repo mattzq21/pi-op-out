@@ -2,6 +2,7 @@
 import { forgetSession, retainSessionResource } from "./sessionMemory";
 import { preserveDaemonPreferences, saveClientSettings, withClientSettings } from "./clientSettings";
 import { invoke, listen, type UnlistenFn } from "./platform";
+import { ORCHESTRATOR_SESSION_ID } from "./orchestrator";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { GroupChange, SessionGroups, SessionGroupSeed } from "./sessionGroups";
 import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, OpencodeGoUsage, PendingMessage, RpcCommand, RpcEvent, SessionSummary, SettingsChange, StorageReport } from "../types";
@@ -21,6 +22,7 @@ const call = <T>(command: string, args?: Record<string, unknown>) => {
 };
 
 export const openSessionWindow = (target: NativeConnectionTarget & { sessionId: string }) => call<string>("new_window", { target });
+export const openOrchestratorChat = () => call<SessionSummary>("orchestrator_chat");
 export function initialWindowTarget(): NativeConnectionTarget {
   try { const value = JSON.parse(new URLSearchParams(window.location.search).get("target") || "{}"); return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
   catch { return {}; }
@@ -230,7 +232,7 @@ export class NativeTransport {
     if (version !== this.connectionVersion) { unlisten(); stderrUnlisten(); return; }
     this.unlisten = unlisten; this.stderrUnlisten = stderrUnlisten;
     // Pi can resume by ID before a fresh session has a file on disk.
-    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call<{ attached: boolean; owned?: boolean; daemonId?: string }>("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }));
+    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call<{ attached: boolean; owned?: boolean; daemonId?: string }>("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionId && this.sessionId !== ORCHESTRATOR_SESSION_ID ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }));
     this.daemonId = attached?.daemonId;
     this.connectedOwnership(attached);
     if (version === this.connectionVersion) {
