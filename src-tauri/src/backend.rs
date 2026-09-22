@@ -2412,7 +2412,9 @@ fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, 
     let claim_id = if ephemeral { None } else if let Some(id) = session_id.as_deref() { Some(id.to_string()) } else if let Some(path) = session_path.as_deref() {
         Some(session_identity(&settings, &host_id, path)?)
     } else { None };
-    let _agent_claim = claim_id.as_deref().map(|id| claim_agent(&broker, &host_id, id)).transpose()?;
+    let read_only = presence.as_ref().is_some_and(|value| value["readOnly"] == true);
+    if read_only && (session_path.is_none() || ephemeral || fork_path.is_some()) { return Err("A read-only view requires a saved conversation".into()); }
+    let _agent_claim = if read_only { None } else { claim_id.as_deref().map(|id| claim_agent(&broker, &host_id, id)).transpose()? };
     let daemon = daemon::connect(&app, &runtime, &broker, &settings, &host_id)?;
     let launch_session_path = ephemeral_path.as_deref().or(session_path.as_deref());
     let launch_fork_path = if ephemeral_path.is_some() { None } else { fork_path.as_deref() };

@@ -19,13 +19,14 @@ import { DiffViewer } from "./DiffViewer";
 import { Message } from "./Message";
 import { PromptContextBar } from "./PromptContextBar";
 import { VoiceContextBar } from "./VoiceContextBar";
+import { ConversationHostContext } from "../lib/subagentNavigation";
 
 interface Props { voiceTransport?: NativeTransport; state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; debug?: boolean; agents?: AgentProfile[]; activeAgent?: string; agentLocked?: boolean; agentSaved?: boolean; agentUnavailable?: boolean; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; selectionBtw?: boolean; draft?: string; onDraftChange?: (value: string) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onPause: () => void | Promise<void>; onResume: () => void | Promise<void>; onOpenTerminal?: () => void; onOpenProject: () => void; onClearProject?: () => void; onBranch: (message: ChatMessage) => void; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
 
 type SelectionBtwTip = { text: string; left: number; top: number; below: boolean };
 
 function canRetry(props: Props, ownsConversation: boolean) {
-  return ownsConversation && !props.controlsDisabled && !props.state.isStreaming && !props.state.isPaused && !props.state.isPausing;
+  return ownsConversation && !props.readOnly && !props.controlsDisabled && !props.state.isStreaming && !props.state.isPaused && !props.state.isPausing;
 }
 
 function selectionWithinMessage(range: Range, messages: HTMLElement) {
@@ -197,9 +198,9 @@ export function ChatView(props: Props) {
       {renderComposerStack()}
     </div>);
   };
-  return <main class={`chat-shell${ownsConversation() ? "" : " conversation-unowned"}`} oncapture:focus={props.onActivate} oncapture:pointerdown={props.onActivate}>
+  return <ConversationHostContext.Provider value={() => props.voiceTransport?.currentHostId() ?? "local"}><main class={`chat-shell${ownsConversation() ? "" : " conversation-unowned"}`} oncapture:focus={props.onActivate} oncapture:pointerdown={props.onActivate}>
     {renderConversationContent()}
-  </main>;
+  </main></ConversationHostContext.Provider>;
 }
 
 function groupTurns(messages: ChatMessage[]) {

@@ -12,6 +12,8 @@ import { ProjectDialog } from "./components/ProjectDialog";
 import { ResizableSidebar } from "./components/ResizableSidebar";
 import { SessionPanel, type SessionAction } from "./components/SessionPanel";
 import { SplitChatPane } from "./components/SplitChatPane";
+import { SubagentPane } from "./components/SubagentPane";
+import { SubagentNavigationContext, type SubagentTarget } from "./lib/subagentNavigation";
 import { TerminalView } from "./components/TerminalView";
 import { WorktreeDialog } from "./components/WorktreeDialog";
 import { encodeAgentValue } from "./lib/agentProtocol";
@@ -110,6 +112,9 @@ export default function App() {
   const archivedSessionKeys = createRef(new Set<string>());
   const sessionActionPending = createRef(new Set<string>());
   const [splitPane, setSplitPane] = createSignal<SplitPaneState>();
+  const [subagentPane, setSubagentPane] = createSignal<SubagentTarget>();
+  const hasSidePane = () => Boolean(splitPane() || subagentPane());
+  createDependencyEffect(() => { if (splitPane()) setSubagentPane(undefined); }, () => [splitPane()]);
   const [mainComposerFocusRequest, setMainComposerFocusRequest] = createSignal(0);
   const [splitComposerFocusRequest, setSplitComposerFocusRequest] = createSignal(0);
   const [activePane, setActivePane] = createSignal<"main" | "split">("main");
@@ -311,7 +316,8 @@ export default function App() {
     pendingBtwRequest.current = undefined;
     void pending.transport.command({ type: "extension_ui_response", id: requestId, ...response }).catch((reason) => addNotice({ title: "Could not finish /btw request", message: reason instanceof Error ? reason.message : String(reason) }));
   };
-  const closeSplitPane = () => { if (splitPane()?.btw) respondToBtw((splitPane())!.btw!.requestId, { cancelled: true }); setSplitPane(undefined); setActivePane("main"); };
+  const closeSplitPane = () => { if (splitPane()?.btw) respondToBtw((splitPane())!.btw!.requestId, { cancelled: true }); setSplitPane(undefined); setSubagentPane(undefined); setActivePane("main"); };
+  const openSubagent = (target: SubagentTarget) => { closeSplitPane(); setSubagentPane(target); setActivePane("split"); };
   const canLeaveSettings = () => view() !== "settings" || !settingsDirty() || window.confirm("Discard unsaved settings changes?");
   const setComposerUploads = (ownerTransport: NativeTransport, update: StateUpdate<ComposerUpload[]>) => setUploadsByTransport((current) => {
     const next = new Map(current);
@@ -696,9 +702,10 @@ export default function App() {
     const renderChatPanes = () => {
       const renderChatView = () => (<Rerun on={() => activeConversationKey()}>{() => <ChatView voiceTransport={transport()}  state={chatSession().state} messages={chatSession().messages} gitDiffs={gitDiffs()} debug={(settings())!.debugMode} {...chatAgentProps()} models={chatSession().models.filter((model) => !(settings())!.hiddenModels.includes(`${model.provider}/${model.id}`))} commands={[{ name: "branch-off", description: "Branch conversation [number back, default 0]", source: "builtin" }, { name: "worktree", description: "Create worktree [number back, default 0] [name]", source: "builtin" }, ...chatSession().commands.filter((command) => !["branch-off", "worktree"].includes(command.name))]} thinkingLevels={chatSession().thinkingLevels} widgets={extensionStateIsCurrent() ? Object.values(widgets()).flat() : []} statuses={extensionStateIsCurrent() ? statuses() : {}} projectCwd={projectCwd()} controlsDisabled={!connected()} selectionBtw draft={composerState().composerDraft} onDraftChange={(value) => setComposerDraft(activeConversationKey(), value)} focusRequest={mainComposerFocusRequest()} onActivate={() => setActivePane("main")} uploads={composerState().composerUploads} onUploadsChange={(update) => setComposerUploads(transport(), update)} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abortInteraction} onPause={pauseInteraction} onResume={resumeInteraction} onOpenTerminal={() => { terminalPanelRevision.current += 1; setActivePane("main"); setTerminalTarget({ sessionKey: activeConversationKey(), cwd: projectCwd(), hostId: activeHostId() }); setTerminalOpen(true); }} onOpenProject={chooseChatProject} onClearProject={clearChatProject} onBranch={branch} onForkAndForget={isGitRepository() === false && projectCwd() ? forkAndForget : undefined} onCreateWorktree={isGitRepository() && projectCwd() ? (message) => setWorktreeTarget({ cwd: (projectCwd())!, hostId: activeHostId(), message, transport: transport() }) : undefined} onAgent={setAgent} onModel={setModel} onToggleFastMode={() => enqueueControl(transport(), () => transport().toggleFastMode())} onThinking={setThinking} />}</Rerun>);
       const renderSplitChatPane = () => (splitPane() && <Rerun on={() => splitPane()?.key}>{() => <SplitChatPane  runtimePool={runtimePool()} session={(splitPane())!.session} settings={(settings())!} draft={composerState().splitComposerDraft} onDraftChange={setSplitComposerDraft} focusRequest={splitComposerFocusRequest()} onActivate={() => setActivePane("split")} onOpenTerminal={() => { terminalPanelRevision.current += 1; setActivePane("split"); setTerminalTarget({ sessionKey: splitSessionId(), cwd: (splitPane())!.session.cwd, hostId: (splitPane())!.session.hostId ?? "local" }); setTerminalOpen(true); }} onDialogRequest={queueExtensionDialog} onDialogResolved={resolveExtensionDialog} onDialogTransportClosed={closeTransportDialogs} onReleaseTransport={releaseSplitTransport} onSessionChange={(next, owner) => { const nextKey = `${next.hostId ?? "local"}:${next.id}`; rekeyConversationUi(splitSessionId(), nextKey, owner); setTerminalTarget((current) => current?.sessionKey === splitSessionId() ? { ...current, sessionKey: nextKey } : current); setSplitPane((current) => current?.key === (splitPane())!.key ? { ...current, session: next } : current); }} forkFrom={(splitPane())!.btw?.forkFrom} initialPrompt={(splitPane())!.btw?.task} onReady={(splitPane())!.btw ? () => respondToBtw((splitPane())!.btw!.requestId, { value: "opened" }) : undefined} onFailed={(splitPane())!.btw ? () => respondToBtw((splitPane())!.btw!.requestId, { cancelled: true }) : undefined} onClose={closeSplitPane} />}</Rerun>);
-      return (<div class={`chat-panes ${splitPane() ? "split" : ""}`}>
+      return (<div class={`chat-panes ${hasSidePane() ? "split" : ""}`}>
         {renderChatView()}
         {renderSplitChatPane()}
+        {subagentPane() && <Rerun on={() => `${subagentPane()!.hostId}:${subagentPane()!.sessionId}`}>{() => <SubagentPane target={subagentPane()!} onClose={closeSplitPane} onActivate={() => setActivePane("split")} />}</Rerun>}
       </div>);
     };
     return (<div class="chat-workspace" hidden={view() !== "chat"}>
@@ -719,14 +726,16 @@ export default function App() {
     const capturedRelocatingSession = relocatingSession(); const capturedTransport = transport(); const capturedRuntimePool = runtimePool();
  if (response.cancelled) { setRelocationError(undefined); setRelocatingSession(undefined); return; } const cwd = typeof response.value === "string" ? response.value.trim() : ""; if (!hasVisibleText(cwd)) { setRelocationError("Path can't be empty"); return; } const session = (capturedRelocatingSession)!; const action = relocationActionRef.current; const relocated = { ...session, cwd, cwdExists: true }; setRelocationError(undefined); try { await capturedTransport.relocateSession(session.path, cwd, session.hostId); const owner = capturedRuntimePool.forSession(session); await owner.restoreConnection({ cwd, sessionPath: session.path, hostId: session.hostId }); setRelocatingSession(undefined); if (action === "split") openSplitPane(relocated); else if (action === "rename") setRenameSession({ session: relocated, transport: capturedRuntimePool.forSession(relocated) }); else selectSession(relocated); } catch (reason) { setRelocationError(reason instanceof Error ? reason.message : String(reason)); } }} />}</Rerun>);
   const renderWorktreeDialog = () => (worktreeTarget() && <WorktreeDialog projectPath={(worktreeTarget())!.cwd} fromProject={!(worktreeTarget())!.message} beforePrompt={(worktreeTarget())!.message?.role === "user"} onCancel={() => setWorktreeTarget(undefined)} onCreate={(name, onSetup) => createWorktree((worktreeTarget())!, name, onSetup)} />);
-  return <>{!settings() ? (<AppLoading error={error()} />) : (<div class={`app dark ${panelOpen() && view() === "chat" ? "mobile-panel-open" : ""}`}>
+  const renderSubagentFind = () => subagentPane() && <FindInPage selector=".subagent-pane .chat-shell" scopeKey={`${subagentPane()!.hostId}:${subagentPane()!.sessionId}`} onActivate={() => setActivePane("split")} active={activePane() === "split"} enabled={view() === "chat"} />;
+  return <SubagentNavigationContext.Provider value={openSubagent}>{!settings() ? (<AppLoading error={error()} />) : (<div class={`app dark ${panelOpen() && view() === "chat" ? "mobile-panel-open" : ""}`}>
     <div class="mobile-navigation"><button aria-label="Toggle conversations" aria-expanded={panelOpen() && view() === "chat"} onClick={() => { if (canLeaveSettings()) { setView("chat"); setPanelOpen((value) => !value); } }}>☰</button></div>
     {renderMobileSidebarBackdrop()}
     {import.meta.env.MODE === "e2e" && <div class="e2e-bridge"><textarea id="pi-e2e-responses" aria-label="E2E responses" placeholder="E2E responses" /><textarea id="pi-e2e-calls" aria-label="E2E calls" placeholder="E2E calls" /></div>}
     {renderSidebar()}
     {renderChatWorkspace()}
     {renderSettingsView()}
-    <FindInPage selector=".chat-panes > .chat-shell" scopeKey={activeConversationKey()} onActivate={() => setActivePane("main")} active={activePane() === "main" || !splitPane()} enabled={view() === "chat"} />
+    <FindInPage selector=".chat-panes > .chat-shell" scopeKey={activeConversationKey()} onActivate={() => setActivePane("main")} active={activePane() === "main" || !hasSidePane()} enabled={view() === "chat"} />
+    {renderSubagentFind()}
     {splitPane() && <Rerun on={() => splitSessionId()}>{() => <FindInPage selector=".split-chat .chat-shell" scopeKey={splitSessionId()} onActivate={() => setActivePane("split")} active={activePane() === "split"} enabled={view() === "chat"} />}</Rerun>}
     {view() === "settings" && <FindInPage selector=".settings-shell" scopeKey="settings" />}
     {renderToastStack()}
@@ -737,5 +746,5 @@ export default function App() {
  if (response.cancelled) { setRenameSession(undefined); return; } if (typeof response.value !== "string" || !hasVisibleText(response.value)) throw new Error("Conversation name can't be empty"); const name = response.value.trim(); await (capturedRenameSession)!.transport.connect(); await (capturedRenameSession)!.transport.command({ type: "set_session_name", name }); if ((capturedRenameSession)!.session.id === capturedSession.state.sessionId && ((capturedRenameSession)!.session.hostId ?? "local") === capturedActiveHostId) capturedSession.setState((current) => ({ ...current, sessionName: name })); await syncSessionIndex(); setRenameSession(undefined); }} />}</Rerun>}
     {renderRelocationDialog()}
     {renderWorktreeDialog()}
-  </div>)}</>;
+  </div>)}</SubagentNavigationContext.Provider>;
 }

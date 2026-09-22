@@ -1,4 +1,5 @@
-import { For } from "solid-js";
+import { For, useContext } from "solid-js";
+import { ConversationHostContext, SubagentNavigationContext } from "../lib/subagentNavigation";
 
 interface Run { name: string; task: string; status: string; sessionId: string; sessionPath: string; hostId: string; output?: string; apiCost?: number; }
 
@@ -15,9 +16,12 @@ export function subagentRuns(details: unknown): Run[] {
 }
 
 export function SubagentResults(props: { runs: Run[] }) {
+  const open = useContext(SubagentNavigationContext);
+  const host = useContext(ConversationHostContext);
   return <div aria-label="Subagent results"><For each={props.runs}>{(run) => <section class="tool-payload">
     <div class="tool-payload-label">{run.name} · {run.status}{typeof run.apiCost === "number" && Number.isFinite(run.apiCost) ? ` · $${run.apiCost.toFixed(4)}` : ""}</div>
     <p>{run.task}</p>
+    {open && run.sessionId && run.sessionPath && <button type="button" onClick={() => open({ ...run, hostId: host?.() ?? run.hostId })}>Open conversation</button>}
     {run.sessionId && <p>Conversation: <code>{run.hostId}/{run.sessionId}</code></p>}
     {run.sessionPath && <details><summary>Saved transcript</summary><div class="tool-output"><pre>{run.sessionPath}</pre></div></details>}
     {typeof run.output === "string" && run.output && <div class="tool-output"><pre>{run.output}</pre></div>}

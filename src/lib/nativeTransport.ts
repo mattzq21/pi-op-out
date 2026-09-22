@@ -27,7 +27,7 @@ export function initialWindowTarget(): NativeConnectionTarget {
   try { const value = JSON.parse(new URLSearchParams(window.location.search).get("target") || "{}"); return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
   catch { return {}; }
 }
-export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; sessionId?: string; hostId?: string; }
+export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; sessionId?: string; hostId?: string; readOnly?: boolean; }
 export const loadSessionGroups = (seeds: SessionGroupSeed[], legacy: SessionGroups) => call<SessionGroups>("load_session_groups", { seeds, legacy });
 export const changeSessionGroups = (change: GroupChange) => call<SessionGroups>("change_session_groups", { change });
 export const openGroupDirectory = (cwd: string, hostId: string) => call<void>("open_project_directory", { cwd, hostId });
@@ -56,6 +56,7 @@ export class NativeTransport {
   private owns = true;
   ownsConversation() { return this.owns; }
   async takeOwnership() {
+    if (this.readOnly) throw new Error("This view is read-only");
     await this.command({ type: "take_ownership" });
     this.owns = true;
     this.emit({ type: "ownership_acquired" });
@@ -66,7 +67,7 @@ export class NativeTransport {
   private fresh = true;
   needsDefaults() { return this.fresh; }
   defaultsApplied() { this.fresh = false; }
-  connectionTarget(): NativeConnectionTarget { return { cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId }; }
+  connectionTarget(): NativeConnectionTarget { return { cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId, ...(this.readOnly ? { readOnly: true } : {}) }; }
   async restoreConnection(target: NativeConnectionTarget) { await this.disconnect(); this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId || "local"; this.daemonId = undefined; await this.connect(); }
   private readonly runtimeId = globalThis.crypto?.randomUUID?.() ?? `runtime-${Date.now()}-${Math.random()}`;
   voiceRuntimeId() { return this.runtimeId; }
@@ -74,7 +75,7 @@ export class NativeTransport {
   private visible = false;
   private presenceCleanup?: () => void;
   setVisible(visible: boolean) { this.visible = visible; this.publishPresence(); }
-  private presence() { return { visible: this.visible && document.visibilityState !== "hidden", focused: document.hasFocus() }; }
+  private presence() { return { visible: this.visible && document.visibilityState !== "hidden", focused: document.hasFocus(), ...(this.readOnly ? { readOnly: true } : {}) }; }
   private publishPresence = () => { if (this.running) void call("pi_presence", { runtimeId: this.runtimeId, presence: this.presence() }).catch(() => undefined); };
   private listeners = new Set<(event: RpcEvent) => void>();
   private retainedStatuses = new Map<string, RpcEvent>();
@@ -127,7 +128,8 @@ export class NativeTransport {
   private temporaryChatUsed = false;
   private fastStatusCommand?: string;
   private fastCommands = new Set<string>();
-  constructor(target: NativeConnectionTarget = {}) { this.fresh = !target.sessionPath && !target.sessionId; this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId ?? "local"; }
+  private readOnly: boolean;
+  constructor(target: NativeConnectionTarget = {}) { this.readOnly = target.readOnly === true; this.fresh = !target.sessionPath && !target.sessionId; this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId ?? "local"; }
   currentHostId() { return this.hostId; }
   currentDaemonId() { return this.daemonId; }
   currentCwd() { return this.cwd; }
@@ -232,7 +234,7 @@ export class NativeTransport {
     if (version !== this.connectionVersion) { unlisten(); stderrUnlisten(); return; }
     this.unlisten = unlisten; this.stderrUnlisten = stderrUnlisten;
     // Pi can resume by ID before a fresh session has a file on disk.
-    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call<{ attached: boolean; owned?: boolean; daemonId?: string }>("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: this.sessionId && this.sessionId !== ORCHESTRATOR_SESSION_ID ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }));
+    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call<{ attached: boolean; owned?: boolean; daemonId?: string }>("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: !this.readOnly && this.sessionId && this.sessionId !== ORCHESTRATOR_SESSION_ID ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }));
     this.daemonId = attached?.daemonId;
     this.connectedOwnership(attached);
     if (version === this.connectionVersion) {
@@ -245,7 +247,7 @@ export class NativeTransport {
   }
   private connectedOwnership(attached: { attached: boolean; owned?: boolean } | undefined) {
     if (attached?.attached) this.fresh = false;
-    this.owns = attached?.owned !== false;
+    this.owns = !this.readOnly && attached?.owned !== false;
     this.emit({ type: this.owns ? "ownership_acquired" : "ownership_lost" });
   }
   async disconnect(discardBlank = false) { ++this.connectionVersion; this.presenceCleanup?.(); this.presenceCleanup = undefined; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; const stopped = await this.runProcessCommand(() => call<boolean>("stop_pi", { runtimeId: this.runtimeId, discardBlank })); this.running = false; this.retainedStatuses.clear(); this.retainedRequests.clear(); return stopped; }

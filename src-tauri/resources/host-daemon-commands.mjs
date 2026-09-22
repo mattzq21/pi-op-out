@@ -136,6 +136,12 @@ async function handleAttach(packet) {
   const identity = await sessionIdentity(packet.spec, packet.sessionKey);
   const pathIndex = packet.spec.args.lastIndexOf('--session');
   const path = pathIndex < 0 ? undefined : packet.spec.args[pathIndex + 1];
+  if (packet.presence?.readOnly) {
+    if (!path || !await ownership.locate(identity, path, false, true)) throw new Error('This conversation has been deleted or archived');
+    attachments.set(runtimeId, packet);
+    readonlyViews.set(runtimeId, { id: identity, path });
+    return { attached: true, owned: false };
+  }
   attachments.set(runtimeId, packet);
   const guard = packet.ephemeral ? { owned: true, release: async () => { } } : await ownership.begin(identity, packet.clientId, { take: packet.takeOwnership, path, create: !path });
   if (!guard.owned) { readonlyViews.set(runtimeId, { id: identity, path }); return { attached: true, owned: false }; }
@@ -328,14 +334,20 @@ async function transferDestination(session, next, runtimeId) {
   return result;
 }
 
+function ownershipTarget(runtimeId) {
+  const target = attachments.get(runtimeId);
+  if (!target) throw new Error('This conversation has been deleted or closed');
+  if (target.presence?.readOnly) throw new Error('This view is read-only');
+  return target;
+}
+
 async function handle(packet) {
   const { runtimeId, type } = packet;
   const handlers = { "voice": handleVoice, "ownership_drained": handleOwnershipDrained, "conversation_mutation": handleConversationMutation, "conversation_mutation_end": handleConversationMutationEnd, "provider_auth": handleProviderAuth, "provider_auth_cancel_owner": handleProviderAuthCancelOwner, "configure": handleConfigure, "attach": handleAttach, "shutdown": handleShutdown, "retire": handleRetire, "session_command": handleSessionCommand };
   if (Object.hasOwn(handlers, type)) return handlers[type](packet);
 
   if (type === 'command' && packet.command.type === 'take_ownership') {
-    const target = attachments.get(runtimeId);
-    if (!target) throw new Error('This conversation has been deleted or closed');
+    const target = ownershipTarget(runtimeId);
     return handle({ ...target, takeOwnership: true });
   }
   if (readonlyViews.has(runtimeId)) {
