@@ -14,6 +14,7 @@ function timestamp(value) {
 class SessionIndex {
   header;
   name;
+  subagentParentId;
   first = '';
   preview = '';
   count = 0;
@@ -23,7 +24,11 @@ class SessionIndex {
   resumes = new Set();
 
   metadata(entry) {
-    if (entry.type === 'custom' && entry.customType === 'pi-desktop-resume' && typeof entry.data?.message === 'string') this.resumes.add(entry.data.message);
+    if (entry.type === 'custom') {
+      const data = entry.data ?? {};
+      if (entry.customType === 'piop-subagent-parent' && typeof data.parentSessionId === 'string') this.subagentParentId = data.parentSessionId;
+      if (entry.customType === 'pi-desktop-resume' && typeof data.message === 'string') this.resumes.add(data.message);
+    }
     if (entry.type === 'session_info' && entry.name?.trim()) this.name = entry.name.trim().slice(0, 2000);
   }
 
@@ -67,7 +72,7 @@ class SessionIndex {
 
   print(path) {
     if (!this.header) return;
-    console.log(JSON.stringify({ path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: this.name || this.first || 'Untitled session', preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: !!this.first, bytes: this.bytes }));
+    console.log(JSON.stringify({ path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: this.name || this.first || 'Untitled session', preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: !!this.first, bytes: this.bytes, subagentParentId: this.subagentParentId }));
   }
 }
 

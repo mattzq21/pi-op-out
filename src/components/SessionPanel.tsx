@@ -103,7 +103,7 @@ function groupLabel(project: string, hostId: string, hostName: string | undefine
 }
 
 export function SessionPanel(props: Props) {
-  const panel = createMemo(() => (sessionPanelDefaults(props)));
+  const panel = createMemo(() => sessionPanelDefaults({ ...props, sessions: props.sessions.filter((session) => !session.subagentParentId) }));
   const [menu, setMenu] = createSignal<{ session: SessionSummary; x: number; y: number; returnFocus?: HTMLElement }>();
   const [groupMenu, setGroupMenu] = createSignal<{ projectKey: string; label: string; x: number; y: number; returnFocus: HTMLElement }>();
   const [collapsedProjects, setCollapsedProjects] = createSignal<Set<string>>((() => savedGroupKeys(COLLAPSED_PROJECTS_KEY))());
