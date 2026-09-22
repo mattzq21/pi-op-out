@@ -3,6 +3,10 @@ import { invoke, listen } from "./platform";
 
 type Configuration = { enabled: boolean; loading: boolean };
 const MAX_SECONDS = 120;
+const SILENCE_SECONDS = 3;
+const SPEECH_CONFIRMATION_SECONDS = 0.1;
+// Fixed input level, approximately -46 dBFS.
+const SPEECH_RMS_THRESHOLD = 0.005;
 let recordingOwner: symbol | undefined;
 
 export function useDictationEnabled() {
@@ -74,7 +78,7 @@ export class DictationRecording {
   private timer?: ReturnType<typeof setTimeout>;
   private stopped = false;
 
-  async start(onLimit: () => void) {
+  async start(onComplete: () => void) {
     if (recordingOwner) throw new Error("Dictation is already recording in another chat.");
     recordingOwner = this.owner;
     try {
@@ -89,15 +93,40 @@ export class DictationRecording {
       this.processor = context.createScriptProcessor(4096, 1, 1);
       this.gain = context.createGain(); this.gain.gain.value = 0;
       let samples = 0;
+      let heardSpeech = false;
+      let voiceSamples = 0;
+      let silentSamples = 0;
+      let completionRequested = false;
+      const complete = () => {
+        if (this.stopped || completionRequested) return;
+        completionRequested = true;
+        onComplete();
+      };
       this.processor.onaudioprocess = (event) => {
-        if (this.stopped) return;
+        if (this.stopped || completionRequested) return;
         const remaining = MAX_SECONDS * context.sampleRate - samples;
-        if (remaining <= 0) { onLimit(); return; }
+        if (remaining <= 0) { complete(); return; }
         const chunk = event.inputBuffer.getChannelData(0).slice(0, remaining);
         this.chunks.push(chunk); samples += chunk.length;
+        const frameSize = Math.max(1, Math.round(context.sampleRate * 0.02));
+        for (let offset = 0; offset < chunk.length; offset += frameSize) {
+          const end = Math.min(chunk.length, offset + frameSize);
+          let energy = 0;
+          for (let index = offset; index < end; index++) energy += chunk[index] * chunk[index];
+          const length = end - offset;
+          if (Math.sqrt(energy / length) >= SPEECH_RMS_THRESHOLD) {
+            voiceSamples += length;
+            if (voiceSamples >= SPEECH_CONFIRMATION_SECONDS * context.sampleRate) heardSpeech = true;
+            silentSamples = 0;
+          } else {
+            voiceSamples = 0;
+            if (heardSpeech) silentSamples += length;
+          }
+          if (silentSamples >= SILENCE_SECONDS * context.sampleRate) { complete(); break; }
+        }
       };
       this.source.connect(this.processor); this.processor.connect(this.gain); this.gain.connect(context.destination);
-      this.timer = setTimeout(onLimit, MAX_SECONDS * 1000);
+      this.timer = setTimeout(complete, MAX_SECONDS * 1000);
     } catch (error) { this.cancel(); throw error; }
   }
 
