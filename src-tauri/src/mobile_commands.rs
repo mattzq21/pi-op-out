@@ -31,6 +31,8 @@ async fn dispatch_local(app: AppHandle, owner: String, command: String, args: Va
         if app.state::<TerminalRuntime>().processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.get(id).is_some_and(|process| process.window_label != owner) { return Err("Terminal belongs to another connection".into()); }
     }
     match command.as_str() {
+        "dictation_configuration" => Ok(dictation::configuration(&app)),
+        "dictation_transcribe" => dictation::dictate(app, argument(&args, "audio")?).await,
         "broker_request" => tokio::task::spawn_blocking(move || peers::local_broker_request(&app, &argument::<String>(&args, "path")?, &argument::<Value>(&args, "body")?)).await.map_err(|error| error.to_string())?,
         "load_host_settings" => tokio::task::spawn_blocking(move || serde_json::to_value(load_app_settings(app)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
         "save_host_settings" => tokio::task::spawn_blocking(move || {
@@ -69,6 +71,7 @@ async fn dispatch_local(app: AppHandle, owner: String, command: String, args: Va
         "load_session_groups" => tokio::task::spawn_blocking(move || serde_json::to_value(load_session_groups(argument(&args, "seeds")?, argument(&args, "legacy")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
         "change_session_groups" => tokio::task::spawn_blocking(move || serde_json::to_value(change_session_groups(app.clone(), argument(&args, "change")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
         "home_directory" => tokio::task::spawn_blocking(move || serde_json::to_value(home_directory(app.clone(), argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
+        "orchestrator_chat" => tokio::task::spawn_blocking(orchestrator_chat).await.map_err(|error| error.to_string())?,
         "create_temporary_chat" => tokio::task::spawn_blocking(move || serde_json::to_value(create_temporary_chat(app.clone(), argument(&args, "hostId")?, argument(&args, "e2e")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
         "remove_temporary_chat" => tokio::task::spawn_blocking(move || serde_json::to_value(remove_temporary_chat(app.clone(), argument(&args, "path")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
         "validate_project_directory" => tokio::task::spawn_blocking(move || serde_json::to_value(validate_project_directory(app.clone(), argument(&args, "path")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,

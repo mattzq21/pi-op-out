@@ -51,6 +51,7 @@ mod headless {
             state!(crate::BrokerRuntime);
             state!(crate::peers::PeerRuntime);
             state!(crate::voice::VoiceRuntime);
+            state!(crate::dictation::DictationRuntime);
             Self(Arc::new(Backend { states, listeners: Mutex::new(HashMap::new()) }))
         }
 

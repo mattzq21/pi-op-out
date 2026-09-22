@@ -17,7 +17,7 @@ pub(super) fn start(app: AppHandle) -> Result<(), String> {
     listener.set_nonblocking(true).map_err(|error| error.to_string())?;
     daemon_endpoint::publish(listener.local_addr().map_err(|error| error.to_string())?, token.clone())?;
     let (events, _) = broadcast::channel::<Value>(1024);
-    for name in ["pi://event", "pi://stderr", "pi://settings-changed", "pi://groups-changed", "pi://voice", "pi://sessions-changed", "pi://daemon-error", "pi://provider-auth-changed"] {
+    for name in ["pi://event", "pi://stderr", "pi://settings-changed", "pi://groups-changed", "pi://voice", "pi://dictation", "pi://sessions-changed", "pi://daemon-error", "pi://provider-auth-changed"] {
         let events = events.clone();
         app.listen_any(name, move |event| {
             if let Ok(payload) = serde_json::from_str::<Value>(event.payload()) {

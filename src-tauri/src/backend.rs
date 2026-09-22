@@ -15,6 +15,7 @@ mod conversation_ownership;
 mod session_groups;
 mod daemon;
 mod voice;
+mod dictation;
 use voice::{voice_configuration, voice_stop, voice_mute, voice_suppress};
 use session_groups::{load_session_groups, change_session_groups};
 
@@ -2859,6 +2860,13 @@ fn create_local_temporary_chat(home: &Path, session_id: &str) -> Result<PathBuf,
     Ok(cwd)
 }
 
+fn orchestrator_chat() -> Result<Value, String> {
+    let output = node_command().arg("-e").arg(include_str!("../resources/orchestrator-chat.cjs"))
+        .arg(home_dir()?.join(STORAGE_DIRECTORY)).output().map_err(|error| error.to_string())?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())
+}
+
 fn temporary_chat_id(path: &str) -> Option<&str> {
     let value = Path::new(path); let id = value.file_name()?.to_str()?;
     if Uuid::parse_str(id).ok()?.to_string() != id { return None; }
@@ -3549,6 +3557,7 @@ pub fn run_daemon() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().map_err(|error| error.to_string())?;
     runtime.block_on(async {
         let app = AppHandle::new();
+        dictation::start(app.clone());
         start_session_broker(app.clone(), app.state::<BrokerRuntime>().inner().clone())?;
         mobile::start(app.clone())?;
         #[cfg(unix)]

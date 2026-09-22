@@ -465,6 +465,11 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .setup-script-code { min-height: 160px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; resize: vertical; }
 .concurrent-view-status { flex-shrink: 0; padding: 6px 16px; color: var(--text-muted, #a09c93); font-size: 12px; border-bottom: 1px solid var(--border, #34322d); }
 .voice-controls { font-size: 12px; color: var(--text-muted, #a4a4ac); }
+.dictation-controls { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; }
+.dictation-controls:empty { display: none; }
+.dictation-controls button { display: inline-flex; align-items: center; gap: 5px; }
+.dictation-recording { color: #dc4545; }
+.dictation-error { max-width: 280px; color: #dc4545; }
 .voice-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .voice-toolbar button { display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 6px; background: transparent; color: inherit; padding: 5px 7px; }
 .voice-toolbar button:hover, .voice-toolbar button[aria-pressed="true"] { background: #ffffff12; color: #fff; }
