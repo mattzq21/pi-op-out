@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import { forgetSession, retainSessionResource } from "./sessionMemory";
 import { preserveDaemonPreferences, saveClientSettings, withClientSettings } from "./clientSettings";
+import { keybindingsError } from "./keybindings";
 import { invoke, listen, type UnlistenFn } from "./platform";
 import { ORCHESTRATOR_SESSION_ID } from "./orchestrator";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -157,7 +158,8 @@ export class NativeTransport {
     return true;
   }
   private normalizeCommand(command: RpcCommand) {
-    const compact = command.type === "prompt" && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null;
+    const compact = ["prompt", "steer", "follow_up"].includes(command.type) && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null;
+    if (compact && command.type !== "prompt") throw new Error("Stop or pause piop before running /compact.");
     if (compact) command = { type: "compact", ...(compact[1]?.trim() ? { customInstructions: compact[1].trim() } : {}) };
     return command;
   }
@@ -363,6 +365,8 @@ export class NativeTransport {
   loadOpencodeGoUsage() { return call<OpencodeGoUsage>("opencode_go_usage"); }
   saveSettings(settings: AppSettings, reconnect = true, agentHostId?: string) {
     const save = async () => {
+      const shortcutError = keybindingsError(settings.keybindings);
+      if (shortcutError) throw new Error(shortcutError);
       const previous = await call<AppSettings>("load_app_settings"); const connection = { cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId };
       const daemonSettings = preserveDaemonPreferences(settings, previous);
       const daemonChanged = JSON.stringify(daemonSettings) !== JSON.stringify(previous) || Boolean(agentHostId);

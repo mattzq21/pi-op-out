@@ -41,7 +41,10 @@ impl Connection {
             pending.insert(id, sender);
         }
         let result = self.outgoing.send(Message::Text(packet.into())).map_err(|_| "Disconnected from the Piop daemon".to_string())
-            .and_then(|_| receiver.recv_timeout(Duration::from_secs(660)).map_err(|_| "Daemon request interrupted or timed out; it may have completed. Refresh before retrying.".to_string())?);
+            .and_then(|_| {
+                if command == "run_worktree_setup" { receiver.recv().map_err(|_| "Daemon request interrupted; reconnect before retrying.".to_string())? }
+                else { receiver.recv_timeout(Duration::from_secs(660)).map_err(|_| "Daemon request interrupted or timed out; it may have completed. Refresh before retrying.".to_string())? }
+            });
         if let Ok(mut pending) = self.pending.lock() { pending.remove(&id); }
         if (command == "close_terminal" && result.is_ok()) || (command == "start_terminal" && result.is_err()) {
             if let (Some(id), Ok(mut terminals)) = (terminal, self.terminals.lock()) { terminals.remove(&id); }

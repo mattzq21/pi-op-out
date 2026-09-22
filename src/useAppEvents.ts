@@ -1,7 +1,7 @@
 import { type Accessor } from "solid-js";
 import { createDependencyEffect, type Dispatch, type RefObject, type StateUpdate } from "./lib/solid";
 
-import { BTW_REQUEST_TITLE, MCP_STATUS_KEY, PROMPT_CONTEXT_STATUS_KEY, staleExtensionContext, type OwnedExtensionDialog, type QueuedTerminalOutput, type SessionTerminals, type SplitPaneState, type TerminalTarget } from "./appSupport";
+import { BTW_REQUEST_TITLE, MCP_STATUS_KEY, PROMPT_CONTEXT_STATUS_KEY, staleExtensionContext, type OwnedExtensionDialog, type SessionTerminals, type SplitPaneState, type TerminalTarget } from "./appSupport";
 import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "./lib/agentProtocol";
 import { NativeTransport } from "./lib/nativeTransport";
 import type { AgentState, AppSettings, DefinedAgentsCapability, ExtensionUiRequest, RpcEvent } from "./types";
@@ -39,7 +39,7 @@ type AppEventsContext = {
   setError: Dispatch<StateUpdate<string | undefined>>;
   updateConnected: (value: boolean) => void;
   terminalOutputFrame: RefObject<number | undefined>;
-  queuedTerminalOutput: RefObject<Map<string, QueuedTerminalOutput>>;
+  flushTerminalOutput: () => void;
 };
 
 export function useAppEvents(options: Accessor<AppEventsContext>) {
@@ -188,6 +188,6 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
       if (Object.hasOwn(handlers, event.type)) handlers[event.type]();
     });
     loadSelectedSession().catch((reason: unknown) => { if (!cancelled) capturedOptions.setError(reason instanceof Error ? reason.message : String(reason)); });
-    return () => { cancelled = true; refreshTimers.forEach(window.clearTimeout); unsubscribe(); if (capturedOptions.terminalOutputFrame.current !== undefined) window.clearTimeout(capturedOptions.terminalOutputFrame.current); capturedOptions.terminalOutputFrame.current = undefined; capturedOptions.queuedTerminalOutput.current.clear(); };
+    return () => { cancelled = true; refreshTimers.forEach(window.clearTimeout); unsubscribe(); if (capturedOptions.terminalOutputFrame.current !== undefined) window.clearTimeout(capturedOptions.terminalOutputFrame.current); capturedOptions.flushTerminalOutput(); };
   }, () => [options().addNotice, options().configureRuntime, options().handleEvent, options().queueExtensionDialog, options().queueTerminalOutput, options().refresh, options().refreshSession, options().transport]);
 }

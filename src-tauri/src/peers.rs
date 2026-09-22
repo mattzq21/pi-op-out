@@ -37,7 +37,10 @@ impl Connection {
             let mut stdin = self.stdin.lock().map_err(|_| "Peer input unavailable")?;
             serde_json::to_writer(&mut *stdin, &json!({"id":id,"command":command,"args":args})).map_err(|error| error.to_string())?;
             stdin.write_all(b"\n").and_then(|_| stdin.flush()).map_err(|error| error.to_string())
-        })().and_then(|_| receiver.recv_timeout(Duration::from_secs(660)).map_err(|_| "Peer request timed out; it may have completed. Reconnect and refresh before retrying.".to_string())?);
+        })().and_then(|_| {
+            if command == "run_worktree_setup" { receiver.recv().map_err(|_| "Peer request interrupted; reconnect before retrying.".to_string())? }
+            else { receiver.recv_timeout(Duration::from_secs(660)).map_err(|_| "Peer request timed out; it may have completed. Reconnect and refresh before retrying.".to_string())? }
+        });
         if let Ok(mut pending) = self.pending.lock() { pending.remove(&id); }
         result
     }
@@ -308,10 +311,16 @@ pub(crate) fn detach_owner(app: &AppHandle, owner: &str) {
 pub(crate) fn invalidate(app: &AppHandle) {
     let Ok(settings) = load_app_settings(app.clone()) else { return; };
     let state = app.state::<PeerRuntime>();
-    if let Ok(mut connections) = state.connections.lock() { connections.retain(|id, (previous, connection)| {
-        let keep = settings.hosts.iter().any(|host| &host.id == id && host.target == previous.target && host.pi_path == previous.pi_path);
-        if !keep { connection.close(); } keep
-    }); };
+    if let Ok(mut connections) = state.connections.lock() {
+        let mut removed = Vec::new();
+        connections.retain(|id, (previous, connection)| {
+            let keep = settings.hosts.iter().any(|host| &host.id == id && host.target == previous.target && host.pi_path == previous.pi_path);
+            if !keep { removed.push(connection.clone()); } keep
+        });
+        removed.retain(|connection| !connections.values().any(|(_, retained)| Arc::ptr_eq(connection, retained)));
+        drop(connections);
+        for connection in removed { connection.close(); }
+    };
 }
 
 pub(crate) fn shutdown(app: &AppHandle) {

@@ -2,7 +2,8 @@ const fs = require('node:fs');
 const { randomUUID } = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
-const [sessionPath, replacement] = process.argv.slice(1);
+const [sessionPath, requestedReplacement] = process.argv.slice(1);
+const replacement = fs.realpathSync(requestedReplacement);
 if (!fs.statSync(replacement).isDirectory()) throw new Error('Project directory does not exist');
 const lines = fs.readFileSync(sessionPath, 'utf8').split('\n');
 const header = JSON.parse(lines[0]);

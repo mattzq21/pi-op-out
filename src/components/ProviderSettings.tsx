@@ -91,7 +91,7 @@ export function ProviderSettings(componentProps: { hosts: RemoteHost[]; initialH
       <button class="section-toggle-all provider-add-custom" disabled={disabled() || adding()} onClick={() => setAdding(true)}>Add custom provider</button>
     </div>
     {auth.error && <p class="provider-error" role="alert">{auth.error}</p>}
-    {adding() && <Rerun on={() => hostId()}>{() => <CustomProviderForm  working={!!disabled()} save={auth.createProvider} close={() => setAdding(false)} />}</Rerun>}
+    {adding() && <Rerun on={() => hostId()}>{(_key) => <CustomProviderForm  working={!!disabled()} save={auth.createProvider} close={() => setAdding(false)} />}</Rerun>}
     {auth.flow && <LoginPanel flow={auth.flow} auth={auth} />}
     {auth.loading && <div class="empty-small" role="status">Loading providers on {hostName()}…</div>}
     <ProviderList providers={providers()} auth={auth} disabled={disabled()} />
@@ -104,7 +104,7 @@ function LoginPanel(componentProps: { flow: AuthFlow; auth: AuthControls }) {
     <strong>{componentProps.flow.name ?? componentProps.auth.providers.find((provider) => provider.id === componentProps.flow.providerId)?.name ?? componentProps.flow.providerId}</strong>
     <FlowStatus flow={componentProps.flow} />
     {<Index each={componentProps.flow.notices}>{(notice, index) => <LoginNotice  notice={notice()} />}</Index>}
-    {componentProps.flow.prompt && <Rerun on={() => componentProps.flow.prompt?.id}>{() => <LoginPrompt  prompt={componentProps.flow.prompt!} working={componentProps.auth.working} reply={componentProps.auth.reply} />}</Rerun>}
+    {componentProps.flow.prompt && <Rerun on={() => componentProps.flow.prompt?.id}>{(_key) => <LoginPrompt  prompt={componentProps.flow.prompt!} working={componentProps.auth.working} reply={componentProps.auth.reply} />}</Rerun>}
     {componentProps.flow.status === "pending" && <button type="button" disabled={componentProps.auth.working} onClick={() => void componentProps.auth.cancel()}>Cancel login</button>}
   </div>;
 }

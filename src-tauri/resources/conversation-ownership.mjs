@@ -128,7 +128,7 @@ class ConversationOwnership {
     try {
       const { record, saved, denied, handoff, next } = await this.inspect(id, client, options);
       if (denied) { await unlock(); return { owned: false }; }
-      if (handoff) await this.releasePrevious(id, record, options.message ? 'message' : 'transfer');
+      if (handoff) await this.releasePrevious(id, record, options.message ? 'message' : options.archive ? 'archive' : 'transfer');
       if (!record || handoff) workerUnlock = await this.lock(id, true);
       await this.write(id, next);
       if (!options.mutation || options.message) { await workerUnlock(); workerUnlock = async () => {}; }

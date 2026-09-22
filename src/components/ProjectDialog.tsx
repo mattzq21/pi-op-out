@@ -48,6 +48,7 @@ export function ProjectDialog(componentProps: Props) {
   const [hostId, setHostId] = createSignal(componentProps.initialHostId);
   const [query, setQuery] = createSignal("");
   const queryHistory = createRef({ current: "", past: [] as string[], future: [] as string[] });
+  const queryRevision = createRef(0);
   const [basePath, setBasePath] = createSignal("");
   const [homePath, setHomePath] = createSignal("");
   const [loaded, setLoaded] = createSignal<{ hostId: string; requested: string; listing: DirectoryListing }>();
@@ -71,12 +72,14 @@ export function ProjectDialog(componentProps: Props) {
   const isMac = createMemo(() => (/Mac|iPhone|iPad/.test(navigator.platform)));
 
   const resetQuery = (path: string) => {
+    queryRevision.current += 1;
     queryHistory.current = { current: path, past: [], future: [] };
     setQuery(path);
   };
   const changeQuery = (path: string) => {
     const history = queryHistory.current;
     if (path === history.current) return;
+    queryRevision.current += 1;
     history.past = [...history.past.slice(-199), history.current];
     history.current = path; history.future = [];
     setQuery(path); setActive(0); setError(undefined);
@@ -86,6 +89,7 @@ export function ProjectDialog(componentProps: Props) {
     const source = redo ? history.future : history.past;
     const path = source.pop();
     if (path === undefined) return;
+    queryRevision.current += 1;
     (redo ? history.past : history.future).push(history.current);
     history.current = path;
     setQuery(path); setActive(0); setError(undefined);
@@ -107,11 +111,15 @@ export function ProjectDialog(componentProps: Props) {
   createDependencyEffect(() => { const capturedHostId = hostId();
     let cancelled = false;
     setLoaded(undefined); setBasePath(""); setHomePath(""); resetQuery(""); setLoading(true); setError(undefined);
+    const initialQueryRevision = queryRevision.current;
     const initialize = async () => {
       const location = initialLocation.current;
       const home = await callbacks.current.onHomeDirectory(capturedHostId);
       const path = location.hostId === capturedHostId && location.path.trim() ? expandHome(location.path, home) : home;
-      if (!cancelled) { setHomePath(home); setBasePath(path); resetQuery(withSeparator(displayPath(path, home))); }
+      if (!cancelled) {
+        setHomePath(home); setBasePath(path);
+        if (queryRevision.current === initialQueryRevision) resetQuery(withSeparator(displayPath(path, home)));
+      }
     };
     void initialize().catch((reason) => { if (!cancelled) { setError(String(reason instanceof Error ? reason.message : reason)); setLoading(false); } });
     return () => { cancelled = true; };

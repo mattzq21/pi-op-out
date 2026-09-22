@@ -6,7 +6,7 @@ import { createDependencyEffect, createRef, type JSXElement } from "../lib/solid
 
 import { Bot, Check, CircleGauge, CirclePlus, Cpu, HardDrive, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Wrench, Zap } from "lucide-solid";
 import { uid } from "../lib/content";
-import { defaultKeybindings, keybindDefinitions, shortcutFromEvent, shortcutsConflict, type KeybindAction } from "../lib/keybindings";
+import { defaultKeybindings, keybindDefinitions, shortcutError, shortcutFromEvent, shortcutsConflict, type KeybindAction } from "../lib/keybindings";
 import { isMobile } from "../lib/platform";
 import type { AgentConfig, AgentProfile, AppSettings, McpServer, Model, RemoteHost, SessionSummary } from "../types";
 import { IconButton } from "./IconButton";
@@ -225,8 +225,8 @@ export function SettingsView(props: SettingsViewProps) {
         duplicateShortcuts.add(right);
       }
     }
-    const unsafeShortcut = Object.values(draft().keybindings).find((shortcut) => shortcut.trim() && !/[+]/.test(shortcut));
-    return { shortcutList, duplicateShortcuts, unsafeShortcut };
+    const error = shortcutList.map(shortcutError).find(Boolean);
+    return { shortcutList, duplicateShortcuts, error };
   };
   const shortcutValidation = createMemo(() => (validateShortcuts()));
   const validateSettingsNames = () => {
@@ -253,7 +253,7 @@ export function SettingsView(props: SettingsViewProps) {
     () => agentDrafts().some((item) => item.mcpServers.length > 32) ? "At most 32 MCP servers can be configured per agent" : undefined,
     () => nameValidation().duplicateMcpNames.size ? `MCP server name “${[...nameValidation().duplicateMcpNames][0]}” is used more than once` : undefined,
     () => agentValidation().invalidMcp ? `${(agentValidation().invalidMcp)!.name.trim() || "MCP server"}: ${mcpServerError((agentValidation().invalidMcp)!)}` : undefined,
-    () => shortcutValidation().unsafeShortcut ? `Shortcut “${(shortcutValidation().unsafeShortcut)!}” must include a modifier key` : undefined,
+    () => shortcutValidation().error,
     () => shortcutValidation().duplicateShortcuts.size ? `Shortcut “${[...shortcutValidation().duplicateShortcuts][0]}” is assigned more than once` : undefined,
     () => !agentDrafts().some(isBuiltInAgent) && agentConfig() ? "The built-in general agent is required" : undefined,
     () => nameValidation().emptyAgent ? "Agent name is required" : undefined,
@@ -347,7 +347,7 @@ export function SettingsView(props: SettingsViewProps) {
       };
       return (<section class="settings-content">
         {!formValidation().matchingSections.length && <div class="empty-small" role="status">No settings match your search.</div>}
-        {formValidation().visibleSection === "providers" && <Rerun on={() => settingsProps().providerHostId}>{() => <ProviderSettings  hosts={settingsProps().providerHosts ?? settingsProps().settings.hosts} initialHostId={settingsProps().providerHostId} fixedHost />}</Rerun>}
+        {formValidation().visibleSection === "providers" && <Rerun on={() => settingsProps().providerHostId}>{(_key) => <ProviderSettings  hosts={settingsProps().providerHosts ?? settingsProps().settings.hosts} initialHostId={settingsProps().providerHostId} fixedHost />}</Rerun>}
         {renderWorktreeScripts()}
         {renderGeneral()}
         {renderModels()}

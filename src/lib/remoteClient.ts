@@ -1,6 +1,6 @@
 export interface HostConnection { url: string }
 export type RemoteEvent = { event: string; payload: unknown };
-type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> };
+type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer?: ReturnType<typeof setTimeout> };
 
 export function validateHost(connection: HostConnection): string {
   const url = new URL(connection.url);
@@ -89,7 +89,7 @@ export class RemoteClient {
     if (new TextEncoder().encode(packet).byteLength > 32 * 1024 * 1024) return Promise.reject(new Error("This message exceeds the host's 32 MiB request limit. Remove an attachment or shorten the message."));
     if (command === "start_terminal" && typeof args.terminalId === "string") this.terminals.add(args.terminalId);
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error("Host request timed out; it may still complete. Refresh before trying again.")); }, 660000);
+      const timer = command === "run_worktree_setup" ? undefined : setTimeout(() => { this.pending.delete(id); reject(new Error("Host request timed out; it may still complete. Refresh before trying again.")); }, 660000);
       this.pending.set(id, { resolve: (value) => resolve(value as T), reject, timer });
       try { socket.send(packet); }
       catch (reason) { clearTimeout(timer); this.pending.delete(id); reject(reason); }

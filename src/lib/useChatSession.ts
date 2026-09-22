@@ -189,7 +189,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       session.setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
     };
     const handleDisconnected = () => {
-      session.setState((current) => ({ ...current, isStreaming: false, isPausing: false, activity: undefined }));
+      session.setState((current) => ({ ...current, isStreaming: false, isCompacting: false, isPausing: false, activity: undefined }));
     };
     const messageLiveId = (rawMessage: Record<string, unknown>, roleKey: string) => {
       const toolCallId = rawMessage.toolCallId;
@@ -231,10 +231,10 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       session.setState((current) => ({ ...current, pendingMessages: event.pendingMessages as AgentState["pendingMessages"], pendingMessageCount: [...((event.steering as unknown[]) ?? []), ...((event.followUp as unknown[]) ?? [])].length }));
     };
     const handleCompactionStart = () => {
-      session.setState((current) => ({ ...current, activity: "Compacting context…" }));
+      session.setState((current) => ({ ...current, isCompacting: true, activity: "Compacting context…" }));
     };
     const handleCompactionEnd = () => {
-      session.setState((current) => ({ ...current, activity: undefined, contextUsage: contextUsageAfterCompaction(current.contextUsage, event) }));
+      session.setState((current) => ({ ...current, isCompacting: false, activity: undefined, contextUsage: contextUsageAfterCompaction(current.contextUsage, event) }));
     };
     const handleAutoRetryStart = () => {
       session.setState((current) => ({ ...current, activity: `Retrying · attempt ${event.attempt}` }));
@@ -258,7 +258,9 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       "tool_execution_end": handleToolExecutionEnd,
       "queue_update": handleQueueUpdate,
       "compaction_start": handleCompactionStart,
+      "auto_compaction_start": handleCompactionStart,
       "compaction_end": handleCompactionEnd,
+      "auto_compaction_end": handleCompactionEnd,
       "auto_retry_start": handleAutoRetryStart,
       "thinking_level_changed": handleThinkingLevelChanged
     };

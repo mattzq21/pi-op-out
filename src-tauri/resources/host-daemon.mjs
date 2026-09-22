@@ -85,7 +85,7 @@ async function releaseConversation(id, intent) {
     const keys = ownershipCaptureKeys.get(id) ?? new Set();
     ownershipCaptureKeys.set(id, keys);
     for (const session of [...sessions.values()].filter((item) => item.identity === id)) {
-      if (intent === 'message') await session.retire();
+      if (intent === 'message' || intent === 'archive') await session.retire();
       await hostVoice.release(session);
       for (const runtimeId of session.views.keys()) readonlyViews.set(runtimeId, { id, path: session.state?.sessionFile });
       session.publish({ type: 'ownership_lost' });

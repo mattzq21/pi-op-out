@@ -95,7 +95,7 @@ async function handleOwnershipDrained(packet) {
 
 async function handleConversationMutation(packet) {
 
-  const guard = await ownership.begin(packet.sessionId, packet.clientId, { mutation: packet.operation !== 'save_diffs', message: packet.operation === 'message', path: packet.sessionPath, archived: packet.archived });
+  const guard = await ownership.begin(packet.sessionId, packet.clientId, { mutation: packet.operation !== 'save_diffs', message: packet.operation === 'message', archive: packet.operation === 'archive', path: packet.sessionPath, archived: packet.archived });
   if (!guard.owned) throw ownershipError();
   const token = randomUUID(); ownership.guards.set(token, { ...guard, operation: packet.operation });
   return { token };

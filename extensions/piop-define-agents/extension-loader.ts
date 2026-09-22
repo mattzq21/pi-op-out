@@ -63,6 +63,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
       get(target, property) {
         if (property === "on") return (event: string, handler: Handler) => {
           const list = group.handlers.get(event) ?? []; list.push(handler); group.handlers.set(event, list);
+          if (group.ready && current === group) publishHandlers(group);
         };
         if (property === "events") return {
           on(name: string, handler: Handler) {

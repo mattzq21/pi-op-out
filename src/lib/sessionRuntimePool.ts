@@ -68,12 +68,13 @@ export class SessionRuntimePool {
     const state = this.diffState(transport); if (state.load?.key === key) return state.load.promise;
     state.path = key;
     const promise = transport.loadGitDiffs(sessionPath, transport.currentHostId()).then((snapshots) => {
-      if (state.path === key) { state.snapshots = snapshots; this.retainDiffs(transport, state); this.notify(); }
+      if (state.path === key && state.load?.promise === promise) { state.snapshots = snapshots; this.retainDiffs(transport, state); this.notify(); }
       return snapshots;
     }).catch((reason) => {
-      if (state.path === key) { state.snapshots = EMPTY_DIFFS; this.notify(); }
-      state.load = undefined;
-      this.errorHandler?.(`Could not load saved project changes: ${reason instanceof Error ? reason.message : String(reason)}`);
+      if (state.path === key && state.load?.promise === promise) {
+        state.snapshots = EMPTY_DIFFS; state.load = undefined; this.notify();
+        this.errorHandler?.(`Could not load saved project changes: ${reason instanceof Error ? reason.message : String(reason)}`);
+      }
       return EMPTY_DIFFS;
     });
     state.load = { key, promise }; return promise;
@@ -210,12 +211,21 @@ export class SessionRuntimePool {
 
   async copySavedDiffs(transport: NativeTransport, sourcePath: string | undefined, destinationPath: string | undefined, retainedMessageIds?: ReadonlySet<string>) {
     if (!sourcePath || !destinationPath || sourcePath === destinationPath) return;
-    const state = this.diffState(transport); const key = `${transport.currentHostId()}:${destinationPath}`;
-    state.path = key; state.snapshots = EMPTY_DIFFS; state.load = undefined; this.notify();
-    const source = await transport.loadGitDiffs(sourcePath, transport.currentHostId());
-    const snapshots = retainedMessageIds ? Object.fromEntries(Object.entries(source).filter(([id]) => retainedMessageIds.has(id))) : source;
-    await transport.saveGitDiffs(destinationPath, snapshots, transport.currentHostId());
-    state.path = key; state.snapshots = snapshots; state.load = { key, promise: Promise.resolve(snapshots) }; this.retainDiffs(transport, state); this.notify();
+    const state = this.diffState(transport); const hostId = transport.currentHostId(); const key = `${hostId}:${destinationPath}`;
+    const operation = transport.loadGitDiffs(sourcePath, hostId).then(async (source) => {
+      const snapshots = retainedMessageIds ? Object.fromEntries(Object.entries(source).filter(([id]) => retainedMessageIds.has(id))) : source;
+      await transport.saveGitDiffs(destinationPath, snapshots, hostId);
+      return snapshots;
+    });
+    const promise = operation.then((snapshots) => {
+      if (state.path === key && state.load?.promise === promise) { state.snapshots = snapshots; this.retainDiffs(transport, state); this.notify(); }
+      return snapshots;
+    }).catch(() => {
+      if (state.load?.promise === promise) { state.load = undefined; this.notify(); }
+      return EMPTY_DIFFS;
+    });
+    state.path = key; state.snapshots = EMPTY_DIFFS; state.load = { key, promise }; this.notify();
+    await operation; await promise;
   }
 
   async remove(session: SessionSummary) {
