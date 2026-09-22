@@ -33,9 +33,13 @@ const firstEditableAgent = (agents: AgentProfile[]) => {
   return editableIndex >= 0 ? editableIndex : agents.length ? 0 : -1;
 };
 
-function settingsSnapshot(settings: AppSettings, agentConfig?: AgentConfig) {
+function stableSnapshot(value: unknown) {
   const stable = (value: unknown): unknown => Array.isArray(value) ? value.map(stable) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, stable(item)])) : value;
-  return JSON.stringify(stable({ settings, agentConfig }));
+  return JSON.stringify(stable(value));
+}
+
+function settingsSnapshot(settings: AppSettings, agentConfig?: AgentConfig) {
+  return stableSnapshot({ settings, agentConfig });
 }
 
 function agentEditsSnapshot(config?: AgentConfig) {
@@ -111,6 +115,37 @@ export function SettingsView(props: SettingsViewProps) {
   const currentSnapshotRef = createRef(currentSnapshot()); createComputed(() => { currentSnapshotRef.current = currentSnapshot(); });
   const agentConfigDirty = createMemo(() => (agentEditsSnapshot(currentAgentConfig()) !== baselineAgentConfig()));
   const dirty = createMemo(() => (settingsSnapshot(draft()) !== baselineSettings() || agentConfigDirty()));
+  const [settingsConflict, setSettingsConflict] = createSignal(false);
+  const [agentsConflict, setAgentsConflict] = createSignal(false);
+  const conflict = () => settingsConflict() || agentsConflict();
+  createDependencyEffect(() => {
+    if (saving()) return;
+    const incoming = settingsProps().settings;
+    const baseline = JSON.parse(baselineSettings()).settings as AppSettings;
+    if (settingsSnapshot(incoming) === baselineSettings()) return;
+    const local = draft();
+    const merged = { ...incoming };
+    let collisions = false;
+    for (const key of Object.keys(local) as Array<keyof AppSettings>) {
+      const same = (left: unknown, right: unknown) => stableSnapshot(left) === stableSnapshot(right);
+      if (!same(local[key], baseline[key])) {
+        if (!same(incoming[key], baseline[key]) && !same(incoming[key], local[key])) collisions = true;
+        Object.assign(merged, { [key]: local[key] });
+      }
+    }
+    setDraft(merged);
+    setBaselineSettings(settingsSnapshot(incoming));
+    if (collisions) setSettingsConflict(true);
+  }, () => [settingsProps().settings, saving()]);
+  const reloadLatest = () => {
+    setDraft(structuredClone(settingsProps().settings));
+    setBaselineSettings(settingsSnapshot(settingsProps().settings));
+    setAgentDrafts(structuredClone(agentConfig()?.agents ?? []));
+    setHasAgentConfigDraft(agentConfig() !== undefined);
+    setBaselineAgentConfig(agentEditsSnapshot(agentConfig()));
+    incomingAgentConfigRef.current = agentConfigSnapshot();
+    setSettingsConflict(false); setAgentsConflict(false);
+  };
   createDependencyEffect(() => {
     const capturedSettingsProps = { ...settingsProps() }; const capturedDirty = dirty();
  capturedSettingsProps.onDirtyChange?.(capturedDirty); return () => capturedSettingsProps.onDirtyChange?.(false); }, () => [dirty(), currentSnapshot(), saving(), settingsProps().onDirtyChange]);
@@ -121,16 +156,21 @@ export function SettingsView(props: SettingsViewProps) {
   createDependencyEffect(() => { const capturedAgentConfigSnapshot = agentConfigSnapshot(); const capturedAgentConfigDirty = agentConfigDirty(); const capturedAgentConfig = agentConfig();
     // A newly discovered configuration is not a user edit. Load it without
     // replacing edits to general settings or an existing agentConfig draft.
-    if (incomingAgentConfigRef.current === capturedAgentConfigSnapshot || capturedAgentConfigDirty) return;
+    if (saving() || incomingAgentConfigRef.current === capturedAgentConfigSnapshot) return;
+    if (capturedAgentConfigDirty) {
+      if (agentEditsSnapshot(currentAgentConfig()) !== capturedAgentConfigSnapshot) setAgentsConflict(true);
+      return;
+    }
     incomingAgentConfigRef.current = capturedAgentConfigSnapshot;
     const next = capturedAgentConfig ? structuredClone((capturedAgentConfig)!) : undefined;
     setHasAgentConfigDraft(next !== undefined);
     setAgentDrafts(next?.agents ?? []);
     setAgentIndex(firstEditableAgent(next?.agents ?? []));
     setBaselineAgentConfig(agentEditsSnapshot(next));
-  }, () => [agentConfigDirty(), agentConfig(), agentConfigSnapshot()]);
+  }, () => [agentConfigDirty(), agentConfig(), agentConfigSnapshot(), saving()]);
   const patch = (value: Partial<AppSettings>) => setDraft((current) => ({ ...current, ...value }));
   const save = async () => {
+    if (conflict()) return;
     const capturedDirty = dirty(); const capturedSettingsProps = { ...settingsProps() }; const capturedDraft = draft(); const capturedAgentConfigDirty = agentConfigDirty(); const capturedCurrentAgentConfig = currentAgentConfig(); const capturedCurrentSnapshot = currentSnapshot();
  if (savingRef.current || !capturedDirty) return; savingRef.current = true; setSaving(true); setSaveError(undefined); try { await capturedSettingsProps.onSave(capturedDraft, capturedAgentConfigDirty ? capturedCurrentAgentConfig : undefined); setBaselineSettings(settingsSnapshot(capturedDraft)); if (capturedAgentConfigDirty) setBaselineAgentConfig(agentEditsSnapshot(capturedCurrentAgentConfig)); setSaved(currentSnapshotRef.current === capturedCurrentSnapshot); window.setTimeout(() => setSaved(false), 1600); } catch (reason) { setSaveError(reason instanceof Error ? reason.message : String(reason)); } finally { savingRef.current = false; setSaving(false); } };
   const nextAgentSuffixRef = createRef(agentDrafts().length);
@@ -151,6 +191,14 @@ export function SettingsView(props: SettingsViewProps) {
   const renameAgent = (name: string) => { if (!agent() || (!isBuiltInAgent(agent()) && name.trim().toLowerCase() === "general")) return; if ((draft().defaultAgent ?? "general") === agent().name) patch({ defaultAgent: name }); updateAgent({ name }); };
   const addAgent = () => { let suffix = nextAgentSuffixRef.current; while (agentDrafts().some((item) => item.name.toLowerCase() === `agent-${suffix}`)) suffix += 1; nextAgentSuffixRef.current = suffix + 1; const next: AgentProfile = { name: `agent-${suffix}`, model: "", effort: "", path_systemprompt: "sysprompt/default.md", path_agentprompt: "", tools: draft().tools.filter((item) => item.enabled).map((item) => item.name), skills: draft().skills.filter((item) => item.enabled).map((item) => item.path), mcpServers: [] }; setAgentDrafts((current) => [...current, next]); setAgentIndex(agentDrafts().length - 1); };
   const removeAgent = () => { if (!agent() || isBuiltInAgent(agent())) return; if (draft().defaultAgent === agent().name) patch({ defaultAgent: "general" }); const next = agentDrafts().filter((_, index) => index !== agentIndex()); setAgentDrafts(next); setAgentIndex(firstEditableAgent(next)); };
+  const agentLevels = (item: AgentProfile) => {
+    const model = settingsProps().models.find((model) => `${model.provider}/${model.id}` === (item.model || draft().defaultModel));
+    const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+    if (!model) return levels;
+    if (!model.reasoning) return ["off"];
+    return levels.filter((level) => model.thinkingLevelMap?.[level] !== null && (!(level === "xhigh" || level === "max") || model.thinkingLevelMap?.[level] !== undefined));
+  };
+  const supportsFastMode = (model: string) => (agentConfig()?.fastModeModels ?? []).includes(model.replace(/--piop-account-\d+(?=\/)/, ""));
   const validateAgentResources = () => {
     const availableModelIds = new Set(settingsProps().models.map((model) => `${model.provider}/${model.id}`));
     const hiddenModels = new Set(draft().hiddenModels);
@@ -158,8 +206,8 @@ export function SettingsView(props: SettingsViewProps) {
     for (const id of hiddenModels) if (!availableModelIds.has(id)) modelChoices.push({ id, name: id });
     const filteredModelChoices = modelChoices.filter((model) => `${model.name} ${model.id}`.toLocaleLowerCase().includes(modelFilter().trim().toLocaleLowerCase()));
     const modelDiscoveryUnavailable = settingsProps().models.length === 0;
-    const thinkingDiscoveryUnavailable = settingsProps().thinkingLevels.length === 0;
-    const agentsValid = !agentConfig() || (agentDrafts().some(isBuiltInAgent) && agentDrafts().every((item) => item.name.length > 0 && !!item.path_systemprompt?.trim() && (!item.model || modelDiscoveryUnavailable || availableModelIds.has(item.model)) && (!item.effort || thinkingDiscoveryUnavailable || settingsProps().thinkingLevels.includes(item.effort)) && validAgentMcp(item.mcpServers)) && new Set(agentDrafts().map((item) => item.name)).size === agentDrafts().length);
+    const thinkingDiscoveryUnavailable = modelDiscoveryUnavailable;
+    const agentsValid = !agentConfig() || (agentDrafts().some(isBuiltInAgent) && agentDrafts().every((item) => item.name.length > 0 && !!item.path_systemprompt?.trim() && (!item.model || modelDiscoveryUnavailable || availableModelIds.has(item.model)) && (!item.effort || thinkingDiscoveryUnavailable || agentLevels(item).includes(item.effort)) && validAgentMcp(item.mcpServers)) && new Set(agentDrafts().map((item) => item.name)).size === agentDrafts().length);
     const defaultAgentAvailable = !agentConfig() || agentDrafts().some((item) => item.name === (draft().defaultAgent ?? "general"));
     const invalidHost = draft().hosts.find((host) => !host.name.trim() || !host.target.trim() || !host.piPath.trim());
     const invalidMcp = agentDrafts().flatMap((item) => item.mcpServers).find((server) => mcpServerError(server));
@@ -189,7 +237,7 @@ export function SettingsView(props: SettingsViewProps) {
     const duplicateMcpNames = duplicateNames(agent()?.mcpServers ?? []);
     const duplicateAgentNames = duplicateNames(agentDrafts());
     const invalidAgentModel = agentValidation().modelDiscoveryUnavailable ? undefined : agentDrafts().find((item) => item.model && !agentValidation().availableModelIds.has(item.model));
-    const invalidAgentEffort = agentValidation().thinkingDiscoveryUnavailable ? undefined : agentDrafts().find((item) => item.effort && !settingsProps().thinkingLevels.includes(item.effort));
+    const invalidAgentEffort = agentValidation().thinkingDiscoveryUnavailable ? undefined : agentDrafts().find((item) => item.effort && !agentLevels(item).includes(item.effort));
     const emptyAgent = agentDrafts().find((item) => !item.name.trim());
     const missingAgentPrompt = agentDrafts().find((item) => !item.path_systemprompt?.trim());
     return { contextWindowValid, duplicateNames, duplicateHostNames, reservedLocalHostName, duplicateMcpNames, duplicateAgentNames, invalidAgentModel, invalidAgentEffort, emptyAgent, missingAgentPrompt };
@@ -216,7 +264,7 @@ export function SettingsView(props: SettingsViewProps) {
     () => !agentValidation().agentsValid ? "Every agent needs a unique name and valid resources" : undefined
   ])));
   const validateForm = () => {
-    const invalidFastModeAgent = agentDrafts().find((item) => item.fastMode === true && !(agentConfig()?.fastModeModels ?? []).includes(item.model || draft().defaultModel));
+    const invalidFastModeAgent = agentDrafts().find((item) => item.fastMode === true && !supportsFastMode(item.model || draft().defaultModel));
     const fastModeValidationError = invalidFastModeAgent ? `${invalidFastModeAgent.name}: model ${invalidFastModeAgent.model || draft().defaultModel} does not support fast mode` : undefined;
     const formValid = agentValidation().agentsValid && !validationError() && !fastModeValidationError;
     const searchTerms = settingsQuery().trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
@@ -230,11 +278,11 @@ export function SettingsView(props: SettingsViewProps) {
     const renderSaveControls = () => {
       const renderUnsavedBadge = () => (dirty() && !saving() && <small role="status" class="unsaved-badge"><span aria-hidden="true" />Unsaved changes</small>);
       const renderPendingSettingsCount = () => (settingsProps().pendingSettingsCount > 0 && !dirty() && <small role="status">Saved · waiting for {settingsProps().pendingSettingsCount} session{settingsProps().pendingSettingsCount === 1 ? "" : "s"} to apply changes</small>);
-      const renderSaveButton = () => ((saveError() || validationError() || formValidation().fastModeValidationError) && <small role="alert">{saveError() || validationError() || formValidation().fastModeValidationError}</small>);
+      const renderSaveButton = () => (conflict() ? <small role="alert">Settings changed in another window. <button disabled={saving()} onClick={reloadLatest}>Reload latest settings and discard local edits</button></small> : (saveError() || validationError() || formValidation().fastModeValidationError) && <small role="alert">{saveError() || validationError() || formValidation().fastModeValidationError}</small>);
       const renderSaveButtonLabel = () => {
         const renderSaveStatus = () => (saved() && !dirty() ? <Check size={15} /> : <Save size={15} />);
         const renderSaveLabel = () => (saved() && !dirty() ? "Saved" : saving() ? "Saving…" : "Save changes");
-        return (<button class={dirty() && !saving() && formValidation().formValid ? "primary-button needs-save" : "primary-button"} disabled={saving() || !dirty() || !formValidation().formValid} onClick={() => void save()}>{renderSaveStatus()}{renderSaveLabel()}</button>);
+        return (<button class={dirty() && !saving() && formValidation().formValid ? "primary-button needs-save" : "primary-button"} disabled={saving() || conflict() || !dirty() || !formValidation().formValid} onClick={() => void save()}>{renderSaveStatus()}{renderSaveLabel()}</button>);
       };
       return (<div class="settings-save">{renderUnsavedBadge()}{renderPendingSettingsCount()}{renderSaveButton()}{renderSaveButtonLabel()}</div>);
     };
@@ -276,8 +324,8 @@ export function SettingsView(props: SettingsViewProps) {
             const renderAgentNameRow = () => (<div class="agent-name-row"><label class="field"><span>Agent name</span><input aria-label="Agent name" aria-invalid={!isBuiltInAgent(agent()) && (!agent().name.trim() || agent().name.trim().toLowerCase() === "general" || nameValidation().duplicateAgentNames.has(agent().name.trim().toLowerCase()))} disabled={isBuiltInAgent(agent())} value={agent().name} onInput={(event) => { renameAgent(event.currentTarget.value.replace(/[^a-zA-Z0-9_-]/g, "")); event.currentTarget.value = agent().name; }} /></label><IconButton label={`Remove ${agent().name}`} disabled={isBuiltInAgent(agent())} onClick={removeAgent}><Trash2 size={15} /></IconButton></div>);
             const renderAgentDefaults = () => {
               const renderAgentModel = () => (<label class="field"><span>Default model</span><select aria-label="Agent default model" value={agent().model} onChange={(event) => updateAgent({ model: event.target.value })}><option value="">Use fallback ({draft().defaultModel})</option>{agent().model && !agentValidation().availableModelIds.has(agent().model) && <option value={agent().model} disabled>Unavailable: {agent().model}</option>}{<Key each={settingsProps().models} by={(model) => `${model.provider}/${model.id}`}>{(model, index) => <option  value={`${model().provider}/${model().id}`}>{accountModelName(model(), settingsProps().models)}</option>}</Key>}</select></label>);
-              const renderAgentFastMode = () => (<div class="field general-fast-mode" title={agent().fastMode === undefined ? "Using the fallback fast mode setting" : "Fast mode default for this agent"}><span>Fast mode</span><div><button type="button" class={`fast-mode-indicator${agentFastModeEnabled() ? " active" : ""}`} aria-label="Agent fast mode" aria-description={agent().fastMode === undefined ? "Using fallback setting" : agentFastModeEnabled() ? "Fast mode on" : "Fast mode off"} aria-pressed={agentFastModeEnabled()} aria-invalid={agent().fastMode === true && !(agentConfig()?.fastModeModels ?? []).includes(agent().model || draft().defaultModel)} onClick={() => updateAgent({ fastMode: !agentFastModeEnabled() })}><Zap size={22} strokeWidth={1.5} fill={agentFastModeEnabled() ? "currentColor" : "none"} aria-hidden="true" /></button></div></div>);
-              const renderAgentEffort = () => (<label class="field"><span>Default effort</span><select aria-label="Agent default effort" aria-invalid={Boolean(!agentValidation().thinkingDiscoveryUnavailable && agent().effort && !settingsProps().thinkingLevels.includes(agent().effort))} value={agent().effort} onChange={(event) => updateAgent({ effort: event.target.value })}><option value="">Use fallback ({draft().defaultThinking})</option>{agent().effort && !settingsProps().thinkingLevels.includes(agent().effort) && <option value={agent().effort} disabled>Unavailable: {agent().effort}</option>}{<Key each={settingsProps().thinkingLevels} by={(level) => level}>{(level, index) => <option  value={level()}>{level().charAt(0).toUpperCase() + level().slice(1)}</option>}</Key>}</select></label>);
+              const renderAgentFastMode = () => (<div class="field general-fast-mode" title={agent().fastMode === undefined ? "Using the fallback fast mode setting" : "Fast mode default for this agent"}><span>Fast mode</span><div><button type="button" class={`fast-mode-indicator${agentFastModeEnabled() ? " active" : ""}`} aria-label="Agent fast mode" aria-description={agent().fastMode === undefined ? "Using fallback setting" : agentFastModeEnabled() ? "Fast mode on" : "Fast mode off"} aria-pressed={agentFastModeEnabled()} aria-invalid={agent().fastMode === true && !supportsFastMode(agent().model || draft().defaultModel)} onClick={() => updateAgent({ fastMode: !agentFastModeEnabled() })}><Zap size={22} strokeWidth={1.5} fill={agentFastModeEnabled() ? "currentColor" : "none"} aria-hidden="true" /></button></div></div>);
+              const renderAgentEffort = () => (<label class="field"><span>Default effort</span><select aria-label="Agent default effort" aria-invalid={Boolean(!agentValidation().thinkingDiscoveryUnavailable && agent().effort && !agentLevels(agent()).includes(agent().effort))} value={agent().effort} onChange={(event) => updateAgent({ effort: event.target.value })}><option value="">Use fallback ({draft().defaultThinking})</option>{agent().effort && !agentLevels(agent()).includes(agent().effort) && <option value={agent().effort} disabled>Unavailable: {agent().effort}</option>}{<Key each={agentLevels(agent())} by={(level) => level}>{(level, index) => <option  value={level()}>{level().charAt(0).toUpperCase() + level().slice(1)}</option>}</Key>}</select></label>);
               return (<div class="agent-defaults">{renderAgentModel()}{renderAgentFastMode()}{renderAgentEffort()}</div>);
             };
             const renderAgentPromptFiles = () => (<label class="field"><span>System prompt file</span><input aria-label="System prompt file" aria-invalid={!agent().path_systemprompt?.trim()} placeholder="Path relative to agent config.json, or absolute path" value={agent().path_systemprompt ?? ""} onInput={(event) => updateAgent({ path_systemprompt: event.target.value })} /></label>);
@@ -314,7 +362,7 @@ export function SettingsView(props: SettingsViewProps) {
     return (<div class={settingsProps().embedded ? "settings-layout settings-layout-embedded" : "settings-layout"}>{!settingsProps().embedded && <nav class="settings-nav"><label class="search settings-search"><Search size={15} /><input autofocus type="search" aria-label="Search settings" placeholder="Search settings" value={settingsQuery()} onInput={(event) => setSettingsQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setSettingsQuery(""); } }} /></label>{<Key each={formValidation().matchingSections} by={(item) => item.id}>{(item, index) => <button  class={formValidation().visibleSection === item().id ? "active" : ""} aria-current={formValidation().visibleSection === item().id ? "page" : undefined} onClick={() => setSection(item().id)}><Dynamic component={item().icon} size={16} /><span>{item().label}</span></button>}</Key>}</nav>}
       {renderSettingsContent()}</div>);
   };
-  const renderSettingsSaveFab = () => (dirty() && pastHeader() && <div class="settings-save-fab"><button class={dirty() && !saving() && formValidation().formValid ? "primary-button needs-save" : "primary-button"} disabled={saving() || !dirty() || !formValidation().formValid} onClick={() => void save()}><Save size={15} />{saving() ? "Saving…" : "Save changes"}</button></div>);
+  const renderSettingsSaveFab = () => (dirty() && pastHeader() && <div class="settings-save-fab"><button class={dirty() && !saving() && formValidation().formValid ? "primary-button needs-save" : "primary-button"} disabled={saving() || conflict() || !dirty() || !formValidation().formValid} onClick={() => void save()}><Save size={15} />{saving() ? "Saving…" : "Save changes"}</button></div>);
   return <main class={dirty() ? "settings-shell has-unsaved" : "settings-shell"}>{renderSettingsHeader()}
     {renderSettingsLayout()}
     {renderSettingsSaveFab()}

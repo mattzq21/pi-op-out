@@ -194,7 +194,7 @@ class Session {
     this.queue.pendingMessages = retryMessages.get(key) ?? [];
     retryMessages.delete(key);
     const launch = workerLaunch(spec, this.identity);
-    this.child = spawn(launch.program, launch.args, { cwd: spec.cwd || undefined, env: { ...process.env, ...spec.env, PI_DESKTOP_GIT_CAPTURE_SCRIPT: ephemeral ? '' : gitCaptureScript }, stdio: ['pipe', 'pipe', 'pipe'] });
+    this.child = spawn(launch.program, launch.args, { cwd: spec.cwd || undefined, env: { ...process.env, ...spec.env, PI_DESKTOP_GIT_CAPTURE_SCRIPT: gitCaptureScript }, stdio: ['pipe', 'pipe', 'pipe'] });
     this.ready = new Promise((resolve, reject) => { this.child.once('spawn', resolve); this.child.once('error', reject); });
     this.ready.catch(() => undefined);
     this.child.stdin.on('error', () => { });
@@ -212,6 +212,8 @@ class Session {
   finish(error) {
     if (this.closed) return;
     this.closed = true;
+    for (const dialog of this.dialogs.values()) clearTimeout(dialog.timer);
+    this.dialogs.clear();
     if (!this.transient && sessions.get(this.key) === this) sessions.delete(this.key);
     for (const request of this.pending.values()) { clearTimeout(request.timer); request.reject(new Error(error)); }
     this.pending.clear();
@@ -335,6 +337,16 @@ class Session {
     this.publishState();
   }
 
+  resolveDialog(id) {
+    const dialog = this.dialogs.get(id);
+    if (!dialog) return;
+    clearTimeout(dialog.timer);
+    this.dialogs.delete(id);
+    this.publish({ type: 'extension_ui_resolved', id });
+    this.publishState();
+    void this.releaseUnusedOwnership().catch((error) => output({ type: 'diagnostic', line: errorText(error) }));
+  }
+
   attach(runtimeId, presence = {}) {
     this.views.set(runtimeId, presence);
     subscriptions.set(runtimeId, this);
@@ -452,7 +464,13 @@ class Session {
     if (event.method === 'notify' && event.notifyType === 'error' && event.message === this.inputRejection?.error) event = { ...event, inputRejected: true };
     this.retainExtensionStatus(event);
     if (interactiveMethods.has(event.method)) {
-      this.dialogs.set(event.id, { event }); this.routeDialogs(); return;
+      clearTimeout(this.dialogs.get(event.id)?.timer);
+      const dialog = { event };
+      if (Number.isFinite(event.timeout) && event.timeout >= 0) {
+        dialog.timer = setTimeout(() => { if (this.dialogs.get(event.id) === dialog) this.resolveDialog(event.id); }, Math.min(event.timeout, 2147483647));
+        dialog.timer.unref();
+      }
+      this.dialogs.set(event.id, dialog); this.routeDialogs(); return;
     }
     return event;
   }
@@ -460,7 +478,7 @@ class Session {
   receiveExtensionStatus(event) {
     if (event.method === 'setStatus' && event.statusKey === 'pi-desktop-turn-capture') {
       const capture = JSON.parse(event.statusText);
-      output({ ...capture, type: 'turn_capture', sessionKey: this.key });
+      output({ ...capture, type: 'turn_capture', sessionKey: this.key, ephemeral: this.ephemeral });
       return true;
     }
     if (event.method === 'setStatus' && event.statusKey === 'pi-desktop-worktree-presence') {
@@ -547,7 +565,7 @@ class Session {
     if (requestType === 'prompt') { this.inputRejection = undefined; this.commandErrors.clear(); }
     let wire = { ...command, id };
     const action = { pause: 'pause', resume: 'resume', abort: 'stop', get_pause_state: 'state' }[command.type];
-    const extension = { provider_auth_refresh: 'piop-provider-auth-refresh', runtime_settings: 'piop-runtime-settings', branch_checkpoint: 'pi-desktop-branch-checkpoint', fork_and_forget: 'pi-desktop-fork-and-forget', voice_history: 'pi-desktop-voice-history' }[command.type];
+    const extension = { provider_auth_refresh: 'piop-provider-auth-refresh', runtime_settings: 'piop-runtime-settings', branch_checkpoint: 'pi-desktop-branch-checkpoint', fork_and_forget: 'pi-desktop-fork-and-forget', fork_after: 'pi-desktop-fork-after', voice_history: 'pi-desktop-voice-history' }[command.type];
     if (action || extension) wire = { type: 'prompt', id: `${id}:desktop-control`, message: `/${extension ?? 'pi-desktop-control'} ${JSON.stringify(action ? { id, action } : { ...command, id })}` };
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {

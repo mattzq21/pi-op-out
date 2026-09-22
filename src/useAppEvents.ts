@@ -182,7 +182,8 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         "session_info_changed": handleSessionInfoChanged,
         "ownership_lost": handleOwnershipLost,
         "ownership_acquired": handleOwnershipAcquired,
-        "disconnected": handleDisconnected
+        "disconnected": handleDisconnected,
+        "connection_restored": handleDisconnected
       };
       if (Object.hasOwn(handlers, event.type)) handlers[event.type]();
     });

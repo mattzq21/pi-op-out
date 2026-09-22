@@ -29,6 +29,15 @@ function observeTurn(root: Element, element: Element, reveal: () => void) {
 export function DeferredTurn(componentProps: { children: JSXElement; scrollRoot: RefObject<HTMLDivElement | null>; eager: boolean }) {
   const element = createRef<HTMLDivElement>(null);
   const [revealed, setRevealed] = createSignal(componentProps.eager);
+  const [searching, setSearching] = createSignal(false);
+  createDependencyEffect(() => {
+    const root = componentProps.scrollRoot.current?.closest(".chat-shell");
+    if (!root) return;
+    const find = (event: Event) => setSearching((event as CustomEvent<boolean>).detail === true);
+    root.addEventListener("piop:find-open", find);
+    setSearching(root.hasAttribute("data-find-open"));
+    return () => root.removeEventListener("piop:find-open", find);
+  }, () => [componentProps.scrollRoot]);
   createDependencyEffect(() => { const capturedRevealed = revealed(); const capturedScrollRoot0 = componentProps.scrollRoot;
     if (capturedRevealed) return;
     const root = capturedScrollRoot0.current;
@@ -36,7 +45,7 @@ export function DeferredTurn(componentProps: { children: JSXElement; scrollRoot:
     if (!root || !target || typeof IntersectionObserver === "undefined") { setRevealed(true); return; }
     return observeTurn(root, target, () => setRevealed(true));
   }, () => [revealed(), componentProps.scrollRoot]);
-  return <div ref={node => { element.current = node; }} style={{ "content-visibility": "auto", "contain-intrinsic-size": "auto 180px", "min-height": cssPixels(revealed() || componentProps.eager ? undefined : 180) }}>
-    {(revealed() || componentProps.eager) && componentProps.children}
+  return <div ref={node => { element.current = node; }} style={{ "content-visibility": searching() ? "visible" : "auto", "contain-intrinsic-size": "auto 180px", "min-height": cssPixels(revealed() || componentProps.eager || searching() ? undefined : 180) }}>
+    {(revealed() || componentProps.eager || searching()) && componentProps.children}
   </div>;
 }

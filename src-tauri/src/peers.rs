@@ -64,7 +64,8 @@ impl Connection {
             return;
         }
         let Some(event) = packet["event"].as_str() else { return; };
-        if matches!(event, "pi://settings-changed" | "pi://groups-changed" | "pi://dictation") || packet["payload"]["_peer"] == true { return; }
+        if matches!(event, "pi://groups-changed" | "pi://dictation") || packet["payload"]["_peer"] == true { return; }
+        let event = if event == "pi://settings-changed" { "pi://host-settings-changed" } else { event };
         let state = app.state::<PeerRuntime>();
         let mut payload = packet["payload"].clone();
         if !payload.is_object() { payload = json!({}); }
@@ -251,6 +252,7 @@ pub(crate) fn route(app: &AppHandle, owner: &str, command: &str, args: &Value) -
         if matches!(command, "save_app_settings" | "load_app_settings" | "change_session_groups" | "load_session_groups") { return Err("Settings belong to the local daemon".into()); }
         Route { owner: owner.into(), host_id: host_id.into(), connection: connect(app, host_id)? }
     } else if let Some(route) = existing { route } else { return Ok(None); };
+    let mut stale_terminals = std::collections::HashSet::new();
     {
         let routes = state.routes.lock().map_err(|_| "Peer routes unavailable")?;
         for kind in ["runtimeId", "terminalId", "setupId", "callId"] {
@@ -260,7 +262,12 @@ pub(crate) fn route(app: &AppHandle, owner: &str, command: &str, args: &Value) -
             }
         }
         if let Some(ids) = args["terminalIds"].as_array() { for id in ids.iter().filter_map(Value::as_str) {
-            if !routes.get(&("terminalId".into(), id.into())).is_some_and(|saved| saved.owner == owner && Arc::ptr_eq(&saved.connection, &route.connection)) { return Err("Terminal belongs to another connection".into()); }
+            let saved = routes.get(&("terminalId".into(), id.into())).ok_or("Terminal belongs to another connection")?;
+            if saved.owner != owner { return Err("Terminal belongs to another connection".into()); }
+            if !Arc::ptr_eq(&saved.connection, &route.connection) {
+                if saved.connection.alive.load(Ordering::SeqCst) || saved.connection.daemon_id != route.connection.daemon_id { return Err("Terminal belongs to another connection".into()); }
+                stale_terminals.insert(id.to_string());
+            }
         } }
     }
     for kind in ["runtimeId", "terminalId"] {
@@ -276,7 +283,7 @@ pub(crate) fn route(app: &AppHandle, owner: &str, command: &str, args: &Value) -
     let mut forwarded = args.clone();
     forwarded["hostId"] = json!("local");
     for kind in ["runtimeId", "terminalId"] { if let Some(id) = args[kind].as_str() { forwarded[kind] = json!(format!("{}{id}", route.connection.prefix)); } }
-    if let Some(ids) = args["terminalIds"].as_array() { forwarded["terminalIds"] = json!(ids.iter().filter_map(Value::as_str).map(|id| format!("{}{id}", route.connection.prefix)).collect::<Vec<_>>()); }
+    if let Some(ids) = args["terminalIds"].as_array() { forwarded["terminalIds"] = json!(ids.iter().filter_map(Value::as_str).filter(|id| !stale_terminals.contains(*id)).map(|id| format!("{}{id}", route.connection.prefix)).collect::<Vec<_>>()); }
     let closing = match command { "stop_pi" => Some("runtimeId"), "close_terminal" => Some("terminalId"), "cancel_worktree_setup" | "run_worktree_setup" => Some("setupId"), "voice_stop" => Some("callId"), _ => None };
     let result = if !route.connection.alive.load(Ordering::SeqCst) && matches!(command, "stop_pi" | "close_terminal") { Ok(json!(false)) } else { route.connection.invoke(command, forwarded) };
     if result.is_ok() { if let Some(kind) = closing { if let Some(id) = args[kind].as_str() { state.routes.lock().map_err(|_| "Peer routes unavailable")?.remove(&(kind.into(), id.into())); } } }

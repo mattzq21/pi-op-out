@@ -97,8 +97,9 @@ async function inspectSession(file, includeArchiveDetails) {
   };
   const recordPromptCheckpoint = (entry) => {
     if (entry.type === "custom" && entry.customType === "pi-project-prompt-checkpoint") {
-      if (promptCheckpoint(entry.data) && typeof header.cwd === "string" && path.isAbsolute(header.cwd) && typeof header.id === "string") {
-        const repository = checkpointRepositoryRecord(checkpointRepositories, header.cwd);
+      const cwd = header.checkpointRepositoryRoot ?? header.cwd;
+      if (promptCheckpoint(entry.data) && typeof cwd === "string" && path.isAbsolute(cwd) && typeof header.id === "string") {
+        const repository = checkpointRepositoryRecord(checkpointRepositories, cwd);
         repository.commits.add(entry.data.commit);
         repository.expectedRefs.set(`refs/pi-session-snapshots/chats/${safeSessionId(header.id)}/prompts/${entry.data.key}`, entry.data.commit);
       }

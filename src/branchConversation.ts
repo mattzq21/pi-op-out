@@ -29,7 +29,7 @@ type Context = {
   syncSessionIndex: () => Promise<void>;
 };
 
-export function createBranchConversation({ transport, activeConversationKeyRef, branchPending, state, sessions, runtimePool, messages, rekeyConversationUi, activeTransportRef, setActiveCwd, setTerminalOpen, setTerminalTarget, setState, setMessages, updateConnected, configureRuntime, transportConversationKeys, activateConversationKey, addNotice, syncSessionIndex }: Context) {
+export function createBranchConversation({ transport, activeConversationKeyRef, branchPending, state, sessions, runtimePool, rekeyConversationUi, activeTransportRef, setActiveCwd, setTerminalOpen, setTerminalTarget, setState, setMessages, updateConnected, configureRuntime, transportConversationKeys, activateConversationKey, addNotice, syncSessionIndex }: Context) {
   return async (message: ChatMessage, destinationCwd?: string) => {
     const entryId = message.entryId; if (!entryId) throw new Error("Could not find the response to branch from");
     const ownerTransport = transport; const previousKey = activeConversationKeyRef.current;
@@ -42,9 +42,7 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
     const sourceHostId = ownerTransport.currentHostId();
     const parentSession = [...sessions, ...runtimePool.liveSessionSummaries()].find((session) => session.path === sourcePath && (session.hostId ?? "local") === sourceHostId);
     const forkSource = async () => {
-      const messageIndex = messages.findIndex((candidate) => candidate.entryId === entryId);
-      const nextUserEntryId = messageIndex >= 0 ? messages.slice(messageIndex + 1).find((candidate) => candidate.role === "user" && candidate.entryId)?.entryId : undefined;
-      const fork = await ownerTransport.command<{ cancelled?: boolean }>(nextUserEntryId ? { type: "fork", entryId: nextUserEntryId } : { type: "clone" }); if (fork.cancelled) return false;
+      const fork = await ownerTransport.command<{ cancelled?: boolean }>({ type: "fork_after", entryId }); if (fork.cancelled) return false;
       return true;
 
     };

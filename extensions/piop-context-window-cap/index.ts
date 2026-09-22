@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { SettingsManager } from "@earendil-works/pi-coding-agent";
 
 const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
 const STATUS_KEY = "pi-desktop-prompt-context";
@@ -125,6 +126,16 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
   const initial = settings();
   let cap = initial ? (initial.contextWindowCapEnabled ? initial.contextWindowCap : undefined) : await loadCap();
   const originalWindows = new Map<{ contextWindow: number }, number>();
+  pi.on("input", (event, ctx) => {
+    if (cap === undefined || event.text.startsWith("/")) return;
+    const budgets = SettingsManager.create(ctx.cwd, undefined, { projectTrusted: ctx.isProjectTrusted() }).getCompactionSettings();
+    const minimum = budgets.reserveTokens + budgets.keepRecentTokens + 1;
+    if (cap >= minimum) return;
+    const error = `This conversation's ${cap.toLocaleString()}-token context cap is too small for Pi's compaction budgets. Start a conversation with a cap of at least ${minimum.toLocaleString()} tokens, or reduce Pi's reserve and recent-history budgets.`;
+    ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error }));
+    ctx.ui.notify(error, "error");
+    return { action: "handled" };
+  });
   const capModel = (model: { contextWindow: number } | undefined) => {
     if (!model) return;
     if (!originalWindows.has(model)) originalWindows.set(model, model.contextWindow);

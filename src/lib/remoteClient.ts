@@ -15,6 +15,7 @@ export class RemoteClient {
   private sequence = 0;
   private ready = false;
   private pending = new Map<number, Pending>();
+  private terminals = new Set<string>();
   private listeners = new Map<string, Set<(event: RemoteEvent) => void>>();
   private heartbeat?: ReturnType<typeof setInterval>;
   onDisconnect?: (message: string) => void;
@@ -24,22 +25,33 @@ export class RemoteClient {
     this.socket = socket;
     await new Promise<void>((resolve, reject) => {
       let ready = false;
+      let lastHeartbeat = Date.now();
       let settled = false;
       const settleReject = (error: Error) => { if (!settled) { settled = true; reject(error); } };
       const settleResolve = () => { if (!settled) { settled = true; resolve(); } };
       const timer = setTimeout(() => { reject(new Error("Connection timed out. Check the host address and Tailscale Serve.")); socket.close(); }, 15000);
       socket.onopen = () => socket.send(JSON.stringify({ type: "authenticate", mode: "tailscale" }));
       socket.onmessage = ({ data }) => {
+        if (this.socket !== socket) return;
         let message: Record<string, unknown>;
         try { message = JSON.parse(String(data)); } catch { socket.close(); return; }
+        if (message.type === "pong") { lastHeartbeat = Date.now(); return; }
         if (message.type === "ready" && message.protocol === 1) {
           if (message.backend !== "daemon") {
             settleReject(new Error("Connect to a Piop daemon. This address belongs to an older desktop endpoint."));
             socket.close(); return;
           }
           ready = true; this.ready = true; clearTimeout(timer);
-          this.heartbeat = setInterval(() => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" })); }, 20000);
-          settleResolve(); return;
+          lastHeartbeat = Date.now();
+          this.heartbeat = setInterval(() => {
+            if (Date.now() - lastHeartbeat > 65000) {
+              this.socket = undefined; this.failPending(); socket.close();
+              this.onDisconnect?.("Connection stopped responding. Reconnecting…");
+            } else if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "ping" }));
+          }, 20000);
+          settleResolve();
+          this.receive({ event: "pi://event", payload: { type: "connection_restored" } });
+          return;
         }
         if (ready) this.receive(message);
       };
@@ -59,6 +71,8 @@ export class RemoteClient {
   }
   private receive(message: Record<string, unknown>) {
     if (typeof message.event === "string") {
+      const event = message.payload as { type?: string; terminalId?: string } | undefined;
+      if (message.event === "pi://event" && event?.type === "terminal_exit" && event.terminalId) this.terminals.delete(event.terminalId);
       this.listeners.get(message.event)?.forEach((listener) => listener({ event: String(message.event), payload: message.payload }));
       return;
     }
@@ -71,10 +85,14 @@ export class RemoteClient {
     const socket = this.socket;
     if (!this.ready || !socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error("Connect to your Piop host first."));
     const id = ++this.sequence;
+    const packet = JSON.stringify({ id, command, args });
+    if (new TextEncoder().encode(packet).byteLength > 32 * 1024 * 1024) return Promise.reject(new Error("This message exceeds the host's 32 MiB request limit. Remove an attachment or shorten the message."));
+    if (command === "start_terminal" && typeof args.terminalId === "string") this.terminals.add(args.terminalId);
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => { this.pending.delete(id); reject(new Error("Host request timed out; it may still complete. Refresh before trying again.")); }, 660000);
       this.pending.set(id, { resolve: (value) => resolve(value as T), reject, timer });
-      socket.send(JSON.stringify({ id, command, args }));
+      try { socket.send(packet); }
+      catch (reason) { clearTimeout(timer); this.pending.delete(id); reject(reason); }
     });
   }
   listen<T>(event: string, handler: (event: { event: string; payload: T; id: number }) => void): Promise<() => void> {
@@ -84,8 +102,12 @@ export class RemoteClient {
     return Promise.resolve(() => { listeners.delete(listener); });
   }
   private failPending() {
+    const wasReady = this.ready;
     this.ready = false;
+    if (wasReady) this.receive({ event: "pi://event", payload: { type: "disconnected" } });
     clearInterval(this.heartbeat);
+    for (const terminalId of this.terminals) this.receive({ event: "pi://event", payload: { type: "terminal_exit", terminalId } });
+    this.terminals.clear();
     this.pending.forEach(({ timer, reject }) => { clearTimeout(timer); reject(new Error("Disconnected from host; the command may have completed.")); });
     this.pending.clear();
   }

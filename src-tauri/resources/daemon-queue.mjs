@@ -376,6 +376,7 @@ class SessionQueue {
     target.behavior = behavior === "steer" ? "steer" : "followUp";
     try {
       await this.deliverPending(target);
+      this.publishQueue();
     } catch (reason) {
       target.retry = true;
       this.publishQueue();

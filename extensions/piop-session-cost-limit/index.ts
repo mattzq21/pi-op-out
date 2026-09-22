@@ -82,7 +82,9 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
   pi.on("input", (event, ctx) => {
     if (event.text.startsWith("/")) return;
     if (!overLimit(ctx)) return;
-    ctx.ui.notify(`Session cost limit of ${formatCost(limit!)} reached (API prices). Raise it with /cost <amount> or remove it with /cost clear.`, "warning");
+    const error = `Session cost limit of ${formatCost(limit!)} reached (API prices). Raise it with /cost <amount> or remove it with /cost clear.`;
+    ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error }));
+    ctx.ui.notify(error, "warning");
     return { action: "handled" };
   });
 

@@ -38,6 +38,7 @@ function enforceCacheLimit() {
   let total = [...fifo.values()].reduce((sum, size) => sum + size, 0);
   for (const [store, size] of fifo) {
     if (fifo.size <= SESSION_COUNT && total <= CACHE_LIMIT) break;
+    if (store.observed()) continue;
     fifo.delete(store);
     total -= size;
     store.evict();
@@ -71,7 +72,8 @@ export class SessionMemory {
     this.value = initialSnapshot(initialState);
   }
   getSnapshot = () => this.value;
-  subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
+  subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); enforceCacheLimit(); }; };
+  observed() { return this.listeners.size > 0; }
   private notify() { for (const listener of this.listeners) listener(); }
 
   evict() {

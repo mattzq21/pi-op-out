@@ -220,7 +220,7 @@ async function loadConfig(pi: ExtensionAPI): Promise<Config> {
 function encode(value: unknown) { return Buffer.from(JSON.stringify(value), "utf8").toString("base64url"); }
 function decode<T>(value: string): T { return JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as T; }
 function safeName(value: string) { return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool"; }
-function desktopList(pi: ExtensionAPI, name: "tools" | "skills") { const request: { settings?: { tools: string[]; skills: string[] } } = {}; pi.events.emit("piop:runtime-settings", request); return request.settings?.[name]; }
+function desktopList(pi: ExtensionAPI, name: "tools" | "skills" | "explicitOnlySkills") { const request: { settings?: { tools: string[]; skills: string[]; explicitOnlySkills?: string[] } } = {}; pi.events.emit("piop:runtime-settings", request); return request.settings?.[name]; }
 function normalizedPath(value: string) { return resolve(value.startsWith("~/") ? join(homedir(), value.slice(2)) : value); }
 function agentSkills(pi: ExtensionAPI, agent: Agent) { const global = desktopList(pi, "skills"); if (!global) return agent.skills; const allowed = new Set(global.map(normalizedPath)); return agent.skills.filter((skill) => allowed.has(normalizedPath(skill))); }
 function agentToolError(pi: ExtensionAPI, agent: Agent, extensionTools: string[] = []) {
@@ -229,11 +229,16 @@ function agentToolError(pi: ExtensionAPI, agent: Agent, extensionTools: string[]
   return denied.length ? `Agent "${agent.name}" cannot run because Pi does not allow its configured tool${denied.length === 1 ? "" : "s"}: ${denied.join(", ")}` : undefined;
 }
 
-function buildAgentSystemPrompt(prompt: string, options: BuildSystemPromptOptions): string {
+function buildAgentSystemPrompt(prompt: string, options: BuildSystemPromptOptions, explicitOnlySkills: string[] = []): string {
   const sections = [prompt];
   if (options.appendSystemPrompt) sections.push(options.appendSystemPrompt);
+  if (options.contextFiles?.length) {
+    const escape = (value: string) => value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    sections.push(`<project_context>\n${options.contextFiles.map((file) => `<project_instructions path="${escape(file.path)}">\n${file.content}\n</project_instructions>`).join("\n\n")}\n</project_context>`);
+  }
   const readTool = (["read", "bash"] as const).find((tool) => (options.selectedTools ?? ["read", "bash", "edit", "write"]).includes(tool));
-  if (readTool && options.skills?.length) sections.push(formatSkillsForPrompt(options.skills, readTool));
+  const explicit = new Set(explicitOnlySkills.map(normalizedPath));
+  if (readTool && options.skills?.length) sections.push(formatSkillsForPrompt(options.skills.map((skill) => explicit.has(normalizedPath(skill.filePath)) || explicit.has(normalizedPath(skill.baseDir)) ? { ...skill, disableModelInvocation: true } : skill), readTool));
   return sections.join("\n\n");
 }
 
@@ -259,7 +264,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const restoredAgentName = (name: string | undefined) => !name || (name === "default" && !findAgent("default")) ? "general" : name;
   const currentSkillPaths = () => [...new Set(currentAgent() ? agentSkills(pi, currentAgent()!).map(normalizedPath) : [])].sort();
   const fastModeModels = () => { const request: { models?: string[] } = {}; pi.events.emit("piop:fast-mode", request); return request.models ?? []; };
-  const fastModeError = (agent: Agent, model: string | undefined) => agent.fastMode === true && (!model || !fastModeModels().includes(model)) ? `Agent "${agent.name}" cannot run because model ${model || "(unset)"} does not support fast mode` : undefined;
+  const fastModeError = (agent: Agent, model: string | undefined) => agent.fastMode === true && (!model || !fastModeModels().includes(model.replace(/--piop-account-\d+(?=\/)/, ""))) ? `Agent "${agent.name}" cannot run because model ${model || "(unset)"} does not support fast mode` : undefined;
   const publish = (ctx: ExtensionContext) => ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: currentAgent()?.name ?? active, locked: false, saved: !!snapshot, unavailable: !currentAgent(), config: { ...config, fastModeModels: fastModeModels() } })}`);
   const saveState = () => pi.appendEntry(STATE_ENTRY, { active, locked, modelOverride, effortOverride, snapshot });
   const reload = async (ctx: ExtensionCommandContext) => {
@@ -338,23 +343,23 @@ export default async function defineAgents(pi: ExtensionAPI) {
     }
 
   };
-  const activate = async (agent: Agent, ctx: ExtensionContext, connectMcp: boolean, persistSnapshot: boolean) => {
+  const activate = async (agent: Agent, ctx: ExtensionContext, connectMcp: boolean, persistSnapshot: boolean, applyFastMode: boolean) => {
     const promptError = await prepareAgentPrompts(agent, persistSnapshot); if (promptError) return promptError;
     try { await extensions.activate(await extensions.prepare(extensionPaths(agent.extensions)), ctx); }
     catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" could not load its piop extensions:\n${error instanceof Error ? error.message : String(error)}`; }
     const toolError = agentToolError(pi, agent, extensions.tools()); if (toolError) { pi.setActiveTools([]); return toolError; }
     const modelError = await configureAgentModel(agent, ctx); if (modelError) return modelError;
     configureAgentEffort(agent);
-    pi.events.emit("piop:fast-mode", { apply: true, enabled: agent.fastMode, ctx });
+    if (applyFastMode) pi.events.emit("piop:fast-mode", { apply: true, enabled: agent.fastMode, ctx });
     pi.setActiveTools([]);
     const tools = new Set([...agent.tools, ...extensions.tools()]);
     const mcpError = await connectAgentMcp(agent, ctx, connectMcp, tools); if (mcpError) return mcpError;
     pi.setActiveTools([...tools]); return undefined;
   };
-  const useAgent = async (name: string, ctx: ExtensionContext, connectMcp: boolean, persistSnapshot = true) => {
+  const useAgent = async (name: string, ctx: ExtensionContext, connectMcp: boolean, persistSnapshot = true, applyFastMode = true) => {
     restore(ctx);
     const agent = currentAgent();
-    activeToolError = agent ? await activate(agent, ctx, connectMcp, persistSnapshot) : `Agent unavailable: "${name}". Select a replacement or general to continue.`;
+    activeToolError = agent ? await activate(agent, ctx, connectMcp, persistSnapshot, applyFastMode) : `Agent unavailable: "${name}". Select a replacement or general to continue.`;
     if (activeToolError) pi.setActiveTools([]);
     publish(ctx);
     return activeToolError;
@@ -398,13 +403,13 @@ export default async function defineAgents(pi: ExtensionAPI) {
   pi.on("resources_discover", () => { const agent = currentAgent(); const skillPaths = agent ? agentSkills(pi, agent) : []; return skillPaths.length ? { skillPaths } : undefined; });
   pi.on("input", async (event, ctx) => {
     if (!locked) { locked = true; saveState(); publish(ctx); }
-    const error = await useAgent(active, ctx, true);
+    const error = await useAgent(active, ctx, true, true, false);
     if (error) { ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error })); ctx.ui.notify(error, "error"); return { action: "handled" }; }
     return { action: "continue" };
   });
   pi.on("before_agent_start", (event, ctx) => {
     const agent = currentAgent(); if (!agent) return;
-    const base = buildAgentSystemPrompt(activeSystemPrompt, event.systemPromptOptions);
+    const base = buildAgentSystemPrompt(activeSystemPrompt, event.systemPromptOptions, desktopList(pi, "explicitOnlySkills"));
     const systemPrompt = activeAgentPrompt.trim() ? `${base}\n\n${activeAgentPrompt}` : base;
     return { systemPrompt: `${systemPrompt}\n\nCurrent working directory ${ctx.cwd.replace(/\\/g, "/")}` };
   });

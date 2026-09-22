@@ -4,7 +4,7 @@ import { basename, extname, isAbsolute, join, relative, resolve, sep } from "nod
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-type Entry = { type?: string; id?: string; parentId?: string | null; message?: Message; customType?: string; data?: { message?: string } };
+type Entry = { type?: string; id?: string; parentId?: string | null; message?: Message; customType?: string; data?: { message?: string; role?: string; text?: string; completed?: boolean } };
 type Message = { role?: string; content?: unknown; stopReason?: string };
 type TraceFile = { path: string; modified: number };
 type CleanMessage = { role: "user" | "assistant"; text: string };
@@ -95,8 +95,11 @@ export function cleanTrace(content: string): CleanMessage[] {
   const resumeMessages = new Set<string>();
   return branch.flatMap((entry): CleanMessage[] => {
     rememberResume(entry, resumeMessages);
+    if (entry.type === "custom" && entry.customType === "piop-voice" && entry.data?.completed === true && (entry.data.role === "user" || entry.data.role === "assistant") && typeof entry.data.text === "string" && entry.data.text.trim()) return [{ role: entry.data.role, text: entry.data.text.trim() }];
     if (entry.type !== "message" || !entry.message) return [];
-    const text = textContent(entry.message.content); if (!text) return [];
+    let text = textContent(entry.message.content);
+    if (entry.message.role === "user") text = text.replace(/^<skill(?:\s[^>]*|)>[\s\S]*?<\/skill>\s*/, "").trim();
+    if (!text) return [];
     if (entry.message.role === "user" && !syntheticUserMessage(text) && !resumeMessages.has(text)) return [{ role: "user", text }];
     if (entry.message.role === "assistant" && entry.message.stopReason !== "toolUse") return [{ role: "assistant", text }];
     return [];

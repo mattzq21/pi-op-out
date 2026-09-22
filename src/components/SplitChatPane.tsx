@@ -3,6 +3,7 @@ import { createComputed, createMemo, createSignal } from "solid-js";
 import { createDependencyEffect, createRef, type StateUpdate } from "../lib/solid";
 
 import { X } from "lucide-solid";
+import { BTW_REQUEST_TITLE } from "../appSupport";
 import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY, encodeAgentValue } from "../lib/agentProtocol";
 import type { NativeTransport } from "../lib/nativeTransport";
 import { SessionRuntimePool, useTurnDiffs } from "../lib/sessionRuntimePool";
@@ -12,7 +13,7 @@ import type { AgentState, AppSettings, ChatMessage, ComposerUpload, DefinedAgent
 import { branchMessages, type PiEntry } from "../lib/messages";
 import { ChatView } from "./ChatView";
 
-interface Props { runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; forkFrom?: string; initialPrompt?: string; onReady?: () => void; onFailed?: (reason: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
+interface Props { uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; forkFrom?: string; initialPrompt?: string; onReady?: () => void; onFailed?: (reason: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
 const initialState = (session: SessionSummary): AgentState => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, pendingMessageCount: 0 });
 
 export function SplitChatPane(componentProps: Props) {
@@ -25,7 +26,8 @@ export function SplitChatPane(componentProps: Props) {
   const updateConnected = (value: boolean) => { connectedRef.current = value; setConnected(value); };
 
   const [definedAgents, setDefinedAgents] = createSignal<DefinedAgentsCapability>();
-  const [uploads, setUploads] = createSignal<ComposerUpload[]>([]);
+  const uploads = () => componentProps.uploadsFor(transport());
+  const setUploads = (update: StateUpdate<ComposerUpload[]>) => componentProps.onUploadsChange(transport(), update);
   const [statuses, setStatuses] = createSignal<Record<string, string>>({});
   const [widgets, setWidgets] = createSignal<Record<string, string[]>>({});
   const [notices, setNotices] = createSignal<Array<{ id: string; title: string; message: string }>>([]);
@@ -81,6 +83,11 @@ export function SplitChatPane(componentProps: Props) {
       };
       const handleExtensionUiRequest = () => {
         const request = event as unknown as ExtensionUiRequest;
+        if (request.method === "input" && request.title === BTW_REQUEST_TITLE) {
+          void capturedTransport.command({ type: "extension_ui_response", id: request.id, cancelled: true }).catch(reportControlError);
+          setControlError("To start /btw from this conversation, select it in the main pane first.");
+          return;
+        }
         const showDialog = () => capturedOnDialogRequest9(request, capturedTransport, `Split: ${capturedSession5.name}`);
         const methods: Record<string, () => void> = {
           setStatus: () => {
@@ -128,7 +135,8 @@ export function SplitChatPane(componentProps: Props) {
         "extension_error": handleExtensionError,
         "message_end": handleMessageEnd,
         "settings_applied": handleSettingsApplied,
-        "disconnected": handleDisconnected
+        "disconnected": handleDisconnected,
+        "connection_restored": handleDisconnected
       };
       if (Object.hasOwn(handlers, event.type)) handlers[event.type]();
     });
@@ -137,7 +145,7 @@ export function SplitChatPane(componentProps: Props) {
   }, () => [transport(), componentProps.forkFrom, componentProps.initialPrompt, session().handleEvent, session().refresh, componentProps.onDialogRequest, componentProps.onDialogTransportClosed, componentProps.onReleaseTransport]);
   createDependencyEffect(() => {
     const capturedConnected = connected(); const capturedTransport = transport(); const capturedSettings0 = componentProps.settings;
- if (!capturedConnected) return; void Promise.all([capturedTransport.command({ type: "set_auto_compaction", enabled: true }), capturedTransport.command({ type: "set_auto_retry", enabled: capturedSettings0.autoRetry })]).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))); }, () => [connected(), componentProps.settings.autoRetry, transport()]);
+ if (!capturedConnected || capturedTransport.currentHostId() !== "local") return; void Promise.all([capturedTransport.command({ type: "set_auto_compaction", enabled: true }), capturedTransport.command({ type: "set_auto_retry", enabled: capturedSettings0.autoRetry })]).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))); }, () => [connected(), componentProps.settings.autoRetry, transport()]);
   const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => { const capturedTransport = transport();
     if (!connectedRef.current) return Promise.reject(new Error("piop is still connecting"));
     if (behavior) { await capturedTransport.command({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...(images.length ? { images } : {}) }); return; }
@@ -148,7 +156,7 @@ export function SplitChatPane(componentProps: Props) {
   const enqueueControl = (action: () => Promise<void>) => { const next = controlQueueRef.current.then(action, action); controlQueueRef.current = next.catch(() => undefined); return next; };
   const branch = async (message: ChatMessage) => {
     const capturedTransport = transport(); const capturedSession = { ...session() }; const capturedRuntimePool0 = componentProps.runtimePool; const capturedSession1 = componentProps.session; const capturedOnSessionChange2 = componentProps.onSessionChange;
- try { if (!message.entryId) throw new Error("Could not find the response to branch from"); const sourcePath = capturedTransport.currentSessionPath(); const index = capturedSession.messages.findIndex((entry) => entry.id === message.id); const nextUser = capturedSession.messages.slice(index + 1).find((entry) => entry.role === "user" && entry.entryId); const result = await capturedTransport.command<{ cancelled?: boolean }>(nextUser ? { type: "fork", entryId: nextUser.entryId } : { type: "clone" }); if (result.cancelled) return; const nextState = await capturedSession.refresh(); capturedRuntimePool0.bind(capturedSession1.hostId ?? "local", nextState.sessionId, capturedTransport); capturedOnSessionChange2({ ...capturedSession1, id: nextState.sessionId, path: nextState.sessionFile || "", name: nextState.sessionName || capturedSession1.name }, capturedTransport); const history = await capturedTransport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }); await capturedRuntimePool0.copySavedDiffs(capturedTransport, sourcePath, capturedTransport.currentSessionPath(), new Set(branchMessages(history.entries, history.leafId).map((entry) => entry.id))); } catch (reason) { reportControlError(reason); } };
+ try { if (!message.entryId) throw new Error("Could not find the response to branch from"); const sourcePath = capturedTransport.currentSessionPath(); const result = await capturedTransport.command<{ cancelled?: boolean }>({ type: "fork_after", entryId: message.entryId }); if (result.cancelled) return; const nextState = await capturedSession.refresh(); capturedRuntimePool0.bind(capturedSession1.hostId ?? "local", nextState.sessionId, capturedTransport); capturedOnSessionChange2({ ...capturedSession1, id: nextState.sessionId, path: nextState.sessionFile || "", name: nextState.sessionName || capturedSession1.name }, capturedTransport); const history = await capturedTransport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }); await capturedRuntimePool0.copySavedDiffs(capturedTransport, sourcePath, capturedTransport.currentSessionPath(), new Set(branchMessages(history.entries, history.leafId).map((entry) => entry.id))); } catch (reason) { reportControlError(reason); } };
   const abort = async () => {
     const capturedTransport = transport();
  await capturedTransport.command({ type: "abort" }); };

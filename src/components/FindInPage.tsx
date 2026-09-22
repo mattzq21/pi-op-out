@@ -128,6 +128,18 @@ export function FindInPage(componentProps: { selector: string; scopeKey: string;
     return () => window.removeEventListener("keydown", onKey, true);
   }, () => [open(), close, move, componentProps.selector, (componentProps.active === undefined ? true : componentProps.active), (componentProps.enabled === undefined ? true : componentProps.enabled)]);
 
+  createDependencyEffect(() => {
+    const root = document.querySelector<HTMLElement>(componentProps.selector);
+    if (!root) return;
+    const searching = open() && componentProps.enabled !== false;
+    root.toggleAttribute("data-find-open", searching);
+    root.dispatchEvent(new CustomEvent("piop:find-open", { detail: searching }));
+    return () => {
+      root.removeAttribute("data-find-open");
+      root.dispatchEvent(new CustomEvent("piop:find-open", { detail: false }));
+    };
+  }, () => [open(), componentProps.enabled, componentProps.selector, componentProps.scopeKey]);
+
   createDependencyEffect(() => { const capturedOpen = open(); const capturedQuery = query(); const capturedEnabled0 = componentProps.enabled; const capturedSelector1 = componentProps.selector;
     if (!capturedOpen || !(capturedEnabled0 === undefined ? true : capturedEnabled0)) { setMatches([]); setBoxes([]); return; }
     const root = document.querySelector<HTMLElement>(capturedSelector1);

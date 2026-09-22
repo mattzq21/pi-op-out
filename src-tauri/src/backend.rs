@@ -129,6 +129,7 @@ const WORKTREE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 struct PiRuntime {
     worktree_setups: Mutex<HashMap<String, Arc<AtomicBool>>>,
     ephemeral_sessions: Mutex<HashMap<String, EphemeralSession>>,
+    ephemeral_keys: Mutex<HashMap<String, String>>,
     processes: Arc<Mutex<HashMap<String, PiProcess>>>,
     daemons: Mutex<HashMap<String, Arc<daemon::Daemon>>>,
     lifecycle: Mutex<()>,
@@ -234,12 +235,15 @@ fn hash_claim_key(bytes: &[u8]) -> String {
     digest.iter().take(20).fold(String::new(), |mut out, byte| { let _ = write!(out, "{byte:02x}"); out })
 }
 
+mod process_cleanup;
+use process_cleanup::stop_message_worker;
+
 struct BrokerWriter { child: Arc<Mutex<Child>>, _claim: BusyAgent }
 
 impl Drop for BrokerWriter {
     fn drop(&mut self) {
         let mut child = self.child.lock().unwrap_or_else(|error| error.into_inner());
-        if !matches!(child.try_wait(), Ok(Some(_))) { let _ = child.kill(); let _ = child.wait(); }
+        stop_message_worker(&mut child);
     }
 }
 
@@ -784,7 +788,7 @@ fn prepare_mcp_bridge() -> Result<PathBuf, String> {
 }
 
 fn runtime_settings(settings: &AppSettings) -> Value {
-    json!({ "tools": enabled_tool_names(settings), "skills": settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|skill| skill.get("path").and_then(Value::as_str)).collect::<Vec<_>>(), "contextWindowCap": settings.context_window_cap, "contextWindowCapEnabled": settings.context_window_cap_enabled })
+    json!({ "tools": enabled_tool_names(settings), "skills": settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|skill| skill.get("path").and_then(Value::as_str)).collect::<Vec<_>>(), "explicitOnlySkills": settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false) && skill.get("userInvokedOnly").and_then(Value::as_bool).unwrap_or(false)).filter_map(|skill| skill.get("path").and_then(Value::as_str)).collect::<Vec<_>>(), "contextWindowCap": settings.context_window_cap, "contextWindowCapEnabled": settings.context_window_cap_enabled })
 }
 
 fn prepare_rtk_extension() -> Result<PathBuf, String> {
@@ -1905,6 +1909,10 @@ fn remove_git_worktree_blocking(app: AppHandle, cwd: String, host_id: Option<Str
     let session_paths = sessions_on_host(&settings, &session_index, &host_id)?.into_iter().map(|session| session.cwd).collect::<Vec<_>>();
     validate_worktree_unused(&settings, &host_id, &target.path, &session_paths, &runtime, &terminals)?;
     run_worktree_scripts(&settings, &target.source, &target.path, &host_id, &AtomicBool::new(false), WorktreeScriptPhase::Cleanup)?;
+    let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Session lifecycle lock was poisoned")?;
+    let target = inspect_worktree_removal(&settings, &cwd, &host_id)?;
+    let session_paths = sessions_on_host(&settings, &session_index, &host_id)?.into_iter().map(|session| session.cwd).collect::<Vec<_>>();
+    validate_worktree_unused(&settings, &host_id, &target.path, &session_paths, &runtime, &terminals)?;
     remove_worktree_target(&settings, &host_id, target, delete_branch)
 }
 
@@ -1925,6 +1933,15 @@ fn validate_worktree_unused(settings: &AppSettings, host_id: &str, target: &str,
 }
 
 fn remove_worktree_target(settings: &AppSettings, host_id: &str, target: WorktreeRemovalTarget, delete_branch: bool) -> Result<GitWorktreeRemoval, String> {
+    let script = include_str!("../resources/preserve-archive-checkpoints.cjs");
+    let mut preserve = if host_id == "local" {
+        let mut command = node_command(); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", script, &target.path]); command
+    } else {
+        let mut command = ssh(remote_host(settings, host_id)?);
+        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), shell_quote(&target.path)))); command
+    };
+    let preserved = run_limited(&mut preserve, 64 * 1024, "Could not preserve archived checkpoints")?;
+    if !preserved.status.success() { return Err(format!("Could not preserve archived checkpoints: {}", String::from_utf8_lossy(&preserved.stderr).trim())); }
     let removed = if host_id == "local" {
         run_limited(Command::new("git").arg("-C").arg(&target.source).args(["worktree", "remove"]).arg(&target.path), 64 * 1024, "Could not remove Git worktree")?
     } else {
@@ -2403,11 +2420,13 @@ fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, 
     let host_id = host_id.unwrap_or_else(|| "local".into());
     if runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(&runtime_id).is_some_and(|process| process.daemon.alive.load(Ordering::SeqCst) && process.daemon.matches_connection(&settings, &host_id)) { return Ok(json!({"attached":true})); }
     let session_id = session_id.or_else(|| (session_path.is_none() && fork_path.is_none()).then(|| Uuid::new_v4().to_string()));
-    let saved_ephemeral = runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.get(&runtime_id).cloned();
+    let ephemeral_key = format!("{}:{}:{}", host_id, client_id, runtime_id.rsplit(':').next().unwrap_or(&runtime_id));
+    let saved_ephemeral = runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.get(&ephemeral_key).cloned();
     let ephemeral = no_session.unwrap_or(false) || saved_ephemeral.is_some();
     let session_path = if ephemeral { None } else { session_path.as_deref().map(|path| desktop_session_file(&settings, &host_id, path)).transpose()? };
     let fork_path = fork_path.as_deref().map(|path| desktop_session_file(&settings, &host_id, path)).transpose()?;
-    let ephemeral_path = prepare_ephemeral_path(&runtime, &runtime_id, ephemeral, saved_ephemeral, fork_path.as_deref(), |source_path| create_ephemeral_fork(&settings, &host_id, source_path))?;
+    let ephemeral_path = prepare_ephemeral_path(&runtime, &ephemeral_key, ephemeral, saved_ephemeral, fork_path.as_deref(), |source_path| create_ephemeral_fork(&settings, &host_id, source_path))?;
+    if ephemeral_path.is_some() { runtime.ephemeral_keys.lock().map_err(|_| "Side conversation lock was poisoned")?.insert(runtime_id.clone(), ephemeral_key); }
     let claim_id = if ephemeral { None } else if let Some(id) = session_id.as_deref() { Some(id.to_string()) } else if let Some(path) = session_path.as_deref() {
         Some(session_identity(&settings, &host_id, path)?)
     } else { None };
@@ -2420,7 +2439,7 @@ fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, 
     let result = daemon.request(json!({"type":"attach","clientId":client_id,"runtimeId":runtime_id,"sessionKey":claim_id.unwrap_or_else(|| runtime_id.clone()),"spec":daemon::spec(&command),"timeout":command_timeout,"ephemeral":ephemeral,"cwd":cwd,"presence":presence.unwrap_or_else(|| json!({}))}))?;
     let blank_cleanup = BlankSessionCleanup { path: session_path.clone(), id: session_id.clone(), host: if host_id == "local" { None } else { Some(remote_host(&settings, &host_id)?.clone()) }, submitted: ephemeral };
     runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { daemon, window_label: owner, blank_cleanup });
-    runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id, AgentAddress { host_id, session_id, session_path, worktree: None, presence_id: None, working: false, messageable: result["owned"].as_bool() == Some(false) });
+    runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id, AgentAddress { host_id, session_id, session_path, worktree: cwd, presence_id: None, working: false, messageable: result["owned"].as_bool() == Some(false) });
     Ok(result)
 }
 
@@ -2437,7 +2456,8 @@ fn detach_pi_with(runtime: &PiRuntime, runtime_id: &str, discard_blank: bool, pr
             stopped = true;
             process.blank_cleanup.submitted |= result["submitted"].as_bool().unwrap_or(false);
             if discard_blank { cleanup_blank_session(process.blank_cleanup); }
-            if let Some(session) = runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.remove(runtime_id) { remove_ephemeral_session(session); }
+            let key = runtime.ephemeral_keys.lock().map_err(|_| "Side conversation lock was poisoned")?.remove(runtime_id).unwrap_or_else(|| runtime_id.to_string());
+            if let Some(session) = runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.remove(&key) { remove_ephemeral_session(session); }
         }
     }
     runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.remove(runtime_id);
@@ -2524,6 +2544,8 @@ fn start_terminal(app: AppHandle, window: tauri::WebviewWindow, runtime: State<T
 }
 
 fn start_terminal_for_owner(app: AppHandle, owner: String, runtime: State<TerminalRuntime>, terminal_id: String, session_key: String, cwd: String, cols: u16, rows: u16, host_id: Option<String>) -> Result<(), String> {
+    let session_runtime = app.state::<PiRuntime>();
+    let _lifecycle = session_runtime.lifecycle.lock().map_err(|_| "Session lifecycle lock was poisoned")?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let event_app = app.clone();
     start_terminal_with(&runtime, terminal_id, session_key, cwd.clone(), cols, rows, host_id.clone(), owner,
@@ -2532,7 +2554,7 @@ fn start_terminal_for_owner(app: AppHandle, owner: String, runtime: State<Termin
             if !working_dir.is_dir() { return Err(format!("Terminal working directory does not exist: {}", working_dir.display())); }
             let mut command = CommandBuilder::new("/bin/bash"); command.cwd(working_dir); Ok(command)
         } else {
-            let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+            let settings = load_app_settings(app.clone())?; let host = remote_host(&settings, &host_id)?;
             let mut command = CommandBuilder::new("ssh");
             if let Some(config) = user_ssh_config() { command.arg("-F"); command.arg(config); }
             command.args(["-tt", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=5", &host.target, &format!("cd {} && exec \"${{SHELL:-/bin/bash}}\" -l", shell_quote(&cwd))]); Ok(command)
@@ -2895,7 +2917,7 @@ fn remove_temporary_chat(app: AppHandle, path: String, host_id: String) -> Resul
 
 fn remove_remote_temporary_chat(path: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
     temporary_chat_id(path).ok_or("Refusing to remove a directory not created as a temporary chat")?;
-    let script = format!("candidate={}; root=\"$HOME/{STORAGE_DIRECTORY}/tmp\"; [ \"$(dirname -- \"$candidate\")\" = \"$root\" ] && [ ! -L \"$HOME/{STORAGE_DIRECTORY}\" ] && [ ! -L \"$root\" ] && [ ! -L \"$candidate\" ] && {{ [ ! -e \"$candidate\" ] || {{ [ -d \"$candidate\" ] && rm -rf -- \"$candidate\"; }}; }}", shell_quote(path));
+    let script = format!("candidate={}; root=\"$HOME/{STORAGE_DIRECTORY}/tmp\"; [ \"$(dirname -- \"$candidate\")\" = \"$root\" ] && [ ! -L \"$HOME/{STORAGE_DIRECTORY}\" ] && [ ! -L \"$root\" ] && [ ! -L \"$candidate\" ] && {{ [ ! -e \"$candidate\" ] || {{ [ -d \"$candidate\" ] && node -e 'try {{ require(\"node:fs\").rmdirSync(process.argv[1]); }} catch (error) {{ if (![\"ENOTEMPTY\", \"EEXIST\", \"ENOENT\"].includes(error.code)) throw error; }}' \"$candidate\"; }}; }}", shell_quote(path));
     let output = command(script).output().map_err(|error| format!("Could not remove temporary chat directory on {host_name}: {error}"))?;
     if !output.status.success() { return Err(format!("Could not remove temporary chat directory on {host_name}: {}", String::from_utf8_lossy(&output.stderr).trim())); }
     Ok(())
@@ -2914,8 +2936,11 @@ fn remove_local_temporary_chat(home: &Path, path: &str) -> Result<(), String> {
             Err(error) => return Err(format!("Could not inspect temporary chat directory: {error}")),
         }
     }
-    fs::remove_dir_all(candidate).map_err(|error| format!("Could not remove temporary chat directory: {error}"))?;
-    Ok(())
+    match fs::remove_dir(candidate) {
+        Ok(()) => Ok(()),
+        Err(error) if matches!(error.kind(), std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::NotFound) => Ok(()),
+        Err(error) => Err(format!("Could not remove temporary chat directory: {error}")),
+    }
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
@@ -3187,11 +3212,15 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
         let settings = load_app_settings(app.clone())?; let host = remote_host(&settings, &host_id)?;
         archive_remote_session(&session_path, |script| { let mut command = ssh(host); command.arg(script); command })?;
         let _ = stop_terminals(&runtime, &terminal_ids);
-        return mutation.finish();
+        mutation.finish()?;
+        let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":session_path}));
+        return Ok(());
     }
     archive_local_session(&home_dir()?, &session_path)?;
     let _ = stop_terminals(&runtime, &terminal_ids);
-    mutation.finish()
+    mutation.finish()?;
+    let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":session_path}));
+    Ok(())
 }
 
 fn archive_remote_session(session_path: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
@@ -3230,12 +3259,14 @@ fn archive_local_session(home: &Path, session_path: &str) -> Result<(), String> 
 fn delete_stored_session(app: AppHandle, runtime: &PiRuntime, session_path: String, host_id: Option<String>, archived: bool, client_id: String) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let mutation = conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, archived, "delete")?;
-    let settings = load_app_settings(app)?;
+    let settings = load_app_settings(app.clone())?;
     let path = if archived { archived_session_file(&settings, &host_id, &session_path)? } else { desktop_session_file(&settings, &host_id, &session_path)? };
     let local_root = if archived { home_dir()?.join(STORAGE_DIRECTORY).join("archived") } else { desktop_sessions_dir(&home_dir()?) };
     let host = if host_id == "local" { None } else { Some(remote_host(&settings, &host_id)?.clone()) };
     delete_session_files(runtime, &path, &host_id, host.as_ref(), &local_root, archived)?;
-    mutation.finish()
+    mutation.finish()?;
+    let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":session_path}));
+    Ok(())
 }
 
 fn delete_session_files(runtime: &PiRuntime, path: &str, host_id: &str, host: Option<&RemoteHost>, local_root: &Path, archived: bool) -> Result<(), String> {
@@ -3279,10 +3310,12 @@ fn delete_archived_session(app: AppHandle, runtime: State<PiRuntime>, session_pa
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 fn relocate_session(app: AppHandle, session_path: String, cwd: String, host_id: Option<String>, client_id: String) -> Result<(), String> {
+    let runtime = app.state::<PiRuntime>();
+    let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let mutation = conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, false, "relocate")?;
     if host_id != "local" {
-        let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+        let settings = load_app_settings(app.clone())?; let host = remote_host(&settings, &host_id)?;
         relocate_remote_session(&session_path, &cwd, &host.name, |script| { let mut command = ssh(host); command.arg(remote_login_command(&script)); command })?;
         return mutation.finish();
     }
@@ -3356,12 +3389,12 @@ fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &Ses
     let spawned = command.spawn();
     let child = match spawned { Ok(child) => Arc::new(Mutex::new(child)), Err(error) => { let _ = fs::remove_dir_all(&output_root); return Err(format!("Could not message agent: {error}")); } };
     let _writer = BrokerWriter { child: child.clone(), _claim };
-    match broker.jobs.lock() { Ok(mut jobs) => { if broker.closing.load(Ordering::SeqCst) { if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); } return Err("App is closing".into()); } jobs.insert(request_id.to_string(), child.clone()); }, Err(_) => { if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); } let _ = fs::remove_dir_all(&output_root); return Err("Broker job lock was poisoned".into()); } }
+    match broker.jobs.lock() { Ok(mut jobs) => { if broker.closing.load(Ordering::SeqCst) { if let Ok(mut child) = child.lock() { stop_message_worker(&mut child); } return Err("App is closing".into()); } jobs.insert(request_id.to_string(), child.clone()); }, Err(_) => { if let Ok(mut child) = child.lock() { stop_message_worker(&mut child); } let _ = fs::remove_dir_all(&output_root); return Err("Broker job lock was poisoned".into()); } }
     let stdin = child.lock().map_err(|_| "Agent process lock was poisoned")?.stdin.take();
     let message = message.to_owned(); thread::spawn(move || { if let Some(mut stdin) = stdin { let _ = stdin.write_all(message.as_bytes()); } });
     let status = loop {
         if broker.cancelled.lock().map_err(|_| "Broker cancellation lock was poisoned")?.contains(request_id) {
-            if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); }
+            if let Ok(mut child) = child.lock() { stop_message_worker(&mut child); }
             break Err("Agent message was cancelled".to_string());
         }
         let status = child.lock().map_err(|_| "Agent process lock was poisoned")?.try_wait().map_err(|error| format!("Could not wait for agent: {error}"))?;
@@ -3369,11 +3402,11 @@ fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &Ses
         let output_bytes = fs::metadata(&stdout_path).map(|metadata| metadata.len()).unwrap_or(0)
             .saturating_add(fs::metadata(&stderr_path).map(|metadata| metadata.len()).unwrap_or(0));
         if output_bytes > MAX_AGENT_OUTPUT_BYTES {
-            if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); }
+            if let Ok(mut child) = child.lock() { stop_message_worker(&mut child); }
             break Err("Agent output exceeded the 16 MiB limit".to_string());
         }
         if Instant::now() >= deadline {
-            if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); }
+            if let Ok(mut child) = child.lock() { stop_message_worker(&mut child); }
             break Err("Agent message timed out after 120 seconds".to_string());
         }
         thread::sleep(Duration::from_millis(25));
@@ -3482,7 +3515,8 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
             cancelled.insert(request_id.to_string()); drop(cancelled);
             #[cfg(not(feature = "desktop"))]
             peers::cancel_message(&app, request_id)?;
-            if let Some(child) = broker.jobs.lock().map_err(|_| "Broker job lock was poisoned")?.get(request_id) { if let Ok(mut child) = child.lock() { let _ = child.kill(); } }
+            let child = broker.jobs.lock().map_err(|_| "Broker job lock was poisoned")?.get(request_id).cloned();
+            if let Some(child) = child { if let Ok(mut child) = child.lock() { stop_message_worker(&mut child); } }
             Ok(json!({"cancelled":true}))
         })(),
         _ => Err("Unknown session broker endpoint".into()),
@@ -3597,7 +3631,7 @@ fn shutdown_backend(app: &AppHandle) {
     let broker = app.state::<BrokerRuntime>();
     broker.closing.store(true, Ordering::SeqCst);
     let jobs = broker.jobs.lock().map(|mut jobs| jobs.drain().map(|(_, child)| child).collect::<Vec<_>>()).unwrap_or_default();
-    for child in jobs { if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); } }
+    for child in jobs { if let Ok(mut child) = child.lock() { stop_message_worker(&mut child); } }
     let terminals = app.state::<TerminalRuntime>();
     let ids = terminals.processes.lock().map(|processes| processes.keys().cloned().collect::<Vec<_>>()).unwrap_or_default();
     let _ = stop_terminals(&terminals, &ids);

@@ -243,6 +243,23 @@ export function registerFastModeStatus(pi: ExtensionAPI) {
 
 function registerForkAndForget(pi: ExtensionAPI) {
   const statusKey = "pi-desktop-control-response";
+  pi.registerCommand("pi-desktop-fork-after", {
+    description: "Branch after a completed response",
+    async handler(args, ctx) {
+      let id: string | undefined;
+      try {
+        const request = JSON.parse(args) as { id?: string; entryId?: string };
+        id = request.id;
+        if (!id || ctx.mode !== "rpc" || typeof request.entryId !== "string") throw new Error("Invalid branch request");
+        const fork = await forkConversation(ctx, { entryId: request.entryId }, async () => { throw new Error("Unexpected worktree request"); });
+        const result = await ctx.switchSession(fork.sessionPath);
+        ctx.ui.setStatus(statusKey, `json:${JSON.stringify({ type: "response", id, success: true, data: { cancelled: result.cancelled } })}`);
+      } catch (error) {
+        if (id) ctx.ui.setStatus(statusKey, `json:${JSON.stringify({ type: "response", id, success: false, error: error instanceof Error ? error.message : String(error) })}`);
+        else ctx.ui.notify(String(error), "error");
+      }
+    },
+  });
   const assertAssistantEntry = (ctx: ExtensionContext, entryId: string) => {
     const entry = ctx.sessionManager.getEntry(entryId);
     if (!entry || entry.type !== "message" || entry.message.role !== "assistant") throw new Error("Assistant response not found in this conversation");
@@ -361,6 +378,10 @@ export function registerCatchUp(pi: ExtensionAPI) {
         if (!confirmed) return;
         if (!ctx.isIdle()) throw new Error("Stop or pause the agent before running /catch-up.");
         await assertWorktreeIdle();
+        const untracked = (await git(root, "ls-files", "--others", "-z", "--")).split("\0").filter(Boolean);
+        const targetPaths = (await git(root, "ls-tree", "-r", "--name-only", "-z", commit)).split("\0").filter(Boolean);
+        const collision = untracked.find((file) => targetPaths.some((target) => file === target || file.startsWith(`${target}/`) || target.startsWith(`${file}/`)));
+        if (collision) throw new Error(`Untracked path ${JSON.stringify(collision)} would be overwritten. Move or commit it before catching up.`);
         await git(root, "reset", "--hard", commit);
         report(`Caught up to the main worktree at ${commit.slice(0, 12)}.`);
       } catch (error) {
@@ -459,7 +480,8 @@ async function forkDirectory(cwd: string, options: ForkOptions) {
 
 function forkHistory(ctx: ExtensionContext, entryId?: string) {
   const branch = ctx.sessionManager.getBranch();
-  const complete = (entry: typeof branch[number]) => entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason !== "toolUse" && !entry.message.content.some((part) => part.type === "toolCall");
+  const complete = (entry: typeof branch[number]) => entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason !== "toolUse" && !entry.message.content.some((part) => part.type === "toolCall")
+    || entry.type === "custom" && entry.customType === "piop-voice" && (entry.data as { role?: string; completed?: boolean })?.role === "assistant" && (entry.data as { completed?: boolean }).completed === true;
   const entry = entryId ? branch.find((entry) => entry.id === entryId) : [...branch].reverse().find(complete);
   if (entryId && (!entry || !complete(entry))) throw new Error("entryId must identify a completed assistant response on the current branch");
   if (!entry) return [];

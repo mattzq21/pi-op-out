@@ -19,22 +19,33 @@ pub(crate) struct Connection {
     sequence: AtomicU64,
     outgoing: async_mpsc::UnboundedSender<Message>,
     pending: Mutex<HashMap<u64, mpsc::Sender<Result<Value, String>>>>,
+    terminals: Mutex<std::collections::HashSet<String>>,
 }
 
 impl Connection {
     pub(crate) fn invoke(&self, command: &str, args: Value) -> Result<Value, String> {
         if !self.alive.load(Ordering::SeqCst) { return Err("Disconnected from the Piop daemon. Reconnect before retrying.".into()); }
+        let terminal = args["terminalId"].as_str().map(str::to_owned);
         let id = self.sequence.fetch_add(1, Ordering::SeqCst);
+        let packet = json!({"id":id,"command":command,"args":args}).to_string();
+        if packet.len() > 32 * 1024 * 1024 { return Err("This message exceeds the host's 32 MiB request limit. Remove an attachment or shorten the message.".into()); }
+        if command == "start_terminal" {
+            let mut terminals = self.terminals.lock().map_err(|_| "Terminal registry unavailable")?;
+            if !self.alive.load(Ordering::SeqCst) { return Err("Disconnected from the Piop daemon".into()); }
+            if let Some(id) = &terminal { terminals.insert(id.clone()); }
+        }
         let (sender, receiver) = mpsc::channel();
         {
             let mut pending = self.pending.lock().map_err(|_| "Daemon requests unavailable")?;
             if !self.alive.load(Ordering::SeqCst) { return Err("Disconnected from the Piop daemon".into()); }
             pending.insert(id, sender);
         }
-        let packet = json!({"id":id,"command":command,"args":args});
-        let result = self.outgoing.send(Message::Text(packet.to_string().into())).map_err(|_| "Disconnected from the Piop daemon".to_string())
+        let result = self.outgoing.send(Message::Text(packet.into())).map_err(|_| "Disconnected from the Piop daemon".to_string())
             .and_then(|_| receiver.recv_timeout(Duration::from_secs(660)).map_err(|_| "Daemon request interrupted or timed out; it may have completed. Refresh before retrying.".to_string())?);
         if let Ok(mut pending) = self.pending.lock() { pending.remove(&id); }
+        if (command == "close_terminal" && result.is_ok()) || (command == "start_terminal" && result.is_err()) {
+            if let (Some(id), Ok(mut terminals)) = (terminal, self.terminals.lock()) { terminals.remove(&id); }
+        }
         result
     }
 
@@ -51,6 +62,9 @@ impl Connection {
     fn receive(&self, app: &AppHandle, packet: Value) {
         if let Some(event) = packet["event"].as_str() {
             let payload = &packet["payload"];
+            if event == "pi://event" && payload["type"] == "terminal_exit" {
+                if let (Some(id), Ok(mut terminals)) = (payload["terminalId"].as_str(), self.terminals.lock()) { terminals.remove(id); }
+            }
             if event == "pi://voice" && payload["event"]["type"] == "ended" { app.state::<voice::VoiceRuntime>().ended(payload["callId"].as_str().unwrap_or_default()); }
             let _ = app.emit_to(&self.window, event, payload);
         } else if let Some(id) = packet["id"].as_u64() {
@@ -62,6 +76,9 @@ impl Connection {
 
     fn disconnected(&self, app: &AppHandle, reason: &str) {
         self.alive.store(false, Ordering::SeqCst);
+        if let Ok(mut terminals) = self.terminals.lock() {
+            for id in terminals.drain() { let _ = app.emit_to(&self.window, "pi://event", json!({"type":"terminal_exit", "terminalId":id})); }
+        }
         if let Ok(mut pending) = self.pending.lock() { for (_, sender) in pending.drain() { let _ = sender.send(Err(format!("Disconnected from the Piop daemon ({reason}); the command may have completed."))); } }
         let state = app.state::<DesktopDaemon>();
         if let Ok(runtimes) = state.runtimes.lock() {
@@ -79,12 +96,12 @@ impl DesktopDaemon {
         if let Some(connection) = connections.get(window).filter(|connection| connection.alive.load(Ordering::SeqCst)) { return Ok(connection.clone()); }
         let _startup = self.startup.lock().await;
         let socket = match configured_endpoint()? {
-            Some(endpoint) => open(&endpoint).await?,
+            Some(endpoint) => open(&endpoint, None).await?,
             None => local_socket(app).await?,
         };
         if app.get_webview_window(window).is_none() { return Err("The client window was closed".into()); }
         let (outgoing, mut incoming) = async_mpsc::unbounded_channel();
-        let connection = Arc::new(Connection { window: window.into(), alive: AtomicBool::new(true), sequence: AtomicU64::new(1), outgoing, pending: Mutex::new(HashMap::new()) });
+        let connection = Arc::new(Connection { window: window.into(), alive: AtomicBool::new(true), sequence: AtomicU64::new(1), outgoing, pending: Mutex::new(HashMap::new()), terminals: Mutex::new(std::collections::HashSet::new()) });
         connections.insert(window.into(), connection.clone());
         let reader = connection.clone(); let app = app.clone();
         tokio::spawn(async move {
@@ -144,7 +161,7 @@ fn configured_endpoint() -> Result<Option<daemon_endpoint::Endpoint>, String> {
     if !parsed.username().is_empty() || parsed.password().is_some() || parsed.query().is_some() || parsed.fragment().is_some() { return Err("Daemon URL must not contain credentials, a query, or a fragment".into()); }
     Ok(Some(daemon_endpoint::Endpoint { url, token, protocol: 1 }))
 }
-async fn open(endpoint: &daemon_endpoint::Endpoint) -> Result<Socket, String> {
+async fn open(endpoint: &daemon_endpoint::Endpoint, expected_build: Option<&str>) -> Result<Socket, String> {
     if endpoint.protocol != 1 || endpoint.token.len() < 32 { return Err("Invalid Piop daemon connection configuration".into()); }
     tokio::time::timeout(Duration::from_secs(5), async {
         let config = WebSocketConfig::default().max_message_size(Some(MAX_DAEMON_RESPONSE)).max_frame_size(Some(MAX_DAEMON_RESPONSE));
@@ -153,12 +170,22 @@ async fn open(endpoint: &daemon_endpoint::Endpoint) -> Result<Socket, String> {
         let message = socket.next().await.ok_or("Piop daemon rejected the connection")?.map_err(|_| "Piop daemon rejected the connection")?;
         let reply: Value = serde_json::from_str(message.to_text().map_err(|_| "Invalid daemon handshake")?).map_err(|_| "Invalid daemon handshake")?;
         if reply["type"] != "ready" || reply["backend"] != "daemon" || reply["protocol"] != 1 { return Err("Incompatible Piop daemon; restart it after upgrading".into()); }
+        if expected_build.is_some_and(|expected| reply["buildId"].as_str() != Some(expected)) {
+            return Err("Piop background service needs restarting after this update. Finish running conversations, stop piop-daemon, then reconnect.".into());
+        }
         Ok(socket)
     }).await.map_err(|_| "Piop daemon connection timed out".to_string())?
 }
 async fn local_socket(app: &AppHandle) -> Result<Socket, String> {
-    if let Ok(endpoint) = daemon_endpoint::read() { if let Ok(socket) = open(&endpoint).await { return Ok(socket); } }
     let executable = daemon_executable(app)?;
+    let build_id = daemon_endpoint::executable_identity(&executable)?;
+    if let Ok(endpoint) = daemon_endpoint::read() {
+        match open(&endpoint, Some(&build_id)).await {
+            Ok(socket) => return Ok(socket),
+            Err(error) if error.starts_with("Piop background service needs restarting") => return Err(error),
+            Err(_) => {},
+        }
+    }
     let directory = daemon_endpoint::directory()?;
     ensure_private_dir(&directory)?;
     let log_path = directory.join("daemon.log");
@@ -180,7 +207,7 @@ async fn local_socket(app: &AppHandle) -> Result<Socket, String> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     while tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        if let Ok(endpoint) = daemon_endpoint::read() { if let Ok(Ok(socket)) = tokio::time::timeout_at(deadline, open(&endpoint)).await { return Ok(socket); } }
+        if let Ok(endpoint) = daemon_endpoint::read() { if let Ok(Ok(socket)) = tokio::time::timeout_at(deadline, open(&endpoint, Some(&build_id))).await { return Ok(socket); } }
     }
     Err(format!("Piop daemon did not start. See {}", log_path.display()))
 }

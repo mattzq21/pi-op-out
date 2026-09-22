@@ -70,7 +70,7 @@ function expandSkillReference(value: string, commands: SlashCommand[]) {
   const reference = /(^|[^a-zA-Z0-9_$])\$([a-zA-Z0-9][a-zA-Z0-9_-]*)\b/g;
   let primary: string | undefined;
   let rest = value;
-  // Expand every known $reference; the first known skill becomes the command prefix.
+  // Invoke the first skill and preserve the rest of the user's references.
   for (const match of [...value.matchAll(reference)]) {
     const name = skills.get(match[2].toLowerCase());
     if (!name || match.index === undefined) continue;
@@ -78,9 +78,10 @@ function expandSkillReference(value: string, commands: SlashCommand[]) {
     const token = match[0].slice(match[1].length);
     const at = rest.indexOf(token);
     if (at >= 0) rest = rest.slice(0, at) + rest.slice(at + token.length);
+    break;
   }
   if (!primary) return value;
-  rest = rest.replace(/\s+/g, " ").trim();
+  rest = rest.trim();
   return `/skill:${primary}${rest ? ` ${rest}` : ""}`;
 }
 const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((resolve, reject) => {
@@ -545,7 +546,7 @@ function ContainedPicker(props: { label: string; selectedLabel?: string; value: 
     setActiveIndex(next); optionRefs.current[next]?.focus();
   };
   return <div ref={element => { root.current = element; }} class="composer-picker" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close(); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); trigger.current?.focus(); } else if (menuStyle() && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); move(event.key === "ArrowDown" ? 1 : -1); } }}>
-    <button ref={element => { trigger.current = element; }} type="button" class="select-control composer-picker-trigger" aria-label={picker().label} aria-haspopup="listbox" aria-expanded={Boolean(menuStyle())} data-value={picker().value} data-options={picker().options.map((option) => option.value).join(" ")} disabled={picker().disabled} onClick={toggle}>{selectedOption()?.label || picker().selectedLabel || picker().label}</button>
+    <button ref={element => { trigger.current = element; }} type="button" class="select-control composer-picker-trigger" aria-label={picker().label} aria-haspopup="listbox" aria-expanded={Boolean(menuStyle())} data-value={picker().value} data-options={picker().options.map((option) => option.value).join(" ")} disabled={picker().disabled} onClick={toggle}>{picker().selectedLabel ?? selectedOption()?.label ?? picker().label}</button>
     {menuStyle() && <div class={`composer-picker-menu${picker().centered ? " centered" : ""}${picker().compact ? " compact" : ""}`} role="listbox" aria-label={`${picker().label} options`} style={(menuStyle())!}>{picker().options.length === 0 && <div class="empty-small">No options available</div>}{<Key each={picker().options} by={(option) => `${option.detail ?? picker().label}:${option.value}`}>{(option, index) => <button ref={(element) => { optionRefs.current[index()] = element; }}  type="button" role="option" aria-selected={option().value === picker().value} tabIndex={index() === activeIndex() ? 0 : -1} data-value={option().value} disabled={picker().disabled || option().disabled} onFocus={() => setActiveIndex(index())} onClick={() => { if (picker().disabled || optionChosenRef.current) return; optionChosenRef.current = true; picker().onChange(option().value); close(); trigger.current?.focus(); }}><span>{option().label}</span>{option().detail && <small>{option().detail}</small>}</button>}</Key>}</div>}
   </div>;
 }

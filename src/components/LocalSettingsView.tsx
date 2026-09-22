@@ -49,11 +49,11 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
     const listeners = [
       listen<{ hostId: string }>("pi://provider-auth-changed", ({ payload }) => { if (!cancelled && payload.hostId === capturedHostId) setRevision((value) => value + 1); }),
       listen("pi://settings-changed", () => { if (!cancelled && capturedHostId === "local") setRevision((value) => value + 1); }),
+      listen<{ hostId: string }>("pi://host-settings-changed", ({ payload }) => { if (!cancelled && payload.hostId === capturedHostId) setRevision((value) => value + 1); }),
     ];
     return () => { cancelled = true; for (const listener of listeners) void listener.then((stop) => stop()); };
   }, () => [hostId()]);
   createDependencyEffect(() => { const capturedHostId = hostId(); const capturedTarget0 = componentProps.target;
-    if (capturedTarget0 === "client") return;
     let cancelled = false;
     const reader = new NativeTransport({ hostId: capturedHostId, cwd: "~" });
     let config: AgentConfig | undefined;
@@ -79,7 +79,8 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
           reader.command<{ models: Model[] }>({ type: "get_available_models" }),
           reader.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }),
         ]);
-        if (!config) throw new Error("Agent definitions are unavailable");
+        if (!config && capturedTarget0 !== "client") throw new Error("Agent definitions are unavailable");
+        config ??= { agents: [] };
         if (!cancelled) setResources({ config, models: models.models, levels: levels.levels });
       } catch (reason) { if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason)); }
       finally { unsubscribe(); await reader.dispose().catch(() => undefined); }

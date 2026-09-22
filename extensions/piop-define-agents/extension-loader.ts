@@ -168,9 +168,10 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
     const active = current;
     current = group;
     try {
-      for (const handler of group?.handlers.get("session_shutdown") ?? []) await handler({ type: "session_shutdown" }, ctx);
-    } catch (error) {
-      ctx.ui.notify(`piop extension cleanup failed: ${String(error)}`, "error");
+      for (const handler of group?.handlers.get("session_shutdown") ?? []) {
+        try { await handler({ type: "session_shutdown" }, ctx); }
+        catch (error) { ctx.ui.notify(`piop extension cleanup failed: ${String(error)}`, "error"); }
+      }
     } finally { current = active; }
   }
   async function activate(group: Group, ctx: ExtensionContext) {

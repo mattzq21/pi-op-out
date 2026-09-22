@@ -1,21 +1,14 @@
 import { type Accessor } from "solid-js";
 import { createSubscription } from "../lib/solid";
 
-import type { AgentState, AppSettings, ExtensionUiRequest, GitDiffSnapshots, RpcEvent, SessionSummary } from "../types";
+import type { AgentState, AppSettings, ExtensionUiRequest, GitDiffSnapshot, GitDiffSnapshots, RpcEvent, SessionSummary } from "../types";
 import { textOf } from "./content";
-import { branchMessages, type PiEntry } from "./messages";
 import { NativeTransport, type NativeConnectionTarget } from "./nativeTransport";
 import { forgetSession, retainSessionResource } from "./sessionMemory";
-import { mergeDiffSnapshots } from "./turnDiff";
 
 const sessionKey = (hostId: string, sessionId: string) => `${hostId}:${sessionId}`;
 const EMPTY_DIFFS: GitDiffSnapshots = {};
-type DiffBaseline = { cwd: string; hostId: string; tree: Promise<string | null> };
-type DiffState = { snapshots: GitDiffSnapshots; path?: string; load?: { key: string; promise: Promise<GitDiffSnapshots> }; baselines: DiffBaseline[]; captureQueue: Promise<void>; persistence: "session" | "memory" };
-
-function latestAssistantEntry(entries: PiEntry[], leafId: string | null) {
-  return [...branchMessages(entries, leafId)].reverse().find((message) => message.role === "assistant" && (textOf(message.content).trim() || message.stopReason === "aborted" || message.stopReason === "error"));
-}
+type DiffState = { snapshots: GitDiffSnapshots; path?: string; load?: { key: string; promise: Promise<GitDiffSnapshots> }; persistence: "session" | "memory" };
 
 function retainedName(state: AgentState, prompt: string | undefined, previous: SessionSummary | undefined) {
   return state.sessionName || prompt?.slice(0, 60) || previous?.name || "New session";
@@ -41,8 +34,19 @@ export class SessionRuntimePool {
   private liveRevision = 0;
   liveSessionRevision() { return this.liveRevision; }
   private liveSessions = new Map<NativeTransport, SessionSummary>();
+  private removedPaths = new Set<string>();
+  isRemoved(session: SessionSummary) { return this.removedPaths.has(`${session.hostId ?? "local"}:${session.path}`); }
+  removeSummary(hostId: string, path: string) {
+    this.removedPaths.add(`${hostId}:${path}`);
+    for (const [transport, session] of this.liveSessions) if ((session.hostId ?? "local") === hostId && session.path === path) {
+      this.liveSessions.delete(transport);
+      this.retainedTransports.delete(transport);
+    }
+    this.liveRevision += 1; this.notify();
+  }
   liveSessionSummaries() { return [...this.liveSessions.values()]; }
   setLiveSession(transport: NativeTransport, session: SessionSummary) {
+    if (this.isRemoved(session)) return;
     this.liveSessions.set(transport, session);
     this.liveRevision += 1; this.notify();
   }
@@ -57,7 +61,7 @@ export class SessionRuntimePool {
     });
   }
 
-  private diffState(transport: NativeTransport) { let state = this.diffStates.get(transport); if (!state) { state = { snapshots: EMPTY_DIFFS, baselines: [], captureQueue: Promise.resolve(), persistence: "session" }; this.diffStates.set(transport, state); } return state; }
+  private diffState(transport: NativeTransport) { let state = this.diffStates.get(transport); if (!state) { state = { snapshots: EMPTY_DIFFS, persistence: "session" }; this.diffStates.set(transport, state); } return state; }
 
   private loadSavedDiffs(transport: NativeTransport, sessionPath: string) {
     const key = `${transport.currentHostId()}:${sessionPath}`;
@@ -75,46 +79,6 @@ export class SessionRuntimePool {
     state.load = { key, promise }; return promise;
   }
 
-  private discardBaselines(transport: NativeTransport, state: DiffState) {
-    const baselines = state.baselines.splice(0);
-    for (const baseline of baselines) void baseline.tree.then((snapshot) => snapshot ? transport.discardGitTree(snapshot, baseline.hostId) : undefined).catch(() => undefined);
-  }
-
-  private captureTurnStart(transport: NativeTransport) {
-    const cwd = transport.currentCwd(); if (!cwd) return;
-    const state = this.diffState(transport); const hostId = transport.currentHostId();
-    state.baselines.push({ cwd, hostId, tree: transport.captureGitTree(cwd, hostId).catch(() => null) });
-  }
-
-  private captureTurnEnd(transport: NativeTransport) {
-    const diffState = this.diffState(transport); const baseline = diffState.baselines.shift(); if (!baseline) return;
-    const capture = Promise.all([
-      baseline.tree,
-      transport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }),
-      transport.command<{ sessionFile?: string }>({ type: "get_state" }),
-    ]).then(async ([baseTree, history, state]) => {
-      if (!state.sessionFile) { if (baseTree) await transport.discardGitTree(baseTree, baseline.hostId).catch(() => undefined); return undefined; }
-      const gitPatch = baseTree ? await transport.loadGitDiff(baseline.cwd, baseTree, baseline.hostId).catch(async () => { await transport.discardGitTree(baseTree, baseline.hostId).catch(() => undefined); return null; }) : null;
-      const messages = branchMessages(history.entries, history.leafId);
-      const turnStart = messages.map((message) => message.role).lastIndexOf("user");
-      const snapshot = mergeDiffSnapshots(gitPatch, messages.slice(Math.max(0, turnStart)).flatMap((message) => message.fileChanges ?? []), baseline.cwd);
-      const message = latestAssistantEntry(history.entries, history.leafId);
-      return snapshot && message ? { snapshot, messageId: message.id, sessionFile: state.sessionFile } : undefined;
-    });
-    diffState.captureQueue = diffState.captureQueue.then(async () => {
-      const result = await capture; if (!result) return;
-      const key = `${baseline.hostId}:${result.sessionFile}`;
-      const saved = diffState.persistence === "memory"
-        ? await (diffState.load?.promise ?? Promise.resolve(diffState.snapshots))
-        : diffState.path === key ? diffState.snapshots : await this.loadSavedDiffs(transport, result.sessionFile);
-      const previous = saved; const snapshots = { ...saved, [result.messageId]: result.snapshot };
-      diffState.snapshots = snapshots; diffState.path = key; diffState.load = { key, promise: Promise.resolve(snapshots) }; this.retainDiffs(transport, diffState); this.notify();
-      if (diffState.persistence === "memory") return;
-      try { await transport.saveGitDiffs(result.sessionFile, snapshots, baseline.hostId); }
-      catch (reason) { diffState.snapshots = previous; diffState.load = { key, promise: Promise.resolve(previous) }; this.retainDiffs(transport, diffState); this.notify(); this.errorHandler?.(`Could not save project changes: ${reason instanceof Error ? reason.message : String(reason)}`); }
-    }).catch(async () => { const snapshot = await baseline.tree.catch(() => null); if (snapshot) await transport.discardGitTree(snapshot, baseline.hostId).catch(() => undefined); });
-  }
-
   private publishSessionStates() {
     const running = new Set([...this.sessions].filter(([, transport]) => this.runningTransports.has(transport)).map(([key]) => key));
     const unseen = new Set([...this.sessions].filter(([, transport]) => this.unseenTransports.has(transport)).map(([key]) => key));
@@ -130,6 +94,7 @@ export class SessionRuntimePool {
     this.retainedTransports.add(transport);
     void transport.command<import("../types").AgentState>({ type: "get_state" }).then((state) => {
       if (!state.sessionId || !this.transports.has(transport)) return;
+      if (state.sessionFile && this.removedPaths.has(`${transport.currentHostId()}:${state.sessionFile}`)) return;
       this.bind(transport.currentHostId(), state.sessionId, transport);
       const cwd = transport.currentCwd() || "";
       const previous = this.liveSessions.get(transport);
@@ -160,9 +125,15 @@ export class SessionRuntimePool {
   }
 
   private captureDiffEvent(transport: NativeTransport, event: RpcEvent) {
-    if (this.diffState(transport).persistence === "memory") {
-      if (event.type === "agent_start") this.captureTurnStart(transport);
-      if (event.type === "agent_end" || event.type === "agent_settled") this.captureTurnEnd(transport);
+    const state = this.diffState(transport);
+    if (state.persistence === "memory" && event.type === "turn_diff" && event.hostId === transport.currentHostId() && event.sessionPath === transport.currentSessionPath() && typeof event.messageId === "string" && event.snapshot) {
+      const messageId = event.messageId;
+      const snapshot = event.snapshot as GitDiffSnapshot;
+      void (state.load?.promise ?? Promise.resolve()).then(() => {
+        if (!this.transports.has(transport) || event.sessionPath !== transport.currentSessionPath()) return;
+        state.snapshots = { ...state.snapshots, [messageId]: snapshot };
+        this.retainDiffs(transport, state); this.notify();
+      });
     }
     if (event.type === "diffs_changed" && event.hostId === transport.currentHostId() && event.sessionPath === transport.currentSessionPath()) {
       this.diffState(transport).load = undefined;
@@ -174,7 +145,7 @@ export class SessionRuntimePool {
     if (event.type === "runtime_presence") { if (event.isStreaming) this.runningTransports.add(transport); else this.runningTransports.delete(transport); }
     if (event.type === "agent_start" || event.type === "message_start") { this.runningTransports.add(transport); this.unseenTransports.delete(transport); }
     if (event.type === "agent_settled") { this.runningTransports.delete(transport); if (transport !== this.activeTransport) this.unseenTransports.add(transport); }
-    if (event.type === "disconnected") { this.runningTransports.delete(transport); this.discardBaselines(transport, this.diffState(transport)); }
+    if (event.type === "disconnected") { this.runningTransports.delete(transport); }
   }
 
   create(target?: NativeConnectionTarget) {
@@ -252,7 +223,7 @@ export class SessionRuntimePool {
     if (transport) await this.release(transport);
   }
 
-  async release(transport: NativeTransport) { if (!this.transports.has(transport)) return; forgetSession(transport); for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key); const diffState = this.diffStates.get(transport); if (diffState) this.discardBaselines(transport, diffState); this.transports.delete(transport); this.retainedTransports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport); this.interactiveTransports.delete(transport); this.diffStates.delete(transport); if (this.liveSessions.delete(transport)) { this.liveRevision += 1; this.notify(); } this.publishSessionStates(); await transport.dispose(); }
+  async release(transport: NativeTransport) { if (!this.transports.has(transport)) return; forgetSession(transport); for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key); this.transports.delete(transport); this.retainedTransports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport); this.interactiveTransports.delete(transport); this.diffStates.delete(transport); if (this.liveSessions.delete(transport)) { this.liveRevision += 1; this.notify(); } this.publishSessionStates(); await transport.dispose(); }
 
   subscribe(listener: () => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   runningSessions() { return this.runningSessionKeys; }

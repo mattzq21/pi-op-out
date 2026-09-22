@@ -17,7 +17,7 @@ pub(super) fn start(app: AppHandle) -> Result<(), String> {
     listener.set_nonblocking(true).map_err(|error| error.to_string())?;
     daemon_endpoint::publish(listener.local_addr().map_err(|error| error.to_string())?, token.clone())?;
     let (events, _) = broadcast::channel::<Value>(1024);
-    for name in ["pi://event", "pi://stderr", "pi://settings-changed", "pi://groups-changed", "pi://voice", "pi://dictation", "pi://sessions-changed", "pi://daemon-error", "pi://provider-auth-changed"] {
+    for name in ["pi://event", "pi://stderr", "pi://settings-changed", "pi://groups-changed", "pi://voice", "pi://dictation", "pi://sessions-changed", "pi://daemon-error", "pi://provider-auth-changed", "pi://session-removed", "pi://host-settings-changed"] {
         let events = events.clone();
         app.listen_any(name, move |event| {
             if let Ok(payload) = serde_json::from_str::<Value>(event.payload()) {
@@ -71,7 +71,7 @@ async fn serve_connection<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpi
 
 async fn serve_connection_mode<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(app: AppHandle, mut socket: tokio_tungstenite::WebSocketStream<S>, events: broadcast::Sender<Value>, jobs: Arc<Semaphore>, peer: bool) -> Result<(), String> {
     let mut events = events.subscribe();
-    socket.send(Message::Text(json!({"type":"ready", "protocol":1, "backend":"daemon", "peerProtocol":1, "daemonId":daemon_endpoint::identity()?}).to_string().into())).await.map_err(|error| error.to_string())?;
+    socket.send(Message::Text(json!({"type":"ready", "protocol":1, "backend":"daemon", "peerProtocol":1, "daemonId":daemon_endpoint::identity()?, "buildId":daemon_endpoint::build_identity()?}).to_string().into())).await.map_err(|error| error.to_string())?;
     let (responses, mut receiver) = tokio::sync::mpsc::channel::<Value>(32);
     let mut pending = tokio::task::JoinSet::new();
     let owner = format!("client:{}", Uuid::new_v4());
@@ -87,7 +87,10 @@ async fn serve_connection_mode<S: tokio::io::AsyncRead + tokio::io::AsyncWrite +
                     Message::Ping(data) => Some(Message::Pong(data)),
                     Message::Text(text) => {
                         let Ok(request) = serde_json::from_str::<Value>(&text) else { break; };
-                        if request.get("type").and_then(Value::as_str) == Some("ping") { continue; }
+                        if request.get("type").and_then(Value::as_str) == Some("ping") {
+                            if !matches!(tokio::time::timeout(Duration::from_secs(10), socket.send(Message::Text(json!({"type":"pong"}).to_string().into()))).await, Ok(Ok(()))) { break; }
+                            continue;
+                        }
                         let Some(id) = request.get("id").and_then(Value::as_u64) else { break; };
                         let Some(command) = request.get("command").and_then(Value::as_str) else { break; };
                         let args = request.get("args").cloned().unwrap_or(json!({}));
@@ -109,7 +112,7 @@ async fn serve_connection_mode<S: tokio::io::AsyncRead + tokio::io::AsyncWrite +
                 }
             },
             event = events.recv() => match event {
-                Ok(event) if peer && (event["payload"]["_peer"] == true || event["event"] == "pi://settings-changed" || event["event"] == "pi://groups-changed") => None,
+                Ok(event) if peer && (event["payload"]["_peer"] == true || event["event"] == "pi://groups-changed") => None,
                 Ok(event) => Some(Message::Text(event.to_string().into())), Err(_) => break
             },
             Some(response) = receiver.recv() => Some(Message::Text(response.to_string().into())),
