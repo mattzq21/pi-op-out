@@ -3,6 +3,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { createMemo, createSignal, Show, splitProps } from "solid-js";
 import { readDroppedFile } from "../lib/nativeTransport";
+import { DictationControls } from "./DictationControls";
 import { isMobile } from "../lib/platform";
 import { accountModelName, providerAccountLabel } from "../lib/providerAccounts";
 import { createDependencyEffect, createRef, cssPixels, type CSSProperties, type JSXElement, type KeyboardEvent, type StateUpdate } from "../lib/solid";
@@ -392,7 +393,7 @@ export function Composer(props: Props) {
         <textarea ref={element => { ref.current = element; }} aria-label="Message piop" disabled={composer().controlsDisabled} placeholder={composer().controlsDisabled ? "Connecting to piop…" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onInput={(event) => { setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
       </div>);
     const renderComposerBar = () => {
-      const renderComposerTools = () => (<div class="composer-tools">{visualProps.voiceControls}{composer().onOpenTerminal && <IconButton title="" label="Open terminal" disabled={composer().controlsDisabled} onClick={(composer().onOpenTerminal)!}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage} keyed>{usage => <ContextWheel usage={usage} />}</Show><Show when={composer().sessionCache} keyed>{cache => <span class={`session-cache-hit${cache.low ? " low" : ""}`}>Cache {cache.rate}%</span>}</Show></div>);
+      const renderComposerTools = () => (<div class="composer-tools">{visualProps.voiceControls}<DictationControls disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); ref.current?.focus(); }} />{composer().onOpenTerminal && <IconButton title="" label="Open terminal" disabled={composer().controlsDisabled} onClick={(composer().onOpenTerminal)!}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage} keyed>{usage => <ContextWheel usage={usage} />}</Show><Show when={composer().sessionCache} keyed>{cache => <span class={`session-cache-hit${cache.low ? " low" : ""}`}>Cache {cache.rate}%</span>}</Show></div>);
       const renderComposerActions = () => {
         const renderMobileSteer = () => (isMobile && composer().streaming && <button class="mobile-steer" disabled={composer().controlsDisabled || !hasVisibleText(value())} onClick={() => void submit("steer")}>Steer</button>);
         const renderAgentPicker = () => (<ContainedPicker label="Agent" selectedLabel={composer().agentUnavailable ? `Agent unavailable: ${composer().activeAgent}` : `${composer().activeAgent ?? "general"}${composer().agentSaved ? " · saved" : ""}`} value={composer().activeAgent ?? "general"} disabled={composer().agentLocked || composer().streaming || controls().inputDisabled} menuMinWidth={130} centered compact options={composer().agents.map((agent) => ({ value: agent.name, label: agent.name }))} onChange={composer().onAgent} />);

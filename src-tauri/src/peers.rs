@@ -64,7 +64,7 @@ impl Connection {
             return;
         }
         let Some(event) = packet["event"].as_str() else { return; };
-        if matches!(event, "pi://settings-changed" | "pi://groups-changed") || packet["payload"]["_peer"] == true { return; }
+        if matches!(event, "pi://settings-changed" | "pi://groups-changed" | "pi://dictation") || packet["payload"]["_peer"] == true { return; }
         let state = app.state::<PeerRuntime>();
         let mut payload = packet["payload"].clone();
         if !payload.is_object() { payload = json!({}); }

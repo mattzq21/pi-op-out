@@ -15,6 +15,7 @@ mod conversation_ownership;
 mod session_groups;
 mod daemon;
 mod voice;
+mod dictation;
 use voice::{voice_configuration, voice_stop, voice_mute, voice_suppress};
 use session_groups::{load_session_groups, change_session_groups};
 
@@ -3518,6 +3519,7 @@ pub fn run_daemon() -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().map_err(|error| error.to_string())?;
     runtime.block_on(async {
         let app = AppHandle::new();
+        dictation::start(app.clone());
         start_session_broker(app.clone(), app.state::<BrokerRuntime>().inner().clone())?;
         mobile::start(app.clone())?;
         #[cfg(unix)]
