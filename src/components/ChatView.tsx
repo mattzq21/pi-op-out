@@ -259,7 +259,7 @@ function invisibleAssistant(message: ChatMessage) {
 }
 
 function repeatedCompletedTool(message: ChatMessage, previous: ChatMessage) {
-  return message.role === "tool" && (message.toolStatus ?? "done") === "done" && previous.role === "tool" && (previous.toolStatus ?? "done") === "done" && (previous.toolName || "tool") === (message.toolName || "tool");
+  return message.role === "tool" && message.toolName !== "subagent" && (message.toolStatus ?? "done") === "done" && previous.role === "tool" && (previous.toolStatus ?? "done") === "done" && (previous.toolName || "tool") === (message.toolName || "tool");
 }
 
 function finalResponseIndex(messages: ChatMessage[]) {

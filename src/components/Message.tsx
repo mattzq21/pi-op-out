@@ -11,6 +11,7 @@ import type { ChatMessage } from "../types";
 import { DiffViewer } from "./DiffViewer";
 import { IconButton } from "./IconButton";
 import { Markdown } from "./Markdown";
+import { SubagentResults, subagentRuns } from "./SubagentResults";
 
 interface Props { message: ChatMessage; turnCacheUsage?: { input: number; cacheRead: number }; diff?: ReturnType<typeof turnDiff>; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
 
@@ -60,11 +61,14 @@ function ToolLabel(componentProps: { message: ChatMessage; toolCount: number; st
 function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; error?: string; retry: () => void }) {
   const input = createMemo(() => (toolInputLines(componentProps.message)));
   const output = createMemo(() => (textOf(componentProps.message.content)));
+  const runs = createMemo(() => componentProps.message.toolName === "subagent" ? subagentRuns(componentProps.message.details) : []);
   return <>
-    {input() !== undefined && <div class="tool-payload"><div class="tool-payload-label">In</div><div class="tool-input" aria-label="Tool arguments"><pre>{(input())!}</pre></div></div>}
+    {runs().length > 0 ? <SubagentResults runs={runs()} /> : <>
+      {input() !== undefined && <div class="tool-payload"><div class="tool-payload-label">In</div><div class="tool-input" aria-label="Tool arguments"><pre>{(input())!}</pre></div></div>}
+      {output() && <div class="tool-payload"><div class="tool-payload-label">Out</div><div class="tool-output" aria-label="Tool output"><pre>{output()}</pre></div></div>}
+    </>}
     {componentProps.loading && <div role="status">Loading tool input and output…</div>}
     {componentProps.error && <div role="alert">{(componentProps.error)!} <button onClick={componentProps.retry}>Retry</button></div>}
-    {output() && <div class="tool-payload"><div class="tool-payload-label">Out</div><div class="tool-output" aria-label="Tool output"><pre>{output()}</pre></div></div>}
     {!componentProps.loading && !componentProps.error && componentProps.message.deferredToolPayload && !componentProps.message.toolPayloadLoaded && <button onClick={componentProps.retry}>Load input and output</button>}
   </>;
 }
@@ -87,7 +91,7 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug
   const status = createMemo(() => (componentProps.message.toolStatus ?? "done"));
   const label = createMemo(() => (<ToolLabel message={componentProps.message} toolCount={componentProps.toolCount ?? 1} status={status()} />));
 
-  return <>{!componentProps.debug ? (<div class={`tool-event ${status()}`}><div class="tool-summary">{label()}</div></div>) : (<details class={`tool-event ${status()}`} open={open()} onToggle={(event) => setOpen(event.currentTarget.open)}>
+  return <>{!componentProps.debug && componentProps.message.toolName !== "subagent" ? (<div class={`tool-event ${status()}`}><div class="tool-summary">{label()}</div></div>) : (<details class={`tool-event ${status()}`} open={open()} onToggle={(event) => setOpen(event.currentTarget.open)}>
     <summary class="tool-summary">{label()}<ChevronRight size={12} class="tool-chevron" aria-hidden="true" /></summary>
     {open() && <ToolPayload message={componentProps.message} loading={loading()} error={error()} retry={() => setRetry((value) => value + 1)} />}
   </details>)}</>;

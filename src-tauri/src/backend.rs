@@ -941,7 +941,7 @@ fn default_settings() -> AppSettings {
 }
 
 fn session_operation_tools() -> Vec<Value> {
-    [("fork_session", "Fork a conversation in any project"), ("create_worktree", "Create a Git worktree"), ("remove_worktree", "Remove an unused Git worktree")].into_iter().map(|(name, description)| json!({"name":name,"description":description,"enabled":true,"builtin":false})).collect()
+    [("fork_session", "Fork a conversation in any project"), ("create_worktree", "Create a Git worktree"), ("remove_worktree", "Remove an unused Git worktree"), ("subagent", "Delegate parallel tasks to agents with saved transcripts")].into_iter().map(|(name, description)| json!({"name":name,"description":description,"enabled":true,"builtin":false})).collect()
 }
 
 fn codex_web_search_tool() -> Value {
@@ -3322,7 +3322,7 @@ fn agent_is_active(session: &SessionSummary, agent: &AgentAddress) -> bool {
 fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &SessionSummary, message: &str, request_id: &str, deadline_ms: u64, client_id: &str) -> Result<String, String> {
     let remaining = deadline_ms.saturating_sub(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis() as u64);
     if remaining == 0 || broker.closing.load(Ordering::SeqCst) { return Err("Agent message expired or app is closing".into()); }
-    let deadline = Instant::now() + Duration::from_millis(remaining.min(120_000));
+    let deadline = Instant::now() + Duration::from_millis(remaining.min(600_000));
     let runtime = app.state::<PiRuntime>();
     let (settings, _claim, _ownership) = {
         let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
@@ -3375,7 +3375,7 @@ fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &Ses
         }
         if Instant::now() >= deadline {
             if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); }
-            break Err("Agent message timed out after 120 seconds".to_string());
+            break Err("Agent message exceeded its deadline".to_string());
         }
         thread::sleep(Duration::from_millis(25));
     };

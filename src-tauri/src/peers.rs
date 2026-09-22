@@ -339,7 +339,7 @@ pub(crate) fn local_broker_request(app: &AppHandle, path: &str, body: &Value) ->
     let broker = app.state::<BrokerRuntime>();
     let (port, token) = broker_environment(&broker)?;
     let mut stream = TcpStream::connect(("127.0.0.1", port)).map_err(|error| error.to_string())?;
-    stream.set_read_timeout(Some(Duration::from_secs(130))).map_err(|error| error.to_string())?;
+    stream.set_read_timeout(Some(Duration::from_secs(610))).map_err(|error| error.to_string())?;
     stream.set_write_timeout(Some(Duration::from_secs(10))).map_err(|error| error.to_string())?;
     let body = body.to_string();
     write!(stream, "POST {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).map_err(|error| error.to_string())?;
