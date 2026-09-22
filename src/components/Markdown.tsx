@@ -10,13 +10,16 @@ function webUrl(href: string) {
   try { const url = new URL(href); return ["http:", "https:"].includes(url.protocol) ? url.href : undefined; }
   catch { return undefined; }
 }
-const parser = new Marked({
+const parserOptions = (noteLinks: boolean) => new Marked({
   gfm: true,
   renderer: {
     html: ({ text }) => escapeHtml(text),
     image: ({ text }) => `<span class="message-image-placeholder" role="img" aria-label="${escapeHtml(text || "Blocked remote image")}">[Image: ${escapeHtml(text || "blocked")}]</span>`,
     link({ href, tokens }) {
       const text = this.parser.parseInline(tokens);
+      if (noteLinks && /^(?![a-z][a-z\d+.-]*:|\/\/)[^#?]+\.md(?:#.*)?$/i.test(href)) {
+        return `<a href="#note" data-note="${escapeHtml(href)}">${text}</a>`;
+      }
       const url = webUrl(href);
       return url ? `<a class="message-link" href="${escapeHtml(url)}" title="Click to open in browser&#10;${escapeHtml(url)}">${text}</a>` : `<span class="message-link" title="${escapeHtml(href)}">${text}</span>`;
     },
@@ -26,12 +29,27 @@ const parser = new Marked({
     },
   },
 });
+const parser = parserOptions(false);
+const notesParser = parserOptions(true);
+notesParser.use({ extensions: [{
+  name: "wikiLink",
+  level: "inline",
+  start: source => source.indexOf("[["),
+  tokenizer(source) {
+    const match = /^\[\[([^\]\n]+)\]\]/.exec(source);
+    if (match) return { type: "wikiLink", raw: match[0], text: match[1] };
+  },
+  renderer(token) {
+    const [target, alias] = String(token.text).split("|");
+    return `<a href="#note" data-note="${escapeHtml(target.trim())}">${escapeHtml(alias?.trim() || target.trim())}</a>`;
+  },
+}] });
 
 let purifier: ReturnType<typeof DOMPurify> | undefined;
 let purifierWindow: Window | undefined;
-export function markdownHtml(source: string) {
+export function markdownHtml(source: string, noteLinks = false) {
   if (!purifier || purifierWindow !== window) { purifier = DOMPurify(window); purifierWindow = window; }
-  return purifier.sanitize(parser.parse(source, { async: false }), {
+  return purifier.sanitize((noteLinks ? notesParser : parser).parse(source, { async: false }), {
     USE_PROFILES: { html: true },
     FORBID_TAGS: ["img", "video", "audio", "source", "iframe", "form", "style"],
     FORBID_ATTR: ["style", "src", "srcset", "id", "name"],
@@ -39,8 +57,8 @@ export function markdownHtml(source: string) {
 }
 
 type LinkMenu = { href: string; x: number; y: number; returnFocus?: HTMLElement };
-export function Markdown(props: { children: string }) {
-  const html = createMemo(() => markdownHtml(props.children));
+export function Markdown(props: { children: string; onNoteLink?: (target: string) => void }) {
+  const html = createMemo(() => markdownHtml(props.children, !!props.onNoteLink));
   const [error, setError] = createSignal<string>();
   const [menu, setMenu] = createSignal<LinkMenu>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -96,6 +114,7 @@ export function Markdown(props: { children: string }) {
     const link = event.target.closest<HTMLAnchorElement>("a");
     if (link) {
       event.preventDefault();
+      if (link.dataset.note && props.onNoteLink) { props.onNoteLink(link.dataset.note); return; }
       const url = webUrl(link.href);
       if (event.button === 0 && url) { setError(undefined); void openExternalUrl(url).catch(reason => setError(`Could not open link: ${reason instanceof Error ? reason.message : String(reason)}`)); }
     }
@@ -104,7 +123,7 @@ export function Markdown(props: { children: string }) {
   };
   const contextMenu = (event: MouseEvent) => {
     const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a") : null;
-    if (!link) return;
+    if (!link || link.dataset.note) return;
     const href = webUrl(link.href); if (!href) return;
     event.preventDefault();
     const bounds = link.getBoundingClientRect();

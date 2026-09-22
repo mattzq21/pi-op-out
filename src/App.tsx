@@ -8,6 +8,7 @@ import { ExtensionDialog } from "./components/ExtensionDialog";
 import { FindInPage } from "./components/FindInPage";
 import { IconButton } from "./components/IconButton";
 import { LocalSettingsView } from "./components/LocalSettingsView";
+import { NotesPane } from "./components/NotesPane";
 import { ProjectDialog } from "./components/ProjectDialog";
 import { ResizableSidebar } from "./components/ResizableSidebar";
 import { SessionPanel, type SessionAction } from "./components/SessionPanel";
@@ -726,6 +727,7 @@ export default function App() {
     {renderSidebar()}
     {renderChatWorkspace()}
     {renderSettingsView()}
+    <NotesPane hidden={view() !== "chat"} />
     <FindInPage selector=".chat-panes > .chat-shell" scopeKey={activeConversationKey()} onActivate={() => setActivePane("main")} active={activePane() === "main" || !splitPane()} enabled={view() === "chat"} />
     {splitPane() && <Rerun on={() => splitSessionId()}>{() => <FindInPage selector=".split-chat .chat-shell" scopeKey={splitSessionId()} onActivate={() => setActivePane("split")} active={activePane() === "split"} enabled={view() === "chat"} />}</Rerun>}
     {view() === "settings" && <FindInPage selector=".settings-shell" scopeKey="settings" />}

@@ -13,6 +13,8 @@ mod desktop_daemon;
 mod provider_auth;
 mod conversation_ownership;
 mod session_groups;
+#[cfg(not(feature = "desktop"))]
+mod notes;
 mod daemon;
 mod voice;
 mod dictation;
