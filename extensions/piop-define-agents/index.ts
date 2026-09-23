@@ -238,7 +238,7 @@ function agentToolError(pi: ExtensionAPI, agent: Agent, extensionTools: string[]
 }
 
 function buildAgentSystemPrompt(prompt: string, options: BuildSystemPromptOptions): string {
-  const sections = [prompt];
+  const sections = [prompt, `Piop renders fenced mermaid blocks as interactive diagrams and charts in conversation messages. Use them proactively when a visual makes architecture, dependencies, request flows, state transitions, timelines, or quantitative comparisons easier to understand. Prefer a small, focused diagram over a long prose description of relationships; skip visuals for simple answers. Use Mermaid flowchart, sequenceDiagram, stateDiagram-v2, classDiagram, erDiagram, gantt, timeline, pie, or xychart-beta syntax as appropriate. Use short plain-text labels, stable node identifiers, and an accTitle/accDescr where supported. Close every fence. Do not include Mermaid configuration directives, frontmatter, HTML, external images, or click handlers; piop controls appearance and interaction. Use only observed or supplied values in charts, and clearly label estimates. Keep the explanation beside the diagram concise.`];
   if (options.appendSystemPrompt) sections.push(options.appendSystemPrompt);
   const readTool = (["read", "bash"] as const).find((tool) => (options.selectedTools ?? ["read", "bash", "edit", "write"]).includes(tool));
   if (readTool && options.skills?.length) sections.push(formatSkillsForPrompt(options.skills, readTool));

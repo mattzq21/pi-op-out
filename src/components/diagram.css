@@ -1,0 +1,17 @@
+.diagram { margin: 12px 0; min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); color: var(--ink); font-style: normal; }
+.diagram-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 7px; border-bottom: 1px solid var(--line); font: 12px/1.4 "DM Sans", sans-serif; }
+.diagram-label { margin-right: auto; padding: 0 5px; color: var(--muted); }
+.diagram-toolbar button { min-height: 28px; min-width: 28px; padding: 3px 7px; border: 0; border-radius: 5px; background: transparent; color: var(--ink); }
+.diagram-toolbar button:hover, .diagram-toolbar button[aria-pressed="true"] { background: var(--panel); }
+.diagram-toolbar button:disabled { opacity: .4; cursor: default; }
+.diagram-toolbar button:focus-visible, .diagram-viewport:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.diagram-viewport { max-height: 420px; overflow: auto; overscroll-behavior: contain; cursor: grab; }
+.diagram-viewport:active { cursor: grabbing; }
+.diagram-expanded .diagram-viewport { max-height: 80vh; }
+.diagram-canvas { padding: 16px; min-width: 0; }
+.diagram-canvas > svg { display: block; width: 100%; height: auto; max-width: none !important; margin: auto; }
+.diagram-status, .message-body .diagram-status { margin: 0; padding: 10px 12px; color: var(--muted); font-size: 12px; }
+.diagram-error, .message-body .diagram-error { margin: 0; padding: 10px 12px; color: #c64f38; font-size: 12px; white-space: pre-wrap; }
+.diagram-source, .message-body .diagram-source { margin: 0; padding: 12px; max-height: 320px; overflow: auto; border-top: 1px solid var(--line); background: var(--panel); color: var(--ink); white-space: pre; }
+.diagram-source code, .message-body .diagram-source code { font: 12px/1.5 ui-monospace, monospace; background: transparent; padding: 0; }
+@media (pointer: coarse) { .diagram-toolbar button { min-height: 40px; min-width: 36px; } }
