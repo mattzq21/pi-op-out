@@ -1,10 +1,34 @@
 import { ArrowLeft, File, Folder, RefreshCw, Save, X } from "lucide-solid";
-import { batch, createEffect, createMemo, createSignal, For, onCleanup, on, Show } from "solid-js";
+import { batch, createEffect, createMemo, createSignal, For, onCleanup, onMount, on, Show } from "solid-js";
 import { listProjectFiles, readProjectFile, saveProjectFile, type FileProject, type FileReference, type ProjectDirectory, type ProjectFile } from "../lib/projectFiles";
 import { CodeEditor } from "./CodeEditor";
 import type { FilePaneRequest } from "./FileWorkspace";
 
 export function FilePane(props: { request: FilePaneRequest; onClose: () => void }) {
+  const [width, setWidth] = createSignal<number | undefined>((() => {
+    try {
+      const saved = Number(localStorage.getItem("piop.files.width"));
+      return Number.isFinite(saved) && saved >= 300 ? saved : undefined;
+    } catch { return undefined; }
+  })());
+  const [workspaceWidth, setWorkspaceWidth] = createSignal(window.innerWidth);
+  const [dragging, setDragging] = createSignal(false);
+  const maxWidth = () => Math.max(300, Math.floor(workspaceWidth() * .7));
+  const visibleWidth = () => Math.min(maxWidth(), Math.max(300, width() ?? workspaceWidth() * .46));
+  const resize = (value: number) => {
+    const next = Math.round(Math.min(maxWidth(), Math.max(300, value)));
+    setWidth(next);
+    try { localStorage.setItem("piop.files.width", String(next)); } catch { /* Width persistence is optional. */ }
+  };
+  let pane!: HTMLElement;
+  let drag: { x: number; width: number; pointer: number } | undefined;
+  onMount(() => {
+    const workspace = pane.parentElement!;
+    const observer = new ResizeObserver(() => setWorkspaceWidth(workspace.clientWidth));
+    setWorkspaceWidth(workspace.clientWidth);
+    observer.observe(workspace);
+    onCleanup(() => observer.disconnect());
+  });
   const [project, setProject] = createSignal<FileProject>(props.request.project);
   const [directory, setDirectory] = createSignal<ProjectDirectory>();
   const [file, setFile] = createSignal<ProjectFile>();
@@ -98,7 +122,22 @@ export function FilePane(props: { request: FilePaneRequest; onClose: () => void 
     <div class="file-editor-toolbar"><span title={file()!.path}>{file()!.path}{dirty() ? " •" : ""}</span><small role="status">{editorStatus()}</small><button type="button" aria-label="Reload file" title="Reload file" disabled={saving() || loading()} onClick={() => navigate(() => { void openFile({ path: file()!.path }); })}><RefreshCw size={14} /></button><button type="button" disabled={!dirty() || saving() || loading()} onClick={() => void save()} title="Save (Ctrl/Cmd+S)"><Save size={14} />Save</button></div>
     <Show when={editorVersion()} keyed>{_version => <CodeEditor filename={file()!.path} value={draft()} disabled={loading()} location={location()} onChange={value => { setDraft(value); setSaved(false); }} onSave={() => { void save(); }} />}</Show>
   </Show>;
-  return <aside class="file-pane" aria-label="Project files">
+  return <aside ref={pane} class="file-pane" aria-label="Project files" style={{ "--files-width": `${visibleWidth()}px` }}>
+    <div class={`files-resizer ${dragging() ? "dragging" : ""}`} role="separator" tabIndex={0} aria-label="Files pane width" aria-orientation="vertical" aria-valuemin={300} aria-valuemax={maxWidth()} aria-valuenow={Math.round(visibleWidth())}
+      onPointerDown={event => {
+        if (event.button !== 0 || !event.isPrimary) return;
+        event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
+        drag = { x: event.clientX, width: visibleWidth(), pointer: event.pointerId }; setDragging(true);
+      }}
+      onPointerMove={event => { if (drag?.pointer === event.pointerId) resize(drag.width + drag.x - event.clientX); }}
+      onPointerUp={event => { if (drag?.pointer !== event.pointerId) return; drag = undefined; setDragging(false); event.currentTarget.releasePointerCapture(event.pointerId); }}
+      onLostPointerCapture={() => { drag = undefined; setDragging(false); }}
+      onPointerCancel={() => { drag = undefined; setDragging(false); }}
+      onDblClick={() => resize(workspaceWidth() * .46)}
+      onKeyDown={event => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault(); event.stopPropagation(); resize(visibleWidth() + (event.key === "ArrowLeft" ? 20 : -20));
+      }} />
     <header class="file-pane-heading"><Folder size={16} /><strong>Files</strong><span title={project().cwd}>{project().cwd.split(/[\\/]/).filter(Boolean).at(-1)}</span><button type="button" aria-label="Close files" onClick={() => navigate(props.onClose)} disabled={saving()}><X size={16} /></button></header>
     <div class="file-pane-project" title={project().cwd}>{project().hostId !== "local" && `${project().hostId} · `}{project().cwd}</div>
     <Show when={pending()}><div class="file-pane-unsaved" role="alert"><span>Save changes to {file()?.path} before continuing?</span><div><button type="button" disabled={saving()} onClick={() => void saveAndContinue()}>Save</button><button type="button" disabled={saving()} onClick={continueNavigation}>Discard changes</button><button type="button" disabled={saving()} onClick={() => setPending(undefined)}>Cancel</button></div></div></Show>

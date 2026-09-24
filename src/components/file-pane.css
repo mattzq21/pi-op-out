@@ -1,6 +1,9 @@
 .chat-with-files { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
 .chat-with-files > .chat-panes { flex: 1; min-width: 0; }
-.file-pane { --accent-soft: color-mix(in srgb, var(--accent) 14%, var(--paper)); width: 46%; min-width: 300px; max-width: 70%; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--paper); color: var(--ink); }
+.file-pane { --accent-soft: color-mix(in srgb, var(--accent) 14%, var(--paper)); position: relative; flex-shrink: 0; width: var(--files-width, 46%); min-width: 300px; max-width: 70%; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--paper); color: var(--ink); }
+.files-resizer { position: absolute; z-index: 5; top: 0; bottom: 0; left: -4px; width: 8px; cursor: col-resize; touch-action: none; user-select: none; }
+.files-resizer::after { content: ""; position: absolute; inset: 0 3px; background: transparent; }
+.files-resizer:hover::after, .files-resizer.dragging::after, .files-resizer:focus-visible::after { background: var(--accent); }
 .file-pane button { display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 5px; padding: 5px 7px; color: var(--muted); background: transparent; font-size: 12px; }
 .file-pane button:hover { color: var(--ink); background: var(--accent-08); }
 .file-pane button:disabled { opacity: .45; cursor: default; }
@@ -30,4 +33,4 @@
 .chat-files-toolbar button:disabled { opacity: .45; cursor: default; }
 .message-body button.file-link { display: inline; border: 0; border-radius: 0; padding: 0; background: transparent; font: inherit; color: var(--accent); text-align: inherit; text-decoration: underline dotted; overflow-wrap: anywhere; }
 .message-body button.file-link:hover { text-decoration-style: solid; }
-@media (max-width: 700px) { .files-open > .chat-panes { display: none; } .file-pane { width: 100%; min-width: 0; max-width: none; border-left: 0; } }
+@media (max-width: 700px) { .files-open > .chat-panes { display: none; } .file-pane { width: 100%; min-width: 0; max-width: none; border-left: 0; } .files-resizer { display: none; } }
