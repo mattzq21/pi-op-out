@@ -41,7 +41,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .group-error { display: block; margin: 3px 7px 0; color: #c44f3b; font-size: 10px; font-weight: 500; text-transform: none; letter-spacing: normal; }
 .project-label { width: 100%; min-width: 0; height: 27px; border: 0; background: transparent; display: flex; align-items: center; gap: 5px; padding: 0 7px; overflow: hidden; text-transform: uppercase; text-align: left; color: #88847c; letter-spacing: .08em; font: 500 11px "DM Sans"; }.project-label:hover { color: var(--ink); }.project-label span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.project-label span.active { color: var(--accent); }.project-label svg { flex: 0 0 auto; transition: transform .15s ease; }.project-label svg.collapsed { transform: rotate(-90deg); }
 .session-item { width: 100%; background: transparent; border-radius: 8px; display: flex; gap: 2px; margin: 1px 0; position: relative; }
-.project.reorderable > button.project-label, .project.reorderable > .project-heading > button.project-label, .session-item.reorderable .session-main { cursor: grab; touch-action: none; }
+.project.reorderable > button.project-label, .project.reorderable > .project-heading > button.project-label, .session-item.reorderable .session-main { touch-action: none; }
 .project.dragging, .session-item.dragging { opacity: .42; }
 .session-item:hover { background: #ffffff77; }
 .session-item.active { background: #fff; box-shadow: 0 1px 2px #3c362d0c; }
