@@ -51,7 +51,7 @@ Guidelines:
 - Show file paths clearly when working with files`;
 
 const sessionTools = ["fork_session", "create_worktree", "remove_worktree", "subagent"];
-type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; orchestratorDefaultApplied?: boolean; subagentsDefaultApplied?: boolean };
+type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; orchestratorDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean };
 const development = process.env.PIOP_STORAGE_DIRECTORY === ".piop-dev";
 const fallbackConfig: Config = { agents: [{ name: "general", model: "", effort: development ? "medium" : "high", fastMode: development ? false : undefined, path_systemprompt: DEFAULT_PROMPT_PATH, path_agentprompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
 function defaultAgent(pi: ExtensionAPI): Agent {
@@ -171,7 +171,7 @@ function normalize(value: Partial<Config>, pi: ExtensionAPI): Config {
   }
   const unique = supplied.filter((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) === index);
   const agents = unique.some((agent) => agent.name === "general") ? unique : [defaultAgent(pi), ...unique];
-  return { agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, orchestratorDefaultApplied: value.orchestratorDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true };
+  return { agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, orchestratorDefaultApplied: value.orchestratorDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, diagramistDefaultApplied: value.diagramistDefaultApplied === true };
 }
 
 async function readConfig(pi: ExtensionAPI): Promise<Config> {
@@ -202,9 +202,20 @@ function migrateSubagents(config: Config, pi: ExtensionAPI) {
   }
   return false;
 }
+async function migrateDiagramist(config: Config, pi: ExtensionAPI) {
+  if (config.diagramistDefaultApplied) return false;
+  if (!config.agents.some(agent => agent.name === "diagramist")) {
+    const path = "sysprompt/diagramist.md";
+    await ensurePromptFile(path, `${DEFAULT_SYSTEM_PROMPT}\n\nYou are diagramist. Explain systems, code, and data through clear, accurate diagrams. Inspect the relevant sources before depicting relationships, and distinguish observed behavior from proposed designs.`);
+    config.agents.push({ ...defaultAgent(pi), name: "diagramist", path_systemprompt: path, extensions: ["../piop-diagrams.ts"] });
+  }
+  config.diagramistDefaultApplied = true;
+  return true;
+}
+
 async function loadConfig(pi: ExtensionAPI): Promise<Config> {
   const config = await readConfig(pi);
-  let changed = [migrateSessionTools(config, pi), migrateSubagents(config, pi)].some(Boolean);
+  let changed = [migrateSessionTools(config, pi), migrateSubagents(config, pi), await migrateDiagramist(config, pi)].some(Boolean);
   for (const agent of config.agents) {
     if (!agent.tools.some((tool) => tool === "exec_command" || tool === "apply_patch")) continue;
     agent.tools = [...new Set(agent.tools.flatMap((tool) => tool === "exec_command"
@@ -238,7 +249,7 @@ function agentToolError(pi: ExtensionAPI, agent: Agent, extensionTools: string[]
 }
 
 function buildAgentSystemPrompt(prompt: string, options: BuildSystemPromptOptions): string {
-  const sections = [prompt, `Piop renders fenced mermaid blocks as interactive diagrams and charts in conversation messages. Use them proactively when a visual makes architecture, dependencies, request flows, state transitions, timelines, or quantitative comparisons easier to understand. Prefer a small, focused diagram over a long prose description of relationships; skip visuals for simple answers. Use Mermaid flowchart, sequenceDiagram, stateDiagram-v2, classDiagram, erDiagram, gantt, timeline, pie, or xychart-beta syntax as appropriate. Use short plain-text labels, stable node identifiers, and an accTitle/accDescr where supported. Close every fence. Do not include Mermaid configuration directives, frontmatter, HTML, external images, or click handlers; piop controls appearance and interaction. Use only observed or supplied values in charts, and clearly label estimates. Keep the explanation beside the diagram concise.`];
+  const sections = [prompt];
   if (options.appendSystemPrompt) sections.push(options.appendSystemPrompt);
   const readTool = (["read", "bash"] as const).find((tool) => (options.selectedTools ?? ["read", "bash", "edit", "write"]).includes(tool));
   if (readTool && options.skills?.length) sections.push(formatSkillsForPrompt(options.skills, readTool));
@@ -458,7 +469,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
   pi.registerCommand("pi-define-agents-config", {
     description: "Update agent definitions", handler: async (args, ctx) => {
-      const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied, orchestratorDefaultApplied: config.orchestratorDefaultApplied, subagentsDefaultApplied: config.subagentsDefaultApplied }, pi);
+      const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied, orchestratorDefaultApplied: config.orchestratorDefaultApplied, subagentsDefaultApplied: config.subagentsDefaultApplied, diagramistDefaultApplied: config.diagramistDefaultApplied }, pi);
       if (!next.agents.some((agent) => agent.name === VOICE_ORCHESTRATOR_NAME)) next.agents.push(structuredClone(config.agents.find((agent) => agent.name === VOICE_ORCHESTRATOR_NAME)!));
       // Global edits only affect future selections. This session keeps its snapshot.
       await writeConfig(next);
