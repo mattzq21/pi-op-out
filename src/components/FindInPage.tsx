@@ -70,7 +70,7 @@ function reveal(range: Range) {
 
 function ownsFindShortcut(event: KeyboardEvent, root: HTMLElement | null, bar: HTMLElement | null, active: boolean) {
   const focused = document.activeElement;
-  if (focused?.closest(".keybind-input") || (event.target instanceof Element && event.target.closest(".keybind-input"))) return false;
+  if (focused?.closest(".keybind-input, .cm-editor") || (event.target instanceof Element && event.target.closest(".keybind-input, .cm-editor"))) return false;
   const focusedBar = focused?.closest(".find-bar");
   const focusedShell = focused?.closest(".chat-shell");
   return focusedBar ? focusedBar === bar : focusedShell ? focusedShell === root : active;

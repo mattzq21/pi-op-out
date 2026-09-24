@@ -16,6 +16,7 @@ import { SplitChatPane } from "./components/SplitChatPane";
 import { SubagentPane } from "./components/SubagentPane";
 import { SubagentNavigationContext, type SubagentTarget } from "./lib/subagentNavigation";
 import { TerminalView } from "./components/TerminalView";
+import { FileWorkspace } from "./components/FileWorkspace";
 import { WorktreeDialog } from "./components/WorktreeDialog";
 import { encodeAgentValue } from "./lib/agentProtocol";
 import { withClientSettings } from "./lib/clientSettings";
@@ -692,7 +693,7 @@ export default function App() {
     };
     const isConversationSearchShortcut = (event: KeyboardEvent) => (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "g";
     const handleKeybind = (event: KeyboardEvent) => {
-      if (ignoreAppShortcut(event)) return;
+      if (event.defaultPrevented || ignoreAppShortcut(event)) return;
       if (isConversationSearchShortcut(event)) {
         event.preventDefault();
         event.stopPropagation();
@@ -741,7 +742,7 @@ export default function App() {
     };
     return (<div class="chat-workspace" hidden={view() !== "chat"}>
       {!notesOpen() && <IconButton class="open-notes-button" label="Open notes" aria-expanded={false} aria-controls="notes-pane" onClick={() => toggleNotes(true)}><Notebook size={19} /></IconButton>}
-      {renderChatPanes()}
+      <FileWorkspace>{renderChatPanes()}</FileWorkspace>
       {terminalOpen() && <Rerun on={() => `${terminalSessionId()}:${composerState().activeTerminal.id}`}>{(_key) => <TerminalView  cwd={terminalLocationState().terminalCwd} terminals={composerState().sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={composerState().activeTerminal.id} output={composerState().activeTerminal.output} outputEnd={composerState().activeTerminal.outputEnd} snapshot={composerState().activeTerminal.snapshot} snapshotEnd={composerState().activeTerminal.snapshotEnd} started={composerState().activeTerminal.started} exited={composerState().activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { void transport().writeTerminal(composerState().activeTerminal.id, data).catch((reason) => queueTerminalOutput(composerState().activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { void transport().resizeTerminal(composerState().activeTerminal.id, cols, rows).catch(() => undefined); }} onSnapshot={((sessionId: string, terminalId: string) => (value: string, outputEnd: number) => saveTerminalSnapshot(sessionId, terminalId, value, outputEnd))(terminalSessionId(), composerState().activeTerminal.id)} onDelete={deleteTerminal} onClose={() => { terminalPanelRevision.current += 1; setTerminalOpen(false); }} />}</Rerun>}
     </div>);
   };

@@ -1,5 +1,5 @@
 function isEditableField(field: Element | null) {
-  if (!(field instanceof HTMLElement) || field.closest(".xterm")) return false;
+  if (!(field instanceof HTMLElement) || field.closest(".xterm, .cm-editor")) return false;
   if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
     if (field.disabled || field.readOnly) return false;
     return !(field instanceof HTMLInputElement) || ["text", "search", "email", "url", "tel", "password", "number"].includes(field.type);

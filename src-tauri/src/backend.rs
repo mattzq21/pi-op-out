@@ -18,6 +18,7 @@ mod notes;
 mod daemon;
 mod voice;
 mod dictation;
+mod project_files;
 use voice::{voice_configuration, voice_stop, voice_mute, voice_suppress};
 use session_groups::{load_session_groups, change_session_groups};
 

@@ -4,14 +4,13 @@ import { Marked } from "marked";
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { openExternalUrl } from "../lib/nativeTransport";
+import { fileReference, type FileReference } from "../lib/projectFiles";
+import { detectFileLinks } from "../lib/fileLinks";
+import { webUrl } from "../lib/webLinks";
 import { diagramFenceClosed } from "../lib/diagrams";
 import { markdownDiagrams } from "./markdownDiagrams";
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
-function webUrl(href: string) {
-  try { const url = new URL(href); return ["http:", "https:"].includes(url.protocol) ? url.href : undefined; }
-  catch { return undefined; }
-}
 const parserOptions = (noteLinks: boolean) => new Marked({
   gfm: true,
   renderer: {
@@ -23,7 +22,7 @@ const parserOptions = (noteLinks: boolean) => new Marked({
         return `<a href="#note" data-note="${escapeHtml(href)}">${text}</a>`;
       }
       const url = webUrl(href);
-      return url ? `<a class="message-link" href="${escapeHtml(url)}" title="Click to open in browser&#10;${escapeHtml(url)}">${text}</a>` : `<span class="message-link" title="${escapeHtml(href)}">${text}</span>`;
+      return url ? `<a class="message-link" href="${escapeHtml(url)}" title="Click to open in browser&#10;${escapeHtml(url)}">${text}</a>` : `<span class="message-link"${fileReference(href) ? ` data-file-reference="${escapeHtml(href)}"` : ""} title="${escapeHtml(href)}">${text}</span>`;
     },
     code({ text, lang, raw }) {
       const language = lang?.split(/\s/)[0];
@@ -50,19 +49,20 @@ notesParser.use({ extensions: [{
 
 let purifier: ReturnType<typeof DOMPurify> | undefined;
 let purifierWindow: Window | undefined;
-export function markdownHtml(source: string, noteLinks = false, streaming = false) {
+export function markdownHtml(source: string, noteLinks = false, streaming = false, detectFiles = false) {
   if (!purifier || purifierWindow !== window) { purifier = DOMPurify(window); purifierWindow = window; }
   const html = (noteLinks ? notesParser : parser).parse(source, { async: false });
-  return purifier.sanitize(streaming ? html : html.replaceAll('data-complete="false"', 'data-complete="true"'), {
+  const sanitized = purifier.sanitize(streaming ? html : html.replaceAll('data-complete="false"', 'data-complete="true"'), {
     USE_PROFILES: { html: true },
     FORBID_TAGS: ["img", "video", "audio", "source", "iframe", "form", "style"],
     FORBID_ATTR: ["style", "src", "srcset", "id", "name"],
   });
+  return detectFiles ? detectFileLinks(sanitized) : sanitized;
 }
 
 type LinkMenu = { href: string; x: number; y: number; returnFocus?: HTMLElement };
-export function Markdown(props: { children: string; onNoteLink?: (target: string) => void; streaming?: boolean }) {
-  const html = createMemo(() => markdownHtml(props.children, !!props.onNoteLink, props.streaming));
+export function Markdown(props: { children: string; onNoteLink?: (target: string) => void; streaming?: boolean; onOpenFile?: (file: FileReference) => void }) {
+  const html = createMemo(() => markdownHtml(props.children, !!props.onNoteLink, props.streaming, Boolean(props.onOpenFile)));
   const [error, setError] = createSignal<string>();
   const [menu, setMenu] = createSignal<LinkMenu>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -118,6 +118,13 @@ export function Markdown(props: { children: string; onNoteLink?: (target: string
   };
   const click = (event: MouseEvent) => {
     if (!(event.target instanceof Element)) return;
+    const fileLink = event.target.closest<HTMLButtonElement>("button.file-link");
+    if (fileLink) {
+      event.preventDefault();
+      const reference = fileReference(fileLink.dataset.fileReference ?? "");
+      if (reference) props.onOpenFile?.(reference);
+      return;
+    }
     const link = event.target.closest<HTMLAnchorElement>("a");
     if (link) {
       event.preventDefault();
