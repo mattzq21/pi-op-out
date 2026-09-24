@@ -135,16 +135,23 @@ pub(crate) fn connect(app: &AppHandle, runtime: &PiRuntime, broker: &BrokerRunti
     let auth_executable = host.as_ref().map(|host| host.pi_path.clone()).unwrap_or_else(|| pi_executable().to_string_lossy().into_owned());
     let script = format!("const gitCaptureScript = {};\nconst piAuthExecutable = {};\nconst piStorageDirectory = {};\n{}\n{}\n{}\n{}\n{}\n{}\n{}", serde_json::to_string(include_str!("../resources/capture-git-tree.cjs")).map_err(|error| error.to_string())?, serde_json::to_string(&auth_executable).map_err(|error| error.to_string())?, serde_json::to_string(STORAGE_DIRECTORY).map_err(|error| error.to_string())?, include_str!("../resources/daemon-queue.mjs"), include_str!("../../extensions/piop-runtime-settings/provider-accounts.mjs"), include_str!("../resources/provider-auth.mjs"), include_str!("../resources/conversation-ownership.mjs"), include_str!("../resources/voice-service.mjs"), include_str!("../resources/host-daemon-commands.mjs"), include_str!("../resources/host-daemon.mjs"));
     let remote_port = (host_id != "local").then(remote_broker_port);
+    let loader = include_str!("../resources/host-daemon-loader.mjs");
     let mut command = if let Some(remote_port) = remote_port {
         let (port, _) = broker_environment(broker)?;
         let mut command = remote_broker_command(remote_host(settings, host_id)?, port, remote_port);
-        command.arg(remote_login_command(&format!("exec node --input-type=module -e {}", shell_quote(&script))));
+        command.arg(remote_login_command(&format!("exec node --input-type=module -e {}", shell_quote(loader))));
         command
     } else {
-        let mut command = Command::new("node"); command.args(["--input-type=module", "-e", &script]); command
+        let mut command = Command::new("node"); command.args(["--input-type=module", "-e", loader]); command
     };
     let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| format!("Could not start host daemon: {error}"))?;
-    let stdin = child.stdin.take().ok_or("Daemon stdin was unavailable")?;
+    let mut stdin = child.stdin.take().ok_or("Daemon stdin was unavailable")?;
+    let source_length = u32::try_from(script.len()).map_err(|_| "Host daemon source is too large")?;
+    if let Err(error) = stdin.write_all(&source_length.to_be_bytes()).and_then(|_| stdin.write_all(script.as_bytes())).and_then(|_| stdin.flush()) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!("Could not send host daemon source: {error}"));
+    }
     let stdout = child.stdout.take().ok_or("Daemon stdout was unavailable")?;
     let stderr = child.stderr.take().ok_or("Daemon stderr was unavailable")?;
     let daemon = Arc::new(Daemon { alive: AtomicBool::new(true), remote_port, connection_config, host, agent_prefix: format!("daemon:{host_id}:{}:", Uuid::new_v4()), events: Mutex::new(()), child: Mutex::new(child), stdin: Mutex::new(stdin), pending: Mutex::new(HashMap::new()), captures: Mutex::new(HashMap::new()) });
