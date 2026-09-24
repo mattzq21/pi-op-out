@@ -31,7 +31,7 @@
 .file-pane-unsaved > div { display: flex; gap: 5px; margin-top: 6px; }
 .chat-files-toolbar { display: flex; justify-content: flex-end; flex-shrink: 0; margin-left: auto; }
 .chat-files-toolbar button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--muted); padding: 5px 9px; font-size: 12px; }
-.chat-files-toolbar button { background: transparent; }
+.chat-files-toolbar button { background: var(--paper); }
 .chat-files-toolbar button:hover { color: var(--ink); background: var(--accent-08); }
 .chat-files-toolbar button svg { color: var(--accent); }
 .chat-files-toolbar button:disabled { opacity: .45; cursor: default; }
