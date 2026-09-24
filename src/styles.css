@@ -77,7 +77,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .link-context-menu { position: fixed; right: auto; z-index: 30; }
 .select-control { height: 31px; border: 1px solid var(--line); border-radius: 7px; display: flex; align-items: center; padding: 0 7px; gap: 4px; background: white; }
 .select-control span { font: 10px "DM Sans"; color: var(--faint); text-transform: uppercase; }.select-control select { max-width: 130px; border: 0; outline: 0; appearance: none; font-size: 12px; font-weight: 500; background: transparent; }.select-control.thinking select { max-width: 70px; }
-.messages { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+.messages { position: absolute; inset: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-bottom: var(--composer-height, 0px); scroll-padding-bottom: calc(var(--composer-height, 0px) + 22px); }
 .conversation { max-width: 740px; margin: 0 auto; padding: 48px 36px 22px; }
 .selection-btw-tip { position: fixed; z-index: 20; display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 5px 7px 5px 10px; border: 1px solid #ffffff18; border-radius: 7px; background: #292824; color: #f7f5ef; box-shadow: 0 6px 18px #0004; transform: translate(-50%, -100%); font-size: 11px; font-weight: 500; white-space: nowrap; }
 .selection-btw-tip.below { transform: translate(-50%, 0); }
@@ -170,7 +170,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .conversation-turn > .prompt-context { margin: 0 0 14px; }
 .conversation-turn > :is(.user-message, .prompt-context):has(+ .work-group) { margin-bottom: 8px; }
 .command-result { margin: 18px auto 28px; color: var(--muted); text-align: center; font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
-.composer-stack { position: relative; z-index: 2; flex-shrink: 0; min-width: 0; }.extension-widget, .runtime-activity { width: min(740px, calc(100% - 72px)); margin: 0 auto 6px; border: 1px solid var(--line); border-radius: 7px; background: #f1eee8; color: var(--muted); padding: 8px 10px; overflow-wrap: anywhere; font: 11px/1.5 "DM Sans"; }.extension-widget { max-height: min(30vh, 240px); overflow-y: auto; }.runtime-activity { border: 0; background: transparent; padding: 0 8px; }.runtime-activity { color: var(--accent); }
+.composer-stack { position: absolute; bottom: 0; left: 0; right: 0; z-index: 2; min-width: 0; }.extension-widget, .runtime-activity { width: min(740px, calc(100% - 72px)); margin: 0 auto 6px; border: 1px solid var(--line); border-radius: 7px; background: #f1eee8; color: var(--muted); padding: 8px 10px; overflow-wrap: anywhere; font: 11px/1.5 "DM Sans"; }.extension-widget { max-height: min(30vh, 240px); overflow-y: auto; }.runtime-activity { border: 0; background: transparent; padding: 0 8px; }.runtime-activity { color: var(--accent); }
 .new-chat-project { width: min(740px, calc(100% - 72px)); margin: 0 auto 7px; }.new-chat-project button { height: 29px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--dark-subtle); color: var(--muted); font-size: 12px; }.new-chat-project button:hover { background: var(--dark-control); color: var(--ink); }.new-chat-project button.selected { color: var(--accent); }
 .composer { position: relative; background: white; border: 1px solid #d8d4cc; border-radius: 11px; padding: 11px 11px 8px; box-shadow: 0 9px 30px #4b433616; }.composer:focus-within { border-color: #bbb5aa; box-shadow: 0 10px 35px #4b433620, 0 0 0 2px var(--accent-05); }
 .composer-editor { position: relative; min-width: 0; }
@@ -467,7 +467,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .setting-number:disabled { opacity: .5; cursor: not-allowed; }
 .setup-script { display: grid; gap: 12px; padding: 16px 0; border-top: 1px solid var(--line); }
 .setup-script-code { min-height: 160px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; resize: vertical; }
-.concurrent-view-status { flex-shrink: 0; padding: 6px 16px; color: var(--text-muted, #a09c93); font-size: 12px; border-bottom: 1px solid var(--border, #34322d); }
+.concurrent-view-status { position: relative; z-index: 1; flex-shrink: 0; padding: 6px 16px; color: var(--text-muted, #a09c93); font-size: 12px; border-bottom: 1px solid var(--border, #34322d); }
 .voice-controls { font-size: 12px; color: var(--text-muted, #a4a4ac); }
 .dictation-controls { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 12px; }
 .dictation-controls:empty { display: none; }

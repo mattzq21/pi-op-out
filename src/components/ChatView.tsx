@@ -116,13 +116,20 @@ export function ChatView(props: Props) {
   };
   createDependencyEffect(scrollToLatest, () => [scrollToLatest, messages(), props.gitDiffs, props.state.isStreaming, mcpLoading(), submittedMessage()]);
   createDependencyEffect(() => {
+    const messages = messagesRef.current;
+    if (!messages) return;
+    messages.style.setProperty("--composer-height", "0px");
     const composer = composerStack.current;
-    if (!composer) return;
-    scrollToLatest();
+    if (props.readOnly || !composer) return;
+    const updateLayout = () => {
+      messages.style.setProperty("--composer-height", `${composer.getBoundingClientRect().height}px`);
+      scrollToLatest();
+    };
+    updateLayout();
     if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(scrollToLatest);
+    const observer = new ResizeObserver(updateLayout);
     observer.observe(composer);
-    return () => observer.disconnect();
+    return () => { observer.disconnect(); messages.style.removeProperty("--composer-height"); };
   }, () => [props.readOnly, scrollToLatest]);
   const selectionBtwEnabled = createMemo(() => (Boolean(ownsConversation() && props.selectionBtw && !props.readOnly && !props.controlsDisabled && props.commands.some((command) => command.name === "btw"))));
   createDependencyEffect(() => { const capturedSelectionBtwEnabled = selectionBtwEnabled();
