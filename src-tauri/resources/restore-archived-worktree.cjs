@@ -11,6 +11,8 @@ const saved = header?.worktreeRestore;
 if (header?.type !== 'session' || !saved || !path.isAbsolute(saved.path ?? '') || !path.isAbsolute(saved.repositoryRoot ?? '')
   || typeof saved.ref !== 'string' || !saved.ref.startsWith('refs/pi-session-snapshots/')
   || !/^[a-f0-9]{40,64}$/.test(saved.commit ?? '')) throw new Error('No saved worktree checkpoint is available');
+const owner = typeof header.id === 'string' ? header.id.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session' : undefined;
+if (!owner || !saved.ref.startsWith(`refs/pi-session-snapshots/chats/${owner}/`)) throw new Error('The restoration checkpoint is not owned by this archive');
 // Both paths were canonicalized before deletion; the original cwd may be an alias.
 const conversationPath = saved.conversationPath ?? header.cwd;
 if (typeof conversationPath !== 'string' || !path.isAbsolute(conversationPath)) throw new Error('Invalid archived conversation location');
