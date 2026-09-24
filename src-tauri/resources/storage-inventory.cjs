@@ -148,9 +148,31 @@ async function archiveDetails(file, header, explicitName, firstPrompt, malformed
       modifiedAt: Math.floor(metadata.mtimeMs / 1000),
       byteSize: metadata.size + diffBytes,
       deletable,
+      ...await archivedWorktree(header),
       ...(deletable ? {} : { deleteError }),
     },
   };
+}
+
+async function archivedWorktree(header) {
+  if (!validSessionHeader(header)) return {};
+  try {
+    const root = (await git(header.cwd, ['rev-parse', '--show-toplevel'])).trim();
+    const common = await fs.realpath((await git(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim());
+    const own = await fs.realpath((await git(root, ['rev-parse', '--absolute-git-dir'])).trim());
+    return own !== common ? { worktreePath: root } : {};
+  } catch {
+    const saved = header.worktreeRestore;
+    if (!saved || !path.isAbsolute(saved.path ?? '') || !snapshotCheckpoint(saved)) return {};
+    try {
+      await fs.lstat(saved.path);
+      return {};
+    } catch (error) { if (error.code !== 'ENOENT') return {}; }
+    try {
+      if ((await git(saved.repositoryRoot, ['rev-parse', '--verify', saved.ref])).trim() === saved.commit) return { restorable: true };
+    } catch { }
+    return { restoreError: 'The last response checkpoint is unavailable.' };
+  }
 }
 
 function archiveLocation(header, file) {

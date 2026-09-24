@@ -4,7 +4,7 @@ import { Dynamic } from "solid-js/web";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
 import { Archive, Camera, Database, FolderClock, GitBranch, HardDrive, MessageSquare, RefreshCw, ShieldAlert, Trash2 } from "lucide-solid";
-import { deleteArchivedConversation, loadStorageReport } from "../lib/nativeTransport";
+import { deleteArchivedConversation, loadStorageReport, removeArchivedWorktree, restoreArchivedWorktree } from "../lib/nativeTransport";
 import type { ArchivedConversation, HostStorage, StorageCategory, StorageReport } from "../types";
 
 const categoryDetails: Record<StorageCategory["id"], { name: string; description: string; icon: typeof Archive; item: string }> = {
@@ -85,6 +85,20 @@ export function StorageSettings(componentProps: { hostId?: string }) {
     if (!window.confirm(`Permanently delete “${archive.name}”? Its diff history and project checkpoint refs will also be removed.`)) return;
     void removeArchives(host, [archive]);
   };
+  const changeWorktree = async (host: HostStorage, archive: ArchivedConversation) => {
+    if (archive.worktreePath && !window.confirm(`Delete the worktree for “${archive.name}”? The archived chat and its checkpoints will be kept. Restore will use the last response's files. Dependencies and build outputs will need rebuilding.`)) return;
+    const key = archiveKey(host, archive);
+    setDeleting((current) => new Set([...current, key]));
+    setError(undefined);
+    let failure: string | undefined;
+    try {
+      if (archive.worktreePath) await removeArchivedWorktree(archive.worktreePath, host.hostId);
+      else await restoreArchivedWorktree(archive.path, host.hostId);
+    } catch (reason) { failure = reason instanceof Error ? reason.message : String(reason); }
+    finally { setDeleting((current) => { const next = new Set(current); next.delete(key); return next; }); }
+    await refresh();
+    if (failure) setError(failure);
+  };
   const deleteAll = (host: HostStorage) => {
     const archives = host.archives.filter((archive) => archive.deletable);
     if (!archives.length || !window.confirm(`Permanently delete ${archives.length === host.archives.length ? `all ${archives.length}` : `the ${archives.length} safely readable`} archived conversations on ${host.hostName}? Their diff histories and project checkpoint refs will also be removed.`)) return;
@@ -121,6 +135,8 @@ export function StorageSettings(componentProps: { hostId?: string }) {
           return <div class={`archive-row${archive().deletable ? "" : " cleanup-unavailable"}`}  title={archive().deleteError || archive().path}>
             {renderArchiveDetails()}
             <code>{formatBytes(Number(archive().byteSize) || 0)}</code>
+            {(archive().worktreePath || archive().restorable) && <button class="archive-worktree-action" disabled={deleting().size > 0 || loading()} onClick={() => void changeWorktree(host(), archive())}>{pending() ? "Working…" : archive().worktreePath ? "Delete worktree" : "Restore worktree"}</button>}
+            {archive().restoreError && <small role="status">{archive().restoreError}</small>}
             {renderArchiveDelete()}
           </div>;
         }}</Key>}</div>}

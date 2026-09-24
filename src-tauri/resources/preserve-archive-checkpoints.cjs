@@ -14,6 +14,19 @@ const verifyRef = (ref, commit) => {
   if (typeof ref !== 'string' || !ref.startsWith('refs/pi-session-snapshots/') || !/^[a-f0-9]{40,64}$/.test(commit ?? '') || git(common, ['rev-parse', '--verify', ref]) !== commit) throw new Error('Could not preserve archived conversation checkpoints before deleting the worktree');
 };
 
+function archiveOwnedRef(sessionId, snapshot) {
+  const id = sessionId.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session';
+  const prefix = `refs/pi-session-snapshots/chats/${id}/`;
+  if (!/^[a-f0-9]{40,64}$/.test(snapshot.commit ?? '')) throw new Error('Invalid archived response checkpoint');
+  const retained = git(common, ['for-each-ref', '--format=%(refname) %(objectname)', prefix])
+    .split('\n').map((line) => line.split(' ')).find(([ref, commit]) => ref.startsWith(prefix) && commit === snapshot.commit);
+  if (retained) return retained[0];
+  verifyRef(snapshot.ref, snapshot.commit);
+  const ref = `${prefix}archive/${snapshot.commit}`;
+  git(common, ['update-ref', ref, snapshot.commit, '0'.repeat(snapshot.commit.length)]);
+  return ref;
+}
+
 function preserve(file) {
   const stat = fs.lstatSync(file);
   if (!stat.isFile()) return;
@@ -24,6 +37,30 @@ function preserve(file) {
   const header = entries[0];
   if (header?.type !== 'session' || typeof header.id !== 'string') return;
   let changed = false;
+  // Follow the selected conversation branch, rather than an abandoned response.
+  const byId = new Map(entries.filter((entry) => entry.id).map((entry) => [entry.id, entry]));
+  let cursor = entries.at(-1);
+  let response;
+  const visited = new Set();
+  while (cursor && !visited.has(cursor.id)) {
+    visited.add(cursor.id);
+    if (cursor.type === 'message' && cursor.message?.role === 'assistant') { response = cursor; break; }
+    cursor = byId.get(cursor.parentId);
+  }
+  const snapshot = response && entries.findLast((entry) => entry.type === 'custom'
+    && entry.customType === 'pi-project-files-watch-snapshot'
+    && entry.data?.responseEntryIds?.includes(response.id));
+  if (typeof header.cwd === 'string' && sameRepository(header.cwd)
+    && fs.realpathSync(git(header.cwd, ['rev-parse', '--show-toplevel'])) === fs.realpathSync(target)) {
+    // Never substitute a prompt checkpoint or capture the files being deleted.
+    if (!snapshot || snapshot.data?.unavailable) throw new Error('The archived conversation has no checkpoint for its last response');
+    // Copied response entries can name the parent's ref. Retain the exact commit
+    // under this archive's ownership and update the response entry used to verify it.
+    snapshot.data.ref = archiveOwnedRef(header.id, snapshot.data);
+    snapshot.data.repositoryRoot = common;
+    header.worktreeRestore = { path: fs.realpathSync(target), conversationPath: fs.realpathSync(header.cwd), repositoryRoot: common, ref: snapshot.data.ref, commit: snapshot.data.commit };
+    changed = true;
+  }
   const promptRoot = header.checkpointRepositoryRoot ?? header.cwd;
   const prompts = entries.filter((entry) => entry.type === 'custom' && entry.customType === 'pi-project-prompt-checkpoint' && !entry.data?.unavailable);
   if (prompts.length && promptRoot !== common && sameRepository(promptRoot)) {
