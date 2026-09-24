@@ -54,6 +54,8 @@ export const loadStorageReport = async (hostId?: string) => {
   return hostId === undefined ? report : { hosts: report.hosts.map((host) => ({ ...host, hostId })) };
 };
 export const deleteArchivedConversation = (sessionPath: string, hostId = "local") => call<void>("delete_archived_session", { sessionPath, hostId });
+export const restoreArchivedWorktree = (sessionPath: string, hostId = "local") => call<GitWorktree>("restore_archived_worktree", { sessionPath, hostId });
+export const removeArchivedWorktree = (cwd: string, hostId = "local") => call<GitWorktreeRemoval>("remove_git_worktree", { cwd, hostId, deleteBranch: false });
 
 export class NativeTransport {
   private owns = true;

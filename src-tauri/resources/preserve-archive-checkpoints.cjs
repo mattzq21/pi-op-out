@@ -24,6 +24,27 @@ function preserve(file) {
   const header = entries[0];
   if (header?.type !== 'session' || typeof header.id !== 'string') return;
   let changed = false;
+  // Follow the selected conversation branch, rather than an abandoned response.
+  const byId = new Map(entries.filter((entry) => entry.id).map((entry) => [entry.id, entry]));
+  let cursor = entries.at(-1);
+  let response;
+  const visited = new Set();
+  while (cursor && !visited.has(cursor.id)) {
+    visited.add(cursor.id);
+    if (cursor.type === 'message' && cursor.message?.role === 'assistant') { response = cursor; break; }
+    cursor = byId.get(cursor.parentId);
+  }
+  const snapshot = response && entries.findLast((entry) => entry.type === 'custom'
+    && entry.customType === 'pi-project-files-watch-snapshot'
+    && entry.data?.responseEntryIds?.includes(response.id));
+  if (typeof header.cwd === 'string' && sameRepository(header.cwd)
+    && fs.realpathSync(git(header.cwd, ['rev-parse', '--show-toplevel'])) === fs.realpathSync(target)) {
+    // Never substitute a prompt checkpoint or capture the files being deleted.
+    if (!snapshot || snapshot.data?.unavailable) throw new Error('The archived conversation has no checkpoint for its last response');
+    verifyRef(snapshot.data.ref, snapshot.data.commit);
+    header.worktreeRestore = { path: fs.realpathSync(target), repositoryRoot: common, ref: snapshot.data.ref, commit: snapshot.data.commit };
+    changed = true;
+  }
   const promptRoot = header.checkpointRepositoryRoot ?? header.cwd;
   const prompts = entries.filter((entry) => entry.type === 'custom' && entry.customType === 'pi-project-prompt-checkpoint' && !entry.data?.unavailable);
   if (prompts.length && promptRoot !== common && sameRepository(promptRoot)) {
