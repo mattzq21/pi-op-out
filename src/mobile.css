@@ -54,7 +54,7 @@ html[data-mobile] .app { padding-top: calc(52px + env(safe-area-inset-top)); }
   .message-content { min-width: 0; overflow-wrap: anywhere; }
   .message-content pre, .message-content table { max-width: 100%; overflow-x: auto; }
   .conversation { padding: 56px 12px 20px; }
-  .composer-wrap, .extension-widget, .extension-status, .runtime-activity { width: calc(100% - 16px); }
+  .composer-wrap, .extension-widget, .runtime-activity { width: calc(100% - 16px); }
   .composer { margin-inline: 0; }
   .composer-bar { flex-wrap: wrap; }
   .composer-tools { flex-wrap: wrap; }
