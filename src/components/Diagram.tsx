@@ -21,7 +21,8 @@ export function Diagram(props: { source: string; complete: boolean }) {
     update();
     const observer = new MutationObserver(update);
     observer.observe(app, { attributes: true, attributeFilter: ["class"] });
-    onCleanup(() => observer.disconnect());
+    root.addEventListener("wheel", wheel, { passive: false });
+    onCleanup(() => { observer.disconnect(); root.removeEventListener("wheel", wheel); });
   });
   onCleanup(() => { revision++; clearTimeout(timer); });
   createEffect(() => {
@@ -48,6 +49,12 @@ export function Diagram(props: { source: string; complete: boolean }) {
     catch { notify("Could not copy source"); }
   };
   const reset = () => { setZoom(1); viewport?.scrollTo(0, 0); };
+  const wheel = (event: WheelEvent) => {
+    if (!event.ctrlKey || !event.deltaY || !(event.target instanceof Node) || !viewport?.contains(event.target)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setZoom(value => Math.max(0.5, Math.min(4, value - Math.sign(event.deltaY) * 0.25)));
+  };
   const pointerDown = (event: PointerEvent) => {
     if (event.button !== 0 || event.pointerType === "touch") return;
     drag = { x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop };
@@ -69,7 +76,7 @@ export function Diagram(props: { source: string; complete: boolean }) {
       <button type="button" aria-expanded={expanded()} onClick={() => setExpanded(!expanded())}>{expanded() ? "Collapse" : "Expand"}</button>
     </div>
     <Show when={svg()}>
-      <div ref={viewport} class="diagram-viewport" tabindex="0" role="region" aria-label="Diagram preview; scroll or drag to pan" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={() => { drag = undefined; }} onLostPointerCapture={() => { drag = undefined; }}>
+      <div ref={viewport} class="diagram-viewport" tabindex="0" role="region" aria-label="Diagram preview; scroll or drag to pan, Ctrl+scroll to zoom" title="Ctrl+scroll up to zoom in, Ctrl+scroll down to zoom out" onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={() => { drag = undefined; }} onLostPointerCapture={() => { drag = undefined; }}>
         <div class="diagram-canvas" style={{ width: `${zoom() * 100}%` }} innerHTML={svg()} />
       </div>
     </Show>
