@@ -876,10 +876,11 @@ fn prepare_session_cost_limit_extension(_settings: &AppSettings) -> Result<PathB
     Ok(extension_path)
 }
 
-const LOOP_DETECTION_ASSETS: [(&str, &str); 3] = [
+const LOOP_DETECTION_ASSETS: [(&str, &str); 4] = [
     ("index.ts", include_str!("../../extensions/piop-loop-detection/index.ts")),
     ("detector.ts", include_str!("../../extensions/piop-loop-detection/detector.ts")),
     ("observations.ts", include_str!("../../extensions/piop-loop-detection/observations.ts")),
+    ("persistence.ts", include_str!("../../extensions/piop-loop-detection/persistence.ts")),
 ];
 
 fn prepare_loop_detection_extension() -> Result<PathBuf, String> {
@@ -2187,8 +2188,8 @@ fn remote_directory_path(path: Option<&str>) -> String {
 
 fn remove_ephemeral_session(session: EphemeralSession) {
     match session {
-        EphemeralSession::Local(path) => { let _ = fs::remove_file(path); }
-        EphemeralSession::Remote { host, path } => { let _ = ssh(&host).arg(format!("rm -f -- {}", shell_quote(&path))).status(); }
+        EphemeralSession::Local(path) => { let _ = fs::remove_file(format!("{}.loop-detection.json", path.display())); let _ = fs::remove_file(path); }
+        EphemeralSession::Remote { host, path } => { let _ = ssh(&host).arg(format!("rm -f -- {} {}", shell_quote(&path), shell_quote(&format!("{path}.loop-detection.json")))).status(); }
     }
 }
 
@@ -3207,6 +3208,7 @@ fn archive_remote_session(session_path: &str, command: impl FnOnce(String) -> Co
     let destination = format!("{}-{file_name}", Uuid::new_v4());
     let diff_destination = Path::new(&destination).with_extension("diffs.json").to_string_lossy().into_owned();
     let remote = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) archive="$HOME/{STORAGE_DIRECTORY}/archived"; mkdir -p "$archive" || exit 1; diff=${{target%.jsonl}}.diffs.json; diff_target="$archive"/{}; moved_diff=0; if [ -f "$diff" ]; then mv -- "$diff" "$diff_target" || exit 1; moved_diff=1; fi; if ! mv -- "$target" "$archive"/{}; then if [ "$moved_diff" = 1 ]; then mv -- "$diff_target" "$diff" || true; fi; exit 1; fi ;; *) printf 'Refusing to archive a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(session_path), shell_quote(&diff_destination), shell_quote(&destination));
+    let remote = format!(r#"{remote} && {{ rm -f -- "$target.loop-detection.json" || true; }}"#);
     let output = command(remote).output().map_err(|error| error.to_string())?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     Ok(())
@@ -3232,6 +3234,7 @@ fn archive_local_session(home: &Path, session_path: &str) -> Result<(), String> 
         if moved_diff { let _ = fs::rename(&diff_destination, &diff_source); }
         return Err(format!("Could not archive session: {error}"));
     }
+    let _ = fs::remove_file(format!("{}.loop-detection.json", source.display()));
     Ok(())
 }
 

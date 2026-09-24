@@ -17,6 +17,8 @@ type Baseline = { content: string | null; capturedAt: number };
 type ToolPathMapping = { toolCallId: string; path: string; absolutePath: string; canonicalPath: string };
 type Capture = { files: Map<string, Baseline>; bytes: number; toolCallIds: Set<string>; toolPaths: ToolPathMapping[]; warnings: Set<string> };
 type Journal = { directory: string; capture: Capture; capturedAt: number };
+type Revision = { path: string; absolute: string; before: string };
+const fingerprint = (content: string | null) => createHash("sha256").update(JSON.stringify(content)).digest("hex");
 const newCapture = (): Capture => ({ files: new Map(), bytes: 0, toolCallIds: new Set(), toolPaths: [], warnings: new Set() });
 const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
 
@@ -82,23 +84,36 @@ function validJournalRecord(record: { path?: unknown; skip?: unknown; content?: 
   return typeof record.path === "string" && isAbsolute(record.path) && !record.skip && (record.content === null || typeof record.content === "string");
 }
 
+function journalTimestamp(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
 async function collectJournal(journal: Journal) {
+  const local = newCapture();
+  let complete = true;
   try {
     for (let index = 0; index < 32; index++) {
       const raw = await textFile(join(journal.directory, `${index}.json`), MAX_TOTAL_BYTES);
       if (raw === null) break;
       const record = JSON.parse(raw);
       if (!validJournalRecord(record)) {
+        complete = false;
         journal.capture.warnings.add("Some shell changes could not be captured."); continue;
       }
       const skipped = `skipped-${createHash("sha256").update(record.path).digest("hex")}`;
-      if (await textFile(join(journal.directory, skipped)) !== null) continue;
-      remember(journal.capture, record.path, record.content, typeof record.capturedAt === "number" && Number.isFinite(record.capturedAt) ? record.capturedAt : journal.capturedAt);
+      if (await textFile(join(journal.directory, skipped)) !== null) { complete = false; continue; }
+      remember(journal.capture, record.path, record.content, journalTimestamp(record.capturedAt, journal.capturedAt));
+      remember(local, record.path, record.content, journal.capturedAt);
       if (index === 31) journal.capture.warnings.add("Shell file capture reached its 32-file limit; Git changes are included where available.");
     }
-    if (await textFile(join(journal.directory, "incomplete")) !== null) journal.capture.warnings.add("Some shell changes could not be captured because snapshots overlapped, failed, or exceeded capture limits. Git changes are included where available.");
-  } catch { journal.capture.warnings.add("Some shell changes could not be captured."); }
+    if (await textFile(join(journal.directory, "incomplete")) !== null) {
+      complete = false;
+      journal.capture.warnings.add("Some shell changes could not be captured because snapshots overlapped, failed, or exceeded capture limits. Git changes are included where available.");
+    }
+  } catch { complete = false; journal.capture.warnings.add("Some shell changes could not be captured."); }
   finally { await rm(journal.directory, { recursive: true, force: true }).catch(() => undefined); }
+  if (!complete || local.warnings.size) return [];
+  return [...local.files].map(([path, before]) => ({ path, absolute: path, before: fingerprint(before.content) }));
 }
 
 async function filePatch(path: string, before: string | null, after: string | null, directory: string) {
@@ -127,9 +142,17 @@ function affectedPaths(name: string | undefined, input: Record<string, unknown>)
   return paths;
 }
 
-function registerToolRevisions(pi: ExtensionAPI) {
-  type Revision = { path: string; absolute: string; before: string };
-  const fingerprint = (content: string | null) => createHash("sha256").update(JSON.stringify(content)).digest("hex");
+function runningShellOutput(content: { type: string; text?: string }[]) {
+  return content.some(part => {
+    if (part.type !== "text") return false;
+    const text = part.text ?? "";
+    if (/(?:^|\n)Process running with session ID\b/.test(text)) return true;
+    try { const result = JSON.parse(text); return result?.session_id != null && result.exit_code == null; }
+    catch { return false; }
+  });
+}
+
+function registerToolRevisions(pi: ExtensionAPI, journals: Map<string, Journal>) {
   const mutation = (name: string) => ["edit", "write", "apply_patch", "bash", "exec_command"].includes(name.split(".").at(-1)!);
   let active = 0;
   let generation = 0;
@@ -172,17 +195,21 @@ function registerToolRevisions(pi: ExtensionAPI) {
     if (!mutation(event.toolName)) return;
     const current = pending; pending = undefined;
     try {
+      const journal = journals.get(event.toolCallId);
+      journals.delete(event.toolCallId);
+      const shellRevisions = journal ? await collectJournal(journal) : [];
       if (!current || current.id !== event.toolCallId || event.isError) return;
-      const changes = await compare(current.revisions);
+      if (runningShellOutput(event.content)) return;
+      const changes = await compare([...current.revisions, ...shellRevisions]);
       if (generation === current.generation && changes.length) pi.events.emit("piop:tool-file-changes", { ctx, changes });
     } finally { active = Math.max(0, active - 1); }
   });
 }
 
 export function registerFileChanges(pi: ExtensionAPI) {
-  registerToolRevisions(pi);
   let capture = newCapture();
   const journals = new Map<string, Journal>();
+  registerToolRevisions(pi, journals);
 
   const captureShell = async (name: string, input: Record<string, unknown>, toolCallId: string, current: Capture) => {
     const key = name === "bash" ? "command" : "cmd";
@@ -218,12 +245,6 @@ export function registerFileChanges(pi: ExtensionAPI) {
         if (!current.files.has(canonical)) remember(current, canonical, await textFile(canonical), Date.now());
       } catch { current.warnings.add(`Could not capture ${path}.`); }
     }
-  });
-  pi.on("tool_result", async (event) => {
-    const journal = journals.get(event.toolCallId);
-    if (!journal) return;
-    journals.delete(event.toolCallId);
-    await collectJournal(journal);
   });
 
   const collectPendingJournals = async (current: Capture) => {

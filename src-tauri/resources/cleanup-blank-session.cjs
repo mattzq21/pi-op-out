@@ -21,4 +21,6 @@ for (const candidate of candidates) {
   fs.unlinkSync(file);
   const sidecar = file.replace(/\.jsonl$/, ".diffs.json");
   if (fs.existsSync(sidecar)) fs.unlinkSync(sidecar);
+  const loopCheckpoint = `${file}.loop-detection.json`;
+  if (fs.existsSync(loopCheckpoint)) fs.unlinkSync(loopCheckpoint);
 }

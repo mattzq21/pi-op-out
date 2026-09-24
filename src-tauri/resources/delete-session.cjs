@@ -119,8 +119,8 @@ async function main() {
   let preserveRecovery = false;
   let lockRemoved = false;
   try {
-    const [trace, sidecar] = await Promise.all([readFile(source), readFile(source.replace(/\.jsonl$/, ".diffs.json"), true)]);
-    const files = sidecar ? [trace, sidecar] : [trace];
+    const [trace, sidecar, loopCheckpoint] = await Promise.all([readFile(source), readFile(source.replace(/\.jsonl$/, ".diffs.json"), true), readFile(`${source}.loop-detection.json`, true)]);
+    const files = [trace, sidecar, loopCheckpoint].filter(Boolean);
     const entries = trace.body.toString("utf8").split("\n").filter((line) => line.trim()).map(JSON.parse);
     const header = entries[0];
     validateHeader(header, target);
