@@ -42,7 +42,7 @@ function preserve(file) {
     // Never substitute a prompt checkpoint or capture the files being deleted.
     if (!snapshot || snapshot.data?.unavailable) throw new Error('The archived conversation has no checkpoint for its last response');
     verifyRef(snapshot.data.ref, snapshot.data.commit);
-    header.worktreeRestore = { path: fs.realpathSync(target), repositoryRoot: common, ref: snapshot.data.ref, commit: snapshot.data.commit };
+    header.worktreeRestore = { path: fs.realpathSync(target), conversationPath: fs.realpathSync(header.cwd), repositoryRoot: common, ref: snapshot.data.ref, commit: snapshot.data.commit };
     changed = true;
   }
   const promptRoot = header.checkpointRepositoryRoot ?? header.cwd;

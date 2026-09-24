@@ -11,7 +11,10 @@ const saved = header?.worktreeRestore;
 if (header?.type !== 'session' || !saved || !path.isAbsolute(saved.path ?? '') || !path.isAbsolute(saved.repositoryRoot ?? '')
   || typeof saved.ref !== 'string' || !saved.ref.startsWith('refs/pi-session-snapshots/')
   || !/^[a-f0-9]{40,64}$/.test(saved.commit ?? '')) throw new Error('No saved worktree checkpoint is available');
-const relative = path.relative(saved.path, header.cwd);
+// Both paths were canonicalized before deletion; the original cwd may be an alias.
+const conversationPath = saved.conversationPath ?? header.cwd;
+if (typeof conversationPath !== 'string' || !path.isAbsolute(conversationPath)) throw new Error('Invalid archived conversation location');
+const relative = path.relative(saved.path, conversationPath);
 if (relative === '..' || relative.startsWith('..' + path.sep) || path.isAbsolute(relative)) throw new Error('Invalid archived worktree location');
 const git = (args) => execFileSync('git', ['-C', saved.repositoryRoot, ...args], { encoding: 'utf8', timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 if (git(['rev-parse', '--verify', saved.ref]) !== saved.commit) throw new Error('The last response checkpoint is missing or has changed');
