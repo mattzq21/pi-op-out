@@ -4,7 +4,7 @@ import { listProjectFiles, readProjectFile, saveProjectFile, type FileProject, t
 import { CodeEditor } from "./CodeEditor";
 import type { FilePaneRequest } from "./FileWorkspace";
 
-export function FilePane(props: { request: FilePaneRequest; onClose: () => void }) {
+export function FilePane(props: { request: FilePaneRequest; hidden?: boolean; onClose: () => void }) {
   const [width, setWidth] = createSignal<number | undefined>((() => {
     try {
       const saved = Number(localStorage.getItem("piop.files.width"));
@@ -122,7 +122,7 @@ export function FilePane(props: { request: FilePaneRequest; onClose: () => void 
     <div class="file-editor-toolbar"><span title={file()!.path}>{file()!.path}{dirty() ? " •" : ""}</span><small role="status">{editorStatus()}</small><button type="button" aria-label="Reload file" title="Reload file" disabled={saving() || loading()} onClick={() => navigate(() => { void openFile({ path: file()!.path }); })}><RefreshCw size={14} /></button><button type="button" disabled={!dirty() || saving() || loading()} onClick={() => void save()} title="Save (Ctrl/Cmd+S)"><Save size={14} />Save</button></div>
     <Show when={editorVersion()} keyed>{_version => <CodeEditor filename={file()!.path} value={draft()} disabled={loading()} location={location()} onChange={value => { setDraft(value); setSaved(false); }} onSave={() => { void save(); }} />}</Show>
   </Show>;
-  return <aside ref={pane} class="file-pane" aria-label="Project files" style={{ "--files-width": `${visibleWidth()}px` }}>
+  return <aside ref={pane} class="file-pane" hidden={props.hidden} aria-label="Project files" style={{ "--files-width": `${visibleWidth()}px` }}>
     <div class={`files-resizer ${dragging() ? "dragging" : ""}`} role="separator" tabIndex={0} aria-label="Files pane width" aria-orientation="vertical" aria-valuemin={300} aria-valuemax={maxWidth()} aria-valuenow={Math.round(visibleWidth())}
       onPointerDown={event => {
         if (event.button !== 0 || !event.isPrimary) return;
