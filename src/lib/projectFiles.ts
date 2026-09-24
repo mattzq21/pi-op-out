@@ -1,4 +1,5 @@
 import { invoke } from "./platform";
+import { webUrl } from "./webLinks";
 
 export interface FileProject { cwd: string; hostId: string; }
 export interface FileReference { path: string; line?: number; column?: number; }
@@ -28,7 +29,7 @@ function sourceLocation(location: RegExpMatchArray | null) {
 
 export function fileReference(value: string): FileReference | undefined {
   let path = decodeFilePath(value);
-  if (!path) return undefined;
+  if (!path || webUrl(path)) return undefined;
   const location = path.match(/(?::(\d+)(?::(\d+))?(?:-\d+)?|#L(\d+)(?:C(\d+))?(?:-L?\d+)?)$/);
   if (location) path = path.slice(0, location.index);
   if (/^[a-z][a-z\d+.-]*:/i.test(path) && !/^[a-z]:[\\/]/i.test(path)) return undefined;

@@ -6,12 +6,9 @@ import { Portal } from "solid-js/web";
 import { openExternalUrl } from "../lib/nativeTransport";
 import { fileReference, type FileReference } from "../lib/projectFiles";
 import { detectFileLinks } from "../lib/fileLinks";
+import { webUrl } from "../lib/webLinks";
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
-function webUrl(href: string) {
-  try { const url = new URL(href); return ["http:", "https:"].includes(url.protocol) ? url.href : undefined; }
-  catch { return undefined; }
-}
 const parser = new Marked({
   gfm: true,
   renderer: {

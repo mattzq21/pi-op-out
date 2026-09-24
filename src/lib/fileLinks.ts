@@ -1,4 +1,5 @@
 import { fileReference, looksLikeFile } from "./projectFiles";
+import { webUrl } from "./webLinks";
 
 function fileButton(path: string, label: string) {
   const button = document.createElement("button");
@@ -10,13 +11,25 @@ function fileButton(path: string, label: string) {
   return button;
 }
 
+function referenceLink(value: string) {
+  const url = webUrl(value);
+  if (!url) return looksLikeFile(value) ? fileButton(value, value) : undefined;
+  const link = document.createElement("a");
+  link.className = "message-link";
+  link.href = url;
+  link.title = `Click to open in browser\n${url}`;
+  link.textContent = value;
+  return link;
+}
+
 function linkText(node: Text) {
   const fragment = document.createDocumentFragment();
   let end = 0;
-  for (const match of node.data.matchAll(/[^\s<>"'`()[\]{},;!?]+/g)) {
-    const candidate = match[0].replace(/[.:]+$/, "");
-    if (!looksLikeFile(candidate)) continue;
-    fragment.append(document.createTextNode(node.data.slice(end, match.index)), fileButton(candidate, candidate));
+  for (const match of node.data.matchAll(/[^\s<>"'`()[\]{},;]+/g)) {
+    const candidate = match[0].replace(/[.:!?]+$/, "");
+    const link = referenceLink(candidate);
+    if (!link) continue;
+    fragment.append(document.createTextNode(node.data.slice(end, match.index)), link);
     end = match.index! + candidate.length;
   }
   if (!end) return;
@@ -41,7 +54,8 @@ export function detectFileLinks(html: string) {
   for (const code of template.content.querySelectorAll("code")) {
     if (code.closest("pre, a, button")) continue;
     const path = code.textContent ?? "";
-    if (looksLikeFile(path)) code.replaceChildren(fileButton(path, path));
+    const link = referenceLink(path);
+    if (link) code.replaceChildren(link);
   }
   const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_TEXT);
   const nodes: Text[] = [];
