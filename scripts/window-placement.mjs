@@ -11,9 +11,13 @@ export function selectWindowBounds() {
     const windows = execFileSync("xwininfo", ["-root", "-tree"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
     // Both sibling apps share these slots. Match titles so custom-named test
     // binaries still count even when their WM_CLASS differs.
-    const siblingWindows = windows.split("\n").filter((line) => /"(?:piop|codop)": \(/i.test(line));
+    const siblingWindows = windows.split("\n")
+      .filter((line) => /"(?:piop|codop)(?: dev)?": \(/i.test(line))
+      .map((line) => line.match(/(\d+)x(\d+)[+-]-?\d+[+-]-?\d+\s+([+-]-?\d+)([+-]-?\d+)\s*$/))
+      .filter(Boolean)
+      .map((match) => ({ width: Number(match[1]), height: Number(match[2]), x: Number(match[3].replace(/^\+/, "")), y: Number(match[4].replace(/^\+/, "")) }));
     return windowSlots.find(({ x, y, width, height }) =>
-      !siblingWindows.some((line) => line.includes(`${width}x${height}+${x}+${y}`))
+      !siblingWindows.some((window) => window.x < x + width && window.x + window.width > x && window.y < y + height && window.y + window.height > y)
     ) ?? quaternaryWindowBounds;
   } catch {
     return topWindowBounds;
