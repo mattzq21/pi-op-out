@@ -102,7 +102,7 @@ export class LoopDetector {
     if (!this.state.config.enabled) return;
     const previous = this.state.attempts.find(item => item.key === action.key);
     if (!result.failed && action.kind === "command") {
-      if (previous) { this.progress(); this.state.edits = []; }
+      if (previous) this.progress();
       return;
     }
     if (action.kind === "read") { if (!result.failed) this.learn(result.fingerprint); return; }
