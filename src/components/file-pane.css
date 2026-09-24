@@ -9,6 +9,7 @@
 .file-pane button:disabled { opacity: .45; cursor: default; }
 .file-pane button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .file-pane-heading { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.file-pane-heading > svg { color: var(--accent); }
 .file-pane-heading > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
 .file-pane-project { padding: 6px 12px; font-size: 10px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-browser { display: flex; flex-direction: column; height: 220px; flex-shrink: 0; max-height: 35%; padding: 0 8px 8px; border-bottom: 1px solid var(--line); }
