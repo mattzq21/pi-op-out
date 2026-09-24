@@ -1,6 +1,6 @@
 .chat-with-files { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
 .chat-with-files > .chat-panes { flex: 1; min-width: 0; }
-.file-pane { width: 46%; min-width: 300px; max-width: 70%; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--paper); color: var(--ink); }
+.file-pane { --accent-soft: color-mix(in srgb, var(--accent) 14%, var(--paper)); width: 46%; min-width: 300px; max-width: 70%; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--paper); color: var(--ink); }
 .file-pane button { display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 5px; padding: 5px 7px; color: var(--muted); background: transparent; font-size: 12px; }
 .file-pane button:hover { color: var(--ink); background: var(--accent-08); }
 .file-pane button:disabled { opacity: .45; cursor: default; }
@@ -22,7 +22,7 @@
 .file-editor-toolbar { padding: 5px 8px; border-bottom: 1px solid var(--line); }
 .file-editor-toolbar small { color: var(--muted); font-size: 10px; }
 .file-pane-error, .file-pane-unsaved { padding: 10px 12px; font-size: 12px; background: var(--accent-soft); overflow-wrap: anywhere; }
-.file-pane-error { color: var(--ink); }
+.file-pane-error { background: color-mix(in srgb, #d77865 12%, var(--paper)); color: color-mix(in srgb, #d77865 65%, var(--ink)); border-left: 2px solid #d77865; }
 .file-pane-unsaved > div { display: flex; gap: 5px; margin-top: 6px; }
 .chat-files-toolbar { display: flex; justify-content: flex-end; padding: 7px 12px; flex-shrink: 0; }
 .chat-files-toolbar button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--muted); padding: 5px 9px; font-size: 12px; }
