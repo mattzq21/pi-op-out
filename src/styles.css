@@ -78,7 +78,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .select-control { height: 31px; border: 1px solid var(--line); border-radius: 7px; display: flex; align-items: center; padding: 0 7px; gap: 4px; background: white; }
 .select-control span { font: 10px "DM Sans"; color: var(--faint); text-transform: uppercase; }.select-control select { max-width: 130px; border: 0; outline: 0; appearance: none; font-size: 12px; font-weight: 500; background: transparent; }.select-control.thinking select { max-width: 70px; }
 .messages { position: absolute; inset: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-bottom: var(--composer-height, 0px); scroll-padding-bottom: calc(var(--composer-height, 0px) + 22px); }
-.conversation { max-width: 740px; margin: 0 auto; }
+.conversation, .composer-wrap { width: min(740px, calc(100% - 72px)); margin: 0 auto; }
 .selection-btw-tip { position: fixed; z-index: 20; display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 5px 7px 5px 10px; border: 1px solid #ffffff18; border-radius: 7px; background: #292824; color: #f7f5ef; box-shadow: 0 6px 18px #0004; transform: translate(-50%, -100%); font-size: 11px; font-weight: 500; white-space: nowrap; }
 .selection-btw-tip.below { transform: translate(-50%, 0); }
 .selection-btw-tip:hover { background: #34322e; }
@@ -163,7 +163,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .prompt-context-wheel { flex: 0 0 auto; margin-left: auto; }
 .prompt-context-content > pre, .prompt-context-content div pre, .prompt-context-content small { overflow-wrap: anywhere; }
 
-.composer-wrap { width: min(740px, calc(100% - 72px)); margin: 0 auto; padding-bottom: 13px; }
+.composer-wrap { padding-bottom: 13px; }
 .composer-stack::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 13px; background: var(--paper); pointer-events: none; }
 .image-input-toast { display: flex; align-items: center; gap: 9px; width: fit-content; max-width: 100%; box-sizing: border-box; margin: 0 0 10px; padding: 11px 13px; border: 1px solid #792b24; border-radius: 12px; background: #260d0b; color: #ff6557; font-size: 14px; line-height: 1.4; box-shadow: 0 4px 16px #0002; }
 .image-input-toast > svg { flex-shrink: 0; }
@@ -345,12 +345,12 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .app.dark .composer-bar .send:disabled { background: #4b4943; color: #8f8b82; }
 @media (max-width: 1050px) {
   :root { --rail-width: 232px; }
-  .conversation { max-width: 670px; }
   .settings-header { height: auto; min-height: 124px; padding-inline: 24px; flex-wrap: wrap; gap: 16px; }
   .settings-layout { grid-template-columns: minmax(0, 1fr); gap: 20px; padding-inline: 24px; }
   .settings-nav { flex-direction: row; flex-wrap: wrap; }
   .settings-nav button { width: auto; }
   .settings-content { min-width: 0; }
+  .chat-panes.split .conversation,
   .chat-panes.split .composer-wrap,
   .chat-panes.split .extension-widget { width: calc(100% - 24px); }
   .chat-panes.split .composer-bar { flex-wrap: wrap; }
