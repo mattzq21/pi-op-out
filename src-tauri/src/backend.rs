@@ -887,6 +887,20 @@ fn prepare_session_cost_limit_extension(_settings: &AppSettings) -> Result<PathB
     Ok(extension_path)
 }
 
+const LOOP_DETECTION_ASSETS: [(&str, &str); 4] = [
+    ("index.ts", include_str!("../../extensions/piop-loop-detection/index.ts")),
+    ("detector.ts", include_str!("../../extensions/piop-loop-detection/detector.ts")),
+    ("observations.ts", include_str!("../../extensions/piop-loop-detection/observations.ts")),
+    ("persistence.ts", include_str!("../../extensions/piop-loop-detection/persistence.ts")),
+];
+
+fn prepare_loop_detection_extension() -> Result<PathBuf, String> {
+    let dir = home_dir()?.join(STORAGE_DIRECTORY).join("piop-loop-detection");
+    ensure_private_dir(&dir)?;
+    for (name, content) in LOOP_DETECTION_ASSETS { atomic_write_private(&dir.join(name), content.as_bytes())?; }
+    Ok(dir.join("index.ts"))
+}
+
 const FILE_CHANGE_ASSETS: [(&str, &str); 3] = [
     ("file-changes.ts", include_str!("../../extensions/piop-diff-watch/file-changes.ts")),
     ("sitecustomize.py", include_str!("../../extensions/piop-diff-watch/sitecustomize.py")),
@@ -2212,8 +2226,8 @@ fn remote_directory_path(path: Option<&str>) -> String {
 
 fn remove_ephemeral_session(session: EphemeralSession) {
     match session {
-        EphemeralSession::Local(path) => { let _ = fs::remove_file(path); }
-        EphemeralSession::Remote { host, path } => { let _ = ssh(&host).arg(format!("rm -f -- {}", shell_quote(&path))).status(); }
+        EphemeralSession::Local(path) => { let _ = fs::remove_file(format!("{}.loop-detection.json", path.display())); let _ = fs::remove_file(path); }
+        EphemeralSession::Remote { host, path } => { let _ = ssh(&host).arg(format!("rm -f -- {} {}", shell_quote(&path), shell_quote(&format!("{path}.loop-detection.json")))).status(); }
     }
 }
 
@@ -2333,6 +2347,10 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let remote = format!(r#"{remote} && printf %s {provider_accounts} > "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs""#);
     let remote = format!(r#"{remote} && printf %s {rtk_extension} > "$HOME/{STORAGE_DIRECTORY}/rtk.ts" && printf %s {rtk_license} > "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/rtk.ts" "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE""#);
     let mut remote = remote;
+    remote.push_str(&format!(r#" && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/piop-loop-detection""#));
+    for (name, content) in LOOP_DETECTION_ASSETS {
+        remote.push_str(&format!(r#" && printf %s {} > "$HOME/{STORAGE_DIRECTORY}/piop-loop-detection/{name}" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-loop-detection/{name}""#, shell_quote(content)));
+    }
     for (name, content) in FILE_CHANGE_ASSETS {
         remote.push_str(&format!(" && printf %s {} > \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/{}\" && chmod 600 \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/{}\"", shell_quote(content), name, name));
     }
@@ -2376,6 +2394,7 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
          let mcp_extension = prepare_mcp_bridge()?; let context_window_cap_extension = prepare_context_window_cap_extension(settings)?; let session_cost_limit_extension = prepare_session_cost_limit_extension(settings)?; let diff_watch_extension = prepare_diff_watch_extension()?; let trace_reader_extension = prepare_trace_reader()?; let openai_cache_fork_extension = prepare_openai_cache_fork_extension()?; let codex_web_search_extension = prepare_codex_web_search_extension()?; let defined_agents_extension = prepare_defined_agents_extension()?; let pi_path = pi_executable();
         let session_dir = ensure_desktop_sessions_dir(&desktop_home)?;
         let mut command = Command::new(session_worker_executable()?); command.args([std::ffi::OsStr::new("--piop-session-worker"), pi_path.as_os_str()]); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY); command.arg(if is_rpc { "--mode" } else { "--print" }); if is_rpc { command.arg("rpc"); }
+        command.arg("--extension").arg(prepare_loop_detection_extension()?);
         command.arg("--extension").arg(prepare_rtk_extension()?);
          command.arg("--extension").arg(prepare_runtime_settings(settings)?).arg("--session-dir").arg(session_dir).arg("--approve").arg("--no-skills").arg("--extension").arg(mcp_extension).arg("--extension").arg(prepare_session_broker()?).arg("--extension").arg(&trace_reader_extension).arg("--extension").arg(&context_window_cap_extension).arg("--extension").arg(&session_cost_limit_extension).arg("--extension").arg(&diff_watch_extension).arg("--extension").arg(prepare_fast_mode_extension()?).arg("--extension").arg(&openai_cache_fork_extension).arg("--extension").arg(&codex_web_search_extension).arg("--extension").arg(&defined_agents_extension)
              .env("PI_DESKTOP_DEFINED_AGENTS_EXTENSION", &defined_agents_extension).env("PI_DESKTOP_CODEX_WEB_SEARCH_EXTENSION", &codex_web_search_extension).env("PI_DESKTOP_CONTEXT_WINDOW_CAP_EXTENSION", &context_window_cap_extension).env("PI_DESKTOP_SESSION_COST_LIMIT_EXTENSION", &session_cost_limit_extension).env("PI_DESKTOP_TRACE_READER_EXTENSION", &trace_reader_extension).env("PI_DESKTOP_BROKER_URL", format!("http://127.0.0.1:{broker_port}")).env("PI_DESKTOP_BROKER_TOKEN", &broker_token).env("PI_DESKTOP_HOST_ID", host_id);
@@ -2395,6 +2414,7 @@ fn build_pi_command(broker: &BrokerRuntime, settings: &AppSettings, host_id: &st
     }
     let host = remote_host(settings, host_id)?; stage_remote_extensions(host, settings)?; let remote_port = daemon_port.unwrap_or_else(remote_broker_port); let remote_pi = remote_pi_path(&host.pi_path);
     let mut arguments = vec![remote_pi.clone()]; if is_rpc { arguments.extend(["--mode".into(), "rpc".into()]); } else { arguments.push("--print".into()); }
+    arguments.extend(["--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/piop-loop-detection/index.ts\"")]);
     arguments.extend(["--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/rtk.ts\"")]);
     arguments.extend(["--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/runtime-settings.ts\"")]);
        arguments.extend(["--session-dir".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/sessions\""), "--approve".into(), "--no-skills".into(), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/piop-mcp-bridge.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/session-broker.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/piop-trace-reader.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/index.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit/index.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/index.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/piop-define-agents/index.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/piop-openai-cache-fork.ts\""), "--extension".into(), format!("\"$HOME/{STORAGE_DIRECTORY}/piop-codex-web-search.ts\"")]);
@@ -3252,6 +3272,7 @@ fn archive_remote_session(session_path: &str, command: impl FnOnce(String) -> Co
     let destination = format!("{}-{file_name}", Uuid::new_v4());
     let diff_destination = Path::new(&destination).with_extension("diffs.json").to_string_lossy().into_owned();
     let remote = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) && target=$(realpath -- {}) && case "$target" in "$root"/*.jsonl) archive="$HOME/{STORAGE_DIRECTORY}/archived"; mkdir -p "$archive" || exit 1; diff=${{target%.jsonl}}.diffs.json; diff_target="$archive"/{}; moved_diff=0; if [ -f "$diff" ]; then mv -- "$diff" "$diff_target" || exit 1; moved_diff=1; fi; if ! mv -- "$target" "$archive"/{}; then if [ "$moved_diff" = 1 ]; then mv -- "$diff_target" "$diff" || true; fi; exit 1; fi ;; *) printf 'Refusing to archive a non-desktop session file' >&2; exit 1 ;; esac"#, shell_quote(session_path), shell_quote(&diff_destination), shell_quote(&destination));
+    let remote = format!(r#"{remote} && {{ rm -f -- "$target.loop-detection.json" || true; }}"#);
     let output = command(remote).output().map_err(|error| error.to_string())?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     Ok(())
@@ -3277,6 +3298,7 @@ fn archive_local_session(home: &Path, session_path: &str) -> Result<(), String> 
         if moved_diff { let _ = fs::rename(&diff_destination, &diff_source); }
         return Err(format!("Could not archive session: {error}"));
     }
+    let _ = fs::remove_file(format!("{}.loop-detection.json", source.display()));
     Ok(())
 }
 
