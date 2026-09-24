@@ -51,7 +51,7 @@ async function discoverTools(client: Client, signal: AbortSignal) {
 function toolParameters(inputSchema: Awaited<ReturnType<Client["listTools"]>>["tools"][number]["inputSchema"], inject = false) {
   const schema = inputSchema ?? { type: "object", properties: {} };
   const agentId = schema.properties?.agent_id;
-  const injectAgentId = inject && agentId !== null && typeof agentId === "object" && agentId.type === "string";
+  const injectAgentId = inject && agentId !== null && typeof agentId === "object" && !Array.isArray(agentId) && agentId.type === "string";
   const parameters = injectAgentId ? {
     ...schema,
     properties: Object.fromEntries(Object.entries(schema.properties ?? {}).filter(([key]) => key !== "agent_id")),
@@ -113,6 +113,8 @@ function resultContent(result: unknown) {
     else if (part.type === "image" && typeof part.data === "string" && typeof part.mimeType === "string") mapped.push({ type: "image", data: part.data, mimeType: part.mimeType });
     else mapped.push({ type: "text", text: JSON.stringify(part, null, 2) });
   }
+  const structured = (result as { structuredContent?: unknown })?.structuredContent;
+  if (structured !== undefined) mapped.push({ type: "text", text: JSON.stringify(structured, null, 2) });
   return mapped.length ? mapped : [{ type: "text" as const, text: JSON.stringify(result, null, 2) }];
 }
 
@@ -149,6 +151,8 @@ export default async function mcpBridge(pi: ExtensionAPI) {
   };
   const statuses = new Map(servers.map((server) => [server.id, { id: server.id, status: "stopped" as "stopped" | "starting" | "connected" | "error", error: undefined as string | undefined }]));
   const shutdown = new AbortController();
+  let preparing: AbortController | undefined;
+  const cancelPreparation = pi.events.on("piop:cancel-preparation", () => preparing?.abort());
   let context: ExtensionContext | undefined;
   let pending: Promise<unknown> = Promise.resolve();
   const publish = () => {
@@ -162,35 +166,9 @@ export default async function mcpBridge(pi: ExtensionAPI) {
     if (connection) { pi.setActiveTools(pi.getActiveTools().filter((name) => !connection.tools.includes(name))); connection.connected = false; await connection.client.close().catch(() => undefined); }
     statuses.set(id, { id, status: "stopped", error: undefined });
   };
-  const select = async (selection: Selection): Promise<string[]> => {
-    if (shutdown.signal.aborted) throw new Error("MCP bridge has shut down");
-    const next = selection.servers.filter((server) => server.enabled);
-    const wanted = new Set(next.map((server) => server.id));
-    const instanceFor = (id: string) => `piop-${createHash("sha256").update(JSON.stringify([selection.sessionId, selection.agentName, id])).digest("hex").slice(0, 32)}`;
-    // Close the old lease before requesting a new one, including on agent changes.
-    await Promise.all([...connections].filter(([id, connection]) => !wanted.has(id) || connection.instanceId !== instanceFor(id) || !connection.connected || JSON.stringify(servers.find((server) => server.id === id)) !== JSON.stringify(next.find((server) => server.id === id))).map(([id]) => close(id)));
-    servers = structuredClone(next);
-    for (const id of statuses.keys()) if (!wanted.has(id)) statuses.delete(id);
-    const errors: string[] = [];
-    await Promise.all([...wanted].map(async (id) => {
-      const server = servers.find((item) => item.id === id);
-      if (!server || !server.enabled) {
-        const error = `MCP server "${id}" is unavailable or disabled`;
-        statuses.set(id, { id, status: "error", error }); errors.push(error); return;
-      }
-      if (connections.get(id)?.connected) return;
-      const instanceId = instanceFor(id);
-      const client = new Client({ name: "piop", version: "0.1.0" });
-      const connection: Connection = { client, instanceId, tools: [], connected: false };
-      connections.set(id, connection);
-      statuses.set(id, { id, status: "starting", error: undefined }); publish();
-      let recentOutput = "";
-      const diagnostic = (text: string) => { recentOutput = (recentOutput + text).slice(-8192); };
-      const errorDetails = (message: string) => recentOutput.trim() ? `${message}\n\nRecent MCP output (last 8 KB):\n${recentOutput.trim()}` : message;
-      try {
-        await connectClient(client, server, instanceId, shutdown.signal, diagnostic);
-        const discovered = await discoverTools(client, shutdown.signal);
-        if (shutdown.signal.aborted) throw new Error("MCP bridge has shut down");
+  const registerTools = (server: ServerConfig, connection: Connection, discovered: Awaited<ReturnType<Client["listTools"]>>["tools"]) => {
+    const id = server.id; const client = connection.client;
+    const previous = new Set(connection.tools); connection.tools = [];
         for (const tool of discovered) {
           const name = registeredName(server.id, tool.name);
           const { injectAgentId, parameters } = toolParameters(tool.inputSchema, server.injectAgentId);
@@ -208,6 +186,43 @@ export default async function mcpBridge(pi: ExtensionAPI) {
             },
           });
         }
+    if (connection.connected) pi.setActiveTools([...pi.getActiveTools().filter((name) => !previous.has(name)), ...connection.tools]);
+  };
+  const select = async (selection: Selection): Promise<string[]> => {
+    const preparation = new AbortController(); preparing = preparation;
+    const signal = AbortSignal.any([shutdown.signal, preparation.signal]);
+    if (shutdown.signal.aborted) throw new Error("MCP bridge has shut down");
+    const next = selection.servers.filter((server) => server.enabled);
+    const wanted = new Set(next.map((server) => server.id));
+    const instanceFor = (id: string) => `piop-${createHash("sha256").update(JSON.stringify([selection.sessionId, selection.agentName, id])).digest("hex").slice(0, 32)}`;
+    // Close the old lease before requesting a new one, including on agent changes.
+    await Promise.all([...connections].filter(([id, connection]) => !wanted.has(id) || connection.instanceId !== instanceFor(id) || !connection.connected || JSON.stringify(servers.find((server) => server.id === id)) !== JSON.stringify(next.find((server) => server.id === id))).map(([id]) => close(id)));
+    servers = structuredClone(next);
+    for (const id of statuses.keys()) if (!wanted.has(id)) statuses.delete(id);
+    const errors: string[] = [];
+    await Promise.all([...wanted].map(async (id) => {
+      const server = servers.find((item) => item.id === id);
+      if (!server || !server.enabled) {
+        const error = `MCP server "${id}" is unavailable or disabled`;
+        statuses.set(id, { id, status: "error", error }); errors.push(error); return;
+      }
+      if (connections.get(id)?.connected) return;
+      const instanceId = instanceFor(id);
+      const client = new Client({ name: "piop", version: "0.1.0" }, { listChanged: { tools: { onChanged: (error, tools) => {
+        if (error || !tools || connections.get(id) !== connection || !connection.connected) return;
+        registerTools(server, connection, tools);
+      } } } });
+      const connection: Connection = { client, instanceId, tools: [], connected: false };
+      connections.set(id, connection);
+      statuses.set(id, { id, status: "starting", error: undefined }); publish();
+      let recentOutput = "";
+      const diagnostic = (text: string) => { recentOutput = (recentOutput + text).slice(-8192); };
+      const errorDetails = (message: string) => recentOutput.trim() ? `${message}\n\nRecent MCP output (last 8 KB):\n${recentOutput.trim()}` : message;
+      try {
+        await connectClient(client, server, instanceId, signal, diagnostic);
+        const discovered = await discoverTools(client, signal);
+        if (shutdown.signal.aborted) throw new Error("MCP bridge has shut down");
+        registerTools(server, connection, discovered);
         connection.connected = true;
         client.onclose = () => {
           if (connections.get(id) !== connection || shutdown.signal.aborted) return;
@@ -225,6 +240,7 @@ export default async function mcpBridge(pi: ExtensionAPI) {
       }
     }));
     publish();
+    if (preparing === preparation) preparing = undefined;
     if (errors.length) throw new Error(errors.join("\n"));
     return [...wanted].flatMap((id) => connections.get(id)?.tools ?? []);
   };
@@ -241,7 +257,7 @@ export default async function mcpBridge(pi: ExtensionAPI) {
   } });
   pi.on("context", (event) => ({ messages: event.messages.filter((message) => message.role !== "custom" || message.customType !== MCP_STATUS_KEY) }));
   pi.on("session_shutdown", async () => {
-    unsubscribe(); shutdown.abort();
+    unsubscribe(); cancelPreparation(); preparing?.abort(); shutdown.abort();
     await pending;
     await Promise.all([...connections.keys()].map(close));
     context?.ui.setStatus(MCP_STATUS_KEY, undefined);

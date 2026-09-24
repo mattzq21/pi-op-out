@@ -192,15 +192,14 @@ export class SessionMemory {
     }
     const output = JSON.parse(serialized) as Pick<ChatMessage, "content" | "details" | "toolInput">;
     if (generation !== this.generation) return;
-    if (this.toolPayloadVersion(id) !== version) throw new Error("Tool payload changed while loading. Reload the tool payload.");
     this.reserved = 0;
     this.loaded.delete(id); this.loaded.add(id);
-    this.set("messages", (messages) => messages.map((message) => message.deferredToolPayload === id ? { ...message, ...output, toolPayloadLoaded: true } : message));
+    this.set("messages", (messages) => messages.map((message) => message.deferredToolPayload === id ? { ...message, ...output, toolPayloadLoaded: true, loadedToolPayloadVersion: version } : message));
     if (!this.value.messages.some((message) => message.deferredToolPayload === id && message.toolPayloadLoaded)) throw new Error("This tool payload could not fit in the client memory limit.");
   }
 
   private loadToolPayload(id: string) {
-    if (this.value.messages.some((message) => message.deferredToolPayload === id && message.toolPayloadLoaded)) return Promise.resolve();
+    if (this.value.messages.some((message) => message.deferredToolPayload === id && message.toolPayloadLoaded && message.loadedToolPayloadVersion === message.toolPayloadVersion)) return Promise.resolve();
     const previous = this.loading.get(id);
     if (previous) return previous;
     const generation = this.generation;

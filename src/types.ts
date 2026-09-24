@@ -45,7 +45,7 @@ export interface ToolPathMapping { toolCallId: string; path: string; absolutePat
 export type GitDiffSnapshot = string | { patch: string; repositoryRoot: string; toolPaths?: ToolPathMapping[] };
 export type GitDiffSnapshots = Record<string, GitDiffSnapshot>;
 export interface FileChangeSnapshot { id: string; cwd: string; toolCallIds: string[]; toolPaths?: ToolPathMapping[]; paths: string[]; patch: string; warnings: string[]; }
-export interface ChatMessage { toolCallId?: string; details?: unknown; fileChanges?: FileChangeSnapshot[]; }
-export interface ChatMessage { deferredToolPayload?: string; toolPayloadLoaded?: boolean; toolPayloadVersion?: number; loadToolPayload?: () => Promise<void>; }
+export interface ChatMessage { toolCallId?: string; details?: unknown; fileChanges?: FileChangeSnapshot[]; toolDiff?: { path?: string; patch: string }; }
+export interface ChatMessage { deferredToolPayload?: string; toolPayloadLoaded?: boolean; toolPayloadVersion?: number; loadedToolPayloadVersion?: number; loadToolPayload?: () => Promise<void>; }
 
 export type PendingMessageAction = "steer" | "followUp" | "remove" | "moveUp" | "moveDown" | { type: "move"; targetId: string; edge: "before" | "after" };

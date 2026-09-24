@@ -422,6 +422,9 @@ export default function diffWatch(pi: ExtensionAPI) {
   registerFileChanges(pi);
   let snapshotQueue = Promise.resolve();
   let pendingContext: string | undefined;
+  const queuedContexts = new Map<string, string[]>();
+  const queuedContextEntry = "piop-queued-project-context";
+  pi.on("agent_settled", () => { queuedContexts.clear(); });
   let pendingSnapshotCleanup: (() => Promise<void>) | undefined;
   let lastError = "";
   let runStart: { sessionId: string; entryIds: Set<string> } | undefined;
@@ -464,6 +467,9 @@ export default function diffWatch(pi: ExtensionAPI) {
     if (event.message.role !== "user") return;
     const text = typeof event.message.content === "string" ? event.message.content
       : event.message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+    const contexts = queuedContexts.get(text); const queuedContent = contexts?.shift();
+    if (!contexts?.length) queuedContexts.delete(text);
+    if (queuedContent) pi.appendEntry(queuedContextEntry, { timestamp: event.message.timestamp, content: queuedContent });
     const resume = ctx.sessionManager.getBranch().some((entry) => entry.type === "custom" && entry.customType === "pi-desktop-resume" && (entry.data as { message?: string })?.message === text);
     if (resume) return;
     snapshotQueue = snapshotQueue.then(async () => {
@@ -551,6 +557,11 @@ export default function diffWatch(pi: ExtensionAPI) {
       const previousCleanup = pendingSnapshotCleanup;
       pendingSnapshotCleanup = async () => { await previousCleanup?.(); await current.cleanup(); };
       pendingContext = projectContext(root, snapshot.commit, current.tree, files, current.env);
+      if (!ctx.isIdle()) {
+        const contexts = queuedContexts.get(event.text) ?? [];
+        contexts.push(pendingContext); queuedContexts.set(event.text, contexts);
+        pendingContext = undefined;
+      }
       return { action: "continue" };
     } catch (error) {
       reportError(ctx, error);
@@ -565,19 +576,28 @@ export default function diffWatch(pi: ExtensionAPI) {
     return { message: { customType: CHANGE_CONTEXT_MESSAGE, content, display: false } };
   });
 
-  pi.on("context", (event) => {
+  pi.on("context", (event, ctx) => {
+    const contexts = new Map(ctx.sessionManager.getBranch().flatMap((entry) => {
+      if (entry.type !== "custom" || entry.customType !== queuedContextEntry) return [];
+      const data = entry.data as { timestamp?: number; content?: string };
+      return typeof data?.timestamp === "number" && typeof data.content === "string" ? [[data.timestamp, data.content] as const] : [];
+    }));
+    const sourceMessages: typeof event.messages = event.messages.flatMap((message) => {
+      const content = message.role === "user" ? contexts.get(message.timestamp) : undefined;
+      return content ? [{ role: "custom" as const, customType: CHANGE_CONTEXT_MESSAGE, content, display: false, timestamp: message.timestamp }, message] : [message];
+    });
     let contextIndex = -1;
-    for (let index = event.messages.length - 1; index >= 0; index -= 1) {
-      const message = event.messages[index];
+    for (let index = sourceMessages.length - 1; index >= 0; index -= 1) {
+      const message = sourceMessages[index];
       if (message.role === "custom" && message.customType === CHANGE_CONTEXT_MESSAGE) { contextIndex = index; break; }
     }
-    if (contextIndex < 0) return;
+    if (contextIndex < 0) return { messages: sourceMessages };
     let userIndex = -1;
     for (let index = contextIndex - 1; index >= 0; index -= 1) {
-      if (event.messages[index].role === "user") { userIndex = index; break; }
+      if (sourceMessages[index].role === "user") { userIndex = index; break; }
     }
-    if (userIndex < 0 || contextIndex !== userIndex + 1) return;
-    const messages = [...event.messages];
+    if (userIndex < 0 || contextIndex !== userIndex + 1 || sourceMessages[contextIndex + 1]?.role === "user") return { messages: sourceMessages };
+    const messages = [...sourceMessages];
     const [context] = messages.splice(contextIndex, 1);
     messages.splice(userIndex, 0, context);
     return { messages };

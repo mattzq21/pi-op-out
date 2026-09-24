@@ -207,6 +207,9 @@ fn register(state: &PeerRuntime, kind: &str, id: &str, route: Route) -> Result<(
 }
 
 pub(crate) fn route(app: &AppHandle, owner: &str, command: &str, args: &Value) -> Result<Option<Value>, String> {
+    let mut routed_args = args.clone();
+    if command == "provider_auth" && args["request"]["flowId"].is_string() { routed_args["flowId"] = args["request"]["flowId"].clone(); }
+    let args = &routed_args;
     let state = app.state::<PeerRuntime>();
     if command == "storage_report" {
         let mut hosts = vec![serde_json::to_value(inspect_storage(None).unwrap_or_else(|error| failed_storage("local".into(), "Local".into(), error))).map_err(|error| error.to_string())?];
@@ -240,7 +243,7 @@ pub(crate) fn route(app: &AppHandle, owner: &str, command: &str, args: &Value) -
     let existing = {
         let routes = state.routes.lock().map_err(|_| "Peer routes unavailable")?;
         let mut existing: Option<Route> = None;
-        for kind in ["runtimeId", "terminalId", "setupId", "callId"] {
+        for kind in ["runtimeId", "terminalId", "setupId", "callId", "flowId"] {
             if let Some(route) = args[kind].as_str().and_then(|id| routes.get(&(kind.into(), id.into()))) {
                 if route.owner != owner { return Err("Resource belongs to another connection".into()); }
                 if existing.as_ref().is_some_and(|previous| !Arc::ptr_eq(&previous.connection, &route.connection)) { return Err("Resources belong to different daemons".into()); }
@@ -290,7 +293,15 @@ pub(crate) fn route(app: &AppHandle, owner: &str, command: &str, args: &Value) -
     let closing = match command { "stop_pi" => Some("runtimeId"), "close_terminal" => Some("terminalId"), "cancel_worktree_setup" | "run_worktree_setup" => Some("setupId"), "voice_stop" => Some("callId"), _ => None };
     let result = if !route.connection.alive.load(Ordering::SeqCst) && matches!(command, "stop_pi" | "close_terminal") { Ok(json!(false)) } else { route.connection.invoke(command, forwarded) };
     if result.is_ok() { if let Some(kind) = closing { if let Some(id) = args[kind].as_str() { state.routes.lock().map_err(|_| "Peer routes unavailable")?.remove(&(kind.into(), id.into())); } } }
-    if command == "prepare_worktree_setup" { if let Ok(Value::String(id)) = &result { register(&state, "setupId", id, route)?; } }
+    if command == "prepare_worktree_setup" { if let Ok(Value::String(id)) = &result { register(&state, "setupId", id, route.clone())?; } }
+    if command == "provider_auth" {
+        if let Ok(value) = &result {
+            if let Some(id) = value["flowId"].as_str() {
+                if value["status"] == "pending" { register(&state, "flowId", id, route)?; }
+                else { state.routes.lock().map_err(|_| "Peer routes unavailable")?.remove(&("flowId".into(), id.into())); }
+            }
+        }
+    }
     result.map(Some)
 }
 
@@ -301,6 +312,7 @@ pub(crate) fn detach_owner(app: &AppHandle, owner: &str) {
         routes.retain(|_, route| route.owner != owner); owned
     }).unwrap_or_default();
     for ((kind, id), route) in routes {
+        if kind == "flowId" { let _ = route.connection.invoke("provider_auth", json!({"hostId":"local","request":{"action":"cancel","flowId":id}})); continue; }
         let command = match kind.as_str() { "runtimeId" => "stop_pi", "terminalId" => "close_terminal", "setupId" => "cancel_worktree_setup", "callId" => "voice_stop", _ => continue };
         let id = if matches!(kind.as_str(), "runtimeId" | "terminalId") { format!("{}{id}", route.connection.prefix) } else { id };
         let mut args = json!({"discardBlank":false,"preserveRunning":true}); args[&kind] = json!(id);
@@ -330,7 +342,7 @@ pub(crate) fn shutdown(app: &AppHandle) {
 pub(crate) fn forward_broker(app: &AppHandle, host_id: &str, path: &str, mut body: Value) -> Result<Value, String> {
     let connection = connect(app, host_id)?;
     body["hostId"] = json!("local");
-    let request_id = (path == "/message").then(|| body["requestId"].as_str().map(str::to_owned)).flatten();
+    let request_id = matches!(path, "/message" | "/worktrees/create" | "/worktrees/remove").then(|| body["requestId"].as_str().map(str::to_owned)).flatten();
     if let Some(id) = &request_id {
         let broker = app.state::<BrokerRuntime>();
         let mut cancelled = broker.cancelled.lock().map_err(|_| "Broker cancellation unavailable")?;

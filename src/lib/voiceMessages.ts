@@ -17,6 +17,7 @@ export function mergeSpokenMessages(messages: ChatMessage[], spoken: ChatMessage
   const merged = new Map(messages.map((message) => [message.id, message]));
   for (const message of spoken) {
     const previous = merged.get(message.id);
+    if (previous?.entryId && !previous.streaming && message.streaming) continue;
     merged.set(message.id, { ...previous, ...message });
   }
   return [...merged.values()].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));

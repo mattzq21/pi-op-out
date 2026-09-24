@@ -378,7 +378,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   pi.on("session_shutdown", () => { stopRefresh(); extensions.stop(); });
   pi.on("model_select", (event) => { const model = `${event.model.provider}/${event.model.id}`; if (applyingAgentModel === model) { applyingAgentModel = undefined; return; } modelOverride = model; saveState(); saveRuntimeDefaults({ model, effort: runtimeDefaults?.effort || pi.getThinkingLevel() }); });
   pi.on("thinking_level_select", (event) => { if (applyingAgentEffort === event.level) { applyingAgentEffort = undefined; return; } effortOverride = event.level; saveState(); saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); });
-  pi.on("session_start", async (_event, ctx) => {
+  const restoreSession = async (_event: unknown, ctx: ExtensionContext) => {
     restore(ctx);
     const branch = ctx.sessionManager.getBranch();
     const states = branch.flatMap((entry) => entry.type === "custom" && entry.customType === STATE_ENTRY ? [entry.data as SessionAgentState] : []);
@@ -398,7 +398,9 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const error = await useAgent(active, ctx, false);
     if (error) ctx.ui.notify(error, "warning");
     publish(ctx);
-  });
+  };
+  pi.on("session_start", restoreSession);
+  pi.on("session_tree", restoreSession);
   pi.on("session_shutdown", (_event, ctx) => { delete process.env.PI_DEFINE_AGENTS_ACTIVE; if (!reloading) ctx.ui.setStatus(STATUS_KEY, undefined); });
   pi.on("resources_discover", () => { const agent = currentAgent(); const skillPaths = agent ? agentSkills(pi, agent) : []; return skillPaths.length ? { skillPaths } : undefined; });
   pi.on("input", async (event, ctx) => {

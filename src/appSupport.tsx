@@ -14,7 +14,7 @@ type SessionTerminals = { activeId: string; tabs: TerminalTabState[] };
 
 type QueuedTerminalOutput = { data: string; length: number };
 
-type BtwRequest = { task: string; forkFrom: string; requestId: string };
+type BtwRequest = { task: string; forkFrom: string; requestId: string; images?: import("./types").ImageAttachment[] };
 
 type SplitPaneState = { key: string; session: SessionSummary; btw?: BtwRequest };
 

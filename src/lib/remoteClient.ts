@@ -69,6 +69,7 @@ export class RemoteClient {
       };
     });
   }
+  publishLocalEvent(event: string, payload: unknown) { this.receive({ event, payload }); }
   private receive(message: Record<string, unknown>) {
     if (typeof message.event === "string") {
       const event = message.payload as { type?: string; terminalId?: string } | undefined;

@@ -40,14 +40,28 @@ function clientHistory(history) {
   // the decoded history and normalized messages to coexist during installation.
   const limit = 256 * 1024 * 1024;
   const entries = [];
+  const inputs = new Map(history.entries.flatMap((entry) => Array.isArray(entry.message?.content) ? entry.message.content.filter((part) => part.type === 'toolCall').map((part) => [part.id, part.arguments]) : []));
+  const indexed = new Map(history.entries.map((entry) => [entry.id, entry]));
+  const branch = [];
+  const visited = new Set();
+  let cursor = history.leafId;
+  while (cursor && !visited.has(cursor)) {
+    visited.add(cursor);
+    const entry = indexed.get(cursor); if (!entry) break;
+    branch.push(entry); cursor = entry.parentId;
+  }
   let size = 0;
-  for (let index = history.entries.length - 1; index >= 0; index--) {
-    const entry = history.entries[index];
+  for (let entry of branch) {
+    if (entry.message?.role === 'toolResult') {
+      const input = inputs.get(entry.message.toolCallId);
+      const patch = entry.message.details?.patch ?? (entry.message.toolName === 'edit' ? entry.message.details?.diff : entry.message.toolName === 'apply_patch' ? input?.patch ?? input?.input : undefined);
+      if (typeof patch === 'string' && patch.length <= 2 * 1024 * 1024) entry = { ...entry, message: { ...entry.message, toolDiff: { patch, path: typeof input?.path === 'string' ? input.path : undefined } } };
+    }
     const cost = JSON.stringify(entry, clientPayload).length * 4 + 256;
     if (size + cost > limit) break;
     size += cost; entries.push(entry);
   }
-  return { ...history, entries: entries.reverse(), omittedEntries: history.entries.length - entries.length };
+  return { ...history, entries: entries.reverse(), omittedEntries: branch.length - entries.length };
 }
 const output = (packet) => process.stdout.write(JSON.stringify(packet, clientPayload) + '\n');
 
@@ -564,7 +578,7 @@ class Session {
     const id = randomUUID();
     if (requestType === 'prompt') { this.inputRejection = undefined; this.commandErrors.clear(); }
     let wire = { ...command, id };
-    const action = { pause: 'pause', resume: 'resume', abort: 'stop', get_pause_state: 'state' }[command.type];
+    const action = { pause: 'pause', resume: 'resume', abort: 'stop', cancel_preparation: 'cancel-preparation', get_pause_state: 'state' }[command.type];
     const extension = { provider_auth_refresh: 'piop-provider-auth-refresh', runtime_settings: 'piop-runtime-settings', branch_checkpoint: 'pi-desktop-branch-checkpoint', fork_and_forget: 'pi-desktop-fork-and-forget', fork_after: 'pi-desktop-fork-after', voice_history: 'pi-desktop-voice-history' }[command.type];
     if (action || extension) wire = { type: 'prompt', id: `${id}:desktop-control`, message: `/${extension ?? 'pi-desktop-control'} ${JSON.stringify(action ? { id, action } : { ...command, id })}` };
     return new Promise((resolve, reject) => {

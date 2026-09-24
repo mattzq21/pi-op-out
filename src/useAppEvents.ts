@@ -16,6 +16,7 @@ type AppEventsContext = {
   addNotice: (notice: { title: string; message: string; }) => void;
   activeTransportRef: RefObject<NativeTransport>;
   pendingBtwRequest: RefObject<{ id: string; transport: NativeTransport; } | undefined>;
+  btwImages: WeakMap<NativeTransport, import("./types").ImageAttachment[]>;
   setSplitPane: Dispatch<StateUpdate<SplitPaneState | undefined>>;
   activeHostIdRef: RefObject<string>;
   setExtensionOwner: Dispatch<StateUpdate<NativeTransport>>;
@@ -97,8 +98,9 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
             capturedOptions.setSplitPane({
               key: crypto.randomUUID(),
               session: { id: `btw-${request.id}`, path: "", name: "BTW", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task, messageCount: 0, lastMessageAt: Date.now(), apiCost: 0, hostId: capturedOptions.activeHostIdRef.current },
-              btw: { task: payload.task, forkFrom: payload.sessionFile, requestId: request.id },
+              btw: { task: payload.task, forkFrom: payload.sessionFile, requestId: request.id, images: capturedOptions.btwImages.get(capturedOptions.transport) },
             });
+            capturedOptions.btwImages.delete(capturedOptions.transport);
           } catch (reason) {
             void capturedOptions.transport.command({ type: "extension_ui_response", id: request.id, cancelled: true });
             capturedOptions.addNotice({ title: "Could not start /btw", message: reason instanceof Error ? reason.message : String(reason) });
@@ -122,7 +124,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         };
         const setExtensionTitle = () => { document.title = request.title || "piop"; };
         const setEditorText = () => {
-          capturedOptions.setComposerDrafts((current) => { const key = capturedOptions.transportConversationKeys.current.get(capturedOptions.transport) ?? capturedOptions.terminalSessionIdRef.current; const next = { ...current }; if (request.text && !next[key]) next[key] = request.text; return next; });
+          capturedOptions.setComposerDrafts((current) => { const key = capturedOptions.transportConversationKeys.current.get(capturedOptions.transport) ?? capturedOptions.terminalSessionIdRef.current; const next = { ...current }; if (typeof request.text === "string") next[key] = request.text; return next; });
           capturedOptions.setActivePane("main");
           capturedOptions.setMainComposerFocusRequest((value) => value + 1);
         };
@@ -157,7 +159,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         capturedOptions.setDialogs((current) => current.filter((dialog) => dialog.transport !== capturedOptions.transport));
       };
       const handleOwnershipAcquired = () => {
-        capturedOptions.updateConnected(true);
+        capturedOptions.updateConnected(false);
       };
       const handleDisconnected = () => {
         capturedOptions.setDefinedAgents(undefined);

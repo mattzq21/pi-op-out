@@ -13,7 +13,7 @@ import type { AgentState, AppSettings, ChatMessage, ComposerUpload, DefinedAgent
 import { branchMessages, type PiEntry } from "../lib/messages";
 import { ChatView } from "./ChatView";
 
-interface Props { uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; forkFrom?: string; initialPrompt?: string; onReady?: () => void; onFailed?: (reason: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
+interface Props { uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; forkFrom?: string; initialPrompt?: string; initialImages?: ImageAttachment[]; onReady?: () => void; onFailed?: (reason: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
 const initialState = (session: SessionSummary): AgentState => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, pendingMessageCount: 0 });
 
 export function SplitChatPane(componentProps: Props) {
@@ -43,7 +43,7 @@ export function SplitChatPane(componentProps: Props) {
       await Promise.all([capturedTransport.command({ type: "set_auto_compaction", enabled: true }), capturedTransport.command({ type: "set_auto_retry", enabled: runtimeSettings.autoRetry })]);
     };
     const sendInitialPrompt = async (initial: boolean) => {
-      if (initial && capturedInitialPrompt2) { await capturedTransport.command({ type: "prompt", message: (capturedInitialPrompt2)! }); if (!closing) capturedOnReady3?.(); }
+      if (initial && capturedInitialPrompt2) { await capturedTransport.command({ type: "prompt", message: (capturedInitialPrompt2)!, images: componentProps.initialImages }); if (!closing) capturedOnReady3?.(); }
     };
     const reportConnectionFailure = (initial: boolean, reason: unknown) => {
       if (closing) return;
@@ -73,7 +73,7 @@ export function SplitChatPane(componentProps: Props) {
         void capturedOnDialogTransportClosed7(capturedTransport);
       };
       const handleOwnershipAcquired = () => {
-        updateConnected(true);
+        updateConnected(false);
       };
       const handleExtensionUiResolved = () => {
         if (event.type === "extension_ui_resolved" && typeof event.id === "string") capturedOnDialogResolved8(capturedTransport, event.id);
@@ -101,7 +101,7 @@ export function SplitChatPane(componentProps: Props) {
           setWidget: () => { if (request.widgetKey) setWidgets((current) => { const next = { ...current }; if (request.widgetLines) next[request.widgetKey!] = request.widgetLines; else delete next[request.widgetKey!]; return next; }); },
           notify: () => { if (!event.inputRejected) setNotices((current) => [...current, { id: crypto.randomUUID(), title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "piop extension", message: request.message || "Notification" }]); },
           setTitle: () => { document.title = request.title || "piop"; },
-          set_editor_text: () => { if (!draftRef.current && request.text) capturedOnDraftChange10(request.text); setExtensionFocusRequest((value) => value + 1); },
+          set_editor_text: () => { if (typeof request.text === "string") capturedOnDraftChange10(request.text); setExtensionFocusRequest((value) => value + 1); },
           input: showDialog, editor: showDialog, select: showDialog, confirm: showDialog,
         };
         if (Object.hasOwn(methods, request.method)) methods[request.method]();
@@ -114,7 +114,9 @@ export function SplitChatPane(componentProps: Props) {
         window.setTimeout(() => void capturedSession.refresh().catch(reportControlError), 30);
       };
       const handleSettingsApplied = () => {
-        void capturedSession.refresh().then(() => setConnected(true)).catch(reportControlError);
+        if (closing) return;
+        if (capturedTransport.currentHostId() !== (capturedSession5.hostId ?? "local")) { componentProps.onClose(); return; }
+        void capturedSession.refresh().then(() => { if (!closing) updateConnected(capturedTransport.ownsConversation()); }).catch(reportControlError);
       };
       const handleDisconnected = () => {
         updateConnected(false);

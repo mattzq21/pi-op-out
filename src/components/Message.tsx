@@ -65,6 +65,7 @@ function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; e
     {componentProps.loading && <div role="status">Loading tool input and output…</div>}
     {componentProps.error && <div role="alert">{(componentProps.error)!} <button onClick={componentProps.retry}>Retry</button></div>}
     {output() && <div class="tool-payload"><div class="tool-payload-label">Out</div><div class="tool-output" aria-label="Tool output"><pre>{output()}</pre></div></div>}
+    {Array.isArray(componentProps.message.content) && <Index each={componentProps.message.content.filter((part) => part.type === "image")}>{(part) => part().type === "image" && part().data && /^image\/(png|jpeg|gif|webp)$/.test(part().mimeType ?? "") ? <img src={`data:${part().mimeType};base64,${part().data}`} alt="Tool result" style={{ "max-width": "100%", "max-height": "320px", "object-fit": "contain" }} /> : null}</Index>}
     {!componentProps.loading && !componentProps.error && componentProps.message.deferredToolPayload && !componentProps.message.toolPayloadLoaded && <button onClick={componentProps.retry}>Load input and output</button>}
   </>;
 }
@@ -74,16 +75,21 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string>();
   const [retry, setRetry] = createSignal(0);
-  createDependencyEffect(() => { const capturedOpen = open(); const capturedMessage0 = componentProps.message;
-    if (!capturedOpen || !capturedMessage0.loadToolPayload) return;
-    let active = true;
-    const timer = setTimeout(() => {
+  createDependencyEffect(() => {
+    if (!open()) return;
+    let active = true; let pending = false;
+    let failed: { version?: number } | undefined;
+    const refresh = () => {
+      const message = componentProps.message;
+      if (pending || !message.loadToolPayload || failed && failed.version === message.toolPayloadVersion || message.toolPayloadLoaded && message.loadedToolPayloadVersion === message.toolPayloadVersion) return;
+      pending = true;
       setLoading(true); setError(undefined);
-      void capturedMessage0.loadToolPayload!().catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : String(reason)); })
-        .finally(() => { if (active) setLoading(false); });
-    }, capturedMessage0.toolStatus === "running" ? 300 : 0);
-    return () => { active = false; clearTimeout(timer); };
-  }, () => [open(), componentProps.message.loadToolPayload, componentProps.message.toolPayloadVersion, componentProps.message.toolStatus, retry()]);
+      void message.loadToolPayload().catch((reason) => { if (active) { failed = { version: message.toolPayloadVersion }; setError(reason instanceof Error ? reason.message : String(reason)); } })
+        .finally(() => { pending = false; if (active) setLoading(false); });
+    };
+    refresh(); const timer = setInterval(refresh, 300);
+    return () => { active = false; clearInterval(timer); };
+  }, () => [open(), retry()]);
   const status = createMemo(() => (componentProps.message.toolStatus ?? "done"));
   const label = createMemo(() => (<ToolLabel message={componentProps.message} toolCount={componentProps.toolCount ?? 1} status={status()} />));
 

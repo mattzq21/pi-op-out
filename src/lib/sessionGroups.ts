@@ -15,12 +15,15 @@ export function isTemporaryChatCwd(cwd: string) {
 }
 
 const listeners = new Set<(state: SessionGroups) => void>();
+let eventRevision = 0;
 function publish(state: SessionGroups) { listeners.forEach((listener) => listener(state)); return state; }
 
 export function updateSessionGroups(update: GroupChange) {
   return enqueue(async () => {
     await loadSessionGroups([], legacyGroups([]));
-    return publish(await changeSessionGroups(update));
+    const revision = eventRevision;
+    const state = await changeSessionGroups(update);
+    return revision === eventRevision ? publish(state) : state;
   });
 }
 
@@ -77,16 +80,16 @@ export function useSessionGroups(sessions: Accessor<SessionSummary[]>) {
     mounted.current = true;
     const listener = (value: SessionGroups) => { setState(value); setError(undefined); };
     listeners.add(listener);
-    const stop = listen<SessionGroups>("pi://groups-changed", ({ payload }) => listener(payload));
+    const stop = listen<SessionGroups>("pi://groups-changed", ({ payload }) => { eventRevision++; publish(payload); });
     return () => { mounted.current = false; listeners.delete(listener); void stop.then((unlisten) => unlisten()); };
   }, () => []);
   const seedsJson = createMemo(() => (JSON.stringify(sessions().filter((session) => !isTemporaryChatCwd(session.cwd)).map((session): SessionGroupSeed => ({
     sessionKey: `${session.hostId ?? "local"}:${session.id}`,
-    project: { id: `${session.hostId ?? "local"}:${session.projectRoot ?? session.cwd}`, name: session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project, cwd: session.projectRoot ?? session.cwd, hostId: session.hostId ?? "local", hostName: session.hostName ?? session.hostId ?? "Local", projectKind: session.projectKind },
+    project: { id: `${session.hostId ?? "local"}:${session.projectRoot ?? session.cwd}`, name: session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project, cwd: session.projectRoot ?? session.cwd, hostId: session.hostId ?? "local", hostName: session.hostName ?? session.hostId ?? "Local", projectKind: session.projectRoot && session.projectRoot !== session.cwd && session.projectKind === "worktree" ? "main" : session.projectKind },
   })).sort((a, b) => a.sessionKey.localeCompare(b.sessionKey)))));
   createDependencyEffect(() => { const capturedSeedsJson = seedsJson();
     const seeds: SessionGroupSeed[] = JSON.parse(capturedSeedsJson);
-    void enqueue(async () => publish(await loadSessionGroups(seeds, legacyGroups(seeds)))).catch((reason) => { if (mounted.current) setError(String(reason)); });
+    void enqueue(async () => { const revision = eventRevision; const state = await loadSessionGroups(seeds, legacyGroups(seeds)); if (revision === eventRevision) publish(state); }).catch((reason) => { if (mounted.current) setError(String(reason)); });
   }, () => [seedsJson()]);
   const change = async (update: GroupChange) => {
     try {

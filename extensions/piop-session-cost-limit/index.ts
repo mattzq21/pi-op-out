@@ -92,6 +92,12 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
     publish(ctx);
     return { block: true, terminate: true, reason: `Session cost limit of ${formatCost(limit!)} reached (API prices). Tool execution blocked.` };
   });
+  pi.on("turn_start", (_event, ctx) => {
+    if (!overLimit(ctx)) return;
+    publish(ctx);
+    ctx.abort();
+    ctx.ui.notify(`Session cost limit of ${formatCost(limit!)} reached (API prices). Raise it with /cost <amount> or remove it with /cost clear.`, "warning");
+  });
 
   pi.registerCommand("cost", {
     description: "Set or clear this conversation's API cost limit. Usage: /cost <amount in USD> or /cost clear",

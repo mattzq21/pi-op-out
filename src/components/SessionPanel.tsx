@@ -507,26 +507,26 @@ export function SessionPanel(props: Props) {
       {renderGroupError()}
       {renderGroupLoading()}
       {renderNewGroup()}
-      {sidebarEntries().flatMap((token) => {
-        const group = groupsByToken().get(token); if (!group) return []; const [projectKey, project, hostId, hostName, projectSessions] = group; const label = groupLabel(project, hostId, hostName); const collapsed = !normalizedQuery() && collapsedProjects().has(projectKey); const groupId = disclosureId(projectKey); const renderProjectHeading = () => {
+      {<Key each={sidebarEntries().filter((token) => groupsByToken().has(token))} by={(token) => token}>{(token) => {
+        const group = () => groupsByToken().get(token())!; const projectKey = group()[0]; const label = () => groupLabel(group()[1], group()[2], group()[3]); const collapsed = () => !normalizedQuery() && collapsedProjects().has(projectKey); const groupId = disclosureId(projectKey); const renderProjectHeading = () => {
           const renderProjectLabel = () => {
             const renderGroupNameInput = () => (<input ref={element => { groupNameRef.current = element; }} disabled={groupSaving()} aria-label="Rename session group" aria-invalid={Boolean(groupDraftError())} aria-describedby={groupDraftError() ? "rename-group-error" : undefined} value={newGroupName() ?? ""} onInput={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} />);
             return (isEditingGroup(projectKey) ? <div class="project-label">{renderGroupNameInput()}{groupDraftError() && <small id="rename-group-error" class="group-error">{(groupDraftError())!}</small>}</div> : <>
-              <button class="project-label" disabled={Boolean(normalizedQuery())} aria-expanded={!collapsed} aria-controls={groupId} {...projectDragProps(projectKey)}><ChevronDown class={collapsed ? "collapsed" : ""} size={13} />{projectDetails().get(projectKey)?.projectKind === "no-repo" && <Folder size={14} aria-hidden="true" />}<span class={projectKey === activeProjectKey() ? "active" : undefined}>{label}</span></button>
+              <button class="project-label" disabled={Boolean(normalizedQuery())} aria-expanded={!collapsed()} aria-controls={groupId} {...projectDragProps(projectKey)}><ChevronDown class={collapsed() ? "collapsed" : ""} size={13} />{projectDetails().get(projectKey)?.projectKind === "no-repo" && <Folder size={14} aria-hidden="true" />}<span class={projectKey === activeProjectKey() ? "active" : undefined}>{label()}</span></button>
               {projectKey !== RECENT_KEY && <div class="project-actions">
-                {customGroupsByKey().has(projectKey) && <button aria-label={`Rename group ${label}`} title="Rename group" onClick={() => editGroup(customGroupsByKey().get(projectKey)!)}><Pencil size={12} /></button>}
-                <button aria-label={`New chat in ${label}`} title="New chat in group" onClick={() => {
+                {customGroupsByKey().has(projectKey) && <button aria-label={`Rename group ${label()}`} title="Rename group" onClick={() => editGroup(customGroupsByKey().get(projectKey)!)}><Pencil size={12} /></button>}
+                <button aria-label={`New chat in ${label()}`} title="New chat in group" onClick={() => {
                   const destination = storedGroups.state?.groups.find((item) => item.id === projectKey);
                   if (!destination) return;
                   expandProject(projectKey);
                   panel().onNewChat(destination);
                 }}><MessageSquarePlus size={14} /></button>
-                <button aria-label={`Group actions for ${label}`} title="Group actions" aria-haspopup="menu" aria-expanded={groupMenu()?.projectKey === projectKey} onClick={(event) => {
+                <button aria-label={`Group actions for ${label()}`} title="Group actions" aria-haspopup="menu" aria-expanded={groupMenu()?.projectKey === projectKey} onClick={(event) => {
                   event.stopPropagation();
                   if (groupMenu()?.projectKey === projectKey) { closeMenu(true); return; }
                   const bounds = event.currentTarget.getBoundingClientRect();
                   setMenu(undefined);
-                  setGroupMenu({ projectKey, label, x: Math.max(8, Math.min(bounds.right - 188, window.innerWidth - 196)), y: Math.max(8, Math.min(bounds.bottom + 4, window.innerHeight - 84)), returnFocus: event.currentTarget });
+                  setGroupMenu({ projectKey, label: label(), x: Math.max(8, Math.min(bounds.right - 188, window.innerWidth - 196)), y: Math.max(8, Math.min(bounds.bottom + 4, window.innerHeight - 148)), returnFocus: event.currentTarget });
                 }}><Ellipsis size={14} /></button>
               </div>}
             </>);
@@ -535,11 +535,11 @@ export function SessionPanel(props: Props) {
             {renderProjectLabel()}
           </div>);
         };
-        return [renderDropZone(token), <section data-sidebar-token={token} class={`project ${!normalizedQuery() ? "reorderable" : ""} ${draggedProject() === projectKey ? "dragging" : ""} ${dropTarget()?.projectKey === projectKey && !(dropTarget())!.sessionKey && (dropTarget())!.layoutBefore === undefined ? "drop-project" : ""}`} >
+        return [renderDropZone(token()), <section data-sidebar-token={token()} class={`project ${!normalizedQuery() ? "reorderable" : ""} ${draggedProject() === projectKey ? "dragging" : ""} ${dropTarget()?.projectKey === projectKey && !(dropTarget())!.sessionKey && (dropTarget())!.layoutBefore === undefined ? "drop-project" : ""}`} >
           {renderProjectHeading()}
-          <div id={groupId} hidden={collapsed}>{projectSessions.map((session) => renderSession(session, projectKey))}</div>
+          <div id={groupId} hidden={collapsed()}>{group()[4].map((session) => renderSession(session, projectKey))}</div>
         </section>];
-      })}
+      }}</Key>}
       {sidebarEntries().length > 0 && renderDropZone(null)}
       {renderEmptyConversations()}
     </div>);

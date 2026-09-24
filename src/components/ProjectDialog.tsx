@@ -67,6 +67,8 @@ export function ProjectDialog(componentProps: Props) {
   const listing = createMemo(() => (loaded()?.hostId === hostId() && (loaded())!.requested === parent() ? (loaded())!.listing : undefined));
   const results = createMemo(() => ((listing()?.directories ?? []).filter((path) => folderName(path).toLocaleLowerCase().includes(fragment().toLocaleLowerCase())).sort((a, b) => {
     const prefix = fragment().toLocaleLowerCase();
+    const exact = Number(folderName(b) === fragment()) - Number(folderName(a) === fragment());
+    if (exact) return exact;
     return Number(folderName(b).toLocaleLowerCase().startsWith(prefix)) - Number(folderName(a).toLocaleLowerCase().startsWith(prefix)) || a.localeCompare(b);
   })));
   const selected = createMemo(() => (results()[active()]));

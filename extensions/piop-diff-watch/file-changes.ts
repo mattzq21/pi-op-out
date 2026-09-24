@@ -199,6 +199,11 @@ export function registerFileChanges(pi: ExtensionAPI) {
     finally { if (directory) await rm(directory, { recursive: true, force: true }).catch(() => undefined); }
     pi.appendEntry(ENTRY, { cwd: await realpath(ctx.cwd).catch(() => ctx.cwd), toolCallIds: [...current.toolCallIds], toolPaths: current.toolPaths, paths, patch: patches.join("\n"), warnings: [...current.warnings] });
   };
+  pi.on("message_start", async (event, ctx) => {
+    if (event.message.role !== "user") return;
+    await finish(ctx);
+    capture = newCapture();
+  });
   pi.on("agent_end", (_event, ctx) => finish(ctx));
   pi.on("agent_settled", (_event, ctx) => finish(ctx));
   pi.on("session_shutdown", async () => {

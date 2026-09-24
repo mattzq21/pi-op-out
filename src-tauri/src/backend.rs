@@ -150,6 +150,7 @@ struct BrokerRuntime {
     busy: Arc<Mutex<HashSet<String>>>,
     jobs: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
     cancelled: Arc<Mutex<HashSet<String>>>,
+    operations: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
 }
 
 impl Default for BrokerRuntime {
@@ -161,6 +162,7 @@ impl Default for BrokerRuntime {
             busy: Arc::new(Mutex::new(HashSet::new())),
             jobs: Arc::new(Mutex::new(HashMap::new())),
             cancelled: Arc::new(Mutex::new(HashSet::new())),
+            operations: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -247,7 +249,7 @@ impl Drop for BrokerWriter {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum ProjectKind { NoRepo, Main, Worktree }
 
@@ -907,7 +909,17 @@ fn prepare_defined_agents_extension() -> Result<PathBuf, String> {
     let legacy_dir = home_dir()?.join(".pi/agent/extensions/pi-define-agents");
     let config = dir.join("config.json");
     if !DEVELOPMENT && !config.exists() && legacy_dir.join("config.json").exists() {
-        atomic_write_private(&config, &fs::read(legacy_dir.join("config.json")).map_err(|error| error.to_string())?)?;
+        let mut migrated: Value = serde_json::from_slice(&fs::read(legacy_dir.join("config.json")).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+        if let Some(agents) = migrated["agents"].as_array_mut() {
+            for agent in agents {
+                for key in ["path_systemprompt", "path_agentprompt"] {
+                    if let Some(path) = agent[key].as_str().filter(|path| !path.is_empty() && !path.starts_with('~') && !Path::new(path).is_absolute()) {
+                        agent[key] = json!(legacy_dir.join(path).to_string_lossy());
+                    }
+                }
+            }
+        }
+        atomic_write_private(&config, &serde_json::to_vec_pretty(&migrated).map_err(|error| error.to_string())?)?;
     }
     let path = dir.join("index.ts");
     atomic_write_private(&dir.join("mcp-config.ts"), include_str!("../../extensions/piop-define-agents/mcp-config.ts").as_bytes())?;
@@ -1900,6 +1912,10 @@ printf '%s\000%s\000%s\000' "$target" "$source" "$branch""#, cwd = shell_quote(c
 }
 
 fn remove_git_worktree_blocking(app: AppHandle, cwd: String, host_id: Option<String>, delete_branch: bool) -> Result<GitWorktreeRemoval, String> {
+    remove_git_worktree_cancellable(app, cwd, host_id, delete_branch, &AtomicBool::new(false))
+}
+
+fn remove_git_worktree_cancellable(app: AppHandle, cwd: String, host_id: Option<String>, delete_branch: bool, cancelled: &AtomicBool) -> Result<GitWorktreeRemoval, String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let settings = load_app_settings(app.clone())?;
     let runtime = app.state::<PiRuntime>();
@@ -1908,12 +1924,13 @@ fn remove_git_worktree_blocking(app: AppHandle, cwd: String, host_id: Option<Str
     let target = inspect_worktree_removal(&settings, &cwd, &host_id)?;
     let session_paths = sessions_on_host(&settings, &session_index, &host_id)?.into_iter().map(|session| session.cwd).collect::<Vec<_>>();
     validate_worktree_unused(&settings, &host_id, &target.path, &session_paths, &runtime, &terminals)?;
-    run_worktree_scripts(&settings, &target.source, &target.path, &host_id, &AtomicBool::new(false), WorktreeScriptPhase::Cleanup)?;
+    run_worktree_scripts(&settings, &target.source, &target.path, &host_id, cancelled, WorktreeScriptPhase::Cleanup)?;
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Session lifecycle lock was poisoned")?;
     let target = inspect_worktree_removal(&settings, &cwd, &host_id)?;
     let session_paths = sessions_on_host(&settings, &session_index, &host_id)?.into_iter().map(|session| session.cwd).collect::<Vec<_>>();
     validate_worktree_unused(&settings, &host_id, &target.path, &session_paths, &runtime, &terminals)?;
-    remove_worktree_target(&settings, &host_id, target, delete_branch)
+    if cancelled.load(Ordering::SeqCst) { return Err("Worktree removal cancelled".into()); }
+    remove_worktree_target(&settings, &host_id, target, delete_branch, cancelled)
 }
 
 fn validate_worktree_unused(settings: &AppSettings, host_id: &str, target: &str, session_paths: &[String], runtime: &PiRuntime, terminals: &TerminalRuntime) -> Result<(), String> {
@@ -1932,7 +1949,7 @@ fn validate_worktree_unused(settings: &AppSettings, host_id: &str, target: &str,
     Ok(())
 }
 
-fn remove_worktree_target(settings: &AppSettings, host_id: &str, target: WorktreeRemovalTarget, delete_branch: bool) -> Result<GitWorktreeRemoval, String> {
+fn remove_worktree_target(settings: &AppSettings, host_id: &str, target: WorktreeRemovalTarget, delete_branch: bool, cancelled: &AtomicBool) -> Result<GitWorktreeRemoval, String> {
     let script = include_str!("../resources/preserve-archive-checkpoints.cjs");
     let mut preserve = if host_id == "local" {
         let mut command = node_command(); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", script, &target.path]); command
@@ -1942,6 +1959,7 @@ fn remove_worktree_target(settings: &AppSettings, host_id: &str, target: Worktre
     };
     let preserved = run_limited(&mut preserve, 64 * 1024, "Could not preserve archived checkpoints")?;
     if !preserved.status.success() { return Err(format!("Could not preserve archived checkpoints: {}", String::from_utf8_lossy(&preserved.stderr).trim())); }
+    if cancelled.load(Ordering::SeqCst) { return Err("Worktree removal cancelled".into()); }
     let removed = if host_id == "local" {
         run_limited(Command::new("git").arg("-C").arg(&target.source).args(["worktree", "remove"]).arg(&target.path), 64 * 1024, "Could not remove Git worktree")?
     } else {
@@ -3436,6 +3454,32 @@ fn read_broker_line(reader: &mut BufReader<TcpStream>, remaining: &mut usize) ->
     Ok(line)
 }
 
+fn broker_worktree_operation(broker: &BrokerRuntime, value: &Value, work: impl FnOnce(&AtomicBool) -> Result<Value, String>) -> Result<Value, String> {
+    let id = value["requestId"].as_str().filter(|id| Uuid::parse_str(id).is_ok()).ok_or("requestId is required")?;
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+    let deadline = value["deadline"].as_u64().unwrap_or(now).min(now + 120_000);
+    let cancelled = Arc::new(AtomicBool::new(deadline <= now));
+    {
+        let mut operations = broker.operations.lock().map_err(|_| "Broker operations unavailable")?;
+        if operations.contains_key(id) { return Err("Worktree operation already running".into()); }
+        operations.insert(id.into(), cancelled.clone());
+    }
+    if broker.cancelled.lock().map_err(|_| "Broker cancellation unavailable")?.contains(id) { cancelled.store(true, Ordering::SeqCst); }
+    let done = Arc::new(AtomicBool::new(false));
+    let finished = done.clone(); let flag = cancelled.clone(); let closing = broker.closing.clone();
+    thread::spawn(move || {
+        while !finished.load(Ordering::SeqCst) {
+            if closing.load(Ordering::SeqCst) || SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis() as u64 >= deadline { flag.store(true, Ordering::SeqCst); break; }
+            thread::sleep(Duration::from_millis(50));
+        }
+    });
+    let result = if cancelled.load(Ordering::SeqCst) { Err("Worktree operation cancelled".into()) } else { work(&cancelled) };
+    done.store(true, Ordering::SeqCst);
+    if let Ok(mut operations) = broker.operations.lock() { operations.remove(id); }
+    if let Ok(mut cancelled) = broker.cancelled.lock() { cancelled.remove(id); }
+    result
+}
+
 fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStream) -> Result<(), String> {
     let mut reader = BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
     let mut header_bytes = BROKER_HEADER_BYTES;
@@ -3490,12 +3534,14 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
             if host_id != "local" { return peers::forward_broker(&app, host_id, "/worktrees/create", value.clone()); }
             let cwd = value["cwd"].as_str().ok_or("cwd is required")?;
             let name = value["name"].as_str().ok_or("name is required")?;
+            broker_worktree_operation(&broker, &value, |cancelled| {
             let settings = load_app_settings(app.clone())?;
             let created = create_git_worktree(app.clone(), cwd.into(), name.into(), Some(host_id.into()))?;
             let group = session_groups::SessionGroup { id: format!("{host_id}:{}", created.path), name: created.branch.clone(), cwd: Some(created.path.clone()), host_id: Some(host_id.into()), host_name: Some(settings.hosts.iter().find(|host| host.id == host_id).map(|host| host.name.clone()).unwrap_or_else(|| host_id.into())), project_kind: Some(ProjectKind::Worktree) };
             let group_error = change_session_groups(app.clone(), session_groups::GroupChange::Project { project: group, key: None }).err();
-            let setup = run_worktree_scripts(&settings, cwd, &created.path, host_id, &AtomicBool::new(false), WorktreeScriptPhase::Setup);
+            let setup = run_worktree_scripts(&settings, cwd, &created.path, host_id, cancelled, WorktreeScriptPhase::Setup);
             Ok(json!({"path":created.path,"branch":created.branch,"setupError":setup.err(),"groupError":group_error}))
+            })
         })(),
         ("POST", "/worktrees/remove") => (|| {
             let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid worktree request")?;
@@ -3503,8 +3549,10 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
             #[cfg(not(feature = "desktop"))]
             if host_id != "local" { return peers::forward_broker(&app, host_id, "/worktrees/remove", value.clone()); }
             let cwd = value["cwd"].as_str().ok_or("cwd is required")?;
-            let removed = remove_git_worktree_blocking(app.clone(), cwd.into(), Some(host_id.into()), value["deleteBranch"].as_bool().unwrap_or(false))?;
+            broker_worktree_operation(&broker, &value, |cancelled| {
+            let removed = remove_git_worktree_cancellable(app.clone(), cwd.into(), Some(host_id.into()), value["deleteBranch"].as_bool().unwrap_or(false), cancelled)?;
             serde_json::to_value(removed).map_err(|error| error.to_string())
+            })
         })(),
         ("POST", "/worktree-agents") => worktree_agents(&app.state::<PiRuntime>(), &body),
         ("POST", "/cancel") => (|| {
@@ -3513,6 +3561,7 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
             let mut cancelled = broker.cancelled.lock().map_err(|_| "Broker cancellation lock was poisoned")?;
             if cancelled.len() >= BROKER_QUEUE_DEPTH * 2 { cancelled.clear(); }
             cancelled.insert(request_id.to_string()); drop(cancelled);
+            if let Some(operation) = broker.operations.lock().map_err(|_| "Broker operations unavailable")?.get(request_id) { operation.store(true, Ordering::SeqCst); }
             #[cfg(not(feature = "desktop"))]
             peers::cancel_message(&app, request_id)?;
             let child = broker.jobs.lock().map_err(|_| "Broker job lock was poisoned")?.get(request_id).cloned();

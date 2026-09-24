@@ -137,7 +137,6 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
   }
   function publishRegistration(method: string, name: string, args: unknown[]) {
     if (method === "registerCommand") {
-      if (dispatchedCommands.has(name)) return;
       dispatchedCommands.add(name);
       pi.registerCommand(name, {
         ...args[1] as Command, handler: (...values: Parameters<Command["handler"]>) => {

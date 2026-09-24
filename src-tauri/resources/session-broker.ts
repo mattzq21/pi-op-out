@@ -57,14 +57,19 @@ async function request(path: string, body?: unknown, signal?: AbortSignal, timeo
   signal?.throwIfAborted();
   if (!url || !token) throw new Error("piop session broker is unavailable");
   const controller = new AbortController();
+  const operationId = path.startsWith("/worktrees/") ? randomUUID() : undefined;
+  if (operationId) body = { ...(body as Record<string, unknown>), requestId: operationId, deadline: Date.now() + timeoutMs };
   const timeout = setTimeout(() => controller.abort(new Error("Session broker request timed out")), timeoutMs);
+  const cancelOperation = () => { if (operationId) void cancelRequest(operationId); };
+  controller.signal.addEventListener("abort", cancelOperation, { once: true });
   const abort = () => controller.abort(signal?.reason); signal?.addEventListener("abort", abort, { once: true });
   try {
     const response = await fetch(`${url}${path}`, requestOptions(body, controller.signal));
     const result = await response.json() as { error?: string; data?: unknown };
     if (!response.ok || result.error) throw new Error(result.error || `Session broker returned HTTP ${response.status}`);
     return result.data;
-  } finally { clearTimeout(timeout); signal?.removeEventListener("abort", abort); }
+  } catch (error) { if (operationId) await cancelRequest(operationId); throw error; }
+  finally { clearTimeout(timeout); controller.signal.removeEventListener("abort", cancelOperation); signal?.removeEventListener("abort", abort); }
 }
 
 export interface PauseController {
@@ -161,6 +166,7 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
       return message;
     },
     async stop(ctx) {
+      pi.events.emit("piop:cancel-preparation", {});
       controlContext = ctx; pauseStopped = true;
       if (isPaused || isPausing) persistPause(false);
       publishPause(); ctx.abort(); await pauseOperation; await waitForIdle(ctx, generation);
@@ -172,6 +178,7 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
     if (action === "pause") await controller.pause(ctx);
     else if (action === "resume") return controller.resume(ctx);
     else if (action === "stop") await controller.stop(ctx);
+    else if (action === "cancel-preparation") pi.events.emit("piop:cancel-preparation", {});
     else if (action !== "state") throw new Error(`Unknown desktop control: ${action}`);
   };
   pi.registerCommand("pi-desktop-control", {

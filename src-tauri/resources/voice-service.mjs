@@ -174,7 +174,7 @@ class HostVoiceService {
     if (item?.type !== 'delegation' || item.target !== 'client' || typeof item.id !== 'string' || call.seen.has(item.id)) return;
     if (call.seen.size >= 512) throw new Error('Start a new voice call to continue this long conversation.');
     call.seen.add(item.id);
-    await this.submit(call, item);
+    void this.submit(call, item).catch((error) => this.fail(call, error));
   }
   async submit(call, item) {
     const text = (item.content ?? []).filter((part) => part.type === 'input_text').map((part) => part.text).join('').slice(-12000);

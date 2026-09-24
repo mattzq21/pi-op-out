@@ -53,6 +53,12 @@ fn storage_path() -> Result<PathBuf, String> {
     Ok(super::ensure_desktop_sessions_dir(&super::home_dir()?)?.join("groups.json"))
 }
 
+fn lock_storage(path: &PathBuf) -> Result<fs::File, String> {
+    let file = fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(path.with_extension("lock")).map_err(|error| error.to_string())?;
+    file.lock().map_err(|error| format!("Could not lock session groups: {error}"))?;
+    Ok(file)
+}
+
 fn read(path: &PathBuf) -> Result<Option<SessionGroups>, String> {
     match fs::read(path) {
         Ok(body) => serde_json::from_slice(&body).map(Some).map_err(|error| format!("Could not read session groups: {error}")),
@@ -88,6 +94,7 @@ pub fn load_session_groups(seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Re
 }
 
 fn load_at(path: &PathBuf, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Result<SessionGroups, String> {
+    let _file_lock = lock_storage(path)?;
     let stored = read(path)?;
     let mut dirty = stored.is_none();
     let mut state = stored.unwrap_or(legacy);
@@ -100,6 +107,10 @@ fn load_at(path: &PathBuf, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Re
         }
     }
     for seed in seeds {
+        for group in state.groups.iter_mut().filter(|group| group.host_id == seed.project.host_id) {
+            if group.host_name != seed.project.host_name { group.host_name = seed.project.host_name.clone(); dirty = true; }
+            if group.id == seed.project.id && seed.project.project_kind.is_some() && group.project_kind != seed.project.project_kind { group.project_kind = seed.project.project_kind.clone(); dirty = true; }
+        }
         if state.assignments.contains_key(&seed.session_key) { continue; }
         let destination = if state.removed_projects.contains(&seed.project.id) { None } else {
             if !state.groups.iter().any(|group| group.id == seed.project.id) {
@@ -132,6 +143,7 @@ fn change_with(change: GroupChange, path: impl FnOnce() -> Result<PathBuf, Strin
 }
 
 fn change_at(path: &PathBuf, change: GroupChange) -> Result<SessionGroups, String> {
+    let _file_lock = lock_storage(path)?;
     let mut state = read(path)?.ok_or("Session groups have not loaded yet")?;
     match change {
         GroupChange::Relocate { project, key } => {

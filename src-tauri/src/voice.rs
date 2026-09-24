@@ -120,12 +120,14 @@ fn command(runtime: &VoiceRuntime, id: &str, control: Control) -> Result<(), Str
 pub fn voice_mute(app: AppHandle, call_id: String, muted: bool) -> Result<(), String> {
     #[cfg(feature = "desktop")]
     command(&app.state::<VoiceRuntime>(), &call_id, Control::Mute(muted))?;
+    #[cfg(not(feature = "desktop"))]
     emit(&app, &call_id, json!({"type":"muted","muted":muted})); Ok(())
 }
 #[cfg_attr(feature = "desktop", tauri::command)]
 pub fn voice_suppress(app: AppHandle, call_id: String, suppressed: bool) -> Result<(), String> {
     #[cfg(feature = "desktop")]
     command(&app.state::<VoiceRuntime>(), &call_id, Control::Suppress(suppressed))?;
+    #[cfg(not(feature = "desktop"))]
     emit(&app, &call_id, json!({"type":"suppressed","suppressed":suppressed})); Ok(())
 }
 
@@ -210,7 +212,12 @@ async fn run_media(app: &AppHandle, id: &str, runtime_id: &str, daemon: Arc<Host
         if *closing.borrow() { return Ok(()); }
         helper.connect(answer.as_str().ok_or("Missing voice connection answer")?.to_owned()).await?;
         let mut controls = AudioControls { microphone_muted: false, speaker_suppressed: false };
+        while let Ok(control) = commands.try_recv() {
+            match control { Control::Mute(value) => controls.microphone_muted = value, Control::Suppress(value) => controls.speaker_suppressed = value }
+        }
         helper.controls(controls).await?;
+        emit(app, id, json!({"type":"muted","muted":controls.microphone_muted}));
+        emit(app, id, json!({"type":"suppressed","suppressed":controls.speaker_suppressed}));
         let mut poll = tokio::time::interval(Duration::from_millis(100));
         poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -220,6 +227,8 @@ async fn run_media(app: &AppHandle, id: &str, runtime_id: &str, daemon: Arc<Host
                 control = commands.recv() => {
                     match control { Some(Control::Mute(value)) => controls.microphone_muted = value, Some(Control::Suppress(value)) => controls.speaker_suppressed = value, None => return Ok(()) }
                     helper.controls(controls).await?;
+                    emit(app, id, json!({"type":"muted","muted":controls.microphone_muted}));
+                    emit(app, id, json!({"type":"suppressed","suppressed":controls.speaker_suppressed}));
                 },
                 _ = poll.tick() => if let Message::AudioState { state } = helper.exchange(Message::InspectAudio {}).await? {
                     emit(app, id, json!({"type":"levels","microphone":state.microphone_peak,"speaker":state.speaker_peak}));

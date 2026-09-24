@@ -132,10 +132,10 @@ async fn serve_connection_mode<S: tokio::io::AsyncRead + tokio::io::AsyncWrite +
     drop(receiver);
     let cleanup_app = app.clone(); let cleanup_owner = owner.clone();
     tokio::task::spawn_blocking(move || detach_owner(&cleanup_app, &cleanup_owner, false)).await.map_err(|error| error.to_string())?;
-    while pending.join_next().await.is_some() {}
-    tokio::task::spawn_blocking(move || {
-        detach_owner(&app, &owner, false);
-    }).await.map_err(|error| error.to_string())?;
+    tokio::spawn(async move {
+        while pending.join_next().await.is_some() {}
+        let _ = tokio::task::spawn_blocking(move || detach_owner(&app, &owner, false)).await;
+    });
     Ok(())
 }
 

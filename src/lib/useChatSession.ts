@@ -225,11 +225,11 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       session.setMessages((current) => [...current.filter((item) => item.id !== message.id), message]);
     };
     const handleToolExecutionUpdate = () => {
-      queue((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: "", details: undefined, toolPayloadLoaded: false, toolPayloadVersion: Number(event.sequence), toolStatus: "running" } : item));
+      queue((current) => current.map((item) => item.id === event.toolCallId ? { ...item, toolPayloadVersion: Number(event.sequence), toolStatus: "running" } : item));
     };
     const handleToolExecutionEnd = () => {
       flush();
-      session.setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, content: "", details: undefined, toolPayloadLoaded: false, toolPayloadVersion: Number(event.sequence), toolStatus: event.isError ? "error" : "done" } : item));
+      session.setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, toolPayloadVersion: Number(event.sequence), toolStatus: event.isError ? "error" : "done" } : item));
     };
     const handleQueueUpdate = () => {
       session.setState((current) => ({ ...current, pendingMessages: event.pendingMessages as AgentState["pendingMessages"], pendingMessageCount: [...((event.steering as unknown[]) ?? []), ...((event.followUp as unknown[]) ?? [])].length }));

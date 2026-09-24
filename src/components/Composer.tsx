@@ -72,12 +72,13 @@ function expandSkillReference(value: string, commands: SlashCommand[]) {
   let primary: string | undefined;
   let rest = value;
   // Invoke the first skill and preserve the rest of the user's references.
-  for (const match of [...value.matchAll(reference)]) {
+  const prose = value.replace(/(^|\n)( {0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n\2\3[^\n]*(?=\n|$)|$)|(`+)[^`]*?\4/g, (code) => code.replace(/[^\n]/g, " "));
+  for (const match of [...prose.matchAll(reference)]) {
     const name = skills.get(match[2].toLowerCase());
     if (!name || match.index === undefined) continue;
     if (!primary) primary = name;
     const token = match[0].slice(match[1].length);
-    const at = rest.indexOf(token);
+    const at = match.index + match[1].length;
     if (at >= 0) rest = rest.slice(0, at) + rest.slice(at + token.length);
     break;
   }
@@ -135,7 +136,7 @@ async function imageUpload(file: File, errors: string[]): Promise<ComposerUpload
 }
 
 async function textUpload(file: File, errors: string[]): Promise<ComposerUpload | undefined> {
-  if (!(file.type.startsWith("text/") || TEXT_MIME_TYPES.has(file.type.toLowerCase()) || TEXT_EXTENSIONS.test(file.name))) { errors.push(`${file.name} is not a supported text file`); return undefined; }
+  if (!(file.type.startsWith("text/") || TEXT_MIME_TYPES.has(file.type.toLowerCase()) || TEXT_EXTENSIONS.test(file.name) || /^(?:Dockerfile|Containerfile|Makefile|README|LICENSE|NOTICE|\.gitignore|\.gitattributes|\.editorconfig)$/i.test(file.name))) { errors.push(`${file.name} is not a supported text file`); return undefined; }
   if (file.size > TEXT_LIMIT) { errors.push(`${file.name} is larger than 200 KB`); return undefined; }
   let text: string;
   try { text = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer()); }
@@ -161,6 +162,7 @@ export function Composer(props: Props) {
     if (composer().onUploadsChange) (composer().onUploadsChange)!(update); else setLocalUploads(update);
   };
   const [uploadError, setUploadError] = createSignal<string>();
+  const [readingUploads, setReadingUploads] = createSignal(0);
   const [imageInputError, setImageInputError] = createSignal(false);
   const supportsImages = createMemo(() => (modelSupportsImages(composer().model, composer().models)));
   const supportsImagesRef = createRef(supportsImages());
@@ -187,16 +189,17 @@ export function Composer(props: Props) {
   const controls = createMemo(() => { const state = composerControlState(composer().controlsDisabled, controlAction(), composer().pausing, stopping()); return { ...state, inputDisabled: state.inputDisabled || composer().compacting }; });
   const [selectedMatch, setSelectedMatch] = createSignal(0);
   const [paletteDismissed, setPaletteDismissed] = createSignal(false);
+  const [caretAtEnd, setCaretAtEnd] = createSignal(true);
   const ref = createRef<HTMLTextAreaElement>(null);
   const composerRef = createRef<HTMLDivElement>(null);
   const selectedCommandRef = createRef<HTMLButtonElement>(null);
   const [draggingFiles, setDraggingFiles] = createSignal(false);
   const dragDepth = createRef(0);
   const restoredDraftId = createRef<string | undefined>(undefined);
-  const commandQuery = createMemo(() => (value().match(/^\/([^\s]*)$/)?.[1]?.toLowerCase()));
-  const skillQuery = createMemo(() => (commandQuery() === undefined ? skillReference(value()) : undefined));
+  const commandQuery = createMemo(() => (caretAtEnd() ? value().match(/^\/([^\s]*)$/)?.[1]?.toLowerCase() : undefined));
+  const skillQuery = createMemo(() => (caretAtEnd() && commandQuery() === undefined ? skillReference(value()) : undefined));
   const matches = createMemo(() => paletteDismissed() ? [] : commandQuery() !== undefined
-    ? composer().commands.filter((command) => command.name.toLowerCase().includes((commandQuery())!)).slice(0, 7)
+    ? composer().commands.filter((command) => command.name.toLowerCase().includes((commandQuery())!)).sort((a, b) => Number(b.name.toLowerCase() === commandQuery()) - Number(a.name.toLowerCase() === commandQuery())).slice(0, 7)
     : skillQuery() !== undefined
       ? composer().commands.filter((command) => skillName(command)?.toLowerCase().includes((skillQuery())!)).slice(0, 7)
       : []);
@@ -253,6 +256,8 @@ export function Composer(props: Props) {
 
   const addFiles = async (files: FileList | File[] | null, initialErrors: string[] = [], commitUploads = composer().onUploadsChange ?? setLocalUploads) => { const capturedUploads = uploads();
     if (!files) return;
+    setReadingUploads((count) => count + 1);
+    try {
     setUploadError(undefined);
     const next: ComposerUpload[] = [];
     const errors = [...initialErrors];
@@ -278,8 +283,11 @@ export function Composer(props: Props) {
       if (errors.length) setUploadError([...new Set(errors)].join(". "));
       return [...current, ...accepted];
     });
+    } finally { setReadingUploads((count) => count - 1); }
   };
   const addPaths = async (paths: string[], cancelled = () => false) => {
+    setReadingUploads((count) => count + 1);
+    try {
     const commitUploads = composer().onUploadsChange ?? setLocalUploads;
     const files: File[] = [];
     const errors = paths.length > UPLOAD_COUNT_LIMIT ? [`Only ${UPLOAD_COUNT_LIMIT} attachments are allowed; extra files were skipped`] : [];
@@ -289,6 +297,7 @@ export function Composer(props: Props) {
       catch (reason) { errors.push(reason instanceof Error ? reason.message : String(reason)); }
     }
     if (!cancelled()) await addFiles(files, errors, commitUploads);
+    } finally { setReadingUploads((count) => count - 1); }
   };
   const nativeDropRef = createRef({ inputDisabled: controls().inputDisabled, addPaths });
   createDependencyEffect(() => {
@@ -326,7 +335,7 @@ export function Composer(props: Props) {
   const controlsBlocked = () => composer().controlsDisabled || composer().compacting || composer().pausing || controlActionRef.current || stoppingRef.current;
   const canSubmit = (message: string, images: ImageAttachment[]) => {
     if (images.length && !supportsImagesRef.current) { setImageInputError(true); return false; }
-    return Boolean((hasVisibleText(message) || images.length) && !sendingRef.current);
+    return Boolean((hasVisibleText(message) || images.length) && !sendingRef.current && !readingUploads());
   };
   const restoreSubmission = (submittedValue: string, submittedUploads: ComposerUpload[], reason: unknown, changeDraft: (value: StateUpdate<string>) => void, changeUploads: (value: StateUpdate<ComposerUpload[]>) => void) => {
     changeDraft((newerDraft) => newerDraft && newerDraft !== submittedValue ? `${submittedValue}\n\n${newerDraft}` : submittedValue);
@@ -374,6 +383,7 @@ export function Composer(props: Props) {
     ref.current?.focus();
   };
   const handlePaletteKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.currentTarget.selectionStart !== value().length || event.currentTarget.selectionEnd !== value().length) return false;
     if (event.key === "Escape" && matches().length) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true); return true; }
     if (matches().length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches().length) % matches().length); return true; }
     if (canPickCommand(event) && matches()[selectedMatch()]) { event.preventDefault(); chooseCommand(matches()[selectedMatch()]); return true; }
@@ -394,19 +404,19 @@ export function Composer(props: Props) {
     const renderComposerDropHint = () => (draggingFiles() && !controls().inputDisabled && <div class="composer-drop-hint" role="status">Drop files to attach</div>);
     const renderCommandPalette = () => (matches().length > 0 && <div class="command-palette" role="listbox" aria-label={skillQuery() === undefined ? "piop commands" : "piop skills"}>{<Key each={matches()} by={(command) => `${command.source}:${command.name}`}>{(command, index) => <button ref={element => { if (index() === selectedMatch()) selectedCommandRef.current = element; }} role="option" aria-selected={index() === selectedMatch()}  type="button" onClick={() => chooseCommand(command())}><span><strong>{skillQuery() !== undefined ? `$${skillName(command())}` : `/${command().name}`}</strong>{command().description && <small>{command().description}</small>}</span></button>}</Key>}</div>);
     const renderComposerEditor = () => (<div class="composer-editor">
-        <textarea ref={element => { ref.current = element; }} aria-label="Message piop" disabled={composer().controlsDisabled} placeholder={composer().controlsDisabled ? "Connecting to piop…" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onInput={(event) => { setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
+        <textarea ref={element => { ref.current = element; }} aria-label="Message piop" disabled={composer().controlsDisabled} placeholder={composer().controlsDisabled ? "Connecting to piop…" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setCaretAtEnd(event.currentTarget.selectionStart === event.currentTarget.value.length && event.currentTarget.selectionEnd === event.currentTarget.value.length)} onInput={(event) => { setCaretAtEnd(event.target.selectionStart === event.target.value.length && event.target.selectionEnd === event.target.value.length); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
       </div>);
     const renderComposerBar = () => {
       const renderComposerTools = () => (<div class="composer-tools">{visualProps.voiceControls}<DictationControls disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); ref.current?.focus(); }} />{composer().onOpenTerminal && <IconButton title="" label="Open terminal" disabled={composer().controlsDisabled} onClick={(composer().onOpenTerminal)!}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage} keyed>{usage => <ContextWheel usage={usage} />}</Show><Show when={composer().sessionCache} keyed>{cache => <span class={`session-cache-hit${cache.low ? " low" : ""}`}>Cache {cache.rate}%</span>}</Show></div>);
       const renderComposerActions = () => {
-        const renderMobileSteer = () => (isMobile && composer().streaming && <button class="mobile-steer" disabled={composer().controlsDisabled || !hasVisibleText(value())} onClick={() => void submit("steer")}>Steer</button>);
+        const renderMobileSteer = () => (isMobile && composer().streaming && <button class="mobile-steer" disabled={composer().controlsDisabled || readingUploads() > 0 || !hasVisibleText(value())} onClick={() => void submit("steer")}>Steer</button>);
         const renderAgentPicker = () => (<ContainedPicker label="Agent" selectedLabel={composer().agentUnavailable ? `Agent unavailable: ${composer().activeAgent}` : `${composer().activeAgent ?? "general"}${composer().agentSaved ? " · saved" : ""}`} value={composer().activeAgent ?? "general"} disabled={composer().agentLocked || composer().streaming || controls().inputDisabled} menuMinWidth={130} centered compact options={composer().agents.map((agent) => ({ value: agent.name, label: agent.name }))} onChange={composer().onAgent} />);
         const renderFastModeIndicator = () => (fastModeSupported() && <button type="button" class={`fast-mode-indicator${fastModeEnabled() ? " active" : ""}`} aria-label="Fast mode" aria-description={(composer().fastModeStatus)!} aria-pressed={fastModeEnabled()} aria-busy={togglingFastMode()} disabled={controls().inputDisabled || togglingFastMode()} onClick={() => void toggleFastMode()}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled() ? "currentColor" : "none"} aria-hidden="true" /></button>);
         const renderModelPicker = () => (<ContainedPicker label="Model" selectedLabel={composer().model ? displayModelName((composer().model)!, composer().models) : undefined} value={composer().model ? `${(composer().model)!.provider}/${(composer().model)!.id}` : ""} disabled={composer().streaming || controls().inputDisabled} options={composer().models.map((item) => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item, composer().models), detail: providerAccountLabel(item.provider) }))} onChange={(value) => { const next = composer().models.find((item) => `${item.provider}/${item.id}` === value); if (next) composer().onModel(next); }} />);
         const renderStopButton = () => ((composer().streaming || composer().compacting || composer().paused || composer().pausing) && <IconButton title="" label="Stop piop" class="stop-compact" disabled={controls().stopDisabled} onClick={() => void control("abort")}><CircleStop size={17} /></IconButton>);
-        const renderSend = () => ((composer().streaming || composer().paused || composer().pausing)
+        const renderSend = () => ((composer().streaming || composer().paused && !(hasVisibleText(value()) || uploads().length) || composer().pausing)
             ? <IconButton title="" label={composer().paused ? "Resume piop" : "Pause piop"} class="send" disabled={controls().inputDisabled} onClick={() => void control(composer().paused ? "resume" : "pause")}>{composer().paused ? <Play size={17} /> : <Pause size={17} />}</IconButton>
-            : <IconButton title="" label="Send message" class="send" disabled={controls().inputDisabled || sending() || (!hasVisibleText(value()) && uploads().length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>);
+            : <IconButton title="" label="Send message" class="send" disabled={controls().inputDisabled || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>);
         return (<div class="composer-actions">{renderMobileSteer()}
           {renderAgentPicker()}
           {renderFastModeIndicator()}

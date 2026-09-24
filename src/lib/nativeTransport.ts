@@ -182,7 +182,6 @@ export class NativeTransport {
     await this.refreshFastStatus(false);
   }
   private async afterPrompt(command: RpcCommand) {
-    this.temporaryChatUsed = true;
     const invocation = typeof command.message === "string" ? command.message.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/) : undefined;
     if (invocation && this.fastCommands.has(invocation[1]) && ["", "on", "off", "toggle"].includes((invocation[2] ?? "").trim().toLowerCase())) await this.refreshFastStatus(true);
   }
