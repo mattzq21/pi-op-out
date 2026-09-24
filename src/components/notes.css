@@ -1,7 +1,8 @@
 .notes-pane { position: relative; order: 3; flex: 0 0 var(--notes-width); width: var(--notes-width); min-width: 0; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); }
 .notes-pane[hidden] { display: none; }
-.chat-workspace > .open-notes-button { position: absolute; z-index: 5; top: 8px; right: 12px; }
-.chat-workspace:has(> .open-notes-button) .split-pane-header { padding-right: 54px; }
+.chat-panes { position: relative; }
+.chat-panes > .open-notes-button { position: absolute; z-index: 5; top: 8px; right: 12px; }
+.chat-panes:has(> .open-notes-button) .split-pane-header { padding-right: 54px; }
 .notes-pane button:disabled { opacity: .45; cursor: default; }
 .notes-pane button:focus-visible, .notes-pane input:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .notes-header { display: flex; align-items: center; flex: 0 0 52px; gap: 3px; padding: 8px 10px 3px 16px; }
@@ -68,7 +69,7 @@
 }
 @media (max-width: 700px) {
   .notes-pane { width: 100%; top: calc(52px + env(safe-area-inset-top)); bottom: env(safe-area-inset-bottom); }
-  .chat-workspace > .open-notes-button { position: fixed; z-index: 15; top: calc(6px + env(safe-area-inset-top)); right: 8px; }
+  .chat-panes > .open-notes-button { position: fixed; z-index: 15; top: calc(6px + env(safe-area-inset-top)); right: 8px; }
   .notes-editor, .notes-form input, .notes-search input { font-size: 16px; }
   .notes-resizer { display: none; }
 }
