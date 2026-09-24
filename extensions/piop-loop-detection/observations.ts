@@ -22,11 +22,13 @@ export function fingerprint(value: unknown): string | undefined {
 }
 
 function polling(command: string) {
-  return /^(?:sleep|watch|wait|while|until|test)\b/.test(command)
+  // Ambiguous shell syntax stays observable, even when quoted or escaped.
+  if (/[;&|`$<>\r\n(){}\\]/.test(command)) return false;
+  return /^(?:sleep|watch|wait|test)(?:\s|$)/.test(command)
     || /^tail\s+.*(?:-f|--follow)\b/.test(command)
     || /^(?:rg|grep)\b.*\s(?:-[A-Za-z]*q[A-Za-z]*|--quiet|--silent)(?:\s|$)/.test(command)
     || /^(?:curl|wget)\s+.*\/(?:healthz?|readyz?|status)(?:[/?\s"']|$)/.test(command)
-    || /^(?:git\s+(?:status|diff)|gh\s+(?:run|pr)\s+(?:view|watch|checks)|kubectl\s+(?:get|wait)|ps\b|pgrep\b)/.test(command);
+    || /^(?:git\s+(?:status|diff)|gh\s+(?:run|pr)\s+(?:view|watch|checks)|kubectl\s+(?:get|wait)|ps|pgrep)(?:\s|$)/.test(command);
 }
 
 function shellSearch(command: string) {
