@@ -38,6 +38,7 @@ function enforceCacheLimit() {
   let total = [...fifo.values()].reduce((sum, size) => sum + size, 0);
   for (const [store, size] of fifo) {
     if (fifo.size <= SESSION_COUNT && total <= CACHE_LIMIT) break;
+    if (store.observed()) continue;
     fifo.delete(store);
     total -= size;
     store.evict();
@@ -71,7 +72,8 @@ export class SessionMemory {
     this.value = initialSnapshot(initialState);
   }
   getSnapshot = () => this.value;
-  subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
+  subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); enforceCacheLimit(); }; };
+  observed() { return this.listeners.size > 0; }
   private notify() { for (const listener of this.listeners) listener(); }
 
   evict() {
@@ -190,15 +192,14 @@ export class SessionMemory {
     }
     const output = JSON.parse(serialized) as Pick<ChatMessage, "content" | "details" | "toolInput">;
     if (generation !== this.generation) return;
-    if (this.toolPayloadVersion(id) !== version) throw new Error("Tool payload changed while loading. Reload the tool payload.");
     this.reserved = 0;
     this.loaded.delete(id); this.loaded.add(id);
-    this.set("messages", (messages) => messages.map((message) => message.deferredToolPayload === id ? { ...message, ...output, toolPayloadLoaded: true } : message));
+    this.set("messages", (messages) => messages.map((message) => message.deferredToolPayload === id ? { ...message, ...output, toolPayloadLoaded: true, loadedToolPayloadVersion: version } : message));
     if (!this.value.messages.some((message) => message.deferredToolPayload === id && message.toolPayloadLoaded)) throw new Error("This tool payload could not fit in the client memory limit.");
   }
 
   private loadToolPayload(id: string) {
-    if (this.value.messages.some((message) => message.deferredToolPayload === id && message.toolPayloadLoaded)) return Promise.resolve();
+    if (this.value.messages.some((message) => message.deferredToolPayload === id && message.toolPayloadLoaded && message.loadedToolPayloadVersion === message.toolPayloadVersion)) return Promise.resolve();
     const previous = this.loading.get(id);
     if (previous) return previous;
     const generation = this.generation;

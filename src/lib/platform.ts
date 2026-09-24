@@ -1,5 +1,6 @@
 import { invoke as nativeInvoke } from "@tauri-apps/api/core";
 import { listen as nativeListen, type EventCallback, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Browser } from "@capacitor/browser";
 import { mobileVoice } from "./mobileVoice";
 import { remoteClient } from "./remoteClient";
@@ -12,7 +13,7 @@ const conversationClientId = (() => {
   try { const saved = localStorage.getItem(key); if (saved) return saved; localStorage.setItem(key, fresh); } catch { /* Keep a stable identity for this client lifetime. */ }
   return fresh;
 })();
-export const listen = <T>(event: string, handler: EventCallback<T>): Promise<UnlistenFn> => isMobile ? remoteClient.listen(event, handler) : nativeListen(event, handler);
+export const listen = <T>(event: string, handler: EventCallback<T>): Promise<UnlistenFn> => isMobile ? remoteClient.listen(event, handler) : nativeListen(event, handler, { target: { kind: "WebviewWindow", label: getCurrentWebviewWindow().label } });
 export function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   args = { ...args, clientId: conversationClientId };
   if (!isMobile) {

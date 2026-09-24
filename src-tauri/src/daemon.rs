@@ -172,6 +172,9 @@ pub(crate) fn connect(app: &AppHandle, runtime: &PiRuntime, broker: &BrokerRunti
                     let _ = sender.send(if let Some(error) = packet["error"].as_str() { Err(error.into()) } else { Ok(packet["data"].clone()) });
                 },
                 Some("event") => {
+                    if let Some(working) = match packet["event"]["type"].as_str() { Some("agent_start") => Some(true), Some("agent_settled") => Some(false), _ => None } {
+                        if let Some(id) = packet["runtimeId"].as_str() { if let Ok(mut agents) = app.state::<PiRuntime>().active_agents.lock() { if let Some(agent) = agents.get_mut(id) { agent.working = working; } } }
+                    }
                     if packet["event"]["type"].as_str() == Some("ownership_lost") {
                         if let Some(id) = packet["runtimeId"].as_str() { if let Ok(mut agents) = app.state::<PiRuntime>().active_agents.lock() { if let Some(agent) = agents.get_mut(id) { agent.working = false; agent.messageable = true; } } }
                     }
@@ -201,6 +204,11 @@ pub(crate) fn connect(app: &AppHandle, runtime: &PiRuntime, broker: &BrokerRunti
                     let key = format!("{}{}", connection.agent_prefix, packet["sessionKey"].as_str().unwrap_or_default());
                     let runtime = app.state::<PiRuntime>();
                     if let Ok(mut agents) = runtime.active_agents.lock() {
+                        if let Some(session_id) = state["sessionId"].as_str() {
+                            for agent in agents.values_mut().filter(|agent| agent.host_id == host_id && agent.session_id.as_deref() == Some(session_id)) {
+                                agent.working = packet["working"].as_bool().unwrap_or(false);
+                            }
+                        }
                         agents.insert(key, AgentAddress { host_id: host_id.clone(), session_id: state["sessionId"].as_str().map(str::to_owned), session_path: state["sessionFile"].as_str().map(str::to_owned), worktree: packet["worktree"].as_str().map(str::to_owned), presence_id: packet["presenceId"].as_str().map(str::to_owned), working: packet["working"].as_bool().unwrap_or(false), messageable: packet["messageable"].as_bool().unwrap_or(false) });
                     };
                     let _ = app.emit("pi://sessions-changed", ());
@@ -254,6 +262,10 @@ fn persist_capture(app: &AppHandle, daemon: &Arc<Daemon>, host_id: &str, packet:
                     let (Some(baseline), Some(current), Some(cwd), Some(path), Some(id)) = (baseline.as_deref(), current, packet["cwd"].as_str(), packet["sessionPath"].as_str(), packet["messageId"].as_str()) else { return Ok(()); };
                     // Both trees and the response ID were fixed by Pi's awaited lifecycle hooks.
                     if let Some(diff) = load_git_diff_between_at_host(cwd, baseline, current, host.as_ref())? {
+                        if packet["ephemeral"] == true {
+                            let _ = app.emit("pi://event", json!({"type":"turn_diff","hostId":host_id,"sessionPath":path,"messageId":id,"snapshot":diff}));
+                            return Ok(());
+                        }
                         let mut diffs = load_git_diffs_at_host(path, host.as_ref())?;
                         diffs.insert(id.into(), diff);
                         save_git_diffs_at_host(path, diffs, host.as_ref())?;

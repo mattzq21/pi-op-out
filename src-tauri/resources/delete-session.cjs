@@ -186,7 +186,9 @@ function collectSnapshot(entry, roots, prefix, legacy) {
 
 function collectPromptCheckpoint(entry, roots, header, prefix) {
   if (entry.type === "custom" && entry.customType === "pi-project-prompt-checkpoint" && promptCheckpoint(entry.data)) {
-    const repository = checkpointRepository(roots, header.cwd);
+    const cwd = header.checkpointRepositoryRoot ?? header.cwd;
+    if (typeof cwd !== 'string' || !path.isAbsolute(cwd)) throw new Error('Invalid prompt checkpoint repository');
+    const repository = checkpointRepository(roots, cwd);
     repository.required = true;
     repository.commits.add(entry.data.commit);
     repository.expectedRefs.set(`${prefix}prompts/${entry.data.key}`, entry.data.commit);

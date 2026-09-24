@@ -37,7 +37,10 @@ impl Connection {
             let mut stdin = self.stdin.lock().map_err(|_| "Peer input unavailable")?;
             serde_json::to_writer(&mut *stdin, &json!({"id":id,"command":command,"args":args})).map_err(|error| error.to_string())?;
             stdin.write_all(b"\n").and_then(|_| stdin.flush()).map_err(|error| error.to_string())
-        })().and_then(|_| receiver.recv_timeout(Duration::from_secs(660)).map_err(|_| "Peer request timed out; it may have completed. Reconnect and refresh before retrying.".to_string())?);
+        })().and_then(|_| {
+            if command == "run_worktree_setup" { receiver.recv().map_err(|_| "Peer request interrupted; reconnect before retrying.".to_string())? }
+            else { receiver.recv_timeout(Duration::from_secs(660)).map_err(|_| "Peer request timed out; it may have completed. Reconnect and refresh before retrying.".to_string())? }
+        });
         if let Ok(mut pending) = self.pending.lock() { pending.remove(&id); }
         result
     }
@@ -64,7 +67,8 @@ impl Connection {
             return;
         }
         let Some(event) = packet["event"].as_str() else { return; };
-        if matches!(event, "pi://settings-changed" | "pi://groups-changed" | "pi://dictation") || packet["payload"]["_peer"] == true { return; }
+        if matches!(event, "pi://groups-changed" | "pi://dictation") || packet["payload"]["_peer"] == true { return; }
+        let event = if event == "pi://settings-changed" { "pi://host-settings-changed" } else { event };
         let state = app.state::<PeerRuntime>();
         let mut payload = packet["payload"].clone();
         if !payload.is_object() { payload = json!({}); }
@@ -165,6 +169,7 @@ pub(crate) fn local_sessions(app: &AppHandle) -> Result<Value, String> {
 pub(crate) fn all_summaries(app: &AppHandle, index: &SessionIndexRuntime) -> Result<Vec<SessionSummary>, String> {
     let sessions = list_local_sessions(index, &ensure_desktop_sessions_dir(&home_dir()?)?)?;
     let hosts = load_app_settings(app.clone())?.hosts;
+    let successful = Mutex::new(HashMap::new());
     let mut result = collect_host_sessions(sessions, hosts.clone(), |host| {
         let result = connect(app, &host.id).and_then(|connection| connection.invoke("list_sessions", json!({})).map(|value| (connection, value)));
         let (connection, value) = match result {
@@ -183,13 +188,13 @@ pub(crate) fn all_summaries(app: &AppHandle, index: &SessionIndexRuntime) -> Res
         }
         let mut rows: Vec<SessionSummary> = serde_json::from_value(value).map_err(|error| error.to_string())?;
         for row in &mut rows { row.host_id = host.id.clone(); row.host_name = host.name.clone(); row.group_id = None; }
+        successful.lock().map_err(|_| "Peer listings unavailable")?.insert(host.id.clone(), connection.daemon_id.clone());
         Ok(rows)
     }, session_groups::attach_assignments)?;
-    let state = app.state::<PeerRuntime>();
-    let connections = state.connections.lock().map_err(|_| "Peer connections unavailable")?;
+    let successful = successful.lock().map_err(|_| "Peer listings unavailable")?;
     let mut canonical = HashMap::new();
-    for host in hosts { if let Some((_, connection)) = connections.get(&host.id) { canonical.entry(connection.daemon_id.clone()).or_insert(host.id); } }
-    result.retain(|session| session.host_id == "local" || connections.get(&session.host_id).is_some_and(|(_, connection)| canonical.get(&connection.daemon_id) == Some(&session.host_id)));
+    for host in hosts { if let Some(daemon_id) = successful.get(&host.id) { canonical.entry(daemon_id.clone()).or_insert(host.id); } }
+    result.retain(|session| session.host_id == "local" || successful.get(&session.host_id).is_some_and(|daemon_id| canonical.get(daemon_id) == Some(&session.host_id)));
     Ok(result)
 }
 
@@ -202,6 +207,9 @@ fn register(state: &PeerRuntime, kind: &str, id: &str, route: Route) -> Result<(
 }
 
 pub(crate) fn route(app: &AppHandle, owner: &str, command: &str, args: &Value) -> Result<Option<Value>, String> {
+    let mut routed_args = args.clone();
+    if command == "provider_auth" && args["request"]["flowId"].is_string() { routed_args["flowId"] = args["request"]["flowId"].clone(); }
+    let args = &routed_args;
     let state = app.state::<PeerRuntime>();
     if command == "storage_report" {
         let mut hosts = vec![serde_json::to_value(inspect_storage(None).unwrap_or_else(|error| failed_storage("local".into(), "Local".into(), error))).map_err(|error| error.to_string())?];
@@ -235,7 +243,7 @@ pub(crate) fn route(app: &AppHandle, owner: &str, command: &str, args: &Value) -
     let existing = {
         let routes = state.routes.lock().map_err(|_| "Peer routes unavailable")?;
         let mut existing: Option<Route> = None;
-        for kind in ["runtimeId", "terminalId", "setupId", "callId"] {
+        for kind in ["runtimeId", "terminalId", "setupId", "callId", "flowId"] {
             if let Some(route) = args[kind].as_str().and_then(|id| routes.get(&(kind.into(), id.into()))) {
                 if route.owner != owner { return Err("Resource belongs to another connection".into()); }
                 if existing.as_ref().is_some_and(|previous| !Arc::ptr_eq(&previous.connection, &route.connection)) { return Err("Resources belong to different daemons".into()); }
@@ -250,6 +258,7 @@ pub(crate) fn route(app: &AppHandle, owner: &str, command: &str, args: &Value) -
         if matches!(command, "save_app_settings" | "load_app_settings" | "change_session_groups" | "load_session_groups") { return Err("Settings belong to the local daemon".into()); }
         Route { owner: owner.into(), host_id: host_id.into(), connection: connect(app, host_id)? }
     } else if let Some(route) = existing { route } else { return Ok(None); };
+    let mut stale_terminals = std::collections::HashSet::new();
     {
         let routes = state.routes.lock().map_err(|_| "Peer routes unavailable")?;
         for kind in ["runtimeId", "terminalId", "setupId", "callId"] {
@@ -259,7 +268,12 @@ pub(crate) fn route(app: &AppHandle, owner: &str, command: &str, args: &Value) -
             }
         }
         if let Some(ids) = args["terminalIds"].as_array() { for id in ids.iter().filter_map(Value::as_str) {
-            if !routes.get(&("terminalId".into(), id.into())).is_some_and(|saved| saved.owner == owner && Arc::ptr_eq(&saved.connection, &route.connection)) { return Err("Terminal belongs to another connection".into()); }
+            let saved = routes.get(&("terminalId".into(), id.into())).ok_or("Terminal belongs to another connection")?;
+            if saved.owner != owner { return Err("Terminal belongs to another connection".into()); }
+            if !Arc::ptr_eq(&saved.connection, &route.connection) {
+                if saved.connection.alive.load(Ordering::SeqCst) || saved.connection.daemon_id != route.connection.daemon_id { return Err("Terminal belongs to another connection".into()); }
+                stale_terminals.insert(id.to_string());
+            }
         } }
     }
     for kind in ["runtimeId", "terminalId"] {
@@ -275,11 +289,19 @@ pub(crate) fn route(app: &AppHandle, owner: &str, command: &str, args: &Value) -
     let mut forwarded = args.clone();
     forwarded["hostId"] = json!("local");
     for kind in ["runtimeId", "terminalId"] { if let Some(id) = args[kind].as_str() { forwarded[kind] = json!(format!("{}{id}", route.connection.prefix)); } }
-    if let Some(ids) = args["terminalIds"].as_array() { forwarded["terminalIds"] = json!(ids.iter().filter_map(Value::as_str).map(|id| format!("{}{id}", route.connection.prefix)).collect::<Vec<_>>()); }
+    if let Some(ids) = args["terminalIds"].as_array() { forwarded["terminalIds"] = json!(ids.iter().filter_map(Value::as_str).filter(|id| !stale_terminals.contains(*id)).map(|id| format!("{}{id}", route.connection.prefix)).collect::<Vec<_>>()); }
     let closing = match command { "stop_pi" => Some("runtimeId"), "close_terminal" => Some("terminalId"), "cancel_worktree_setup" | "run_worktree_setup" => Some("setupId"), "voice_stop" => Some("callId"), _ => None };
     let result = if !route.connection.alive.load(Ordering::SeqCst) && matches!(command, "stop_pi" | "close_terminal") { Ok(json!(false)) } else { route.connection.invoke(command, forwarded) };
     if result.is_ok() { if let Some(kind) = closing { if let Some(id) = args[kind].as_str() { state.routes.lock().map_err(|_| "Peer routes unavailable")?.remove(&(kind.into(), id.into())); } } }
-    if command == "prepare_worktree_setup" { if let Ok(Value::String(id)) = &result { register(&state, "setupId", id, route)?; } }
+    if command == "prepare_worktree_setup" { if let Ok(Value::String(id)) = &result { register(&state, "setupId", id, route.clone())?; } }
+    if command == "provider_auth" {
+        if let Ok(value) = &result {
+            if let Some(id) = value["flowId"].as_str() {
+                if value["status"] == "pending" { register(&state, "flowId", id, route)?; }
+                else { state.routes.lock().map_err(|_| "Peer routes unavailable")?.remove(&("flowId".into(), id.into())); }
+            }
+        }
+    }
     result.map(Some)
 }
 
@@ -290,6 +312,7 @@ pub(crate) fn detach_owner(app: &AppHandle, owner: &str) {
         routes.retain(|_, route| route.owner != owner); owned
     }).unwrap_or_default();
     for ((kind, id), route) in routes {
+        if kind == "flowId" { let _ = route.connection.invoke("provider_auth", json!({"hostId":"local","request":{"action":"cancel","flowId":id}})); continue; }
         let command = match kind.as_str() { "runtimeId" => "stop_pi", "terminalId" => "close_terminal", "setupId" => "cancel_worktree_setup", "callId" => "voice_stop", _ => continue };
         let id = if matches!(kind.as_str(), "runtimeId" | "terminalId") { format!("{}{id}", route.connection.prefix) } else { id };
         let mut args = json!({"discardBlank":false,"preserveRunning":true}); args[&kind] = json!(id);
@@ -300,10 +323,16 @@ pub(crate) fn detach_owner(app: &AppHandle, owner: &str) {
 pub(crate) fn invalidate(app: &AppHandle) {
     let Ok(settings) = load_app_settings(app.clone()) else { return; };
     let state = app.state::<PeerRuntime>();
-    if let Ok(mut connections) = state.connections.lock() { connections.retain(|id, (previous, connection)| {
-        let keep = settings.hosts.iter().any(|host| &host.id == id && host.target == previous.target && host.pi_path == previous.pi_path);
-        if !keep { connection.close(); } keep
-    }); };
+    if let Ok(mut connections) = state.connections.lock() {
+        let mut removed = Vec::new();
+        connections.retain(|id, (previous, connection)| {
+            let keep = settings.hosts.iter().any(|host| &host.id == id && host.target == previous.target && host.pi_path == previous.pi_path);
+            if !keep { removed.push(connection.clone()); } keep
+        });
+        removed.retain(|connection| !connections.values().any(|(_, retained)| Arc::ptr_eq(connection, retained)));
+        drop(connections);
+        for connection in removed { connection.close(); }
+    };
 }
 
 pub(crate) fn shutdown(app: &AppHandle) {
@@ -313,7 +342,7 @@ pub(crate) fn shutdown(app: &AppHandle) {
 pub(crate) fn forward_broker(app: &AppHandle, host_id: &str, path: &str, mut body: Value) -> Result<Value, String> {
     let connection = connect(app, host_id)?;
     body["hostId"] = json!("local");
-    let request_id = (path == "/message").then(|| body["requestId"].as_str().map(str::to_owned)).flatten();
+    let request_id = matches!(path, "/message" | "/worktrees/create" | "/worktrees/remove").then(|| body["requestId"].as_str().map(str::to_owned)).flatten();
     if let Some(id) = &request_id {
         let broker = app.state::<BrokerRuntime>();
         let mut cancelled = broker.cancelled.lock().map_err(|_| "Broker cancellation unavailable")?;

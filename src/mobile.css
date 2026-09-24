@@ -4,7 +4,7 @@
 html[data-mobile] .mobile-navigation { display: flex; }
 html[data-mobile] .app { padding-top: calc(52px + env(safe-area-inset-top)); }
 .mobile-sidebar-backdrop { display: none; }
-.mobile-connect { min-height: 100dvh; display: grid; place-items: center; padding: max(28px, env(safe-area-inset-top)) 24px; background: #181817; color: #e8e5dd; }
+.mobile-connect { height: var(--mobile-height, 100dvh); overflow-y: auto; display: grid; align-items: safe center; justify-items: center; padding: max(28px, env(safe-area-inset-top)) 24px; background: #181817; color: #e8e5dd; }
 .mobile-connect form { width: min(100%, 420px); display: grid; gap: 20px; }
 .mobile-connect h1 { margin: 0; font: 38px/1.12 "Instrument Serif", Georgia, serif; }
 .mobile-connect p { margin: 0; line-height: 1.55; color: #aaa69e; }
@@ -17,6 +17,8 @@ html[data-mobile] .app { padding-top: calc(52px + env(safe-area-inset-top)); }
 .mobile-host-actions button, .mobile-connect button[type="button"] { min-height: 40px; padding: 8px 12px; border: 1px solid #48453e; border-radius: 8px; background: #24231f; color: #eee; }
 .mobile-connect [role=alert] { color: #f19b89; }
 .mobile-connect .primary-button { min-height: 48px; }
+.mobile-reconnect-banner { position: fixed; z-index: 25; top: max(8px, env(safe-area-inset-top)); left: 8px; right: 8px; display: flex; align-items: center; gap: 12px; padding: 12px; background: #24231f; color: #eee; border: 1px solid #48453e; border-radius: 8px; }
+.mobile-reconnect-banner button { flex-shrink: 0; min-height: 44px; }
 .mobile-host-button { display: none; position: fixed; z-index: 15; bottom: max(6px, env(safe-area-inset-bottom)); left: 8px; font-size: 11px; border: 1px solid #48453e; border-radius: 5px; background: #24231f; color: #ccc; padding: 5px; }
 @media (max-width: 700px) {
   body { min-width: 0; min-height: 100dvh; }

@@ -244,10 +244,11 @@ class SessionQueue {
   }
   resumesHeldQueue(command) { return command.type === "resume" || command.type === "prompt" && this.heldMessages && typeof command.message === "string"; }
   command(command) {
-    if (command.type === "abort") return this.serializeQueue(async () => {
-      await this.holdQueue();
-      return this.stop(command);
-    });
+    if (command.type === "abort") {
+      const cancelling = this.executeCommand({ type: "cancel_preparation" });
+      void cancelling.catch(() => undefined);
+      return this.serializeQueue(async () => { await cancelling; await this.holdQueue(); return this.stop(command); });
+    }
     if (command.type === "pause") return this.serializeQueue(async () => {
       await this.holdQueue();
       try {
@@ -376,6 +377,7 @@ class SessionQueue {
     target.behavior = behavior === "steer" ? "steer" : "followUp";
     try {
       await this.deliverPending(target);
+      this.publishQueue();
     } catch (reason) {
       target.retry = true;
       this.publishQueue();
@@ -453,6 +455,14 @@ class SessionQueue {
   }
   isReordering(behavior) { return ["moveUp", "moveDown", "reorder"].includes(behavior); }
   changePendingMessage(id, action) {
+    if (action === "remove" && this.sendingPending.has(id)) {
+      const cancelling = this.executeCommand({ type: "cancel_preparation" });
+      void cancelling.catch(() => undefined);
+      return this.serializeQueue(async () => {
+        await cancelling;
+        if (this.pendingMessages.some((item) => item.id === id)) await this.changeLiveMessage(id, "remove", undefined, "remove");
+      });
+    }
     return this.serializeQueue(async () => {
       const target = this.pendingMessages.find((item) => item.id === id);
       if (!target) return;

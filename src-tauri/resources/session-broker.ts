@@ -58,14 +58,19 @@ async function request(path: string, body?: unknown, signal?: AbortSignal, timeo
   signal?.throwIfAborted();
   if (!url || !token) throw new Error("piop session broker is unavailable");
   const controller = new AbortController();
+  const operationId = path.startsWith("/worktrees/") ? randomUUID() : undefined;
+  if (operationId) body = { ...(body as Record<string, unknown>), requestId: operationId, deadline: Date.now() + timeoutMs };
   const timeout = setTimeout(() => controller.abort(new Error("Session broker request timed out")), timeoutMs);
+  const cancelOperation = () => { if (operationId) void cancelRequest(operationId); };
+  controller.signal.addEventListener("abort", cancelOperation, { once: true });
   const abort = () => controller.abort(signal?.reason); signal?.addEventListener("abort", abort, { once: true });
   try {
     const response = await fetch(`${url}${path}`, requestOptions(body, controller.signal));
     const result = await response.json() as { error?: string; data?: unknown };
     if (!response.ok || result.error) throw new Error(result.error || `Session broker returned HTTP ${response.status}`);
     return result.data;
-  } finally { clearTimeout(timeout); signal?.removeEventListener("abort", abort); }
+  } catch (error) { if (operationId) await cancelRequest(operationId); throw error; }
+  finally { clearTimeout(timeout); controller.signal.removeEventListener("abort", cancelOperation); signal?.removeEventListener("abort", abort); }
 }
 
 export interface PauseController {
@@ -109,6 +114,7 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
     // Pi can restart its agent loop to drain queued messages after an abort.
     // Keep those runs aborted until every queued message (including images) is saved.
     if (isPausing) { ctx.abort(); return; }
+    pauseStopped = false;
     if (isPaused) { persistPause(false); publishPause(); }
   });
   pi.on("message_start", (event) => {
@@ -124,7 +130,11 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
     if (event.message.role !== "assistant") return;
     const content = [...completedBlocks].sort(([left], [right]) => left - right).map(([, block]) => block);
     completedBlocks.clear();
-    if (isPausing && (event.message.stopReason === "aborted" || (event.message.stopReason === "error" && ctx.signal?.aborted))) return { message: { ...event.message, stopReason: "aborted", errorMessage: "Response paused" } };
+    if ((isPausing || pauseStopped) && (event.message.stopReason === "aborted" || (event.message.stopReason === "error" && (ctx.signal?.aborted || event.message.errorMessage === "This operation was aborted")))) {
+      if (isPausing && !pauseStopped) return { message: { ...event.message, stopReason: "aborted", errorMessage: "Response paused" } };
+      const message: StoppedAssistantMessage = { ...event.message, stopReason: "aborted", errorMessage: undefined, content, piopCompletedBlocks: true };
+      return { message };
+    }
     if (event.message.stopReason === "aborted") {
       const message: StoppedAssistantMessage = { ...event.message, content, piopCompletedBlocks: true };
       return { message };
@@ -157,6 +167,7 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
       return message;
     },
     async stop(ctx) {
+      pi.events.emit("piop:cancel-preparation", {});
       controlContext = ctx; pauseStopped = true;
       if (isPaused || isPausing) persistPause(false);
       publishPause(); ctx.abort(); await pauseOperation; await waitForIdle(ctx, generation);
@@ -168,6 +179,7 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
     if (action === "pause") await controller.pause(ctx);
     else if (action === "resume") return controller.resume(ctx);
     else if (action === "stop") await controller.stop(ctx);
+    else if (action === "cancel-preparation") pi.events.emit("piop:cancel-preparation", {});
     else if (action !== "state") throw new Error(`Unknown desktop control: ${action}`);
   };
   pi.registerCommand("pi-desktop-control", {
@@ -244,6 +256,23 @@ export function registerFastModeStatus(pi: ExtensionAPI) {
 
 function registerForkAndForget(pi: ExtensionAPI) {
   const statusKey = "pi-desktop-control-response";
+  pi.registerCommand("pi-desktop-fork-after", {
+    description: "Branch after a completed response",
+    async handler(args, ctx) {
+      let id: string | undefined;
+      try {
+        const request = JSON.parse(args) as { id?: string; entryId?: string };
+        id = request.id;
+        if (!id || ctx.mode !== "rpc" || typeof request.entryId !== "string") throw new Error("Invalid branch request");
+        const fork = await forkConversation(ctx, { entryId: request.entryId }, async () => { throw new Error("Unexpected worktree request"); });
+        const result = await ctx.switchSession(fork.sessionPath);
+        ctx.ui.setStatus(statusKey, `json:${JSON.stringify({ type: "response", id, success: true, data: { cancelled: result.cancelled } })}`);
+      } catch (error) {
+        if (id) ctx.ui.setStatus(statusKey, `json:${JSON.stringify({ type: "response", id, success: false, error: error instanceof Error ? error.message : String(error) })}`);
+        else ctx.ui.notify(String(error), "error");
+      }
+    },
+  });
   const assertAssistantEntry = (ctx: ExtensionContext, entryId: string) => {
     const entry = ctx.sessionManager.getEntry(entryId);
     if (!entry || entry.type !== "message" || entry.message.role !== "assistant") throw new Error("Assistant response not found in this conversation");
@@ -278,9 +307,10 @@ function registerTurnCapture(pi: ExtensionAPI) {
   const snapshot = async (cwd: string) => {
     try {
       const { stdout } = await runFile(process.execPath, ["-e", script], { cwd, maxBuffer: 64 * 1024 });
-      const [root, tree] = stdout.trimEnd().split("\n");
-      if (!root || !tree) throw new Error("Git snapshot was incomplete");
-      return JSON.stringify({ root, tree });
+      const capture = JSON.parse(stdout);
+      if (!capture || typeof capture.root !== "string" || !capture.root || typeof capture.repository_root !== "string" || !capture.repository_root
+        || typeof capture.tree !== "string" || !/^[a-f0-9]{40,64}$/i.test(capture.tree)) throw new Error("Git snapshot was incomplete");
+      return JSON.stringify({ root: capture.root, tree: capture.tree, repository_root: capture.repository_root });
     } catch (error) {
       if ([3, 4, 6].includes(Number((error as { code?: unknown }).code))) return null;
       throw error;
@@ -361,6 +391,10 @@ export function registerCatchUp(pi: ExtensionAPI) {
         if (!confirmed) return;
         if (!ctx.isIdle()) throw new Error("Stop or pause the agent before running /catch-up.");
         await assertWorktreeIdle();
+        const untracked = (await git(root, "ls-files", "--others", "-z", "--")).split("\0").filter(Boolean);
+        const targetPaths = (await git(root, "ls-tree", "-r", "--name-only", "-z", commit)).split("\0").filter(Boolean);
+        const collision = untracked.find((file) => targetPaths.some((target) => file === target || file.startsWith(`${target}/`) || target.startsWith(`${file}/`)));
+        if (collision) throw new Error(`Untracked path ${JSON.stringify(collision)} would be overwritten. Move or commit it before catching up.`);
         await git(root, "reset", "--hard", commit);
         report(`Caught up to the main worktree at ${commit.slice(0, 12)}.`);
       } catch (error) {
@@ -580,10 +614,20 @@ async function forkDirectory(cwd: string, options: ForkOptions) {
 
 function forkHistory(ctx: ExtensionContext, entryId?: string) {
   const branch = ctx.sessionManager.getBranch();
-  const complete = (entry: typeof branch[number]) => entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason !== "toolUse" && !entry.message.content.some((part) => part.type === "toolCall");
+  const complete = (entry: typeof branch[number]) => entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason !== "toolUse" && !entry.message.content.some((part) => part.type === "toolCall")
+    || entry.type === "custom" && entry.customType === "piop-voice" && (entry.data as { role?: string; completed?: boolean })?.role === "assistant" && (entry.data as { completed?: boolean }).completed === true;
   const entry = entryId ? branch.find((entry) => entry.id === entryId) : [...branch].reverse().find(complete);
   if (entryId && (!entry || !complete(entry))) throw new Error("entryId must identify a completed assistant response on the current branch");
-  return entry ? branch.slice(0, branch.indexOf(entry) + 1) : [];
+  if (!entry) return [];
+  const retained = branch.slice(0, branch.indexOf(entry) + 1);
+  const ids = new Set(retained.map((item) => item.id));
+  const checkpoint = branch.slice(branch.indexOf(entry) + 1).find((item) => item.type === "custom" && item.customType === "pi-project-files-watch-snapshot"
+    && (item.data as { responseEntryIds?: string[] })?.responseEntryIds?.includes(entry.id));
+  if (checkpoint?.type === "custom") {
+    const data = checkpoint.data as { responseEntryIds: string[] };
+    retained.push({ ...checkpoint, parentId: entry.id, data: { ...data, responseEntryIds: data.responseEntryIds.filter((id) => ids.has(id)) } });
+  }
+  return retained;
 }
 
 async function writeFork(path: string, entries: unknown[]) {

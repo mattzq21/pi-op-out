@@ -91,7 +91,7 @@ async function inheritedLineage(ctx: ExtensionContext): Promise<string> {
 }
 
 function usesOpenAIResponses(model: unknown): boolean {
-  if (!isJsonObject(model)) return false;
+  if (!isJsonObject(model) || typeof model.provider !== "string") return false;
   const provider = model.provider.replace(/--piop-account-\d+$/, "");
   return (provider === "openai-codex" && model.api === "openai-codex-responses")
     || (provider === "openai" && model.api === "openai-responses");
@@ -117,6 +117,7 @@ export default function openAICacheFork(pi: ExtensionAPI): void {
       api: "openai-codex-responses",
       streamSimple: wrappedStream,
     });
+    pi.events.emit("piop:models-refreshed", { ctx });
   };
 
   const initialize = async (ctx: ExtensionContext): Promise<string> => {

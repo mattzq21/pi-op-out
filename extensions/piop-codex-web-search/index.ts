@@ -36,24 +36,30 @@ function record(value: unknown): value is RecordValue {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function selectModel(ctx: ExtensionContext) {
+async function selectModel(ctx: ExtensionContext) {
   const isCodex = (model: NonNullable<ExtensionContext["model"]>) =>
     model.provider.replace(/--piop-account-\d+$/, "") === "openai-codex" && model.api === "openai-codex-responses";
   const override = process.env.PIOP_WEB_SEARCH_MODEL?.trim();
-  if (!override && ctx.model && isCodex(ctx.model)) return ctx.model;
   const models = ctx.modelRegistry.getAll().filter(isCodex);
-  if (override) {
-    const model = models.find((candidate) => candidate.id === override);
-    if (!model) throw new Error(`Unknown Codex web search model: ${override}`);
-    return model;
-  }
   // Match upstream's independent search-model preference when the chat isn't Codex.
   const candidates = models.filter((model) => !model.id.split("-").some((part) => part === "pro" || part === "ultra"))
     .sort((a, b) => b.id.localeCompare(a.id, undefined, { numeric: true }));
-  const model = candidates.find((candidate) => candidate.id.includes("terra"))
-    ?? candidates.find((candidate) => /^gpt-\d+(\.\d+)?$/.test(candidate.id)) ?? candidates[0];
-  if (!model) throw new Error("Codex web search needs an openai-codex model and Pi /login authentication on this host.");
-  return model;
+  const ranked = override ? models.filter((model) => model.id === override) : [
+    ...ctx.model && isCodex(ctx.model) ? [ctx.model] : [],
+    ...candidates.filter((model) => model.id.includes("terra")),
+    ...candidates.filter((model) => /^gpt-\d+(\.\d+)?$/.test(model.id)),
+    ...candidates,
+  ];
+  if (override && !ranked.length) throw new Error(`Unknown Codex web search model: ${override}`);
+  const seen = new Set<string>();
+  for (const model of ranked) {
+    const key = `${model.provider}/${model.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+    if (auth.ok && auth.apiKey) return { model, auth };
+  }
+  throw new Error("Codex web search needs an authenticated openai-codex account. Use Pi /login on this host.");
 }
 
 function accountId(token: string): string {
@@ -207,8 +213,7 @@ export default function codexWebSearch(pi: ExtensionAPI) {
       if (!query) throw new Error("Search query cannot be empty.");
       const domains = normalizeDomains(params.domains);
       signal?.throwIfAborted();
-      const model = selectModel(ctx);
-      const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
+      const { model, auth } = await selectModel(ctx);
       if (!auth.ok || !auth.apiKey) throw new Error("Codex web search authentication is unavailable. Use Pi /login on this host.");
       signal?.throwIfAborted();
       const headers = searchHeaders(auth.apiKey, auth.headers);

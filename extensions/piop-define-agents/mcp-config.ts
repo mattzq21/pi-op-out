@@ -1,4 +1,4 @@
-export type McpServer = { id: string; name: string; transport?: "stdio" | "http"; command?: string; args?: string; url?: string; headers?: string | Record<string, string>; enabled: boolean; startupTimeoutSec?: number };
+export type McpServer = { id: string; name: string; transport?: "stdio" | "http"; command?: string; args?: string; url?: string; headers?: string | Record<string, string>; enabled: boolean; startupTimeoutSec?: number; injectAgentId?: boolean };
 
 function validateIdentity(item: McpServer, ids: Set<string>) {
   if (!item || typeof item !== "object" || typeof item.id !== "string" || !item.id.trim() || ids.has(item.id)) throw new Error("Each agent MCP server requires a unique id");
@@ -8,6 +8,7 @@ function validateIdentity(item: McpServer, ids: Set<string>) {
 
 function validateOptions(item: McpServer) {
   if (item.enabled !== undefined && typeof item.enabled !== "boolean") throw new Error(`${item.name}: enabled must be a boolean`);
+  if (item.injectAgentId !== undefined && typeof item.injectAgentId !== "boolean") throw new Error(`${item.name}: injectAgentId must be a boolean`);
   if (item.startupTimeoutSec !== undefined && (!Number.isInteger(item.startupTimeoutSec) || item.startupTimeoutSec < 1 || item.startupTimeoutSec > 600)) throw new Error(`${item.name}: startup timeout must be between 1 and 600 seconds`);
 }
 
@@ -24,7 +25,7 @@ function validateHttp(item: McpServer) {
 }
 
 function normalizedServer(item: McpServer, transport: "stdio" | "http"): McpServer {
-  return { id: item.id, name: item.name, transport, command: item.command ?? "", args: item.args ?? "", url: item.url, headers: typeof item.headers === "object" && item.headers !== null ? JSON.stringify(item.headers) : item.headers, enabled: item.enabled ?? true, startupTimeoutSec: item.startupTimeoutSec };
+  return { id: item.id, name: item.name, transport, command: item.command ?? "", args: item.args ?? "", url: item.url, headers: typeof item.headers === "object" && item.headers !== null ? JSON.stringify(item.headers) : item.headers, enabled: item.enabled ?? true, startupTimeoutSec: item.startupTimeoutSec, injectAgentId: item.injectAgentId };
 }
 
 export function mcpServers(value: unknown): McpServer[] {

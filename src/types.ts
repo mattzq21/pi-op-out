@@ -18,9 +18,9 @@ export interface PromptContextInfo {
   tokens: { system: number; instructions: number; tools: number; skills: number };
 }
 export interface PendingMessage { id: string; message: string; behavior: "steer" | "followUp"; images?: ImageAttachment[]; retry?: boolean; }
-export interface AgentState { viewers?: number; pendingMessages?: PendingMessage[]; model: Model | null; thinkingLevel: string; isStreaming: boolean; isPaused?: boolean; isPausing?: boolean; sessionFile?: string; sessionId: string; sessionName?: string; messageCount: number; pendingMessageCount: number; activity?: string; contextUsage?: ContextUsage; }
+export interface AgentState { viewers?: number; pendingMessages?: PendingMessage[]; model: Model | null; thinkingLevel: string; isStreaming: boolean; isCompacting?: boolean; isPaused?: boolean; isPausing?: boolean; sessionFile?: string; sessionId: string; sessionName?: string; messageCount: number; pendingMessageCount: number; activity?: string; contextUsage?: ContextUsage; }
 export interface ExtensionUiRequest { type: "extension_ui_request"; id: string; method: "select" | "confirm" | "input" | "editor" | "notify" | "setStatus" | "setWidget" | "setTitle" | "set_editor_text"; title?: string; message?: string; error?: string; options?: string[]; placeholder?: string; prefill?: string; notifyType?: "info" | "warning" | "error"; statusKey?: string; statusText?: string; widgetKey?: string; widgetLines?: string[]; widgetPlacement?: "aboveEditor" | "belowEditor"; text?: string; }
-export interface Model { provider: string; id: string; name?: string; reasoning?: boolean; contextWindow?: number; input?: ("text" | "image")[]; }
+export interface Model { provider: string; id: string; name?: string; reasoning?: boolean; thinkingLevelMap?: Record<string, unknown>; contextWindow?: number; input?: ("text" | "image")[]; }
 export interface AgentProfile { name: string; model: string; effort: string; fastMode?: boolean; extensions?: string[]; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: McpServer[]; }
 export interface AgentConfig { agents: AgentProfile[]; fastModeModels?: string[]; }
 export interface DefinedAgentsCapability { version: number; active: string; locked?: boolean; saved?: boolean; unavailable?: boolean; config: AgentConfig; }
@@ -30,7 +30,7 @@ export interface RpcCommand { id?: string; type: string; [key: string]: unknown;
 export interface RpcEvent { type: string; [key: string]: unknown; }
 export interface ToolConfig { name: string; description: string; enabled: boolean; builtin?: boolean; }
 export interface SkillConfig { name: string; path: string; description: string; enabled: boolean; userInvokedOnly?: boolean; }
-export interface McpServer { id: string; name: string; transport?: "stdio" | "http"; command: string; args: string; url?: string; headers?: string; enabled: boolean; startupTimeoutSec?: number; status?: "starting" | "connected" | "stopped" | "error"; error?: string; }
+export interface McpServer { id: string; name: string; transport?: "stdio" | "http"; command: string; args: string; url?: string; headers?: string; enabled: boolean; startupTimeoutSec?: number; injectAgentId?: boolean; status?: "starting" | "connected" | "stopped" | "error"; error?: string; }
 export interface RemoteHost { id: string; name: string; target: string; piPath: string; }
 export interface DirectoryListing { path: string; parent?: string; directories: string[]; }
 export interface SlashCommand { name: string; description?: string; source: "builtin" | "extension" | "prompt" | "skill"; sourceInfo?: { source?: string }; }
@@ -45,7 +45,7 @@ export interface ToolPathMapping { toolCallId: string; path: string; absolutePat
 export type GitDiffSnapshot = string | { patch: string; repositoryRoot: string; toolPaths?: ToolPathMapping[] };
 export type GitDiffSnapshots = Record<string, GitDiffSnapshot>;
 export interface FileChangeSnapshot { id: string; cwd: string; toolCallIds: string[]; toolPaths?: ToolPathMapping[]; paths: string[]; patch: string; warnings: string[]; }
-export interface ChatMessage { toolCallId?: string; details?: unknown; fileChanges?: FileChangeSnapshot[]; }
-export interface ChatMessage { deferredToolPayload?: string; toolPayloadLoaded?: boolean; toolPayloadVersion?: number; loadToolPayload?: () => Promise<void>; }
+export interface ChatMessage { toolCallId?: string; details?: unknown; fileChanges?: FileChangeSnapshot[]; toolDiff?: { path?: string; patch: string }; }
+export interface ChatMessage { deferredToolPayload?: string; toolPayloadLoaded?: boolean; toolPayloadVersion?: number; loadedToolPayloadVersion?: number; loadToolPayload?: () => Promise<void>; }
 
 export type PendingMessageAction = "steer" | "followUp" | "remove" | "moveUp" | "moveDown" | { type: "move"; targetId: string; edge: "before" | "after" };

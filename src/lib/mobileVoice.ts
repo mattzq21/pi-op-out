@@ -29,6 +29,15 @@ async function start(args: Record<string, unknown>) {
     if (version !== generation) { stream.getTracks().forEach((track) => track.stop()); throw new Error("Voice call was cancelled"); }
     microphone = stream;
     const connection = new RTCPeerConnection(); peer = connection;
+    const mediaFailed = () => {
+      if (version !== generation || (connection.connectionState !== "failed" && connection.iceConnectionState !== "failed")) return;
+      closeMobileVoice();
+      remoteClient.publishLocalEvent("pi://voice", { callId: args.callId, event: { type: "error", message: "Voice audio connection failed. Reconnect to try again." } });
+      remoteClient.publishLocalEvent("pi://voice", { callId: args.callId, event: { type: "ended" } });
+      void remoteClient.invoke("voice_stop", { callId: args.callId, runtimeId: args.runtimeId }).catch(() => undefined);
+    };
+    connection.onconnectionstatechange = mediaFailed;
+    connection.oniceconnectionstatechange = mediaFailed;
     speaker = new Audio(); speaker.autoplay = true;
     connection.ontrack = ({ streams }) => { if (speaker) { speaker.srcObject = streams[0]; void speaker.play().catch(() => undefined); } };
     microphone.getTracks().forEach((track) => connection.addTrack(track, microphone!));

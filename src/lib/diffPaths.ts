@@ -13,7 +13,10 @@ export function decodeGitPath(value: string) {
 }
 
 export function displayPath(header: string) {
-  const fields = header.replace(/^diff --git\s+/, "").match(/"(?:\\.|[^"])*"|\S+/g) ?? [];
-  const decoded = decodeGitPath(fields[1] ?? fields[0] ?? "");
-  return decoded.replace(/^b\//, "");
+  const paths = header.replace(/^diff --git /, "");
+  const quotedSource = /^"(?:\\.|[^"])*" /.exec(paths);
+  if (quotedSource) return decodeGitPath(paths.slice(quotedSource[0].length)).replace(/^b\//, "");
+  const separators = [...paths.matchAll(/ (?=b\/|"b\/)/g)].map((match) => match.index!);
+  const separator = separators.find((index) => paths.slice(0, index).replace(/^a\//, "") === decodeGitPath(paths.slice(index + 1)).replace(/^b\//, "")) ?? separators[0];
+  return decodeGitPath(separator === undefined ? paths : paths.slice(separator + 1)).replace(/^b\//, "");
 }

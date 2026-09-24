@@ -19,7 +19,7 @@ async fn host_login() -> Result<String, String> {
 #[cfg(target_os = "linux")]
 pub(super) fn start(app: AppHandle, events: broadcast::Sender<Value>, connections: Arc<Semaphore>, jobs: Arc<Semaphore>) -> Result<(), String> {
     use std::os::unix::fs::FileTypeExt;
-    let directory = home_dir()?.join(STORAGE_DIRECTORY);
+    let directory = daemon_endpoint::directory()?;
     ensure_private_dir(&directory)?;
     let path = directory.join("tailscale.sock");
     match fs::symlink_metadata(&path) {

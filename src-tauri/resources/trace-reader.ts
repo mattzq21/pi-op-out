@@ -4,7 +4,7 @@ import { basename, extname, isAbsolute, join, relative, resolve, sep } from "nod
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-type Entry = { type?: string; id?: string; parentId?: string | null; message?: Message; customType?: string; data?: { message?: string } };
+type Entry = { type?: string; id?: string; parentId?: string | null; message?: Message; customType?: string; data?: { message?: string; role?: string; text?: string; completed?: boolean } };
 type Message = { role?: string; content?: unknown; stopReason?: string };
 type TraceFile = { path: string; modified: number };
 type CleanMessage = { role: "user" | "assistant"; text: string };
@@ -95,8 +95,11 @@ export function cleanTrace(content: string): CleanMessage[] {
   const resumeMessages = new Set<string>();
   return branch.flatMap((entry): CleanMessage[] => {
     rememberResume(entry, resumeMessages);
+    if (entry.type === "custom" && entry.customType === "piop-voice" && entry.data?.completed === true && (entry.data.role === "user" || entry.data.role === "assistant") && typeof entry.data.text === "string" && entry.data.text.trim()) return [{ role: entry.data.role, text: entry.data.text.trim() }];
     if (entry.type !== "message" || !entry.message) return [];
-    const text = textContent(entry.message.content); if (!text) return [];
+    let text = textContent(entry.message.content);
+    if (entry.message.role === "user") text = text.replace(/^<skill(?:\s[^>]*|)>[\s\S]*?<\/skill>\s*/, "").trim();
+    if (!text) return [];
     if (entry.message.role === "user" && !syntheticUserMessage(text) && !resumeMessages.has(text)) return [{ role: "user", text }];
     if (entry.message.role === "assistant" && entry.message.stopReason !== "toolUse") return [{ role: "assistant", text }];
     return [];
@@ -113,7 +116,7 @@ export default function traceReader(pi: ExtensionAPI) {
     label: "Read trace",
     description: "Find a Piop .jsonl trace in the current Piop profile’s sessions or archives and return only original user prompts and completed assistant messages. Excludes tools, tool results, reasoning, skills, system/provider instructions, AGENTS.md, and intermediate assistant tool-call messages. Use a Piop trace path, session id, filename fragment, or latest. Traces outside Piop storage are not supported.",
     promptSnippet: "Read a clean Piop trace by path, session id, filename fragment, or latest",
-    parameters: Type.Object({ query: Type.String({ description: "Trace path, session id, filename fragment, or the word latest" }) }),
+    parameters: Type.Object({ query: Type.String({ description: "Trace path, session id, filename fragment, or the word latest" }), offset: Type.Optional(Type.Integer({ minimum: 0, description: "Character offset from the preceding page's nextOffset" })), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 32000, description: "Maximum characters to return (default 16000)" })) }),
     async execute(_id, params, _signal, _onUpdate, ctx: ExtensionContext) {
       const found = await findTrace(params.query, ctx.cwd);
       if (!found.selected) {
@@ -123,7 +126,10 @@ export default function traceReader(pi: ExtensionAPI) {
       }
       const messages = cleanTrace(await readFile(await piopTracePath(found.selected), "utf8"));
       if (!messages.length) throw new Error("The trace contains no user prompts or completed assistant messages on its active branch");
-      return { content: [{ type: "text", text: transcript(messages) }], details: { path: found.selected, messages } };
+      const text = transcript(messages); const offset = params.offset ?? 0; const end = Math.min(text.length, offset + (params.limit ?? 16000));
+      const nextOffset = end < text.length ? end : undefined;
+      const continuation = nextOffset === undefined ? "" : `\n\n[More trace content: call read_trace with query ${JSON.stringify(found.selected)} and offset ${nextOffset}.]`;
+      return { content: [{ type: "text", text: text.slice(offset, end) + continuation }], details: { path: found.selected, offset, nextOffset, totalCharacters: text.length } };
     },
   });
 }

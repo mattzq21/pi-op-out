@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import { forgetSession, retainSessionResource } from "./sessionMemory";
 import { preserveDaemonPreferences, saveClientSettings, withClientSettings } from "./clientSettings";
+import { keybindingsError } from "./keybindings";
 import { invoke, listen, type UnlistenFn } from "./platform";
 import { ORCHESTRATOR_SESSION_ID } from "./orchestrator";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -10,6 +11,8 @@ import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDif
 function responseKey(command: string, args?: Record<string, unknown>) {
   return command === "pi_command" ? `${command}:${String((args?.command as RpcCommand)?.type)}` : command;
 }
+
+const terminalWrites = new Map<string, Promise<void>>();
 
 const call = <T>(command: string, args?: Record<string, unknown>) => {
   if (import.meta.env.MODE !== "e2e") return invoke<T>(command, args);
@@ -64,6 +67,7 @@ export class NativeTransport {
     this.emit({ type: "settings_applied" });
   }
   private ephemeral = false;
+  isEphemeral() { return this.ephemeral; }
   private fresh = true;
   needsDefaults() { return this.fresh; }
   defaultsApplied() { this.fresh = false; }
@@ -126,6 +130,8 @@ export class NativeTransport {
   private running = false;
   private temporaryChat = false;
   private temporaryChatUsed = false;
+  private terminalActivity = false;
+  hasTerminalActivity() { return this.terminalActivity; }
   private fastStatusCommand?: string;
   private fastCommands = new Set<string>();
   private readOnly: boolean;
@@ -155,12 +161,16 @@ export class NativeTransport {
     return true;
   }
   private normalizeCommand(command: RpcCommand) {
-    const compact = command.type === "prompt" && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null;
+    const compact = ["prompt", "steer", "follow_up"].includes(command.type) && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null;
+    if (compact && command.type !== "prompt") throw new Error("Stop or pause piop before running /compact.");
     if (compact) command = { type: "compact", ...(compact[1]?.trim() ? { customInstructions: compact[1].trim() } : {}) };
     return command;
   }
   private retainCommandSession(command: RpcCommand, result: unknown) {
     if (command.type === "get_state" || command.type === "get_snapshot") { const state = (command.type === "get_snapshot" ? (result as { state: unknown }).state : result) as { sessionFile?: string; sessionId?: string }; if (this.sessionId && this.sessionId !== state.sessionId) forgetSession(this); this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; }
+    if (command.type === "get_snapshot") {
+      for (const event of (result as { extensionState?: RpcEvent[] }).extensionState ?? []) this.emit(event);
+    }
   }
   private async discoverFastCommands(result: unknown) {
     const { commands } = result as { commands: Array<{ name: string; source: string; sourceInfo?: { source?: string; path?: string } }> };
@@ -174,7 +184,6 @@ export class NativeTransport {
     await this.refreshFastStatus(false);
   }
   private async afterPrompt(command: RpcCommand) {
-    this.temporaryChatUsed = true;
     const invocation = typeof command.message === "string" ? command.message.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/) : undefined;
     if (invocation && this.fastCommands.has(invocation[1]) && ["", "on", "off", "toggle"].includes((invocation[2] ?? "").trim().toLowerCase())) await this.refreshFastStatus(true);
   }
@@ -198,7 +207,13 @@ export class NativeTransport {
     }
     if (["agent_settled", "auto_compaction_end", "queue_update"].includes(event.type)) this.applyPendingSettings();
   }
+  private connectionLost() {
+    ++this.connectionVersion; this.connectPromise = undefined; this.running = false; this.owns = false;
+    this.retainedStatuses.clear(); this.retainedRequests.clear();
+    this.presenceCleanup?.(); this.presenceCleanup = undefined;
+  }
   async connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string, ephemeral = false) {
+    if (this.disposed) throw new Error("This conversation view has been closed");
     this.ephemeral ||= ephemeral;
     if (cwd !== undefined) this.cwd = cwd; if (sessionPath !== undefined) { this.sessionPath = sessionPath; this.sessionId = undefined; } if (hostId !== undefined) this.hostId = hostId;
     if (this.running) return;
@@ -222,8 +237,12 @@ export class NativeTransport {
     this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.stderrLines = [];
     const unlisten = await listen<RpcEvent | { runtimeId: string; event: RpcEvent }>("pi://event", ({ payload }) => {
       const envelope = payload as { runtimeId?: unknown; event?: RpcEvent };
-      if (typeof envelope.runtimeId === "string") { if (envelope.runtimeId === this.runtimeId && envelope.event) { if (envelope.event.type === "ownership_lost") { this.owns = false; this.retainedRequests.clear(); } if (envelope.event.type === "disconnected") { this.running = false; this.retainedStatuses.clear(); this.retainedRequests.clear(); } this.emit(envelope.event); } }
-      else this.emit(payload as RpcEvent);
+      if (typeof envelope.runtimeId === "string") { if (envelope.runtimeId === this.runtimeId && envelope.event) { if (envelope.event.type === "ownership_lost") { this.owns = false; this.retainedRequests.clear(); } if (envelope.event.type === "disconnected") this.connectionLost(); this.emit(envelope.event); } }
+      else {
+        const event = payload as RpcEvent;
+        if (event.type === "disconnected") this.connectionLost();
+        this.emit(event);
+      }
     });
     const stderrUnlisten = await listen<{ runtimeId?: string; line?: string } | string>("pi://stderr", ({ payload }) => {
       const runtimeId = typeof payload === "string" ? this.runtimeId : payload.runtimeId;
@@ -235,7 +254,8 @@ export class NativeTransport {
     this.unlisten = unlisten; this.stderrUnlisten = stderrUnlisten;
     // Pi can resume by ID before a fresh session has a file on disk.
     const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call<{ attached: boolean; owned?: boolean; daemonId?: string }>("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: !this.readOnly && this.sessionId && this.sessionId !== ORCHESTRATOR_SESSION_ID ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }));
-    this.daemonId = attached?.daemonId;
+    if (version !== this.connectionVersion || !attached) throw new Error("The conversation disconnected while starting. Reconnect to try again.");
+    this.daemonId = attached.daemonId;
     this.connectedOwnership(attached);
     if (version === this.connectionVersion) {
       this.running = true;
@@ -306,7 +326,7 @@ export class NativeTransport {
     }
   }
   private resetChangedSession(command: RpcCommand, result: unknown) {
-    if (["new_session", "switch_session", "fork", "clone"].includes(command.type) && !(result as { cancelled?: boolean })?.cancelled) { forgetSession(this); this.sessionId = undefined; }
+    if (["new_session", "switch_session", "fork", "fork_after", "clone"].includes(command.type) && !(result as { cancelled?: boolean })?.cancelled) { forgetSession(this); this.sessionId = undefined; }
   }
   subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); listener(this.queueView()); this.retainedStatuses.forEach((event) => listener(event)); this.retainedRequests.forEach((event) => listener(event)); return () => this.listeners.delete(listener); }
   listSessions() { return call<SessionSummary[]>("list_sessions"); }
@@ -350,6 +370,8 @@ export class NativeTransport {
   loadOpencodeGoUsage() { return call<OpencodeGoUsage>("opencode_go_usage"); }
   saveSettings(settings: AppSettings, reconnect = true, agentHostId?: string) {
     const save = async () => {
+      const shortcutError = keybindingsError(settings.keybindings);
+      if (shortcutError) throw new Error(shortcutError);
       const previous = await call<AppSettings>("load_app_settings"); const connection = { cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId };
       const daemonSettings = preserveDaemonPreferences(settings, previous);
       const daemonChanged = JSON.stringify(daemonSettings) !== JSON.stringify(previous) || Boolean(agentHostId);
@@ -374,10 +396,18 @@ export class NativeTransport {
   validateProjectDirectory(path: string, hostId: string) { return call<string>("validate_project_directory", { path, hostId }); }
   listDirectories(hostId: string, path?: string) { return call<DirectoryListing>("list_directories", { hostId, path }); }
   async prepareTemporaryChat(hostId: string) { const chat = await call<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId, e2e: import.meta.env.MODE === "e2e" }); this.cwd = chat.cwd; this.sessionPath = undefined; this.sessionId = chat.sessionId; this.hostId = hostId; this.temporaryChat = true; this.temporaryChatUsed = false; return chat.cwd; }
-  startTerminal(terminalId: string, sessionKey: string, cwd: string, cols: number, rows: number, hostId = this.hostId) { return call<void>("start_terminal", { terminalId, sessionKey, cwd, cols, rows, hostId }); }
-  writeTerminal(terminalId: string, data: string) { return call<void>("write_terminal", { terminalId, data }); }
+  startTerminal(terminalId: string, sessionKey: string, cwd: string, cols: number, rows: number, hostId = this.hostId) {
+    if (cwd === this.cwd && hostId === this.hostId) { this.terminalActivity = true; this.temporaryChatUsed = true; }
+    return call<void>("start_terminal", { terminalId, sessionKey, cwd, cols, rows, hostId });
+  }
+  writeTerminal(terminalId: string, data: string) {
+    const next = (terminalWrites.get(terminalId) ?? Promise.resolve()).then(() => call<void>("write_terminal", { terminalId, data }));
+    terminalWrites.set(terminalId, next);
+    void next.then(() => { if (terminalWrites.get(terminalId) === next) terminalWrites.delete(terminalId); }, () => undefined);
+    return next;
+  }
   resizeTerminal(terminalId: string, cols: number, rows: number) { return call<void>("resize_terminal", { terminalId, cols, rows }); }
-  closeTerminal(terminalId: string) { return call<void>("close_terminal", { terminalId }); }
+  async closeTerminal(terminalId: string) { await terminalWrites.get(terminalId)?.catch(() => undefined); terminalWrites.delete(terminalId); return call<void>("close_terminal", { terminalId }); }
 }
 
 export async function readDroppedFile(path: string): Promise<File> {

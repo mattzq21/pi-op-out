@@ -95,7 +95,7 @@ async function handleOwnershipDrained(packet) {
 
 async function handleConversationMutation(packet) {
 
-  const guard = await ownership.begin(packet.sessionId, packet.clientId, { mutation: packet.operation !== 'save_diffs', message: packet.operation === 'message', path: packet.sessionPath, archived: packet.archived });
+  const guard = await ownership.begin(packet.sessionId, packet.clientId, { mutation: packet.operation !== 'save_diffs', message: packet.operation === 'message', archive: packet.operation === 'archive', path: packet.sessionPath, archived: packet.archived });
   if (!guard.owned) throw ownershipError();
   const token = randomUUID(); ownership.guards.set(token, { ...guard, operation: packet.operation });
   return { token };
@@ -132,28 +132,41 @@ async function handleConfigure(packet) {
 
 async function handleAttach(packet) {
   const { runtimeId } = packet;
-
+  attachments.set(runtimeId, packet);
+  const stillAttached = () => attachments.get(runtimeId) === packet;
   const identity = await sessionIdentity(packet.spec, packet.sessionKey);
+  if (!stillAttached()) throw new Error('The conversation was closed while attaching');
   const pathIndex = packet.spec.args.lastIndexOf('--session');
   const path = pathIndex < 0 ? undefined : packet.spec.args[pathIndex + 1];
   if (packet.presence?.readOnly) {
     if (!path || !await ownership.locate(identity, path, false, true)) throw new Error('This conversation has been deleted or archived');
-    attachments.set(runtimeId, packet);
+    if (!stillAttached()) throw new Error('The conversation was closed while attaching');
     readonlyViews.set(runtimeId, { id: identity, path });
     return { attached: true, owned: false };
   }
-  attachments.set(runtimeId, packet);
   const guard = packet.ephemeral ? { owned: true, release: async () => { } } : await ownership.begin(identity, packet.clientId, { take: packet.takeOwnership, path, create: !path });
-  if (!guard.owned) { readonlyViews.set(runtimeId, { id: identity, path }); return { attached: true, owned: false }; }
+  let session;
   try {
-    const session = await attachedSession(packet, guard, identity);
+    if (!stillAttached()) throw new Error('The conversation was closed while attaching');
+    if (!guard.owned) { readonlyViews.set(runtimeId, { id: identity, path }); return { attached: true, owned: false }; }
+    session = await attachedSession(packet, guard, identity);
     await session.execute({ type: 'get_state' });
+    if (!stillAttached()) throw new Error('The conversation was closed while attaching');
     readonlyViews.delete(runtimeId);
     session.attach(runtimeId, packet.presence);
     rememberAttachment(runtimeId, session);
     void session.reconcileConfiguration(true);
     return { attached: session.views.size > 1 || session.submitted, owned: true };
-  } finally { await guard.release(); }
+  } finally {
+    await guard.release?.();
+    if (!stillAttached() && session && !session.views.size) {
+      if (!session.submitted && !session.working) await session.stop();
+      else await session.releaseUnusedOwnership();
+    }
+    if (!stillAttached() && guard.owned && !session) {
+      await ownership.releaseClient(identity, packet.clientId, () => ![...attachments.values()].some((value) => value.clientId === packet.clientId && value.sessionKey === packet.sessionKey));
+    }
+  }
 }
 
 async function handleShutdown(packet) {
@@ -202,15 +215,13 @@ async function executeSessionCommand(session, runtimeId, command) {
   if (command.type === 'extension_ui_response') {
     const dialog = session.dialogs.get(command.id);
     if (!dialog || dialog.owner !== runtimeId) return;
-    session.dialogs.delete(command.id);
+    session.resolveDialog(command.id);
     session.child.stdin.write(JSON.stringify(command) + '\n');
-    session.publish({ type: 'extension_ui_resolved', id: command.id });
-    session.publishState();
     return;
   }
   if (!command.type.startsWith('get_') || command.type === 'get_snapshot') await session.reconcileConfiguration();
   if (!command.type.startsWith('get_') && session.configurationFailed && session.settingsPending()) throw new Error(session.configurationError);
-  if (['fork', 'clone', 'new_session', 'switch_session'].includes(command.type)) return switchConversation(session, runtimeId, command);
+  if (['fork', 'fork_after', 'clone', 'new_session', 'switch_session'].includes(command.type)) return switchConversation(session, runtimeId, command);
   return queueSessionCommand(session, command);
 }
 
@@ -218,7 +229,7 @@ async function switchConversation(session, runtimeId, command) {
   if (session.working || session.queue.pendingMessages.length) throw new Error('Stop or pause the response and finish queued messages before branching or switching');
   const state = await session.execute({ type: 'get_state' });
   if (subscriptions.get(runtimeId) !== session) throw new Error('The conversation changed while preparing its destination');
-  if (command.type === 'fork') {
+  if (command.type === 'fork' || command.type === 'fork_after') {
     if (!state.sessionFile) throw new Error('The conversation has no session file');
     return forkSession(session, runtimeId, command, state);
   }
@@ -343,6 +354,7 @@ function ownershipTarget(runtimeId) {
 
 async function handle(packet) {
   const { runtimeId, type } = packet;
+  if (type === 'detach') attachments.delete(runtimeId);
   const handlers = { "voice": handleVoice, "ownership_drained": handleOwnershipDrained, "conversation_mutation": handleConversationMutation, "conversation_mutation_end": handleConversationMutationEnd, "provider_auth": handleProviderAuth, "provider_auth_cancel_owner": handleProviderAuthCancelOwner, "configure": handleConfigure, "attach": handleAttach, "shutdown": handleShutdown, "retire": handleRetire, "session_command": handleSessionCommand };
   if (Object.hasOwn(handlers, type)) return handlers[type](packet);
 

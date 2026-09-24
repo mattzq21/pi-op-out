@@ -85,6 +85,7 @@ enum EphemeralSession {
 }
 
 struct TerminalProcess {
+    generation: Uuid,
     session_key: String,
     cwd: String,
     host_id: String,
@@ -128,6 +129,7 @@ const WORKTREE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 struct PiRuntime {
     worktree_setups: Mutex<HashMap<String, Arc<AtomicBool>>>,
     ephemeral_sessions: Mutex<HashMap<String, EphemeralSession>>,
+    ephemeral_keys: Mutex<HashMap<String, String>>,
     processes: Arc<Mutex<HashMap<String, PiProcess>>>,
     daemons: Mutex<HashMap<String, Arc<daemon::Daemon>>>,
     lifecycle: Mutex<()>,
@@ -148,6 +150,7 @@ struct BrokerRuntime {
     busy: Arc<Mutex<HashSet<String>>>,
     jobs: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
     cancelled: Arc<Mutex<HashSet<String>>>,
+    operations: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
 }
 
 impl Default for BrokerRuntime {
@@ -159,6 +162,7 @@ impl Default for BrokerRuntime {
             busy: Arc::new(Mutex::new(HashSet::new())),
             jobs: Arc::new(Mutex::new(HashMap::new())),
             cancelled: Arc::new(Mutex::new(HashSet::new())),
+            operations: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -233,16 +237,19 @@ fn hash_claim_key(bytes: &[u8]) -> String {
     digest.iter().take(20).fold(String::new(), |mut out, byte| { let _ = write!(out, "{byte:02x}"); out })
 }
 
+mod process_cleanup;
+use process_cleanup::stop_message_worker;
+
 struct BrokerWriter { child: Arc<Mutex<Child>>, _claim: BusyAgent }
 
 impl Drop for BrokerWriter {
     fn drop(&mut self) {
         let mut child = self.child.lock().unwrap_or_else(|error| error.into_inner());
-        if !matches!(child.try_wait(), Ok(Some(_))) { let _ = child.kill(); let _ = child.wait(); }
+        stop_message_worker(&mut child);
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum ProjectKind { NoRepo, Main, Worktree }
 
@@ -785,7 +792,7 @@ fn prepare_mcp_bridge() -> Result<PathBuf, String> {
 }
 
 fn runtime_settings(settings: &AppSettings) -> Value {
-    json!({ "tools": enabled_tool_names(settings), "skills": settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|skill| skill.get("path").and_then(Value::as_str)).collect::<Vec<_>>(), "contextWindowCap": settings.context_window_cap, "contextWindowCapEnabled": settings.context_window_cap_enabled })
+    json!({ "tools": enabled_tool_names(settings), "skills": settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|skill| skill.get("path").and_then(Value::as_str)).collect::<Vec<_>>(), "explicitOnlySkills": settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false) && skill.get("userInvokedOnly").and_then(Value::as_bool).unwrap_or(false)).filter_map(|skill| skill.get("path").and_then(Value::as_str)).collect::<Vec<_>>(), "contextWindowCap": settings.context_window_cap, "contextWindowCapEnabled": settings.context_window_cap_enabled })
 }
 
 fn prepare_rtk_extension() -> Result<PathBuf, String> {
@@ -904,7 +911,17 @@ fn prepare_defined_agents_extension() -> Result<PathBuf, String> {
     let legacy_dir = home_dir()?.join(".pi/agent/extensions/pi-define-agents");
     let config = dir.join("config.json");
     if !DEVELOPMENT && !config.exists() && legacy_dir.join("config.json").exists() {
-        atomic_write_private(&config, &fs::read(legacy_dir.join("config.json")).map_err(|error| error.to_string())?)?;
+        let mut migrated: Value = serde_json::from_slice(&fs::read(legacy_dir.join("config.json")).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+        if let Some(agents) = migrated["agents"].as_array_mut() {
+            for agent in agents {
+                for key in ["path_systemprompt", "path_agentprompt"] {
+                    if let Some(path) = agent[key].as_str().filter(|path| !path.is_empty() && !path.starts_with('~') && !Path::new(path).is_absolute()) {
+                        agent[key] = json!(legacy_dir.join(path).to_string_lossy());
+                    }
+                }
+            }
+        }
+        atomic_write_private(&config, &serde_json::to_vec_pretty(&migrated).map_err(|error| error.to_string())?)?;
     }
     let path = dir.join("index.ts");
     atomic_write_private(&dir.join("mcp-config.ts"), include_str!("../../extensions/piop-define-agents/mcp-config.ts").as_bytes())?;
@@ -1726,7 +1743,7 @@ fn create_git_worktree(app: AppHandle, cwd: String, name: String, host_id: Optio
         let root = String::from_utf8_lossy(&located.stdout).trim().to_string();
         let project = Path::new(&root).file_name().ok_or("Git repository directory has no name")?.to_string_lossy();
         let branch = worktree_branch_name(&project, name);
-        let script = format!(r#"root={root}; branch={branch}; git check-ref-format --branch "$branch" >/dev/null || {{ printf 'Invalid Git branch name: %s' "$branch" >&2; exit 1; }}; git -C "$root" show-ref --verify --quiet "refs/heads/$branch" && {{ printf 'Git branch already exists: %s' "$branch" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git branches' >&2; exit 1; }}; parent=$(dirname -- "$root"); target="$parent/$branch"; if [ -e "$target" ] || [ -L "$target" ]; then printf 'Worktree directory already exists: %s' "$target" >&2; exit 1; fi; worktrees=$(git -C "$root" worktree list --porcelain) || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; printf '%s\n' "$worktrees" | grep -Fqx "worktree $target" && {{ printf 'Git worktree is already registered: %s' "$target" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; temporary=$(mktemp -d "${{TMPDIR:-/tmp}}/pi-desktop-worktree.XXXXXX") || exit 1; created=0; cleanup() {{ status=$?; rm -rf -- "$temporary"; if [ "$status" -ne 0 ] && [ "$created" -eq 1 ]; then git -C "$root" worktree remove --force "$target" >/dev/null 2>&1; git -C "$root" branch -D "$branch" >/dev/null 2>&1; fi; exit "$status"; }}; trap cleanup EXIT; has_head=0; if git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then has_head=1; fi; : > "$temporary/changes.patch"; if [ "$has_head" -eq 1 ]; then mkfifo "$temporary/patch.pipe" || exit 1; git -C "$root" diff --binary --no-textconv --no-ext-diff HEAD -- > "$temporary/patch.pipe" 2> "$temporary/diff-error" & diff_pid=$!; head -c {patch_plus_one} < "$temporary/patch.pipe" > "$temporary/changes.patch"; wait "$diff_pid"; diff_status=$?; rm -f -- "$temporary/patch.pipe"; patch_bytes=$(wc -c < "$temporary/changes.patch"); [ "$patch_bytes" -le {max_patch} ] || {{ printf 'Git changes are too large to copy' >&2; exit 1; }}; [ "$diff_status" -eq 0 ] || {{ cat "$temporary/diff-error" >&2; printf 'Could not capture Git changes' >&2; exit 1; }}; fi; git -C "$root" ls-files -z --others --exclude-standard $(test "$has_head" -eq 0 && printf %s --cached) -- > "$temporary/untracked" || exit 1; created=1; if [ "$has_head" -eq 1 ]; then git -C "$root" worktree add -b "$branch" "$target" >/dev/null || exit 1; else git -C "$root" worktree add --orphan -b "$branch" "$target" >/dev/null || exit 1; fi; created=1; if [ -s "$temporary/changes.patch" ]; then git -C "$target" apply --whitespace=nowarn "$temporary/changes.patch" || exit 1; fi; if [ -s "$temporary/untracked" ]; then tar -C "$root" --exclude=.git --null -T "$temporary/untracked" -cf "$temporary/untracked.tar" || exit 1; tar -C "$target" -xf "$temporary/untracked.tar" || exit 1; fi; printf '%s\n%s\n' "$branch" "$target""#,
+        let script = format!(r#"root={root}; branch={branch}; git check-ref-format --branch "$branch" >/dev/null || {{ printf 'Invalid Git branch name: %s' "$branch" >&2; exit 1; }}; git -C "$root" show-ref --verify --quiet "refs/heads/$branch" && {{ printf 'Git branch already exists: %s' "$branch" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git branches' >&2; exit 1; }}; parent=$(dirname -- "$root"); target="$parent/$branch"; if [ -e "$target" ] || [ -L "$target" ]; then printf 'Worktree directory already exists: %s' "$target" >&2; exit 1; fi; worktrees=$(git -C "$root" worktree list --porcelain) || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; printf '%s\n' "$worktrees" | grep -Fqx "worktree $target" && {{ printf 'Git worktree is already registered: %s' "$target" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; temporary=$(mktemp -d "${{TMPDIR:-/tmp}}/pi-desktop-worktree.XXXXXX") || exit 1; created=0; cleanup() {{ status=$?; rm -rf -- "$temporary"; if [ "$status" -ne 0 ] && [ "$created" -eq 1 ]; then git -C "$root" worktree remove --force "$target" >/dev/null 2>&1; git -C "$root" branch -D "$branch" >/dev/null 2>&1; fi; exit "$status"; }}; trap cleanup EXIT; has_head=0; if git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then has_head=1; fi; : > "$temporary/changes.patch"; if [ "$has_head" -eq 1 ]; then mkfifo "$temporary/patch.pipe" || exit 1; git -C "$root" diff --binary --no-textconv --no-ext-diff HEAD -- > "$temporary/patch.pipe" 2> "$temporary/diff-error" & diff_pid=$!; head -c {patch_plus_one} < "$temporary/patch.pipe" > "$temporary/changes.patch"; wait "$diff_pid"; diff_status=$?; rm -f -- "$temporary/patch.pipe"; patch_bytes=$(wc -c < "$temporary/changes.patch"); [ "$patch_bytes" -le {max_patch} ] || {{ printf 'Git changes are too large to copy' >&2; exit 1; }}; [ "$diff_status" -eq 0 ] || {{ cat "$temporary/diff-error" >&2; printf 'Could not capture Git changes' >&2; exit 1; }}; fi; git -C "$root" ls-files -z --others --exclude-standard $(test "$has_head" -eq 0 && printf %s --cached) -- > "$temporary/untracked" || exit 1; if [ "$has_head" -eq 1 ]; then git -C "$root" worktree add -b "$branch" "$target" >/dev/null || exit 1; else git -C "$root" worktree add --orphan -b "$branch" "$target" >/dev/null || exit 1; fi; created=1; if [ -s "$temporary/changes.patch" ]; then git -C "$target" apply --whitespace=nowarn "$temporary/changes.patch" || exit 1; fi; if [ -s "$temporary/untracked" ]; then tar -C "$root" --exclude=.git --null -T "$temporary/untracked" -cf "$temporary/untracked.tar" || exit 1; tar -C "$target" -xf "$temporary/untracked.tar" || exit 1; fi; printf '%s\n%s\n' "$branch" "$target""#,
             root = shell_quote(&root), branch = shell_quote(&branch),
             patch_plus_one = MAX_GIT_PATCH_BYTES + 1, max_patch = MAX_GIT_PATCH_BYTES);
         let output = run_limited(ssh(host).arg(script), 64 * 1024, &format!("Could not create Git worktree on {}", host.name))?;
@@ -1765,8 +1782,6 @@ fn create_local_git_worktree(cwd: &str, name: &str) -> Result<GitWorktree, Strin
     let output = run_limited(&mut add_worktree, 64 * 1024, "Could not create Git worktree")?;
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        if local_worktree_is_registered(&root, &target).unwrap_or(false) { let _ = Command::new("git").arg("-C").arg(&root).args(["worktree", "remove", "--force"]).arg(&target).status(); }
-        let _ = Command::new("git").arg("-C").arg(&root).args(["branch", "-D", &branch]).status();
         return Err(if error.is_empty() { "Could not create Git worktree".into() } else { error });
     }
     let copy_result = (|| {
@@ -1899,6 +1914,10 @@ printf '%s\000%s\000%s\000' "$target" "$source" "$branch""#, cwd = shell_quote(c
 }
 
 fn remove_git_worktree_blocking(app: AppHandle, cwd: String, host_id: Option<String>, delete_branch: bool) -> Result<GitWorktreeRemoval, String> {
+    remove_git_worktree_cancellable(app, cwd, host_id, delete_branch, &AtomicBool::new(false))
+}
+
+fn remove_git_worktree_cancellable(app: AppHandle, cwd: String, host_id: Option<String>, delete_branch: bool, cancelled: &AtomicBool) -> Result<GitWorktreeRemoval, String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let settings = load_app_settings(app.clone())?;
     let runtime = app.state::<PiRuntime>();
@@ -1907,8 +1926,13 @@ fn remove_git_worktree_blocking(app: AppHandle, cwd: String, host_id: Option<Str
     let target = inspect_worktree_removal(&settings, &cwd, &host_id)?;
     let session_paths = sessions_on_host(&settings, &session_index, &host_id)?.into_iter().map(|session| session.cwd).collect::<Vec<_>>();
     validate_worktree_unused(&settings, &host_id, &target.path, &session_paths, &runtime, &terminals)?;
-    run_worktree_scripts(&settings, &target.source, &target.path, &host_id, &AtomicBool::new(false), WorktreeScriptPhase::Cleanup)?;
-    remove_worktree_target(&settings, &host_id, target, delete_branch)
+    run_worktree_scripts(&settings, &target.source, &target.path, &host_id, cancelled, WorktreeScriptPhase::Cleanup)?;
+    let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Session lifecycle lock was poisoned")?;
+    let target = inspect_worktree_removal(&settings, &cwd, &host_id)?;
+    let session_paths = sessions_on_host(&settings, &session_index, &host_id)?.into_iter().map(|session| session.cwd).collect::<Vec<_>>();
+    validate_worktree_unused(&settings, &host_id, &target.path, &session_paths, &runtime, &terminals)?;
+    if cancelled.load(Ordering::SeqCst) { return Err("Worktree removal cancelled".into()); }
+    remove_worktree_target(&settings, &host_id, target, delete_branch, cancelled)
 }
 
 fn validate_worktree_unused(settings: &AppSettings, host_id: &str, target: &str, session_paths: &[String], runtime: &PiRuntime, terminals: &TerminalRuntime) -> Result<(), String> {
@@ -1927,7 +1951,17 @@ fn validate_worktree_unused(settings: &AppSettings, host_id: &str, target: &str,
     Ok(())
 }
 
-fn remove_worktree_target(settings: &AppSettings, host_id: &str, target: WorktreeRemovalTarget, delete_branch: bool) -> Result<GitWorktreeRemoval, String> {
+fn remove_worktree_target(settings: &AppSettings, host_id: &str, target: WorktreeRemovalTarget, delete_branch: bool, cancelled: &AtomicBool) -> Result<GitWorktreeRemoval, String> {
+    let script = include_str!("../resources/preserve-archive-checkpoints.cjs");
+    let mut preserve = if host_id == "local" {
+        let mut command = node_command(); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", script, &target.path]); command
+    } else {
+        let mut command = ssh(remote_host(settings, host_id)?);
+        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), shell_quote(&target.path)))); command
+    };
+    let preserved = run_limited(&mut preserve, 64 * 1024, "Could not preserve archived checkpoints")?;
+    if !preserved.status.success() { return Err(format!("Could not preserve archived checkpoints: {}", String::from_utf8_lossy(&preserved.stderr).trim())); }
+    if cancelled.load(Ordering::SeqCst) { return Err("Worktree removal cancelled".into()); }
     let removed = if host_id == "local" {
         run_limited(Command::new("git").arg("-C").arg(&target.source).args(["worktree", "remove"]).arg(&target.path), 64 * 1024, "Could not remove Git worktree")?
     } else {
@@ -2406,11 +2440,13 @@ fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, 
     let host_id = host_id.unwrap_or_else(|| "local".into());
     if runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(&runtime_id).is_some_and(|process| process.daemon.alive.load(Ordering::SeqCst) && process.daemon.matches_connection(&settings, &host_id)) { return Ok(json!({"attached":true})); }
     let session_id = session_id.or_else(|| (session_path.is_none() && fork_path.is_none()).then(|| Uuid::new_v4().to_string()));
-    let saved_ephemeral = runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.get(&runtime_id).cloned();
+    let ephemeral_key = format!("{}:{}:{}", host_id, client_id, runtime_id.rsplit(':').next().unwrap_or(&runtime_id));
+    let saved_ephemeral = runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.get(&ephemeral_key).cloned();
     let ephemeral = no_session.unwrap_or(false) || saved_ephemeral.is_some();
     let session_path = if ephemeral { None } else { session_path.as_deref().map(|path| desktop_session_file(&settings, &host_id, path)).transpose()? };
     let fork_path = fork_path.as_deref().map(|path| desktop_session_file(&settings, &host_id, path)).transpose()?;
-    let ephemeral_path = prepare_ephemeral_path(&runtime, &runtime_id, ephemeral, saved_ephemeral, fork_path.as_deref(), |source_path| create_ephemeral_fork(&settings, &host_id, source_path))?;
+    let ephemeral_path = prepare_ephemeral_path(&runtime, &ephemeral_key, ephemeral, saved_ephemeral, fork_path.as_deref(), |source_path| create_ephemeral_fork(&settings, &host_id, source_path))?;
+    if ephemeral_path.is_some() { runtime.ephemeral_keys.lock().map_err(|_| "Side conversation lock was poisoned")?.insert(runtime_id.clone(), ephemeral_key); }
     let claim_id = if ephemeral { None } else if let Some(id) = session_id.as_deref() { Some(id.to_string()) } else if let Some(path) = session_path.as_deref() {
         Some(session_identity(&settings, &host_id, path)?)
     } else { None };
@@ -2425,7 +2461,7 @@ fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, 
     let result = daemon.request(json!({"type":"attach","clientId":client_id,"runtimeId":runtime_id,"sessionKey":claim_id.unwrap_or_else(|| runtime_id.clone()),"spec":daemon::spec(&command),"timeout":command_timeout,"ephemeral":ephemeral,"cwd":cwd,"presence":presence.unwrap_or_else(|| json!({}))}))?;
     let blank_cleanup = BlankSessionCleanup { path: session_path.clone(), id: session_id.clone(), host: if host_id == "local" { None } else { Some(remote_host(&settings, &host_id)?.clone()) }, submitted: ephemeral };
     runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { daemon, window_label: owner, blank_cleanup });
-    runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id, AgentAddress { host_id, session_id, session_path, worktree: None, presence_id: None, working: false, messageable: result["owned"].as_bool() == Some(false) });
+    runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id, AgentAddress { host_id, session_id, session_path, worktree: cwd, presence_id: None, working: false, messageable: result["owned"].as_bool() == Some(false) });
     Ok(result)
 }
 
@@ -2442,7 +2478,8 @@ fn detach_pi_with(runtime: &PiRuntime, runtime_id: &str, discard_blank: bool, pr
             stopped = true;
             process.blank_cleanup.submitted |= result["submitted"].as_bool().unwrap_or(false);
             if discard_blank { cleanup_blank_session(process.blank_cleanup); }
-            if let Some(session) = runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.remove(runtime_id) { remove_ephemeral_session(session); }
+            let key = runtime.ephemeral_keys.lock().map_err(|_| "Side conversation lock was poisoned")?.remove(runtime_id).unwrap_or_else(|| runtime_id.to_string());
+            if let Some(session) = runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.remove(&key) { remove_ephemeral_session(session); }
         }
     }
     runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.remove(runtime_id);
@@ -2529,6 +2566,8 @@ fn start_terminal(app: AppHandle, window: tauri::WebviewWindow, runtime: State<T
 }
 
 fn start_terminal_for_owner(app: AppHandle, owner: String, runtime: State<TerminalRuntime>, terminal_id: String, session_key: String, cwd: String, cols: u16, rows: u16, host_id: Option<String>) -> Result<(), String> {
+    let session_runtime = app.state::<PiRuntime>();
+    let _lifecycle = session_runtime.lifecycle.lock().map_err(|_| "Session lifecycle lock was poisoned")?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let event_app = app.clone();
     start_terminal_with(&runtime, terminal_id, session_key, cwd.clone(), cols, rows, host_id.clone(), owner,
@@ -2537,7 +2576,7 @@ fn start_terminal_for_owner(app: AppHandle, owner: String, runtime: State<Termin
             if !working_dir.is_dir() { return Err(format!("Terminal working directory does not exist: {}", working_dir.display())); }
             let mut command = CommandBuilder::new("/bin/bash"); command.cwd(working_dir); Ok(command)
         } else {
-            let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+            let settings = load_app_settings(app.clone())?; let host = remote_host(&settings, &host_id)?;
             let mut command = CommandBuilder::new("ssh");
             if let Some(config) = user_ssh_config() { command.arg("-F"); command.arg(config); }
             command.args(["-tt", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=5", &host.target, &format!("cd {} && exec \"${{SHELL:-/bin/bash}}\" -l", shell_quote(&cwd))]); Ok(command)
@@ -2560,14 +2599,24 @@ fn start_terminal_with(runtime: &TerminalRuntime, terminal_id: String, session_k
     let mut reader = pair.master.try_clone_reader().map_err(|error| error.to_string())?;
     let mut writer = pair.master.take_writer().map_err(|error| error.to_string())?;
     let event_id = terminal_id.clone(); let terminal_processes = runtime.processes.clone();
+    let generation = Uuid::new_v4();
     thread::spawn(move || {
-        stream_terminal_output(&mut reader, &event_id, &mut emit);
-        if let Some(mut process) = terminal_processes.lock().ok().and_then(|mut values| values.remove(&event_id)) { let _ = process.child.wait(); }
-        emit(json!({ "type": "terminal_exit", "terminalId": event_id }));
+        stream_terminal_output(&mut reader, &event_id, |packet| {
+            if let Ok(values) = terminal_processes.lock() {
+                if values.get(&event_id).is_some_and(|process| process.generation == generation) { emit(packet); }
+            }
+        });
+        let finished = terminal_processes.lock().ok().and_then(|mut values| {
+            if !values.get(&event_id).is_some_and(|process| process.generation == generation) { return None; }
+            let process = values.remove(&event_id);
+            emit(json!({ "type": "terminal_exit", "terminalId": event_id }));
+            process
+        });
+        if let Some(mut process) = finished { let _ = process.child.wait(); }
     });
     let (input, queued) = mpsc::sync_channel::<String>(32);
     thread::spawn(move || write_terminal_queue(&mut writer, queued));
-    processes.insert(terminal_id, TerminalProcess { session_key, cwd, host_id, window_label, master: pair.master, child, writer: input });
+    processes.insert(terminal_id, TerminalProcess { generation, session_key, cwd, host_id, window_label, master: pair.master, child, writer: input });
     Ok(())
 }
 
@@ -2864,9 +2913,11 @@ fn create_local_temporary_chat(home: &Path, session_id: &str) -> Result<PathBuf,
     Ok(cwd)
 }
 
-fn orchestrator_chat() -> Result<Value, String> {
+fn orchestrator_chat(app: AppHandle) -> Result<Value, String> {
+    let settings = read_settings_at(&settings_path(&app)?)?;
     let output = node_command().arg("-e").arg(include_str!("../resources/orchestrator-chat.cjs"))
-        .arg(home_dir()?.join(STORAGE_DIRECTORY)).output().map_err(|error| error.to_string())?;
+        .arg(home_dir()?.join(STORAGE_DIRECTORY)).arg(&settings.default_model).arg(&settings.default_thinking)
+        .output().map_err(|error| error.to_string())?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())
 }
@@ -2888,7 +2939,7 @@ fn remove_temporary_chat(app: AppHandle, path: String, host_id: String) -> Resul
 
 fn remove_remote_temporary_chat(path: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
     temporary_chat_id(path).ok_or("Refusing to remove a directory not created as a temporary chat")?;
-    let script = format!("candidate={}; root=\"$HOME/{STORAGE_DIRECTORY}/tmp\"; [ \"$(dirname -- \"$candidate\")\" = \"$root\" ] && [ ! -L \"$HOME/{STORAGE_DIRECTORY}\" ] && [ ! -L \"$root\" ] && [ ! -L \"$candidate\" ] && {{ [ ! -e \"$candidate\" ] || {{ [ -d \"$candidate\" ] && rm -rf -- \"$candidate\"; }}; }}", shell_quote(path));
+    let script = format!("candidate={}; root=\"$HOME/{STORAGE_DIRECTORY}/tmp\"; [ \"$(dirname -- \"$candidate\")\" = \"$root\" ] && [ ! -L \"$HOME/{STORAGE_DIRECTORY}\" ] && [ ! -L \"$root\" ] && [ ! -L \"$candidate\" ] && {{ [ ! -e \"$candidate\" ] || {{ [ -d \"$candidate\" ] && node -e 'try {{ require(\"node:fs\").rmdirSync(process.argv[1]); }} catch (error) {{ if (![\"ENOTEMPTY\", \"EEXIST\", \"ENOENT\"].includes(error.code)) throw error; }}' \"$candidate\"; }}; }}", shell_quote(path));
     let output = command(script).output().map_err(|error| format!("Could not remove temporary chat directory on {host_name}: {error}"))?;
     if !output.status.success() { return Err(format!("Could not remove temporary chat directory on {host_name}: {}", String::from_utf8_lossy(&output.stderr).trim())); }
     Ok(())
@@ -2907,8 +2958,11 @@ fn remove_local_temporary_chat(home: &Path, path: &str) -> Result<(), String> {
             Err(error) => return Err(format!("Could not inspect temporary chat directory: {error}")),
         }
     }
-    fs::remove_dir_all(candidate).map_err(|error| format!("Could not remove temporary chat directory: {error}"))?;
-    Ok(())
+    match fs::remove_dir(candidate) {
+        Ok(()) => Ok(()),
+        Err(error) if matches!(error.kind(), std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::NotFound) => Ok(()),
+        Err(error) => Err(format!("Could not remove temporary chat directory: {error}")),
+    }
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
@@ -3180,11 +3234,15 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
         let settings = load_app_settings(app.clone())?; let host = remote_host(&settings, &host_id)?;
         archive_remote_session(&session_path, |script| { let mut command = ssh(host); command.arg(script); command })?;
         let _ = stop_terminals(&runtime, &terminal_ids);
-        return mutation.finish();
+        mutation.finish()?;
+        let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":session_path}));
+        return Ok(());
     }
     archive_local_session(&home_dir()?, &session_path)?;
     let _ = stop_terminals(&runtime, &terminal_ids);
-    mutation.finish()
+    mutation.finish()?;
+    let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":session_path}));
+    Ok(())
 }
 
 fn archive_remote_session(session_path: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
@@ -3223,12 +3281,14 @@ fn archive_local_session(home: &Path, session_path: &str) -> Result<(), String> 
 fn delete_stored_session(app: AppHandle, runtime: &PiRuntime, session_path: String, host_id: Option<String>, archived: bool, client_id: String) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let mutation = conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, archived, "delete")?;
-    let settings = load_app_settings(app)?;
+    let settings = load_app_settings(app.clone())?;
     let path = if archived { archived_session_file(&settings, &host_id, &session_path)? } else { desktop_session_file(&settings, &host_id, &session_path)? };
     let local_root = if archived { home_dir()?.join(STORAGE_DIRECTORY).join("archived") } else { desktop_sessions_dir(&home_dir()?) };
     let host = if host_id == "local" { None } else { Some(remote_host(&settings, &host_id)?.clone()) };
     delete_session_files(runtime, &path, &host_id, host.as_ref(), &local_root, archived)?;
-    mutation.finish()
+    mutation.finish()?;
+    let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":session_path}));
+    Ok(())
 }
 
 fn delete_session_files(runtime: &PiRuntime, path: &str, host_id: &str, host: Option<&RemoteHost>, local_root: &Path, archived: bool) -> Result<(), String> {
@@ -3272,10 +3332,12 @@ fn delete_archived_session(app: AppHandle, runtime: State<PiRuntime>, session_pa
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 fn relocate_session(app: AppHandle, session_path: String, cwd: String, host_id: Option<String>, client_id: String) -> Result<(), String> {
+    let runtime = app.state::<PiRuntime>();
+    let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let mutation = conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, false, "relocate")?;
     if host_id != "local" {
-        let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
+        let settings = load_app_settings(app.clone())?; let host = remote_host(&settings, &host_id)?;
         relocate_remote_session(&session_path, &cwd, &host.name, |script| { let mut command = ssh(host); command.arg(remote_login_command(&script)); command })?;
         return mutation.finish();
     }
@@ -3285,7 +3347,8 @@ fn relocate_session(app: AppHandle, session_path: String, cwd: String, host_id: 
 
 fn relocate_remote_session(session_path: &str, cwd: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
     let session = shell_quote(session_path); let replacement = shell_quote(cwd.trim());
-    let script = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) || exit 1; path=$(realpath -- {session}) || exit 1; case "$path" in "$root"/*.jsonl) ;; *) printf 'Refusing to relocate a non-desktop session file' >&2; exit 1 ;; esac; replacement={replacement}; [ -d "$replacement" ] || {{ printf 'Project directory does not exist: %s' "$replacement" >&2; exit 1; }}; PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e 'const fs=require("fs"); const [path,cwd]=process.argv.slice(1); const content=fs.readFileSync(path,"utf8"); const newline=content.indexOf("\n"); const first=newline<0?content:content.slice(0,newline); const rest=newline<0?"":content.slice(newline+1); const header=JSON.parse(first); if(header.type!=="session") throw new Error("Invalid session header"); header.cwd=cwd; const temporary=path+"."+process.pid+".tmp"; try {{ fs.writeFileSync(temporary,JSON.stringify(header)+(newline<0?"":"\n"+rest),{{mode:fs.statSync(path).mode}}); fs.renameSync(temporary,path); }} catch(error) {{ try {{ fs.unlinkSync(temporary); }} catch {{}} throw error; }}' "$path" "$replacement""#);
+    let relocate = shell_quote(include_str!("../resources/relocate-session.cjs"));
+    let script = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) || exit 1; path=$(realpath -- {session}) || exit 1; case "$path" in "$root"/*.jsonl) ;; *) printf 'Refusing to relocate a non-desktop session file' >&2; exit 1 ;; esac; replacement={replacement}; [ -d "$replacement" ] || {{ printf 'Project directory does not exist: %s' "$replacement" >&2; exit 1; }}; node -e {relocate} "$path" "$replacement""#);
     let output = run_limited(&mut command(script), 64 * 1024, &format!("Could not relocate conversation on {host_name}"))?;
     if output.status.success() { return Ok(()); }
     let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -3296,23 +3359,10 @@ fn relocate_local_session(home: &Path, session_path: &str, cwd: &str) -> Result<
     let replacement = PathBuf::from(cwd.trim());
     if !replacement.is_dir() { return Err(format!("Project directory does not exist: {}", replacement.display())); }
     let path = local_desktop_session_file_at(home, session_path)?;
-    let content = fs::read_to_string(&path).map_err(|error| format!("Could not read session: {error}"))?;
-    let (first, rest) = content.split_once('\n').unwrap_or((&content, ""));
-    let mut header: Value = serde_json::from_str(first).map_err(|error| format!("Invalid session header: {error}"))?;
-    if header.get("type").and_then(Value::as_str) != Some("session") { return Err("File is not a Pi session".into()); }
-    header.as_object_mut().ok_or("Invalid session header")?.insert("cwd".into(), Value::String(replacement.to_string_lossy().into_owned()));
-    let first = serde_json::to_string(&header).map_err(|error| error.to_string())?;
-    let updated = if rest.is_empty() { first } else { format!("{first}\n{rest}") };
-    let permissions = fs::metadata(&path).map_err(|error| format!("Could not inspect session: {error}"))?.permissions();
-    let temporary = path.with_extension(format!("jsonl.{}.tmp", Uuid::new_v4()));
-    let result = (|| {
-        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(|error| format!("Could not prepare relocated session: {error}"))?;
-        file.set_permissions(permissions).map_err(|error| format!("Could not preserve session permissions: {error}"))?;
-        file.write_all(updated.as_bytes()).and_then(|_| file.sync_all()).map_err(|error| format!("Could not write relocated session: {error}"))?;
-        fs::rename(&temporary, &path).map_err(|error| format!("Could not commit relocated session: {error}"))
-    })();
-    if result.is_err() { let _ = fs::remove_file(&temporary); }
-    result
+    let output = run_limited(node_command().arg("-e").arg(include_str!("../resources/relocate-session.cjs")).arg(&path).arg(&replacement), 64 * 1024, "Could not relocate conversation")?;
+    if output.status.success() { return Ok(()); }
+    let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(if error.is_empty() { "Could not relocate conversation".into() } else { error })
 }
 
 fn resolve_agent<'a>(sessions: &'a [SessionSummary], host_id: &str, session_id: &str) -> Result<&'a SessionSummary, String> {
@@ -3361,12 +3411,12 @@ fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &Ses
     let spawned = command.spawn();
     let child = match spawned { Ok(child) => Arc::new(Mutex::new(child)), Err(error) => { let _ = fs::remove_dir_all(&output_root); return Err(format!("Could not message agent: {error}")); } };
     let _writer = BrokerWriter { child: child.clone(), _claim };
-    match broker.jobs.lock() { Ok(mut jobs) => { if broker.closing.load(Ordering::SeqCst) { if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); } return Err("App is closing".into()); } jobs.insert(request_id.to_string(), child.clone()); }, Err(_) => { if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); } let _ = fs::remove_dir_all(&output_root); return Err("Broker job lock was poisoned".into()); } }
+    match broker.jobs.lock() { Ok(mut jobs) => { if broker.closing.load(Ordering::SeqCst) { if let Ok(mut child) = child.lock() { stop_message_worker(&mut child); } return Err("App is closing".into()); } jobs.insert(request_id.to_string(), child.clone()); }, Err(_) => { if let Ok(mut child) = child.lock() { stop_message_worker(&mut child); } let _ = fs::remove_dir_all(&output_root); return Err("Broker job lock was poisoned".into()); } }
     let stdin = child.lock().map_err(|_| "Agent process lock was poisoned")?.stdin.take();
     let message = message.to_owned(); thread::spawn(move || { if let Some(mut stdin) = stdin { let _ = stdin.write_all(message.as_bytes()); } });
     let status = loop {
         if broker.cancelled.lock().map_err(|_| "Broker cancellation lock was poisoned")?.contains(request_id) {
-            if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); }
+            if let Ok(mut child) = child.lock() { stop_message_worker(&mut child); }
             break Err("Agent message was cancelled".to_string());
         }
         let status = child.lock().map_err(|_| "Agent process lock was poisoned")?.try_wait().map_err(|error| format!("Could not wait for agent: {error}"))?;
@@ -3374,11 +3424,11 @@ fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &Ses
         let output_bytes = fs::metadata(&stdout_path).map(|metadata| metadata.len()).unwrap_or(0)
             .saturating_add(fs::metadata(&stderr_path).map(|metadata| metadata.len()).unwrap_or(0));
         if output_bytes > MAX_AGENT_OUTPUT_BYTES {
-            if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); }
+            if let Ok(mut child) = child.lock() { stop_message_worker(&mut child); }
             break Err("Agent output exceeded the 16 MiB limit".to_string());
         }
         if Instant::now() >= deadline {
-            if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); }
+            if let Ok(mut child) = child.lock() { stop_message_worker(&mut child); }
             break Err("Agent message exceeded its deadline".to_string());
         }
         thread::sleep(Duration::from_millis(25));
@@ -3406,6 +3456,32 @@ fn read_broker_line(reader: &mut BufReader<TcpStream>, remaining: &mut usize) ->
     if count > *remaining { return Err("Request headers are too large".into()); }
     *remaining -= count;
     Ok(line)
+}
+
+fn broker_worktree_operation(broker: &BrokerRuntime, value: &Value, work: impl FnOnce(&AtomicBool) -> Result<Value, String>) -> Result<Value, String> {
+    let id = value["requestId"].as_str().filter(|id| Uuid::parse_str(id).is_ok()).ok_or("requestId is required")?;
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+    let deadline = value["deadline"].as_u64().unwrap_or(now).min(now + 120_000);
+    let cancelled = Arc::new(AtomicBool::new(deadline <= now));
+    {
+        let mut operations = broker.operations.lock().map_err(|_| "Broker operations unavailable")?;
+        if operations.contains_key(id) { return Err("Worktree operation already running".into()); }
+        operations.insert(id.into(), cancelled.clone());
+    }
+    if broker.cancelled.lock().map_err(|_| "Broker cancellation unavailable")?.contains(id) { cancelled.store(true, Ordering::SeqCst); }
+    let done = Arc::new(AtomicBool::new(false));
+    let finished = done.clone(); let flag = cancelled.clone(); let closing = broker.closing.clone();
+    thread::spawn(move || {
+        while !finished.load(Ordering::SeqCst) {
+            if closing.load(Ordering::SeqCst) || SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis() as u64 >= deadline { flag.store(true, Ordering::SeqCst); break; }
+            thread::sleep(Duration::from_millis(50));
+        }
+    });
+    let result = if cancelled.load(Ordering::SeqCst) { Err("Worktree operation cancelled".into()) } else { work(&cancelled) };
+    done.store(true, Ordering::SeqCst);
+    if let Ok(mut operations) = broker.operations.lock() { operations.remove(id); }
+    if let Ok(mut cancelled) = broker.cancelled.lock() { cancelled.remove(id); }
+    result
 }
 
 fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStream) -> Result<(), String> {
@@ -3462,12 +3538,14 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
             if host_id != "local" { return peers::forward_broker(&app, host_id, "/worktrees/create", value.clone()); }
             let cwd = value["cwd"].as_str().ok_or("cwd is required")?;
             let name = value["name"].as_str().ok_or("name is required")?;
+            broker_worktree_operation(&broker, &value, |cancelled| {
             let settings = load_app_settings(app.clone())?;
             let created = create_git_worktree(app.clone(), cwd.into(), name.into(), Some(host_id.into()))?;
             let group = session_groups::SessionGroup { id: format!("{host_id}:{}", created.path), name: created.branch.clone(), cwd: Some(created.path.clone()), host_id: Some(host_id.into()), host_name: Some(settings.hosts.iter().find(|host| host.id == host_id).map(|host| host.name.clone()).unwrap_or_else(|| host_id.into())), project_kind: Some(ProjectKind::Worktree) };
             let group_error = change_session_groups(app.clone(), session_groups::GroupChange::Project { project: group, key: None }).err();
-            let setup = run_worktree_scripts(&settings, cwd, &created.path, host_id, &AtomicBool::new(false), WorktreeScriptPhase::Setup);
+            let setup = run_worktree_scripts(&settings, cwd, &created.path, host_id, cancelled, WorktreeScriptPhase::Setup);
             Ok(json!({"path":created.path,"branch":created.branch,"setupError":setup.err(),"groupError":group_error}))
+            })
         })(),
         ("POST", "/worktrees/remove") => (|| {
             let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid worktree request")?;
@@ -3475,8 +3553,10 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
             #[cfg(not(feature = "desktop"))]
             if host_id != "local" { return peers::forward_broker(&app, host_id, "/worktrees/remove", value.clone()); }
             let cwd = value["cwd"].as_str().ok_or("cwd is required")?;
-            let removed = remove_git_worktree_blocking(app.clone(), cwd.into(), Some(host_id.into()), value["deleteBranch"].as_bool().unwrap_or(false))?;
+            broker_worktree_operation(&broker, &value, |cancelled| {
+            let removed = remove_git_worktree_cancellable(app.clone(), cwd.into(), Some(host_id.into()), value["deleteBranch"].as_bool().unwrap_or(false), cancelled)?;
             serde_json::to_value(removed).map_err(|error| error.to_string())
+            })
         })(),
         ("POST", "/worktree-agents") => worktree_agents(&app.state::<PiRuntime>(), &body),
         ("POST", "/cancel") => (|| {
@@ -3485,9 +3565,11 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
             let mut cancelled = broker.cancelled.lock().map_err(|_| "Broker cancellation lock was poisoned")?;
             if cancelled.len() >= BROKER_QUEUE_DEPTH * 2 { cancelled.clear(); }
             cancelled.insert(request_id.to_string()); drop(cancelled);
+            if let Some(operation) = broker.operations.lock().map_err(|_| "Broker operations unavailable")?.get(request_id) { operation.store(true, Ordering::SeqCst); }
             #[cfg(not(feature = "desktop"))]
             peers::cancel_message(&app, request_id)?;
-            if let Some(child) = broker.jobs.lock().map_err(|_| "Broker job lock was poisoned")?.get(request_id) { if let Ok(mut child) = child.lock() { let _ = child.kill(); } }
+            let child = broker.jobs.lock().map_err(|_| "Broker job lock was poisoned")?.get(request_id).cloned();
+            if let Some(child) = child { if let Ok(mut child) = child.lock() { stop_message_worker(&mut child); } }
             Ok(json!({"cancelled":true}))
         })(),
         _ => Err("Unknown session broker endpoint".into()),
@@ -3602,7 +3684,7 @@ fn shutdown_backend(app: &AppHandle) {
     let broker = app.state::<BrokerRuntime>();
     broker.closing.store(true, Ordering::SeqCst);
     let jobs = broker.jobs.lock().map(|mut jobs| jobs.drain().map(|(_, child)| child).collect::<Vec<_>>()).unwrap_or_default();
-    for child in jobs { if let Ok(mut child) = child.lock() { let _ = child.kill(); let _ = child.wait(); } }
+    for child in jobs { if let Ok(mut child) = child.lock() { stop_message_worker(&mut child); } }
     let terminals = app.state::<TerminalRuntime>();
     let ids = terminals.processes.lock().map(|processes| processes.keys().cloned().collect::<Vec<_>>()).unwrap_or_default();
     let _ = stop_terminals(&terminals, &ids);

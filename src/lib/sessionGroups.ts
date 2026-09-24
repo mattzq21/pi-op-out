@@ -8,19 +8,22 @@ import { listen } from "./platform";
 export interface SessionGroup { id: string; name: string; cwd?: string | null; hostId?: string | null; hostName?: string | null; projectKind?: "no-repo" | "main" | "worktree" | null; }
 export interface SessionGroups { groups: SessionGroup[]; assignments: Record<string, string | null>; removedProjects: string[]; }
 export interface SessionGroupSeed { sessionKey: string; project: SessionGroup; }
-export type GroupChange = { type: "create"; name: string } | { type: "project"; project: SessionGroup; key?: string } | { type: "rename"; id: string; name: string } | { type: "remove"; id: string } | { type: "assign"; key: string; group: string | null };
+export type GroupChange = { type: "relocate"; project: SessionGroup; key: string } | { type: "create"; name: string } | { type: "project"; project: SessionGroup; key?: string } | { type: "inspectProject"; id: string; projectKind: "no-repo" | "main" | "worktree" } | { type: "rename"; id: string; name: string } | { type: "remove"; id: string } | { type: "assign"; key: string; group: string | null };
 
 export function isTemporaryChatCwd(cwd: string) {
   return /(?:^|[\\/])\.piop(?:-dev)?[\\/]tmp[\\/][0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}[\\/]?$/i.test(cwd);
 }
 
 const listeners = new Set<(state: SessionGroups) => void>();
+let eventRevision = 0;
 function publish(state: SessionGroups) { listeners.forEach((listener) => listener(state)); return state; }
 
 export function updateSessionGroups(update: GroupChange) {
   return enqueue(async () => {
     await loadSessionGroups([], legacyGroups([]));
-    return publish(await changeSessionGroups(update));
+    const revision = eventRevision;
+    const state = await changeSessionGroups(update);
+    return revision === eventRevision ? publish(state) : state;
   });
 }
 
@@ -77,16 +80,16 @@ export function useSessionGroups(sessions: Accessor<SessionSummary[]>) {
     mounted.current = true;
     const listener = (value: SessionGroups) => { setState(value); setError(undefined); };
     listeners.add(listener);
-    const stop = listen<SessionGroups>("pi://groups-changed", ({ payload }) => listener(payload));
+    const stop = listen<SessionGroups>("pi://groups-changed", ({ payload }) => { eventRevision++; publish(payload); });
     return () => { mounted.current = false; listeners.delete(listener); void stop.then((unlisten) => unlisten()); };
   }, () => []);
   const seedsJson = createMemo(() => (JSON.stringify(sessions().filter((session) => !isTemporaryChatCwd(session.cwd)).map((session): SessionGroupSeed => ({
     sessionKey: `${session.hostId ?? "local"}:${session.id}`,
-    project: { id: `${session.hostId ?? "local"}:${session.projectRoot ?? session.cwd}`, name: session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project, cwd: session.projectRoot ?? session.cwd, hostId: session.hostId ?? "local", hostName: session.hostName ?? session.hostId ?? "Local", projectKind: session.projectKind },
+    project: { id: `${session.hostId ?? "local"}:${session.projectRoot ?? session.cwd}`, name: session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project, cwd: session.projectRoot ?? session.cwd, hostId: session.hostId ?? "local", hostName: session.hostName ?? session.hostId ?? "Local", projectKind: session.projectRoot && session.projectRoot !== session.cwd && session.projectKind === "worktree" ? "main" : session.projectKind },
   })).sort((a, b) => a.sessionKey.localeCompare(b.sessionKey)))));
   createDependencyEffect(() => { const capturedSeedsJson = seedsJson();
     const seeds: SessionGroupSeed[] = JSON.parse(capturedSeedsJson);
-    void enqueue(async () => publish(await loadSessionGroups(seeds, legacyGroups(seeds)))).catch((reason) => { if (mounted.current) setError(String(reason)); });
+    void enqueue(async () => { const revision = eventRevision; const state = await loadSessionGroups(seeds, legacyGroups(seeds)); if (revision === eventRevision) publish(state); }).catch((reason) => { if (mounted.current) setError(String(reason)); });
   }, () => [seedsJson()]);
   const change = async (update: GroupChange) => {
     try {

@@ -29,7 +29,7 @@ type Context = {
   syncSessionIndex: () => Promise<void>;
 };
 
-export function createBranchConversation({ transport, activeConversationKeyRef, branchPending, state, sessions, runtimePool, messages, rekeyConversationUi, activeTransportRef, setActiveCwd, setTerminalOpen, setTerminalTarget, setState, setMessages, updateConnected, configureRuntime, transportConversationKeys, activateConversationKey, addNotice, syncSessionIndex }: Context) {
+export function createBranchConversation({ transport, activeConversationKeyRef, branchPending, state, sessions, runtimePool, rekeyConversationUi, activeTransportRef, setActiveCwd, setTerminalOpen, setTerminalTarget, setState, setMessages, updateConnected, configureRuntime, transportConversationKeys, activateConversationKey, addNotice, syncSessionIndex }: Context) {
   return async (message: ChatMessage, destinationCwd?: string) => {
     const entryId = message.entryId; if (!entryId) throw new Error("Could not find the response to branch from");
     const ownerTransport = transport; const previousKey = activeConversationKeyRef.current;
@@ -42,9 +42,7 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
     const sourceHostId = ownerTransport.currentHostId();
     const parentSession = [...sessions, ...runtimePool.liveSessionSummaries()].find((session) => session.path === sourcePath && (session.hostId ?? "local") === sourceHostId);
     const forkSource = async () => {
-      const messageIndex = messages.findIndex((candidate) => candidate.entryId === entryId);
-      const nextUserEntryId = messageIndex >= 0 ? messages.slice(messageIndex + 1).find((candidate) => candidate.role === "user" && candidate.entryId)?.entryId : undefined;
-      const fork = await ownerTransport.command<{ cancelled?: boolean }>(nextUserEntryId ? { type: "fork", entryId: nextUserEntryId } : { type: "clone" }); if (fork.cancelled) return false;
+      const fork = await ownerTransport.command<{ cancelled?: boolean }>({ type: "fork_after", entryId }); if (fork.cancelled) return false;
       return true;
 
     };
@@ -79,8 +77,9 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
       const nextSettings = await ownerTransport.loadSettings(); await configureRuntime(nextSettings); nextState = await ownerTransport.command<AgentState>({ type: "get_state" }); const history = await ownerTransport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" });
       return { nextState, history };
     };
+    let sourceDiffs: import("./types").GitDiffSnapshots | undefined;
     const copyBranchDiffs = async (nextState: AgentState, history: { entries: PiEntry[]; leafId: string | null }) => {
-      try { await runtimePool.copySavedDiffs(ownerTransport, sourcePath, nextState.sessionFile, new Set(branchMessages(history.entries, history.leafId).map((entry) => entry.id))); }
+      try { await runtimePool.copySavedDiffs(ownerTransport, sourcePath, nextState.sessionFile, new Set(branchMessages(history.entries, history.leafId).map((entry) => entry.id)), sourceDiffs); }
       catch (reason) { addNotice({ title: "Conversation branched, but project changes could not be copied", message: reason instanceof Error ? reason.message : String(reason) }); }
 
     };
@@ -96,6 +95,7 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
     };
     let forked = false;
     try {
+      sourceDiffs = await runtimePool.captureMemoryDiffs(ownerTransport);
       if (!await forkSource()) return false;
       forked = true;
       let nextState = await ownerTransport.command<AgentState>({ type: "get_state" });

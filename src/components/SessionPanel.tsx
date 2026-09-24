@@ -174,14 +174,14 @@ export function SessionPanel(props: Props) {
       if (!group.cwd || group.projectKind || projectKindInspectionsRef.current.has(group.id)) continue;
       projectKindInspectionsRef.current.add(group.id);
       void gitProjectKind(group.cwd, group.hostId ?? "local")
-        .then((projectKind) => storedGroups.change({ type: "project", project: { ...group, projectKind } }))
+        .then((projectKind) => storedGroups.change({ type: "inspectProject", id: group.id, projectKind }))
         .catch(() => undefined);
     }
   }, () => [storedGroups.change, storedGroups.state?.groups]);
   const inferredWorktreeGroup = createMemo(() => (savedGroups().find((group) => group.cwd && group.projectKind !== "worktree" && panel().sessions.some((session) => (session.hostId ?? "local") === (group.hostId ?? "local") && session.cwd === group.cwd && session.projectKind === "worktree"))));
   createDependencyEffect(() => { const capturedInferredWorktreeGroup = inferredWorktreeGroup();
     if (!capturedInferredWorktreeGroup) return;
-    void storedGroups.change({ type: "project", project: { ...(capturedInferredWorktreeGroup)!, projectKind: "worktree" } }).catch(() => undefined);
+    void storedGroups.change({ type: "inspectProject", id: capturedInferredWorktreeGroup.id, projectKind: "worktree" }).catch(() => undefined);
   }, () => [storedGroups.change, inferredWorktreeGroup()?.id]);
   const groupNameTaken = (name: string, excludedId?: string) => sidebarCollator.compare(RECENT_LABEL, name.trim()) === 0 || storedGroups.state?.groups.some((group) => group.id !== excludedId && sidebarCollator.compare(group.name.trim(), name.trim()) === 0);
   const validateGroupName = (name: string) => {
@@ -243,7 +243,7 @@ export function SessionPanel(props: Props) {
       try { localStorage.setItem(SESSION_ORDERS_KEY, JSON.stringify(next)); } catch { /* Persistence is best-effort. */ }
       return next;
     });
-    void storedGroups.change({ type: "assign", key: drag.sessionKey, group: destinationKey === RECENT_KEY ? null : destinationKey }).catch(() => undefined);
+    return storedGroups.change({ type: "assign", key: drag.sessionKey, group: destinationKey === RECENT_KEY ? null : destinationKey }).catch(() => undefined);
   };
   const placeSidebarEntry = (token: string, beforeToken: string | null) => {
     const currentEntries = sidebarEntriesRef.current;
@@ -329,16 +329,21 @@ export function SessionPanel(props: Props) {
   const activeProjectKey = createMemo(() => (selectedProjectKey()));
   const moveSessionByKeyboard = (drag: DraggedSession, direction: -1 | 1, betweenGroups: boolean) => {
     const sourceSessions = groupedSessionsRef.current.get(drag.projectKey) ?? [];
+    const focused = document.activeElement;
+    const restoreFocus = () => requestAnimationFrame(() => {
+      if (document.activeElement !== document.body && document.activeElement !== focused) return;
+      sessionScrollRef.current?.querySelector<HTMLElement>(`[data-session-key="${CSS.escape(drag.sessionKey)}"] .session-main`)?.focus({ preventScroll: true });
+    });
     if (betweenGroups) {
       const destinationKeys = keyboardSidebarEntries().filter((token) => token.startsWith("group:")).map((token) => token.slice("group:".length));
       const sourceIndex = destinationKeys.indexOf(drag.projectKey); const destinationKey = destinationKeys[sourceIndex + direction];
       if (!destinationKey) return;
-      moveSession(drag, destinationKey, groupedSessionsRef.current.get(destinationKey) ?? []); expandProject(destinationKey);
+      void moveSession(drag, destinationKey, groupedSessionsRef.current.get(destinationKey) ?? [])?.then(restoreFocus); expandProject(destinationKey);
       return;
     }
     const sourceIndex = sourceSessions.findIndex((session) => sessionKey(session) === drag.sessionKey); const target = sourceSessions[sourceIndex + direction];
     if (!target) return;
-    moveSession(drag, drag.projectKey, sourceSessions, sessionKey(target), direction < 0 ? "before" : "after");
+    void moveSession(drag, drag.projectKey, sourceSessions, sessionKey(target), direction < 0 ? "before" : "after")?.then(restoreFocus);
   };
   const startMouseDrag = (event: MouseEvent<HTMLElement>, drag: DraggedItem) => {
     if (normalizedQuery() || event.button !== 0) return;
@@ -502,26 +507,26 @@ export function SessionPanel(props: Props) {
       {renderGroupError()}
       {renderGroupLoading()}
       {renderNewGroup()}
-      {sidebarEntries().flatMap((token) => {
-        const group = groupsByToken().get(token); if (!group) return []; const [projectKey, project, hostId, hostName, projectSessions] = group; const label = groupLabel(project, hostId, hostName); const collapsed = !normalizedQuery() && collapsedProjects().has(projectKey); const groupId = disclosureId(projectKey); const renderProjectHeading = () => {
+      {<Key each={sidebarEntries().filter((token) => groupsByToken().has(token))} by={(token) => token}>{(token) => {
+        const group = () => groupsByToken().get(token())!; const projectKey = group()[0]; const label = () => groupLabel(group()[1], group()[2], group()[3]); const collapsed = () => !normalizedQuery() && collapsedProjects().has(projectKey); const groupId = disclosureId(projectKey); const renderProjectHeading = () => {
           const renderProjectLabel = () => {
             const renderGroupNameInput = () => (<input ref={element => { groupNameRef.current = element; }} disabled={groupSaving()} aria-label="Rename session group" aria-invalid={Boolean(groupDraftError())} aria-describedby={groupDraftError() ? "rename-group-error" : undefined} value={newGroupName() ?? ""} onInput={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} />);
             return (isEditingGroup(projectKey) ? <div class="project-label">{renderGroupNameInput()}{groupDraftError() && <small id="rename-group-error" class="group-error">{(groupDraftError())!}</small>}</div> : <>
-              <button class="project-label" disabled={Boolean(normalizedQuery())} aria-expanded={!collapsed} aria-controls={groupId} {...projectDragProps(projectKey)}><ChevronDown class={collapsed ? "collapsed" : ""} size={13} />{projectDetails().get(projectKey)?.projectKind === "no-repo" && <Folder size={14} aria-hidden="true" />}<span class={projectKey === activeProjectKey() ? "active" : undefined}>{label}</span></button>
+              <button class="project-label" disabled={Boolean(normalizedQuery())} aria-expanded={!collapsed()} aria-controls={groupId} {...projectDragProps(projectKey)}><ChevronDown class={collapsed() ? "collapsed" : ""} size={13} />{projectDetails().get(projectKey)?.projectKind === "no-repo" && <Folder size={14} aria-hidden="true" />}<span class={projectKey === activeProjectKey() ? "active" : undefined}>{label()}</span></button>
               {projectKey !== RECENT_KEY && <div class="project-actions">
-                {customGroupsByKey().has(projectKey) && <button aria-label={`Rename group ${label}`} title="Rename group" onClick={() => editGroup(customGroupsByKey().get(projectKey)!)}><Pencil size={12} /></button>}
-                <button aria-label={`New chat in ${label}`} title="New chat in group" onClick={() => {
+                {customGroupsByKey().has(projectKey) && <button aria-label={`Rename group ${label()}`} title="Rename group" onClick={() => editGroup(customGroupsByKey().get(projectKey)!)}><Pencil size={12} /></button>}
+                <button aria-label={`New chat in ${label()}`} title="New chat in group" onClick={() => {
                   const destination = storedGroups.state?.groups.find((item) => item.id === projectKey);
                   if (!destination) return;
                   expandProject(projectKey);
                   panel().onNewChat(destination);
                 }}><MessageSquarePlus size={14} /></button>
-                <button aria-label={`Group actions for ${label}`} title="Group actions" aria-haspopup="menu" aria-expanded={groupMenu()?.projectKey === projectKey} onClick={(event) => {
+                <button aria-label={`Group actions for ${label()}`} title="Group actions" aria-haspopup="menu" aria-expanded={groupMenu()?.projectKey === projectKey} onClick={(event) => {
                   event.stopPropagation();
                   if (groupMenu()?.projectKey === projectKey) { closeMenu(true); return; }
                   const bounds = event.currentTarget.getBoundingClientRect();
                   setMenu(undefined);
-                  setGroupMenu({ projectKey, label, x: Math.max(8, Math.min(bounds.right - 188, window.innerWidth - 196)), y: Math.max(8, Math.min(bounds.bottom + 4, window.innerHeight - 84)), returnFocus: event.currentTarget });
+                  setGroupMenu({ projectKey, label: label(), x: Math.max(8, Math.min(bounds.right - 188, window.innerWidth - 196)), y: Math.max(8, Math.min(bounds.bottom + 4, window.innerHeight - 148)), returnFocus: event.currentTarget });
                 }}><Ellipsis size={14} /></button>
               </div>}
             </>);
@@ -530,11 +535,11 @@ export function SessionPanel(props: Props) {
             {renderProjectLabel()}
           </div>);
         };
-        return [renderDropZone(token), <section data-sidebar-token={token} class={`project ${!normalizedQuery() ? "reorderable" : ""} ${draggedProject() === projectKey ? "dragging" : ""} ${dropTarget()?.projectKey === projectKey && !(dropTarget())!.sessionKey && (dropTarget())!.layoutBefore === undefined ? "drop-project" : ""}`} >
+        return [renderDropZone(token()), <section data-sidebar-token={token()} class={`project ${!normalizedQuery() ? "reorderable" : ""} ${draggedProject() === projectKey ? "dragging" : ""} ${dropTarget()?.projectKey === projectKey && !(dropTarget())!.sessionKey && (dropTarget())!.layoutBefore === undefined ? "drop-project" : ""}`} >
           {renderProjectHeading()}
-          <div id={groupId} hidden={collapsed}>{projectSessions.map((session) => renderSession(session, projectKey))}</div>
+          <div id={groupId} hidden={collapsed()}>{group()[4].map((session) => renderSession(session, projectKey))}</div>
         </section>];
-      })}
+      }}</Key>}
       {sidebarEntries().length > 0 && renderDropZone(null)}
       {renderEmptyConversations()}
     </div>);

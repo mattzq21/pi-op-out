@@ -1,6 +1,6 @@
 import { readFile as accountRead, mkdir as accountMkdir } from 'node:fs/promises';
 import { spawn as accountSpawn } from 'node:child_process';
-import { dirname as accountDirname } from 'node:path';
+import { dirname as accountDirname, join as accountJoin } from 'node:path';
 
 export const providerAccountsPath = (authPath) => `${authPath}.piop-accounts.json`;
 export async function readProviderAccounts(authPath) {
@@ -79,14 +79,23 @@ function accountStream(source, provider) {
   };
 }
 
+const accountConfigurations = new WeakMap();
 export async function loadAccountProviders(authPath, createRuntime, existing = new Map()) {
   const records = await readProviderAccounts(authPath);
+  const configuration = await accountRead(accountJoin(accountDirname(authPath), 'models.json'), 'utf8').catch((error) => {
+    if (error.code === 'ENOENT') return '';
+    throw error;
+  });
   for (const record of records) {
-    if (existing.has(record.id)) continue;
+    if (existing.has(record.id) && accountConfigurations.get(existing.get(record.id)) === configuration) continue;
     // Separate provider instances keep credential-dependent catalogs isolated between accounts.
     const runtime = await createRuntime();
     const base = runtime.getProvider(record.providerId);
-    if (base) existing.set(record.id, accountProvider(base, record));
+    if (base) {
+      const provider = accountProvider(base, record);
+      accountConfigurations.set(provider, configuration);
+      existing.set(record.id, provider);
+    }
   }
   return existing;
 }

@@ -41,7 +41,7 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
   let limit: number | undefined;
 
   const restoreLimit = (ctx: CostContext) => {
-    const entry = ctx.sessionManager.getEntries().find((entry) => entry.type === "custom" && entry.customType === LIMIT_ENTRY);
+    const entry = [...ctx.sessionManager.getBranch()].reverse().find((entry) => entry.type === "custom" && entry.customType === LIMIT_ENTRY);
     if (entry?.type === "custom") {
       const saved = (entry.data as { limit?: unknown } | undefined)?.limit;
       if (saved !== null && saved !== undefined && !validAmount(saved)) throw new Error("Invalid saved session cost limit");
@@ -80,9 +80,10 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
   });
 
   pi.on("input", (event, ctx) => {
-    if (event.text.startsWith("/")) return;
     if (!overLimit(ctx)) return;
-    ctx.ui.notify(`Session cost limit of ${formatCost(limit!)} reached (API prices). Raise it with /cost <amount> or remove it with /cost clear.`, "warning");
+    const error = `Session cost limit of ${formatCost(limit!)} reached (API prices). Raise it with /cost <amount> or remove it with /cost clear.`;
+    ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error }));
+    ctx.ui.notify(error, "warning");
     return { action: "handled" };
   });
 
@@ -90,6 +91,12 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
     if (!overLimit(ctx)) return;
     publish(ctx);
     return { block: true, terminate: true, reason: `Session cost limit of ${formatCost(limit!)} reached (API prices). Tool execution blocked.` };
+  });
+  pi.on("turn_start", (_event, ctx) => {
+    if (!overLimit(ctx)) return;
+    publish(ctx);
+    ctx.abort();
+    ctx.ui.notify(`Session cost limit of ${formatCost(limit!)} reached (API prices). Raise it with /cost <amount> or remove it with /cost clear.`, "warning");
   });
 
   pi.registerCommand("cost", {

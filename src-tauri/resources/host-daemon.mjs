@@ -40,14 +40,28 @@ function clientHistory(history) {
   // the decoded history and normalized messages to coexist during installation.
   const limit = 256 * 1024 * 1024;
   const entries = [];
+  const inputs = new Map(history.entries.flatMap((entry) => Array.isArray(entry.message?.content) ? entry.message.content.filter((part) => part.type === 'toolCall').map((part) => [part.id, part.arguments]) : []));
+  const indexed = new Map(history.entries.map((entry) => [entry.id, entry]));
+  const branch = [];
+  const visited = new Set();
+  let cursor = history.leafId;
+  while (cursor && !visited.has(cursor)) {
+    visited.add(cursor);
+    const entry = indexed.get(cursor); if (!entry) break;
+    branch.push(entry); cursor = entry.parentId;
+  }
   let size = 0;
-  for (let index = history.entries.length - 1; index >= 0; index--) {
-    const entry = history.entries[index];
+  for (let entry of branch) {
+    if (entry.message?.role === 'toolResult') {
+      const input = inputs.get(entry.message.toolCallId);
+      const patch = entry.message.details?.patch ?? (entry.message.toolName === 'edit' ? entry.message.details?.diff : entry.message.toolName === 'apply_patch' ? input?.patch ?? input?.input : undefined);
+      if (typeof patch === 'string' && patch.length <= 2 * 1024 * 1024) entry = { ...entry, message: { ...entry.message, toolDiff: { patch, path: typeof input?.path === 'string' ? input.path : undefined } } };
+    }
     const cost = JSON.stringify(entry, clientPayload).length * 4 + 256;
     if (size + cost > limit) break;
     size += cost; entries.push(entry);
   }
-  return { ...history, entries: entries.reverse(), omittedEntries: history.entries.length - entries.length };
+  return { ...history, entries: entries.reverse(), omittedEntries: branch.length - entries.length };
 }
 const output = (packet) => process.stdout.write(JSON.stringify(packet, clientPayload) + '\n');
 
@@ -85,7 +99,7 @@ async function releaseConversation(id, intent) {
     const keys = ownershipCaptureKeys.get(id) ?? new Set();
     ownershipCaptureKeys.set(id, keys);
     for (const session of [...sessions.values()].filter((item) => item.identity === id)) {
-      if (intent === 'message') await session.retire();
+      if (intent === 'message' || intent === 'archive') await session.retire();
       await hostVoice.release(session);
       for (const runtimeId of session.views.keys()) readonlyViews.set(runtimeId, { id, path: session.state?.sessionFile });
       session.publish({ type: 'ownership_lost' });
@@ -194,7 +208,7 @@ class Session {
     this.queue.pendingMessages = retryMessages.get(key) ?? [];
     retryMessages.delete(key);
     const launch = workerLaunch(spec, this.identity);
-    this.child = spawn(launch.program, launch.args, { cwd: spec.cwd || undefined, env: { ...process.env, ...spec.env, PI_DESKTOP_GIT_CAPTURE_SCRIPT: ephemeral ? '' : gitCaptureScript }, stdio: ['pipe', 'pipe', 'pipe'] });
+    this.child = spawn(launch.program, launch.args, { cwd: spec.cwd || undefined, env: { ...process.env, ...spec.env, PI_DESKTOP_GIT_CAPTURE_SCRIPT: gitCaptureScript }, stdio: ['pipe', 'pipe', 'pipe'] });
     this.ready = new Promise((resolve, reject) => { this.child.once('spawn', resolve); this.child.once('error', reject); });
     this.ready.catch(() => undefined);
     this.child.stdin.on('error', () => { });
@@ -212,6 +226,8 @@ class Session {
   finish(error) {
     if (this.closed) return;
     this.closed = true;
+    for (const dialog of this.dialogs.values()) clearTimeout(dialog.timer);
+    this.dialogs.clear();
     if (!this.transient && sessions.get(this.key) === this) sessions.delete(this.key);
     for (const request of this.pending.values()) { clearTimeout(request.timer); request.reject(new Error(error)); }
     this.pending.clear();
@@ -234,7 +250,11 @@ class Session {
       output({ type: 'event', runtimeId, event: envelope });
     }
     if (event.type === 'queue_update' || event.type === 'settings_pending') this.publishState();
-    if (['agent_settled', 'compaction_end', 'auto_compaction_end', 'queue_update'].includes(event.type)) void this.reconcileConfiguration();
+    if (['agent_settled', 'compaction_end', 'auto_compaction_end', 'queue_update'].includes(event.type)) {
+      void this.reconcileConfiguration().then(() => this.releaseUnusedOwnership()).catch((error) => {
+        output({ type: 'diagnostic', line: `Could not release unused ownership for ${this.key}: ${errorText(error)}` });
+      });
+    }
   }
 
   settingsPending() {
@@ -331,6 +351,16 @@ class Session {
     this.publishState();
   }
 
+  resolveDialog(id) {
+    const dialog = this.dialogs.get(id);
+    if (!dialog) return;
+    clearTimeout(dialog.timer);
+    this.dialogs.delete(id);
+    this.publish({ type: 'extension_ui_resolved', id });
+    this.publishState();
+    void this.releaseUnusedOwnership().catch((error) => output({ type: 'diagnostic', line: errorText(error) }));
+  }
+
   attach(runtimeId, presence = {}) {
     this.views.set(runtimeId, presence);
     subscriptions.set(runtimeId, this);
@@ -356,7 +386,8 @@ class Session {
   }
 
   async releaseUnusedOwnership() {
-    if (!this.ephemeral && !this.views.size && !this.configurationBusy()) await ownership.releaseClient(this.identity, this.clientId, () => !this.views.size && !this.configurationBusy());
+    const unused = () => !this.views.size && !this.configurationBusy() && !this.configurationPromise && !this.dialogs.size && !this.pauseState?.isPausing;
+    if (!this.ephemeral && unused()) await ownership.releaseClient(this.identity, this.clientId, unused);
   }
 
   receive(event) {
@@ -407,7 +438,7 @@ class Session {
       }
     }
     const queue = this.queue.queueView();
-    request.resolve({ history, revision: this.clientRevision(), sequence: this.sequence, stateRevision: this.stateRevision, epoch: this.epoch, liveTools: [...this.tools.values()], queue, state: { ...request.snapshotState, isStreaming: this.working, viewers: [...this.views.values()].filter((view) => view.visible).length, pendingMessageCount: queue.steering.length + queue.followUp.length } });
+    request.resolve({ history, revision: this.clientRevision(), sequence: this.sequence, stateRevision: this.stateRevision, epoch: this.epoch, liveTools: [...this.tools.values()], extensionState: [...this.statuses.values()], queue, state: { ...request.snapshotState, isStreaming: this.working, viewers: [...this.views.values()].filter((view) => view.visible).length, pendingMessageCount: queue.steering.length + queue.followUp.length } });
   }
 
   retainState(event) {
@@ -447,7 +478,13 @@ class Session {
     if (event.method === 'notify' && event.notifyType === 'error' && event.message === this.inputRejection?.error) event = { ...event, inputRejected: true };
     this.retainExtensionStatus(event);
     if (interactiveMethods.has(event.method)) {
-      this.dialogs.set(event.id, { event }); this.routeDialogs(); return;
+      clearTimeout(this.dialogs.get(event.id)?.timer);
+      const dialog = { event };
+      if (Number.isFinite(event.timeout) && event.timeout >= 0) {
+        dialog.timer = setTimeout(() => { if (this.dialogs.get(event.id) === dialog) this.resolveDialog(event.id); }, Math.min(event.timeout, 2147483647));
+        dialog.timer.unref();
+      }
+      this.dialogs.set(event.id, dialog); this.routeDialogs(); return;
     }
     return event;
   }
@@ -455,7 +492,7 @@ class Session {
   receiveExtensionStatus(event) {
     if (event.method === 'setStatus' && event.statusKey === 'pi-desktop-turn-capture') {
       const capture = JSON.parse(event.statusText);
-      output({ ...capture, type: 'turn_capture', sessionKey: this.key });
+      output({ ...capture, type: 'turn_capture', sessionKey: this.key, ephemeral: this.ephemeral });
       return true;
     }
     if (event.method === 'setStatus' && event.statusKey === 'pi-desktop-worktree-presence') {
@@ -541,8 +578,8 @@ class Session {
     const id = randomUUID();
     if (requestType === 'prompt') { this.inputRejection = undefined; this.commandErrors.clear(); }
     let wire = { ...command, id };
-    const action = { pause: 'pause', resume: 'resume', abort: 'stop', get_pause_state: 'state' }[command.type];
-    const extension = { provider_auth_refresh: 'piop-provider-auth-refresh', runtime_settings: 'piop-runtime-settings', branch_checkpoint: 'pi-desktop-branch-checkpoint', fork_and_forget: 'pi-desktop-fork-and-forget', voice_history: 'pi-desktop-voice-history' }[command.type];
+    const action = { pause: 'pause', resume: 'resume', abort: 'stop', cancel_preparation: 'cancel-preparation', get_pause_state: 'state' }[command.type];
+    const extension = { provider_auth_refresh: 'piop-provider-auth-refresh', runtime_settings: 'piop-runtime-settings', branch_checkpoint: 'pi-desktop-branch-checkpoint', fork_and_forget: 'pi-desktop-fork-and-forget', fork_after: 'pi-desktop-fork-after', voice_history: 'pi-desktop-voice-history' }[command.type];
     if (action || extension) wire = { type: 'prompt', id: `${id}:desktop-control`, message: `/${extension ?? 'pi-desktop-control'} ${JSON.stringify(action ? { id, action } : { ...command, id })}` };
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {

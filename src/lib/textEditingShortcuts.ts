@@ -21,6 +21,7 @@ export function installTextEditingShortcuts() {
     if (!command) return;
 
     if (!isEditableField(document.activeElement)) return;
+    if (document.activeElement?.closest("[data-custom-history]")) return;
 
     // Use the browser's history so typing, paste, selection and IME edits retain
     // their native undo boundaries and emit input events for controlled fields.

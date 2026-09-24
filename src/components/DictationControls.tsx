@@ -11,7 +11,8 @@ export function DictationControls(props: { disabled: boolean; onText: (text: str
   const [error, setError] = createSignal<string>();
   let recording: DictationRecording | undefined;
   let generation = 0;
-  const cancel = () => { generation++; recording?.cancel(); recording = undefined; setPhase("idle"); };
+  let transcriptionPending = false;
+  const cancel = () => { generation++; recording?.cancel(); recording = undefined; if (!transcriptionPending) setPhase("idle"); };
   onCleanup(cancel);
   createEffect(() => { if (props.disabled || voice().phase !== "idle") cancel(); });
   createEffect(() => { if (!enabled() && (phase() === "starting" || phase() === "recording")) cancel(); });
@@ -19,12 +20,13 @@ export function DictationControls(props: { disabled: boolean; onText: (text: str
     if (phase() !== "recording" || !recording) return;
     const current = generation;
     setPhase("transcribing");
+    transcriptionPending = true;
     try {
       const audio = recording.finish(); recording = undefined;
       const result = await transcribeDictation(audio);
       if (current === generation && !props.disabled && result.text.trim()) props.onText(result.text.trim());
     } catch (reason) { if (current === generation) setError(reason instanceof Error ? reason.message : String(reason)); }
-    finally { if (current === generation) setPhase("idle"); }
+    finally { transcriptionPending = false; setPhase("idle"); }
   };
   const start = async () => {
     if (!enabled() || props.disabled || phase() !== "idle" || voice().phase !== "idle") return;

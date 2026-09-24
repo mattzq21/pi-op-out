@@ -72,6 +72,7 @@ function addToolDiff(message: ChatMessage, snapshots: FileChangeSnapshot[], sour
 }
 
 function toolPatch(message: ChatMessage) {
+  if (message.toolDiff) return message.toolDiff;
   const name = message.toolName?.split(".").at(-1);
   const input = message.toolInput as { path?: unknown; patch?: unknown; input?: unknown } | undefined;
   const details = message.details as { patch?: unknown; diff?: unknown } | undefined;

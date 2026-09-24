@@ -25,6 +25,25 @@ export function parseShortcut(shortcut: string) {
   return { mod: has("mod"), ctrl: has("ctrl"), meta: has("meta"), alt: has("alt"), shift: has("shift"), key: keys[0] };
 }
 
+export function shortcutError(shortcut: string) {
+  if (!shortcut.trim()) return undefined;
+  const parsed = parseShortcut(shortcut);
+  if (!parsed || parsed.key === "control") return `Shortcut “${shortcut}” needs exactly one non-modifier key`;
+  if (!parsed.mod && !parsed.ctrl && !parsed.meta && !parsed.alt) return `Shortcut “${shortcut}” needs Ctrl, Alt, or Meta`;
+  if ((parsed.key === "f" || parsed.key === "g") && !parsed.alt && !parsed.shift && (parsed.mod || parsed.ctrl || parsed.meta)) return `Shortcut “${shortcut}” is reserved for search`;
+  return undefined;
+}
+
+export function keybindingsError(keybindings: Keybindings) {
+  const shortcuts = Object.values(keybindings).filter((shortcut) => shortcut.trim());
+  for (const [index, shortcut] of shortcuts.entries()) {
+    const error = shortcutError(shortcut);
+    if (error) return error;
+    if (shortcuts.slice(0, index).some((other) => shortcutsConflict(shortcut, other))) return `Shortcut “${shortcut}” is assigned more than once`;
+  }
+  return undefined;
+}
+
 function primaryModifiers(shortcut: NonNullable<ReturnType<typeof parseShortcut>>) {
   const primary = new Set<string>();
   if (shortcut.mod) { primary.add("ctrl"); primary.add("meta"); }

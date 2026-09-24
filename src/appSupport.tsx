@@ -3,6 +3,7 @@ import { createDependencyEffect, type Dispatch, type StateUpdate } from "./lib/s
 
 import { NativeTransport } from "./lib/nativeTransport";
 import { appendTerminalOutput as retainTerminalOutput } from "./lib/terminalOutput";
+import { isTemporaryChatCwd } from "./lib/sessionGroups";
 import type { AgentConfig, ChatMessage, CodexUsage, DefinedAgentsCapability, ExtensionUiRequest, OpencodeGoUsage, SessionSummary } from "./types";
 
 const staleExtensionContext = "This extension ctx is stale after session replacement or reload.";
@@ -13,7 +14,7 @@ type SessionTerminals = { activeId: string; tabs: TerminalTabState[] };
 
 type QueuedTerminalOutput = { data: string; length: number };
 
-type BtwRequest = { task: string; forkFrom: string; requestId: string };
+type BtwRequest = { task: string; forkFrom: string; requestId: string; images?: import("./types").ImageAttachment[] };
 
 type SplitPaneState = { key: string; session: SessionSummary; btw?: BtwRequest };
 
@@ -46,7 +47,7 @@ function appendTerminalOutputs(current: Record<string, SessionTerminals>, chunks
   }]));
 }
 
-function selectedProjectCwd(cwd: string | undefined, temporary: boolean) { return !cwd || temporary ? undefined : cwd; }
+function selectedProjectCwd(cwd: string | undefined, temporary: boolean) { return !cwd || temporary || isTemporaryChatCwd(cwd) ? undefined : cwd; }
 
 function formatCodexReset(resetAt: number, now = Date.now()) {
   if (!Number.isFinite(resetAt)) return "—";

@@ -17,6 +17,12 @@ if (!fs.existsSync(sessionPath)) {
     { type: 'session_info', id: 'orchestrator-name', parentId: null, timestamp, name: 'Orchestrator' },
     { type: 'custom', id: 'orchestrator-agent', parentId: 'orchestrator-name', timestamp, customType: 'pi-define-agents-state', data: { active: 'voice-orchestrator' } },
   ];
+  const model = process.argv[2] || '';
+  const separator = model.indexOf('/');
+  if (separator > 0 && separator < model.length - 1) {
+    entries.push({ type: 'model_change', id: 'orchestrator-model', parentId: entries.at(-1).id, timestamp, provider: model.slice(0, separator), modelId: model.slice(separator + 1) });
+  }
+  if (process.argv[3]) entries.push({ type: 'thinking_level_change', id: 'orchestrator-thinking', parentId: entries.at(-1).id, timestamp, thinkingLevel: process.argv[3] });
   try {
     fs.writeFileSync(temporary, entries.map(entry => JSON.stringify(entry)).join('\n') + '\n', { flag: 'wx', mode: 0o600 });
     try { fs.linkSync(temporary, sessionPath); }

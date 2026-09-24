@@ -42,6 +42,8 @@ pub struct SessionSeed {
 pub enum GroupChange {
     Create { name: String },
     Project { project: SessionGroup, key: Option<String> },
+    Relocate { project: SessionGroup, key: String },
+    InspectProject { id: String, #[serde(rename = "projectKind")] project_kind: super::ProjectKind },
     Rename { id: String, name: String },
     Remove { id: String },
     Assign { key: String, group: Option<String> },
@@ -49,6 +51,12 @@ pub enum GroupChange {
 
 fn storage_path() -> Result<PathBuf, String> {
     Ok(super::ensure_desktop_sessions_dir(&super::home_dir()?)?.join("groups.json"))
+}
+
+fn lock_storage(path: &PathBuf) -> Result<fs::File, String> {
+    let file = fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(path.with_extension("lock")).map_err(|error| error.to_string())?;
+    file.lock().map_err(|error| format!("Could not lock session groups: {error}"))?;
+    Ok(file)
 }
 
 fn read(path: &PathBuf) -> Result<Option<SessionGroups>, String> {
@@ -86,6 +94,7 @@ pub fn load_session_groups(seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Re
 }
 
 fn load_at(path: &PathBuf, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Result<SessionGroups, String> {
+    let _file_lock = lock_storage(path)?;
     let stored = read(path)?;
     let mut dirty = stored.is_none();
     let mut state = stored.unwrap_or(legacy);
@@ -98,6 +107,10 @@ fn load_at(path: &PathBuf, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Re
         }
     }
     for seed in seeds {
+        for group in state.groups.iter_mut().filter(|group| group.host_id == seed.project.host_id) {
+            if group.host_name != seed.project.host_name { group.host_name = seed.project.host_name.clone(); dirty = true; }
+            if group.id == seed.project.id && seed.project.project_kind.is_some() && group.project_kind != seed.project.project_kind { group.project_kind = seed.project.project_kind.clone(); dirty = true; }
+        }
         if state.assignments.contains_key(&seed.session_key) { continue; }
         let destination = if state.removed_projects.contains(&seed.project.id) { None } else {
             if !state.groups.iter().any(|group| group.id == seed.project.id) {
@@ -130,8 +143,31 @@ fn change_with(change: GroupChange, path: impl FnOnce() -> Result<PathBuf, Strin
 }
 
 fn change_at(path: &PathBuf, change: GroupChange) -> Result<SessionGroups, String> {
+    let _file_lock = lock_storage(path)?;
     let mut state = read(path)?.ok_or("Session groups have not loaded yet")?;
     match change {
+        GroupChange::Relocate { project, key } => {
+            if project.cwd.as_ref().is_none_or(|cwd| cwd.is_empty()) { return Err("Enter a project directory".into()); }
+            let previous = state.assignments.get(&key).cloned();
+            let old_id = previous.clone().flatten();
+            let automatic = old_id.as_ref().is_some_and(|id| state.groups.iter().any(|group| &group.id == id && group.cwd.is_some()));
+            if previous.is_none() || automatic {
+                state.removed_projects.remove(&project.id);
+                state.assignments.insert(key, Some(project.id.clone()));
+                if !state.groups.iter().any(|group| group.id == project.id) { state.groups.insert(0, project); }
+                if let Some(old_id) = old_id {
+                    if !state.assignments.values().any(|id| id.as_ref() == Some(&old_id)) {
+                        state.groups.retain(|group| group.id != old_id);
+                        state.removed_projects.insert(old_id);
+                    }
+                }
+            }
+        },
+        GroupChange::InspectProject { id, project_kind } => {
+            if !state.removed_projects.contains(&id) {
+                if let Some(group) = state.groups.iter_mut().find(|group| group.id == id) { group.project_kind = Some(project_kind); }
+            }
+        }
         GroupChange::Project { project, key } => {
             if project.cwd.as_ref().is_none_or(|cwd| cwd.trim().is_empty()) { return Err("Enter a project directory".into()); }
             state.removed_projects.remove(&project.id);

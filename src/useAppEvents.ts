@@ -1,7 +1,7 @@
 import { type Accessor } from "solid-js";
 import { createDependencyEffect, type Dispatch, type RefObject, type StateUpdate } from "./lib/solid";
 
-import { BTW_REQUEST_TITLE, MCP_STATUS_KEY, PROMPT_CONTEXT_STATUS_KEY, staleExtensionContext, type OwnedExtensionDialog, type QueuedTerminalOutput, type SessionTerminals, type SplitPaneState, type TerminalTarget } from "./appSupport";
+import { BTW_REQUEST_TITLE, MCP_STATUS_KEY, PROMPT_CONTEXT_STATUS_KEY, staleExtensionContext, type OwnedExtensionDialog, type SessionTerminals, type SplitPaneState, type TerminalTarget } from "./appSupport";
 import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "./lib/agentProtocol";
 import { NativeTransport } from "./lib/nativeTransport";
 import type { AgentState, AppSettings, DefinedAgentsCapability, ExtensionUiRequest, RpcEvent } from "./types";
@@ -16,6 +16,7 @@ type AppEventsContext = {
   addNotice: (notice: { title: string; message: string; }) => void;
   activeTransportRef: RefObject<NativeTransport>;
   pendingBtwRequest: RefObject<{ id: string; transport: NativeTransport; } | undefined>;
+  btwImages: WeakMap<NativeTransport, import("./types").ImageAttachment[]>;
   setSplitPane: Dispatch<StateUpdate<SplitPaneState | undefined>>;
   activeHostIdRef: RefObject<string>;
   setExtensionOwner: Dispatch<StateUpdate<NativeTransport>>;
@@ -39,12 +40,13 @@ type AppEventsContext = {
   setError: Dispatch<StateUpdate<string | undefined>>;
   updateConnected: (value: boolean) => void;
   terminalOutputFrame: RefObject<number | undefined>;
-  queuedTerminalOutput: RefObject<Map<string, QueuedTerminalOutput>>;
+  flushTerminalOutput: () => void;
 };
 
 export function useAppEvents(options: Accessor<AppEventsContext>) {
   createDependencyEffect(() => { const capturedOptions = options();
     let cancelled = false; let reconnecting = false; const refreshTimers = new Set<number>();
+    document.title = "piop"; capturedOptions.setStatuses({}); capturedOptions.setWidgets({});
     const loadSelectedSession = async () => {
       const current = () => !cancelled && capturedOptions.activeTransportRef.current === capturedOptions.transport;
       await capturedOptions.transport.connect();
@@ -96,8 +98,9 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
             capturedOptions.setSplitPane({
               key: crypto.randomUUID(),
               session: { id: `btw-${request.id}`, path: "", name: "BTW", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task, messageCount: 0, lastMessageAt: Date.now(), apiCost: 0, hostId: capturedOptions.activeHostIdRef.current },
-              btw: { task: payload.task, forkFrom: payload.sessionFile, requestId: request.id },
+              btw: { task: payload.task, forkFrom: payload.sessionFile, requestId: request.id, images: capturedOptions.btwImages.get(capturedOptions.transport) },
             });
+            capturedOptions.btwImages.delete(capturedOptions.transport);
           } catch (reason) {
             void capturedOptions.transport.command({ type: "extension_ui_response", id: request.id, cancelled: true });
             capturedOptions.addNotice({ title: "Could not start /btw", message: reason instanceof Error ? reason.message : String(reason) });
@@ -121,7 +124,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         };
         const setExtensionTitle = () => { document.title = request.title || "piop"; };
         const setEditorText = () => {
-          capturedOptions.setComposerDrafts((current) => { const key = capturedOptions.transportConversationKeys.current.get(capturedOptions.transport) ?? capturedOptions.terminalSessionIdRef.current; const next = { ...current }; if (request.text && !next[key]) next[key] = request.text; return next; });
+          capturedOptions.setComposerDrafts((current) => { const key = capturedOptions.transportConversationKeys.current.get(capturedOptions.transport) ?? capturedOptions.terminalSessionIdRef.current; const next = { ...current }; if (typeof request.text === "string") next[key] = request.text; return next; });
           capturedOptions.setActivePane("main");
           capturedOptions.setMainComposerFocusRequest((value) => value + 1);
         };
@@ -138,23 +141,25 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         void capturedOptions.refresh().catch(() => undefined);
       };
       const handleSettingsApplied = () => {
+        const current = () => !cancelled && capturedOptions.activeTransportRef.current === capturedOptions.transport;
+        if (!current()) return;
         if (capturedOptions.transport.currentHostId() !== capturedOptions.activeHostIdRef.current) {
           const conversationKey = `local:draft-${crypto.randomUUID()}`;
           capturedOptions.setActiveHostId(capturedOptions.transport.currentHostId()); capturedOptions.setActiveCwd(capturedOptions.transport.currentCwd());
           capturedOptions.transportConversationKeys.current.set(capturedOptions.transport, conversationKey); capturedOptions.activateConversationKey(conversationKey);
           capturedOptions.setTerminalOpen(false); capturedOptions.setTerminalTarget(undefined);
         }
-        void capturedOptions.refresh().then((value) => capturedOptions.configureRuntime(value)).then(() => { capturedOptions.setError(undefined); capturedOptions.updateConnected(true); }).catch((reason) => capturedOptions.setError(String(reason)));
+        void capturedOptions.refresh().then((value) => current() ? capturedOptions.configureRuntime(value) : undefined).then(() => { if (current()) { capturedOptions.setError(undefined); capturedOptions.updateConnected(true); } }).catch((reason) => { if (current()) capturedOptions.setError(String(reason)); });
       };
       const handleSessionInfoChanged = () => {
-        void capturedOptions.refresh();
+        void capturedOptions.refresh().catch(() => undefined);
       };
       const handleOwnershipLost = () => {
         capturedOptions.updateConnected(false);
         capturedOptions.setDialogs((current) => current.filter((dialog) => dialog.transport !== capturedOptions.transport));
       };
       const handleOwnershipAcquired = () => {
-        capturedOptions.updateConnected(true);
+        capturedOptions.updateConnected(false);
       };
       const handleDisconnected = () => {
         capturedOptions.setDefinedAgents(undefined);
@@ -182,11 +187,12 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         "session_info_changed": handleSessionInfoChanged,
         "ownership_lost": handleOwnershipLost,
         "ownership_acquired": handleOwnershipAcquired,
-        "disconnected": handleDisconnected
+        "disconnected": handleDisconnected,
+        "connection_restored": handleDisconnected
       };
       if (Object.hasOwn(handlers, event.type)) handlers[event.type]();
     });
     loadSelectedSession().catch((reason: unknown) => { if (!cancelled) capturedOptions.setError(reason instanceof Error ? reason.message : String(reason)); });
-    return () => { cancelled = true; refreshTimers.forEach(window.clearTimeout); unsubscribe(); if (capturedOptions.terminalOutputFrame.current !== undefined) window.clearTimeout(capturedOptions.terminalOutputFrame.current); capturedOptions.terminalOutputFrame.current = undefined; capturedOptions.queuedTerminalOutput.current.clear(); };
+    return () => { cancelled = true; refreshTimers.forEach(window.clearTimeout); unsubscribe(); if (capturedOptions.terminalOutputFrame.current !== undefined) window.clearTimeout(capturedOptions.terminalOutputFrame.current); capturedOptions.flushTerminalOutput(); };
   }, () => [options().addNotice, options().configureRuntime, options().handleEvent, options().queueExtensionDialog, options().queueTerminalOutput, options().refresh, options().refreshSession, options().transport]);
 }
