@@ -1,11 +1,10 @@
-import { createContext, createSignal, lazy, Show, Suspense, useContext, type JSX } from "solid-js";
+import { createSignal, lazy, Show, Suspense, type JSX } from "solid-js";
 import type { FileProject, FileReference } from "../lib/projectFiles";
+import { FilePaneContext } from "../lib/filePaneContext";
 import "./file-pane.css";
 
 export interface FilePaneRequest { project: FileProject; file?: FileReference; }
 const FilePane = lazy(() => import("./FilePane").then(module => ({ default: module.FilePane })));
-const FilePaneContext = createContext<{ open: (project: FileProject, file?: FileReference) => void }>();
-export const useFilePane = () => useContext(FilePaneContext);
 
 export function FileWorkspace(props: { children: JSX.Element }) {
   const [request, setRequest] = createSignal<FilePaneRequest>();
