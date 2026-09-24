@@ -13,7 +13,7 @@ export type Snapshot = {
   lastWarningAt: number; lastWarningSeq: number; warning?: Warning;
 };
 export type FileChange = { path: string; before: string; after: string };
-export const defaults = (): Config => ({ enabled: true, threshold: 4, cooldownSeconds: 120 });
+export const defaults = (): Config => ({ enabled: false, threshold: 4, cooldownSeconds: 120 });
 const integer = (value: unknown, min: number, max: number): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max;
 const hash = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 
