@@ -4,7 +4,7 @@ import { digest, observe, outcome, type Observation } from "./observations.ts";
 
 const ENTRY = "piop-loop-detection";
 const ADVISORY = "piop-loop-advisory";
-const USAGE = "/loop-detection [on|off|status|reset|threshold 3..10|cooldown 30..3600]";
+const USAGE = "/loop-detection [on|off|status|threshold 3..10|cooldown 30..3600]";
 const scope = (ctx: ExtensionContext) => digest(JSON.stringify([ctx.sessionManager.getSessionId(), ctx.cwd]));
 
 function profile(ctx: ExtensionContext) {
@@ -19,7 +19,7 @@ function configure(args: string, previous: Config) {
   if (action === "on" || action === "off") config.enabled = action === "on";
   else if (action === "threshold") config.threshold = Number(raw);
   else if (action === "cooldown") config.cooldownSeconds = Number(raw);
-  else if (action !== "reset" && action !== "status") throw new Error(USAGE);
+  else if (action !== "status") throw new Error(USAGE);
   validateArguments(action, raw, extra, config);
   return { action, config };
 }
@@ -114,7 +114,7 @@ export default function loopDetection(pi: ExtensionAPI) {
 
   pi.registerCommand("loop-detection", {
     description: `Configure advisory loop detection for this conversation branch. ${USAGE}`,
-    getArgumentCompletions: prefix => ["on", "off", "status", "reset", "threshold", "cooldown"].filter(value => value.startsWith(prefix.trim())).map(value => ({ value, label: value })),
+    getArgumentCompletions: prefix => ["on", "off", "status", "threshold", "cooldown"].filter(value => value.startsWith(prefix.trim())).map(value => ({ value, label: value })),
     handler: async (args, ctx) => {
       try {
         const { action, config } = configure(args, detector.state.config);
