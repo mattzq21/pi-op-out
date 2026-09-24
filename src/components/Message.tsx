@@ -151,7 +151,7 @@ export function Message(componentProps: Props) {
     try { await (capturedOnForkAndForget0)!(capturedMessage1); } finally { forgettingRef.current = false; setForgetting(false); }
   };
   const renderMessageBody = () => {
-    const renderVoiceResponseBubble = () => (voiceResponse() ? <div class="voice-response-bubble"><Markdown>{output()}</Markdown>{componentProps.message.streaming && <span class="stream-caret" />}</div> : <Markdown>{output()}</Markdown>);
+    const renderVoiceResponseBubble = () => (voiceResponse() ? <div class="voice-response-bubble"><Markdown streaming={componentProps.message.streaming}>{output()}</Markdown>{componentProps.message.streaming && <span class="stream-caret" />}</div> : <Markdown streaming={componentProps.message.streaming}>{output()}</Markdown>);
     const renderMessageFailure = () => (failureState().failure && <div class="message-failure" role="status"><CircleAlert size={14} /><span>{(failureState().failure)!}</span>{componentProps.onRetry && <button disabled={(componentProps.retrying === undefined ? false : componentProps.retrying)} onClick={(componentProps.onRetry)!}>{(componentProps.retrying === undefined ? false : componentProps.retrying) ? "Retrying…" : "Retry"}</button>}</div>);
     const renderStreamCaret = () => (componentProps.message.streaming && !voiceResponse() && <span class="stream-caret" />);
     const renderMessageActions = () => {
@@ -170,7 +170,7 @@ export function Message(componentProps: Props) {
       </div>);
     };
     return (<div class="message-body">
-      {thinking() && <div class="reasoning-text"><Markdown>{thinking()}</Markdown></div>}
+      {thinking() && <div class="reasoning-text"><Markdown streaming={componentProps.message.streaming}>{thinking()}</Markdown></div>}
       {renderVoiceResponseBubble()}
       {renderMessageFailure()}
       {failureState().pausedResponse && <div class="message-paused" role="status"><Pause size={14} /><span>Response paused</span></div>}

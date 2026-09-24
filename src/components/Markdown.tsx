@@ -4,6 +4,8 @@ import { Marked } from "marked";
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { openExternalUrl } from "../lib/nativeTransport";
+import { diagramFenceClosed } from "../lib/diagrams";
+import { markdownDiagrams } from "./markdownDiagrams";
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
 function webUrl(href: string) {
@@ -23,8 +25,9 @@ const parserOptions = (noteLinks: boolean) => new Marked({
       const url = webUrl(href);
       return url ? `<a class="message-link" href="${escapeHtml(url)}" title="Click to open in browser&#10;${escapeHtml(url)}">${text}</a>` : `<span class="message-link" title="${escapeHtml(href)}">${text}</span>`;
     },
-    code({ text, lang }) {
+    code({ text, lang, raw }) {
       const language = lang?.split(/\s/)[0];
+      if (language?.toLowerCase() === "mermaid") return `<div class="diagram-placeholder" data-complete="${diagramFenceClosed(raw)}"><pre><code>${escapeHtml(text)}</code></pre></div>`;
       return `<div class="code-block"><pre><code${language ? ` class="language-${escapeHtml(language)}"` : ""}>${escapeHtml(text)}\n</code></pre><button type="button" class="icon-button code-copy" aria-label="Copy code" title="Copy code">⧉</button></div>`;
     },
   },
@@ -47,9 +50,10 @@ notesParser.use({ extensions: [{
 
 let purifier: ReturnType<typeof DOMPurify> | undefined;
 let purifierWindow: Window | undefined;
-export function markdownHtml(source: string, noteLinks = false) {
+export function markdownHtml(source: string, noteLinks = false, streaming = false) {
   if (!purifier || purifierWindow !== window) { purifier = DOMPurify(window); purifierWindow = window; }
-  return purifier.sanitize((noteLinks ? notesParser : parser).parse(source, { async: false }), {
+  const html = (noteLinks ? notesParser : parser).parse(source, { async: false });
+  return purifier.sanitize(streaming ? html : html.replaceAll('data-complete="false"', 'data-complete="true"'), {
     USE_PROFILES: { html: true },
     FORBID_TAGS: ["img", "video", "audio", "source", "iframe", "form", "style"],
     FORBID_ATTR: ["style", "src", "srcset", "id", "name"],
@@ -57,12 +61,15 @@ export function markdownHtml(source: string, noteLinks = false) {
 }
 
 type LinkMenu = { href: string; x: number; y: number; returnFocus?: HTMLElement };
-export function Markdown(props: { children: string; onNoteLink?: (target: string) => void }) {
-  const html = createMemo(() => markdownHtml(props.children, !!props.onNoteLink));
+export function Markdown(props: { children: string; onNoteLink?: (target: string) => void; streaming?: boolean }) {
+  const html = createMemo(() => markdownHtml(props.children, !!props.onNoteLink, props.streaming));
   const [error, setError] = createSignal<string>();
   const [menu, setMenu] = createSignal<LinkMenu>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   let root: HTMLDivElement | undefined;
+  const diagrams = markdownDiagrams();
+  createEffect(() => { html(); if (root) diagrams.update(root); });
+  onCleanup(() => diagrams.dispose());
   const [menuElement, setMenuElement] = createSignal<HTMLDivElement>();
   onCleanup(() => timers.forEach(clearTimeout));
   const close = (restoreFocus = false) => { if (restoreFocus) menu()?.returnFocus?.focus({ preventScroll: true }); setMenu(undefined); };
