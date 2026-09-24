@@ -129,6 +129,8 @@ export function ChatView(props: Props) {
     const composer = composerStack.current;
     if (props.readOnly || !composer) return;
     const updateLayout = () => {
+      composer.style.paddingLeft = `${messages.clientLeft}px`;
+      composer.style.paddingRight = `${messages.offsetWidth - messages.clientWidth - messages.clientLeft}px`;
       messages.style.setProperty("--composer-height", `${composer.getBoundingClientRect().height}px`);
       scrollToLatest();
     };
@@ -136,7 +138,13 @@ export function ChatView(props: Props) {
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(updateLayout);
     observer.observe(composer);
-    return () => { observer.disconnect(); messages.style.removeProperty("--composer-height"); };
+    observer.observe(messages);
+    return () => {
+      observer.disconnect();
+      messages.style.removeProperty("--composer-height");
+      composer.style.removeProperty("padding-left");
+      composer.style.removeProperty("padding-right");
+    };
   }, () => [props.readOnly, scrollToLatest]);
   const selectionBtwEnabled = createMemo(() => (Boolean(ownsConversation() && props.selectionBtw && !props.readOnly && !props.controlsDisabled && props.commands.some((command) => command.name === "btw"))));
   createDependencyEffect(() => { const capturedSelectionBtwEnabled = selectionBtwEnabled();
