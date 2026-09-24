@@ -24,8 +24,7 @@
 .file-pane-error, .file-pane-unsaved { padding: 10px 12px; font-size: 12px; background: var(--accent-soft); overflow-wrap: anywhere; }
 .file-pane-error { background: color-mix(in srgb, #d77865 12%, var(--paper)); color: color-mix(in srgb, #d77865 65%, var(--ink)); border-left: 2px solid #d77865; }
 .file-pane-unsaved > div { display: flex; gap: 5px; margin-top: 6px; }
-.chat-files-toolbar { position: absolute; top: 0; right: 0; z-index: 1; display: flex; justify-content: flex-end; padding: 7px 12px; }
-.chat-workspace:has(> .open-notes-button) .chat-files-toolbar { right: 42px; }
+.chat-files-toolbar { display: flex; justify-content: flex-end; flex-shrink: 0; margin-left: auto; }
 .chat-files-toolbar button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--muted); padding: 5px 9px; font-size: 12px; }
 .chat-files-toolbar button:hover { color: var(--ink); background: var(--accent-08); }
 .chat-files-toolbar button:disabled { opacity: .45; cursor: default; }
