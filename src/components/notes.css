@@ -1,6 +1,7 @@
 .notes-pane { position: relative; order: 3; flex: 0 0 var(--notes-width); width: var(--notes-width); min-width: 0; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); }
 .notes-pane[hidden] { display: none; }
-.notes-pane.collapsed { flex-basis: 42px; width: 42px; align-items: center; padding-top: 14px; }
+.chat-workspace > .open-notes-button { position: absolute; z-index: 5; top: 8px; right: 12px; }
+.chat-workspace:has(> .open-notes-button) .split-pane-header { padding-right: 54px; }
 .notes-pane button:disabled { opacity: .45; cursor: default; }
 .notes-pane button:focus-visible, .notes-pane input:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .notes-header { display: flex; align-items: center; flex: 0 0 52px; gap: 3px; padding: 8px 10px 3px 16px; }
@@ -63,11 +64,11 @@
 .notes-resizer::after { content: ""; position: absolute; inset: 0 3px; background: transparent; }
 .notes-resizer:hover::after, .notes-resizer.dragging::after, .notes-resizer:focus-visible::after { background: var(--accent); }
 @media (max-width: 1100px) {
-  .notes-pane.expanded { position: fixed; z-index: 10; inset: 0 0 0 auto; width: min(var(--notes-width), calc(100vw - 48px)); box-shadow: -16px 0 48px #0004; }
+  .notes-pane { position: fixed; z-index: 10; inset: 0 0 0 auto; width: min(var(--notes-width), calc(100vw - 48px)); box-shadow: -16px 0 48px #0004; }
 }
 @media (max-width: 700px) {
-  .notes-pane.expanded { width: 100%; top: calc(52px + env(safe-area-inset-top)); bottom: env(safe-area-inset-bottom); }
-  .notes-pane.collapsed { position: fixed; z-index: 15; top: env(safe-area-inset-top); right: 8px; width: 40px; padding-top: 6px; border: 0; background: transparent; }
+  .notes-pane { width: 100%; top: calc(52px + env(safe-area-inset-top)); bottom: env(safe-area-inset-bottom); }
+  .chat-workspace > .open-notes-button { position: fixed; z-index: 15; top: calc(6px + env(safe-area-inset-top)); right: 8px; }
   .notes-editor, .notes-form input, .notes-search input { font-size: 16px; }
   .notes-resizer { display: none; }
 }

@@ -9,9 +9,8 @@ type FormAction = "create" | "rename" | "vault" | "copy";
 type FormState = { action: FormAction; value: string };
 const formLabels: Record<FormAction, string> = { create: "New note", rename: "Rename note", vault: "Open notes folder", copy: "Save draft as a copy" };
 
-export function NotesPane(props: { hidden: boolean }) {
+export function NotesPane(props: { hidden: boolean; open: boolean; onClose: () => void }) {
   const notes = useNotes();
-  const [open, setOpen] = createSignal(notePreference("open", window.innerWidth > 1100 ? "true" : "false") === "true");
   const [width, setWidth] = createSignal(Number(notePreference("width", "360")) || 360);
   const [viewportWidth, setViewportWidth] = createSignal(window.innerWidth);
   const [preview, setPreview] = createSignal(false);
@@ -29,11 +28,10 @@ export function NotesPane(props: { hidden: boolean }) {
   let editor: HTMLTextAreaElement | undefined;
 
   createEffect(() => {
-    if (props.hidden || !open() || initialized) return;
+    if (props.hidden || !props.open || initialized) return;
     initialized = true;
     void notes.openVault();
   });
-  const toggle = (value: boolean) => { setOpen(value); rememberNotePreference("open", String(value)); };
   const resize = (value: number) => {
     const next = Math.round(Math.min(maxWidth(), Math.max(300, value)));
     setWidth(next);
@@ -103,8 +101,8 @@ export function NotesPane(props: { hidden: boolean }) {
     <footer class="notes-status"><span classList={{ unsaved: notes.dirty() }} role="status">{status()}</span><span>{wordCount()} words · Markdown</span></footer>
   </Show>;
 
-  return <aside class={`notes-pane ${open() ? "expanded" : "collapsed"}`} hidden={props.hidden} aria-label="Notes" style={{ "--notes-width": `${visibleWidth()}px` }} onKeyDown={editorKeyDown}>
-    <Show when={open()} fallback={<IconButton label="Open notes" onClick={() => toggle(true)}><Notebook size={19} /></IconButton>}>
+  return <aside id="notes-pane" class="notes-pane" hidden={props.hidden || !props.open} aria-label="Notes" style={{ "--notes-width": `${visibleWidth()}px` }} onKeyDown={editorKeyDown}>
+    <Show when={props.open}>
       <div class={`notes-resizer ${dragging() ? "dragging" : ""}`} role="separator" tabIndex={0} aria-label="Notes pane width" aria-orientation="vertical" aria-valuemin={300} aria-valuemax={maxWidth()} aria-valuenow={visibleWidth()}
         onPointerDown={event => {
           if (event.button !== 0 || !event.isPrimary) return;
@@ -125,7 +123,7 @@ export function NotesPane(props: { hidden: boolean }) {
         <IconButton label="New note" disabled={notes.busy() || !notes.ready()} onClick={() => begin("create")}><FilePlus2 size={16} /></IconButton>
         <IconButton label="Open notes folder" disabled={notes.busy()} onClick={() => begin("vault", notes.root())}><FolderOpen size={16} /></IconButton>
         <IconButton label="Refresh notes" disabled={notes.busy()} onClick={() => void (notes.ready() ? notes.refresh() : notes.openVault())}><RefreshCw size={15} /></IconButton>
-        <IconButton label="Close notes" onClick={() => toggle(false)}><PanelRightClose size={17} /></IconButton>
+        <IconButton label="Close notes" onClick={props.onClose}><PanelRightClose size={17} /></IconButton>
       </header>
       <div class="notes-vault" title={notes.root()}>{notes.root() || "Your Markdown notebook"}</div>
       <Show when={form()}>{current => <form class="notes-form" onSubmit={submit}>

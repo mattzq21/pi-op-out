@@ -1,5 +1,5 @@
 import { Key, Rerun } from "@solid-primitives/keyed";
-import { ArrowLeft, Bug, FolderPlus, GitBranch, MessageSquare, Mic, Server, Settings } from "lucide-solid";
+import { ArrowLeft, Bug, FolderPlus, GitBranch, MessageSquare, Mic, Notebook, Server, Settings } from "lucide-solid";
 import { createComputed, createMemo, createSignal } from "solid-js";
 import { appendTerminalOutputs, AppLoading, dialogOwnerName, goUsageBadge, initialTerminals, LimitBadge, MAX_TERMINALS, normalizeCodexUsage, normalizeOpencodeGoUsage, selectedProjectCwd, splitConversationKey, terminalConversationKey, useUsageClock, type OwnedExtensionDialog, type QueuedTerminalOutput, type RenameTarget, type SessionTerminals, type SplitPaneState, type TerminalTarget, type WorktreeTarget } from "./appSupport";
 import { createBranchConversation } from "./branchConversation";
@@ -22,6 +22,7 @@ import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
 import { branchMessages, type PiEntry } from "./lib/messages";
 import { recordSeenModels } from "./lib/modelVisibility";
 import { initialWindowTarget, NativeTransport, openOrchestratorChat, openSessionWindow } from "./lib/nativeTransport";
+import { notePreference, rememberNotePreference } from "./lib/notes";
 import { ORCHESTRATOR_SESSION_ID, VOICE_ORCHESTRATOR_AGENT } from "./lib/orchestrator";
 import { isMobile, listen } from "./lib/platform";
 import { updateSessionGroups, type SessionGroup } from "./lib/sessionGroups";
@@ -100,6 +101,8 @@ export default function App() {
   const [relocatingSession, setRelocatingSession] = createSignal<SessionSummary>(); const [relocationError, setRelocationError] = createSignal<string>();
   const relocationActionRef = createRef<"select" | "split" | "rename">("select");
   const [terminalOpen, setTerminalOpen] = createSignal(false);
+  const [notesOpen, setNotesOpen] = createSignal(notePreference("open", window.innerWidth > 1100 ? "true" : "false") === "true");
+  const toggleNotes = (open: boolean) => { setNotesOpen(open); rememberNotePreference("open", String(open)); };
   const [terminalTarget, setTerminalTarget] = createSignal<TerminalTarget>();
   const [composerDrafts, setComposerDrafts] = createSignal<Record<string, string>>({});
   const [uploadsByTransport, setUploadsByTransport] = createSignal<Map<NativeTransport, ComposerUpload[]>>((() => new Map())());
@@ -703,6 +706,7 @@ export default function App() {
       </div>);
     };
     return (<div class="chat-workspace" hidden={view() !== "chat"}>
+      {!notesOpen() && <IconButton class="open-notes-button" label="Open notes" aria-expanded={false} aria-controls="notes-pane" onClick={() => toggleNotes(true)}><Notebook size={19} /></IconButton>}
       {renderChatPanes()}
       {terminalOpen() && <Rerun on={() => `${terminalSessionId()}:${composerState().activeTerminal.id}`}>{() => <TerminalView  cwd={terminalLocationState().terminalCwd} terminals={composerState().sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={composerState().activeTerminal.id} output={composerState().activeTerminal.output} outputEnd={composerState().activeTerminal.outputEnd} snapshot={composerState().activeTerminal.snapshot} snapshotEnd={composerState().activeTerminal.snapshotEnd} started={composerState().activeTerminal.started} exited={composerState().activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { void transport().writeTerminal(composerState().activeTerminal.id, data).catch((reason) => queueTerminalOutput(composerState().activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { void transport().resizeTerminal(composerState().activeTerminal.id, cols, rows).catch(() => undefined); }} onSnapshot={((sessionId: string, terminalId: string) => (value: string, outputEnd: number) => saveTerminalSnapshot(sessionId, terminalId, value, outputEnd))(terminalSessionId(), composerState().activeTerminal.id)} onDelete={deleteTerminal} onClose={() => { terminalPanelRevision.current += 1; setTerminalOpen(false); }} />}</Rerun>}
     </div>);
@@ -727,7 +731,7 @@ export default function App() {
     {renderSidebar()}
     {renderChatWorkspace()}
     {renderSettingsView()}
-    <NotesPane hidden={view() !== "chat"} />
+    <NotesPane hidden={view() !== "chat"} open={notesOpen()} onClose={() => toggleNotes(false)} />
     <FindInPage selector=".chat-panes > .chat-shell" scopeKey={activeConversationKey()} onActivate={() => setActivePane("main")} active={activePane() === "main" || !splitPane()} enabled={view() === "chat"} />
     {splitPane() && <Rerun on={() => splitSessionId()}>{() => <FindInPage selector=".split-chat .chat-shell" scopeKey={splitSessionId()} onActivate={() => setActivePane("split")} active={activePane() === "split"} enabled={view() === "chat"} />}</Rerun>}
     {view() === "settings" && <FindInPage selector=".settings-shell" scopeKey="settings" />}
