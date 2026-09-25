@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const limit = 10;
+const lineLimit = 750;
 const options = { cwd: root, encoding: 'utf8', timeout: 30_000, maxBuffer: 16 * 1024 * 1024 };
 
 function checkSpace(space, file) {
@@ -21,6 +22,18 @@ function checkSpace(space, file) {
   return failures;
 }
 
+function checkLines(space, file) {
+  const { ploc, blank } = space.metrics.loc;
+  if (!Number.isFinite(ploc) || !Number.isFinite(blank)) {
+    throw new Error(`Invalid line metrics for ${file}`);
+  }
+  // Physical code lines plus blanks excludes only comment-only lines.
+  const lines = ploc + blank;
+  if (lines <= lineLimit) return 0;
+  console.error(`${file}: ${lines} lines excluding comment-only lines (maximum ${lineLimit})`);
+  return 1;
+}
+
 function main() {
   try {
     execFileSync('rust-code-analysis-cli', ['--version'], options);
@@ -33,12 +46,16 @@ function main() {
   ], options).split('\0').filter(Boolean))];
   if (files.length === 0) throw new Error('No Rust files found for complexity checking');
   let failures = 0;
+  let oversizedFiles = 0;
   for (const file of files) {
     const output = execFileSync('rust-code-analysis-cli', ['-m', '-p', file, '-O', 'json'], options);
-    failures += checkSpace(JSON.parse(output), file);
+    const space = JSON.parse(output);
+    failures += checkSpace(space, file);
+    oversizedFiles += checkLines(space, file);
   }
   console.log(`Rust cyclomatic complexity: ${files.length} files checked, ${failures} functions exceed ${limit}.`);
-  process.exitCode = failures > 0 ? 1 : 0;
+  console.log(`Rust file length: ${files.length} files checked, ${oversizedFiles} files exceed ${lineLimit} lines excluding comment-only lines.`);
+  process.exitCode = failures + oversizedFiles > 0 ? 1 : 0;
 }
 
 try {
