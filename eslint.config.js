@@ -1,6 +1,8 @@
 import tsParser from '@typescript-eslint/parser';
 import tsPlugin from '@typescript-eslint/eslint-plugin';
 
+const unusedOptions = { args: 'all', argsIgnorePattern: '^_', caughtErrors: 'all', caughtErrorsIgnorePattern: '^_', ignoreRestSiblings: true };
+
 export default [
   {
     ignores: [
@@ -26,7 +28,10 @@ export default [
     },
     rules: {
       complexity: ['error', { max: 10, variant: 'classic' }],
-      "max-lines": ['error', { max: 750, skipComments: true }]
+      "max-lines": ['error', { max: 750, skipComments: true }],
+      'no-unused-vars': ['error', unusedOptions],
+      'no-unreachable': 'error',
+      'no-unused-labels': 'error',
     },
   },
   {
@@ -35,6 +40,8 @@ export default [
     plugins: { '@typescript-eslint': tsPlugin },
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': ['error', unusedOptions],
     },
   },
 ];
