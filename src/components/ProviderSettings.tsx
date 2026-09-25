@@ -93,18 +93,19 @@ export function ProviderSettings(componentProps: { hosts: RemoteHost[]; initialH
     {auth.error && <p class="provider-error" role="alert">{auth.error}</p>}
     {adding() && <Rerun on={() => hostId()}>{(_key) => <CustomProviderForm  working={!!disabled()} save={auth.createProvider} close={() => setAdding(false)} />}</Rerun>}
     {auth.flow && <LoginPanel flow={auth.flow} auth={auth} />}
-    {auth.loading && <div class="empty-small" role="status">Loading providers on {hostName()}…</div>}
+    {auth.loading && !auth.providers.length && <div class="empty-small" role="status">Loading providers on {hostName()}…</div>}
     <ProviderList providers={providers()} auth={auth} disabled={disabled()} />
     <p class="provider-login-help">Removing a saved login leaves credentials from environment variables or other host configuration in place. Voice uses the host’s separate Codex login.</p>
   </div>;
 }
 
 function LoginPanel(componentProps: { flow: AuthFlow; auth: AuthControls }) {
+  const promptId = createMemo(() => componentProps.flow.prompt?.id);
   return <div class="provider-login-panel" aria-label="Provider login">
     <strong>{componentProps.flow.name ?? componentProps.auth.providers.find((provider) => provider.id === componentProps.flow.providerId)?.name ?? componentProps.flow.providerId}</strong>
     <FlowStatus flow={componentProps.flow} />
     {<Index each={componentProps.flow.notices}>{(notice, index) => <LoginNotice  notice={notice()} />}</Index>}
-    {componentProps.flow.prompt && <Rerun on={() => componentProps.flow.prompt?.id}>{(_key) => <LoginPrompt  prompt={componentProps.flow.prompt!} working={componentProps.auth.working} reply={componentProps.auth.reply} />}</Rerun>}
+    {componentProps.flow.prompt && <Rerun on={promptId}>{(_key) => <LoginPrompt  prompt={componentProps.flow.prompt!} working={componentProps.auth.working} reply={componentProps.auth.reply} />}</Rerun>}
     {componentProps.flow.status === "pending" && <button type="button" disabled={componentProps.auth.working} onClick={() => void componentProps.auth.cancel()}>Cancel login</button>}
   </div>;
 }

@@ -84,6 +84,7 @@ function settingsViewDefaults({ selectedSection, embedded = false, resourceError
 
 export function SettingsView(props: SettingsViewProps) {
   const settingsProps = createMemo(() => (settingsViewDefaults(props)));
+  const providerHostId = createMemo(() => settingsProps().providerHostId);
   const [saving, setSaving] = createSignal(false);
   createDependencyEffect(() => {
     const capturedSettingsProps = { ...settingsProps() }; const capturedSaving = saving();
@@ -347,7 +348,7 @@ export function SettingsView(props: SettingsViewProps) {
       };
       return (<section class="settings-content">
         {!formValidation().matchingSections.length && <div class="empty-small" role="status">No settings match your search.</div>}
-        {formValidation().visibleSection === "providers" && <Rerun on={() => settingsProps().providerHostId}>{(_key) => <ProviderSettings  hosts={settingsProps().providerHosts ?? settingsProps().settings.hosts} initialHostId={settingsProps().providerHostId} fixedHost />}</Rerun>}
+        {formValidation().visibleSection === "providers" && <Rerun on={providerHostId}>{(_key) => <ProviderSettings  hosts={settingsProps().providerHosts ?? settingsProps().settings.hosts} initialHostId={settingsProps().providerHostId} fixedHost />}</Rerun>}
         {renderWorktreeScripts()}
         {renderGeneral()}
         {renderModels()}
