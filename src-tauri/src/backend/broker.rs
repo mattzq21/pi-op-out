@@ -138,6 +138,13 @@ fn enqueue_broker_message(app: AppHandle, broker: BrokerRuntime, stream: TcpStre
 
 fn respond_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStream, method: &str, path: &str, body: Vec<u8>) -> Result<(), String> {
     let result = match (method, path) {
+        ("POST", "/terminals") => (|| {
+            let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid terminal lookup request")?;
+            let host_id = value["hostId"].as_str().ok_or("hostId is required")?;
+            #[cfg(not(feature = "desktop"))]
+            if host_id != "local" { return peers::forward_broker(&app, host_id, "/terminals", value.clone()); }
+            terminal_lookup::lookup(&app.state::<TerminalRuntime>(), &value, host_id)
+        })(),
         ("GET", "/agents") => {
             broker_agents(&app, &broker)
         },

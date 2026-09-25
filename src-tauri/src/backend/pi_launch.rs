@@ -204,8 +204,6 @@ enum PiLaunch<'a> {
 }
 
 fn session_worker_executable() -> Result<PathBuf, String> {
-    // Keep using this daemon's executable after a rebuild unlinks its original
-    // path. The explicit PID also works when Node launches the worker for us.
     #[cfg(target_os = "linux")]
     { Ok(PathBuf::from(format!("/proc/{}/exe", std::process::id()))) }
     #[cfg(not(target_os = "linux"))]

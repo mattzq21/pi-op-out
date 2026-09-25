@@ -17,7 +17,7 @@ fn default_settings() -> AppSettings {
 }
 
 fn session_operation_tools() -> Vec<Value> {
-    [("fork_session", "Fork a conversation in any project"), ("create_worktree", "Create a Git worktree"), ("remove_worktree", "Remove an unused Git worktree"), ("subagent", "Delegate parallel tasks to agents with saved transcripts"), ("request_user_input", "Ask the user questions with choices and free-text answers")].into_iter().map(|(name, description)| json!({"name":name,"description":description,"enabled":true,"builtin":false})).collect()
+    [("fork_session", "Fork a conversation in any project"), ("create_worktree", "Create a Git worktree"), ("remove_worktree", "Remove an unused Git worktree"), ("subagent", "Delegate parallel tasks to agents with saved transcripts"), ("request_user_input", "Ask the user questions with choices and free-text answers"), ("lookup_terminals", "Read session terminal activity through terminal-agent")].into_iter().map(|(name, description)| json!({"name":name,"description":description,"enabled":true,"builtin":false})).collect()
 }
 
 fn migrate_question_tool(settings: &mut AppSettings) {

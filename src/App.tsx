@@ -1,7 +1,7 @@
 import { useAppKeyboard } from "./useAppKeyboard";
 import { createTransportActivation } from "./appTransportActivation";
 import { createWorktreeActions } from "./appWorktrees";
-import { configureConversationRuntime } from "./appRuntime";
+import { configureConversationRuntime, reassignTerminals } from "./appRuntime";
 import { Key, Rerun } from "@solid-primitives/keyed";
 import { ArrowLeft, Bug, FolderPlus, GitBranch, MessageSquare, Mic, Notebook, Server, Settings } from "lucide-solid";
 import { batch, createComputed, createMemo, createSignal, onCleanup } from "solid-js";
@@ -159,6 +159,7 @@ export default function App() {
     return { composerDraft, composerUploads, splitComposerDraft, sessionTerminals, activeTerminal };
   };
   const composerState = createMemo(() => (composerAndTerminalState()));
+  const terminalViewKey = createMemo(() => `${terminalSessionId()}:${composerState().activeTerminal.id}`);
   const terminalsBySessionRef = createRef(terminalsBySession()); createComputed(() => { terminalsBySessionRef.current = terminalsBySession(); });
   const activateConversationKey = (key: string) => { activeConversationKeyRef.current = key; setActiveConversationKey(key); };
   createDependencyEffect(() => {
@@ -326,6 +327,7 @@ export default function App() {
   });
   const rekeyConversationUi = (previousKey: string, nextKey: string, ownerTransport: NativeTransport, moveTerminals = true, copyDraft = false) => {
     if (previousKey === nextKey) return;
+    if (moveTerminals) reassignTerminals(ownerTransport, terminalsBySession()[previousKey]?.tabs ?? [], nextKey, (reason) => addNotice({ title: "Could not move terminal history", message: String(reason) }));
     setComposerDrafts((current) => { if (!(previousKey in current)) return current; const next = { ...current, [nextKey]: current[previousKey] }; if (!copyDraft) delete next[previousKey]; return next; });
     if (moveTerminals) setTerminalsBySession((current) => { if (!(previousKey in current)) return current; const next = { ...current, [nextKey]: current[previousKey] }; delete next[previousKey]; return next; });
     if (moveTerminals) setTerminalTarget((current) => current?.sessionKey === previousKey ? { ...current, sessionKey: nextKey } : current);
@@ -685,7 +687,7 @@ export default function App() {
     };
     return (<div class="chat-workspace" hidden={view() !== "chat"}>
       <FileWorkspace sessionKey={activeConversationKey()}>{renderChatPanes()}</FileWorkspace>
-      {terminalOpen() && <Rerun on={() => `${terminalSessionId()}:${composerState().activeTerminal.id}`}>{(_key) => <TerminalView  cwd={terminalLocationState().terminalCwd} terminals={composerState().sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={composerState().activeTerminal.id} output={composerState().activeTerminal.output} outputEnd={composerState().activeTerminal.outputEnd} snapshot={composerState().activeTerminal.snapshot} snapshotEnd={composerState().activeTerminal.snapshotEnd} started={composerState().activeTerminal.started} exited={composerState().activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { void transport().writeTerminal(composerState().activeTerminal.id, data).catch((reason) => queueTerminalOutput(composerState().activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { void transport().resizeTerminal(composerState().activeTerminal.id, cols, rows).catch(() => undefined); }} onSnapshot={((sessionId: string, terminalId: string) => (value: string, outputEnd: number) => saveTerminalSnapshot(sessionId, terminalId, value, outputEnd))(terminalSessionId(), composerState().activeTerminal.id)} onDelete={deleteTerminal} onClose={() => { terminalPanelRevision.current += 1; setTerminalOpen(false); }} />}</Rerun>}
+      {terminalOpen() && <Rerun on={terminalViewKey}>{(_key) => <TerminalView  cwd={terminalLocationState().terminalCwd} terminals={composerState().sessionTerminals.tabs.map((terminal, index) => ({ id: terminal.id, label: index === 0 ? "Terminal" : `Terminal ${index + 1}` }))} activeId={composerState().activeTerminal.id} output={composerState().activeTerminal.output} outputEnd={composerState().activeTerminal.outputEnd} snapshot={composerState().activeTerminal.snapshot} snapshotEnd={composerState().activeTerminal.snapshotEnd} started={composerState().activeTerminal.started} exited={composerState().activeTerminal.exited} onAdd={addTerminal} onSelect={selectTerminal} onStart={startTerminal} onData={(data) => { void transport().writeTerminal(composerState().activeTerminal.id, data).catch((reason) => queueTerminalOutput(composerState().activeTerminal.id, `\r\nTerminal input failed: ${String(reason)}\r\n`)); }} onResize={(cols, rows) => { void transport().resizeTerminal(composerState().activeTerminal.id, cols, rows).catch(() => undefined); }} onSnapshot={((sessionId: string, terminalId: string) => (value: string, outputEnd: number) => saveTerminalSnapshot(sessionId, terminalId, value, outputEnd))(terminalSessionId(), composerState().activeTerminal.id)} onDelete={deleteTerminal} onClose={() => { terminalPanelRevision.current += 1; setTerminalOpen(false); }} />}</Rerun>}
     </div>);
   };
   const renderSettingsView = () => (view() === "settings" && <LocalSettingsView pendingSettingsCount={pendingSettingsCount()} settings={(settings())!} sessions={sessions()} onSave={saveSettings} onDirtyChange={setSettingsDirty} />);

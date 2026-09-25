@@ -61,6 +61,7 @@ fn detach_owner(app: &AppHandle, owner: &str, discard_blank: bool) {
     let terminals = app.state::<TerminalRuntime>();
     let ids = terminals.processes.lock().map(|processes| processes.iter().filter(|(_, process)| process.window_label == owner).map(|(id, _)| id.clone()).collect::<Vec<_>>()).unwrap_or_default();
     let _ = stop_terminals(&terminals, &ids);
+    terminal_lookup::detach(&terminals, owner);
 }
 
 fn shutdown_backend(app: &AppHandle) {
@@ -76,7 +77,9 @@ fn shutdown_backend(app: &AppHandle) {
     let _ = stop_terminals(&terminals, &ids);
     let runtime = app.state::<PiRuntime>();
     if let Ok(setups) = runtime.worktree_setups.lock() { for cancelled in setups.values() { cancelled.store(true, Ordering::SeqCst); } }
-    if let Ok(daemons) = runtime.daemons.lock() { for daemon in daemons.values() { daemon.shutdown(); } }
+    let daemons = runtime.daemons.lock().map(|daemons| daemons.values().cloned().collect::<Vec<_>>()).unwrap_or_default();
+    for daemon in &daemons { daemon.shutdown(); }
+    for daemon in daemons { daemon.wait_shutdown(); let _ = daemon.drain_captures(None); }
     let ephemeral = runtime.ephemeral_sessions.lock().map(|mut sessions| sessions.drain().map(|(_, session)| session).collect::<Vec<_>>()).unwrap_or_default();
     for session in ephemeral { remove_ephemeral_session(session); }
 }

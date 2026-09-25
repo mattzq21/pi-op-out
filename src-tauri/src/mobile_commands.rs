@@ -38,6 +38,7 @@ async fn dispatch_local(app: AppHandle, owner: String, command: String, args: Va
 type CommandFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>>;
 type CommandHandler = fn(AppHandle, String, Value) -> CommandFuture;
 const COMMANDS: &[(&str, CommandHandler)] = &[
+    ("reassign_terminal", handle_reassign_terminal),
     ("notes", handle_notes),
     ("dictation_configuration", handle_dictation_configuration),
     ("dictation_transcribe", handle_dictation_transcribe),
@@ -489,5 +490,11 @@ fn start_terminal_options(args: &Value) -> Result<StartTerminalOptions, String> 
         cols: argument(args, "cols")?,
         rows: argument(args, "rows")?,
         host_id: argument(args, "hostId")?
+    })
+}
+
+fn handle_reassign_terminal(app: AppHandle, owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        terminal_lookup::reassign(&app.state::<TerminalRuntime>(), &owner, &argument::<String>(&args, "terminalId")?, &argument::<String>(&args, "sessionKey")?).map(|_| Value::Null)
     })
 }

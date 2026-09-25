@@ -13,6 +13,7 @@ mod desktop_daemon;
 mod provider_auth;
 mod conversation_ownership;
 mod session_groups;
+mod terminal_lookup;
 #[cfg(not(feature = "desktop"))]
 mod notes;
 mod daemon;
@@ -104,6 +105,7 @@ struct TerminalProcess {
 #[derive(Default)]
 struct TerminalRuntime {
     processes: Arc<Mutex<HashMap<String, TerminalProcess>>>,
+    history: Arc<Mutex<HashMap<String, terminal_lookup::Transcript>>>,
 }
 
 #[derive(Clone)]

@@ -4,16 +4,10 @@ import tsParser from '@typescript-eslint/parser';
 
 const root = new URL('../', import.meta.url);
 const fragments = [
-  'src-tauri/resources/daemon-queue.mjs',
   'extensions/piop-runtime-settings/provider-accounts.mjs',
-  'src-tauri/resources/provider-auth.mjs',
-  'src-tauri/resources/conversation-ownership.mjs',
-  'src-tauri/resources/voice-service.mjs',
-  'src-tauri/resources/host-daemon-commands.mjs',
-  'src-tauri/resources/host-daemon.mjs',
+  'src-tauri/resources/provider-sdk.mjs',
 ];
 
-// daemon.rs concatenates these fragments into one module before starting Node.
 const references = fragments.map((file) => {
   const path = fileURLToPath(new URL(file, root));
   const { scopeManager } = tsParser.parseForESLint(readFileSync(path, 'utf8'), { sourceType: 'module', ecmaVersion: 'latest' });

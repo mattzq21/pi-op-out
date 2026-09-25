@@ -201,6 +201,12 @@ fn start_terminal_for_owner(app: AppHandle, owner: String, runtime: State<Termin
         move |packet| { let _ = event_app.emit("pi://event", packet); })
 }
 
+fn spawn_terminal_shell(slave: &dyn portable_pty::SlavePty, command: impl FnOnce() -> Result<CommandBuilder, String>) -> Result<Box<dyn PtyChild + Send + Sync>, String> {
+    let mut command = command()?;
+    command.env("TERM", "xterm-256color"); command.env("COLORTERM", "truecolor");
+    slave.spawn_command(command).map_err(|error| format!("Could not start terminal shell: {error}"))
+}
+
 fn start_terminal_with(runtime: &TerminalRuntime, launch: TerminalLaunch,
     command: impl FnOnce() -> Result<CommandBuilder, String>, mut emit: impl FnMut(Value) + Send + 'static) -> Result<(), String> {
     let TerminalLaunch { terminal_id, session_key, cwd, cols, rows, host_id, window_label } = launch;
@@ -210,23 +216,27 @@ fn start_terminal_with(runtime: &TerminalRuntime, launch: TerminalLaunch,
     }
     if processes.values().filter(|process| process.session_key == session_key).count() >= MAX_TERMINALS { return Err(format!("At most {MAX_TERMINALS} terminals may run for one conversation")); }
     let pair = native_pty_system().openpty(PtySize { rows: rows.max(1), cols: cols.max(1), pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())?;
-    let mut command = command()?;
-    command.env("TERM", "xterm-256color"); command.env("COLORTERM", "truecolor");
-    let child = pair.slave.spawn_command(command).map_err(|error| format!("Could not start terminal shell: {error}"))?;
+    let child = spawn_terminal_shell(pair.slave.as_ref(), command)?;
     drop(pair.slave);
     let mut reader = pair.master.try_clone_reader().map_err(|error| error.to_string())?;
     let mut writer = pair.master.take_writer().map_err(|error| error.to_string())?;
     let event_id = terminal_id.clone(); let terminal_processes = runtime.processes.clone();
     let generation = Uuid::new_v4();
+    let terminal_history = runtime.history.clone();
+    terminal_lookup::start(runtime, &terminal_id, &session_key, &cwd, &host_id, &window_label, generation)?;
     thread::spawn(move || {
         stream_terminal_output(&mut reader, &event_id, |packet| {
             if let Ok(values) = terminal_processes.lock() {
-                if values.get(&event_id).is_some_and(|process| process.generation == generation) { emit(packet); }
+                if values.get(&event_id).is_some_and(|process| process.generation == generation) {
+                    terminal_lookup::record(&terminal_history, &event_id, packet["data"].as_str().unwrap_or_default());
+                    emit(packet);
+                }
             }
         });
         let finished = terminal_processes.lock().ok().and_then(|mut values| {
             if !values.get(&event_id).is_some_and(|process| process.generation == generation) { return None; }
             let process = values.remove(&event_id);
+            terminal_lookup::finish(&terminal_history, &event_id);
             emit(json!({ "type": "terminal_exit", "terminalId": event_id }));
             process
         });
@@ -310,6 +320,7 @@ fn resize_terminal_pty(runtime: &TerminalRuntime, terminal_id: &str, cols: u16, 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 fn close_terminal(runtime: State<TerminalRuntime>, terminal_id: String) -> Result<(), String> {
     if let Some(mut process) = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.remove(&terminal_id) { let _ = process.child.kill(); let _ = process.child.wait(); }
+    runtime.history.lock().map_err(|_| "Terminal history lock was poisoned")?.remove(&terminal_id);
     Ok(())
 }
 
@@ -317,6 +328,7 @@ fn stop_terminals(runtime: &TerminalRuntime, terminal_ids: &[String]) -> Result<
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
     for id in terminal_ids {
         if let Some(mut process) = processes.remove(id) { let _ = process.child.kill(); let _ = process.child.wait(); }
+        runtime.history.lock().map_err(|_| "Terminal history lock was poisoned")?.remove(id);
     }
     Ok(())
 }

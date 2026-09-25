@@ -6,6 +6,12 @@ import type { AppSettings, Model } from "./types";
 export type ProjectControls = { agent?: string; model: Model | null; thinking: string };
 const selectableAgent = (agent: string) => agent === VOICE_ORCHESTRATOR_AGENT ? "general" : agent;
 
+export function reassignTerminals(transport: NativeTransport, terminals: readonly { id: string; started: boolean }[], sessionKey: string, onError: (reason: unknown) => void) {
+  for (const terminal of terminals) {
+    if (terminal.started) void transport.reassignTerminal(terminal.id, sessionKey).catch(onError);
+  }
+}
+
 async function applyInherited(transport: NativeTransport, inherited: ProjectControls, models: Model[]) {
   if (inherited.agent) await transport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(selectableAgent(inherited.agent))}` });
   if (inherited.model && models.some((model) => model.provider === inherited.model!.provider && model.id === inherited.model!.id)) {
