@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "lint": "eslint . --max-warnings 0",
-    "lint:rust": "npm run lint:rust:complexity && npm run build:extensions && vite build && cd src-tauri && cargo clippy --locked --all-targets --all-features -- -D warnings -D dead_code -D unused && cargo clippy --locked --all-targets --no-default-features --features daemon,test-home -- -D warnings -D dead_code -D unused && cargo clippy --locked --manifest-path voice-host/Cargo.toml --all-targets --all-features -- -D warnings -D dead_code -D unused",
+    "lint:rust": "npm run lint:rust:comments && npm run lint:rust:complexity && npm run build:extensions && vite build && cd src-tauri && cargo clippy --locked --all-targets --all-features -- -D warnings -D dead_code -D unused && cargo clippy --locked --all-targets --no-default-features --features daemon,test-home -- -D warnings -D dead_code -D unused && cargo clippy --locked --manifest-path voice-host/Cargo.toml --all-targets --all-features -- -D warnings -D dead_code -D unused",
+    "lint:rust:comments": "node scripts/lint-rust-comments.mjs",
     "lint:rust:complexity": "node scripts/lint-rust-complexity.mjs",
     "build": "npm run build:extensions && tsc -b && vite build",
     "build:voice": "node scripts/build-voice.mjs",
