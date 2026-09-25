@@ -5,8 +5,8 @@ import { pathToFileURL } from 'node:url';
 import { transform } from 'esbuild';
 
 export const encoded = value => Buffer.from(JSON.stringify(value)).toString('base64url');
-export const profile = (name = 'general', extra = {}) => ({ name, model: '', effort: '', path_systemprompt: 'prompt.md', path_agentprompt: '', tools: ['read'], skills: [], mcpServers: [], ...extra });
-export const configured = agents => ({ agents, webSearchDefaultApplied: true, sessionToolsDefaultApplied: true });
+export const profile = (name = 'general', extra = {}) => ({ name, model: '', effort: '', path_systemprompt: 'prompt.md', path_agentprompt: '', tools: ['read'], skills: [], mcpServers: [], extensions: [], ...extra });
+export const configured = agents => ({ agents: [...agents, profile('voice-orchestrator')], webSearchDefaultApplied: true, sessionToolsDefaultApplied: true, subagentsDefaultApplied: true, diagramistDefaultApplied: true, askerAgentDefaultApplied: true, terminalAgentDefaultApplied: true });
 
 export async function agentFixture(t, options = {}) {
   options = { files: {}, effort: 'high', model: { provider: 'test', id: 'default' }, config: configured([profile(), profile('reviewer')]), ...options };

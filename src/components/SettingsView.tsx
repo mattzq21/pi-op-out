@@ -118,9 +118,13 @@ export function SettingsView(props: SettingsViewProps) {
   const [settingsConflict, setSettingsConflict] = createSignal(false);
   const [agentsConflict, setAgentsConflict] = createSignal(false);
   const conflict = () => settingsConflict() || agentsConflict();
+  const incomingSettingsSnapshot = createRef(settingsSnapshot(settingsProps().settings));
   createDependencyEffect(() => {
     if (saving()) return;
     const incoming = settingsProps().settings;
+    const incomingSnapshot = settingsSnapshot(incoming);
+    if (incomingSnapshot === incomingSettingsSnapshot.current) return;
+    incomingSettingsSnapshot.current = incomingSnapshot;
     const baseline = JSON.parse(baselineSettings()).settings as AppSettings;
     if (settingsSnapshot(incoming) === baselineSettings()) return;
     const local = draft();

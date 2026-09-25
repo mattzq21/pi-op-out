@@ -17,8 +17,9 @@ html[data-mobile] .app { padding-top: calc(52px + env(safe-area-inset-top)); }
 .mobile-host-actions button, .mobile-connect button[type="button"] { min-height: 40px; padding: 8px 12px; border: 1px solid #48453e; border-radius: 8px; background: #24231f; color: #eee; }
 .mobile-connect [role=alert] { color: #f19b89; }
 .mobile-connect .primary-button { min-height: 48px; }
-.mobile-reconnect-banner { position: fixed; z-index: 25; top: max(8px, env(safe-area-inset-top)); left: 8px; right: 8px; display: flex; align-items: center; gap: 12px; padding: 12px; background: #24231f; color: #eee; border: 1px solid #48453e; border-radius: 8px; }
+.mobile-reconnect-banner { position: fixed; z-index: 25; top: calc(56px + env(safe-area-inset-top)); left: 8px; right: 8px; display: flex; align-items: center; gap: 12px; padding: 12px; background: #24231f; color: #eee; border: 1px solid #48453e; border-radius: 8px; }
 .mobile-reconnect-banner button { flex-shrink: 0; min-height: 44px; }
+html[data-mobile] .app:has(.icon-rail:not(.compact)) ~ .mobile-reconnect-banner { z-index: 17; }
 .mobile-host-button { display: none; position: fixed; z-index: 15; bottom: max(6px, env(safe-area-inset-bottom)); left: 8px; font-size: 11px; border: 1px solid #48453e; border-radius: 5px; background: #24231f; color: #ccc; padding: 5px; }
 @media (max-width: 700px) {
   body { min-width: 0; min-height: 100dvh; }

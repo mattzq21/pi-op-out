@@ -8,14 +8,14 @@ import assert from 'node:assert/strict';
 const screenshots = await mkdtemp(join(tmpdir(), 'piop-mobile-ui-'));
 const chromePath = process.env.CHROME_PATH || (process.env.PATH || '').split(delimiter).flatMap(directory => ['chromium', 'google-chrome', 'chromium-browser', 'chrome'].map(name => join(directory, name + (process.platform === 'win32' ? '.exe' : '')))).find(existsSync) || '/snap/bin/chromium';
 const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--mode', 'mobile', '--host', '127.0.0.1', '--port', '1424', '--strictPort'], { stdio: 'ignore' });
-let browser;
+let browser, page;
 try {
  for (let attempt = 0; attempt < 60; attempt++) {
   try { if ((await fetch('http://127.0.0.1:1424')).ok) break; } catch { }
   await new Promise(resolve => setTimeout(resolve, 250));
  }
  browser = await chromium.launch({ executablePath: chromePath, headless: true, args: ['--no-sandbox'] });
- const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+ page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
  const errors=[]; page.on('pageerror', error=>errors.push(error.stack));
   const settings={worktreeSetupScripts:[],defaultAgent:'default',defaultModel:'test/model',hiddenModels:[],defaultThinking:'high',defaultFastMode:false,contextWindowCap:200000,contextWindowCapEnabled:true,autoRetry:true,debugMode:false,keybindings:{newConversation:'Ctrl+N',toggleConversations:'Ctrl+B',toggleTerminal:'Ctrl+J',toggleDebugMode:'Ctrl+D',focusComposer:'Ctrl+E',openSettings:'Ctrl+,'},tools:[],skills:[],hosts:[],dictionaries:[],activeDictionaryIds:[]};
  const state={model:{id:'model',provider:'test',name:'Test model'},thinkingLevel:'high',isStreaming:false,sessionId:'mobile-test',sessionFile:'/tmp/mobile-test.jsonl',messageCount:0,pendingMessageCount:0};
@@ -69,6 +69,9 @@ try {
  await page.getByRole('button',{name:'Close conversations'}).waitFor();
  await page.getByRole('button',{name:'Close conversations'}).click({position:{x:370,y:500}});
  connection.close();
+ await page.getByRole('button',{name:'Reconnect',exact:true}).waitFor();
+ await page.getByRole('button',{name:'Toggle conversations'}).click();
+ await page.getByRole('button',{name:'Host',exact:true}).click();
  await page.getByRole('button',{name:'Connect to workspace'}).waitFor();
  await page.getByRole('button',{name:'Remove host',exact:true}).click();
  assert.equal(await page.getByLabel('Host address').inputValue(),'');
@@ -77,4 +80,7 @@ try {
  assert.deepEqual(errors,[]);
  console.log('PASS: phone connection, connected chat, usage badges with OpenCode Go above Codex, multiline entry, settings, drawer, disconnection; no page errors or horizontal overflow');
  console.log(`Screenshots: ${screenshots}`);
+} catch (error) {
+ console.error(await page?.locator('body').innerText());
+ throw error;
 } finally {await browser?.close(); server.kill();}

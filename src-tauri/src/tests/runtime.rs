@@ -207,7 +207,7 @@ fn terminal_lifecycle_delivers_queued_input_and_resized_dimensions_to_the_shell(
 
 #[cfg(unix)]
 #[test]
-fn stopping_a_started_terminal_emits_exit_and_preserves_other_processes() {
+fn stopping_a_started_terminal_suppresses_stale_events_and_preserves_other_processes() {
     let runtime = TestTerminals(TerminalRuntime::default());
     let _other_input = runtime.add("other");
     let (sender, events) = mpsc::channel();
@@ -217,10 +217,7 @@ fn stopping_a_started_terminal_emits_exit_and_preserves_other_processes() {
     let packet = events.recv_timeout(Duration::from_secs(3)).unwrap();
     assert_eq!(packet["type"], "terminal_output");
     stop_terminals(&runtime.0, &["stop-me".into()]).unwrap();
-    loop {
-        let packet = events.recv_timeout(Duration::from_secs(3)).unwrap();
-        if packet["type"] == "terminal_exit" { assert_eq!(packet["terminalId"], "stop-me"); break; }
-    }
+    assert_eq!(events.recv_timeout(Duration::from_secs(3)).unwrap_err(), mpsc::RecvTimeoutError::Disconnected);
     let processes = runtime.0.processes.lock().unwrap();
     assert_eq!(processes.len(), 1); assert!(processes.contains_key("other"));
 }

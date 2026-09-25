@@ -151,7 +151,7 @@ fn remote_session_scan_propagates_launch_exit_and_output_limit_errors() {
 
 #[cfg(unix)]
 #[test]
-fn remote_temporary_chat_removal_requires_the_expected_root_and_marker() {
+fn remote_temporary_chat_removal_preserves_contents_and_rejects_symlinks() {
     use std::os::unix::fs::symlink;
     let directory = TestDirectory::new(); let home = directory.0.join("home ' $(false)");
     let marked = create_local_temporary_chat(&home, &Uuid::new_v4().to_string()).unwrap();
@@ -164,13 +164,14 @@ fn remote_temporary_chat_removal_requires_the_expected_root_and_marker() {
     let remove = |path: &Path| remove_remote_temporary_chat(path.to_str().unwrap(), "Server", |script| {
         let mut command = Command::new("sh"); command.args(["-c", &script]).env("HOME", &home); command
     });
-    assert!(remove(&unmarked).is_err()); assert!(unmarked.is_dir());
+    remove(&unmarked).unwrap(); assert!(!unmarked.exists());
     assert!(remove(&outside).is_err()); assert!(outside.is_dir());
-    remove(&marked).unwrap(); assert!(!marked.exists());
+    remove(&marked).unwrap(); assert_eq!(fs::read_to_string(marked.join("content")).unwrap(), "remove");
+    fs::remove_file(marked.join("content")).unwrap(); remove(&marked).unwrap(); assert!(!marked.exists());
     assert_eq!(fs::read_to_string(sibling.join("keep")).unwrap(), "preserve");
-    assert!(remove(&marked).is_err());
+    remove(&marked).unwrap();
     let link = home.join(STORAGE_DIRECTORY).join("tmp").join(Uuid::new_v4().to_string()); symlink(&outside, &link).unwrap();
-    remove(&link).unwrap(); assert!(fs::symlink_metadata(&link).is_err());
+    assert!(remove(&link).is_err()); assert!(fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
     assert_eq!(fs::read_to_string(outside.join("keep")).unwrap(), "outside", "removing a symlink must not traverse its target");
 }
 
@@ -190,7 +191,7 @@ fn remote_temporary_chat_removal_rejects_bad_ids_before_launch_and_reports_comma
 }
 
 #[test]
-fn remote_temporary_chat_creates_marked_isolated_directories_and_preserves_existing_contents() {
+fn remote_temporary_chat_creates_empty_isolated_directories_and_preserves_existing_contents() {
     let directory = TestDirectory::new(); let home = directory.0.join("home ' λ $(false)"); fs::create_dir(&home).unwrap();
     let create = |id: &str| create_remote_temporary_chat(id, "Server", |script| {
         let mut command = Command::new("sh"); command.args(["-c", &script]).env("HOME", &home); command
@@ -200,13 +201,12 @@ fn remote_temporary_chat_creates_marked_isolated_directories_and_preserves_exist
     assert_eq!(first, home.join(STORAGE_DIRECTORY).join("tmp").join(&first_id));
     assert_eq!(second, home.join(STORAGE_DIRECTORY).join("tmp").join(&second_id));
     for path in [&first, &second] {
-        assert_eq!(fs::read(path.join(".pi-desktop-temporary-chat")).unwrap(), b"");
-        assert_eq!(fs::read_dir(path).unwrap().count(), 1);
+        assert_eq!(fs::read_dir(path).unwrap().count(), 0);
     }
     fs::write(first.join("user-file"), "keep").unwrap();
     assert_eq!(create(&first_id).unwrap(), first.to_str().unwrap());
     assert_eq!(fs::read_to_string(first.join("user-file")).unwrap(), "keep");
-    assert_eq!(fs::read_dir(&second).unwrap().count(), 1);
+    assert_eq!(fs::read_dir(&second).unwrap().count(), 0);
 }
 
 #[test]
@@ -394,30 +394,31 @@ fn executable_discovery_searches_home_installations_in_order_and_ignores_directo
 }
 
 #[test]
-fn temporary_chat_removal_deletes_marked_contents_and_preserves_other_chats() {
+fn temporary_chat_removal_preserves_contents_and_removes_only_empty_directories() {
     let home = TestDirectory::new();
     let first = create_local_temporary_chat(&home.0, &Uuid::new_v4().to_string()).unwrap();
     let second = create_local_temporary_chat(&home.0, &Uuid::new_v4().to_string()).unwrap();
     fs::create_dir(first.join("nested")).unwrap(); fs::write(first.join("nested/file"), "temporary content").unwrap();
     fs::write(second.join("keep"), "other chat").unwrap();
     remove_local_temporary_chat(&home.0, first.to_str().unwrap()).unwrap();
-    assert!(!first.exists());
+    assert_eq!(fs::read_to_string(first.join("nested/file")).unwrap(), "temporary content");
     assert_eq!(fs::read_to_string(second.join("keep")).unwrap(), "other chat");
-    assert!(second.join(".pi-desktop-temporary-chat").is_file());
-    assert!(remove_local_temporary_chat(&home.0, first.to_str().unwrap()).is_err());
+    fs::remove_file(first.join("nested/file")).unwrap(); fs::remove_dir(first.join("nested")).unwrap();
+    remove_local_temporary_chat(&home.0, first.to_str().unwrap()).unwrap(); assert!(!first.exists());
+    remove_local_temporary_chat(&home.0, first.to_str().unwrap()).unwrap();
 }
 
 #[test]
-fn temporary_chat_removal_rejects_unmarked_wrong_root_and_non_uuid_directories() {
+fn temporary_chat_removal_preserves_legacy_markers_and_rejects_wrong_roots_and_non_uuid_directories() {
     let home = TestDirectory::new(); let other_home = TestDirectory::new();
     let outside = create_local_temporary_chat(&other_home.0, &Uuid::new_v4().to_string()).unwrap();
     assert_eq!(remove_local_temporary_chat(&home.0, outside.to_str().unwrap()).unwrap_err(), "Refusing to remove a directory outside the temporary chat root");
     assert!(outside.is_dir());
     let unmarked = home.0.join(STORAGE_DIRECTORY).join("tmp").join(Uuid::new_v4().to_string());
     fs::create_dir_all(&unmarked).unwrap(); fs::write(unmarked.join("keep"), "keep").unwrap();
-    assert_eq!(remove_local_temporary_chat(&home.0, unmarked.to_str().unwrap()).unwrap_err(), "Refusing to remove an unmarked directory");
+    remove_local_temporary_chat(&home.0, unmarked.to_str().unwrap()).unwrap();
     fs::create_dir(unmarked.join(".pi-desktop-temporary-chat")).unwrap();
-    assert!(remove_local_temporary_chat(&home.0, unmarked.to_str().unwrap()).is_err());
+    remove_local_temporary_chat(&home.0, unmarked.to_str().unwrap()).unwrap();
     assert_eq!(fs::read_to_string(unmarked.join("keep")).unwrap(), "keep");
     let named = home.0.join(STORAGE_DIRECTORY).join("tmp/project"); fs::create_dir(&named).unwrap();
     fs::write(named.join(".pi-desktop-temporary-chat"), "").unwrap();
@@ -426,12 +427,12 @@ fn temporary_chat_removal_rejects_unmarked_wrong_root_and_non_uuid_directories()
 }
 
 #[test]
-fn temporary_chats_create_marked_directories_and_validate_their_location() {
+fn temporary_chats_create_empty_directories_and_validate_their_location() {
     let root = TestDirectory::new();
     let id = "12345678-1234-4123-8123-123456789abc";
     let path = create_local_temporary_chat(&root.0, id).unwrap();
     assert_eq!(path, root.0.join(STORAGE_DIRECTORY).join("tmp").join(id));
-    assert!(path.join(".pi-desktop-temporary-chat").is_file());
+    assert_eq!(fs::read_dir(&path).unwrap().count(), 0);
     assert_eq!(temporary_chat_id(path.to_str().unwrap()), Some(id));
     assert_eq!(create_local_temporary_chat(&root.0, id).unwrap(), path);
     for invalid in [format!("/home/tmp/{id}"), format!("/home/.piop/other/{id}"), "/home/.piop/tmp/not-a-uuid".into(), "/".into()] {

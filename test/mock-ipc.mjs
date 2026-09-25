@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { mockIPC as mockNativeIPC } from '@tauri-apps/api/mocks';
+import { mockIPC as mockNativeIPC, mockWindows } from '@tauri-apps/api/mocks';
 
 export { clearMocks, mockWindows } from '@tauri-apps/api/mocks';
 
 export function mockIPC(handler, options) {
+  mockWindows('main');
   return mockNativeIPC((command, args) => {
     if (command === 'daemon_invoke') {
       assert.equal(typeof args.command, 'string');

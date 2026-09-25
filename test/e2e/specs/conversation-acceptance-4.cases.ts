@@ -57,9 +57,9 @@ describe("Conversation acceptance", () => {
   });
 
   it("shows and clears extension status, widgets, and notifications", async () => {
-    await emitPiEvent({ type: "extension_ui_request", id: "acceptance-status", method: "setStatus", statusKey: "acceptance", statusText: "Indexing workspace" });
+    await emitPiEvent({ type: "extension_ui_request", id: "acceptance-status", method: "setStatus", statusKey: "pi-desktop-mcp-loading", statusText: "Indexing workspace" });
     await emitPiEvent({ type: "extension_ui_request", id: "acceptance-widget", method: "setWidget", widgetKey: "acceptance", widgetLines: ["3 files changed", "Tests pending"] });
-    await expect($(".extension-status")).toHaveText("Indexing workspace");
+    await expect($(".mcp-loading-list")).toBeDisplayed();
     await expect($(".extension-widget")).toHaveText(expect.stringContaining("3 files changed"));
 
     await emitPiEvent({ type: "extension_ui_request", id: "acceptance-notice", method: "notify", notifyType: "warning", message: "Review generated changes" });
@@ -67,9 +67,9 @@ describe("Conversation acceptance", () => {
     await expect($(".error-toast span")).toHaveText("Review generated changes");
     await $(".error-toast button").click();
 
-    await emitPiEvent({ type: "extension_ui_request", id: "acceptance-status-clear", method: "setStatus", statusKey: "acceptance", statusText: "" });
+    await emitPiEvent({ type: "extension_ui_request", id: "acceptance-status-clear", method: "setStatus", statusKey: "pi-desktop-mcp-loading", statusText: "" });
     await emitPiEvent({ type: "extension_ui_request", id: "acceptance-widget-clear", method: "setWidget", widgetKey: "acceptance" });
-    await expect($(".extension-status")).not.toBeExisting();
+    await expect($(".mcp-loading-list")).not.toBeExisting();
     await expect($(".extension-widget")).not.toBeExisting();
   });
 
@@ -99,7 +99,11 @@ describe("Conversation acceptance", () => {
   });
 
   it("stacks simultaneous application and extension notices", async () => {
-    await mockBackend({ save_app_settings: { error: "Settings write deliberately failed" } });
+    await browser.execute(() => {
+      const original = Storage.prototype.setItem;
+      (window as unknown as { __restoreStorage: () => void }).__restoreStorage = () => { Storage.prototype.setItem = original; };
+      Storage.prototype.setItem = function (key, value) { if (key === "piop-client-settings") throw new Error("Client settings write deliberately failed"); original.call(this, key, value); };
+    });
     const debug = $('button[aria-label$="debug mode"]');
     try {
       await debug.click();
@@ -108,8 +112,7 @@ describe("Conversation acceptance", () => {
       await expect(toasts).toBeElementsArrayOfSize(2);
       expect(await toasts[0].getLocation("y")).not.toBe(await toasts[1].getLocation("y"));
     } finally {
-      await updateBackendResponse("save_app_settings", {});
-      await debug.click();
+      await browser.execute(() => (window as unknown as { __restoreStorage: () => void }).__restoreStorage());
       while (await $(".error-toast button").isExisting()) await $(".error-toast button").click();
       await resetBackend();
     }

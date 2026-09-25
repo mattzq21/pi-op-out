@@ -108,7 +108,7 @@ test('MCP selections wait for readiness, deduplicate tools, and report unavailab
   let timer;
   try { await Promise.race([started.promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('MCP selection was not requested')), 1000); })]); }
   finally { clearTimeout(timer); }
-  assert.deepEqual({ ...selection, ready: undefined }, { servers: [{ ...remoteMcp, url: undefined, headers: undefined, startupTimeoutSec: undefined }], agentName: 'general', sessionId: 'session-id', ready: undefined });
+  assert.deepEqual({ ...selection, ready: undefined }, { servers: [{ ...remoteMcp, url: undefined, headers: undefined, startupTimeoutSec: undefined, injectAgentId: undefined }], agentName: 'general', sessionId: 'session-id', ready: undefined });
   assert.deepEqual(f.pi.getActiveTools(), []);
   gate.resolve(['mcp_remote_read', 'read', 'mcp_remote_read']); assert.deepEqual(await pending, { action: 'continue' }); assert.deepEqual(f.pi.getActiveTools(), ['read', 'mcp_remote_read']); remove();
   for (const reason of [new Error('network lost'), 'network lost']) {
@@ -136,7 +136,7 @@ test('skills are intersected by normalized path and prompts preserve append inst
   runtime.skills = [join(f.home, 'allowed')];
   await f.load(); await f.start(); assert.deepEqual(await f.emit('resources_discover'), { skillPaths: ['~/allowed'] });
   f.ctx.cwd = 'C:\\project\\folder';
-  const skills = [{ filePath: '/skills/one' }, { filePath: '/skills/two' }];
+  const skills = [{ filePath: '/skills/one', baseDir: '/skills' }, { filePath: '/skills/two', baseDir: '/skills' }];
   assert.deepEqual(await f.prompt({ appendSystemPrompt: 'Appended', skills }), { systemPrompt: 'System instructions\n\nAppended\n\nSkills via read: /skills/one, /skills/two\n\nAgent instructions\n\nCurrent working directory C:/project/folder' });
   assert.match((await f.prompt({ skills, selectedTools: ['bash'] })).systemPrompt, /Skills via bash:/);
   assert.doesNotMatch((await f.prompt({ skills, selectedTools: [] })).systemPrompt, /Skills via/);
@@ -146,7 +146,7 @@ test('skills are intersected by normalized path and prompts preserve append inst
 test('configuration edits normalize resources and persist atomically without modifying the running snapshot', async t => {
   const f = await agentFixture(t); await f.load(); await f.start();
   await f.configure({ agents: [profile('reviewer', { model: 42, effort: null, tools: ['read', 7], skills: [false, '/skill'], mcpServers: [remoteMcp], path_agentprompt: '  agent.md  ' }), profile('reviewer', { tools: ['bash'] }), profile('default')] });
-  const saved = await f.config(); assert.deepEqual(saved.agents.map(a => a.name), ['reviewer', 'general']);
+  const saved = await f.config(); assert.deepEqual(saved.agents.map(a => a.name), ['reviewer', 'general', 'voice-orchestrator']);
   assert.equal(saved.agents[0].model, ''); assert.equal(saved.agents[0].effort, 'high'); assert.deepEqual(saved.agents[0].tools, ['read']); assert.deepEqual(saved.agents[0].skills, ['/skill']); assert.deepEqual(saved.agents[0].mcpServers, [remoteMcp]); assert.equal(saved.agents[0].path_agentprompt, 'agent.md');
   assert.equal(saved.webSearchDefaultApplied, true); assert.equal(saved.sessionToolsDefaultApplied, true);
   assert.equal(f.capability().active, 'general'); assert.deepEqual(f.entries[0].data.snapshot.definition.tools, ['read']);
@@ -178,12 +178,12 @@ test('legacy prompt and tool migrations preserve content, remove inline fields a
   const legacy = { name: 'default', description: 'obsolete', systemPrompt: 'System', developerPrompt: 'Developer', agentsMd: 'Agent notes', tools: ['exec_command', 'apply_patch', 'read', 'web_search'], skills: [], mcpServers: [] };
   const f = await agentFixture(t, { config: { agents: [legacy, { ...legacy, name: ' Reviewer!! ', systemPrompt: '' }] }, runtime: { tools: ['web_search', 'fork_session'], skills: [] } });
   await f.load(); const config = await f.config();
-  assert.deepEqual(config.agents.map(a => a.name), ['general', ' Reviewer!! ']);
+  assert.deepEqual(config.agents.map(a => a.name), ['general', ' Reviewer!! ', 'diagramist', 'voice-orchestrator']);
   const hash = createHash('sha256').update('default').update('\0').update('System\n\nDeveloper').digest('hex');
   assert.equal(config.agents[0].path_systemprompt, `sysprompt/default-${hash}.md`);
   assert.equal(await readFile(join(f.dir, config.agents[0].path_systemprompt), 'utf8'), 'System\n\nDeveloper');
   assert.match(await readFile(join(f.dir, config.agents[1].path_systemprompt), 'utf8'), /^You are an expert coding assistant[\s\S]*\n\nDeveloper$/);
-  for (const agent of config.agents) {
+  for (const agent of config.agents.slice(0, 2)) {
     assert.equal(await readFile(join(f.dir, agent.path_agentprompt), 'utf8'), 'Agent notes');
     assert.deepEqual(agent.tools, ['read', 'bash', 'grep', 'find', 'ls', 'edit', 'write', 'web_search', 'fork_session']);
     for (const field of ['description', 'systemPrompt', 'developerPrompt', 'agentsMd']) assert.equal(field in agent, false);
@@ -203,7 +203,7 @@ test('invalid configuration and filesystem failures surface instead of silently 
 test('legacy migration skips null entries and empty names while retaining a general profile', async t => {
   const f = await agentFixture(t, { config: { agents: [{ name: 'default', tools: [] }, null, { name: '' }, { name: 7 }] } });
   await f.load(); const config = await f.config();
-  assert.deepEqual(config.agents.map(agent => agent.name), ['general']);
+  assert.deepEqual(config.agents.map(agent => agent.name), ['general', 'diagramist', 'voice-orchestrator']);
   assert.equal(config.agents[0].path_systemprompt, 'sysprompt/default.md');
   assert.equal(config.agents[0].path_agentprompt, '~/.piop/agents/default.md');
 });
@@ -233,13 +233,13 @@ test('normalization supplies defaults for absent arrays and filters malformed pr
   const full = profile('reviewer', { model: ' test/review/model ', effort: ' low ', fastMode: false, extensions: [], tools: null, skills: null, mcpServers: undefined, path_agentprompt: 7 });
   await f.configure({ agents: [null, false, {}, { name: '' }, { name: 7 }, full, profile('default')] });
   const config = await f.config(), reviewer = config.agents[0];
-  assert.deepEqual(config.agents.map(agent => agent.name), ['reviewer', 'general']);
+  assert.deepEqual(config.agents.map(agent => agent.name), ['reviewer', 'general', 'voice-orchestrator']);
   assert.equal(reviewer.model, full.model); assert.equal(reviewer.effort, full.effort); assert.equal(reviewer.fastMode, false);
   assert.deepEqual(reviewer.tools, ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls']); assert.deepEqual(reviewer.skills, []); assert.deepEqual(reviewer.mcpServers, []); assert.equal(reviewer.path_agentprompt, '');
   await f.select('reviewer'); assert.equal(f.ctx.model.id, 'review/model'); assert.equal(f.pi.getThinkingLevel(), 'low');
   assert.equal(f.entries.at(-1).data.snapshot.definition.model, 'test/review/model'); assert.equal(f.entries.at(-1).data.snapshot.definition.effort, 'low');
-  await f.configure({ agents: [profile('default'), profile('general')] }); assert.deepEqual((await f.config()).agents.map(agent => agent.name), ['default', 'general']);
-  await f.configure({ agents: 'invalid' }); assert.deepEqual((await f.config()).agents.map(agent => agent.name), ['general']);
+  await f.configure({ agents: [profile('default'), profile('general')] }); assert.deepEqual((await f.config()).agents.map(agent => agent.name), ['default', 'general', 'voice-orchestrator']);
+  await f.configure({ agents: 'invalid' }); assert.deepEqual((await f.config()).agents.map(agent => agent.name), ['general', 'voice-orchestrator']);
   await assert.rejects(f.configure(configured([profile('bad', { path_systemprompt: '  ' })])), /requires a nonempty path_systemprompt/);
 });
 
@@ -315,7 +315,7 @@ test('absent prompt paths migrate independently while explicit general and defau
   await t.test('distinct profiles', async t => {
     const f = await agentFixture(t, { config: configured([profile('default'), profile('general')]), entries: [{ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'default' } }] });
     await f.load(); await f.start(); assert.equal(f.capability().active, 'default');
-    assert.deepEqual(f.capability().config.agents.map(agent => agent.name), ['default', 'general']);
+    assert.deepEqual(f.capability().config.agents.map(agent => agent.name), ['default', 'general', 'voice-orchestrator']);
   });
 });
 
@@ -439,7 +439,7 @@ test('startup publishes the selected definition before asynchronous model select
 test('configuration and refresh publish new capability data and discard stale non-MCP active tools', async t => {
   const fastModels = ['test/default'];
   const f = await agentFixture(t, { fastModels }); await f.load(); await f.start();
-  await f.configure(configured([profile(), profile('new-agent')])); assert.deepEqual(f.capability().config.agents.map(agent => agent.name), ['general', 'new-agent']);
+  await f.configure(configured([profile(), profile('new-agent')])); assert.deepEqual(f.capability().config.agents.map(agent => agent.name), ['general', 'new-agent', 'voice-orchestrator']);
   f.pi.setActiveTools(['read', 'stale', 'mcp_remote_read']); fastModels.push('test/review/model');
   const request = { ctx: f.ctx }; f.pi.events.emit('piop:agents:refresh', request); await request.ready;
   assert.deepEqual(f.pi.getActiveTools(), ['read', 'mcp_remote_read']); assert.deepEqual(f.capability().config.fastModeModels, fastModels);
@@ -503,7 +503,7 @@ test('configuration errors identify the invalid field instead of leaking inciden
 
 test('adding profiles supplies a missing general profile and inherited agent prompt paths', async t => {
   const f = await agentFixture(t); await f.load();
-  await f.configure(configured([profile('reviewer')])); assert.deepEqual((await f.config()).agents.map(agent => agent.name), ['general', 'reviewer']);
+  await f.configure(configured([profile('reviewer')])); assert.deepEqual((await f.config()).agents.map(agent => agent.name), ['general', 'reviewer', 'voice-orchestrator']);
   for (const name of ['general', 'default']) {
     const agent = profile(name); delete agent.path_agentprompt;
     await f.configure(configured([agent])); assert.equal((await f.config()).agents[0].path_agentprompt, '~/.piop/agents/default.md');
@@ -512,7 +512,7 @@ test('adding profiles supplies a missing general profile and inherited agent pro
 
 test('renaming a legacy default is persisted even when every other field is current', async t => {
   const f = await agentFixture(t, { config: configured([profile('default')]) }); await f.load();
-  assert.deepEqual((await f.config()).agents.map(agent => agent.name), ['general']);
+  assert.deepEqual((await f.config()).agents.map(agent => agent.name), ['general', 'voice-orchestrator']);
 });
 
 test('legacy prompt type errors and whitespace fall back to the default system prompt', async t => {
@@ -548,7 +548,7 @@ test('fast-mode model names are trimmed consistently during preflight and activa
 
 test('implicit default profiles do not trigger a config rewrite without a legacy rename', async t => {
   const config = configured([profile('reviewer')]); const f = await agentFixture(t, { config });
-  await f.load(); await f.start(); assert.deepEqual(f.capability().config.agents.map(agent => agent.name), ['general', 'reviewer']); assert.deepEqual(await f.config(), config);
+  await f.load(); await f.start(); assert.deepEqual(f.capability().config.agents.map(agent => agent.name), ['general', 'reviewer', 'voice-orchestrator']); assert.deepEqual(await f.config(), config);
 });
 
 test('atomic writes reject colliding temporary files and preserve the original write error', async t => {

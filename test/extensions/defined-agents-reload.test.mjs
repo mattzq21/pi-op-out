@@ -51,7 +51,7 @@ test('agent definitions survive reload while selected MCP tools are pending', as
     assert.ok(statuses.every(Boolean), 'reload cleared already-loaded agent definitions');
     const capability = JSON.parse(Buffer.from(status.slice(5), 'base64url').toString());
     assert.equal(capability.active, 'tester');
-    assert.deepEqual(capability.config.agents.map(a => a.name), ['general', 'tester']);
+    assert.deepEqual(capability.config.agents.map(a => a.name), ['general', 'tester', 'diagramist', 'voice-orchestrator']);
     await startup;
     assert.equal(finishMcp, undefined, 'selecting an agent must not start MCP');
     const input = handlers.input({ text: 'Check the app' }, ctx);

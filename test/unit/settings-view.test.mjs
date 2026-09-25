@@ -15,7 +15,7 @@ describe('settings editor', () => {
   const control = label => document.querySelector(`[aria-label="${label}"]`);
   const button = text => [...document.querySelectorAll('button')].find(item => item.textContent === text);
   const click = async element => act(async () => element.click());
-  const save = () => document.querySelector('.settings-save button');
+  const save = () => document.querySelector('.settings-save > button');
   const section = async name => click([...document.querySelectorAll('nav button')].find(item => item.textContent === name));
   const select = async (label, value) => act(async () => { control(label).value = value; control(label).dispatchEvent(new Event('change', { bubbles: true })); });
   const profile = (name, extra = {}) => ({ name, model: '', effort: '', path_systemprompt: 'system.md', path_agentprompt: '', tools: [], skills: [], mcpServers: [], ...extra });
@@ -33,7 +33,7 @@ describe('settings editor', () => {
 
   test('save failures keep edits available and validation prevents invalid context caps', async () => {
     await render({ onSave: async () => { throw new Error('disk full'); } });
-    await enterText(control('Context window cap'), '999'); assert.equal(save().disabled, true); assert.match(document.querySelector('[role=alert]').textContent, /at least 1000/);
+    await enterText(control('Context window cap'), '999'); assert.equal(save().disabled, true); assert.match(document.querySelector('[role=alert]').textContent, /from 1000 to 10000000/);
     await enterText(control('Context window cap'), '2000'); await click(save()); assert.equal(document.querySelector('[role=alert]').textContent, 'disk full'); assert.equal(save().disabled, false);
     await click(control('Automatic retry')); assert.equal(document.querySelector('[role=alert]'), null);
     await click(control('Enable context window cap')); assert.equal(control('Context window cap').disabled, true);
@@ -122,7 +122,7 @@ describe('settings editor', () => {
 
   test('agent edits save defaults, prompts and resource permissions without changing the built-in identity', async () => {
     props.settings.tools = [{ name: 'read', enabled: true }]; props.settings.skills = [{ name: 'Research', path: '/research', enabled: true }];
-    await render({ agentConfig: { agents: [profile('general'), profile('review')], fastModeModels: ['p/model'] }, models: [{ provider: 'p', id: 'model' }] });
+    await render({ agentConfig: { agents: [profile('general'), profile('review')], fastModeModels: ['p/model'] }, models: [{ provider: 'p', id: 'model', reasoning: true }] });
     await section('Agents'); assert.equal(control('Agent name').value, 'review');
     await enterText(control('Agent name'), 'code review!'); assert.equal(control('Agent name').value, 'codereview');
     await enterText(control('Agent name'), 'general'); assert.equal(control('Agent name').value, 'codereview');
@@ -159,7 +159,8 @@ describe('settings editor', () => {
     await click(save()); assert.equal(saves[0][0].autoRetry, false); assert.equal(saves[0][1], undefined);
     await enterText(control('Agent name'), 'edited');
     await render({ agentConfig: { agents: [profile('general'), profile('external')] } }); assert.equal(control('Agent name').value, 'edited');
-    await click(save()); assert.equal(saves[1][1].agents[1].name, 'edited');
+    assert.equal(save().disabled, true); assert.equal(saves.length, 1);
+    assert.match(document.querySelector('[role=alert]').textContent, /changed/i);
   });
 
   test('configuration refresh during save keeps agent capabilities until completion', async () => {

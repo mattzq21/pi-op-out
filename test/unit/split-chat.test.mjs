@@ -13,7 +13,7 @@ describe('split conversation lifecycle', () => {
     responses = new Map([['get_session_revision', { revision: 'changed' }], ['get_snapshot', { revision: 'snapshot', state, history: { entries: [], leafId: null }, sequence: 0, epoch: 'epoch', liveTools: [], queue: { pendingMessages: [] } }], ['get_available_models', { models: [] }], ['get_available_thinking_levels', { levels: ['off', 'high'] }], ['get_commands', { commands: [] }]]);
     transport = { currentHostId: () => 'local', ownsConversation: () => true, connect: async (...args) => connected.push(args), subscribe: handler => { listeners.add(handler); return () => listeners.delete(handler); }, command: async command => { calls.push(command); const result = responses.get(command.type); if (result instanceof Error) throw result; return typeof result === 'function' ? result(command) : result; } };
     const diffs = {};
-    props = { runtimePool: { forSession: () => transport, createEphemeralFork: () => transport, subscribe: () => () => {}, gitDiffs: () => diffs, setInteractive: (_, value) => calls.push({ interactive: value }) }, session: { id: 'session', name: 'Conversation', cwd: '/repo', path: '/session.jsonl', project: 'repo', messageCount: 0 }, settings: { autoCompaction: true, autoRetry: true, hiddenModels: [] }, draft: '', onDraftChange: () => {}, onOpenTerminal: () => {}, onDialogRequest: (...args) => dialogs.push(args), onDialogResolved: (...args) => dialogs.push(args), onDialogTransportClosed: async () => {}, onReleaseTransport: async value => released.push(value), onSessionChange: () => {}, onClose: () => {} };
+    props = { uploadsFor: () => [], onUploadsChange: () => {}, runtimePool: { forSession: () => transport, createEphemeralFork: () => transport, subscribe: () => () => {}, gitDiffs: () => diffs, captureMemoryDiffs: async () => undefined, setInteractive: (_, value) => calls.push({ interactive: value }) }, session: { id: 'session', name: 'Conversation', cwd: '/repo', path: '/session.jsonl', project: 'repo', messageCount: 0 }, settings: { autoCompaction: true, autoRetry: true, hiddenModels: [] }, draft: '', onDraftChange: () => {}, onOpenTerminal: () => {}, onDialogRequest: (...args) => dialogs.push(args), onDialogResolved: (...args) => dialogs.push(args), onDialogTransportClosed: async () => {}, onReleaseTransport: async value => released.push(value), onSessionChange: () => {}, onClose: () => {} };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; dom.restore(); });
   async function render(extra = {}) { props = { ...props, ...extra }; if (view) await view.rerender(props); else view = await renderComponent(SplitChatPane, props); }
@@ -36,7 +36,7 @@ describe('split conversation lifecycle', () => {
     await render({ forkFrom: 'entry', initialPrompt: 'Explore this', onReady: () => ready++ });
     assert.deepEqual(connected[0], ['/repo', undefined, undefined, 'entry', true]); assert.equal(ready, 1);
     const promptIndex = calls.findIndex(command => command.type === 'prompt');
-    assert.deepEqual(calls[promptIndex], { type: 'prompt', message: 'Explore this' }); assert.ok(promptIndex > calls.findIndex(command => command.type === 'get_snapshot'));
+    assert.deepEqual(calls[promptIndex], { type: 'prompt', message: 'Explore this', images: undefined }); assert.ok(promptIndex > calls.findIndex(command => command.type === 'get_snapshot'));
     await view.unmount(); view = undefined;
     const failure = new Error('connection refused'); const failures = [];
     transport.connect = async () => { throw failure; };
@@ -45,8 +45,8 @@ describe('split conversation lifecycle', () => {
 
   test('extension status, widgets, notices and dialogs are routed to the split owner', async () => {
     await render();
-    await extension('setStatus', { statusKey: 'extension', statusText: 'Running checks' }); assert.equal(document.querySelector('.extension-status').textContent, 'Running checks');
-    await extension('setStatus', { statusKey: 'extension' }); assert.equal(document.querySelector('.extension-status'), null);
+    await extension('setStatus', { statusKey: 'pi-desktop-mcp-loading', statusText: 'Running checks' }); assert.match(document.querySelector('.mcp-loading-list').textContent, /Loading MCPs/);
+    await extension('setStatus', { statusKey: 'pi-desktop-mcp-loading' }); assert.equal(document.querySelector('.mcp-loading-list'), null);
     await extension('setWidget', { widgetKey: 'progress', widgetLines: ['one', 'two'] }); assert.equal(document.querySelector('.extension-widget').textContent, 'onetwo');
     await extension('setWidget', { widgetKey: 'progress' }); assert.equal(document.querySelector('.extension-widget'), null);
     await extension('notify', { notifyType: 'error', message: 'Problem', inputRejected: true }); assert.equal(document.querySelector('.split-notices'), null);
@@ -57,10 +57,10 @@ describe('split conversation lifecycle', () => {
     await event({ type: 'extension_ui_resolved', id: 'dialog' }); assert.deepEqual(dialogs[1], [transport, 'dialog']);
   });
 
-  test('editor injection preserves existing drafts and focuses the composer', async () => {
+  test('editor injection replaces existing drafts and focuses the composer', async () => {
     const changes = []; await render({ onDraftChange: value => changes.push(value) });
     await extension('set_editor_text', { text: 'Suggested' }); assert.deepEqual(changes, ['Suggested']); assert.equal(document.activeElement, control('Message piop'));
-    await render({ draft: 'User edit' }); await extension('set_editor_text', { text: 'Replace' }); assert.deepEqual(changes, ['Suggested']);
+    await render({ draft: 'User edit' }); await extension('set_editor_text', { text: 'Replace' }); assert.deepEqual(changes, ['Suggested', 'Replace']);
   });
 
   test('send routes prompts and streaming steering to their respective runtime commands', async () => {
@@ -98,21 +98,21 @@ describe('split conversation lifecycle', () => {
     let path = '/source.jsonl'; const changes = [], bindings = [], copies = [];
     transport.currentSessionPath = () => path;
     props.runtimePool.bind = (...args) => bindings.push(args); props.runtimePool.copySavedDiffs = async (...args) => copies.push(args);
-    responses.set('fork', () => { path = '/fork.jsonl'; const snapshot = responses.get('get_snapshot'); snapshot.state = { ...snapshot.state, sessionId: 'forked', sessionName: 'Fork', sessionFile: path }; snapshot.history = { entries: entries.slice(0, 2), leafId: 'a' }; return {}; });
+    responses.set('fork_after', () => { path = '/fork.jsonl'; const snapshot = responses.get('get_snapshot'); snapshot.state = { ...snapshot.state, sessionId: 'forked', sessionName: 'Fork', sessionFile: path }; snapshot.history = { entries: entries.slice(0, 2), leafId: 'a' }; return {}; });
     responses.set('get_entries', { entries: entries.slice(0, 2), leafId: 'a' });
     await render({ onSessionChange: (...args) => changes.push(args) });
     await click(document.querySelector('[title="Branch from here"]'));
-    assert.ok(calls.some(command => command.type === 'fork' && command.entryId === 'next'));
+    assert.ok(calls.some(command => command.type === 'fork_after' && command.entryId === 'a'));
     assert.deepEqual(bindings, [['local', 'forked', transport]]); assert.equal(changes[0][0].path, '/fork.jsonl'); assert.equal(changes[0][0].name, 'Fork'); assert.equal(changes[0][1], transport);
-    assert.deepEqual(copies, [[transport, '/source.jsonl', '/fork.jsonl', new Set(['u', 'a'])]]);
+    assert.deepEqual(copies, [[transport, '/source.jsonl', '/fork.jsonl', new Set(['u', 'a']), undefined]]);
   });
 
-  test('branching the latest answer clones, honors cancellation, and exposes runtime errors', async () => {
+  test('branching the latest answer forks after it, honors cancellation, and exposes runtime errors', async () => {
     responses.get('get_snapshot').history = { entries: [{ type: 'message', id: 'a', parentId: null, message: { role: 'assistant', content: 'Answer' } }], leafId: 'a' };
     transport.currentSessionPath = () => '/source'; const changes = [];
-    responses.set('clone', { cancelled: true }); await render({ onSessionChange: value => changes.push(value) });
-    await click(document.querySelector('[title="Branch from here"]')); assert.ok(calls.some(command => command.type === 'clone')); assert.deepEqual(changes, []);
-    responses.set('clone', new Error('fork failed')); await click(document.querySelector('[title="Branch from here"]')); assert.match(document.querySelector('.split-control-error').textContent, /fork failed/);
+    responses.set('fork_after', { cancelled: true }); await render({ onSessionChange: value => changes.push(value) });
+    await click(document.querySelector('[title="Branch from here"]')); assert.ok(calls.some(command => command.type === 'fork_after' && command.entryId === 'a')); assert.deepEqual(changes, []);
+    responses.set('fork_after', new Error('fork failed')); await click(document.querySelector('[title="Branch from here"]')); assert.match(document.querySelector('.split-control-error').textContent, /fork failed/);
     await click(control('Dismiss split pane error')); assert.equal(document.querySelector('.split-control-error'), null);
   });
 

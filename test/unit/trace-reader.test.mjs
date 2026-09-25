@@ -9,7 +9,7 @@ const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
     if (context.parentURL?.endsWith('/resources/trace-reader.ts')) {
       if (specifier === 'node:os') return { url: 'data:text/javascript,export const homedir = () => globalThis.__TRACE_TEST_HOME__', shortCircuit: true };
-      if (specifier === '@earendil-works/pi-ai') return { url: 'data:text/javascript,export const Type = { Object: properties => ({properties}), String: options => ({type:"string",...options}) }', shortCircuit: true };
+      if (specifier === '@earendil-works/pi-ai') return { url: 'data:text/javascript,export const Type = { Object: properties => ({properties}), String: options => ({type:"string",...options}), Integer: options => ({type:"integer",...options}), Optional: schema => schema }', shortCircuit: true };
     }
     return nextResolve(specifier, context);
   },

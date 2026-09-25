@@ -10,8 +10,8 @@ test('agent MCP definitions normalize defaults without modifying the input', () 
   const input = [Object.freeze({ ...stdio }), Object.freeze({ ...http, enabled: false, headers: { Authorization: 'token' }, startupTimeoutSec: 600 })];
   const result = mcpServers(input);
   assert.deepEqual(result, [
-    { ...stdio, transport: 'stdio', args: '', enabled: true, url: undefined, headers: undefined, startupTimeoutSec: undefined },
-    { ...http, command: '', args: '', enabled: false, headers: '{"Authorization":"token"}', startupTimeoutSec: 600 },
+    { ...stdio, transport: 'stdio', args: '', enabled: true, url: undefined, headers: undefined, startupTimeoutSec: undefined, injectAgentId: undefined },
+    { ...http, command: '', args: '', enabled: false, headers: '{"Authorization":"token"}', startupTimeoutSec: 600, injectAgentId: undefined },
   ]);
   result[0].command = 'changed';
   assert.equal(input[0].command, 'search-server');

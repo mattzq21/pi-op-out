@@ -1,7 +1,7 @@
 import { $, browser, expect } from "@wdio/globals";
 
 import { app } from "../pageobjects/app.page.js";
-import { mockBackend, backendCalls, resetBackend, resetApp, emitPiEvent, defaultSettings, connectedSessionResponses, startTemporaryConversation } from './acceptance-fixture.js';
+import { mockBackend, backendCalls, updateBackendResponse, resetBackend, resetApp, emitPiEvent, defaultSettings, connectedSessionResponses, startTemporaryConversation } from './acceptance-fixture.js';
 
 describe("Conversation acceptance", () => {
   before(async () => {
@@ -15,14 +15,18 @@ describe("Conversation acceptance", () => {
   it("renders a failed tool with its diagnostic output", async () => {
     await startTemporaryConversation({ load_app_settings: { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high", debugMode: true } });
     await emitPiEvent({ type: "session_switched" });
+    const enableDebug = $('button[aria-label="Enable debug mode"]'); if (await enableDebug.isExisting()) await enableDebug.click();
     await expect($('button[aria-label="Disable debug mode"]')).toBeEnabled();
+    await emitPiEvent({ type: "agent_start" });
     await emitPiEvent({ type: "tool_execution_start", toolCallId: "acceptance-failed-tool", toolName: "write", args: { path: "protected.txt" } });
     await emitPiEvent({ type: "tool_execution_end", toolCallId: "acceptance-failed-tool", result: { content: "Permission denied" }, isError: true });
 
     const tool = $('//details[contains(@class,"tool-event")][.//strong[contains(.,"write")]]');
     await expect(tool).toHaveText(expect.stringContaining("Failed"));
+    await updateBackendResponse("pi_command:get_tool_payload", { chunk: JSON.stringify({ content: "Permission denied" }), length: 0, revision: "tool" });
     await tool.$("summary").click();
     await expect(tool.$(".tool-output pre")).toHaveText("Permission denied");
+    await emitPiEvent({ type: "agent_end" });
   });
 
   it("tracks queued steering and follow-up messages from backend events", async () => {
@@ -84,8 +88,8 @@ describe("Conversation acceptance", () => {
     await mockBackend({ ...connectedSessionResponses("cache-session"), "pi_command:get_entries": history, load_app_settings: settings });
     try {
       await emitPiEvent({ type: "session_switched" });
-      await expect($(".cache-hit-rate")).toHaveText("Cache 75%");
-      expect((await $(".cache-hit-rate").getAttribute("title"))?.replaceAll(",", "")).toBe("3000 of 4000 prompt tokens read from cache across all calls in this response");
+      const enableDebug = $('button[aria-label="Enable debug mode"]'); if (await enableDebug.isExisting()) await enableDebug.click();
+      await expect($(".cache-hit-rate")).toHaveAttribute("aria-label", "Cache 75%, 3000/4000");
       await expect($(".session-cache-hit")).toHaveText("Cache 75%");
     } finally {
       await resetBackend();
@@ -140,6 +144,7 @@ describe("Conversation acceptance", () => {
     try {
       await app.openTerminalButton.click();
       await expect(app.terminalPanel).toBeDisplayed();
+      await browser.waitUntil(() => browser.execute(() => document.activeElement?.classList.contains("xterm-helper-textarea") ?? false), { timeoutMsg: "Opening the terminal did not focus its input" });
       await browser.keys("x");
       await browser.waitUntil(async () => String(await browser.execute(() => document.querySelector(".xterm-rows")?.textContent)).includes("Terminal input failed: Error: Terminal input channel closed"));
       await app.deleteTerminalButton.click();
@@ -202,7 +207,13 @@ describe("Conversation acceptance", () => {
       await expect(work).toHaveText(expect.stringContaining("read x2"));
       await $('button[aria-label="Enable debug mode"]').click();
       await expect(work.$$(".tool-event")).toBeElementsArrayOfSize(2);
-      for (const summary of await work.$$(".tool-event summary")) await summary.click();
+      let index = 0;
+      for (const summary of await work.$$(".tool-event summary")) {
+        const content = ["First file inspected", "Second file inspected"][index++];
+        await updateBackendResponse("pi_command:get_tool_payload", { chunk: JSON.stringify({ content }), length: 0, revision: "tool" });
+        await summary.click();
+        await expect(work).toHaveText(expect.stringContaining(content));
+      }
       await expect(work).toHaveText(expect.stringContaining("First file inspected"));
       await expect(work).toHaveText(expect.stringContaining("Second file inspected"));
       await expect($('//article[contains(@class,"assistant-message")][contains(.,"The implementation satisfies the acceptance behavior.")]')).toBeDisplayed();
@@ -223,7 +234,7 @@ describe("Conversation acceptance", () => {
       ...connectedSessionResponses("branch-session"),
       "pi_command:get_state": { ...connectedSessionResponses("branch-session")["pi_command:get_state"], sessionFile: "/tmp/branch-session.jsonl" },
       "pi_command:get_entries": history,
-      "pi_command:clone": {},
+      "pi_command:fork_after": {},
     });
     try {
       await emitPiEvent({ type: "session_switched" });
@@ -231,8 +242,8 @@ describe("Conversation acceptance", () => {
       await expect(branch).toBeEnabled();
       await browser.execute(() => document.querySelector<HTMLButtonElement>('.assistant-message button[aria-label^="Branch from assistant response"]')!.click());
 
-      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "clone"));
-      expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "clone")?.args.command).toEqual({ type: "clone" });
+      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "fork_after"));
+      expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "fork_after")?.args.command).toEqual({ type: "fork_after", entryId: "branch-assistant" });
       await expect($(".user-message .message-body")).toHaveText("Establish the branch point");
       await expect($(".assistant-message")).toHaveText(expect.stringContaining("This response can be branched."));
     } finally {

@@ -77,6 +77,7 @@ test('unused temporary chats are removed on disposal while used chats survive', 
   const used = transport({});
   await used.connect();
   await used.command({ type: 'prompt', message: 'hello' });
+  await emit('pi://event', { runtimeId: commands('start_pi').at(-1).args.runtimeId, event: { type: 'message_start', message: { role: 'user', content: 'hello' } } });
   await used.dispose();
   assert.equal(commands('remove_temporary_chat').length, 1);
   const retained = transport({});

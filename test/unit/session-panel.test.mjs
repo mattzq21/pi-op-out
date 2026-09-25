@@ -7,7 +7,7 @@ import { SessionPanel } from '../../src/components/SessionPanel.tsx';
 describe('conversation sidebar', () => {
   let dom, view, props, groups, changes, nativeCalls, responses;
   function responseFor(command) { const result = responses.get(command); if (result instanceof Error) throw result; return result; }
-  const session = (id, name, extra = {}) => ({ id, name, cwd: '/repo', project: 'repo', projectRoot: '/repo', projectKind: 'main', ...extra });
+  const session = (id, name, extra = {}) => ({ id, name, path: `/sessions/${id}.jsonl`, cwd: '/repo', project: 'repo', projectRoot: '/repo', projectKind: 'main', ...extra });
   beforeEach(() => {
     dom = installDom(); HTMLElement.prototype.scrollTo = () => {};
     nativeCalls = []; responses = new Map();
