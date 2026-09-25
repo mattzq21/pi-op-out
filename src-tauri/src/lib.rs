@@ -1,4 +1,7 @@
 #[cfg(any(not(feature = "desktop"), test))]
+mod host_daemon;
+
+#[cfg(any(not(feature = "desktop"), test))]
 include!("backend.rs");
 
 #[cfg(all(feature = "desktop", not(test)))]
