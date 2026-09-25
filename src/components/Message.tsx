@@ -167,7 +167,7 @@ export function Message(componentProps: Props) {
         {renderForkAndForgetAction()}
         {componentProps.onCreateWorktree && <button class="branch-button" aria-label="Create Git worktree" title="Create Git worktree after this response" onClick={() => (componentProps.onCreateWorktree)!(componentProps.message)}><FolderGit2 size={14} /></button>}
         {renderCacheHitRate()}
-        {metadata().responseTime && <span class="message-time" title={(metadata().responseTime)!.full}>{(metadata().responseTime)!.short}</span>}
+        {metadata().responseTime && <span class="message-time">{(metadata().responseTime)!.short}</span>}
       </div>);
     };
     return (<div class="message-body">
