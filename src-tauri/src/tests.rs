@@ -3737,18 +3737,9 @@ fn diff_watch_preparation_replaces_legacy_assets_and_refreshes_all_bundled_files
     assert_eq!(entry, home.0.join(STORAGE_DIRECTORY).join("piop-diff-watch/index.ts"));
     for _ in 0..2 {
         assert_eq!(fs::read_to_string(&entry).unwrap(), include_str!("../../extensions/piop-diff-watch/index.ts"));
-        for (name, expected) in FILE_CHANGE_ASSETS {
-            let path = entry.with_file_name(name);
-            assert_eq!(fs::read_to_string(&path).unwrap(), expected);
-            #[cfg(unix)] {
-                use std::os::unix::fs::PermissionsExt;
-                assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
-            }
-            fs::write(&path, "outdated").unwrap();
-        }
         prepare_diff_watch_extension().unwrap();
     }
-    assert_eq!(fs::read_dir(entry.parent().unwrap()).unwrap().count(), 4, "no temporary files should remain");
+    assert_eq!(fs::read_dir(entry.parent().unwrap()).unwrap().count(), 1, "no temporary files should remain");
 }
 
 #[test]

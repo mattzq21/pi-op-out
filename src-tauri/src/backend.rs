@@ -908,11 +908,7 @@ fn prepare_loop_detection_extension() -> Result<PathBuf, String> {
     Ok(dir.join("index.ts"))
 }
 
-const FILE_CHANGE_ASSETS: [(&str, &str); 3] = [
-    ("file-changes.ts", include_str!("../../extensions/piop-diff-watch/file-changes.ts")),
-    ("sitecustomize.py", include_str!("../../extensions/piop-diff-watch/sitecustomize.py")),
-    ("node_fs.cjs", include_str!("../../extensions/piop-diff-watch/node_fs.cjs")),
-];
+const LEGACY_FILE_CHANGE_ASSETS: [&str; 3] = ["file-changes.ts", "sitecustomize.py", "node_fs.cjs"];
 
 fn prepare_diff_watch_extension() -> Result<PathBuf, String> {
     migrate_extension_directory("pi-diff-watch", "piop-diff-watch")?;
@@ -923,7 +919,11 @@ fn prepare_diff_watch_extension() -> Result<PathBuf, String> {
     ensure_private_dir(&dir)?;
     let extension_path = dir.join("index.ts");
     atomic_write_private(&extension_path, include_str!("../../extensions/piop-diff-watch/index.ts").as_bytes())?;
-    for (name, content) in FILE_CHANGE_ASSETS { atomic_write_private(&dir.join(name), content.as_bytes())?; }
+    for name in LEGACY_FILE_CHANGE_ASSETS {
+        if let Err(error) = fs::remove_file(dir.join(name)) {
+            if error.kind() != std::io::ErrorKind::NotFound { return Err(format!("Could not remove legacy diff observer: {error}")); }
+        }
+    }
     Ok(extension_path)
 }
 
@@ -2360,8 +2360,8 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     for (name, content) in LOOP_DETECTION_ASSETS {
         remote.push_str(&format!(r#" && printf %s {} > "$HOME/{STORAGE_DIRECTORY}/piop-loop-detection/{name}" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-loop-detection/{name}""#, shell_quote(content)));
     }
-    for (name, content) in FILE_CHANGE_ASSETS {
-        remote.push_str(&format!(" && printf %s {} > \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/{}\" && chmod 600 \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/{}\"", shell_quote(content), name, name));
+    for name in LEGACY_FILE_CHANGE_ASSETS {
+        remote.push_str(&format!(r#" && rm -f -- "$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/{name}""#));
     }
     // Bundled extensions can exceed the OS limit for a single command argument.
     stage_extension_script(ssh(host).arg("sh -s"), &host.name, remote)

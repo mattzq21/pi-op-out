@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { registerFileChanges } from "./file-changes.ts";
 
 const REF_ROOT = "refs/pi-session-snapshots";
 const PROMPT_ENTRY = "pi-project-prompt-checkpoint";
@@ -419,7 +418,6 @@ ${command}
 }
 
 export default function diffWatch(pi: ExtensionAPI) {
-  registerFileChanges(pi);
   let snapshotQueue = Promise.resolve();
   let pendingContext: string | undefined;
   const queuedContexts = new Map<string, string[]>();
