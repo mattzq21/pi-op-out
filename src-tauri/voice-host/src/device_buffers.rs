@@ -223,8 +223,7 @@ pub(super) struct Playback {
 }
 
 impl Playback {
-    pub(super) fn next(&mut self, buffers: &Buffers) -> Option<f32> {
-        let epoch = buffers.speaker.load(Ordering::Acquire);
+    fn retire_frame(&mut self, buffers: &Buffers, epoch: u64) {
         if self
             .frame
             .as_ref()
@@ -238,6 +237,11 @@ impl Playback {
             }
             self.frame = None;
         }
+    }
+
+    pub(super) fn next(&mut self, buffers: &Buffers) -> Option<f32> {
+        let epoch = buffers.speaker.load(Ordering::Acquire);
+        self.retire_frame(buffers, epoch);
         // Bound stale-frame work even if a producer keeps writing during a mute.
         for _ in 0..buffers.playback.capacity() {
             if self.frame.is_some() {

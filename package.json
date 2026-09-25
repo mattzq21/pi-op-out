@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "lint": "eslint . --max-warnings 0",
-    "lint:rust": "npm run lint:rust:complexity && npm run build:extensions && vite build && cd src-tauri && cargo clippy --locked --all-targets --all-features -- -D warnings -D dead_code -D unused",
+    "lint:rust": "npm run lint:rust:complexity && npm run build:extensions && vite build && cd src-tauri && cargo clippy --locked --all-targets --all-features -- -D warnings -D dead_code -D unused && cargo clippy --locked --all-targets --no-default-features --features daemon,test-home -- -D warnings -D dead_code -D unused",
     "lint:rust:complexity": "node scripts/lint-rust-complexity.mjs",
     "build": "npm run build:extensions && tsc -b && vite build",
     "build:voice": "node scripts/build-voice.mjs",
@@ -16,7 +16,7 @@
     "build:mcp-bridge": "node scripts/build-mcp-bridge.mjs",
     "pretauri": "npm install --no-audit --no-fund && npm run build:extensions",
     "test": "npm run test:unit && npm run test:extensions && npm run test:mobile && npm run test:rust && npm run test:mobile:ui && npm run test:e2e",
-    "test:rust": "npm run build && TAURI_CONFIG='{\"bundle\":{\"externalBin\":[]}}' cargo test --locked --manifest-path src-tauri/Cargo.toml -- --test-threads=1",
+    "test:rust": "npm run build && TAURI_CONFIG='{\"bundle\":{\"externalBin\":[]}}' cargo test --locked --manifest-path src-tauri/Cargo.toml -- --test-threads=1 && cargo test --locked --manifest-path src-tauri/Cargo.toml --no-default-features --features daemon,test-home -- --test-threads=1",
     "test:extensions": "node --test test/extensions/*.test.mjs",
     "test:unit": "node --max-old-space-size=768 --enable-source-maps --import ./test/register-typescript.mjs --test --test-concurrency=1 --test-timeout=30000 test/unit/*.test.mjs",
     "test:mutation": "stryker run",

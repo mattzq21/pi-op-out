@@ -228,3 +228,7 @@ pub fn run() {
         }
     });
 }
+
+#[cfg(test)]
+#[path = "desktop_tests.rs"]
+mod tests;

@@ -339,10 +339,10 @@ fn collect_host_sessions(
             });
         }
         drop(sender);
-        for result in receiver { if let Ok(mut remote) = result { sessions.append(&mut remote); } }
+        for mut remote in receiver.into_iter().flatten() { sessions.append(&mut remote); }
     });
     assign(&mut sessions)?;
-    sessions.sort_by(|left, right| right.modified_at.cmp(&left.modified_at)); Ok(sessions)
+    sessions.sort_by_key(|session| std::cmp::Reverse(session.modified_at)); Ok(sessions)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]

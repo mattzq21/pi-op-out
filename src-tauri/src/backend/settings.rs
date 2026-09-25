@@ -140,18 +140,18 @@ fn merge_discovered_skills_at(settings: &mut AppSettings, home: &Path) {
         (home.join(".agents/skills"), false),
     ];
     let enabled_by_path: HashMap<PathBuf, bool> = settings.skills.iter().filter_map(|skill| {
-        let path = expand_skill_path(skill.get("path")?.as_str()?, &home);
+        let path = expand_skill_path(skill.get("path")?.as_str()?, home);
         Some((path, skill.get("enabled").and_then(Value::as_bool).unwrap_or(true)))
     }).collect();
 
     // Preserve manually-added paths, but rebuild entries belonging to discovery
     // roots so deleted skills disappear and newly installed skills show up.
     settings.skills.retain(|skill| {
-        let Some(path) = skill.get("path").and_then(Value::as_str).map(|path| expand_skill_path(path, &home)) else { return true };
+        let Some(path) = skill.get("path").and_then(Value::as_str).map(|path| expand_skill_path(path, home)) else { return true };
         !roots.iter().any(|(root, _)| skill_path_is_within(&path, root))
     });
 
-    let mut known: HashSet<PathBuf> = settings.skills.iter().filter_map(|skill| skill.get("path").and_then(Value::as_str).map(|path| expand_skill_path(path, &home))).collect();
+    let mut known: HashSet<PathBuf> = settings.skills.iter().filter_map(|skill| skill.get("path").and_then(Value::as_str).map(|path| expand_skill_path(path, home))).collect();
     for (root, include_root_markdown) in roots {
         for mut skill in discover_skills_in(&root, include_root_markdown) {
             let Some(path) = skill.get("path").and_then(Value::as_str).map(PathBuf::from) else { continue };
@@ -181,7 +181,7 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
 }
 
 fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
-    let mut settings = if !path.exists() { default_settings() } else { serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())? };
+    let mut settings = if !path.exists() { default_settings() } else { serde_json::from_slice(&fs::read(path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())? };
     migrate_question_tool(&mut settings);
     for (legacy, replacements) in [
         ("exec_command", &["read", "bash", "grep", "find", "ls"][..]),
@@ -257,4 +257,3 @@ fn save_settings_with(
     synchronize(&settings)?;
     Ok(change)
 }
-

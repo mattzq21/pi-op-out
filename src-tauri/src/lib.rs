@@ -1,5 +1,5 @@
-#[cfg(any(not(feature = "desktop"), test))]
+#[cfg(not(feature = "desktop"))]
 include!("backend.rs");
 
-#[cfg(all(feature = "desktop", not(test)))]
+#[cfg(feature = "desktop")]
 include!("desktop.rs");

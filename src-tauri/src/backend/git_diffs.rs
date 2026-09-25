@@ -14,7 +14,7 @@ fn remote_git_tree(host: &RemoteHost, cwd: &str) -> Result<Option<String>, Strin
 
 fn query_remote_git_tree(command: &mut Command, host_name: &str) -> Result<Option<String>, String> {
     let output = run_limited(command, 64 * 1024, &format!("Could not capture Git snapshot on {host_name}"))?;
-    match output.status.code() { Some(3 | 4 | 6) => return Ok(None), _ => {} }
+    if let Some(3 | 4 | 6) = output.status.code() { return Ok(None) }
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let snapshot: GitSnapshotToken = serde_json::from_slice(&output.stdout).map_err(|error| format!("Remote Git snapshot was invalid: {error}"))?;
     if !valid_remote_snapshot(&snapshot) || !Path::new(&snapshot.repository_root).is_absolute() { return Err("Remote Git snapshot was invalid".into()); }
@@ -41,7 +41,7 @@ fn discard_git_tree_at_host(snapshot: &str, host: Option<&RemoteHost>) -> Result
 }
 
 fn discard_remote_git_tree(snapshot: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
-    let snapshot: GitSnapshotToken = serde_json::from_str(&snapshot).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
+    let snapshot: GitSnapshotToken = serde_json::from_str(snapshot).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     if !valid_remote_snapshot(&snapshot) { return Err("Invalid remote Git snapshot location".into()); }
     let root = shell_quote(&snapshot.root);
     let script = format!("parent=$(cd \"$HOME/{STORAGE_DIRECTORY}/git-snapshots\" && pwd -P) || exit 7; snap=$(cd {root} && pwd -P) || exit 7; [ \"$(dirname -- \"$snap\")\" = \"$parent\" ] || exit 7; case \"$(basename -- \"$snap\")\" in pi-desktop-diff-*) ;; *) exit 7;; esac; rm -rf -- \"$snap\"");
@@ -83,7 +83,7 @@ fn load_git_diff_between_at_host(cwd: &str, base_tree: &str, current_token: &str
 
 fn load_remote_git_diff_between(base_tree: &str, current_token: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<Option<GitDiffSnapshot>, String> {
     let base: GitSnapshotToken = serde_json::from_str(base_tree).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
-    let current: GitSnapshotToken = serde_json::from_str(&current_token).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
+    let current: GitSnapshotToken = serde_json::from_str(current_token).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     if !valid_remote_snapshot(&base) || !valid_remote_snapshot(&current) { return Err("Invalid remote Git snapshot location".into()); }
     let script = format!("cd {} || exit 2; parent=$(cd \"$HOME/{STORAGE_DIRECTORY}/git-snapshots\" && pwd -P) || exit 7; base=$(cd {} && pwd -P) || exit 7; current=$(cd {} && pwd -P) || exit 7; for snapshot in \"$base\" \"$current\"; do [ \"$(dirname -- \"$snapshot\")\" = \"$parent\" ] || exit 7; case \"$(basename -- \"$snapshot\")\" in pi-desktop-diff-*) ;; *) exit 7;; esac; done; repo_objects=$(git rev-parse --git-path objects) || exit 3; repo_objects=$(cd \"$repo_objects\" && pwd -P) || exit 3; GIT_OBJECT_DIRECTORY=\"$current/objects\" GIT_ALTERNATE_OBJECT_DIRECTORIES=\"$base/objects:$repo_objects\" git diff --no-relative --no-color --no-ext-diff --find-renames {} {} --", shell_quote(&current.repository_root), shell_quote(&base.root), shell_quote(&current.root), shell_quote(&base.tree), shell_quote(&current.tree));
     let output = run_limited(&mut command(script), MAX_GIT_PATCH_BYTES, &format!("Git patch on {host_name} is too large"))?;
@@ -122,13 +122,12 @@ fn load_local_git_diffs(home: &Path, session_path: &str) -> Result<GitDiffSnapsh
 }
 
 fn load_git_diffs_at_host(session_path: &str, host: Option<&RemoteHost>) -> Result<GitDiffSnapshots, String> {
-    let content = if host.is_none() {
-        let snapshots = load_local_git_diffs(&home_dir()?, &session_path)?;
-        serde_json::to_string(&snapshots).map_err(|error| format!("Could not serialize diffs: {error}"))?
-    } else {
-        let host = host.unwrap();
+    let content = if let Some(host) = host {
         let mut command = ssh(host); command.arg(remote_session_sidecar_script(session_path, "if [ -f \"$sidecar\" ]; then cat -- \"$sidecar\"; else printf '{}'; fi"));
         return query_remote_git_diffs(&mut command, &host.name);
+    } else {
+        let snapshots = load_local_git_diffs(&home_dir()?, session_path)?;
+        serde_json::to_string(&snapshots).map_err(|error| format!("Could not serialize diffs: {error}"))?
     };
     serde_json::from_str(&content).map_err(|error| format!("Could not parse saved diffs: {error}"))
 }

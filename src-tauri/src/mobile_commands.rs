@@ -194,7 +194,7 @@ fn handle_voice_suppress(app: AppHandle, _owner: String, args: Value) -> Command
 
 fn handle_start_pi(app: AppHandle, owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
-        tokio::task::spawn_blocking(move || (|| { let mut result = start_pi_for_owner(app.clone(), owner, app.state(), app.state(), argument(&args, "runtimeId")?, argument(&args, "cwd")?, argument(&args, "sessionPath")?, argument(&args, "sessionId")?, argument(&args, "forkPath")?, argument(&args, "noSession")?, argument(&args, "hostId")?, argument(&args, "presence")?, argument(&args, "clientId")?)?; result["daemonId"] = json!(daemon_endpoint::identity()?); Ok(result) })()).await.map_err(|error| error.to_string())?
+        tokio::task::spawn_blocking(move || (|| { let mut result = start_pi_for_owner(app.clone(), owner, app.state(), app.state(), start_pi_options(&args)?)?; result["daemonId"] = json!(daemon_endpoint::identity()?); Ok(result) })()).await.map_err(|error| error.to_string())?
     })
 }
 
@@ -223,7 +223,7 @@ fn handle_pi_presence(app: AppHandle, _owner: String, args: Value) -> CommandFut
 
 fn handle_start_terminal(app: AppHandle, owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
-        tokio::task::spawn_blocking(move || serde_json::to_value(start_terminal_for_owner(app.clone(), owner, app.state(), argument(&args, "terminalId")?, argument(&args, "sessionKey")?, argument(&args, "cwd")?, argument(&args, "cols")?, argument(&args, "rows")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+        tokio::task::spawn_blocking(move || serde_json::to_value(start_terminal_for_owner(app.clone(), owner, app.state(), start_terminal_options(&args)?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
     })
 }
 
@@ -464,5 +464,30 @@ fn handle_codex_usage(_app: AppHandle, _owner: String, _args: Value) -> CommandF
 fn handle_opencode_go_usage(_app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
     Box::pin(async move {
         opencode_go_usage().await.and_then(|usage| serde_json::to_value(usage).map_err(|error| error.to_string()))
+    })
+}
+
+fn start_pi_options(args: &Value) -> Result<StartPiOptions, String> {
+    Ok(StartPiOptions {
+        runtime_id: argument(args, "runtimeId")?,
+        cwd: argument(args, "cwd")?,
+        session_path: argument(args, "sessionPath")?,
+        session_id: argument(args, "sessionId")?,
+        fork_path: argument(args, "forkPath")?,
+        no_session: argument(args, "noSession")?,
+        host_id: argument(args, "hostId")?,
+        presence: argument(args, "presence")?,
+        client_id: argument(args, "clientId")?
+    })
+}
+
+fn start_terminal_options(args: &Value) -> Result<StartTerminalOptions, String> {
+    Ok(StartTerminalOptions {
+        terminal_id: argument(args, "terminalId")?,
+        session_key: argument(args, "sessionKey")?,
+        cwd: argument(args, "cwd")?,
+        cols: argument(args, "cols")?,
+        rows: argument(args, "rows")?,
+        host_id: argument(args, "hostId")?
     })
 }

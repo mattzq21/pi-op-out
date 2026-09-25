@@ -15,60 +15,6 @@ fn usage_query_propagates_server_errors_and_missing_usage_data() {
 }
 
 #[test]
-fn conversation_window_targets_require_a_nonblank_string_session_id() {
-    for target in [Value::Null, json!({}), json!({"sessionId":null}), json!({"sessionId":7}), json!({"sessionId":""}), json!({"sessionId":" \n\t"})] {
-        assert_eq!(conversation_window_target(&target).unwrap_err(), "Select a conversation to open in another window");
-    }
-}
-
-#[test]
-fn conversation_window_targets_round_trip_special_characters_without_extra_query_fields() {
-    let target = json!({
-        "sessionId":"session & # ? = + / \u{3bb}",
-        "sessionPath":"/project\u{27}s files/a?b#c.jsonl",
-        "hostId":"remote",
-        "name":"hello\n\u{4e16}\u{754c}",
-        "nested":{"value":"%26target=other"}
-    });
-    let (first, path) = conversation_window_target(&target).unwrap();
-    let (second, _) = conversation_window_target(&target).unwrap();
-    assert_ne!(first, second);
-    assert!(Uuid::parse_str(first.strip_prefix("chat-").unwrap()).is_ok());
-    assert!(Uuid::parse_str(second.strip_prefix("chat-").unwrap()).is_ok());
-    let url = tauri::Url::parse("https://piop.invalid/").unwrap().join(&path).unwrap();
-    assert_eq!(url.path(), "/index.html");
-    assert!(url.fragment().is_none());
-    let parameters = url.query_pairs().collect::<Vec<_>>();
-    assert_eq!(parameters.len(), 1);
-    assert_eq!(parameters[0].0, "target");
-    assert_eq!(serde_json::from_str::<Value>(&parameters[0].1).unwrap(), target);
-}
-
-#[test]
-fn external_url_opening_rejects_non_web_schemes_before_invoking_the_system_opener() {
-    for url in ["", "relative/path", "https://", "http://[invalid"] {
-        assert_eq!(open_external_url_with(url, |_| panic!("invalid URL opened")).unwrap_err(), "Enter a valid HTTP or HTTPS URL");
-    }
-    for url in ["file:///tmp/file", "javascript:alert(1)", "data:text/html,hello", "mailto:user@example.com", "ftp://example.com/file"] {
-        assert_eq!(open_external_url_with(url, |_| panic!("non-web URL opened")).unwrap_err(), "Only HTTP and HTTPS links can be opened in the browser");
-    }
-}
-
-#[test]
-fn external_url_opening_preserves_encoded_targets_and_propagates_launcher_failures() {
-    for (url, expected) in [
-        ("HTTPS://Example.COM:443/a b?x=1&y=2#section", "https://example.com/a%20b?x=1&y=2#section"),
-        ("http://localhost:8080/path", "http://localhost:8080/path"),
-        ("https://example.com/?q=%26%3D%23", "https://example.com/?q=%26%3D%23"),
-    ] {
-        open_external_url_with(url, |target| {
-            assert_eq!(target, std::ffi::OsStr::new(expected)); Ok(())
-        }).unwrap();
-    }
-    assert_eq!(open_external_url_with("https://example.com", |_| Err("launcher unavailable".into())).unwrap_err(), "launcher unavailable");
-}
-
-#[test]
 fn project_directory_opening_passes_literal_paths_and_propagates_launcher_errors() {
     let temporary = TestDirectory::new();
     let directory = temporary.0.join("project\u{27}s $files; \u{3bb}"); fs::create_dir(&directory).unwrap();
@@ -123,7 +69,7 @@ fn worktree_setup_execution_removes_finished_failed_and_panicked_jobs_only() {
         let runtime = PiRuntime::default();
         let id = register_worktree_setup(&runtime).unwrap();
         let other = register_worktree_setup(&runtime).unwrap();
-        let result = tauri::async_runtime::block_on(execute_worktree_setup(&runtime, &id, move |cancelled| {
+        let result = crate::platform::async_runtime::block_on(execute_worktree_setup(&runtime, &id, move |cancelled| {
             assert!(!cancelled.load(Ordering::SeqCst));
             match outcome { "success" => Ok(()), "failure" => Err("setup failed".into()), _ => panic!("setup worker panicked") }
         }));
@@ -140,12 +86,12 @@ fn worktree_setup_execution_removes_finished_failed_and_panicked_jobs_only() {
 #[test]
 fn worktree_setup_execution_observes_cancellation_and_rejects_unknown_jobs() {
     let runtime = Arc::new(PiRuntime::default());
-    assert_eq!(tauri::async_runtime::block_on(execute_worktree_setup(&runtime, "unknown",
+    assert_eq!(crate::platform::async_runtime::block_on(execute_worktree_setup(&runtime, "unknown",
         |_| panic!("unknown job executed"))).unwrap_err(), "Unknown setup");
     let id = register_worktree_setup(&runtime).unwrap();
     let (started, ready) = mpsc::channel(); let (release, proceed) = mpsc::channel();
     let worker_runtime = runtime.clone(); let worker_id = id.clone();
-    let worker = thread::spawn(move || tauri::async_runtime::block_on(execute_worktree_setup(&worker_runtime, &worker_id, move |cancelled| {
+    let worker = thread::spawn(move || crate::platform::async_runtime::block_on(execute_worktree_setup(&worker_runtime, &worker_id, move |cancelled| {
         started.send(()).unwrap();
         proceed.recv_timeout(Duration::from_secs(3)).unwrap();
         assert!(cancelled.load(Ordering::SeqCst));
@@ -177,4 +123,3 @@ fn worktree_setup_registration_and_cancellation_are_isolated_and_repeatable() {
     signal_worktree_setup_cancellation(&runtime, &first).unwrap();
     assert_eq!(runtime.worktree_setups.lock().unwrap().len(), 1);
 }
-

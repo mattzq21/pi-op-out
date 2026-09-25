@@ -64,7 +64,7 @@ fn collect_storage_report(local: Result<HostStorage, String>, remote_hosts: Vec<
         drop(sender);
         hosts.extend(receiver);
     });
-    hosts[1..].sort_by(|left, right| left.host_name.to_lowercase().cmp(&right.host_name.to_lowercase()));
+    hosts[1..].sort_by_key(|left| left.host_name.to_lowercase());
     StorageReport { hosts }
 }
 
@@ -118,8 +118,8 @@ fn retire_archived_session(app: &AppHandle, client: &PiRuntime, host_id: &str, s
     let daemon = client.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?.get(host_id).cloned();
     if let Some(daemon) = daemon {
         let settings = load_app_settings(app.clone())?;
-        let path = desktop_session_file(&settings, &host_id, &session_path)?;
-        let key = session_identity(&settings, &host_id, &path)?;
+        let path = desktop_session_file(&settings, host_id, session_path)?;
+        let key = session_identity(&settings, host_id, &path)?;
         if daemon.alive.load(Ordering::SeqCst) { daemon.request(json!({"type":"retire","sessionKey":key,"sessionPath":path}))?; }
         // Retirement stops new captures; its response follows all previously queued capture packets.
         daemon.drain_captures(Some(&key))?;
@@ -130,7 +130,7 @@ fn retire_archived_session(app: &AppHandle, client: &PiRuntime, host_id: &str, s
 
 fn archive_session_on_host(app: &AppHandle, host_id: &str, session_path: &str) -> Result<(), String> {
     if host_id != "local" {
-        let settings = load_app_settings(app.clone())?; let host = remote_host(&settings, &host_id)?;
+        let settings = load_app_settings(app.clone())?; let host = remote_host(&settings, host_id)?;
         return archive_remote_session(session_path, |script| { let mut command = ssh(host); command.arg(script); command });
     }
     archive_local_session(&home_dir()?, session_path)
@@ -250,11 +250,11 @@ fn restore_worktree_command(settings: &AppSettings, host_id: &str, path: &str) -
     let script = include_str!("../../resources/restore-archived-worktree.cjs");
     let command = if host_id == "local" {
         let mut command = node_command();
-        command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", script, &path]);
+        command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", script, path]);
         command
     } else {
-        let mut command = ssh(remote_host(&settings, &host_id)?);
-        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), shell_quote(&path))));
+        let mut command = ssh(remote_host(settings, host_id)?);
+        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), shell_quote(path))));
         command
     };
     Ok(command)

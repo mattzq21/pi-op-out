@@ -126,7 +126,7 @@ fn silent_wav() -> Vec<u8> {
 }
 
 fn validate_wav(wav: &[u8]) -> Result<(), String> {
-    if wav.len() < 46 || wav.len() > MAX_AUDIO_BYTES || wav.len() % 2 != 0 { return Err("Invalid dictation recording length".into()); }
+    if wav.len() < 46 || wav.len() > MAX_AUDIO_BYTES || !wav.len().is_multiple_of(2) { return Err("Invalid dictation recording length".into()); }
     let header = silent_wav();
     if wav[..4] != header[..4] || wav[8..40] != header[8..40]
         || u32::from_le_bytes(wav[4..8].try_into().unwrap()) as usize != wav.len() - 8

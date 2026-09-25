@@ -174,7 +174,7 @@ fn remote_session_index_preserves_previous_cache_when_reading_or_inspection_fail
 fn terminal_lifecycle_delivers_queued_input_and_resized_dimensions_to_the_shell() {
     let runtime = TestTerminals(TerminalRuntime::default());
     let (sender, events) = mpsc::channel();
-    start_terminal_with(&runtime.0, "interactive".into(), "session".into(), "/tmp".into(), 0, 0, "local".into(), "window".into(),
+    start_terminal_with(&runtime.0, TerminalLaunch { terminal_id: "interactive".into(), session_key: "session".into(), cwd: "/tmp".into(), cols: 0, rows: 0, host_id: "local".into(), window_label: "window".into() },
         || {
             let mut command = CommandBuilder::new("sh");
             command.args(["-c", "stty -echo; printf 'READY'; IFS= read -r line; printf 'received:%s\\n' \"$line\"; stty size"]);
@@ -211,7 +211,7 @@ fn stopping_a_started_terminal_emits_exit_and_preserves_other_processes() {
     let runtime = TestTerminals(TerminalRuntime::default());
     let _other_input = runtime.add("other");
     let (sender, events) = mpsc::channel();
-    start_terminal_with(&runtime.0, "stop-me".into(), "another-session".into(), "/tmp".into(), 80, 24, "local".into(), "window".into(),
+    start_terminal_with(&runtime.0, TerminalLaunch { terminal_id: "stop-me".into(), session_key: "another-session".into(), cwd: "/tmp".into(), cols: 80, rows: 24, host_id: "local".into(), window_label: "window".into() },
         || { let mut command = CommandBuilder::new("sh"); command.args(["-c", "printf READY; exec sleep 60"]); Ok(command) },
         move |packet| { let _ = sender.send(packet); }).unwrap();
     let packet = events.recv_timeout(Duration::from_secs(3)).unwrap();
@@ -230,7 +230,7 @@ fn stopping_a_started_terminal_emits_exit_and_preserves_other_processes() {
 fn terminal_startup_streams_shell_output_and_removes_finished_process() {
     let runtime = TestTerminals(TerminalRuntime::default());
     let (sender, events) = mpsc::channel();
-    start_terminal_with(&runtime.0, "terminal".into(), "session".into(), "/tmp".into(), 0, 0, "local".into(), "window".into(),
+    start_terminal_with(&runtime.0, TerminalLaunch { terminal_id: "terminal".into(), session_key: "session".into(), cwd: "/tmp".into(), cols: 0, rows: 0, host_id: "local".into(), window_label: "window".into() },
         || { let mut command = CommandBuilder::new("sh"); command.args(["-c", "printf 'hello λ'; exit 0"]); Ok(command) },
         move |packet| { let _ = sender.send(packet); }).unwrap();
     let mut output = String::new();
@@ -250,14 +250,14 @@ fn terminal_startup_streams_shell_output_and_removes_finished_process() {
 fn terminal_startup_rejects_limits_and_launch_failures_without_registering_new_processes() {
     let runtime = TestTerminals(TerminalRuntime::default());
     for id in 0..MAX_TERMINALS { runtime.add(&format!("terminal-{id}")); }
-    start_terminal_with(&runtime.0, "terminal-0".into(), "session".into(), "/tmp".into(), 80, 24, "local".into(), "main".into(),
+    start_terminal_with(&runtime.0, TerminalLaunch { terminal_id: "terminal-0".into(), session_key: "session".into(), cwd: "/tmp".into(), cols: 80, rows: 24, host_id: "local".into(), window_label: "main".into() },
         || panic!("duplicate must not launch"), |_| panic!("duplicate emitted")).unwrap();
-    let error = start_terminal_with(&runtime.0, "extra".into(), "session".into(), "/tmp".into(), 80, 24, "local".into(), "window".into(),
+    let error = start_terminal_with(&runtime.0, TerminalLaunch { terminal_id: "extra".into(), session_key: "session".into(), cwd: "/tmp".into(), cols: 80, rows: 24, host_id: "local".into(), window_label: "window".into() },
         || panic!("limit must prevent launch"), |_| panic!("limit emitted")).unwrap_err();
     assert!(error.contains("At most"));
     for failure in ["build", "spawn"] {
         let temporary = TestDirectory::new();
-        let error = start_terminal_with(&runtime.0, "other".into(), "other-session".into(), "/tmp".into(), 80, 24, "local".into(), "window".into(),
+        let error = start_terminal_with(&runtime.0, TerminalLaunch { terminal_id: "other".into(), session_key: "other-session".into(), cwd: "/tmp".into(), cols: 80, rows: 24, host_id: "local".into(), window_label: "window".into() },
             || if failure == "build" { Err("invalid directory".into()) } else { Ok(CommandBuilder::new(temporary.0.join("missing"))) },
             |_| panic!("failed launch emitted")).unwrap_err();
         assert!(error.contains(if failure == "build" { "invalid directory" } else { "Could not start terminal shell" }));
@@ -434,4 +434,3 @@ fn git_branch_reporting_handles_unborn_detached_and_linked_worktrees() {
     assert_eq!(git_branch_at(linked.to_str().unwrap(), None).unwrap().as_deref(), Some("HEAD"));
     assert_eq!(git_branch_at(repository.to_str().unwrap(), None).unwrap().as_deref(), Some("main"));
 }
-

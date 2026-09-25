@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, fs, path::PathBuf, sync::Mutex};
+use std::{collections::{HashMap, HashSet}, fs, path::{Path, PathBuf}, sync::Mutex};
 use serde::{Deserialize, Serialize};
 use crate::platform::AppHandle;
 #[cfg(feature = "desktop")]
@@ -53,13 +53,13 @@ fn storage_path() -> Result<PathBuf, String> {
     Ok(super::ensure_desktop_sessions_dir(&super::home_dir()?)?.join("groups.json"))
 }
 
-fn lock_storage(path: &PathBuf) -> Result<fs::File, String> {
+fn lock_storage(path: &Path) -> Result<fs::File, String> {
     let file = fs::OpenOptions::new().create(true).truncate(false).read(true).write(true).open(path.with_extension("lock")).map_err(|error| error.to_string())?;
     file.lock().map_err(|error| format!("Could not lock session groups: {error}"))?;
     Ok(file)
 }
 
-fn read(path: &PathBuf) -> Result<Option<SessionGroups>, String> {
+fn read(path: &Path) -> Result<Option<SessionGroups>, String> {
     match fs::read(path) {
         Ok(body) => serde_json::from_slice(&body).map(Some).map_err(|error| format!("Could not read session groups: {error}")),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -67,7 +67,7 @@ fn read(path: &PathBuf) -> Result<Option<SessionGroups>, String> {
     }
 }
 
-fn write(path: &PathBuf, groups: &SessionGroups) -> Result<(), String> {
+fn write(path: &Path, groups: &SessionGroups) -> Result<(), String> {
     super::atomic_write_private(path, &serde_json::to_vec_pretty(groups).map_err(|error| error.to_string())?)
         .map_err(|error| format!("Could not save session groups: {error}"))
 }
@@ -77,7 +77,7 @@ pub fn attach_assignments(sessions: &mut [super::SessionSummary]) -> Result<(), 
     attach_assignments_at(sessions, &storage_path()?)
 }
 
-fn attach_assignments_at(sessions: &mut [super::SessionSummary], path: &PathBuf) -> Result<(), String> {
+fn attach_assignments_at(sessions: &mut [super::SessionSummary], path: &Path) -> Result<(), String> {
     if let Some(state) = read(path)? {
         for session in sessions {
             session.group_id = state.assignments.get(&format!("{}:{}", session.host_id, session.id)).cloned().flatten();
@@ -110,7 +110,7 @@ fn update_seed_metadata(state: &mut SessionGroups, seed: &SessionSeed) -> bool {
     let mut dirty = false;
     for group in state.groups.iter_mut().filter(|group| group.host_id == seed.project.host_id) {
         if group.host_name != seed.project.host_name { group.host_name = seed.project.host_name.clone(); dirty = true; }
-        if group.id == seed.project.id && seed.project.project_kind.is_some() && group.project_kind != seed.project.project_kind { group.project_kind = seed.project.project_kind.clone(); dirty = true; }
+        if group.id == seed.project.id && seed.project.project_kind.is_some() && group.project_kind != seed.project.project_kind { group.project_kind = seed.project.project_kind; dirty = true; }
     }
     dirty
 }
@@ -127,7 +127,7 @@ fn assign_seed(state: &mut SessionGroups, seed: SessionSeed) -> bool {
     true
 }
 
-fn load_at(path: &PathBuf, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Result<SessionGroups, String> {
+fn load_at(path: &Path, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Result<SessionGroups, String> {
     let _file_lock = lock_storage(path)?;
     let stored = read(path)?;
     let mut dirty = stored.is_none();
@@ -158,7 +158,7 @@ fn change_with(change: GroupChange, path: impl FnOnce() -> Result<PathBuf, Strin
     Ok(state)
 }
 
-fn change_at(path: &PathBuf, change: GroupChange) -> Result<SessionGroups, String> {
+fn change_at(path: &Path, change: GroupChange) -> Result<SessionGroups, String> {
     let _file_lock = lock_storage(path)?;
     let mut state = read(path)?.ok_or("Session groups have not loaded yet")?;
     apply_group_change(&mut state, change)?;

@@ -48,22 +48,12 @@ fn worktree_names_validate_user_input_and_sanitize_project_prefixes() {
     assert_eq!(worktree_branch_name("!!!", "feature"), "project-feature");
     assert_eq!(worktree_branch_name("my_project", "feature"), "my_project-feature");
 }
-pub(super) struct TestDirectory(pub(super) PathBuf);
-impl TestDirectory {
-    pub(super) fn new() -> Self {
-        let path = std::env::temp_dir().join(format!("piop-tests-{}", Uuid::new_v4()));
-        fs::create_dir_all(&path).unwrap();
-        Self(path)
-    }
-}
-impl Drop for TestDirectory {
-    fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
-}
+include!("../test_directory.rs");
 
 // Tests exercising installers that read HOME must serialize the process-wide
 // override and restore the original value: the test harness runs tests in
 // parallel threads within one process.
-struct HomeOverride(std::sync::MutexGuard<'static, ()>, Option<std::ffi::OsString>);
+struct HomeOverride { _guard: std::sync::MutexGuard<'static, ()>, previous: Option<std::ffi::OsString> }
 
 impl HomeOverride {
     fn take(home: &Path) -> Self {
@@ -71,31 +61,17 @@ impl HomeOverride {
         let guard = HOME_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let previous = std::env::var_os("HOME");
         std::env::set_var("HOME", home);
-        HomeOverride(guard, previous)
+        HomeOverride { _guard: guard, previous }
     }
 }
 
 impl Drop for HomeOverride {
     fn drop(&mut self) {
-        match self.1.take() {
+        match self.previous.take() {
             Some(original) => std::env::set_var("HOME", original),
             None => std::env::remove_var("HOME"),
         }
     }
-}
-
-#[test]
-fn dropped_files_preserve_binary_data_and_enforce_file_type_and_size_limits() {
-    let root = TestDirectory::new();
-    let path = root.0.join("attachment.bin"); fs::write(&path, [0, 255, 128, 10]).unwrap();
-    assert_eq!(read_dropped_file(path.to_string_lossy().into_owned()).unwrap(), json!({"name":"attachment.bin","data":[0,255,128,10]}));
-    assert_eq!(read_dropped_file(root.0.to_string_lossy().into_owned()).unwrap_err(), "Drop files, not folders");
-    assert!(read_dropped_file(root.0.join("missing").to_string_lossy().into_owned()).is_err());
-    let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
-    file.set_len(10 * 1024 * 1024 + 1).unwrap();
-    assert_eq!(read_dropped_file(path.to_string_lossy().into_owned()).unwrap_err(), "Attachment is larger than 10 MB");
-    file.set_len(10 * 1024 * 1024).unwrap();
-    assert_eq!(read_dropped_file(path.to_string_lossy().into_owned()).unwrap()["data"].as_array().unwrap().len(), 10 * 1024 * 1024);
 }
 
 #[test]
@@ -129,4 +105,3 @@ fn test_git(cwd: &Path, arguments: &[&str]) {
         .args(arguments).output().unwrap();
     assert!(output.status.success(), "git {arguments:?}: {}", String::from_utf8_lossy(&output.stderr));
 }
-

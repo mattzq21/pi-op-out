@@ -83,23 +83,9 @@ async fn verify_proxy_peer(stream: &tokio::net::UnixStream) -> Result<(), String
 
 #[cfg(target_os = "linux")]
 async fn authenticate(stream: tokio::net::UnixStream) -> Result<tokio_tungstenite::WebSocketStream<tokio::net::UnixStream>, String> {
-    use tokio_tungstenite::tungstenite::handshake::server::{Request, Response, ErrorResponse};
     verify_proxy_peer(&stream).await?;
     let allowed_login = host_login().await?;
-    let callback = |request: &Request, response: Response| -> Result<Response, ErrorResponse> {
-        let headers = request.headers();
-        let login = headers.get("tailscale-user-login").and_then(|value| value.to_str().ok());
-        // A web page must not borrow the browser's tailnet identity to control
-        // Pi. These are the packaged Capacitor origins; native clients omit it.
-        let origin_allowed = match headers.get("origin") {
-            None => true,
-            Some(value) => matches!(value.to_str(), Ok("https://localhost" | "capacitor://localhost")),
-        };
-        if headers.contains_key("tailscale-funnel-request") || !origin_allowed || login != Some(allowed_login.as_str()) {
-            return Err(Response::builder().status(403).body(Some("Tailscale identity is not authorized".into())).unwrap());
-        }
-        Ok(response)
-    };
+    let callback = TailscaleIdentity { login: allowed_login };
     let config = WebSocketConfig::default().max_message_size(Some(MAX_MESSAGE)).max_frame_size(Some(MAX_MESSAGE));
     let mut socket = tokio::time::timeout(Duration::from_secs(10), tokio_tungstenite::accept_hdr_async_with_config(stream, callback, Some(config))).await.map_err(|_| "Handshake timeout")?.map_err(|error| error.to_string())?;
     authenticate_mode(&mut socket).await?;
@@ -112,4 +98,26 @@ async fn authenticate_mode(socket: &mut tokio_tungstenite::WebSocketStream<tokio
     let packet: Value = serde_json::from_str(first.to_text().map_err(|_| "Expected authentication")?).map_err(|_| "Invalid authentication")?;
     if packet["type"] != "authenticate" || packet["mode"] != "tailscale" { let _ = socket.close(None).await; return Err("Select Tailscale authentication".into()); }
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+struct TailscaleIdentity { login: String }
+
+#[cfg(target_os = "linux")]
+impl tokio_tungstenite::tungstenite::handshake::server::Callback for TailscaleIdentity {
+    fn on_request(self, request: &tokio_tungstenite::tungstenite::handshake::server::Request, response: tokio_tungstenite::tungstenite::handshake::server::Response) -> Result<tokio_tungstenite::tungstenite::handshake::server::Response, tokio_tungstenite::tungstenite::handshake::server::ErrorResponse> {
+        use tokio_tungstenite::tungstenite::handshake::server::Response;
+        let headers = request.headers();
+        let login = headers.get("tailscale-user-login").and_then(|value| value.to_str().ok());
+        // A web page must not borrow the browser's tailnet identity to control
+        // Pi. These are the packaged Capacitor origins; native clients omit it.
+        let origin_allowed = match headers.get("origin") {
+            None => true,
+            Some(value) => matches!(value.to_str(), Ok("https://localhost" | "capacitor://localhost")),
+        };
+        if headers.contains_key("tailscale-funnel-request") || !origin_allowed || login != Some(self.login.as_str()) {
+            return Err(Response::builder().status(403).body(Some("Tailscale identity is not authorized".into())).unwrap());
+        }
+        Ok(response)
+    }
 }

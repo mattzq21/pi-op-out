@@ -206,6 +206,33 @@ impl Processor {
         Ok(())
     }
 
+    fn process_capture(
+        &mut self,
+        at: Instant,
+        input: &[f32; BLOCK],
+        now: Instant,
+    ) -> Result<[f32; BLOCK]> {
+        let capture_age = now.saturating_duration_since(at);
+        if capture_age > MAX_PROCESSING_DELAY {
+            return Err(PROCESSING_LATE);
+        }
+        let delay = (capture_age.as_millis() as i64 + self.render_delay).max(0);
+        if delay > MAX_PROCESSING_DELAY.as_millis() as i64 {
+            return Err(PROCESSING_LATE);
+        }
+        self.apm
+            .set_stream_delay_ms(delay as i32)
+            .map_err(|_| "invalid voice echo delay")?;
+        let mut output = [0.0; BLOCK];
+        self.apm
+            .process_capture_f32(&[input], &mut [&mut output])
+            .map_err(|_| "voice capture processing failed")?;
+        if output.iter().any(|sample| !sample.is_finite()) {
+            return Err("invalid processed voice audio");
+        }
+        Ok(output)
+    }
+
     pub(super) fn capture(
         &mut self,
         frame: &Frame,
@@ -228,24 +255,7 @@ impl Processor {
         self.capture.push(frame)?;
         let mut encoded = Vec::new();
         while let Some((at, input)) = self.capture.next() {
-            let capture_age = now().saturating_duration_since(at);
-            if capture_age > MAX_PROCESSING_DELAY {
-                return Err(PROCESSING_LATE);
-            }
-            let delay = (capture_age.as_millis() as i64 + self.render_delay).max(0);
-            if delay > MAX_PROCESSING_DELAY.as_millis() as i64 {
-                return Err(PROCESSING_LATE);
-            }
-            self.apm
-                .set_stream_delay_ms(delay as i32)
-                .map_err(|_| "invalid voice echo delay")?;
-            let mut output = [0.0; BLOCK];
-            self.apm
-                .process_capture_f32(&[&input], &mut [&mut output])
-                .map_err(|_| "voice capture processing failed")?;
-            if output.iter().any(|sample| !sample.is_finite()) {
-                return Err("invalid processed voice audio");
-            }
+            let output = self.process_capture(at, &input, now())?;
             if self.pending.is_empty() {
                 self.at = at;
             }

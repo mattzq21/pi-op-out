@@ -61,7 +61,7 @@ impl PlaybackWriter {
         self.state.rate
     }
 
-    pub(crate) fn write(&self, bytes: &[u8]) -> Result<usize, &'static str> {
+    fn decode_frame(&self, bytes: &[u8]) -> Result<Frame, &'static str> {
         if bytes.is_empty() || !bytes.len().is_multiple_of(4) {
             return Err("invalid speaker buffer");
         }
@@ -77,6 +77,22 @@ impl PlaybackWriter {
                 return Err("invalid speaker sample");
             }
         }
+        Ok(frame)
+    }
+
+    fn check_epoch(&self) -> Result<(), &'static str> {
+        let buffers = &self.state.buffers;
+        if self.epoch % 2 == 1
+            || buffers.speaker.load(Ordering::Acquire) != self.epoch
+            || buffers.failed.load(Ordering::Acquire)
+        {
+            return Err("speaker writer cancelled");
+        }
+        Ok(())
+    }
+
+    pub(crate) fn write(&self, bytes: &[u8]) -> Result<usize, &'static str> {
+        let frame = self.decode_frame(bytes)?;
         let _producer = self
             .state
             .producer
@@ -90,12 +106,7 @@ impl PlaybackWriter {
         let limit = (self.state.rate / windows_per_second)
             .min((BLOCK * buffers.playback.capacity()) as u32);
         loop {
-            if self.epoch % 2 == 1
-                || buffers.speaker.load(Ordering::Acquire) != self.epoch
-                || buffers.failed.load(Ordering::Acquire)
-            {
-                return Err("speaker writer cancelled");
-            }
+            self.check_epoch()?;
             if buffers.queued.load(Ordering::Acquire) + frame.len as u32 <= limit
                 && !buffers.playback.is_full()
             {

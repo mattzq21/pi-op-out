@@ -129,32 +129,8 @@ pub(crate) fn connect(app: &AppHandle, runtime: &PiRuntime, broker: &BrokerRunti
     let mut daemons = runtime.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?;
     let connection_config = connection_config(settings, host_id)?;
     let host = if host_id == "local" { None } else { Some(remote_host(settings, host_id)?.clone()) };
-    if let Some(daemon) = daemons.get(host_id).filter(|daemon| daemon.alive.load(Ordering::SeqCst) && daemon.connection_config == connection_config) { daemon.configure(runtime, settings, host_id)?; return Ok(daemon.clone()); }
-    if let Some(daemon) = daemons.get(host_id) { daemon.disconnect(app, runtime); daemon.shutdown(); daemon.drain_captures(None)?; }
-    daemons.remove(host_id);
-    let auth_executable = host.as_ref().map(|host| host.pi_path.clone()).unwrap_or_else(|| pi_executable().to_string_lossy().into_owned());
-    let script = format!("const gitCaptureScript = {};\nconst piAuthExecutable = {};\nconst piStorageDirectory = {};\n{}\n{}\n{}\n{}\n{}\n{}\n{}", serde_json::to_string(include_str!("../resources/capture-git-tree.cjs")).map_err(|error| error.to_string())?, serde_json::to_string(&auth_executable).map_err(|error| error.to_string())?, serde_json::to_string(STORAGE_DIRECTORY).map_err(|error| error.to_string())?, include_str!("../resources/daemon-queue.mjs"), include_str!("../../extensions/piop-runtime-settings/provider-accounts.mjs"), include_str!("../resources/provider-auth.mjs"), include_str!("../resources/conversation-ownership.mjs"), include_str!("../resources/voice-service.mjs"), include_str!("../resources/host-daemon-commands.mjs"), include_str!("../resources/host-daemon.mjs"));
-    let remote_port = (host_id != "local").then(remote_broker_port);
-    let loader = include_str!("../resources/host-daemon-loader.mjs");
-    let mut command = if let Some(remote_port) = remote_port {
-        let (port, _) = broker_environment(broker)?;
-        let mut command = remote_broker_command(remote_host(settings, host_id)?, port, remote_port);
-        command.arg(remote_login_command(&format!("exec node --input-type=module -e {}", shell_quote(loader))));
-        command
-    } else {
-        let mut command = Command::new("node"); command.args(["--input-type=module", "-e", loader]); command
-    };
-    let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| format!("Could not start host daemon: {error}"))?;
-    let mut stdin = child.stdin.take().ok_or("Daemon stdin was unavailable")?;
-    let source_length = u32::try_from(script.len()).map_err(|_| "Host daemon source is too large")?;
-    if let Err(error) = stdin.write_all(&source_length.to_be_bytes()).and_then(|_| stdin.write_all(script.as_bytes())).and_then(|_| stdin.flush()) {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(format!("Could not send host daemon source: {error}"));
-    }
-    let stdout = child.stdout.take().ok_or("Daemon stdout was unavailable")?;
-    let stderr = child.stderr.take().ok_or("Daemon stderr was unavailable")?;
-    let daemon = Arc::new(Daemon { alive: AtomicBool::new(true), remote_port, connection_config, host, agent_prefix: format!("daemon:{host_id}:{}:", Uuid::new_v4()), events: Mutex::new(()), child: Mutex::new(child), stdin: Mutex::new(stdin), pending: Mutex::new(HashMap::new()), captures: Mutex::new(HashMap::new()) });
+    if let Some(daemon) = reuse_connection(&mut daemons, app, runtime, settings, host_id, &connection_config)? { return Ok(daemon); }
+    let (daemon, stdout, stderr) = spawn_connection(broker, settings, host_id, connection_config, host)?;
     daemons.insert(host_id.into(), daemon.clone());
     let configuration_host_id = host_id.to_owned();
     let connection = daemon.clone(); let app = app.clone(); let host_id = host_id.to_owned();
@@ -162,78 +138,7 @@ pub(crate) fn connect(app: &AppHandle, runtime: &PiRuntime, broker: &BrokerRunti
     thread::spawn(move || for line in BufReader::new(stderr).lines().map_while(Result::ok) {
         if error_connection.alive.load(Ordering::SeqCst) { let _ = error_app.emit("pi://daemon-error", json!({"hostId":error_host,"line":line})); }
     });
-    thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            let Ok(packet) = serde_json::from_str::<Value>(&line) else { continue; };
-            let _events = connection.events.lock().unwrap_or_else(|error| error.into_inner());
-            if !connection.alive.load(Ordering::SeqCst) { continue; }
-            match packet["type"].as_str() {
-                Some("ownership_drain") => {
-                    let connection = connection.clone();
-                    thread::spawn(move || {
-                        let error = connection.drain_captures(packet["sessionKey"].as_str()).err();
-                        let _ = connection.notify(json!({"type":"ownership_drained","requestId":packet["id"],"error":error}));
-                    });
-                },
-                Some("response") => if let Some(sender) = packet["id"].as_str().and_then(|id| connection.pending.lock().ok()?.remove(id)) {
-                    let _ = sender.send(if let Some(error) = packet["error"].as_str() { Err(error.into()) } else { Ok(packet["data"].clone()) });
-                },
-                Some("event") => {
-                    if let Some(working) = match packet["event"]["type"].as_str() { Some("agent_start") => Some(true), Some("agent_settled") => Some(false), _ => None } {
-                        if let Some(id) = packet["runtimeId"].as_str() { if let Ok(mut agents) = app.state::<PiRuntime>().active_agents.lock() { if let Some(agent) = agents.get_mut(id) { agent.working = working; } } }
-                    }
-                    if packet["event"]["type"].as_str() == Some("ownership_lost") {
-                        if let Some(id) = packet["runtimeId"].as_str() { if let Ok(mut agents) = app.state::<PiRuntime>().active_agents.lock() { if let Some(agent) = agents.get_mut(id) { agent.working = false; agent.messageable = true; } } }
-                    }
-                    if packet["event"]["type"].as_str() == Some("disconnected") {
-                        if let Some(id) = packet["runtimeId"].as_str() {
-                            let runtime = app.state::<PiRuntime>();
-                            let owned = runtime.processes.lock().map(|mut processes| {
-                                if !processes.get(id).is_some_and(|process| Arc::ptr_eq(&process.daemon, &connection)) { return false; }
-                                processes.remove(id); true
-                            }).unwrap_or(false);
-                            if !owned { continue; }
-                            if let Ok(mut agents) = runtime.active_agents.lock() { agents.remove(id); };
-                        }
-                    }
-                    let _ = app.emit("pi://event", json!({"runtimeId":packet["runtimeId"],"event":packet["event"]}));
-                },
-                Some("voice_event") => {
-                    if packet["event"]["type"] == "ended" { app.state::<voice::VoiceRuntime>().ended(packet["callId"].as_str().unwrap_or_default()); }
-                    let _ = app.emit("pi://voice", json!({"callId":packet["callId"],"event":packet["event"]}));
-                },
-                Some("stderr") => { let _ = app.emit("pi://stderr", packet.clone()); },
-                Some("provider_auth_changed") => { let _ = app.emit("pi://provider-auth-changed", json!({"hostId":host_id})); },
-                Some("diagnostic") => { let _ = app.emit("pi://daemon-error", json!({"hostId":host_id,"line":packet["line"]})); },
-                Some("session_state") => {
-                    let state = &packet["state"];
-                    if !state.is_object() { continue; }
-                    let key = format!("{}{}", connection.agent_prefix, packet["sessionKey"].as_str().unwrap_or_default());
-                    let runtime = app.state::<PiRuntime>();
-                    if let Ok(mut agents) = runtime.active_agents.lock() {
-                        if let Some(session_id) = state["sessionId"].as_str() {
-                            for agent in agents.values_mut().filter(|agent| agent.host_id == host_id && agent.session_id.as_deref() == Some(session_id)) {
-                                agent.working = packet["working"].as_bool().unwrap_or(false);
-                            }
-                        }
-                        agents.insert(key, AgentAddress { host_id: host_id.clone(), session_id: state["sessionId"].as_str().map(str::to_owned), session_path: state["sessionFile"].as_str().map(str::to_owned), worktree: packet["worktree"].as_str().map(str::to_owned), presence_id: packet["presenceId"].as_str().map(str::to_owned), working: packet["working"].as_bool().unwrap_or(false), messageable: packet["messageable"].as_bool().unwrap_or(false) });
-                    };
-                    let _ = app.emit("pi://sessions-changed", ());
-                },
-                Some("session_closed") => {
-                    let runtime = app.state::<PiRuntime>();
-                    if let Some(key) = packet["sessionKey"].as_str() { if let Ok(captures) = connection.captures.lock() { if let Some(sender) = captures.get(key) { let _ = sender.send(CaptureWork::Packet(json!({"phase":"closed"}))); } } }
-                    if let Ok(mut agents) = runtime.active_agents.lock() { agents.remove(&format!("{}{}", connection.agent_prefix, packet["sessionKey"].as_str().unwrap_or_default())); };
-                    let _ = app.emit("pi://sessions-changed", ());
-                },
-                Some("turn_capture") => persist_capture(&app, &connection, &host_id, packet.clone()),
-                _ => {},
-            }
-        }
-        let runtime = app.state::<PiRuntime>();
-        connection.disconnect(&app, &runtime);
-        if let Ok(mut child) = connection.child.lock() { let _ = child.wait(); };
-    });
+    thread::spawn(move || read_packets(app, connection, host_id, stdout));
     daemon.configure(runtime, settings, &configuration_host_id)?;
     Ok(daemon)
 }
@@ -252,17 +157,8 @@ fn persist_capture(app: &AppHandle, daemon: &Arc<Daemon>, host_id: &str, packet:
                     CaptureWork::Packet(packet) => packet,
                     CaptureWork::Drain(completion) => { let _ = completion.send(()); continue; }
                 };
-                if packet["phase"].as_str() == Some("closed") {
-                    for (_, baseline) in baselines.drain() { let _ = discard_git_tree_at_host(&baseline, host.as_ref()); }
-                    continue;
-                }
+                if update_capture_baseline(&mut baselines, &packet, host.as_ref()) { continue; }
                 let Some(turn_id) = packet["turnId"].as_str() else { continue; };
-                if packet["phase"].as_str() == Some("start") {
-                    if let Some(baseline) = packet["baseline"].as_str() {
-                        if let Some(previous) = baselines.insert(turn_id.into(), baseline.into()) { let _ = discard_git_tree_at_host(&previous, host.as_ref()); }
-                    }
-                    continue;
-                }
                 let baseline = baselines.remove(turn_id);
                 let current = packet["current"].as_str();
                 let result = (|| -> Result<(), String> {
@@ -298,4 +194,150 @@ pub(crate) fn spec(command: &Command) -> Value {
         "cwd": command.get_current_dir().map(|path| path.to_string_lossy()),
         "env": command.get_envs().filter_map(|(key, value)| value.map(|value| (key.to_string_lossy().into_owned(), value.to_string_lossy().into_owned()))).collect::<HashMap<_, _>>(),
     })
+}
+
+fn handle_event(app: &AppHandle, connection: &Arc<Daemon>, packet: &Value) {
+    update_agent_event(app, packet);
+                    if packet["event"]["type"].as_str() == Some("disconnected") {
+                        if let Some(id) = packet["runtimeId"].as_str() {
+                            let runtime = app.state::<PiRuntime>();
+                            let owned = runtime.processes.lock().map(|mut processes| {
+                                if !processes.get(id).is_some_and(|process| Arc::ptr_eq(&process.daemon, connection)) { return false; }
+                                processes.remove(id); true
+                            }).unwrap_or(false);
+                            if !owned { return; }
+                            if let Ok(mut agents) = runtime.active_agents.lock() { agents.remove(id); };
+                        }
+                    }
+                    let _ = app.emit("pi://event", json!({"runtimeId":packet["runtimeId"],"event":packet["event"]}));
+}
+
+fn handle_session_state(app: &AppHandle, connection: &Arc<Daemon>, host_id: &str, packet: &Value) {
+                    let state = &packet["state"];
+                    if !state.is_object() { return; }
+                    let key = format!("{}{}", connection.agent_prefix, packet["sessionKey"].as_str().unwrap_or_default());
+                    let runtime = app.state::<PiRuntime>();
+                    if let Ok(mut agents) = runtime.active_agents.lock() {
+                        if let Some(session_id) = state["sessionId"].as_str() {
+                            for agent in agents.values_mut().filter(|agent| agent.host_id == host_id && agent.session_id.as_deref() == Some(session_id)) {
+                                agent.working = packet["working"].as_bool().unwrap_or(false);
+                            }
+                        }
+                        agents.insert(key, AgentAddress { host_id: host_id.to_owned(), session_id: state["sessionId"].as_str().map(str::to_owned), session_path: state["sessionFile"].as_str().map(str::to_owned), worktree: packet["worktree"].as_str().map(str::to_owned), presence_id: packet["presenceId"].as_str().map(str::to_owned), working: packet["working"].as_bool().unwrap_or(false), messageable: packet["messageable"].as_bool().unwrap_or(false) });
+                    };
+                    let _ = app.emit("pi://sessions-changed", ());
+}
+
+fn handle_session_closed(app: &AppHandle, connection: &Arc<Daemon>, packet: &Value) {
+                    let runtime = app.state::<PiRuntime>();
+                    if let Some(key) = packet["sessionKey"].as_str() { if let Ok(captures) = connection.captures.lock() { if let Some(sender) = captures.get(key) { let _ = sender.send(CaptureWork::Packet(json!({"phase":"closed"}))); } } }
+                    if let Ok(mut agents) = runtime.active_agents.lock() { agents.remove(&format!("{}{}", connection.agent_prefix, packet["sessionKey"].as_str().unwrap_or_default())); };
+                    let _ = app.emit("pi://sessions-changed", ());
+}
+
+fn handle_notice(app: &AppHandle, host_id: &str, packet: &Value) {
+    match packet["type"].as_str() {
+                Some("voice_event") => {
+                    if packet["event"]["type"] == "ended" { app.state::<voice::VoiceRuntime>().ended(packet["callId"].as_str().unwrap_or_default()); }
+                    let _ = app.emit("pi://voice", json!({"callId":packet["callId"],"event":packet["event"]}));
+                },
+                Some("stderr") => { let _ = app.emit("pi://stderr", packet.clone()); },
+                Some("provider_auth_changed") => { let _ = app.emit("pi://provider-auth-changed", json!({"hostId":host_id})); },
+                Some("diagnostic") => { let _ = app.emit("pi://daemon-error", json!({"hostId":host_id,"line":packet["line"]})); },
+        _ => {},
+    }
+}
+
+fn read_packets(app: AppHandle, connection: Arc<Daemon>, host_id: String, stdout: std::process::ChildStdout) {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            let Ok(packet) = serde_json::from_str::<Value>(&line) else { continue; };
+            let _events = connection.events.lock().unwrap_or_else(|error| error.into_inner());
+            if !connection.alive.load(Ordering::SeqCst) { continue; }
+            handle_packet(&app, &connection, &host_id, packet);
+        }
+        let runtime = app.state::<PiRuntime>();
+        connection.disconnect(&app, &runtime);
+        if let Ok(mut child) = connection.child.lock() { let _ = child.wait(); };
+}
+
+fn reuse_connection(daemons: &mut HashMap<String, Arc<Daemon>>, app: &AppHandle, runtime: &PiRuntime, settings: &AppSettings, host_id: &str, connection_config: &Option<(String, String)>) -> Result<Option<Arc<Daemon>>, String> {
+    if let Some(daemon) = daemons.get(host_id).filter(|daemon| daemon.alive.load(Ordering::SeqCst) && &daemon.connection_config == connection_config) { daemon.configure(runtime, settings, host_id)?; return Ok(Some(daemon.clone())); }
+    if let Some(daemon) = daemons.get(host_id) { daemon.disconnect(app, runtime); daemon.shutdown(); daemon.drain_captures(None)?; }
+    daemons.remove(host_id);
+    Ok(None)
+}
+
+fn spawn_connection(broker: &BrokerRuntime, settings: &AppSettings, host_id: &str, connection_config: Option<(String, String)>, host: Option<RemoteHost>) -> Result<(Arc<Daemon>, std::process::ChildStdout, std::process::ChildStderr), String> {
+    let auth_executable = host.as_ref().map(|host| host.pi_path.clone()).unwrap_or_else(|| pi_executable().to_string_lossy().into_owned());
+    let script = format!("const gitCaptureScript = {};\nconst piAuthExecutable = {};\nconst piStorageDirectory = {};\n{}\n{}\n{}\n{}\n{}\n{}\n{}", serde_json::to_string(include_str!("../resources/capture-git-tree.cjs")).map_err(|error| error.to_string())?, serde_json::to_string(&auth_executable).map_err(|error| error.to_string())?, serde_json::to_string(STORAGE_DIRECTORY).map_err(|error| error.to_string())?, include_str!("../resources/daemon-queue.mjs"), include_str!("../../extensions/piop-runtime-settings/provider-accounts.mjs"), include_str!("../resources/provider-auth.mjs"), include_str!("../resources/conversation-ownership.mjs"), include_str!("../resources/voice-service.mjs"), include_str!("../resources/host-daemon-commands.mjs"), include_str!("../resources/host-daemon.mjs"));
+    let remote_port = (host_id != "local").then(remote_broker_port);
+    let loader = include_str!("../resources/host-daemon-loader.mjs");
+    let mut command = if let Some(remote_port) = remote_port {
+        let (port, _) = broker_environment(broker)?;
+        let mut command = remote_broker_command(remote_host(settings, host_id)?, port, remote_port);
+        command.arg(remote_login_command(&format!("exec node --input-type=module -e {}", shell_quote(loader))));
+        command
+    } else {
+        let mut command = Command::new("node"); command.args(["--input-type=module", "-e", loader]); command
+    };
+    let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| format!("Could not start host daemon: {error}"))?;
+    let mut stdin = child.stdin.take().ok_or("Daemon stdin was unavailable")?;
+    let source_length = u32::try_from(script.len()).map_err(|_| "Host daemon source is too large")?;
+    if let Err(error) = stdin.write_all(&source_length.to_be_bytes()).and_then(|_| stdin.write_all(script.as_bytes())).and_then(|_| stdin.flush()) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!("Could not send host daemon source: {error}"));
+    }
+    let stdout = child.stdout.take().ok_or("Daemon stdout was unavailable")?;
+    let stderr = child.stderr.take().ok_or("Daemon stderr was unavailable")?;
+    let daemon = Arc::new(Daemon { alive: AtomicBool::new(true), remote_port, connection_config, host, agent_prefix: format!("daemon:{host_id}:{}:", Uuid::new_v4()), events: Mutex::new(()), child: Mutex::new(child), stdin: Mutex::new(stdin), pending: Mutex::new(HashMap::new()), captures: Mutex::new(HashMap::new()) });
+    Ok((daemon, stdout, stderr))
+}
+
+fn update_agent_event(app: &AppHandle, packet: &Value) {
+    let Some(id) = packet["runtimeId"].as_str() else { return; };
+    let runtime = app.state::<PiRuntime>();
+    let Ok(mut agents) = runtime.active_agents.lock() else { return; };
+    let Some(agent) = agents.get_mut(id) else { return; };
+    match packet["event"]["type"].as_str() {
+        Some("agent_start") => agent.working = true,
+        Some("agent_settled") => agent.working = false,
+        Some("ownership_lost") => { agent.working = false; agent.messageable = true; },
+        _ => {},
+    }
+}
+
+fn handle_packet(app: &AppHandle, connection: &Arc<Daemon>, host_id: &str, packet: Value) {
+            match packet["type"].as_str() {
+                Some("ownership_drain") => {
+                    let connection = connection.clone();
+                    thread::spawn(move || {
+                        let error = connection.drain_captures(packet["sessionKey"].as_str()).err();
+                        let _ = connection.notify(json!({"type":"ownership_drained","requestId":packet["id"],"error":error}));
+                    });
+                },
+                Some("response") => if let Some(sender) = packet["id"].as_str().and_then(|id| connection.pending.lock().ok()?.remove(id)) {
+                    let _ = sender.send(if let Some(error) = packet["error"].as_str() { Err(error.into()) } else { Ok(packet["data"].clone()) });
+                },
+                Some("event") => handle_event(app, connection, &packet),
+                Some("session_state") => handle_session_state(app, connection, host_id, &packet),
+                Some("session_closed") => handle_session_closed(app, connection, &packet),
+                Some("turn_capture") => persist_capture(app, connection, host_id, packet.clone()),
+                _ => handle_notice(app, host_id, &packet),
+            }
+}
+
+fn update_capture_baseline(baselines: &mut HashMap<String, String>, packet: &Value, host: Option<&RemoteHost>) -> bool {
+                if packet["phase"].as_str() == Some("closed") {
+                    for (_, baseline) in baselines.drain() { let _ = discard_git_tree_at_host(&baseline, host); }
+                    return true;
+                }
+                let Some(turn_id) = packet["turnId"].as_str() else { return true; };
+                if packet["phase"].as_str() == Some("start") {
+                    if let Some(baseline) = packet["baseline"].as_str() {
+                        if let Some(previous) = baselines.insert(turn_id.into(), baseline.into()) { let _ = discard_git_tree_at_host(&previous, host); }
+                    }
+                    return true;
+                }
+    false
 }

@@ -37,14 +37,7 @@ impl CaptureWorker {
         Ok(())
     }
 
-    pub(super) async fn service(
-        &mut self,
-        audio: &mut crate::audio_track::AudioTrack,
-        now: impl Fn() -> Instant,
-    ) -> io::Result<usize> {
-        // Some backends start callbacks during stream construction, before open returns.
-        self.buffers.serviced.store(true, Ordering::Release);
-        let generation = self.buffers.microphone.load(Ordering::Acquire);
+    fn reset_dropped(&mut self) -> io::Result<()> {
         if self.buffers.render_dropped.swap(false, Ordering::AcqRel) {
             self.processor.reset_render();
             for _ in 0..self.buffers.rendered.capacity() {
@@ -62,6 +55,10 @@ impl CaptureWorker {
                 }
             }
         }
+        Ok(())
+    }
+
+    fn process_render(&mut self) -> io::Result<()> {
         let mut render_stale = false;
         for _ in 0..self.buffers.rendered.capacity() {
             let Some(frame) = self.buffers.rendered.pop() else {
@@ -79,38 +76,78 @@ impl CaptureWorker {
                 .render(&frame)
                 .map_err(|_| io::Error::other(ServiceFailure::Render))?;
         }
-        if self.pending.is_empty() {
-            let mut capture_stale = false;
-            for _ in 0..self.buffers.capture.capacity() {
-                let Some(frame) = self.buffers.capture.pop() else {
-                    break;
-                };
-                if generation.is_multiple_of(2) && frame.generation == generation {
-                    if now().saturating_duration_since(frame.at) > processing::MAX_PROCESSING_DELAY
-                    {
-                        self.pending.clear();
-                        if !capture_stale {
-                            self.processor.reset().map_err(io::Error::other)?;
-                            capture_stale = true;
-                        }
-                        continue;
+        Ok(())
+    }
+
+    fn encode_capture(
+        &mut self,
+        frame: &super::buffers::Frame,
+        now: &impl Fn() -> Instant,
+    ) -> io::Result<()> {
+        let frames = self.processor.capture(frame, now);
+        match frames {
+            Ok(frames) => self.pending.extend(frames),
+            Err(processing::PROCESSING_LATE) => {
+                self.pending.clear();
+                self.processor.reset().map_err(io::Error::other)?;
+            }
+            Err(_) => return Err(io::Error::other(ServiceFailure::Capture)),
+        }
+        Ok(())
+    }
+
+    fn process_capture(&mut self, generation: u64, now: &impl Fn() -> Instant) -> io::Result<()> {
+        let mut capture_stale = false;
+        for _ in 0..self.buffers.capture.capacity() {
+            let Some(frame) = self.buffers.capture.pop() else {
+                break;
+            };
+            if generation.is_multiple_of(2) && frame.generation == generation {
+                if now().saturating_duration_since(frame.at) > processing::MAX_PROCESSING_DELAY {
+                    self.pending.clear();
+                    if !capture_stale {
+                        self.processor.reset().map_err(io::Error::other)?;
+                        capture_stale = true;
                     }
-                    capture_stale = false;
-                    let frames = self.processor.capture(&frame, &now);
-                    match frames {
-                        Ok(frames) => self.pending.extend(frames),
-                        Err(processing::PROCESSING_LATE) => {
-                            self.pending.clear();
-                            self.processor.reset().map_err(io::Error::other)?;
-                        }
-                        Err(_) => return Err(io::Error::other(ServiceFailure::Capture)),
-                    }
+                    continue;
                 }
+                capture_stale = false;
+                self.encode_capture(&frame, now)?;
             }
         }
+        Ok(())
+    }
+
+    fn check_device(&self) -> io::Result<()> {
         if self.buffers.failed.load(Ordering::Acquire) {
             return Err(io::Error::other(ServiceFailure::Device));
         }
+        Ok(())
+    }
+
+    pub(super) async fn service(
+        &mut self,
+        audio: &mut crate::audio_track::AudioTrack,
+        now: impl Fn() -> Instant,
+    ) -> io::Result<usize> {
+        // Some backends start callbacks during stream construction, before open returns.
+        self.buffers.serviced.store(true, Ordering::Release);
+        let generation = self.buffers.microphone.load(Ordering::Acquire);
+        self.reset_dropped()?;
+        self.process_render()?;
+        if self.pending.is_empty() {
+            self.process_capture(generation, &now)?;
+        }
+        self.check_device()?;
+        self.send_pending(audio, generation, now).await
+    }
+
+    async fn send_pending(
+        &mut self,
+        audio: &mut crate::audio_track::AudioTrack,
+        generation: u64,
+        now: impl Fn() -> Instant,
+    ) -> io::Result<usize> {
         let Some(frame) = self.pending.pop_front() else {
             if !generation.is_multiple_of(2) {
                 audio

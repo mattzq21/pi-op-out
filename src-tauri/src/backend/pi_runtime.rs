@@ -1,36 +1,95 @@
+struct TerminalLaunch { terminal_id: String, session_key: String, cwd: String, cols: u16, rows: u16, host_id: String, window_label: String }
+
+struct StartTerminalOptions { terminal_id: String, session_key: String, cwd: String, cols: u16, rows: u16, host_id: Option<String> }
+
+struct StartPiOptions { runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, no_session: Option<bool>, host_id: Option<String>, presence: Option<Value>, client_id: String }
+
 #[cfg(feature = "desktop")]
 #[tauri::command(async)]
 fn start_pi(app: AppHandle, window: tauri::WebviewWindow, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, no_session: Option<bool>, host_id: Option<String>, presence: Option<Value>, client_id: String) -> Result<Value, String> {
-    start_pi_for_owner(app, window.label().into(), runtime, broker, runtime_id, cwd, session_path, session_id, fork_path, no_session, host_id, presence, client_id)
+    start_pi_for_owner(app, window.label().into(), runtime, broker, StartPiOptions { runtime_id, cwd, session_path, session_id, fork_path, no_session, host_id, presence, client_id })
 }
 
-fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, no_session: Option<bool>, host_id: Option<String>, presence: Option<Value>, client_id: String) -> Result<Value, String> {
-    let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
-    if runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(&runtime_id).is_some_and(|process| process.window_label != owner) { return Err("Runtime belongs to another connection".into()); }
-    let settings = load_app_settings(app.clone())?;
-    let host_id = host_id.unwrap_or_else(|| "local".into());
-    if runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(&runtime_id).is_some_and(|process| process.daemon.alive.load(Ordering::SeqCst) && process.daemon.matches_connection(&settings, &host_id)) { return Ok(json!({"attached":true})); }
-    let session_id = session_id.or_else(|| (session_path.is_none() && fork_path.is_none()).then(|| Uuid::new_v4().to_string()));
-    let ephemeral_key = format!("{}:{}:{}", host_id, client_id, runtime_id.rsplit(':').next().unwrap_or(&runtime_id));
+struct PreparedPiSession {
+    host_id: String,
+    session_id: Option<String>,
+    session_path: Option<String>,
+    fork_path: Option<String>,
+    ephemeral_path: Option<String>,
+    ephemeral: bool,
+}
+
+impl PreparedPiSession {
+    fn claim_id(&self, settings: &AppSettings) -> Result<Option<String>, String> {
+        if self.ephemeral { return Ok(None); }
+        if let Some(id) = &self.session_id { return Ok(Some(id.clone())); }
+        self.session_path.as_deref().map(|path| session_identity(settings, &self.host_id, path)).transpose()
+    }
+
+    fn claim(&self, broker: &BrokerRuntime, claim_id: Option<&str>, presence: Option<&Value>) -> Result<Option<BusyAgent>, String> {
+        if presence.is_some_and(|value| value["readOnly"] == true) {
+            if self.session_path.is_none() || self.ephemeral || self.fork_path.is_some() {
+                return Err("A read-only view requires a saved conversation".into());
+            }
+            return Ok(None);
+        }
+        claim_id.map(|id| claim_agent(broker, &self.host_id, id)).transpose()
+    }
+
+    fn launch<'a>(&'a self, options: &'a StartPiOptions) -> PiLaunch<'a> {
+        PiLaunch::Rpc {
+            cwd: options.cwd.as_deref(),
+            session_path: self.ephemeral_path.as_deref().or(self.session_path.as_deref()),
+            session_id: self.session_id.as_deref(),
+            fork_path: if self.ephemeral_path.is_some() { None } else { self.fork_path.as_deref() },
+            no_session: self.ephemeral && self.ephemeral_path.is_none(),
+        }
+    }
+}
+
+fn prepare_pi_session(runtime: &PiRuntime, settings: &AppSettings, host_id: String, options: &StartPiOptions) -> Result<PreparedPiSession, String> {
+    let session_id = options.session_id.clone().or_else(|| (options.session_path.is_none() && options.fork_path.is_none()).then(|| Uuid::new_v4().to_string()));
+    let ephemeral_key = format!("{}:{}:{}", host_id, options.client_id, options.runtime_id.rsplit(':').next().unwrap_or(&options.runtime_id));
     let saved_ephemeral = runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.get(&ephemeral_key).cloned();
-    let ephemeral = no_session.unwrap_or(false) || saved_ephemeral.is_some();
-    let session_path = if ephemeral { None } else { session_path.as_deref().map(|path| desktop_session_file(&settings, &host_id, path)).transpose()? };
-    let fork_path = fork_path.as_deref().map(|path| desktop_session_file(&settings, &host_id, path)).transpose()?;
-    let ephemeral_path = prepare_ephemeral_path(&runtime, &ephemeral_key, ephemeral, saved_ephemeral, fork_path.as_deref(), |source_path| create_ephemeral_fork(&settings, &host_id, source_path))?;
-    if ephemeral_path.is_some() { runtime.ephemeral_keys.lock().map_err(|_| "Side conversation lock was poisoned")?.insert(runtime_id.clone(), ephemeral_key); }
-    let claim_id = if ephemeral { None } else if let Some(id) = session_id.as_deref() { Some(id.to_string()) } else if let Some(path) = session_path.as_deref() {
-        Some(session_identity(&settings, &host_id, path)?)
-    } else { None };
-    let read_only = presence.as_ref().is_some_and(|value| value["readOnly"] == true);
-    if read_only && (session_path.is_none() || ephemeral || fork_path.is_some()) { return Err("A read-only view requires a saved conversation".into()); }
-    let _agent_claim = if read_only { None } else { claim_id.as_deref().map(|id| claim_agent(&broker, &host_id, id)).transpose()? };
-    let daemon = daemon::connect(&app, &runtime, &broker, &settings, &host_id)?;
-    let launch_session_path = ephemeral_path.as_deref().or(session_path.as_deref());
-    let launch_fork_path = if ephemeral_path.is_some() { None } else { fork_path.as_deref() };
-    let command = build_pi_command(&broker, &settings, &host_id, PiLaunch::Rpc { cwd: cwd.as_deref(), session_path: launch_session_path, session_id: session_id.as_deref(), fork_path: launch_fork_path, no_session: ephemeral && ephemeral_path.is_none() }, daemon.remote_port)?;
-    let command_timeout = 630_000;
-    let result = daemon.request(json!({"type":"attach","clientId":client_id,"runtimeId":runtime_id,"sessionKey":claim_id.unwrap_or_else(|| runtime_id.clone()),"spec":daemon::spec(&command),"timeout":command_timeout,"ephemeral":ephemeral,"cwd":cwd,"presence":presence.unwrap_or_else(|| json!({}))}))?;
-    let blank_cleanup = BlankSessionCleanup { path: session_path.clone(), id: session_id.clone(), host: if host_id == "local" { None } else { Some(remote_host(&settings, &host_id)?.clone()) }, submitted: ephemeral };
+    let ephemeral = options.no_session.unwrap_or(false) || saved_ephemeral.is_some();
+    let session_path = if ephemeral { None } else { options.session_path.as_deref().map(|path| desktop_session_file(settings, &host_id, path)).transpose()? };
+    let fork_path = options.fork_path.as_deref().map(|path| desktop_session_file(settings, &host_id, path)).transpose()?;
+    let ephemeral_path = prepare_ephemeral_path(runtime, &ephemeral_key, ephemeral, saved_ephemeral, fork_path.as_deref(), |source_path| create_ephemeral_fork(settings, &host_id, source_path))?;
+    if ephemeral_path.is_some() { runtime.ephemeral_keys.lock().map_err(|_| "Side conversation lock was poisoned")?.insert(options.runtime_id.clone(), ephemeral_key); }
+    Ok(PreparedPiSession { host_id, session_id, session_path, fork_path, ephemeral_path, ephemeral })
+}
+
+fn ensure_runtime_owner(runtime: &PiRuntime, runtime_id: &str, owner: &str) -> Result<(), String> {
+    if runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(runtime_id).is_some_and(|process| process.window_label != owner) {
+        return Err("Runtime belongs to another connection".into());
+    }
+    Ok(())
+}
+
+fn runtime_is_attached(runtime: &PiRuntime, runtime_id: &str, settings: &AppSettings, host_id: &str) -> Result<bool, String> {
+    Ok(runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(runtime_id).is_some_and(|process| process.daemon.alive.load(Ordering::SeqCst) && process.daemon.matches_connection(settings, host_id)))
+}
+
+fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, options: StartPiOptions) -> Result<Value, String> {
+    let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
+    ensure_runtime_owner(&runtime, &options.runtime_id, &owner)?;
+    let settings = load_app_settings(app.clone())?;
+    let host_id = options.host_id.clone().unwrap_or_else(|| "local".into());
+    if runtime_is_attached(&runtime, &options.runtime_id, &settings, &host_id)? { return Ok(json!({"attached":true})); }
+    let session = prepare_pi_session(&runtime, &settings, host_id, &options)?;
+    let claim_id = session.claim_id(&settings)?;
+    let _agent_claim = session.claim(&broker, claim_id.as_deref(), options.presence.as_ref())?;
+    attach_pi_session(&app, owner, &runtime, &broker, &settings, options, (session, claim_id))
+}
+
+fn attach_pi_session(app: &AppHandle, owner: String, runtime: &PiRuntime, broker: &BrokerRuntime, settings: &AppSettings, options: StartPiOptions, prepared: (PreparedPiSession, Option<String>)) -> Result<Value, String> {
+    let (session, claim_id) = prepared;
+    let daemon = daemon::connect(app, runtime, broker, settings, &session.host_id)?;
+    let command = build_pi_command(broker, settings, &session.host_id, session.launch(&options), daemon.remote_port)?;
+    let StartPiOptions { runtime_id, cwd, presence, client_id, .. } = options;
+    let PreparedPiSession { host_id, session_id, session_path, ephemeral, .. } = session;
+    let result = daemon.request(json!({"type":"attach","clientId":client_id,"runtimeId":runtime_id,"sessionKey":claim_id.unwrap_or_else(|| runtime_id.clone()),"spec":daemon::spec(&command),"timeout":630_000,"ephemeral":ephemeral,"cwd":cwd,"presence":presence.unwrap_or_else(|| json!({}))}))?;
+    let blank_cleanup = BlankSessionCleanup { path: session_path.clone(), id: session_id.clone(), host: if host_id == "local" { None } else { Some(remote_host(settings, &host_id)?.clone()) }, submitted: ephemeral };
     runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.insert(runtime_id.clone(), PiProcess { daemon, window_label: owner, blank_cleanup });
     runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.insert(runtime_id, AgentAddress { host_id, session_id, session_path, worktree: cwd, presence_id: None, working: false, messageable: result["owned"].as_bool() == Some(false) });
     Ok(result)
@@ -80,33 +139,19 @@ fn pi_command(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRun
     let _lifecycle = if command_type == "switch_session" { Some(runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?) } else { None };
     let mut _claim = None;
     if command_type == "switch_session" {
-        let path = command["sessionPath"].as_str().ok_or("Session path is required")?;
-        let host_id = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.get(&runtime_id).map(|agent| agent.host_id.clone()).ok_or("Unknown Pi runtime")?;
-        let settings = load_app_settings(app)?;
-        let path = desktop_session_file(&settings, &host_id, path)?;
-        _claim = Some(claim_agent(&broker, &host_id, &session_identity(&settings, &host_id, &path)?)?);
-        command["sessionPath"] = json!(path);
+        _claim = Some(prepare_session_switch(app, &runtime, &broker, &runtime_id, &mut command)?);
     }
     let result = execute_pi_command(&runtime, &runtime_id, command)?;
-    if command_type == "take_ownership" {
-        if let Some(agent) = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.get_mut(&runtime_id) { agent.messageable = false; }
-    }
-    if command_type == "voice_history" {
-        if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(&runtime_id) { process.blank_cleanup.submitted = true; }
-    }
-    let state = if command_type == "get_snapshot" { Some(&result["state"]) } else if command_type == "get_state" { Some(&result) } else { None };
+    update_command_ownership(&runtime, &runtime_id, &command_type)?;
+    let state = command_snapshot(&command_type, &result);
     if let Some(state) = state {
-        if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(&runtime_id) {
-            if let Some(path) = state["sessionFile"].as_str() { process.blank_cleanup.path = Some(path.into()); }
-            if let Some(id) = state["sessionId"].as_str() { process.blank_cleanup.id = Some(id.into()); }
-        }
-        if let Some(agent) = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.get_mut(&runtime_id) {
-            agent.session_id = state["sessionId"].as_str().map(str::to_owned);
-            agent.session_path = state["sessionFile"].as_str().map(str::to_owned);
-            agent.working = state["isStreaming"].as_bool().unwrap_or(false);
-        }
+        update_runtime_snapshot(&runtime, &runtime_id, state)?;
     }
     Ok(result)
+}
+
+fn command_snapshot<'a>(command_type: &str, result: &'a Value) -> Option<&'a Value> {
+    match command_type { "get_snapshot" => Some(&result["state"]), "get_state" => Some(result), _ => None }
 }
 
 #[cfg(feature = "desktop")]
@@ -133,15 +178,16 @@ fn conversation_window_target(target: &Value) -> Result<(String, String), String
 #[cfg(feature = "desktop")]
 #[tauri::command]
 fn start_terminal(app: AppHandle, window: tauri::WebviewWindow, runtime: State<TerminalRuntime>, terminal_id: String, session_key: String, cwd: String, cols: u16, rows: u16, host_id: Option<String>) -> Result<(), String> {
-    start_terminal_for_owner(app, window.label().into(), runtime, terminal_id, session_key, cwd, cols, rows, host_id)
+    start_terminal_for_owner(app, window.label().into(), runtime, StartTerminalOptions { terminal_id, session_key, cwd, cols, rows, host_id })
 }
 
-fn start_terminal_for_owner(app: AppHandle, owner: String, runtime: State<TerminalRuntime>, terminal_id: String, session_key: String, cwd: String, cols: u16, rows: u16, host_id: Option<String>) -> Result<(), String> {
+fn start_terminal_for_owner(app: AppHandle, owner: String, runtime: State<TerminalRuntime>, options: StartTerminalOptions) -> Result<(), String> {
+    let StartTerminalOptions { terminal_id, session_key, cwd, cols, rows, host_id } = options;
     let session_runtime = app.state::<PiRuntime>();
     let _lifecycle = session_runtime.lifecycle.lock().map_err(|_| "Session lifecycle lock was poisoned")?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let event_app = app.clone();
-    start_terminal_with(&runtime, terminal_id, session_key, cwd.clone(), cols, rows, host_id.clone(), owner,
+    start_terminal_with(&runtime, TerminalLaunch { terminal_id, session_key, cwd: cwd.clone(), cols, rows, host_id: host_id.clone(), window_label: owner },
         || if host_id == "local" {
             let working_dir = PathBuf::from(&cwd);
             if !working_dir.is_dir() { return Err(format!("Terminal working directory does not exist: {}", working_dir.display())); }
@@ -155,8 +201,9 @@ fn start_terminal_for_owner(app: AppHandle, owner: String, runtime: State<Termin
         move |packet| { let _ = event_app.emit("pi://event", packet); })
 }
 
-fn start_terminal_with(runtime: &TerminalRuntime, terminal_id: String, session_key: String, cwd: String, cols: u16, rows: u16, host_id: String, window_label: String,
+fn start_terminal_with(runtime: &TerminalRuntime, launch: TerminalLaunch,
     command: impl FnOnce() -> Result<CommandBuilder, String>, mut emit: impl FnMut(Value) + Send + 'static) -> Result<(), String> {
+    let TerminalLaunch { terminal_id, session_key, cwd, cols, rows, host_id, window_label } = launch;
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
     if let Some(process) = processes.get(&terminal_id) {
         return if process.window_label == window_label { Ok(()) } else { Err("Terminal belongs to another connection".into()) };
@@ -328,3 +375,35 @@ fn open_project_directory_with(cwd: &str, host: Option<&RemoteHost>, open: impl 
 }
 
 
+fn prepare_session_switch(app: AppHandle, runtime: &PiRuntime, broker: &BrokerRuntime, runtime_id: &str, command: &mut Value) -> Result<BusyAgent, String> {
+        let path = command["sessionPath"].as_str().ok_or("Session path is required")?;
+        let host_id = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.get(runtime_id).map(|agent| agent.host_id.clone()).ok_or("Unknown Pi runtime")?;
+        let settings = load_app_settings(app)?;
+        let path = desktop_session_file(&settings, &host_id, path)?;
+        let claim = claim_agent(broker, &host_id, &session_identity(&settings, &host_id, &path)?)?;
+        command["sessionPath"] = json!(path);
+    Ok(claim)
+}
+
+fn update_command_ownership(runtime: &PiRuntime, runtime_id: &str, command_type: &str) -> Result<(), String> {
+    if command_type == "take_ownership" {
+        if let Some(agent) = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.get_mut(runtime_id) { agent.messageable = false; }
+    }
+    if command_type == "voice_history" {
+        if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(runtime_id) { process.blank_cleanup.submitted = true; }
+    }
+    Ok(())
+}
+
+fn update_runtime_snapshot(runtime: &PiRuntime, runtime_id: &str, state: &Value) -> Result<(), String> {
+        if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(runtime_id) {
+            if let Some(path) = state["sessionFile"].as_str() { process.blank_cleanup.path = Some(path.into()); }
+            if let Some(id) = state["sessionId"].as_str() { process.blank_cleanup.id = Some(id.into()); }
+        }
+        if let Some(agent) = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.get_mut(runtime_id) {
+            agent.session_id = state["sessionId"].as_str().map(str::to_owned);
+            agent.session_path = state["sessionFile"].as_str().map(str::to_owned);
+            agent.working = state["isStreaming"].as_bool().unwrap_or(false);
+        }
+    Ok(())
+}

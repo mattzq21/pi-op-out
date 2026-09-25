@@ -86,7 +86,7 @@ fn atomic_write_private(path: &Path, body: &[u8]) -> Result<(), String> {
             file.set_permissions(fs::Permissions::from_mode(0o600)).map_err(|error| error.to_string())?;
         }
         file.write_all(body).and_then(|_| file.sync_all()).map_err(|error| error.to_string())?;
-        fs::rename(&temporary, path).or_else(|error| if path.is_dir() { Err(format!("Configuration path is a directory: {}", path.display())) } else { Err(error.to_string()) })?;
+        fs::rename(&temporary, path).map_err(|error| if path.is_dir() { format!("Configuration path is a directory: {}", path.display()) } else { error.to_string() })?;
         if let Ok(directory) = fs::File::open(parent) { let _ = directory.sync_all(); }
         Ok(())
     })();

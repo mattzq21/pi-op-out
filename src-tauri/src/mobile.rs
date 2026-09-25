@@ -122,9 +122,7 @@ async fn serve_connection_mode<S: tokio::io::AsyncRead + tokio::io::AsyncWrite +
                 Some(Message::Ping(Vec::new().into()))
             },
         };
-        if let Some(message) = outgoing {
-            if !matches!(tokio::time::timeout(Duration::from_secs(10), socket.send(message)).await, Ok(Ok(()))) { break; }
-        }
+        if !send_outgoing(&mut socket, outgoing).await { break; }
     }
     let _ = tokio::time::timeout(Duration::from_secs(2), socket.close(None)).await;
     // Hide disconnected viewers immediately so dialogs can move to a returning
@@ -146,6 +144,13 @@ async fn detach_connection(app: AppHandle, owner: String, mut pending: tokio::ta
 async fn send_ready<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(socket: &mut tokio_tungstenite::WebSocketStream<S>) -> Result<(), String> {
     let message = Message::Text(json!({"type":"ready", "protocol":1, "backend":"daemon", "peerProtocol":1, "daemonId":daemon_endpoint::identity()?, "buildId":daemon_endpoint::build_identity()?}).to_string().into());
     socket.send(message).await.map_err(|error| error.to_string())
+}
+
+async fn send_outgoing<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(socket: &mut tokio_tungstenite::WebSocketStream<S>, message: Option<Message>) -> bool {
+    match message {
+        Some(message) => matches!(tokio::time::timeout(Duration::from_secs(10), socket.send(message)).await, Ok(Ok(()))),
+        None => true,
+    }
 }
 
 #[cfg(test)]

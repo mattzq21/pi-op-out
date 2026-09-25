@@ -95,9 +95,9 @@ fn parse_worktree_output(output: LimitedOutput, context: &str) -> Result<GitWork
 }
 
 fn copy_untracked_symlink(source: &Path, target: &Path, relative: &Path) -> Result<(), String> {
-        let link = fs::read_link(&source).map_err(|error| format!("Could not read untracked symlink {}: {error}", relative.display()))?;
+        let link = fs::read_link(source).map_err(|error| format!("Could not read untracked symlink {}: {error}", relative.display()))?;
         #[cfg(unix)]
-        std::os::unix::fs::symlink(link, &target).map_err(|error| format!("Could not copy untracked symlink {}: {error}", relative.display()))?;
+        std::os::unix::fs::symlink(link, target).map_err(|error| format!("Could not copy untracked symlink {}: {error}", relative.display()))?;
         #[cfg(windows)]
         if source.is_dir() { std::os::windows::fs::symlink_dir(link, &target) } else { std::os::windows::fs::symlink_file(link, &target) }.map_err(|error| format!("Could not copy untracked symlink {}: {error}", relative.display()))?;
         #[cfg(not(any(unix, windows)))]
@@ -168,9 +168,9 @@ fn create_project_worktree(app: AppHandle, cwd: String, name: String, host_id: O
 
 fn project_worktree_root(cwd: &str, host: Option<&RemoteHost>) -> Result<PathBuf, String> {
     let located = if let Some(host) = host {
-        run_limited(ssh(host).arg(format!("git -C {} rev-parse --show-toplevel", shell_quote(&cwd))), 64 * 1024, "Could not locate Git repository")?
+        run_limited(ssh(host).arg(format!("git -C {} rev-parse --show-toplevel", shell_quote(cwd))), 64 * 1024, "Could not locate Git repository")?
     } else {
-        run_limited(Command::new("git").args(["-C", &cwd, "rev-parse", "--show-toplevel"]), 64 * 1024, "Could not locate Git repository")?
+        run_limited(Command::new("git").args(["-C", cwd, "rev-parse", "--show-toplevel"]), 64 * 1024, "Could not locate Git repository")?
     };
     if !located.status.success() { return Err("Project is not a Git repository".into()); }
     Ok(PathBuf::from(String::from_utf8_lossy(&located.stdout).trim()))
@@ -195,7 +195,7 @@ fn create_project_worktree_at(cwd: &str, name: &str, host: Option<&RemoteHost>) 
 }
 
 fn remote_worktree_root(cwd: &str, host: &RemoteHost) -> Result<String, String> {
-    let locate = format!("root=$(git -C {} rev-parse --show-toplevel 2>/dev/null) || exit 3; cd \"$root\" && pwd -P", shell_quote(&cwd));
+    let locate = format!("root=$(git -C {} rev-parse --show-toplevel 2>/dev/null) || exit 3; cd \"$root\" && pwd -P", shell_quote(cwd));
     let located = run_limited(ssh(host).arg(locate), 64 * 1024, &format!("Could not locate Git repository on {}", host.name))?;
     if !located.status.success() {
         if located.status.code() == Some(3) { return Err("Project is not a Git repository".into()); }
@@ -414,9 +414,9 @@ fn validated_removal_target(app: &AppHandle, settings: &AppSettings, cwd: &str, 
     let runtime = app.state::<PiRuntime>();
     let terminals = app.state::<TerminalRuntime>();
     let session_index = app.state::<SessionIndexRuntime>();
-    let target = inspect_worktree_removal(&settings, &cwd, &host_id)?;
-    let session_paths = sessions_on_host(&settings, &session_index, &host_id)?.into_iter().map(|session| session.cwd).collect::<Vec<_>>();
-    validate_worktree_unused(&settings, &host_id, &target.path, &session_paths, &runtime, &terminals)?;
+    let target = inspect_worktree_removal(settings, cwd, host_id)?;
+    let session_paths = sessions_on_host(settings, &session_index, host_id)?.into_iter().map(|session| session.cwd).collect::<Vec<_>>();
+    validate_worktree_unused(settings, host_id, &target.path, &session_paths, &runtime, &terminals)?;
     Ok(target)
 }
 
@@ -467,7 +467,7 @@ fn remove_worktree_target(settings: &AppSettings, host_id: &str, target: Worktre
     let removed = if host_id == "local" {
         run_limited(Command::new("git").arg("-C").arg(&target.source).args(["worktree", "remove"]).arg(&target.path), 64 * 1024, "Could not remove Git worktree")?
     } else {
-        let host = remote_host(&settings, &host_id)?;
+        let host = remote_host(settings, host_id)?;
         run_limited(ssh(host).arg(format!("git -C {} worktree remove -- {}", shell_quote(&target.source), shell_quote(&target.path))), 64 * 1024, &format!("Could not remove Git worktree on {}", host.name))?
     };
     if !removed.status.success() {
@@ -485,7 +485,7 @@ fn remove_worktree_branch(settings: &AppSettings, host_id: &str, target: Worktre
     let deleted = if host_id == "local" {
         run_limited(Command::new("git").arg("-C").arg(&target.source).args(["branch", "-d", "--", branch]), 64 * 1024, "Could not delete Git branch")?
     } else {
-        let host = remote_host(&settings, &host_id)?;
+        let host = remote_host(settings, host_id)?;
         run_limited(ssh(host).arg(format!("git -C {} branch -d -- {}", shell_quote(&target.source), shell_quote(branch))), 64 * 1024, &format!("Could not delete Git branch on {}", host.name))?
     };
     if deleted.status.success() { return Ok(GitWorktreeRemoval { branch: target.branch, branch_deleted: true, warning: None }); }

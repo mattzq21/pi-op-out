@@ -47,6 +47,7 @@ fn parse_local_snapshot_with(token: &str, parent: impl FnOnce() -> Result<PathBu
 
 fn local_git_tree(cwd: &str) -> Result<Option<String>, String> { local_git_tree_with(cwd, local_snapshot_parent) }
 
+#[cfg(test)]
 fn validate_snapshot_location(snapshot: GitSnapshotToken, parent: &Path) -> Result<GitSnapshotToken, String> {
     let root = PathBuf::from(&snapshot.root).canonicalize().map_err(|_| "Git snapshot expired".to_string())?;
     if root.parent() != Some(parent) || !root.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.starts_with("pi-desktop-diff-")) { return Err("Invalid Git snapshot location".into()); }
@@ -70,7 +71,7 @@ fn capture_local_git_tree(root: &Path, repository_objects: &Path, snapshot_paren
     let seed = String::from_utf8_lossy(&seed.stdout).trim().to_owned();
     fs::create_dir_all(&objects).map_err(|error| format!("Could not create Git snapshot: {error}"))?;
     let result = (|| {
-        let configure = |command: &mut Command| { command.env("GIT_INDEX_FILE", &index).env("GIT_OBJECT_DIRECTORY", &objects).env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &repository_objects); };
+        let configure = |command: &mut Command| { command.env("GIT_INDEX_FILE", &index).env("GIT_OBJECT_DIRECTORY", &objects).env("GIT_ALTERNATE_OBJECT_DIRECTORIES", repository_objects); };
         let mut read_tree = Command::new("git"); read_tree.args(["-C", cwd, "read-tree", &seed]); configure(&mut read_tree);
         let output = run_limited(&mut read_tree, 64 * 1024, "Could not prepare Git snapshot")?; if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
         let mut add = Command::new("git"); add.args(["-C", cwd, "add", "-A", "--", "."]); configure(&mut add);
@@ -108,4 +109,3 @@ fn local_git_diff_between(cwd: &str, base: &GitSnapshotToken, current: &GitSnaps
     let patch = String::from_utf8_lossy(&output.stdout).into_owned();
     Ok((!patch.trim().is_empty()).then_some(GitDiffSnapshot::Located { patch, repository_root: current.repository_root.clone(), tool_paths: Vec::new() }))
 }
-

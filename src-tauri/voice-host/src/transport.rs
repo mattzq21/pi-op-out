@@ -74,6 +74,70 @@ pub(crate) struct Transport {
     pub(crate) ready: watch::Receiver<bool>,
 }
 
+fn ice_settings() -> Result<webrtc::peer_connection::SettingEngine> {
+    // Upstream defaults exhaust checks after 1.4s, including checks sent before
+    // a TCP connection exists. Keep probing throughout our negotiation deadline.
+    let check_interval = Duration::from_millis(/*millis*/ 200);
+    let attempts = u16::try_from(WAIT.as_millis() / check_interval.as_millis())
+        .map_err(|_| "invalid voice ICE attempt budget")?;
+    let mut settings = webrtc::peer_connection::SettingEngine::default();
+    settings.set_ice_connection_attempts(Some(check_interval), Some(attempts));
+    Ok(settings)
+}
+
+fn answer_candidates(answer: &RTCSessionDescription) -> Result<Vec<RTCIceCandidateInit>> {
+    let parsed = answer.unmarshal().map_err(|_| "invalid voice answer")?;
+    let mut seen = HashSet::new();
+    let mut candidates = Vec::new();
+    // Count all occurrences, including duplicates and other components/media sections.
+    // set_remote_description itself installs ICE candidates, so validate before that call.
+    for (index, attribute) in parsed
+        .media_descriptions
+        .iter()
+        .flat_map(|media| &media.attributes)
+        .filter(|attribute| attribute.key == "candidate")
+        .enumerate()
+    {
+        if index >= MAX_REMOTE_CANDIDATES {
+            return Err("too many voice candidates");
+        }
+        let candidate = attribute
+            .value
+            .as_deref()
+            .ok_or("invalid voice candidate")?;
+        let parsed = rtc::ice::candidate::unmarshal_candidate(candidate)
+            .map_err(|_| "invalid voice candidate")?;
+        if parsed.component() == 1 && seen.insert(candidate) {
+            candidates.push(RTCIceCandidateInit {
+                candidate: format!("candidate:{candidate}"),
+                ..Default::default()
+            });
+        }
+    }
+    Ok(candidates)
+}
+
+fn observe_channel(channel: Arc<dyn DataChannel>) -> (JoinHandle<()>, watch::Receiver<bool>) {
+    let (sender, ready) = watch::channel(false);
+    let observer = tokio::spawn(async move {
+        while let Some(event) = channel.poll().await {
+            match event {
+                DataChannelEvent::OnOpen => {
+                    sender.send_replace(true);
+                }
+                DataChannelEvent::OnError
+                | DataChannelEvent::OnClosing
+                | DataChannelEvent::OnClose => break,
+                DataChannelEvent::OnMessage(_)
+                | DataChannelEvent::OnBufferedAmountLow
+                | DataChannelEvent::OnBufferedAmountHigh => {}
+            }
+        }
+        sender.send_replace(false);
+    });
+    (observer, ready)
+}
+
 impl Transport {
     pub(crate) async fn new() -> Result<Self> {
         Self::with_runtime(Arc::new(crate::transport_runtime::VoiceRuntime::default())).await
@@ -83,13 +147,7 @@ impl Transport {
         let (media, audio) = crate::audio_track::AudioTrack::new()?;
         let (incoming, ingress) = crate::incoming::Incoming::new();
         let gathered = Arc::new(Notify::new());
-        // Upstream defaults exhaust checks after 1.4s, including checks sent before
-        // a TCP connection exists. Keep probing throughout our negotiation deadline.
-        let check_interval = Duration::from_millis(/*millis*/ 200);
-        let attempts = u16::try_from(WAIT.as_millis() / check_interval.as_millis())
-            .map_err(|_| "invalid voice ICE attempt budget")?;
-        let mut settings = webrtc::peer_connection::SettingEngine::default();
-        settings.set_ice_connection_attempts(Some(check_interval), Some(attempts));
+        let settings = ice_settings()?;
         let connection: Arc<dyn PeerConnection> = Arc::new(
             PeerConnectionBuilder::new()
                 .with_interceptor_registry(rtc::interceptor::Registry::from(ingress))
@@ -119,23 +177,7 @@ impl Transport {
                 return Err("failed to create voice event channel");
             }
         };
-        let (sender, ready) = watch::channel(false);
-        let observer = tokio::spawn(async move {
-            while let Some(event) = channel.poll().await {
-                match event {
-                    DataChannelEvent::OnOpen => {
-                        sender.send_replace(true);
-                    }
-                    DataChannelEvent::OnError
-                    | DataChannelEvent::OnClosing
-                    | DataChannelEvent::OnClose => break,
-                    DataChannelEvent::OnMessage(_)
-                    | DataChannelEvent::OnBufferedAmountLow
-                    | DataChannelEvent::OnBufferedAmountHigh => {}
-                }
-            }
-            sender.send_replace(false);
-        });
+        let (observer, ready) = observe_channel(channel);
         Ok(Self {
             incoming,
             audio,
@@ -170,34 +212,7 @@ impl Transport {
 
     pub(crate) async fn apply_answer(&self, sdp: String) -> Result<AnswerOutcome> {
         let answer = RTCSessionDescription::answer(sdp).map_err(|_| "invalid voice answer")?;
-        let parsed = answer.unmarshal().map_err(|_| "invalid voice answer")?;
-        let mut seen = HashSet::new();
-        let mut candidates = Vec::new();
-        // Count all occurrences, including duplicates and other components/media sections.
-        // set_remote_description itself installs ICE candidates, so validate before that call.
-        for (index, attribute) in parsed
-            .media_descriptions
-            .iter()
-            .flat_map(|media| &media.attributes)
-            .filter(|attribute| attribute.key == "candidate")
-            .enumerate()
-        {
-            if index >= MAX_REMOTE_CANDIDATES {
-                return Err("too many voice candidates");
-            }
-            let candidate = attribute
-                .value
-                .as_deref()
-                .ok_or("invalid voice candidate")?;
-            let parsed = rtc::ice::candidate::unmarshal_candidate(candidate)
-                .map_err(|_| "invalid voice candidate")?;
-            if parsed.component() == 1 && seen.insert(candidate) {
-                candidates.push(RTCIceCandidateInit {
-                    candidate: format!("candidate:{candidate}"),
-                    ..Default::default()
-                });
-            }
-        }
+        let candidates = answer_candidates(&answer)?;
         timeout(WAIT, async {
             self.connection
                 .set_remote_description(answer)
