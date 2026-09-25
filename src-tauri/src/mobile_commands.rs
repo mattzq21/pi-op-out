@@ -31,6 +31,7 @@ async fn dispatch_local(app: AppHandle, owner: String, command: String, args: Va
         if app.state::<TerminalRuntime>().processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.get(id).is_some_and(|process| process.window_label != owner) { return Err("Terminal belongs to another connection".into()); }
     }
     match command.as_str() {
+        "reassign_terminal" => terminal_lookup::reassign(&app.state::<TerminalRuntime>(), &owner, &argument::<String>(&args, "terminalId")?, &argument::<String>(&args, "sessionKey")?).map(|_| Value::Null),
         "notes" => tokio::task::spawn_blocking(move || notes::dispatch(args)).await.map_err(|error| error.to_string())?,
         "dictation_configuration" => Ok(dictation::configuration(&app)),
         "dictation_transcribe" => dictation::dictate(app, argument(&args, "audio")?).await,

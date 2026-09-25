@@ -382,6 +382,9 @@ export default function App() {
   });
   const rekeyConversationUi = (previousKey: string, nextKey: string, ownerTransport: NativeTransport, moveTerminals = true, copyDraft = false) => {
     if (previousKey === nextKey) return;
+    if (moveTerminals) for (const terminal of terminalsBySession()[previousKey]?.tabs ?? []) {
+      if (terminal.started) void ownerTransport.reassignTerminal(terminal.id, nextKey).catch((reason) => addNotice({ title: "Could not move terminal history", message: String(reason) }));
+    }
     setComposerDrafts((current) => { if (!(previousKey in current)) return current; const next = { ...current, [nextKey]: current[previousKey] }; if (!copyDraft) delete next[previousKey]; return next; });
     if (moveTerminals) setTerminalsBySession((current) => { if (!(previousKey in current)) return current; const next = { ...current, [nextKey]: current[previousKey] }; delete next[previousKey]; return next; });
     if (moveTerminals) setTerminalTarget((current) => current?.sessionKey === previousKey ? { ...current, sessionKey: nextKey } : current);
