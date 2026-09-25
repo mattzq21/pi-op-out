@@ -1,0 +1,113 @@
+use super::*;
+
+const RETAINED_BYTES: usize = 256 * 1024;
+const EXITED_LIMIT: usize = 64;
+
+pub(super) struct Transcript {
+    session_id: String,
+    host_id: String,
+    owner: String,
+    cwd: String,
+    generation: Uuid,
+    output: String,
+    end: u64,
+    updated: SystemTime,
+    pub(super) running: bool,
+}
+
+impl Transcript {
+    pub(super) fn append(&mut self, data: &str) {
+        self.output.push_str(data);
+        self.end += data.len() as u64;
+        self.updated = SystemTime::now();
+        let mut discard = self.output.len().saturating_sub(RETAINED_BYTES);
+        while !self.output.is_char_boundary(discard) { discard += 1; }
+        self.output.drain(..discard);
+    }
+
+    fn summary(&self, id: &str) -> Value {
+        json!({"terminalId":id,"generation":self.generation.to_string(),"initialCwd":self.cwd,
+            "running":self.running,"updatedAt":self.updated.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_millis(),
+            "availableFrom":self.end - self.output.len() as u64,"endOffset":self.end})
+    }
+}
+
+pub(super) fn start(runtime: &TerminalRuntime, id: &str, session_key: &str, cwd: &str, host_id: &str, owner: &str, generation: Uuid) -> Result<(), String> {
+    let mut history = runtime.history.lock().map_err(|_| "Terminal history lock was poisoned")?;
+    // A peer's session key contains the referring machine's host alias.
+    let session_id = session_key.rsplit_once(':').map_or(session_key, |(_, id)| id);
+    history.insert(id.into(), Transcript { session_id: session_id.into(), host_id: host_id.into(), owner: owner.into(), cwd: cwd.into(), generation,
+        output: String::new(), end: 0, updated: SystemTime::now(), running: true });
+    Ok(())
+}
+
+pub(super) fn record(history: &Mutex<HashMap<String, Transcript>>, id: &str, data: &str) {
+    if let Ok(mut history) = history.lock() {
+        if let Some(item) = history.get_mut(id) { item.append(data); }
+    }
+}
+
+pub(super) fn finish(history: &Mutex<HashMap<String, Transcript>>, id: &str) {
+    if let Ok(mut history) = history.lock() {
+        if let Some(item) = history.get_mut(id) { item.running = false; }
+        let mut exited: Vec<_> = history.iter().filter(|(_, item)| !item.running).map(|(id, item)| (id.clone(), item.updated)).collect();
+        exited.sort_by_key(|(_, updated)| *updated);
+        let discard = exited.len().saturating_sub(EXITED_LIMIT);
+        for (id, _) in exited.into_iter().take(discard) { history.remove(&id); }
+    }
+}
+
+pub(super) fn reassign(runtime: &TerminalRuntime, owner: &str, id: &str, session_key: &str) -> Result<(), String> {
+    let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
+    let mut history = runtime.history.lock().map_err(|_| "Terminal history lock was poisoned")?;
+    let item = history.get_mut(id).ok_or("Terminal history is unavailable")?;
+    if item.owner != owner { return Err("Terminal belongs to another connection".into()); }
+    item.session_id = session_key.rsplit_once(':').map_or(session_key, |(_, id)| id).into();
+    if let Some(process) = processes.get_mut(id) { process.session_key = session_key.into(); }
+    Ok(())
+}
+
+pub(super) fn detach(runtime: &TerminalRuntime, owner: &str) {
+    if let Ok(mut history) = runtime.history.lock() { history.retain(|_, item| item.owner != owner); }
+}
+
+pub(super) fn lookup(runtime: &TerminalRuntime, request: &Value, host_id: &str) -> Result<Value, String> {
+    let session_id = request["sessionId"].as_str().filter(|id| !id.is_empty()).ok_or("sessionId is required")?;
+    let history = runtime.history.lock().map_err(|_| "Terminal history lock was poisoned")?;
+    let belongs = |item: &&Transcript| item.session_id == session_id && item.host_id == host_id;
+    let Some(id) = request["terminalId"].as_str() else {
+        let mut terminals: Vec<_> = history.iter().filter(|(_, item)| belongs(item)).collect();
+        terminals.sort_by_key(|(id, _)| *id);
+        return Ok(json!({"terminals":terminals.into_iter().map(|(id, item)| item.summary(id)).collect::<Vec<_>>(),
+            "retention":"Up to 256 KiB per terminal; closed terminals are removed, exited history may be evicted. Select terminalId to read output."}));
+    };
+    let item = history.get(id).filter(belongs).ok_or("Terminal not found in this session; list terminals again")?;
+    if request["generation"].as_str().is_some_and(|generation| generation != item.generation.to_string()) {
+        return Err("Terminal restarted; list terminals again before reading output".into());
+    }
+    read_page(item, id, request)
+}
+
+fn read_page(item: &Transcript, id: &str, request: &Value) -> Result<Value, String> {
+    let limit = match request.get("maxBytes") {
+        None => 4096,
+        Some(value) => value.as_u64().filter(|limit| (4..=16384).contains(limit)).ok_or("maxBytes must be an integer from 4 to 16384")? as usize,
+    };
+    let available = item.end - item.output.len() as u64;
+    let requested = match request.get("offset") {
+        None => item.end.saturating_sub(limit as u64).max(available),
+        Some(value) => value.as_u64().ok_or("offset must be a nonnegative integer")?,
+    };
+    if requested > item.end { return Err("Offset is beyond terminal output; list terminals again".into()); }
+    let mut start = (requested.max(available) - available) as usize;
+    while !item.output.is_char_boundary(start) { start += 1; }
+    let mut end = (start + limit).min(item.output.len());
+    while !item.output.is_char_boundary(end) { end -= 1; }
+    let mut result = item.summary(id);
+    result["output"] = json!(&item.output[start..end]);
+    result["startOffset"] = json!(available + start as u64);
+    result["nextOffset"] = json!(available + end as u64);
+    result["hasMore"] = json!(end < item.output.len());
+    result["truncated"] = json!(requested < available);
+    Ok(result)
+}

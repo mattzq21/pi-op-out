@@ -13,6 +13,7 @@ mod desktop_daemon;
 mod provider_auth;
 mod conversation_ownership;
 mod session_groups;
+mod terminal_lookup;
 #[cfg(not(feature = "desktop"))]
 mod notes;
 mod daemon;
@@ -101,6 +102,7 @@ struct TerminalProcess {
 #[derive(Default)]
 struct TerminalRuntime {
     processes: Arc<Mutex<HashMap<String, TerminalProcess>>>,
+    history: Arc<Mutex<HashMap<String, terminal_lookup::Transcript>>>,
 }
 
 #[derive(Clone)]
@@ -2644,15 +2646,21 @@ fn start_terminal_with(runtime: &TerminalRuntime, terminal_id: String, session_k
     let mut writer = pair.master.take_writer().map_err(|error| error.to_string())?;
     let event_id = terminal_id.clone(); let terminal_processes = runtime.processes.clone();
     let generation = Uuid::new_v4();
+    let terminal_history = runtime.history.clone();
+    terminal_lookup::start(runtime, &terminal_id, &session_key, &cwd, &host_id, &window_label, generation)?;
     thread::spawn(move || {
         stream_terminal_output(&mut reader, &event_id, |packet| {
             if let Ok(values) = terminal_processes.lock() {
-                if values.get(&event_id).is_some_and(|process| process.generation == generation) { emit(packet); }
+                if values.get(&event_id).is_some_and(|process| process.generation == generation) {
+                    terminal_lookup::record(&terminal_history, &event_id, packet["data"].as_str().unwrap_or_default());
+                    emit(packet);
+                }
             }
         });
         let finished = terminal_processes.lock().ok().and_then(|mut values| {
             if !values.get(&event_id).is_some_and(|process| process.generation == generation) { return None; }
             let process = values.remove(&event_id);
+            terminal_lookup::finish(&terminal_history, &event_id);
             emit(json!({ "type": "terminal_exit", "terminalId": event_id }));
             process
         });
@@ -2736,6 +2744,7 @@ fn resize_terminal_pty(runtime: &TerminalRuntime, terminal_id: &str, cols: u16, 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 fn close_terminal(runtime: State<TerminalRuntime>, terminal_id: String) -> Result<(), String> {
     if let Some(mut process) = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.remove(&terminal_id) { let _ = process.child.kill(); let _ = process.child.wait(); }
+    runtime.history.lock().map_err(|_| "Terminal history lock was poisoned")?.remove(&terminal_id);
     Ok(())
 }
 
@@ -2743,6 +2752,7 @@ fn stop_terminals(runtime: &TerminalRuntime, terminal_ids: &[String]) -> Result<
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
     for id in terminal_ids {
         if let Some(mut process) = processes.remove(id) { let _ = process.child.kill(); let _ = process.child.wait(); }
+        runtime.history.lock().map_err(|_| "Terminal history lock was poisoned")?.remove(id);
     }
     Ok(())
 }
@@ -3597,6 +3607,13 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
     }
     let session_index = app.state::<SessionIndexRuntime>();
     let result = match (method, path) {
+        ("POST", "/terminals") => (|| {
+            let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid terminal lookup request")?;
+            let host_id = value["hostId"].as_str().ok_or("hostId is required")?;
+            #[cfg(not(feature = "desktop"))]
+            if host_id != "local" { return peers::forward_broker(&app, host_id, "/terminals", value.clone()); }
+            terminal_lookup::lookup(&app.state::<TerminalRuntime>(), &value, host_id)
+        })(),
         ("GET", "/agents") => {
             let active: Vec<_> = app.state::<PiRuntime>().active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values().cloned().collect();
             let busy = broker.busy.lock().map_err(|_| "Broker claim lock was poisoned")?.clone();
@@ -3746,6 +3763,7 @@ fn detach_owner(app: &AppHandle, owner: &str, discard_blank: bool) {
     let terminals = app.state::<TerminalRuntime>();
     let ids = terminals.processes.lock().map(|processes| processes.iter().filter(|(_, process)| process.window_label == owner).map(|(id, _)| id.clone()).collect::<Vec<_>>()).unwrap_or_default();
     let _ = stop_terminals(&terminals, &ids);
+    terminal_lookup::detach(&terminals, owner);
 }
 
 fn shutdown_backend(app: &AppHandle) {

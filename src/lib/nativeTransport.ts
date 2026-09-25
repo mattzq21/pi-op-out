@@ -419,6 +419,7 @@ export class NativeTransport {
     return next;
   }
   async resizeTerminal(terminalId: string, cols: number, rows: number) { await terminalStarts.get(terminalId); return call<void>("resize_terminal", { terminalId, cols, rows }); }
+  async reassignTerminal(terminalId: string, sessionKey: string) { await terminalStarts.get(terminalId); return call<void>("reassign_terminal", { terminalId, sessionKey }); }
   async closeTerminal(terminalId: string) { await terminalStarts.get(terminalId)?.catch(() => undefined); await terminalWrites.get(terminalId)?.catch(() => undefined); terminalWrites.delete(terminalId); return call<void>("close_terminal", { terminalId }); }
 }
 
