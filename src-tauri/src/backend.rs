@@ -827,6 +827,7 @@ fn prepare_session_broker() -> Result<PathBuf, String> {
     let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let path = dir.join("session-broker.ts");
+    atomic_write_private(&dir.join("ask-user.ts"), include_str!("../resources/ask-user.ts").as_bytes())?;
     atomic_write_private(&path, include_str!("../resources/session-broker.ts").as_bytes())?;
     Ok(path)
 }
@@ -984,7 +985,15 @@ fn default_settings() -> AppSettings {
 }
 
 fn session_operation_tools() -> Vec<Value> {
-    [("fork_session", "Fork a conversation in any project"), ("create_worktree", "Create a Git worktree"), ("remove_worktree", "Remove an unused Git worktree"), ("subagent", "Delegate parallel tasks to agents with saved transcripts"), ("request_user_input", "Ask the user questions with choices and free-text answers")].into_iter().map(|(name, description)| json!({"name":name,"description":description,"enabled":true,"builtin":false})).collect()
+    [("fork_session", "Fork a conversation in any project"), ("create_worktree", "Create a Git worktree"), ("remove_worktree", "Remove an unused Git worktree"), ("subagent", "Delegate parallel tasks to agents with saved transcripts"), ("request_user_input_async", "Ask the user questions with choices and free-text answers")].into_iter().map(|(name, description)| json!({"name":name,"description":description,"enabled":true,"builtin":false})).collect()
+}
+
+fn migrate_question_tool(settings: &mut AppSettings) {
+    let has_async = settings.tools.iter().any(|tool| tool["name"] == "request_user_input_async");
+    if has_async { settings.tools.retain(|tool| tool["name"] != "request_user_input"); }
+    for tool in &mut settings.tools {
+        if tool["name"] == "request_user_input" { tool["name"] = json!("request_user_input_async"); }
+    }
 }
 
 fn codex_web_search_tool() -> Value {
@@ -1141,6 +1150,7 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
 
 fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
     let mut settings = if !path.exists() { default_settings() } else { serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())? };
+    migrate_question_tool(&mut settings);
     for (legacy, replacements) in [
         ("exec_command", &["read", "bash", "grep", "find", "ls"][..]),
         ("apply_patch", &["edit", "write"][..]),
@@ -1164,6 +1174,7 @@ fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 fn save_app_settings(app: AppHandle, mut settings: AppSettings, agent_host_id: Option<String>) -> Result<Value, String> {
+    migrate_question_tool(&mut settings);
     for tool in session_operation_tools() {
         if !settings.tools.iter().any(|existing| existing["name"] == tool["name"]) { settings.tools.push(tool); }
     }
@@ -2332,6 +2343,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let provider_accounts = shell_quote(include_str!("../../extensions/piop-runtime-settings/provider-accounts.mjs"));
     let runtime_settings_config = shell_quote(&serde_json::to_string(&runtime_settings(settings)).map_err(|error| error.to_string())?);
     let broker = shell_quote(include_str!("../resources/session-broker.ts"));
+    let ask_user = shell_quote(include_str!("../resources/ask-user.ts"));
     let trace_reader = shell_quote(include_str!("../resources/trace-reader.ts"));
     let btw = shell_quote(include_str!("../resources/btw.ts"));
     let agent_extension_loader = shell_quote(include_str!("../../extensions/piop-define-agents/extension-loader.ts"));
@@ -2349,6 +2361,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
      let migration = [("pi-define-agents", "piop-define-agents"), ("pi-openai-fast-mode-piop", "piop-openai-fast-mode"), ("pi-context-window-cap", "piop-context-window-cap"), ("pi-session-cost-limit", "piop-session-cost-limit"), ("pi-diff-watch", "piop-diff-watch")].iter().map(|(old, new)| format!(r#"if [ -d "$HOME/{STORAGE_DIRECTORY}/{old}" ] && [ ! -e "$HOME/{STORAGE_DIRECTORY}/{new}" ]; then mv "$HOME/{STORAGE_DIRECTORY}/{old}" "$HOME/{STORAGE_DIRECTORY}/{new}"; fi"#)).collect::<Vec<_>>().join(" && ");
     let remote = format!("umask 077 && {migration} && rm -rf -- \"$HOME/{STORAGE_DIRECTORY}/pi-git-change-context\" && mkdir -p -m 700 \"$HOME/{STORAGE_DIRECTORY}/sessions\" \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap\" \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch\" \"$HOME/{STORAGE_DIRECTORY}/piop-define-agents\" && chmod 700 \"$HOME/{STORAGE_DIRECTORY}\" \"$HOME/{STORAGE_DIRECTORY}/sessions\" \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap\" \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch\" \"$HOME/{STORAGE_DIRECTORY}/piop-define-agents\" && printf %s {broker} > \"$HOME/{STORAGE_DIRECTORY}/session-broker.ts\" && printf %s {trace_reader} > \"$HOME/{STORAGE_DIRECTORY}/piop-trace-reader.ts\" && printf %s {mcp_bridge} > \"$HOME/{STORAGE_DIRECTORY}/piop-mcp-bridge.ts\" && printf %s {context_window_cap} > \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/index.ts\" && printf %s {context_window_config} > \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/config.json\" && printf %s {diff_watch} > \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/index.ts\" && printf %s {codex_web_search} > \"$HOME/{STORAGE_DIRECTORY}/piop-codex-web-search.ts\" && printf %s {openai_cache_fork} > \"$HOME/{STORAGE_DIRECTORY}/piop-openai-cache-fork.ts\" && printf %s {btw} > \"$HOME/{STORAGE_DIRECTORY}/piop-btw.ts\" && printf %s {mcp_types} > \"$HOME/{STORAGE_DIRECTORY}/piop-define-agents/mcp-config.ts\" && printf %s {defined_agents} > \"$HOME/{STORAGE_DIRECTORY}/piop-define-agents/index.ts\" && chmod 600 -- \"$HOME/{STORAGE_DIRECTORY}/piop-codex-web-search.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-openai-cache-fork.ts\" \"$HOME/{STORAGE_DIRECTORY}/session-broker.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-trace-reader.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-mcp-bridge.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/index.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-context-window-cap/config.json\" \"$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/index.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-btw.ts\" \"$HOME/{STORAGE_DIRECTORY}/piop-define-agents/index.ts\"");
     let remote = format!(r#"{remote} && printf %s {agent_extension_loader} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/extension-loader.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/extension-loader.ts" && printf %s {diagrams_extension} > "$HOME/{STORAGE_DIRECTORY}/piop-diagrams.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-diagrams.ts""#);
+    let remote = format!(r#"{remote} && printf %s {ask_user} > "$HOME/{STORAGE_DIRECTORY}/ask-user.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/ask-user.ts""#);
     let remote = if DEVELOPMENT { remote } else { format!(r#"{remote} && if [ ! -f "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/config.json" ] && [ -f "$HOME/.pi/agent/extensions/pi-define-agents/config.json" ]; then cp "$HOME/.pi/agent/extensions/pi-define-agents/config.json" "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/config.json"; fi && rm -f -- "$HOME/.pi/agent/extensions/pi-define-agents/index.ts" "$HOME/.pi/agent/extensions/pi-desktop-btw.ts""#) };
      let remote = format!(r#"{remote} && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/piop-openai-fast-mode" && printf %s {fast_mode} > "$HOME/{STORAGE_DIRECTORY}/piop-openai-fast-mode/index.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-openai-fast-mode/index.ts""#);
      let remote = format!(r#"{remote} && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit" && printf %s {session_cost_limit} > "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit/index.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-session-cost-limit/index.ts""#);

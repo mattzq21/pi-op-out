@@ -1,3 +1,4 @@
+import { registerRequestUserInput } from "./ask-user.ts";
 import { Type, type AssistantMessage } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
@@ -468,38 +469,6 @@ const currentHost = () => process.env.PI_DESKTOP_HOST_ID || "local";
 const SUBAGENT_RUN = "piop-subagent-run";
 const SUBAGENT_PARENT = "piop-subagent-parent";
 
-function registerRequestUserInput(pi: ExtensionAPI) {
-  pi.registerTool({
-    name: "request_user_input", label: "Ask user",
-    description: "Request user input for one to three short questions and wait for the response. Use for missing information, preferences, or clarification. Only the root conversation can ask the user.",
-    parameters: Type.Object({ questions: Type.Array(Type.Object({
-      id: Type.String({ minLength: 1, description: "Stable identifier for mapping answers (snake_case)." }),
-      header: Type.String({ description: "Short header label shown in the UI (12 or fewer chars)." }),
-      question: Type.String({ minLength: 1, description: "Single-sentence prompt shown to the user." }),
-      options: Type.Array(Type.Object({
-        label: Type.String({ minLength: 1, description: "User-facing label (1-5 words)." }),
-        description: Type.String({ description: "One short sentence explaining impact/tradeoff if selected." }),
-      }), { minItems: 2, maxItems: 3, description: 'Provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with "(Recommended)". Do not include an "Other" option; the client adds it automatically.' }),
-    }), { minItems: 1, maxItems: 3, description: "Questions to show the user. Prefer 1 and do not exceed 3." }) }),
-    async execute(toolCallId, params, signal, _update, ctx) {
-      signal?.throwIfAborted();
-      if (ctx.sessionManager.getEntries().some((entry) => entry.type === "custom" && entry.customType === SUBAGENT_PARENT)) throw new Error("request_user_input can only be used by the root conversation");
-      if (ctx.mode !== "rpc") throw new Error("request_user_input requires the piop interface");
-      if (new Set(params.questions.map((question) => question.id)).size !== params.questions.length) throw new Error("Question IDs must be unique");
-      const value = await ctx.ui.input("__piop_request_user_input__", JSON.stringify({ toolCallId, questions: params.questions }), { signal });
-      signal?.throwIfAborted();
-      if (value === undefined) throw new Error("request_user_input was cancelled before receiving a response");
-      const response = JSON.parse(value) as { answers?: Record<string, { answers?: unknown }> };
-      const answers = Object.fromEntries(params.questions.map(({ id }) => {
-        const answer = response.answers?.[id]?.answers;
-        if (!Array.isArray(answer) || !answer.every((item) => typeof item === "string")) throw new Error("Invalid user input response");
-        return [id, { answers: answer }];
-      }));
-      const result = { answers };
-      return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
-    },
-  });
-}
 const SUBAGENT_TIMEOUT_MS = 600_000;
 type SubagentTask = { task: string; name: string; agent?: string; sessionId?: string };
 type SubagentRun = { version: 1; toolCallId: string; parentSessionId: string; sessionId: string; sessionPath: string; hostId: string; name: string; task: string; status: "running" | "completed" | "failed" | "cancelled"; startedAt: number; endedAt?: number; output?: string; apiCost?: number };

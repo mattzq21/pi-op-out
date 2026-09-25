@@ -13,14 +13,14 @@ export function isAskUserRequest(request: ExtensionUiRequest) {
 function readQuestions(request: ExtensionUiRequest): Question[] {
   try {
     const { questions } = JSON.parse(request.placeholder ?? "{}");
-    if (!Array.isArray(questions) || !questions.length || questions.length > 3) return [];
+    if (!Array.isArray(questions) || !questions.length) return [];
     return questions.every(validQuestion) ? questions : [];
   } catch { return []; }
 }
 
 function validQuestion(value: Question) {
   return value && [value.id, value.header, value.question].every((item) => typeof item === "string")
-    && Array.isArray(value.options) && value.options.length > 0
+    && Array.isArray(value.options)
     && value.options.every((option) => option && typeof option.label === "string" && typeof option.description === "string");
 }
 

@@ -47,7 +47,7 @@ Guidelines:
 - Show file paths clearly when working with files`;
 
 const sessionTools = ["fork_session", "create_worktree", "remove_worktree", "subagent"];
-type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; orchestratorDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean; generalUserInputDefaultApplied?: boolean };
+type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; orchestratorDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean; asyncUserInputDefaultApplied?: boolean };
 const development = process.env.PIOP_STORAGE_DIRECTORY === ".piop-dev";
 const fallbackConfig: Config = { agents: [{ name: "general", model: "", effort: development ? "medium" : "high", fastMode: development ? false : undefined, path_systemprompt: DEFAULT_PROMPT_PATH, path_agentprompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
 function defaultAgent(pi: ExtensionAPI): Agent {
@@ -167,7 +167,7 @@ function normalize(value: Partial<Config>, pi: ExtensionAPI): Config {
   }
   const unique = supplied.filter((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) === index);
   const agents = unique.some((agent) => agent.name === "general") ? unique : [defaultAgent(pi), ...unique];
-  return { agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, orchestratorDefaultApplied: value.orchestratorDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, diagramistDefaultApplied: value.diagramistDefaultApplied === true, generalUserInputDefaultApplied: value.generalUserInputDefaultApplied === true };
+  return { agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, orchestratorDefaultApplied: value.orchestratorDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, diagramistDefaultApplied: value.diagramistDefaultApplied === true, asyncUserInputDefaultApplied: value.asyncUserInputDefaultApplied === true };
 }
 
 async function readConfig(pi: ExtensionAPI): Promise<Config> {
@@ -199,12 +199,19 @@ function migrateSubagents(config: Config, pi: ExtensionAPI) {
   return false;
 }
 function migrateUserInput(config: Config, pi: ExtensionAPI) {
-  if (config.generalUserInputDefaultApplied || !desktopList(pi, "tools")?.includes("request_user_input")) return false;
-  for (const agent of config.agents) if (agent.name !== "general") agent.tools = agent.tools.filter((tool) => tool !== "request_user_input");
+  for (const agent of config.agents) agent.tools = agent.tools.filter((tool) => tool !== "request_user_input");
+  if (config.asyncUserInputDefaultApplied || !desktopList(pi, "tools")?.includes("request_user_input_async")) return false;
+  for (const agent of config.agents) if (agent.name !== "general") agent.tools = agent.tools.filter((tool) => tool !== "request_user_input_async");
   const general = config.agents.find((agent) => agent.name === "general");
-  if (general && !general.tools.includes("request_user_input")) general.tools.push("request_user_input");
-  config.generalUserInputDefaultApplied = true;
+  if (general && !general.tools.includes("request_user_input_async")) general.tools.push("request_user_input_async");
+  config.asyncUserInputDefaultApplied = true;
   return true;
+}
+function migrateQuestionSnapshot(stored: AgentSnapshot | undefined) {
+  if (stored?.version !== 1) return undefined;
+  const snapshot = structuredClone(stored);
+  snapshot.definition.tools = snapshot.definition.tools.flatMap((tool) => tool === "request_user_input" ? snapshot.definition.name === "general" ? ["request_user_input_async"] : [] : [tool]);
+  return snapshot;
 }
 async function migrateDiagramist(config: Config, pi: ExtensionAPI) {
   if (config.diagramistDefaultApplied) return false;
@@ -414,7 +421,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const branch = ctx.sessionManager.getBranch();
     const states = branch.flatMap((entry) => entry.type === "custom" && entry.customType === STATE_ENTRY ? [entry.data as SessionAgentState] : []);
     const stored = states.at(-1);
-    snapshot = stored?.snapshot?.version === 1 ? structuredClone(stored.snapshot) : undefined;
+    snapshot = migrateQuestionSnapshot(stored?.snapshot);
     active = snapshot?.definition.name ?? restoredAgentName(stored?.active);
     const voiceOrchestrator = ctx.sessionManager.getSessionId() === VOICE_ORCHESTRATOR_SESSION_ID;
     if (voiceOrchestrator && active !== VOICE_ORCHESTRATOR_NAME || !voiceOrchestrator && active === VOICE_ORCHESTRATOR_NAME) {
@@ -480,7 +487,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
   pi.registerCommand("pi-define-agents-config", {
     description: "Update agent definitions", handler: async (args, ctx) => {
-      const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied, orchestratorDefaultApplied: config.orchestratorDefaultApplied, subagentsDefaultApplied: config.subagentsDefaultApplied, diagramistDefaultApplied: config.diagramistDefaultApplied, generalUserInputDefaultApplied: config.generalUserInputDefaultApplied }, pi);
+      const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied, orchestratorDefaultApplied: config.orchestratorDefaultApplied, subagentsDefaultApplied: config.subagentsDefaultApplied, diagramistDefaultApplied: config.diagramistDefaultApplied, asyncUserInputDefaultApplied: config.asyncUserInputDefaultApplied }, pi);
       if (!next.agents.some((agent) => agent.name === VOICE_ORCHESTRATOR_NAME)) next.agents.push(structuredClone(config.agents.find((agent) => agent.name === VOICE_ORCHESTRATOR_NAME)!));
       // Global edits only affect future selections. This session keeps its snapshot.
       await writeConfig(next);
