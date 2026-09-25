@@ -399,6 +399,10 @@ impl SessionQueue {
             return self.execute(command).await;
         }
         let _gate = self.gate.lock().await;
+        self.serial_command(command, &name).await
+    }
+
+    async fn serial_command(&self, command: Value, name: &str) -> Result<Value> {
         if name == "pause" {
             self.hold().await?;
             let result = self.execute(command).await;
@@ -408,17 +412,25 @@ impl SessionQueue {
             return result;
         }
         if name == "resume" || name == "prompt" && self.held() && command["message"].is_string() {
-            let revision = self.state().inference_revision;
-            let slash = text(&command, "message").starts_with('/');
-            let result = self.execute(command).await?;
-            if name == "resume" || !slash || self.state().inference_revision != revision {
-                self.restore().await?;
-            }
-            return Ok(result);
+            return self.resume_command(command, name).await;
         }
-        if !matches!(name.as_str(), "steer" | "follow_up") {
+        if !matches!(name, "steer" | "follow_up") {
             return self.execute(command).await;
         }
+        self.enqueue(command, name).await
+    }
+
+    async fn resume_command(&self, command: Value, name: &str) -> Result<Value> {
+        let revision = self.state().inference_revision;
+        let slash = text(&command, "message").starts_with('/');
+        let result = self.execute(command).await?;
+        if name == "resume" || !slash || self.state().inference_revision != revision {
+            self.restore().await?;
+        }
+        Ok(result)
+    }
+
+    async fn enqueue(&self, command: Value, name: &str) -> Result<Value> {
         let id = Uuid::new_v4().to_string();
         let mut pending = json!({"id":id,"message":command["message"],"behavior":if name == "steer" { "steer" } else { "followUp" }});
         if let Some(images) = command.get("images") {
@@ -490,32 +502,7 @@ impl SessionQueue {
             };
             let behavior = action.as_str().unwrap_or("reorder").to_owned();
             let moving = matches!(behavior.as_str(), "moveUp" | "moveDown" | "reorder");
-            let peers: Vec<_> = state
-                .pending
-                .iter()
-                .filter(|item| !flag(item, "retry") && item["behavior"] == target["behavior"])
-                .collect();
-            let neighbor = if action.is_object() {
-                peers
-                    .iter()
-                    .find(|item| item["id"] == action["targetId"] && item["id"] != id)
-                    .map(|item| text(item, "id"))
-            } else if moving {
-                peers
-                    .iter()
-                    .position(|item| item["id"] == id)
-                    .and_then(|index| {
-                        if behavior == "moveUp" {
-                            index.checked_sub(1)
-                        } else {
-                            index.checked_add(1)
-                        }
-                    })
-                    .and_then(|index| peers.get(index))
-                    .map(|item| text(item, "id"))
-            } else {
-                None
-            };
+            let neighbor = queue_neighbor(&state.pending, &target, &action, &behavior);
             if moving && (flag(&target, "retry") || neighbor.is_none()) {
                 return Ok(Value::Null);
             }
@@ -524,26 +511,7 @@ impl SessionQueue {
         if cancelling {
             return self.change_live(id, "remove", None, &action).await;
         }
-        let held = {
-            let mut state = self.state();
-            if let Some(held) = state.held.as_mut().filter(|held| held.iter().any(|item| item["id"] == id)) {
-                if behavior == "remove" {
-                    held.retain(|item| item["id"] != id);
-                } else if matches!(behavior.as_str(), "steer" | "followUp") {
-                    if let Some(target) = held.iter_mut().find(|item| item["id"] == id) {
-                        target["behavior"] = json!(behavior);
-                        target["retry"] = json!(false);
-                    }
-                } else if let Some(neighbor) = &neighbor {
-                    move_item(held, id, neighbor, &action);
-                }
-                held.sort_by_key(|item| item["behavior"] == "followUp");
-                true
-            } else {
-                false
-            }
-        };
-        if held {
+        if self.change_held(id, &behavior, neighbor.as_deref(), &action) {
             self.publish();
             return Ok(Value::Null);
         }
@@ -551,6 +519,26 @@ impl SessionQueue {
             return self.retry(id, target, &behavior).await;
         }
         self.change_live(id, &behavior, neighbor.as_deref(), &action).await
+    }
+
+    fn change_held(&self, id: &str, behavior: &str, neighbor: Option<&str>, action: &Value) -> bool {
+        let mut state = self.state();
+        if let Some(held) = state.held.as_mut().filter(|held| held.iter().any(|item| item["id"] == id)) {
+            if behavior == "remove" {
+                held.retain(|item| item["id"] != id);
+            } else if matches!(behavior, "steer" | "followUp") {
+                if let Some(target) = held.iter_mut().find(|item| item["id"] == id) {
+                    target["behavior"] = json!(behavior);
+                    target["retry"] = json!(false);
+                }
+            } else if let Some(neighbor) = neighbor {
+                move_item(held, id, neighbor, action);
+            }
+            held.sort_by_key(|item| item["behavior"] == "followUp");
+            true
+        } else {
+            false
+        }
     }
 
     async fn retry(&self, id: &str, mut target: Value, behavior: &str) -> Result<Value> {
@@ -578,7 +566,7 @@ impl SessionQueue {
         let originals = {
             let mut state = self.state();
             let snapshot: Vec<_> = state.steering.iter().chain(&state.follow_up).collect();
-            let unique: HashSet<_> = snapshot.iter().map(|item| item.to_string()).collect();
+            let unique: HashSet<_> = snapshot.iter().copied().collect();
             if unique.len() != snapshot.len()
                 || snapshot.iter().any(|message| {
                     !state
@@ -600,20 +588,7 @@ impl SessionQueue {
 
     async fn replace_live(&self, id: &str, behavior: &str, neighbor: Option<&str>, action: &Value, originals: Vec<Value>) -> Result<Value> {
         let cleared = self.execute(json!({"type":"clear_queue"})).await?;
-        let mut remaining = Vec::new();
-        for (field, mode) in [("steering", "steer"), ("followUp", "followUp")] {
-            for message in array(&cleared, field) {
-                let mut item = originals
-                    .iter()
-                    .find(|item| !flag(item, "retry") && item["behavior"] == mode && item["message"] == message)
-                    .cloned()
-                    .unwrap_or_else(|| json!({"id":Uuid::new_v4().to_string(),"message":message,"behavior":mode,"retry":true}));
-                if item["id"] == id && matches!(behavior, "steer" | "followUp") {
-                    item["behavior"] = json!(behavior);
-                }
-                remaining.push(item);
-            }
-        }
+        let mut remaining = cleared_messages(&cleared, &originals, id, behavior);
         if let Some(neighbor) = neighbor {
             move_item(&mut remaining, id, neighbor, action);
         }
@@ -645,6 +620,48 @@ impl SessionQueue {
             }
         }
     }
+}
+
+fn cleared_messages(cleared: &Value, originals: &[Value], id: &str, behavior: &str) -> Vec<Value> {
+    let mut remaining = Vec::new();
+    for (field, mode) in [("steering", "steer"), ("followUp", "followUp")] {
+        for message in array(cleared, field) {
+            let mut item = originals
+                .iter()
+                .find(|item| !flag(item, "retry") && item["behavior"] == mode && item["message"] == message)
+                .cloned()
+                .unwrap_or_else(|| json!({"id":Uuid::new_v4().to_string(),"message":message,"behavior":mode,"retry":true}));
+            if item["id"] == id && matches!(behavior, "steer" | "followUp") {
+                item["behavior"] = json!(behavior);
+            }
+            remaining.push(item);
+        }
+    }
+    remaining
+}
+
+fn queue_neighbor(pending: &[Value], target: &Value, action: &Value, behavior: &str) -> Option<String> {
+    let id = &target["id"];
+    let peers: Vec<_> = pending
+        .iter()
+        .filter(|item| !flag(item, "retry") && item["behavior"] == target["behavior"])
+        .collect();
+    if action.is_object() {
+        return peers
+            .iter()
+            .find(|item| item["id"] == action["targetId"] && item["id"] != *id)
+            .map(|item| text(item, "id"));
+    }
+    if !matches!(behavior, "moveUp" | "moveDown" | "reorder") {
+        return None;
+    }
+    let index = peers.iter().position(|item| item["id"] == *id)?;
+    let neighbor = if behavior == "moveUp" {
+        index.checked_sub(1)
+    } else {
+        index.checked_add(1)
+    }?;
+    peers.get(neighbor).map(|item| text(item, "id"))
 }
 
 fn move_item(items: &mut Vec<Value>, id: &str, neighbor: &str, action: &Value) {

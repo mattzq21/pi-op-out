@@ -12,7 +12,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::{ChildStdin, Command},
+    process::{Child, ChildStdin, ChildStdout, Command},
     sync::{mpsc, oneshot, watch, Mutex as AsyncMutex},
 };
 use uuid::Uuid;
@@ -43,6 +43,63 @@ pub(super) struct Worker {
     timeout: Duration,
 }
 
+fn launch_command(spec: &LaunchSpec, identity: &str, home: &std::path::Path) -> Result<Command> {
+    let mut command = if let Some(directory) = spec.env.get("PIOP_REMOTE_SESSION_CLAIMS") {
+        let directory = home.join(directory).join("session-claims");
+        crate::ensure_private_dir(&directory)?;
+        let hash = format!("{:x}", Sha256::digest(identity.to_lowercase().as_bytes()));
+        let mut command = Command::new("flock");
+        command
+            .args(["--nonblock", "--no-fork"])
+            .arg(directory.join(format!("id-{}.lock", &hash[..40])))
+            .arg(&spec.program);
+        command
+    } else {
+        Command::new(&spec.program)
+    };
+    command.args(&spec.args).envs(&spec.env).env(
+        "PI_DESKTOP_GIT_CAPTURE_SCRIPT",
+        include_str!("../../resources/capture-git-tree.cjs"),
+    );
+    if let Some(cwd) = spec.cwd.as_ref().filter(|cwd| !cwd.is_empty()) {
+        command.current_dir(cwd);
+    }
+    Ok(command)
+}
+
+async fn supervise(child: &mut Child, mut signals: mpsc::UnboundedReceiver<bool>) {
+    let mut deadline = None;
+    loop {
+        tokio::select! {
+            _ = child.wait() => break,
+            signal = signals.recv() => {
+                if signal == Some(true) || signal.is_none() { let _ = child.start_kill(); }
+                else {
+                    terminate(child);
+                    deadline.get_or_insert(tokio::time::Instant::now() + Duration::from_secs(5));
+                }
+            }
+            _ = async {
+                if let Some(deadline) = deadline { tokio::time::sleep_until(deadline).await; }
+                else { std::future::pending::<()>().await; }
+            } => { let _ = child.start_kill(); deadline = None; }
+        }
+    }
+}
+
+fn terminate(child: &mut Child) {
+    #[cfg(unix)]
+    if let Some(id) = child.id() {
+        unsafe {
+            libc::kill(id as libc::pid_t, libc::SIGTERM);
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child.start_kill();
+    }
+}
+
 impl Worker {
     pub fn spawn(
         spec: &LaunchSpec,
@@ -51,29 +108,7 @@ impl Worker {
         observer: Arc<dyn Observer>,
         home: &std::path::Path,
     ) -> Result<Arc<Self>> {
-        let mut command = if let Some(directory) = spec.env.get("PIOP_REMOTE_SESSION_CLAIMS") {
-            let directory = home.join(directory).join("session-claims");
-            crate::ensure_private_dir(&directory)?;
-            let hash = format!("{:x}", Sha256::digest(identity.to_lowercase().as_bytes()));
-            let mut command = Command::new("flock");
-            command
-                .args(["--nonblock", "--no-fork"])
-                .arg(directory.join(format!("id-{}.lock", &hash[..40])))
-                .arg(&spec.program);
-            command
-        } else {
-            Command::new(&spec.program)
-        };
-        command.args(&spec.args).envs(&spec.env).env(
-            "PI_DESKTOP_GIT_CAPTURE_SCRIPT",
-            include_str!("../../resources/capture-git-tree.cjs"),
-        );
-        if let Some(cwd) = &spec.cwd {
-            if !cwd.is_empty() {
-                command.current_dir(cwd);
-            }
-        }
-        let mut child = command
+        let mut child = launch_command(spec, identity, home)?
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -83,7 +118,7 @@ impl Worker {
         let stdin = child.stdin.take().ok_or("Pi stdin is unavailable")?;
         let stdout = child.stdout.take().ok_or("Pi stdout is unavailable")?;
         let stderr = child.stderr.take().ok_or("Pi stderr is unavailable")?;
-        let (signals, mut incoming_signals) = mpsc::unbounded_channel();
+        let (signals, incoming_signals) = mpsc::unbounded_channel();
         let (closed_tx, closed) = watch::channel(false);
         let worker = Arc::new(Self {
             stdin: AsyncMutex::new(stdin),
@@ -95,22 +130,7 @@ impl Worker {
             timeout,
         });
         let reader = worker.clone();
-        let stdout_task = tokio::spawn(async move {
-            let mut lines = BufReader::new(stdout).lines();
-            loop {
-                match lines.next_line().await {
-                    Ok(Some(line)) => match serde_json::from_str::<Value>(&line) {
-                        Ok(event) => reader.receive(event),
-                        Err(error) => reader.observer.diagnostic(error.to_string()),
-                    },
-                    Ok(None) => break,
-                    Err(error) => {
-                        reader.observer.diagnostic(error.to_string());
-                        break;
-                    }
-                }
-            }
-        });
+        let stdout_task = tokio::spawn(async move { reader.read_events(stdout).await });
         let errors = worker.clone();
         let stderr_task = tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
@@ -120,26 +140,7 @@ impl Worker {
         });
         let process = worker.clone();
         tokio::spawn(async move {
-            let mut deadline = None;
-            loop {
-                tokio::select! {
-                    _ = child.wait() => break,
-                    signal = incoming_signals.recv() => {
-                        if signal == Some(true) || signal.is_none() { let _ = child.start_kill(); }
-                        else {
-                            #[cfg(unix)]
-                            if let Some(id) = child.id() { unsafe { libc::kill(id as libc::pid_t, libc::SIGTERM); } }
-                            #[cfg(not(unix))]
-                            { let _ = child.start_kill(); }
-                            deadline.get_or_insert(tokio::time::Instant::now() + Duration::from_secs(5));
-                        }
-                    }
-                    _ = async {
-                        if let Some(deadline) = deadline { tokio::time::sleep_until(deadline).await; }
-                        else { std::future::pending::<()>().await; }
-                    } => { let _ = child.start_kill(); deadline = None; }
-                }
-            }
+            supervise(&mut child, incoming_signals).await;
             // Drain the final response and stderr before closing outstanding requests.
             let _ = stdout_task.await;
             let _ = stderr_task.await;
@@ -152,6 +153,23 @@ impl Worker {
             closed_tx.send_replace(true);
         });
         Ok(worker)
+    }
+
+    async fn read_events(&self, stdout: ChildStdout) {
+        let mut lines = BufReader::new(stdout).lines();
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => match serde_json::from_str::<Value>(&line) {
+                    Ok(event) => self.receive(event),
+                    Err(error) => self.observer.diagnostic(error.to_string()),
+                },
+                Ok(None) => break,
+                Err(error) => {
+                    self.observer.diagnostic(error.to_string());
+                    break;
+                }
+            }
+        }
     }
 
     fn receive(&self, mut event: Value) {
