@@ -75,7 +75,7 @@ export function ChatView(props: Props) {
   const [askingSelection, setAskingSelection] = createSignal(false);
   const [selectionBtwError, setSelectionBtwError] = createSignal(false);
   const messages = useVoiceMessages(() => (props.messages), () => (props.voiceTransport), () => (props.state.sessionId));
-  const turns = createMemo(() => groupTurns(messages()));
+  const turns = createMemo<ConversationGroup[]>(previous => groupTurns(messages(), previous), []);
   const sessionUsage = createMemo(() => props.messages.reduce((total, message) => ({ input: total.input + (message.usage?.input ?? 0), cacheRead: total.cacheRead + (message.usage?.cacheRead ?? 0), cacheWrite: total.cacheWrite + (message.usage?.cacheWrite ?? 0) }), { input: 0, cacheRead: 0, cacheWrite: 0 }));
   const sessionCache = createMemo(() => (cacheHitStats(sessionUsage())));
   const [submittedMessage, setSubmittedMessage] = createSignal<ChatMessage>();
@@ -227,7 +227,8 @@ export function ChatView(props: Props) {
   </main></ConversationHostContext.Provider>;
 }
 
-function groupTurns(messages: ChatMessage[]) {
+type ConversationGroup = { messages: ChatMessage[]; promptContexts: PromptContextInfo[] };
+function groupTurns(messages: ChatMessage[], previous: ConversationGroup[] = []) {
   const groups = messages.reduce<ChatMessage[][]>((turns, message) => {
     if (message.role === "user" || message.customType === VOICE_MESSAGE || turns.at(-1)?.at(-1)?.customType === VOICE_MESSAGE || message.customType === "pi-desktop-btw" || turns.length === 0) turns.push([]);
     turns[turns.length - 1].push(message);
@@ -251,7 +252,15 @@ function groupTurns(messages: ChatMessage[]) {
       target?.promptContexts.push(prompt.promptContext);
     }
   }
-  return turns;
+  const prior = new Map(previous.map(turn => [turn.messages[0]?.id, turn]));
+  const same = <T,>(left: T[], right: T[]) => left.length === right.length && left.every((item, index) => item === right[index]);
+  return turns.map(turn => {
+    const old = prior.get(turn.messages[0]?.id);
+    if (!old) return turn;
+    const messages = same(old.messages, turn.messages) ? old.messages : turn.messages;
+    const promptContexts = same(old.promptContexts, turn.promptContexts) ? old.promptContexts : turn.promptContexts;
+    return messages === old.messages && promptContexts === old.promptContexts ? old : { messages, promptContexts };
+  });
 }
 
 function formatWorkedFor(startedAt?: number, completedAt?: number) {
@@ -314,10 +323,12 @@ function MessageList(props: { messages: ChatMessage[]; expanded: boolean; compac
 type ConversationTurnProps = { onOpenFile?: (file: FileReference) => void; messages: ChatMessage[]; promptContexts: PromptContextInfo[]; gitDiffs?: GitDiffSnapshots; cwd?: string; debug: boolean; active: boolean; retryable: boolean; paused: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"]; onForkAndForget?: Props["onForkAndForget"]; onCreateWorktree?: Props["onCreateWorktree"] };
 
 function ConversationTurn(componentProps: ConversationTurnProps) {
-  const changes = createMemo(() => {
+  const patch = createMemo(() => {
     const final = [...componentProps.messages].reverse().find((message) => message.role === "assistant" && (textOf(message.content).trim() || message.stopReason === "aborted" || message.stopReason === "error"));
-    return turnDiff(final ? componentProps.gitDiffs?.[final.id] : undefined);
+    const snapshot = final ? componentProps.gitDiffs?.[final.id] : undefined;
+    return typeof snapshot === "string" ? snapshot : snapshot?.patch;
   });
+  const changes = createMemo(() => turnDiff(patch()));
   const [retryError, setRetryError] = createSignal<string>();
   const [workOpen, setWorkOpen] = createSignal(false);
   const [retrying, setRetrying] = createSignal(false); const retryingRef = createRef(false);
@@ -351,13 +362,15 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
 
   const renderPromptContextBar = () => (<Show when={componentProps.debug}><Index each={componentProps.promptContexts}>{context => <PromptContextBar context={context()} />}</Index></Show>);
   const renderWorkGroup = () => hasWork() && <details class="work-group" open={workOpen()} onToggle={(event) => setWorkOpen(event.currentTarget.open)}><summary>{reasoningOnly() ? "Reasoning" : workedFor() ? `Worked for ${workedFor()}` : "Work"}<ChevronRight size={12} class="work-group-chevron" aria-hidden="true" /></summary>{workOpen() && <div class={`work-group-content${reasoningOnly() ? " reasoning-group-content" : ""}`}><MessageList messages={intermediate()} expanded debug={componentProps.debug} paused={componentProps.paused} showActions={false} /></div>}</details>;
-  const renderActiveWorkContent = () => (componentProps.active || componentProps.paused ? <div class="active-work-content"><MessageList messages={componentProps.messages.filter(message => message.role !== "user")} expanded compact={false} debug={componentProps.debug} paused={componentProps.paused} /></div> : <>
+  const renderActiveWorkContent = () => (<Show when={componentProps.active || componentProps.paused} fallback={<>
     {renderWorkGroup()}
     {finalMessage() && <Message onOpenFile={componentProps.onOpenFile} message={(finalMessage())!} turnCacheUsage={turnCacheUsage()} diff={changes()} debug={componentProps.debug} paused={componentProps.paused} onBranch={componentProps.onBranch} onForkAndForget={componentProps.onForkAndForget} onCreateWorktree={worktreeResponse()} retrying={retrying()} onRetry={retryPrompt() ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(componentProps.onRetry((retryPrompt())!, undefined, retryImages())).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
     {retryError() && <div class="message-failure retry-error" role="alert">Retry failed: {(retryError())!}</div>}
     <MessageList messages={componentProps.messages.filter(message => message.role === "system")} expanded={false} />
-  </>);
-  const renderDiffViewer = () => ((componentProps.active || componentProps.paused || !finalMessage()) && <DiffViewer {...changes()} />);
+  </>}>
+    <div class="active-work-content"><MessageList messages={componentProps.messages.filter(message => message.role !== "user")} expanded compact={false} debug={componentProps.debug} paused={componentProps.paused} /></div>
+  </Show>);
+  const renderDiffViewer = () => (<Show when={componentProps.active || componentProps.paused || !finalMessage()}><DiffViewer {...changes()} /></Show>);
   return <>{componentProps.messages.length === 1 && componentProps.messages[0].customType === VOICE_MESSAGE ? (<section class="conversation-turn">{componentProps.debug && componentProps.messages[0].role === "assistant" && <VoiceContextBar context={componentProps.messages[0].voiceContext} />}<Message message={componentProps.messages[0]} debug={componentProps.debug} /></section>) : (<section class="conversation-turn">
     {<Key each={userMessages()} by={(message) => message.id}>{(message, index) => <Message  message={message()} debug={componentProps.debug} />}</Key>}
     {renderPromptContextBar()}

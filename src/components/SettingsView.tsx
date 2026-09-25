@@ -1,8 +1,8 @@
 import { Key, Rerun } from "@solid-primitives/keyed";
-import { createComputed, createMemo, createSignal, Index } from "solid-js";
+import { createComputed, createMemo, createSignal, Index, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { accountModelName } from "../lib/providerAccounts";
-import { createDependencyEffect, createRef, type JSXElement } from "../lib/solid";
+import { createDependencyEffect, createMemoFields, createRef, type JSXElement } from "../lib/solid";
 
 import { Bot, Check, CircleGauge, CirclePlus, Cpu, HardDrive, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Wrench, Zap } from "lucide-solid";
 import { uid } from "../lib/content";
@@ -83,7 +83,8 @@ function settingsViewDefaults({ selectedSection, embedded = false, resourceError
 }
 
 export function SettingsView(props: SettingsViewProps) {
-  const settingsProps = createMemo(() => (settingsViewDefaults(props)));
+  const settingsFields = createMemoFields(() => settingsViewDefaults(props));
+  const settingsProps = () => settingsFields;
   const providerHostId = createMemo(() => settingsProps().providerHostId);
   const [saving, setSaving] = createSignal(false);
   createDependencyEffect(() => {
@@ -274,7 +275,8 @@ export function SettingsView(props: SettingsViewProps) {
 
     return { invalidFastModeAgent, fastModeValidationError, formValid, searchTerms, matchingSections, visibleSection };
   };
-  const formValidation = createMemo(() => (validateForm()));
+  const formFields = createMemoFields(validateForm);
+  const formValidation = () => formFields;
   const renderSettingsHeader = () => {
     const renderSaveControls = () => {
       const renderUnsavedBadge = () => (dirty() && !saving() && <small role="status" class="unsaved-badge"><span aria-hidden="true" />Unsaved changes</small>);
@@ -330,12 +332,12 @@ export function SettingsView(props: SettingsViewProps) {
               return (<div class="agent-defaults">{renderAgentModel()}{renderAgentFastMode()}{renderAgentEffort()}</div>);
             };
             const renderAgentPromptFiles = () => (<label class="field"><span>System prompt file</span><input aria-label="System prompt file" aria-invalid={!agent().path_systemprompt?.trim()} placeholder="Path relative to agent config.json, or absolute path" value={agent().path_systemprompt ?? ""} onInput={(event) => updateAgent({ path_systemprompt: event.target.value })} /></label>);
-            return (agent() && <div class="agent-fields">{renderAgentNameRow()}
+            return (<Show when={agent()}><div class="agent-fields">{renderAgentNameRow()}
               {renderAgentDefaults()}
               {renderAgentPromptFiles()}<label class="field"><span>Agent prompt file</span><input aria-label="Agent prompt file" placeholder="Optional path to an agent prompt file" value={agent().path_agentprompt ?? ""} onInput={(event) => updateAgent({ path_agentprompt: event.target.value })} /></label>
               <label class="field"><span>piop extensions (one path per line)</span><textarea aria-label="Agent piop extensions" placeholder="/path/to/extension.ts" value={(agent().extensions ?? []).join("\n")} onInput={(event) => updateAgent({ extensions: event.target.value.split("\n") })} onBlur={() => updateAgent({ extensions: (agent().extensions ?? []).map(path => path.trim()).filter(Boolean) })} /></label>
               <AgentAllowlist title="Tools">{<Key each={draft().tools} by={(tool) => tool.name}>{(tool, index) => <label ><input type="checkbox" aria-label={`Allow ${tool().name}`} checked={agent().tools.includes(tool().name)} onInput={() => toggleAgentResource("tools", tool().name)} />{tool().name}</label>}</Key>}</AgentAllowlist><AgentAllowlist title="Skills">{<Key each={draft().skills} by={(skill) => skill.path}>{(skill, index) => <label ><input type="checkbox" aria-label={`Allow ${skill().name}`} checked={agent().skills.includes(skill().path)} onInput={() => toggleAgentResource("skills", skill().path)} />{skill().name}</label>}</Key>}</AgentAllowlist><div class="agent-mcp-settings"><h3>MCP servers</h3><div class="mcp-list">{<Key each={agent().mcpServers} by={(server) => server.id}>{(server, index) => { const fieldError = createMemo(() => (mcpServerError(server()))); return <div class="mcp-card" ><div class="mcp-card-head"><span class="config-icon mcp"><PlugZap size={16} /></span><input aria-label="Server name" aria-invalid={!server().name.trim() || nameValidation().duplicateMcpNames.has(server().name.trim().toLowerCase())} value={server().name} onInput={(e) => updateMcp(server().id, { name: e.target.value })} /><Toggle label={`Enable ${server().name}`} checked={server().enabled} onChange={(enabled) => updateMcp(server().id, { enabled })} /><IconButton label={`Remove ${server().name}`} onClick={() => removeMcp(server().id)}><Trash2 size={15} /></IconButton></div>{fieldError() && <small class="mcp-error" role="alert">{fieldError()}</small>}<div class="field"><span>Transport</span><div class="mcp-transport-toggle" role="group" aria-label={`${server().name} transport`}>{<Key each={(["stdio", "http"] as const)} by={(transport) => transport}>{(transport, index) => <button  type="button" aria-pressed={(server().transport ?? "stdio") === transport()} onClick={() => updateMcp(server().id, { transport: transport() })}>{transport() === "stdio" ? "stdio" : "HTTP"}</button>}</Key>}</div></div><label class="field"><span>Startup timeout (seconds)</span><input type="number" min={1} max={600} step={1} aria-label={`${server().name} startup timeout`} value={server().startupTimeoutSec ?? 10} onInput={(event) => { const value = event.target.value; updateMcp(server().id, { startupTimeoutSec: Number(value) }); }} /></label><Toggle label={`Supply Piop agent ID to ${server().name}`} checked={server().injectAgentId === true} onChange={(injectAgentId) => updateMcp(server().id, { injectAgentId })} />{(server().transport ?? "stdio") === "stdio" ? <div class="command-fields stdio-fields"><label><span>Command</span><input aria-invalid={!server().command.trim()} value={server().command} onInput={(e) => updateMcp(server().id, { command: e.target.value })} /></label><label><span>Arguments</span><input value={server().args} onInput={(e) => updateMcp(server().id, { args: e.target.value })} /></label></div> : <div class="command-fields http-fields"><label><span>URL</span><input type="url" aria-invalid={Boolean(fieldError()?.includes("URL"))} placeholder="https://example.com/mcp" value={server().url ?? ""} onInput={(e) => updateMcp(server().id, { url: e.target.value })} /></label><label><span>Headers (JSON)</span><input aria-invalid={Boolean(fieldError()?.startsWith("Headers"))} placeholder={'{"Authorization":"Bearer …"}'} value={server().headers ?? ""} onInput={(e) => updateMcp(server().id, { headers: e.target.value })} /></label></div>}</div>; }}</Key>}</div><button class="secondary-button" disabled={agent().mcpServers.length >= 32} onClick={addMcp}><CirclePlus size={15} />Add MCP server</button></div>
-            </div>);
+            </div></Show>);
           };
           return (<>{!agentConfig() && <p role={settingsProps().resourceError ? "alert" : "status"}>{settingsProps().resourceError ? "Could not load agent definitions: " + (settingsProps().resourceError)! : "Loading agent definitions…"}</p>}
           <div class="agent-editor"><div class="agent-list">{<Index each={agentDrafts()}>{(item, index) => <button  class={index === agentIndex() ? "active" : ""} onClick={() => setAgentIndex(index)}><Bot size={14} /><span>{item().name}</span>{isBuiltInAgent(item()) && <small>Built in</small>}</button>}</Index>}</div>

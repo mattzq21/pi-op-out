@@ -153,7 +153,11 @@ export function FindInPage(componentProps: { selector: string; scopeKey: string;
       if (!keepCurrent && next[active]) reveal(next[active].range);
     };
     scan(false);
-    const observer = new MutationObserver(() => {
+    const observer = new MutationObserver((records) => {
+      if (!records.some((record) => {
+        const element = record.target instanceof Element ? record.target : record.target.parentElement;
+        return !element?.closest("textarea, input");
+      })) return;
       window.clearTimeout(timer); timer = window.setTimeout(() => scan(true), 100);
     });
     observer.observe(root, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["open", "hidden", "class", "style"] });
@@ -196,6 +200,8 @@ export function FindInPage(componentProps: { selector: string; scopeKey: string;
     const observer = new ResizeObserver(schedule);
     const root = document.querySelector<HTMLElement>(capturedSelector1);
     if (root) observer.observe(root);
+    const composer = root?.querySelector(".composer-stack");
+    if (composer) observer.observe(composer);
     return () => { cancelAnimationFrame(frame); observer.disconnect(); document.removeEventListener("scroll", schedule, true); window.removeEventListener("resize", schedule); };
   }, () => [open(), matches(), index(), componentProps.selector, componentProps.scopeKey, (componentProps.enabled === undefined ? true : componentProps.enabled)]);
 

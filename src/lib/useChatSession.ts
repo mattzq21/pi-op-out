@@ -12,10 +12,10 @@ interface SessionSnapshot { revision: string; state: AgentState; history: { entr
 type MessageUpdate = (messages: ChatMessage[]) => ChatMessage[];
 const emptyState: AgentState = { model: null, thinkingLevel: "off", isStreaming: false, sessionId: "", messageCount: 0, pendingMessageCount: 0 };
 
-export function useChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation">>>, initialState: Accessor<AgentState> = () => emptyState) {
+export function useChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation">>>, initialState: Accessor<AgentState> = () => emptyState, options: { poll?: boolean } = {}) {
   const runtime = createMemo(() => {
     const current = transport();
-    return untrack(() => createChatSession(() => current, initialState));
+    return untrack(() => createChatSession(() => current, initialState, options));
   });
   return {
     get state() { return runtime().state; }, get setState() { return runtime().setState; },
@@ -26,7 +26,7 @@ export function useChatSession(transport: Accessor<Pick<NativeTransport, "comman
   };
 }
 
-function createChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation">>>, initialState: Accessor<AgentState>) {
+function createChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation">>>, initialState: Accessor<AgentState>, options: { poll?: boolean }) {
   const session = useSessionMemory(() => (transport()), () => (initialState()));
   const owner = createRef<ReturnType<typeof transport> | undefined>(transport());
   const loading = new AbortController();
@@ -142,6 +142,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   };
 
   createDependencyEffect(() => { const capturedTransport = transport();
+    if (options.poll === false) return;
     let stopped = false;
     let viewing = capturedTransport.ownsConversation?.() === false;
     let timer: ReturnType<typeof setTimeout> | undefined;

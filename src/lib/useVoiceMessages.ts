@@ -8,7 +8,11 @@ import { voiceSession } from "./voiceSession";
 
 export function useVoiceMessages(messages: Accessor<ChatMessage[]>, transport: Accessor<NativeTransport | undefined> = () => undefined, sessionId: Accessor<string | undefined> = () => undefined) {
   const voice = createSubscription(() => voiceSession.subscribe, () => voiceSession.getSnapshot);
-  return createMemo(() => voice().transport === transport() && voice().sessionId === sessionId()
-    ? mergeSpokenMessages(messages(), voice().transcripts.map(spokenMessage))
+  const owner = createMemo(() => voice().transport);
+  const conversation = createMemo(() => voice().sessionId);
+  const transcripts = createMemo(() => voice().transcripts);
+  const spoken = createMemo(() => transcripts().map(spokenMessage));
+  return createMemo(() => owner() === transport() && conversation() === sessionId()
+    ? mergeSpokenMessages(messages(), spoken())
     : messages());
 }

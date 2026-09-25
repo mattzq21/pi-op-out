@@ -1,6 +1,6 @@
 import { Key, Rerun } from "@solid-primitives/keyed";
 import { ArrowLeft, Bug, FolderPlus, GitBranch, MessageSquare, Mic, Notebook, Server, Settings } from "lucide-solid";
-import { batch, createComputed, createMemo, createSignal, onCleanup } from "solid-js";
+import { batch, createComputed, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import { appendTerminalOutputs, AppLoading, dialogOwnerName, goUsageBadge, initialTerminals, LimitBadge, MAX_TERMINALS, normalizeCodexUsage, normalizeOpencodeGoUsage, selectedProjectCwd, splitConversationKey, terminalConversationKey, useUsageClock, type OwnedExtensionDialog, type QueuedTerminalOutput, type RenameTarget, type SessionTerminals, type SplitPaneState, type TerminalTarget, type WorktreeTarget } from "./appSupport";
 import { createBranchConversation } from "./branchConversation";
 import { ChatView } from "./components/ChatView";
@@ -31,10 +31,10 @@ import { ORCHESTRATOR_SESSION_ID, VOICE_ORCHESTRATOR_AGENT } from "./lib/orchest
 import { isMobile, listen } from "./lib/platform";
 import { updateSessionGroups, type SessionGroup } from "./lib/sessionGroups";
 import { SessionRuntimePool, useTurnDiffs } from "./lib/sessionRuntimePool";
-import { createDependencyEffect, createRef, createSubscription, type StateUpdate } from "./lib/solid";
+import { createDependencyEffect, createMemoFields, createRef, createSubscription, type StateUpdate } from "./lib/solid";
 import { TERMINAL_OUTPUT_LIMIT } from "./lib/terminalOutput";
 import { useChatSession } from "./lib/useChatSession";
-import type { AgentConfig, AgentState, AppSettings, ChatMessage, CodexUsage, ComposerUpload, DefinedAgentsCapability, ExtensionUiRequest, ImageAttachment, Model, OpencodeGoUsage, SessionSummary, SettingsChange } from "./types";
+import type { AgentConfig, AgentState, AppSettings, ChatMessage, CodexUsage, ComposerUpload, DefinedAgentsCapability, ExtensionUiRequest, ImageAttachment, Model, OpencodeGoUsage, SessionSummary, SettingsChange, SlashCommand } from "./types";
 import { useAppEvents } from "./useAppEvents";
 export { formatCodexReset,normalizeCodexUsage,normalizeOpencodeGoUsage,usageWindowsDescription } from "./appSupport";
 declare const __PIOP_DEVELOPMENT_BRANCH__: string;
@@ -155,7 +155,8 @@ export default function App() {
     const activeTerminal = sessionTerminals.tabs.find((terminal) => terminal.id === sessionTerminals.activeId) ?? sessionTerminals.tabs[0];
     return { composerDraft, composerUploads, splitComposerDraft, sessionTerminals, activeTerminal };
   };
-  const composerState = createMemo(() => (composerAndTerminalState()));
+  const composerFields = createMemoFields(composerAndTerminalState);
+  const composerState = () => composerFields;
   const terminalViewKey = createMemo(() => `${terminalSessionId()}:${composerState().activeTerminal.id}`);
   const terminalsBySessionRef = createRef(terminalsBySession()); createComputed(() => { terminalsBySessionRef.current = terminalsBySession(); });
   const activateConversationKey = (key: string) => { activeConversationKeyRef.current = key; setActiveConversationKey(key); };
@@ -794,10 +795,13 @@ export default function App() {
     return (<ResizableSidebar compact={view() === "settings" || !panelOpen()}><div class="rail-branch" title={`piop development branch: ${__PIOP_DEVELOPMENT_BRANCH__}`}><GitBranch size={13} /><span>{__PIOP_DEVELOPMENT_BRANCH__}</span></div>{renderNavigation()}{renderSessionPanel()}{renderUsageBadges()}</ResizableSidebar>);
   };
   const chatAgentProps = () => { if (!extensionStateIsCurrent()) return { agents: [], activeAgent: undefined, agentLocked: false, agentSaved: false, agentUnavailable: false }; return { agents: (definedAgents()?.config.agents ?? []).filter((agent) => isOrchestrator() || agent.name !== VOICE_ORCHESTRATOR_AGENT), activeAgent: definedAgents()?.active, agentLocked: isOrchestrator() || definedAgents()?.locked, agentSaved: definedAgents()?.saved, agentUnavailable: definedAgents()?.unavailable }; };
+  const chatModels = createMemo(() => chatSession().models.filter(model => !settings()?.hiddenModels.includes(`${model.provider}/${model.id}`)));
+  const chatCommands = createMemo<SlashCommand[]>(() => [{ name: "branch-off", description: "Branch conversation [number back, default 0]", source: "builtin" }, { name: "worktree", description: "Create worktree [number back, default 0] [name]", source: "builtin" }, ...chatSession().commands.filter(command => !["branch-off", "worktree"].includes(command.name))]);
+  const chatWidgets = createMemo(() => extensionStateIsCurrent() ? Object.values(widgets()).flat() : []);
   const renderChatWorkspace = () => {
     const renderChatPanes = () => {
-      const renderChatView = () => (<Rerun on={() => activeConversationKey()}>{(_key) => <ChatView voiceTransport={transport()}  state={chatSession().state} messages={chatSession().messages} gitDiffs={gitDiffs()} debug={(settings())!.debugMode} {...chatAgentProps()} models={chatSession().models.filter((model) => !(settings())!.hiddenModels.includes(`${model.provider}/${model.id}`))} commands={[{ name: "branch-off", description: "Branch conversation [number back, default 0]", source: "builtin" }, { name: "worktree", description: "Create worktree [number back, default 0] [name]", source: "builtin" }, ...chatSession().commands.filter((command) => !["branch-off", "worktree"].includes(command.name))]} thinkingLevels={chatSession().thinkingLevels} widgets={extensionStateIsCurrent() ? Object.values(widgets()).flat() : []} statuses={extensionStateIsCurrent() ? statuses() : {}} projectCwd={projectCwd()} filesCwd={activeCwd()} controlsDisabled={!connected()} selectionBtw draft={composerState().composerDraft} onDraftChange={draftChangeFor(activeConversationKey(), transport())} focusRequest={mainComposerFocusRequest()} onActivate={() => setActivePane("main")} uploads={composerState().composerUploads} onUploadsChange={uploadsChangeFor(transport())} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abortInteraction} onPause={pauseInteraction} onResume={resumeInteraction} onOpenTerminal={() => { terminalPanelRevision.current += 1; setActivePane("main"); setTerminalTarget({ sessionKey: activeConversationKey(), cwd: projectCwd(), hostId: activeHostId() }); setTerminalOpen(true); }} onOpenProject={chooseChatProject} onClearProject={clearChatProject} onBranch={branch} onForkAndForget={isGitRepository() === false && projectCwd() ? forkAndForget : undefined} onCreateWorktree={isGitRepository() && projectCwd() ? (message) => setWorktreeTarget({ cwd: (projectCwd())!, hostId: activeHostId(), message, transport: transport() }) : undefined} onAgent={setAgent} onModel={setModel} onToggleFastMode={() => { const owner = transport(); return enqueueControl(owner, () => owner.toggleFastMode()); }} onThinking={setThinking} />}</Rerun>);
-      const renderSplitChatPane = () => (splitPane() && <Rerun on={() => splitPane()?.key}>{() => {
+      const renderChatView = () => (<Rerun on={() => activeConversationKey()}>{(_key) => <ChatView voiceTransport={transport()}  state={chatSession().state} messages={chatSession().messages} gitDiffs={gitDiffs()} debug={(settings())!.debugMode} {...chatAgentProps()} models={chatModels()} commands={chatCommands()} thinkingLevels={chatSession().thinkingLevels} widgets={chatWidgets()} statuses={extensionStateIsCurrent() ? statuses() : {}} projectCwd={projectCwd()} filesCwd={activeCwd()} controlsDisabled={!connected()} selectionBtw draft={composerState().composerDraft} onDraftChange={draftChangeFor(activeConversationKey(), transport())} focusRequest={mainComposerFocusRequest()} onActivate={() => setActivePane("main")} uploads={composerState().composerUploads} onUploadsChange={uploadsChangeFor(transport())} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abortInteraction} onPause={pauseInteraction} onResume={resumeInteraction} onOpenTerminal={() => { terminalPanelRevision.current += 1; setActivePane("main"); setTerminalTarget({ sessionKey: activeConversationKey(), cwd: projectCwd(), hostId: activeHostId() }); setTerminalOpen(true); }} onOpenProject={chooseChatProject} onClearProject={clearChatProject} onBranch={branch} onForkAndForget={isGitRepository() === false && projectCwd() ? forkAndForget : undefined} onCreateWorktree={isGitRepository() && projectCwd() ? (message) => setWorktreeTarget({ cwd: (projectCwd())!, hostId: activeHostId(), message, transport: transport() }) : undefined} onAgent={setAgent} onModel={setModel} onToggleFastMode={() => { const owner = transport(); return enqueueControl(owner, () => owner.toggleFastMode()); }} onThinking={setThinking} />}</Rerun>);
+      const renderSplitChatPane = () => (<Show when={splitPane()}><Rerun on={() => splitPane()?.key}>{(_key) => {
         const pane = splitPane()!;
         const currentPane = () => splitPane()?.key === pane.key ? splitPane() : undefined;
         const changeSession = (next: SessionSummary, owner: NativeTransport) => {
@@ -820,7 +824,7 @@ export default function App() {
           onReady={pane.btw ? () => respondToBtw(pane.btw!.requestId, { value: "opened" }) : undefined}
           onFailed={pane.btw ? () => respondToBtw(pane.btw!.requestId, { cancelled: true }) : undefined}
           onClose={() => { if (currentPane()) closeSplitPane(); }} />;
-      }}</Rerun>);
+      }}</Rerun></Show>);
       return (<div class={`chat-panes ${hasSidePane() ? "split" : ""}`}>
         {!notesOpen() && <IconButton class="open-notes-button" label="Open notes" aria-expanded={false} aria-controls="notes-pane" onClick={() => toggleNotes(true)}><Notebook size={19} /></IconButton>}
         {renderChatView()}
@@ -834,10 +838,10 @@ export default function App() {
     </div>);
   };
   const renderSettingsView = () => (view() === "settings" && <LocalSettingsView pendingSettingsCount={pendingSettingsCount()} settings={(settings())!} sessions={sessions()} onSave={saveSettings} onDirtyChange={setSettingsDirty} />);
-  const renderToastStack = () => ((error() || notices().length > 0) && <div class="toast-stack">
+  const renderToastStack = () => (<Show when={error() || notices().length > 0}><div class="toast-stack">
       {error() && <div class="error-toast" role="alert"><strong>piop could not connect</strong><span>{(error())!}</span><button onClick={reconnectMain} disabled={reconnectPending.current.has(transport())}>Retry</button><button aria-label="Dismiss connection error" onClick={() => setError(undefined)}>×</button></div>}
       {<Key each={notices()} by={(notice) => notice.id}>{(notice, index) => <div class="error-toast" role="alert" ><strong>{notice().title}</strong><span>{notice().message}</span><button aria-label={`Dismiss ${notice().title}`} onClick={() => setNotices((current) => current.filter((item) => item.id !== notice().id))}>×</button></div>}</Key>}
-    </div>);
+    </div></Show>);
   const renderExtensionDialog = () => (activeDialog() && !projectOpen() && !renameSession() && !relocatingSession() && !worktreeTarget() && <Rerun on={() => activeDialog()?.queueId}>{(_key) => <ExtensionDialog request={activeDialog()!.request} owner={activeDialog()!.owner} onRespond={async (response) => {
     const capturedActiveDialog = activeDialog()!;
  await capturedActiveDialog.transport.command({ type: "extension_ui_response", id: capturedActiveDialog.request.id, ...response }); setDialogs((current) => current.filter((item) => item !== capturedActiveDialog)); }} />}</Rerun>);

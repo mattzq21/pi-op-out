@@ -1,5 +1,5 @@
 import { Key } from "@solid-primitives/keyed";
-import { createMemo, createSignal } from "solid-js";
+import { createMemo, createSignal, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
@@ -115,7 +115,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
       const maximum = createMemo(() => (Math.max(...host().categories.map((category) => category.byteSize), 1)));
       const deletableArchives = createMemo(() => (host().archives.filter((archive) => archive.deletable)));
       const renderHostHeader = () => (<header><span class="config-icon"><Database size={16} /></span><span><strong>{host().hostName}</strong><small>{host().error ? "Storage unavailable" : `${approximate() ? "About " : ""}${formatBytes(total())} tracked`}</small></span></header>);
-      const renderStorageHostError = () => (host().error ? <div class="storage-host-error" role="alert">{host().error}</div> : <>
+      const renderStorageHostError = () => (<Show when={!host().error} fallback={<div class="storage-host-error" role="alert">{host().error}</div>}>
         <div class="storage-categories">{<Key each={host().categories.filter((category) => category && categoryDetails[category.id])} by={(category) => category.id}>{(category, index) => {
           const details = createMemo(() => (categoryDetails[category().id])); const CategoryIcon = createMemo(() => (details().icon));
           return <div class="storage-category" >
@@ -140,7 +140,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
             {renderArchiveDelete()}
           </div>;
         }}</Key>}</div>}
-      </>);
+      </Show>);
       return <section class="storage-host" >
         {renderHostHeader()}
         {renderStorageHostError()}

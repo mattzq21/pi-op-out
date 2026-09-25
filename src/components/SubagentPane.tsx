@@ -10,7 +10,7 @@ const noop = () => undefined;
 
 export function SubagentPane(props: { target: SubagentTarget; onClose: () => void; onActivate: () => void }) {
   const transport = new NativeTransport({ ...props.target, readOnly: true });
-  const session = useChatSession(() => transport, () => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: props.target.sessionId, sessionName: props.target.name, messageCount: 0, pendingMessageCount: 0 }));
+  const session = useChatSession(() => transport, () => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: props.target.sessionId, sessionName: props.target.name, messageCount: 0, pendingMessageCount: 0 }), { poll: false });
   const [loaded, setLoaded] = createSignal(false);
   const [error, setError] = createSignal<string>();
   const [retry, setRetry] = createSignal(0);
