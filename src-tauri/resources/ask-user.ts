@@ -48,7 +48,7 @@ export function registerRequestUserInput(pi: ExtensionAPI) {
   pi.on("session_start", (_event, ctx) => publish(ctx));
   pi.on("session_tree", (_event, ctx) => publish(ctx));
   pi.registerTool({
-    name: "request_user_input_async", label: "Ask user",
+    name: "request_user_input", label: "Ask user",
     description: "Ask the user one or more questions during ongoing work. Use only for missing information, preferences, constraints, clarification, or approval. Returns immediately without ending the turn or waiting for a reply; replies arrive later as user follow-up messages. Continue independent work while waiting. Questions remain available if the user does not answer. A preselected option is not submitted automatically. Never interpret silence as an answer or approval.",
     parameters: Type.Object({ questions: Type.Array(Type.Object({
       title: Type.String({ description: "The complete question shown to the user, including any context needed to answer it." }),
