@@ -14,33 +14,59 @@ mod worker;
 
 use futures_util::FutureExt;
 use serde_json::{json, Value};
-use std::io::BufRead;
+use std::{path::PathBuf, sync::mpsc, thread};
 
-pub(crate) fn run() -> Result<(), String> {
-    let executable = std::env::args()
-        .nth(2)
-        .unwrap_or_else(|| crate::pi_executable().to_string_lossy().into_owned());
-    let storage = std::env::var("PIOP_STORAGE_DIRECTORY").unwrap_or_else(|_| crate::STORAGE_DIRECTORY.into());
-    let home = crate::home_dir()?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| error.to_string())?;
-    runtime.block_on(async move {
-        let host = controller::Host::new(home, &storage, services::HostServices::new(executable), Box::new(std::io::stdout())).await?;
-        serve(host).await;
-        Ok(())
-    })
+pub(crate) struct Supervisor {
+    pub input: tokio::sync::mpsc::UnboundedSender<Value>,
+    pub worker: thread::JoinHandle<()>,
 }
 
-async fn serve(host: std::sync::Arc<controller::Host>) {
-    let mut packets = input_packets();
+pub(crate) fn start(home: PathBuf, storage: String, executable: String, output: mpsc::Sender<Value>) -> Result<Supervisor, String> {
+    let (input, packets) = tokio::sync::mpsc::unbounded_channel();
+    let (ready, initialized) = mpsc::sync_channel(1);
+    let worker = thread::Builder::new()
+        .name("piop-host-supervisor".into())
+        .spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    let _ = ready.send(Err(error.to_string()));
+                    return;
+                }
+            };
+            runtime.block_on(async move {
+                match controller::Host::new(home, &storage, services::HostServices::new(executable), output).await {
+                    Ok(host) => {
+                        if ready.send(Ok(())).is_ok() {
+                            serve(host, packets).await;
+                        } else {
+                            host.shutdown().await;
+                        }
+                    }
+                    Err(error) => {
+                        let _ = ready.send(Err(error));
+                    }
+                }
+            });
+        })
+        .map_err(|error| error.to_string())?;
+    match initialized
+        .recv()
+        .map_err(|_| "Host supervisor stopped during startup".to_owned())
+        .and_then(|result| result)
+    {
+        Ok(()) => Ok(Supervisor { input, worker }),
+        Err(error) => {
+            let _ = worker.join();
+            Err(error)
+        }
+    }
+}
+
+async fn serve(host: std::sync::Arc<controller::Host>, mut packets: tokio::sync::mpsc::UnboundedReceiver<Value>) {
     let mut tasks = tokio::task::JoinSet::new();
-    let termination = termination();
-    tokio::pin!(termination);
     loop {
         tokio::select! {
-            _ = &mut termination => break,
             Some(result) = tasks.join_next(), if !tasks.is_empty() => {
                 if let Err(error) = result { host.output(json!({"type":"diagnostic","line":format!("Host command failed: {error}")})); }
             }
@@ -64,30 +90,4 @@ async fn serve(host: std::sync::Arc<controller::Host>) {
     tasks.abort_all();
     while tasks.join_next().await.is_some() {}
     host.shutdown().await;
-}
-
-fn input_packets() -> tokio::sync::mpsc::UnboundedReceiver<Value> {
-    let (input, packets) = tokio::sync::mpsc::unbounded_channel();
-    std::thread::spawn(move || {
-        for line in std::io::stdin().lock().lines() {
-            let Ok(line) = line else {
-                break;
-            };
-            if let Ok(packet) = serde_json::from_str::<Value>(&line) {
-                if input.send(packet).is_err() {
-                    break;
-                }
-            }
-        }
-    });
-    packets
-}
-
-async fn termination() {
-    #[cfg(unix)]
-    if let Ok(mut terminate) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-        tokio::select! { _ = terminate.recv() => {}, _ = tokio::signal::ctrl_c() => {} }
-        return;
-    }
-    let _ = tokio::signal::ctrl_c().await;
 }

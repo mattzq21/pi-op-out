@@ -11,7 +11,6 @@ use futures_util::future::BoxFuture;
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
-    io::Write,
     path::PathBuf,
     sync::{Arc, Mutex, MutexGuard, OnceLock, Weak},
     time::Duration,
@@ -57,7 +56,7 @@ pub(super) struct Host {
     state: Mutex<Registry>,
     ownership: OnceLock<Arc<ConversationOwnership>>,
     pub services: Arc<dyn Services>,
-    output: Mutex<Box<dyn Write + Send>>,
+    output: std::sync::mpsc::Sender<Value>,
     weak: Weak<Self>,
 }
 
@@ -145,13 +144,18 @@ impl Revocation for Callbacks {
 }
 
 impl Host {
-    pub async fn new(home: PathBuf, storage: &str, services: Arc<dyn Services>, output: Box<dyn Write + Send>) -> Result<Arc<Self>> {
+    pub async fn new(
+        home: PathBuf,
+        storage: &str,
+        services: Arc<dyn Services>,
+        output: std::sync::mpsc::Sender<Value>,
+    ) -> Result<Arc<Self>> {
         let host = Arc::new_cyclic(|weak| Self {
             home,
             state: Mutex::new(Registry::default()),
             ownership: OnceLock::new(),
             services,
-            output: Mutex::new(output),
+            output,
             weak: weak.clone(),
         });
         let ownership = ConversationOwnership::new(&host.home, storage, Arc::new(Callbacks(Arc::downgrade(&host)))).await?;
@@ -167,15 +171,7 @@ impl Host {
         self.ownership.get().expect("Ownership initialized before host dispatch")
     }
     pub fn output(&self, packet: Value) {
-        let packet = client_payload(packet);
-        let mut output = self.output.lock().unwrap_or_else(|error| error.into_inner());
-        let result = serde_json::to_writer(&mut *output, &packet)
-            .map_err(std::io::Error::other)
-            .and_then(|_| output.write_all(b"\n"))
-            .and_then(|_| output.flush());
-        if let Err(error) = result {
-            eprintln!("Host daemon output: {error}");
-        }
+        let _ = self.output.send(client_payload(packet));
     }
 
     pub fn find_session(&self, identity: &str) -> Option<Arc<Session>> {

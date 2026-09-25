@@ -16,17 +16,17 @@ pub(crate) struct Daemon {
     host: Option<RemoteHost>,
     agent_prefix: String,
     events: Mutex<()>,
-    child: Mutex<Child>,
-    stdin: Mutex<ChildStdin>,
+    worker: Mutex<Option<thread::JoinHandle<()>>>,
+    events_worker: Mutex<Option<thread::JoinHandle<()>>>,
+    input: Mutex<tokio::sync::mpsc::UnboundedSender<Value>>,
     pending: Mutex<HashMap<String, mpsc::Sender<Result<Value, String>>>>,
     captures: Mutex<HashMap<String, mpsc::Sender<CaptureWork>>>,
 }
 
 impl Daemon {
     fn notify(&self, packet: Value) -> Result<(), String> {
-        let mut stdin = self.stdin.lock().map_err(|_| "Daemon input lock was poisoned")?;
-        serde_json::to_writer(&mut *stdin, &packet).map_err(|error| error.to_string())?;
-        stdin.write_all(b"\n").and_then(|_| stdin.flush()).map_err(|error| error.to_string())
+        let input = self.input.lock().map_err(|_| "Daemon input lock was poisoned")?;
+        input.send(packet).map_err(|_| "Host supervisor disconnected".into())
     }
     fn configure(&self, runtime: &PiRuntime, settings: &AppSettings, host_id: &str) -> Result<(), String> {
         let agent_revision = runtime.agent_config_revisions.lock().map_err(|_| "Agent configuration lock was poisoned")?.get(host_id).copied().unwrap_or(0);
@@ -64,10 +64,9 @@ impl Daemon {
             pending.insert(id.clone(), sender);
         }
         let write = (|| {
-            let mut stdin = self.stdin.lock().map_err(|_| "Daemon input lock was poisoned")?;
+            let input = self.input.lock().map_err(|_| "Daemon input lock was poisoned")?;
             if !self.alive.load(Ordering::SeqCst) { return Err("Host daemon disconnected".into()); }
-            serde_json::to_writer(&mut *stdin, &packet).map_err(|error| error.to_string())?;
-            stdin.write_all(b"\n").and_then(|_| stdin.flush()).map_err(|error| error.to_string())
+            input.send(packet).map_err(|_| "Host supervisor disconnected".into())
         })();
         let result = write.and_then(|_| receiver.recv_timeout(Duration::from_secs(660)).map_err(|_| "Host daemon request timed out".to_string())?);
         self.pending.lock().ok().map(|mut pending| pending.remove(&id));
@@ -75,7 +74,14 @@ impl Daemon {
     }
 
     pub(crate) fn shutdown(&self) {
-        if let Ok(mut stdin) = self.stdin.lock() { let _ = stdin.write_all(b"{\"type\":\"shutdown\"}\n"); let _ = stdin.flush(); }
+        let _ = self.notify(json!({"type":"shutdown"}));
+    }
+
+    pub(crate) fn wait_shutdown(&self) {
+        let worker = self.worker.lock().unwrap_or_else(|error| error.into_inner()).take();
+        if let Some(worker) = worker { let _ = worker.join(); }
+        let events = self.events_worker.lock().unwrap_or_else(|error| error.into_inner()).take();
+        if let Some(events) = events { let _ = events.join(); }
     }
 
     pub(crate) fn drain_captures(&self, session_key: Option<&str>) -> Result<(), String> {
@@ -106,7 +112,7 @@ pub(crate) fn invalidate_changed(app: &AppHandle, runtime: &PiRuntime, settings:
     let mut daemons = runtime.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?;
     let changed: Vec<_> = daemons.iter().filter(|(host_id, daemon)| !daemon.matches_connection(settings, host_id)).map(|(host_id, _)| host_id.clone()).collect();
     for host_id in changed {
-        if let Some(daemon) = daemons.get(&host_id) { daemon.disconnect(app, runtime); daemon.shutdown(); daemon.drain_captures(None)?; }
+        if let Some(daemon) = daemons.get(&host_id) { daemon.disconnect(app, runtime); daemon.shutdown(); daemon.wait_shutdown(); daemon.drain_captures(None)?; }
         daemons.remove(&host_id);
     }
     Ok(())
@@ -129,27 +135,19 @@ pub(crate) fn connect(app: &AppHandle, runtime: &PiRuntime, _broker: &BrokerRunt
     let connection_config = connection_config(settings, host_id)?;
     let host = if host_id == "local" { None } else { Some(remote_host(settings, host_id)?.clone()) };
     if let Some(daemon) = daemons.get(host_id).filter(|daemon| daemon.alive.load(Ordering::SeqCst) && daemon.connection_config == connection_config) { daemon.configure(runtime, settings, host_id)?; return Ok(daemon.clone()); }
-    if let Some(daemon) = daemons.get(host_id) { daemon.disconnect(app, runtime); daemon.shutdown(); daemon.drain_captures(None)?; }
+    if let Some(daemon) = daemons.get(host_id) { daemon.disconnect(app, runtime); daemon.shutdown(); daemon.wait_shutdown(); daemon.drain_captures(None)?; }
     daemons.remove(host_id);
-    let auth_executable = host.as_ref().map(|host| host.pi_path.clone()).unwrap_or_else(|| pi_executable().to_string_lossy().into_owned());
+    let auth_executable = pi_executable().to_string_lossy().into_owned();
     let remote_port = None;
-    let mut command = Command::new(session_worker_executable()?);
-    command.args(["--host-daemon", &auth_executable]).env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY);
-    let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| format!("Could not start host daemon: {error}"))?;
-    let stdin = child.stdin.take().ok_or("Daemon stdin was unavailable")?;
-    let stdout = child.stdout.take().ok_or("Daemon stdout was unavailable")?;
-    let stderr = child.stderr.take().ok_or("Daemon stderr was unavailable")?;
-    let daemon = Arc::new(Daemon { alive: AtomicBool::new(true), remote_port, connection_config, host, agent_prefix: format!("daemon:{host_id}:{}:", Uuid::new_v4()), events: Mutex::new(()), child: Mutex::new(child), stdin: Mutex::new(stdin), pending: Mutex::new(HashMap::new()), captures: Mutex::new(HashMap::new()) });
+    let (output, packets) = mpsc::channel();
+    let supervisor = crate::host_supervisor::start(home_dir()?, STORAGE_DIRECTORY.into(), auth_executable, output)?;
+    let daemon = Arc::new(Daemon { alive: AtomicBool::new(true), remote_port, connection_config, host, agent_prefix: format!("daemon:{host_id}:{}:", Uuid::new_v4()), events: Mutex::new(()), worker: Mutex::new(Some(supervisor.worker)), events_worker: Mutex::new(None), input: Mutex::new(supervisor.input), pending: Mutex::new(HashMap::new()), captures: Mutex::new(HashMap::new()) });
     daemons.insert(host_id.into(), daemon.clone());
     let configuration_host_id = host_id.to_owned();
+    let failure_app = app.clone();
     let connection = daemon.clone(); let app = app.clone(); let host_id = host_id.to_owned();
-    let error_app = app.clone(); let error_host = host_id.clone(); let error_connection = daemon.clone();
-    thread::spawn(move || for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-        if error_connection.alive.load(Ordering::SeqCst) { let _ = error_app.emit("pi://daemon-error", json!({"hostId":error_host,"line":line})); }
-    });
-    thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            let Ok(packet) = serde_json::from_str::<Value>(&line) else { continue; };
+    let events_worker = thread::spawn(move || {
+        for packet in packets {
             let _events = connection.events.lock().unwrap_or_else(|error| error.into_inner());
             if !connection.alive.load(Ordering::SeqCst) { continue; }
             match packet["type"].as_str() {
@@ -217,9 +215,15 @@ pub(crate) fn connect(app: &AppHandle, runtime: &PiRuntime, _broker: &BrokerRunt
         }
         let runtime = app.state::<PiRuntime>();
         connection.disconnect(&app, &runtime);
-        if let Ok(mut child) = connection.child.lock() { let _ = child.wait(); };
     });
-    daemon.configure(runtime, settings, &configuration_host_id)?;
+    *daemon.events_worker.lock().unwrap_or_else(|error| error.into_inner()) = Some(events_worker);
+    if let Err(error) = daemon.configure(runtime, settings, &configuration_host_id) {
+        daemon.disconnect(&failure_app, runtime);
+        daemon.shutdown();
+        daemon.wait_shutdown();
+        daemons.remove(&configuration_host_id);
+        return Err(error);
+    }
     Ok(daemon)
 }
 

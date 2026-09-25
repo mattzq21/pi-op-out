@@ -2400,7 +2400,7 @@ enum PiLaunch<'a> {
 
 fn session_worker_executable() -> Result<PathBuf, String> {
     // Keep using this daemon's executable after a rebuild unlinks its original
-    // path. The explicit PID also works from the separate host supervisor.
+    // path. Session workers exec Pi while retaining their ownership lock.
     #[cfg(target_os = "linux")]
     { Ok(PathBuf::from(format!("/proc/{}/exe", std::process::id()))) }
     #[cfg(not(target_os = "linux"))]
@@ -3725,7 +3725,6 @@ async fn wait_for_desktop_exit() {
 
 #[cfg(not(feature = "desktop"))]
 pub fn run_daemon() -> Result<(), String> {
-    if std::env::args().nth(1).as_deref() == Some("--host-daemon") { return host_daemon::run(); }
     if std::env::args().nth(1).as_deref() == Some("--stdio-client") { return daemon_stdio::run(); }
     let _instance = daemon_endpoint::claim()?;
     daemon_endpoint::identity()?;
@@ -3780,7 +3779,9 @@ fn shutdown_backend(app: &AppHandle) {
     let _ = stop_terminals(&terminals, &ids);
     let runtime = app.state::<PiRuntime>();
     if let Ok(setups) = runtime.worktree_setups.lock() { for cancelled in setups.values() { cancelled.store(true, Ordering::SeqCst); } }
-    if let Ok(daemons) = runtime.daemons.lock() { for daemon in daemons.values() { daemon.shutdown(); } }
+    let daemons = runtime.daemons.lock().map(|daemons| daemons.values().cloned().collect::<Vec<_>>()).unwrap_or_default();
+    for daemon in &daemons { daemon.shutdown(); }
+    for daemon in daemons { daemon.wait_shutdown(); let _ = daemon.drain_captures(None); }
     let ephemeral = runtime.ephemeral_sessions.lock().map(|mut sessions| sessions.drain().map(|(_, session)| session).collect::<Vec<_>>()).unwrap_or_default();
     for session in ephemeral { remove_ephemeral_session(session); }
 }
