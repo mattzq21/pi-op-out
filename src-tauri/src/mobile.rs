@@ -71,7 +71,7 @@ async fn serve_connection<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpi
 
 async fn serve_connection_mode<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(app: AppHandle, mut socket: tokio_tungstenite::WebSocketStream<S>, events: broadcast::Sender<Value>, jobs: Arc<Semaphore>, peer: bool) -> Result<(), String> {
     let mut events = events.subscribe();
-    socket.send(Message::Text(json!({"type":"ready", "protocol":1, "backend":"daemon", "peerProtocol":1, "daemonId":daemon_endpoint::identity()?, "buildId":daemon_endpoint::build_identity()?}).to_string().into())).await.map_err(|error| error.to_string())?;
+    send_ready(&mut socket).await?;
     let (responses, mut receiver) = tokio::sync::mpsc::channel::<Value>(32);
     let mut pending = tokio::task::JoinSet::new();
     let owner = format!("client:{}", Uuid::new_v4());
@@ -130,6 +130,10 @@ async fn serve_connection_mode<S: tokio::io::AsyncRead + tokio::io::AsyncWrite +
     // Hide disconnected viewers immediately so dialogs can move to a returning
     // client. Preserve workers, finish mutations, then catch any late attaches.
     drop(receiver);
+    detach_connection(app, owner, pending).await
+}
+
+async fn detach_connection(app: AppHandle, owner: String, mut pending: tokio::task::JoinSet<()>) -> Result<(), String> {
     let cleanup_app = app.clone(); let cleanup_owner = owner.clone();
     tokio::task::spawn_blocking(move || detach_owner(&cleanup_app, &cleanup_owner, false)).await.map_err(|error| error.to_string())?;
     tokio::spawn(async move {
@@ -137,6 +141,11 @@ async fn serve_connection_mode<S: tokio::io::AsyncRead + tokio::io::AsyncWrite +
         let _ = tokio::task::spawn_blocking(move || detach_owner(&app, &owner, false)).await;
     });
     Ok(())
+}
+
+async fn send_ready<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(socket: &mut tokio_tungstenite::WebSocketStream<S>) -> Result<(), String> {
+    let message = Message::Text(json!({"type":"ready", "protocol":1, "backend":"daemon", "peerProtocol":1, "daemonId":daemon_endpoint::identity()?, "buildId":daemon_endpoint::build_identity()?}).to_string().into());
+    socket.send(message).await.map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

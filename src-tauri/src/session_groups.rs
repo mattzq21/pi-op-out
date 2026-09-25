@@ -93,11 +93,8 @@ pub fn load_session_groups(seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Re
     load_at(&path, seeds, legacy)
 }
 
-fn load_at(path: &PathBuf, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Result<SessionGroups, String> {
-    let _file_lock = lock_storage(path)?;
-    let stored = read(path)?;
-    let mut dirty = stored.is_none();
-    let mut state = stored.unwrap_or(legacy);
+fn migrate_group_names(state: &mut SessionGroups) -> bool {
+    let mut dirty = false;
     for group in &mut state.groups {
         if group.name != "Workspace" { continue; }
         let Some(cwd) = group.cwd.as_deref() else { continue; };
@@ -106,20 +103,39 @@ fn load_at(path: &PathBuf, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Re
             if name != group.name { group.name = name.to_owned(); dirty = true; }
         }
     }
-    for seed in seeds {
-        for group in state.groups.iter_mut().filter(|group| group.host_id == seed.project.host_id) {
-            if group.host_name != seed.project.host_name { group.host_name = seed.project.host_name.clone(); dirty = true; }
-            if group.id == seed.project.id && seed.project.project_kind.is_some() && group.project_kind != seed.project.project_kind { group.project_kind = seed.project.project_kind.clone(); dirty = true; }
+    dirty
+}
+
+fn update_seed_metadata(state: &mut SessionGroups, seed: &SessionSeed) -> bool {
+    let mut dirty = false;
+    for group in state.groups.iter_mut().filter(|group| group.host_id == seed.project.host_id) {
+        if group.host_name != seed.project.host_name { group.host_name = seed.project.host_name.clone(); dirty = true; }
+        if group.id == seed.project.id && seed.project.project_kind.is_some() && group.project_kind != seed.project.project_kind { group.project_kind = seed.project.project_kind.clone(); dirty = true; }
+    }
+    dirty
+}
+
+fn assign_seed(state: &mut SessionGroups, seed: SessionSeed) -> bool {
+    if state.assignments.contains_key(&seed.session_key) { return false; }
+    let destination = if state.removed_projects.contains(&seed.project.id) { None } else {
+        if !state.groups.iter().any(|group| group.id == seed.project.id) {
+            state.groups.insert(0, seed.project.clone());
         }
-        if state.assignments.contains_key(&seed.session_key) { continue; }
-        let destination = if state.removed_projects.contains(&seed.project.id) { None } else {
-            if !state.groups.iter().any(|group| group.id == seed.project.id) {
-                state.groups.insert(0, seed.project.clone());
-            }
-            Some(seed.project.id)
-        };
-        state.assignments.insert(seed.session_key, destination);
-        dirty = true;
+        Some(seed.project.id)
+    };
+    state.assignments.insert(seed.session_key, destination);
+    true
+}
+
+fn load_at(path: &PathBuf, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Result<SessionGroups, String> {
+    let _file_lock = lock_storage(path)?;
+    let stored = read(path)?;
+    let mut dirty = stored.is_none();
+    let mut state = stored.unwrap_or(legacy);
+    dirty |= migrate_group_names(&mut state);
+    for seed in seeds {
+        dirty |= update_seed_metadata(&mut state, &seed);
+        dirty |= assign_seed(&mut state, seed);
     }
     let ids: HashSet<_> = state.groups.iter().map(|group| group.id.clone()).collect();
     for destination in state.assignments.values_mut() {
@@ -145,62 +161,87 @@ fn change_with(change: GroupChange, path: impl FnOnce() -> Result<PathBuf, Strin
 fn change_at(path: &PathBuf, change: GroupChange) -> Result<SessionGroups, String> {
     let _file_lock = lock_storage(path)?;
     let mut state = read(path)?.ok_or("Session groups have not loaded yet")?;
-    match change {
-        GroupChange::Relocate { project, key } => {
-            if project.cwd.as_ref().is_none_or(|cwd| cwd.is_empty()) { return Err("Enter a project directory".into()); }
-            let previous = state.assignments.get(&key).cloned();
-            let old_id = previous.clone().flatten();
-            let automatic = old_id.as_ref().is_some_and(|id| state.groups.iter().any(|group| &group.id == id && group.cwd.is_some()));
-            if previous.is_none() || automatic {
-                state.removed_projects.remove(&project.id);
-                state.assignments.insert(key, Some(project.id.clone()));
-                if !state.groups.iter().any(|group| group.id == project.id) { state.groups.insert(0, project); }
-                if let Some(old_id) = old_id {
-                    if !state.assignments.values().any(|id| id.as_ref() == Some(&old_id)) {
-                        state.groups.retain(|group| group.id != old_id);
-                        state.removed_projects.insert(old_id);
-                    }
-                }
-            }
-        },
-        GroupChange::InspectProject { id, project_kind } => {
-            if !state.removed_projects.contains(&id) {
-                if let Some(group) = state.groups.iter_mut().find(|group| group.id == id) { group.project_kind = Some(project_kind); }
-            }
-        }
-        GroupChange::Project { project, key } => {
-            if project.cwd.as_ref().is_none_or(|cwd| cwd.trim().is_empty()) { return Err("Enter a project directory".into()); }
-            state.removed_projects.remove(&project.id);
-            if let Some(key) = key { state.assignments.insert(key, Some(project.id.clone())); }
-            if let Some(group) = state.groups.iter_mut().find(|group| group.id == project.id) {
-                if project.project_kind.is_some() { group.project_kind = project.project_kind; }
-            } else { state.groups.insert(0, project); }
-        }
-        GroupChange::Create { name } => {
-            let name = name.trim();
-            if name.is_empty() { return Err("Enter a group name".into()); }
-            if state.groups.iter().any(|group| group.name.to_lowercase() == name.to_lowercase()) { return Err("A group already uses that name".into()); }
-            state.groups.insert(0, SessionGroup { id: format!("__pi-desktop-custom-group__:{}", uuid::Uuid::new_v4()), name: name.into(), cwd: None, host_id: None, host_name: None, project_kind: None });
-        }
-        GroupChange::Rename { id, name } => {
-            let name = name.trim();
-            if name.is_empty() { return Err("Enter a group name".into()); }
-            if state.groups.iter().any(|group| group.id != id && group.name.to_lowercase() == name.to_lowercase()) { return Err("A group already uses that name".into()); }
-            state.groups.iter_mut().find(|group| group.id == id).ok_or("Group no longer exists")?.name = name.into();
-        }
-        GroupChange::Remove { id } => {
-            let group = state.groups.iter().find(|group| group.id == id).ok_or("Group no longer exists")?;
-            if group.cwd.is_some() { state.removed_projects.insert(id.clone()); }
-            state.groups.retain(|group| group.id != id);
-            for destination in state.assignments.values_mut() {
-                if destination.as_ref() == Some(&id) { *destination = None; }
-            }
-        }
-        GroupChange::Assign { key, group } => {
-            if group.as_ref().is_some_and(|id| !state.groups.iter().any(|item| &item.id == id)) { return Err("Group no longer exists".into()); }
-            state.assignments.insert(key, group);
-        }
-    }
+    apply_group_change(&mut state, change)?;
     write(path, &state)?;
     Ok(state)
+}
+
+fn apply_group_change(state: &mut SessionGroups, change: GroupChange) -> Result<(), String> {
+    match change {
+        GroupChange::Relocate { project, key } => relocate_group(state, project, key),
+        GroupChange::InspectProject { id, project_kind } => inspect_project_group(state, id, project_kind),
+        GroupChange::Project { project, key } => project_group(state, project, key),
+        GroupChange::Create { name } => create_group(state, name),
+        GroupChange::Rename { id, name } => rename_group(state, id, name),
+        GroupChange::Remove { id } => remove_group(state, id),
+        GroupChange::Assign { key, group } => assign_group(state, key, group),
+    }
+}
+
+fn relocate_group(state: &mut SessionGroups, project: SessionGroup, key: String) -> Result<(), String> {
+    if project.cwd.as_ref().is_none_or(|cwd| cwd.is_empty()) { return Err("Enter a project directory".into()); }
+    let previous = state.assignments.get(&key).cloned();
+    let old_id = previous.clone().flatten();
+    let automatic = old_id.as_ref().is_some_and(|id| state.groups.iter().any(|group| &group.id == id && group.cwd.is_some()));
+    if previous.is_none() || automatic {
+        state.removed_projects.remove(&project.id);
+        state.assignments.insert(key, Some(project.id.clone()));
+        if !state.groups.iter().any(|group| group.id == project.id) { state.groups.insert(0, project); }
+        if let Some(old_id) = old_id {
+            if !state.assignments.values().any(|id| id.as_ref() == Some(&old_id)) {
+                state.groups.retain(|group| group.id != old_id);
+                state.removed_projects.insert(old_id);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn inspect_project_group(state: &mut SessionGroups, id: String, project_kind: super::ProjectKind) -> Result<(), String> {
+    if !state.removed_projects.contains(&id) {
+        if let Some(group) = state.groups.iter_mut().find(|group| group.id == id) { group.project_kind = Some(project_kind); }
+    }
+    Ok(())
+}
+
+fn project_group(state: &mut SessionGroups, project: SessionGroup, key: Option<String>) -> Result<(), String> {
+    if project.cwd.as_ref().is_none_or(|cwd| cwd.trim().is_empty()) { return Err("Enter a project directory".into()); }
+    state.removed_projects.remove(&project.id);
+    if let Some(key) = key { state.assignments.insert(key, Some(project.id.clone())); }
+    if let Some(group) = state.groups.iter_mut().find(|group| group.id == project.id) {
+        if project.project_kind.is_some() { group.project_kind = project.project_kind; }
+    } else { state.groups.insert(0, project); }
+    Ok(())
+}
+
+fn create_group(state: &mut SessionGroups, name: String) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() { return Err("Enter a group name".into()); }
+    if state.groups.iter().any(|group| group.name.to_lowercase() == name.to_lowercase()) { return Err("A group already uses that name".into()); }
+    state.groups.insert(0, SessionGroup { id: format!("__pi-desktop-custom-group__:{}", uuid::Uuid::new_v4()), name: name.into(), cwd: None, host_id: None, host_name: None, project_kind: None });
+    Ok(())
+}
+
+fn rename_group(state: &mut SessionGroups, id: String, name: String) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() { return Err("Enter a group name".into()); }
+    if state.groups.iter().any(|group| group.id != id && group.name.to_lowercase() == name.to_lowercase()) { return Err("A group already uses that name".into()); }
+    state.groups.iter_mut().find(|group| group.id == id).ok_or("Group no longer exists")?.name = name.into();
+    Ok(())
+}
+
+fn remove_group(state: &mut SessionGroups, id: String) -> Result<(), String> {
+    let group = state.groups.iter().find(|group| group.id == id).ok_or("Group no longer exists")?;
+    if group.cwd.is_some() { state.removed_projects.insert(id.clone()); }
+    state.groups.retain(|group| group.id != id);
+    for destination in state.assignments.values_mut() {
+        if destination.as_ref() == Some(&id) { *destination = None; }
+    }
+    Ok(())
+}
+
+fn assign_group(state: &mut SessionGroups, key: String, group: Option<String>) -> Result<(), String> {
+    if group.as_ref().is_some_and(|id| !state.groups.iter().any(|item| &item.id == id)) { return Err("Group no longer exists".into()); }
+    state.assignments.insert(key, group);
+    Ok(())
 }
