@@ -1,6 +1,9 @@
+mod configuration;
+mod events;
+
 use super::{
     payload::{assistant_delta, saved_tool_payload, tool_payload_page},
-    protocol::{array, flag, kind, text, LaunchSpec, Result},
+    protocol::{array, flag, kind, text, LaunchSpec, Result, SessionLaunch},
     queue::{Execution, SessionQueue},
     worker::{Observer, Request, Worker},
 };
@@ -84,6 +87,7 @@ pub(super) struct Session {
     worker: OnceLock<Arc<Worker>>,
     host: Arc<dyn SessionHost>,
     configuration_gate: AsyncMutex<()>,
+    publication: Mutex<()>,
     weak: Weak<Self>,
 }
 
@@ -133,21 +137,25 @@ impl Observer for SessionCallbacks {
             session.finish();
         }
     }
+    fn disconnect_error(&self) -> String {
+        self.0
+            .upgrade()
+            .and_then(|session| session.state().startup_error.clone())
+            .unwrap_or_else(|| "Pi disconnected before responding".into())
+    }
 }
 
 impl Session {
-    pub fn spawn(
-        key: String,
-        mut spec: LaunchSpec,
-        timeout: Duration,
-        ephemeral: bool,
-        transient: bool,
-        client_id: String,
-        cwd: Option<String>,
-        pending: Vec<Value>,
-        host: Arc<dyn SessionHost>,
-        home: &Path,
-    ) -> Result<Arc<Self>> {
+    pub fn spawn(launch: SessionLaunch, pending: Vec<Value>, host: Arc<dyn SessionHost>, home: &Path) -> Result<Arc<Self>> {
+        let SessionLaunch {
+            key,
+            mut spec,
+            timeout,
+            ephemeral,
+            transient,
+            client_id,
+            cwd,
+        } = launch;
         spec.prepare(&key, &client_id, home);
         let identity = if spec.argument("--session").is_some() {
             key.clone()
@@ -170,6 +178,7 @@ impl Session {
             worker: OnceLock::new(),
             host,
             configuration_gate: AsyncMutex::new(()),
+            publication: Mutex::new(()),
             weak: weak.clone(),
             state: Mutex::new(SessionState {
                 key,
@@ -313,6 +322,7 @@ impl Session {
     }
 
     pub fn publish(&self, mut event: Value, target: Option<&str>) {
+        let _publication = self.publication.lock().unwrap_or_else(|error| error.into_inner());
         if target.is_none() {
             self.host.agent_event(&self.identity, &event);
         }
@@ -320,10 +330,10 @@ impl Session {
         let (key, targets) = {
             let mut state = self.state();
             let previous = format!("{}:{}", self.epoch, state.content_revision);
-            if state_change(&name) {
+            if events::state_change(&name) {
                 state.state_revision += 1;
             }
-            if state_change(&name)
+            if events::state_change(&name)
                 || matches!(
                     name.as_str(),
                     "message_update"
@@ -359,7 +369,7 @@ impl Session {
             }
         }
         for runtime in targets {
-            if self.host.readonly(&runtime) && name == "extension_ui_request" && interactive(&event) {
+            if self.host.readonly(&runtime) && name == "extension_ui_request" && events::interactive(&event) {
                 continue;
             }
             self.host.output(json!({"type":"event","runtimeId":runtime,"event":event}));
@@ -711,307 +721,6 @@ impl Session {
             "extensionState":state.statuses.iter().map(|(_,value)|value).collect::<Vec<_>>(),"queue":queue,"state":snapshot_state}),
         )
     }
-
-    pub async fn reconcile(&self, retry: bool) {
-        if retry {
-            self.state().configuration_error = None;
-        }
-        if self.transient() || self.closed() || self.stopping() || !self.settings_pending() {
-            return;
-        }
-        let _configuration = self.configuration_gate.lock().await;
-        if self.state().configuration_error.is_some() || self.busy(&Value::Null) || !self.settings_pending() {
-            return;
-        }
-        self.state().configuring = true;
-        let result = self.apply_configuration().await;
-        if let Err(error) = result {
-            if !self.closed() && !self.stopping() && !self.busy(&Value::Null) {
-                let message = format!("Saved settings could not be applied: {error}. Save again or reopen the conversation to retry.");
-                self.state().configuration_error = Some(message.clone());
-                self.publish(json!({"type":"extension_error","error":message}), None);
-                if self.views().is_empty() {
-                    self.host
-                        .output(json!({"type":"diagnostic","line":format!("Could not apply settings to {}: {error}",self.key())}));
-                }
-            }
-        }
-        self.state().configuring = false;
-        self.publish(json!({"type":"settings_pending","pending":self.settings_pending()}), None);
-    }
-
-    async fn apply_configuration(&self) -> Result<()> {
-        let _gate = self.queue.gate.lock().await;
-        while !self.closed() && !self.stopping() && self.settings_pending() {
-            let observed = self.raw(json!({"type":"get_state"})).await?;
-            if self.busy(&observed) {
-                return Ok(());
-            }
-            let Some(configuration) = self.host.configuration() else {
-                return Ok(());
-            };
-            let revision = configuration["agentRevision"].as_u64().unwrap_or(0);
-            let reload = self.state().agent_revision < revision;
-            self.execute_worker(
-                json!({"type":"runtime_settings","settings":configuration["settings"],"agentRevision":revision,"reloadAgents":reload}),
-            )
-            .await?;
-            let (compaction, retry) = {
-                let state = self.state();
-                (state.auto_compaction, state.auto_retry)
-            };
-            if compaction != configuration["autoCompaction"].as_bool() {
-                self.execute_worker(json!({"type":"set_auto_compaction","enabled":configuration["autoCompaction"]}))
-                    .await?;
-            }
-            if retry != configuration["autoRetry"].as_bool() {
-                self.execute_worker(json!({"type":"set_auto_retry","enabled":configuration["autoRetry"]}))
-                    .await?;
-            }
-            {
-                let mut state = self.state();
-                state.agent_revision = revision;
-                state.applied_configuration = Some(configuration);
-            }
-            self.publish(json!({"type":"settings_applied"}), None);
-        }
-        Ok(())
-    }
-
-    fn receive(&self, mut event: Value) {
-        self.retain_live(&event);
-        if kind(&event) == "extension_ui_request" {
-            let Some(next) = self.receive_extension(event) else {
-                return;
-            };
-            event = next;
-        }
-        if kind(&event) == "extension_error" && event["event"] == "command" {
-            let command = event["extensionPath"]
-                .as_str()
-                .and_then(|path| path.strip_prefix("command:"))
-                .unwrap_or_default();
-            self.state()
-                .command_errors
-                .insert(command.into(), event["error"].as_str().unwrap_or("Extension command failed").into());
-        }
-        self.queue.receive(event);
-    }
-
-    fn retain_live(&self, event: &Value) {
-        let name = kind(event);
-        {
-            let mut state = self.state();
-            match name {
-                "agent_start" => {
-                    state.working = true;
-                    state.submitted = true;
-                }
-                "agent_settled" => {
-                    state.working = false;
-                    state.live_messages.clear();
-                    state.tools.clear();
-                }
-                "compaction_start" | "auto_compaction_start" => state.compacting = true,
-                "compaction_end" | "auto_compaction_end" => state.compacting = false,
-                "pause_state" => state.pause_state = json!({"isPaused":event["isPaused"],"isPausing":event["isPausing"]}),
-                _ => {}
-            }
-            retain_message(&mut state, event);
-        }
-        if matches!(
-            name,
-            "agent_start"
-                | "agent_settled"
-                | "compaction_start"
-                | "compaction_end"
-                | "auto_compaction_start"
-                | "auto_compaction_end"
-                | "pause_state"
-        ) {
-            self.publish_state();
-        }
-    }
-
-    fn receive_extension(&self, mut event: Value) -> Option<Value> {
-        if event["method"] == "setStatus" && self.receive_status(&event) {
-            return None;
-        }
-        if event["method"] == "notify" && event["notifyType"] == "error" && event["message"] == self.state().input_rejection["error"] {
-            event["inputRejected"] = json!(true);
-        }
-        if matches!(event["method"].as_str(), Some("setStatus" | "setWidget" | "setTitle")) {
-            let key = format!(
-                "{}:{}",
-                text(&event, "method"),
-                event["statusKey"]
-                    .as_str()
-                    .or_else(|| event["widgetKey"].as_str())
-                    .unwrap_or_default()
-            );
-            set(&mut self.state().statuses, key, event.clone());
-        }
-        if !interactive(&event) {
-            return Some(event);
-        }
-        let id = text(&event, "id");
-        let generation = Uuid::new_v4().to_string();
-        set(
-            &mut self.state().dialogs,
-            id.clone(),
-            Dialog {
-                event: event.clone(),
-                owner: None,
-                generation: generation.clone(),
-                answering: false,
-                answer_queued: false,
-                queued_response: None,
-            },
-        );
-        if let Some(timeout) = event["timeout"].as_f64().filter(|timeout| timeout.is_finite() && *timeout >= 0.0) {
-            let weak = self.weak.clone();
-            tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(timeout.min(2147483647.0) as u64)).await;
-                if let Some(session) = weak.upgrade() {
-                    if session.dialog(&id).is_some_and(|dialog| dialog.generation == generation) {
-                        session.resolve_dialog(&id);
-                    }
-                }
-            });
-        }
-        self.route_dialogs();
-        None
-    }
-
-    fn receive_status(&self, event: &Value) -> bool {
-        let parsed = || serde_json::from_str::<Value>(event["statusText"].as_str().unwrap_or_default());
-        match event["statusKey"].as_str() {
-            Some("piop-async-questions") => match parsed() {
-                Ok(requests) => self.receive_questions(requests),
-                Err(error) => self.host.output(json!({"type":"diagnostic","line":error.to_string()})),
-            },
-            Some("pi-desktop-turn-capture") => match parsed() {
-                Ok(mut capture) => {
-                    capture["type"] = json!("turn_capture");
-                    capture["sessionKey"] = json!(self.key());
-                    capture["ephemeral"] = json!(self.ephemeral);
-                    self.host.output(capture);
-                }
-                Err(error) => self.host.output(json!({"type":"diagnostic","line":error.to_string()})),
-            },
-            Some("pi-desktop-worktree-presence") => {
-                if let Ok(presence) = parsed() {
-                    {
-                        let mut state = self.state();
-                        state.worktree = presence["worktree"].clone();
-                        state.presence_id = presence["id"].clone();
-                    }
-                    self.publish_state();
-                }
-            }
-            Some("piop-input-rejected") => {
-                if let Ok(rejection) = parsed() {
-                    self.state().input_rejection = rejection;
-                }
-            }
-            _ => return false,
-        }
-        true
-    }
-
-    fn receive_questions(&self, requests: Value) {
-        let Some(requests) = requests.as_array() else {
-            return;
-        };
-        let ids: Vec<_> = requests.iter().map(|request| format!("question:{}", text(request, "id"))).collect();
-        let removed: Vec<_> = self
-            .state()
-            .dialogs
-            .iter()
-            .filter(|(id, dialog)| dialog.event["asyncQuestion"].is_string() && !ids.contains(id))
-            .map(|(id, _)| id.clone())
-            .collect();
-        for id in removed {
-            self.resolve_dialog(&id);
-        }
-        for request in requests {
-            let id = format!("question:{}", text(request, "id"));
-            if self.dialog(&id).is_some() {
-                continue;
-            }
-            let questions: Vec<_> = array(request, "questions")
-                .iter()
-                .enumerate()
-                .map(|(index, question)| {
-                    json!({"id":format!("question_{index}"),"header":"Question","question":question["title"],
-                "options":array(question,"options").iter().map(|label|json!({"label":label,"description":""})).collect::<Vec<_>>()})
-                })
-                .collect();
-            let event = json!({"type":"extension_ui_request","id":id,"method":"input","title":"__piop_request_user_input__","asyncQuestion":request["id"],"placeholder":json!({"questions":questions}).to_string()});
-            set(
-                &mut self.state().dialogs,
-                id,
-                Dialog {
-                    event,
-                    owner: None,
-                    generation: Uuid::new_v4().to_string(),
-                    answering: false,
-                    answer_queued: false,
-                    queued_response: None,
-                },
-            );
-        }
-        self.route_dialogs();
-    }
-
-    pub fn route_dialogs(&self) {
-        let events = {
-            let mut state = self.state();
-            let views = state.views.clone();
-            let mut events = Vec::new();
-            let owner = views
-                .iter()
-                .find(|(_, view)| flag(view, "visible") && flag(view, "focused"))
-                .or_else(|| views.iter().find(|(_, view)| flag(view, "visible")))
-                .map(|(id, _)| id.clone());
-            for (id, dialog) in &mut state.dialogs {
-                if dialog
-                    .owner
-                    .as_ref()
-                    .is_some_and(|owner| views.iter().any(|(id, view)| id == owner && flag(view, "visible")))
-                {
-                    continue;
-                }
-                if let Some(previous) = dialog.owner.take() {
-                    events.push((previous, json!({"type":"extension_ui_resolved","id":id})));
-                }
-                dialog.owner = owner.clone();
-                if let Some(owner) = &dialog.owner {
-                    events.push((owner.clone(), dialog.event.clone()));
-                }
-            }
-            events
-        };
-        for (runtime, event) in events {
-            self.publish(event, Some(&runtime));
-        }
-        self.publish_state();
-    }
-
-    pub fn resolve_dialog(&self, id: &str) {
-        let removed = {
-            let mut state = self.state();
-            let count = state.dialogs.len();
-            state.dialogs.retain(|(key, _)| key != id);
-            count != state.dialogs.len()
-        };
-        if !removed {
-            return;
-        }
-        self.publish(json!({"type":"extension_ui_resolved","id":id}), None);
-        self.publish_state();
-        self.host.maintenance(&self.key());
-    }
 }
 
 fn set<T>(items: &mut Vec<(String, T)>, key: String, value: T) {
@@ -1024,68 +733,5 @@ fn set<T>(items: &mut Vec<(String, T)>, key: String, value: T) {
 pub(super) fn merge(target: &mut Value, source: Value) {
     if let (Some(target), Value::Object(source)) = (target.as_object_mut(), source) {
         target.extend(source);
-    }
-}
-fn interactive(event: &Value) -> bool {
-    matches!(event["method"].as_str(), Some("input" | "editor" | "select" | "confirm"))
-}
-fn state_change(name: &str) -> bool {
-    matches!(
-        name,
-        "session_info_changed"
-            | "session_switched"
-            | "model_select"
-            | "thinking_level_changed"
-            | "agent_start"
-            | "agent_end"
-            | "agent_settled"
-            | "message_start"
-            | "message_end"
-            | "entry_appended"
-            | "pause_state"
-            | "compaction_start"
-            | "compaction_end"
-            | "auto_compaction_start"
-            | "auto_compaction_end"
-    )
-}
-
-fn retain_message(state: &mut SessionState, event: &Value) {
-    match kind(event) {
-        "message_start" => set(&mut state.live_messages, text(&event["message"], "role"), event["message"].clone()),
-        "message_update" => {
-            let previous = state
-                .live_messages
-                .iter()
-                .find(|(role, _)| role == "assistant")
-                .map(|(_, message)| message);
-            let next = event["assistantMessageEvent"]
-                .get("partial")
-                .or_else(|| event.get("message"))
-                .cloned()
-                .or_else(|| previous.map(|message| assistant_delta(message, &event["assistantMessageEvent"])));
-            if let Some(mut next) = next {
-                if let Some(usage) = event.get("usage") {
-                    next["usage"] = usage.clone();
-                }
-                let role = next["role"].as_str().unwrap_or("assistant").to_owned();
-                set(&mut state.live_messages, role, next);
-            }
-        }
-        "message_end" => state.live_messages.retain(|(role, _)| event["message"]["role"] != *role),
-        "tool_execution_start" | "tool_execution_update" => {
-            let id = text(event, "toolCallId");
-            let mut tool = state
-                .tools
-                .iter()
-                .find(|(key, _)| key == &id)
-                .map(|(_, tool)| tool.clone())
-                .unwrap_or(json!({}));
-            merge(&mut tool, event.clone());
-            tool["type"] = json!("tool_execution_start");
-            set(&mut state.tools, id, tool);
-        }
-        "tool_execution_end" => state.tools.retain(|(id, _)| event["toolCallId"] != *id),
-        _ => {}
     }
 }

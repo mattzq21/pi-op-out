@@ -2400,7 +2400,7 @@ enum PiLaunch<'a> {
 
 fn session_worker_executable() -> Result<PathBuf, String> {
     // Keep using this daemon's executable after a rebuild unlinks its original
-    // path. The explicit PID also works when Node launches the worker for us.
+    // path. The explicit PID also works from the separate host supervisor.
     #[cfg(target_os = "linux")]
     { Ok(PathBuf::from(format!("/proc/{}/exe", std::process::id()))) }
     #[cfg(not(target_os = "linux"))]
@@ -3725,6 +3725,7 @@ async fn wait_for_desktop_exit() {
 
 #[cfg(not(feature = "desktop"))]
 pub fn run_daemon() -> Result<(), String> {
+    if std::env::args().nth(1).as_deref() == Some("--host-daemon") { return host_daemon::run(); }
     if std::env::args().nth(1).as_deref() == Some("--stdio-client") { return daemon_stdio::run(); }
     let _instance = daemon_endpoint::claim()?;
     daemon_endpoint::identity()?;

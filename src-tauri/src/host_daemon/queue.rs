@@ -59,19 +59,19 @@ impl QueueState {
             .collect();
         for behavior in ["steer", "followUp"] {
             let texts = self.texts(behavior);
-            let unique: HashSet<_> = texts.iter().map(Value::to_string).collect();
-            for encoded in unique {
+            let unique: HashSet<_> = texts.iter().collect();
+            for message in unique {
                 let matches: Vec<_> = available
                     .iter()
                     .filter(|item| {
                         !flag(item, "retry")
                             && !self.sending.contains(&text(item, "id"))
                             && item["behavior"] == behavior
-                            && item["message"].to_string() == encoded
+                            && &item["message"] == message
                     })
                     .map(|item| text(item, "id"))
                     .collect();
-                let count = texts.iter().filter(|item| item.to_string() == encoded).count();
+                let count = texts.iter().filter(|item| *item == message).count();
                 let stale: HashSet<_> = matches.iter().take(matches.len().saturating_sub(count)).collect();
                 available.retain(|item| !stale.contains(&text(item, "id")));
             }
@@ -177,6 +177,7 @@ impl QueueState {
 
 pub(super) struct SessionQueue {
     state: Mutex<QueueState>,
+    publication: Mutex<()>,
     pub gate: AsyncMutex<()>,
     executor: Arc<dyn Execution>,
 }
@@ -189,6 +190,7 @@ impl SessionQueue {
                 ..QueueState::default()
             }),
             gate: AsyncMutex::new(()),
+            publication: Mutex::new(()),
             executor,
         }
     }
@@ -213,6 +215,7 @@ impl SessionQueue {
         self.state().pending.is_empty()
     }
     fn publish(&self) {
+        let _publication = self.publication.lock().unwrap_or_else(|error| error.into_inner());
         let event = self.state().publish();
         self.executor.publish(event);
     }
@@ -227,6 +230,7 @@ impl SessionQueue {
     }
 
     pub fn receive(&self, mut event: Value) {
+        let _publication = self.publication.lock().unwrap_or_else(|error| error.into_inner());
         let queue_event = {
             let mut state = self.state();
             if kind(&event) == "agent_start" {
@@ -348,6 +352,7 @@ impl SessionQueue {
     }
 
     fn held_failed(&self) {
+        let _publication = self.publication.lock().unwrap_or_else(|error| error.into_inner());
         let event = self.state().failed_held();
         self.executor.publish(event);
     }
@@ -471,10 +476,13 @@ impl SessionQueue {
 
     pub async fn change_pending(&self, id: &str, action: Value) -> Result<Value> {
         let cancelling = action == "remove" && self.state().sending.contains(id);
-        if cancelling {
-            self.execute(json!({"type":"cancel_preparation"})).await?;
-        }
-        let _gate = self.gate.lock().await;
+        let _gate = if cancelling {
+            let (cancelled, gate) = tokio::join!(self.execute(json!({"type":"cancel_preparation"})), self.gate.lock());
+            cancelled?;
+            gate
+        } else {
+            self.gate.lock().await
+        };
         let (target, behavior, neighbor) = {
             let state = self.state();
             let Some(target) = state.pending.iter().find(|item| item["id"] == id).cloned() else {

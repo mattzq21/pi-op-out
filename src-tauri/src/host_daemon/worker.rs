@@ -4,7 +4,10 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     process::Stdio,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 use tokio::{
@@ -27,6 +30,7 @@ pub(super) trait Observer: Send + Sync {
     fn stderr(&self, line: String);
     fn diagnostic(&self, line: String);
     fn finished(&self);
+    fn disconnect_error(&self) -> String;
 }
 
 pub(super) struct Worker {
@@ -34,6 +38,7 @@ pub(super) struct Worker {
     pending: Mutex<HashMap<String, Request>>,
     signals: mpsc::UnboundedSender<bool>,
     closed: watch::Receiver<bool>,
+    exited: AtomicBool,
     observer: Arc<dyn Observer>,
     timeout: Duration,
 }
@@ -85,6 +90,7 @@ impl Worker {
             pending: Mutex::new(HashMap::new()),
             signals,
             closed,
+            exited: AtomicBool::new(false),
             observer,
             timeout,
         });
@@ -137,8 +143,10 @@ impl Worker {
             // Drain the final response and stderr before closing outstanding requests.
             let _ = stdout_task.await;
             let _ = stderr_task.await;
+            process.exited.store(true, Ordering::SeqCst);
+            let error = process.observer.disconnect_error();
             for (_, request) in process.pending.lock().unwrap_or_else(|error| error.into_inner()).drain() {
-                let _ = request.reply.send(Err("Pi disconnected before responding".into()));
+                let _ = request.reply.send(Err(error.clone()));
             }
             process.observer.finished();
             closed_tx.send_replace(true);
@@ -188,7 +196,7 @@ impl Worker {
     }
 
     pub fn is_closed(&self) -> bool {
-        *self.closed.borrow()
+        self.exited.load(Ordering::SeqCst)
     }
 
     pub async fn send(&self, packet: &Value) -> Result<()> {
@@ -236,7 +244,7 @@ impl Worker {
     }
 
     pub async fn stop(&self) {
-        if self.is_closed() {
+        if *self.closed.borrow() {
             return;
         }
         let _ = self.signals.send(false);

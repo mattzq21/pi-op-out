@@ -1,4 +1,4 @@
-#[cfg(any(not(feature = "desktop"), test))]
+#[cfg(not(feature = "desktop"))]
 mod host_daemon;
 
 #[cfg(any(not(feature = "desktop"), test))]

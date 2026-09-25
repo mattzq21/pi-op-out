@@ -1,7 +1,7 @@
 use super::{
     controller::{Host, ReadonlyView},
     ownership::{ownership_error, Guard},
-    protocol::{kind, text, Result},
+    protocol::{kind, text, Result, SessionLaunch},
     session::Session,
 };
 use serde_json::{json, Value};
@@ -92,15 +92,15 @@ pub(super) async fn switch(host: &Arc<Host>, session: &Arc<Session>, runtime: &s
         let created = next.is_none();
         let next = match next {
             Some(next) => next,
-            None => host.spawn_session(
+            None => host.spawn_session(SessionLaunch {
                 key,
                 spec,
-                session.timeout,
-                session.ephemeral,
-                false,
-                session.client_id.clone(),
-                session.cwd.clone(),
-            )?,
+                timeout: session.timeout,
+                ephemeral: session.ephemeral,
+                transient: false,
+                client_id: session.client_id.clone(),
+                cwd: session.cwd.clone(),
+            })?,
         };
         let result = transfer(host, session, &next, runtime).await;
         if result.is_err() && created && next.views().is_empty() && !next.submitted() && !next.working() {
@@ -159,15 +159,15 @@ async fn fork(host: &Arc<Host>, session: &Arc<Session>, runtime: &str, command: 
     let result = async {
         let mut spec = session.spec.session("--fork", path);
         spec.args.extend(["--session-dir".into(), directory.to_string_lossy().into_owned()]);
-        let preparing = host.spawn_session(
-            Uuid::new_v4().to_string(),
+        let preparing = host.spawn_session(SessionLaunch {
+            key: Uuid::new_v4().to_string(),
             spec,
-            session.timeout,
-            session.ephemeral,
-            true,
-            session.client_id.clone(),
-            session.cwd.clone(),
-        )?;
+            timeout: session.timeout,
+            ephemeral: session.ephemeral,
+            transient: true,
+            client_id: session.client_id.clone(),
+            cwd: session.cwd.clone(),
+        })?;
         worker = Some(preparing.clone());
         let initial = preparing.execute(json!({"type":"get_state"})).await?;
         let result = preparing.raw(command).await?;
@@ -224,15 +224,15 @@ async fn fork(host: &Arc<Host>, session: &Arc<Session>, runtime: &str, command: 
             return Err(ownership_error());
         }
         let destination = destination.to_string_lossy().into_owned();
-        let opened = host.spawn_session(
-            branch_id.clone(),
-            session.spec.session("--session", &destination),
-            session.timeout,
-            session.ephemeral,
-            true,
-            session.client_id.clone(),
-            session.cwd.clone(),
-        )?;
+        let opened = host.spawn_session(SessionLaunch {
+            key: branch_id.clone(),
+            spec: session.spec.session("--session", &destination),
+            timeout: session.timeout,
+            ephemeral: session.ephemeral,
+            transient: true,
+            client_id: session.client_id.clone(),
+            cwd: session.cwd.clone(),
+        })?;
         opened.set_reserved_path(Some(destination.clone()));
         next = Some(opened.clone());
         let actual = opened.execute(json!({"type":"get_state"})).await?;

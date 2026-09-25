@@ -4,6 +4,16 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 pub(super) type Result<T> = std::result::Result<T, String>;
 
+pub(super) struct SessionLaunch {
+    pub key: String,
+    pub spec: LaunchSpec,
+    pub timeout: std::time::Duration,
+    pub ephemeral: bool,
+    pub transient: bool,
+    pub client_id: String,
+    pub cwd: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct LaunchSpec {
     pub program: String,
@@ -84,24 +94,8 @@ pub(super) fn expand_home(path: &str, home: &std::path::Path) -> PathBuf {
 }
 
 pub(super) fn wire_command(command: &Value, id: &str) -> Value {
-    let action = match kind(command) {
-        "pause" => Some("pause"),
-        "resume" => Some("resume"),
-        "abort" => Some("stop"),
-        "cancel_preparation" => Some("cancel-preparation"),
-        "get_pause_state" => Some("state"),
-        _ => None,
-    };
-    let extension = match kind(command) {
-        "answer_question" => Some("piop-answer-question"),
-        "provider_auth_refresh" => Some("piop-provider-auth-refresh"),
-        "runtime_settings" => Some("piop-runtime-settings"),
-        "branch_checkpoint" => Some("pi-desktop-branch-checkpoint"),
-        "fork_and_forget" => Some("pi-desktop-fork-and-forget"),
-        "fork_after" => Some("pi-desktop-fork-after"),
-        "voice_history" => Some("pi-desktop-voice-history"),
-        _ => None,
-    };
+    let action = control_action(kind(command));
+    let extension = control_extension(kind(command));
     let mut wire = command.clone();
     wire["id"] = json!(id);
     if action.is_some() || extension.is_some() {
@@ -110,6 +104,30 @@ pub(super) fn wire_command(command: &Value, id: &str) -> Value {
             "message":format!("/{} {}", extension.unwrap_or("pi-desktop-control"), payload)})
     } else {
         wire
+    }
+}
+
+fn control_action(command: &str) -> Option<&'static str> {
+    match command {
+        "pause" => Some("pause"),
+        "resume" => Some("resume"),
+        "abort" => Some("stop"),
+        "cancel_preparation" => Some("cancel-preparation"),
+        "get_pause_state" => Some("state"),
+        _ => None,
+    }
+}
+
+fn control_extension(command: &str) -> Option<&'static str> {
+    match command {
+        "answer_question" => Some("piop-answer-question"),
+        "provider_auth_refresh" => Some("piop-provider-auth-refresh"),
+        "runtime_settings" => Some("piop-runtime-settings"),
+        "branch_checkpoint" => Some("pi-desktop-branch-checkpoint"),
+        "fork_and_forget" => Some("pi-desktop-fork-and-forget"),
+        "fork_after" => Some("pi-desktop-fork-after"),
+        "voice_history" => Some("pi-desktop-voice-history"),
+        _ => None,
     }
 }
 

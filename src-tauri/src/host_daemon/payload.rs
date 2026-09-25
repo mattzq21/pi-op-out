@@ -49,18 +49,20 @@ fn client_tool_payload(mut value: Value) -> Value {
         "toolcall_end" if value["toolCall"].is_object() => {
             value["toolCall"] = json!({"id":value["toolCall"]["id"],"name":value["toolCall"]["name"]});
         }
-        name if name.starts_with("tool_execution_") => {
-            remove(&mut value, &["args"]);
-            let deferred = json!({"content":"","deferredToolPayload":value["toolCallId"]});
-            for field in ["result", "partialResult"] {
-                if value.get(field).is_some_and(|item| !item.is_null()) {
-                    value[field] = deferred.clone();
-                }
-            }
-        }
+        name if name.starts_with("tool_execution_") => defer_tool_result(&mut value),
         _ => {}
     }
     value
+}
+
+fn defer_tool_result(value: &mut Value) {
+    remove(value, &["args"]);
+    let deferred = json!({"content":"","deferredToolPayload":value["toolCallId"]});
+    for field in ["result", "partialResult"] {
+        if value.get(field).is_some_and(|item| !item.is_null()) {
+            value[field] = deferred.clone();
+        }
+    }
 }
 
 pub(super) fn branch(history: &Value) -> Vec<Value> {
@@ -188,22 +190,27 @@ pub(super) fn tool_payload_page(message: Option<Value>, command: &Value) -> Resu
     if offset > length as u64 {
         return Err("Invalid output offset".into());
     }
+    let chunk = payload_chunk(&serialized, offset as usize)?;
+    Ok(json!({"revision":revision,"length":length,"chunk":chunk}))
+}
+
+fn payload_chunk(serialized: &str, offset: usize) -> Result<String> {
     let mut position = 0;
     let mut chunk = String::new();
     for ch in serialized.chars() {
         let next = position + ch.len_utf16();
-        if position < offset as usize && next > offset as usize {
+        if position < offset && next > offset {
             return Err("Invalid output offset".into());
         }
-        if position >= offset as usize {
-            if next > offset as usize + 524288 {
+        if position >= offset {
+            if next > offset + 524288 {
                 break;
             }
             chunk.push(ch);
         }
         position = next;
     }
-    Ok(json!({"revision":revision,"length":length,"chunk":chunk}))
+    Ok(chunk)
 }
 
 pub(super) fn assistant_delta(message: &Value, event: &Value) -> Value {
@@ -223,31 +230,29 @@ pub(super) fn assistant_delta(message: &Value, event: &Value) -> Value {
     }
     content.resize_with(content.len().max(index + 1), || json!({"type":"text","text":""}));
     let current = &content[index];
+    let next = if kind(event).starts_with("toolcall_") {
+        tool_delta(current, event, index)
+    } else {
+        text_delta(current, event)
+    };
+    let Some(next) = next else {
+        return message.clone();
+    };
+    content[index] = next;
+    let mut result = message.clone();
+    result["content"] = json!(content);
+    result
+}
+
+fn tool_delta(current: &Value, event: &Value, index: usize) -> Option<Value> {
     let tool = if kind(current) == "toolCall" {
         current.clone()
     } else {
         json!({"type":"toolCall","id":event.get("id").cloned().unwrap_or(json!(format!("tool-{index}"))),
             "name":event.get("toolName").cloned().unwrap_or(json!("tool")),"arguments":{}})
     };
-    let mut next = current.clone();
+    let mut next;
     match kind(event) {
-        "text_start" => next = json!({"type":"text","text":""}),
-        "thinking_start" => next = json!({"type":"thinking","thinking":""}),
-        "text_delta" | "thinking_delta" => {
-            let field = if kind(event) == "text_delta" { "text" } else { "thinking" };
-            let before = if kind(current) == field {
-                current[field].as_str().unwrap_or_default()
-            } else {
-                ""
-            };
-            next["type"] = json!(field);
-            next[field] = json!(format!("{before}{}", event["delta"].as_str().unwrap_or_default()));
-        }
-        "text_end" | "thinking_end" => {
-            let field = if kind(event) == "text_end" { "text" } else { "thinking" };
-            next["type"] = json!(field);
-            next[field] = event.get("content").cloned().unwrap_or(json!(""));
-        }
         "toolcall_start" => {
             next = json!({"type":"toolCall","id":event.get("id").unwrap_or(&tool["id"]),"name":event.get("toolName").unwrap_or(&tool["name"]),"arguments":{},"partialArgs":""})
         }
@@ -263,10 +268,33 @@ pub(super) fn assistant_delta(message: &Value, event: &Value) -> Value {
             next = event["toolCall"].clone();
             next["type"] = json!("toolCall");
         }
-        _ => return message.clone(),
+        _ => return None,
     }
-    content[index] = next;
-    let mut result = message.clone();
-    result["content"] = json!(content);
-    result
+    Some(next)
+}
+
+fn text_delta(current: &Value, event: &Value) -> Option<Value> {
+    let (field, action) = kind(event).split_once('_')?;
+    if !matches!(field, "text" | "thinking") {
+        return None;
+    }
+    let mut next = current.clone();
+    match action {
+        "start" => next = json!({"type":field,field:""}),
+        "delta" => {
+            let before = if kind(current) == field {
+                current[field].as_str().unwrap_or_default()
+            } else {
+                ""
+            };
+            next["type"] = json!(field);
+            next[field] = json!(format!("{before}{}", event["delta"].as_str().unwrap_or_default()));
+        }
+        "end" => {
+            next["type"] = json!(field);
+            next[field] = event.get("content").cloned().unwrap_or(json!(""));
+        }
+        _ => return None,
+    }
+    Some(next)
 }

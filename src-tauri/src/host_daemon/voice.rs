@@ -221,7 +221,7 @@ impl VoiceService {
             .get("location")
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.split('?').next())
-            .and_then(|value| value.split('/').filter(|part| !part.is_empty()).next_back())
+            .and_then(|value| value.split('/').rfind(|part| !part.is_empty()))
             .ok_or("Invalid voice service session ID")?;
         if id.is_empty() || id.len() > 256 || !id.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-') {
             return Err("Invalid voice service session ID".into());

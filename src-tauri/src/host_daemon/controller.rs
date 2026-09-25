@@ -1,7 +1,7 @@
 use super::{
     ownership::{ownership_error, ConversationOwnership, Guard, Revocation},
     payload::{client_payload, saved_tool_payload, tool_payload_page},
-    protocol::{array, expand_home, flag, kind, text, LaunchSpec, Result},
+    protocol::{array, expand_home, flag, kind, text, LaunchSpec, Result, SessionLaunch},
     session::{Session, SessionHost},
 };
 use futures_util::future::BoxFuture;
@@ -46,6 +46,7 @@ pub(super) struct Registry {
     maintenance: HashSet<String>,
     release_gates: HashMap<String, Arc<AsyncMutex<()>>>,
     dialog_gates: HashMap<String, Arc<AsyncMutex<()>>>,
+    session_gates: HashMap<String, Arc<AsyncMutex<()>>>,
 }
 
 pub(super) struct Host {
@@ -189,30 +190,22 @@ impl Host {
             .is_some_and(|current| current.epoch() == session.epoch())
     }
 
-    pub fn spawn_session(
-        &self,
-        key: String,
-        spec: LaunchSpec,
-        timeout: Duration,
-        ephemeral: bool,
-        transient: bool,
-        client: String,
-        cwd: Option<String>,
-    ) -> Result<Arc<Session>> {
+    pub fn spawn_session(&self, launch: SessionLaunch) -> Result<Arc<Session>> {
+        let key = launch.key.clone();
         let pending = self.registry().pending.remove(&key).unwrap_or_default();
-        let session = Session::spawn(
-            key.clone(),
-            spec,
-            timeout,
-            ephemeral,
-            transient,
-            client,
-            cwd,
-            pending,
-            Arc::new(Callbacks(self.weak.clone())),
-            &self.home,
-        )?;
+        let session = match Session::spawn(launch, pending.clone(), Arc::new(Callbacks(self.weak.clone())), &self.home) {
+            Ok(session) => session,
+            Err(error) => {
+                if !pending.is_empty() {
+                    self.registry().pending.insert(key, pending);
+                }
+                return Err(error);
+            }
+        };
         self.registry().sessions.insert(key, session.clone());
+        if session.closed() {
+            self.forget_worker(&session);
+        }
         Ok(session)
     }
 
@@ -540,6 +533,13 @@ impl Host {
             } else if cwd.is_some() {
                 spec.cwd = cwd.clone();
             }
+            let gate = self
+                .registry()
+                .session_gates
+                .entry(identity.clone())
+                .or_insert_with(|| Arc::new(AsyncMutex::new(())))
+                .clone();
+            let _creation = gate.lock().await;
             let mut session = self.find_session(&identity);
             if session.as_ref().is_some_and(|session| session.transient()) {
                 return Err("This conversation branch is still being prepared".into());
@@ -550,15 +550,15 @@ impl Host {
             }
             let session = match session {
                 Some(session) => session,
-                None => self.spawn_session(
-                    identity.clone(),
+                None => self.spawn_session(SessionLaunch {
+                    key: identity.clone(),
                     spec,
-                    Duration::from_millis(packet["timeout"].as_u64().unwrap_or(630000)),
-                    flag(&packet, "ephemeral"),
-                    false,
-                    text(&packet, "clientId"),
+                    timeout: Duration::from_millis(packet["timeout"].as_u64().unwrap_or(630000)),
+                    ephemeral: flag(&packet, "ephemeral"),
+                    transient: false,
+                    client_id: text(&packet, "clientId"),
                     cwd,
-                )?,
+                })?,
             };
             opened = Some(session.clone());
             session.execute(json!({"type":"get_state"})).await?;
