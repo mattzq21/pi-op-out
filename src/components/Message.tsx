@@ -16,6 +16,11 @@ import type { FileReference } from "../lib/projectFiles";
 
 interface Props { message: ChatMessage; onOpenFile?: (file: FileReference) => void; turnCacheUsage?: { input: number; cacheRead: number }; diff?: ReturnType<typeof turnDiff>; expanded?: boolean; showActions?: boolean; toolCount?: number; debug?: boolean; paused?: boolean; onBranch?: (message: ChatMessage) => void | Promise<void>; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onRetry?: () => void; retrying?: boolean; }
 
+function cacheTokenDigits(tokens: number) {
+  const groups = String(tokens).match(/\d{1,3}(?=(?:\d{3})*$)/g) ?? [];
+  return groups.map((group, index) => <span style={{ color: "var(--accent)", opacity: [0.33, 0.66, 1][Math.min(2, groups.length - index - 1)] }}>{group}</span>);
+}
+
 function userMessageParts(content: string) {
   const invocation = content.match(/^<skill\s+name="([^"]+)"\s+location="[^"]+">\nReferences are relative to [^\n]+\.\n\n[\s\S]*?<\/skill>(?:\n\n([\s\S]*))?$/i);
   if (!invocation) return { skills: [] as string[], text: content, literalSkill: /<\/?skill\b/i.test(content) };
@@ -159,7 +164,7 @@ export function Message(componentProps: Props) {
       const renderCopyResponse = () => (<IconButton title="Copy" label={copyState() === "copied" ? `${metadata().responseLabel} copied` : copyState() === "error" ? `Copy failed for ${metadata().responseLabel.toLowerCase()}` : `Copy ${metadata().responseLabel.toLowerCase()}`} onClick={copy}>{copyState() === "copied" ? <Check size={14} /> : copyState() === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>);
       const renderBranchAction = () => (componentProps.onBranch && <button class="branch-button" aria-label={`Branch from ${metadata().responseLabel.toLowerCase()}`} title="Branch from here" disabled={branching() || forgetting()} onClick={() => void branch()}><GitBranch size={14} /></button>);
       const renderForkAndForgetAction = () => (componentProps.onForkAndForget && <button class="branch-button" aria-label={`Fork and forget from ${metadata().responseLabel.toLowerCase()}`} title="Fork and forget from here" disabled={branching() || forgetting()} onClick={() => void forkAndForget()}><Undo2 size={14} /></button>);
-      const renderCacheHitRate = () => ((componentProps.debug === undefined ? false : componentProps.debug) && metadata().cache && <span class={`cache-hit-rate${(metadata().cache)!.low ? " low" : ""}`} tabIndex={0} aria-label={`Cache ${(metadata().cache)!.rate}%, ${(metadata().cache)!.cachedTokens}/${(metadata().cache)!.promptTokens}`}>Cache {(metadata().cache)!.rate}%<span class="cache-fraction-tooltip" aria-hidden="true"><span>{(metadata().cache)!.cachedTokens}</span><span>{(metadata().cache)!.promptTokens}</span></span></span>);
+      const renderCacheHitRate = () => ((componentProps.debug === undefined ? false : componentProps.debug) && metadata().cache && <span class={`cache-hit-rate${(metadata().cache)!.low ? " low" : ""}`} tabIndex={0} aria-label={`Cache ${(metadata().cache)!.rate}%, ${(metadata().cache)!.cachedTokens}/${(metadata().cache)!.promptTokens}`}>Cache {(metadata().cache)!.rate}%<span class="cache-fraction-tooltip" aria-hidden="true"><span>{cacheTokenDigits((metadata().cache)!.cachedTokens)}</span><span>{cacheTokenDigits((metadata().cache)!.promptTokens)}</span></span></span>);
       return ((componentProps.showActions === undefined ? true : componentProps.showActions) && !componentProps.message.streaming && (output().trim().length > 0 || componentProps.onCreateWorktree) && <div class="message-actions">
         {renderCopyResponse()}
         {copyState() === "error" && <span class="copy-feedback" role="status">Could not copy response</span>}
