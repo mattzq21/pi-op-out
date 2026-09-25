@@ -10,6 +10,7 @@ import "./mobile.css";
 if (isMobile) document.documentElement.dataset.mobile = "true";
 
 if (import.meta.env.MODE === "e2e") document.documentElement.dataset.testPalette = "warm-swap";
+if (import.meta.env.DEV || import.meta.env.TAURI_ENV_DEBUG === "true" || import.meta.env.VITE_PIOP_DEBUG === "true") document.documentElement.dataset.debugPalette = "true";
 
 const removeTextEditingShortcuts = installTextEditingShortcuts();
 

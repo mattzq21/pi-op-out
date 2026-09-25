@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const home = homedir();
 const extension = process.platform === 'win32' ? '.exe' : '';
-const env = { ...process.env };
+const env = { ...process.env, VITE_PIOP_DEBUG: "true" };
 const localProperties = join(root, 'android/local.properties');
 const configuredSdk = existsSync(localProperties)
   ? readFileSync(localProperties, 'utf8').match(/^sdk\.dir=(.+)$/m)?.[1].trim().replace(/\\([\\: ])/g, '$1')

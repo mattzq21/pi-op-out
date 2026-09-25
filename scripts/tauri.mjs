@@ -35,6 +35,7 @@ if (development) args.splice(1, 0, "--config", JSON.stringify(configOverrides));
 const tauri = fileURLToPath(new URL("../node_modules/.bin/tauri", import.meta.url));
 const env = {
   ...process.env,
+  VITE_PIOP_DEBUG: String(development),
   ...(windowBounds ? { GDK_BACKEND: "x11", PI_WINDOW_BOUNDS: JSON.stringify(windowBounds) } : {}),
 };
 const child = spawn(tauri, args, { stdio: "inherit", env });
