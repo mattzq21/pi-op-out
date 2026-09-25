@@ -457,6 +457,7 @@ export function SessionPanel(props: Props) {
     "aria-keyshortcuts": !normalizedQuery() ? "Alt+ArrowUp Alt+ArrowDown" : undefined,
   });
   const isActiveSession = (session: SessionSummary) => panel().activeId === session.id && (session.hostId ?? "local") === panel().activeHostId;
+  const isSavedSession = (session: SessionSummary) => !session.isDraft && Boolean(session.path);
   const sessionPresentation = (session: SessionSummary, projectKey: string) => {
     const key = sessionKey(session); const running = session.isRunning || panel().runningSessions.has(key); const activity = panel().unseenSessions.has(key) ? "New activity" : undefined; const accessibleActivity = running ? "Running" : activity; const target = dropTarget()?.projectKey === projectKey && (dropTarget())!.sessionKey === key ? (dropTarget())!.edge : undefined; const drag = { projectKey, sessionKey: key, session }; const renderSessionMain = () => (<button class="session-main" aria-label={`${session.name}, ${projectKindLabel(session)}, ${formatApiCost(session.apiCost)}${accessibleActivity ? `, ${accessibleActivity}` : ""}`} aria-current={isActiveSession(session) ? "page" : undefined} aria-description={!normalizedQuery() ? "Press Alt plus Up or Down to reorder. Add Shift to move between groups." : undefined} aria-keyshortcuts={!normalizedQuery() ? "Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown" : undefined} onMouseDown={(event) => startMouseDrag(event, drag)} onKeyDown={(event) => { if (!normalizedQuery() && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); moveSessionByKeyboard(drag, event.key === "ArrowUp" ? -1 : 1, event.shiftKey); } }} onClick={(event) => { if (suppressClickRef.current === sessionLayoutToken(key)) { suppressClickRef.current = undefined; event.preventDefault(); return; } panel().onSelect(session); }}><span class="session-copy"><span class="session-title-row">{session.projectKind !== "no-repo" && <SessionProjectIcon session={session} />}<strong>{session.name}</strong><span class="session-api-cost" title="Would-be API cost">{formatApiCost(session.apiCost)}</span></span></span></button>);
     return { key, running, activity, target, renderSessionMain };
@@ -464,7 +465,7 @@ export function SessionPanel(props: Props) {
   const renderSession = (session: SessionSummary, projectKey: string) => {
     const { key, running, activity, target, renderSessionMain } = sessionPresentation(session, projectKey); return <div  data-session-key={key} data-project-key={projectKey} class={`session-item ${!normalizedQuery() ? "reorderable" : ""} ${isActiveSession(session) ? "active" : ""} ${running ? "running" : activity ? "unseen" : ""} ${draggedSession()?.sessionKey === key ? "dragging" : ""} ${target ? `drop-${target}` : ""}`} onContextMenu={(event) => { event.preventDefault(); const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget.querySelector<HTMLElement>(".session-main") ?? undefined; setGroupMenu(undefined); setMenu({ session, x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190), returnFocus }); }}>
       {renderSessionMain()}
-      <button class="session-archive" aria-label={`Archive ${session.name}`} title={`Archive ${session.name}`} onClick={() => panel().onAction(session, "archive")}><Archive size={14} /></button>
+      <button class="session-archive" aria-label={`Archive ${session.name}`} title={!isSavedSession(session) ? "Send a message before archiving this draft" : `Archive ${session.name}`} disabled={!isSavedSession(session)} onClick={() => panel().onAction(session, "archive")}><Archive size={14} /></button>
     </div>;
   };
   const prepareWorktreeRemoval = async (id: string, name: string, group: SessionGroup) => { const capturedPanel = panel();
@@ -492,7 +493,7 @@ export function SessionPanel(props: Props) {
       { label: "Create worktree", Icon: GitBranch, disabled: !groupDirectory, run: () => { if (groupDirectory?.cwd) panel().onCreateWorktree(groupDirectory.cwd, groupDirectory.hostId ?? "local"); } },
       ...(isWorktreeGroup && groupDirectory?.cwd ? [{ label: "Delete worktree…", Icon: Trash2, disabled: false, run: () => void prepareWorktreeRemoval((groupMenu())!.projectKey, (groupMenu())!.label, groupDirectory) }] : []),
       { label: "Forget group", Icon: Trash2, disabled: false, run: () => setRemovingGroup({ id: (groupMenu())!.projectKey, name: (groupMenu())!.label }) },
-    ] : menu() ? actions.filter(([action]) => action !== "split" || (menu())!.session.id !== panel().activeId || ((menu())!.session.hostId ?? "local") !== panel().activeHostId).map(([action, Icon, label]) => ({ label, Icon, disabled: false, run: () => panel().onAction((menu())!.session, action) })) : [];
+    ] : menu() ? actions.filter(([action]) => action !== "split" || (menu())!.session.id !== panel().activeId || ((menu())!.session.hostId ?? "local") !== panel().activeHostId).map(([action, Icon, label]) => ({ label, Icon, disabled: action === "clone" && Boolean(menu()!.session.isDraft || !menu()!.session.path), run: () => panel().onAction((menu())!.session, action) })) : [];
     return { activeMenu, menuItems };
   };
   const menuActions = createMemo(() => (contextMenu()));
@@ -549,7 +550,7 @@ export function SessionPanel(props: Props) {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); items[(index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus(); }
       else if (event.key === "Home" || event.key === "End") { event.preventDefault(); items[event.key === "Home" ? 0 : items.length - 1]?.focus(); }
       else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeMenu(true); }
-    }}>{<Key each={menuActions().menuItems} by={({ label, Icon, disabled, run }) => label}>{(entry, index) => <button  role="menuitem" disabled={entry().disabled} title={entry().disabled ? "Custom groups have no directory" : undefined} onClick={() => { const run = entry().run; run(); closeMenu(true); }}><Dynamic component={entry().Icon} size={14} />{entry().label}</button>}</Key>}</div>);
+    }}>{<Key each={menuActions().menuItems} by={({ label, Icon, disabled, run }) => label}>{(entry, index) => <button  role="menuitem" disabled={entry().disabled} title={entry().disabled ? groupMenu() ? "Custom groups have no directory" : "Send a message before cloning this draft" : undefined} onClick={() => { const run = entry().run; run(); closeMenu(true); }}><Dynamic component={entry().Icon} size={14} />{entry().label}</button>}</Key>}</div>);
   return <aside class="session-panel">
     {removingGroup() && <RemoveGroupDialog name={(removingGroup())!.name} onCancel={() => setRemovingGroup(undefined)} onRemove={async () => {
     const capturedRemovingGroup = removingGroup();

@@ -44,7 +44,7 @@ export class SessionRuntimePool {
     }
     this.liveRevision += 1; this.notify();
   }
-  liveSessionSummaries() { return [...this.liveSessions.values()]; }
+  liveSessionSummaries() { return [...this.liveSessions].filter(([transport]) => !transport.isEphemeral()).map(([, session]) => session); }
   setLiveSession(transport: NativeTransport, session: SessionSummary) {
     if (this.isRemoved(session)) return;
     this.liveSessions.set(transport, session);

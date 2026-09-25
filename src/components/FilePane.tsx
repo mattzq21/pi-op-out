@@ -72,7 +72,7 @@ export function FilePane(props: { request: FilePaneRequest; hidden?: boolean; on
     finally { if (version === fileVersion) setLoading(false); }
   };
   const chooseFile = (reference: FileReference) => {
-    if (isCurrentFile(reference)) { setLocation({ ...reference }); return; }
+    if (isCurrentFile(reference)) { fileVersion++; setLoading(false); setLocation({ ...reference }); return; }
     navigate(() => { void openFile(reference); });
   };
   const isCurrentFile = (reference: FileReference) => {
@@ -100,14 +100,19 @@ export function FilePane(props: { request: FilePaneRequest; hidden?: boolean; on
   const applyRequest = (request: FilePaneRequest) => {
     const sameProject = request.project.cwd === project().cwd && request.project.hostId === project().hostId;
     if (sameProject && !request.file) { void list(""); return; }
-    if (sameProject && request.file && isCurrentFile(request.file)) { setLocation({ ...request.file }); return; }
+    if (sameProject && request.file && isCurrentFile(request.file)) { fileVersion++; setLoading(false); setLocation({ ...request.file }); return; }
     navigate(() => {
       if (!sameProject) { fileVersion++; setLoading(false); setFile(undefined); setDraft(""); setDirectory(undefined); setProject(request.project); }
       void list("");
       if (request.file) void openFile(request.file);
     });
   };
-  createEffect(on(() => props.request, applyRequest));
+  let appliedRequest: FilePaneRequest | undefined;
+  createEffect(on([() => props.request, saving], ([request, isSaving]) => {
+    if (isSaving || request === appliedRequest) return;
+    appliedRequest = request;
+    applyRequest(request);
+  }));
   const beforeUnload = (event: BeforeUnloadEvent) => { if (dirty()) { event.preventDefault(); event.returnValue = ""; } };
   window.addEventListener("beforeunload", beforeUnload);
   onCleanup(() => { disposed = true; fileVersion++; directoryVersion++; window.removeEventListener("beforeunload", beforeUnload); });
