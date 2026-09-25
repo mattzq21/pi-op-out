@@ -985,14 +985,14 @@ fn default_settings() -> AppSettings {
 }
 
 fn session_operation_tools() -> Vec<Value> {
-    [("fork_session", "Fork a conversation in any project"), ("create_worktree", "Create a Git worktree"), ("remove_worktree", "Remove an unused Git worktree"), ("subagent", "Delegate parallel tasks to agents with saved transcripts"), ("request_user_input_async", "Ask the user questions with choices and free-text answers")].into_iter().map(|(name, description)| json!({"name":name,"description":description,"enabled":true,"builtin":false})).collect()
+    [("fork_session", "Fork a conversation in any project"), ("create_worktree", "Create a Git worktree"), ("remove_worktree", "Remove an unused Git worktree"), ("subagent", "Delegate parallel tasks to agents with saved transcripts"), ("request_user_input", "Ask the user questions with choices and free-text answers")].into_iter().map(|(name, description)| json!({"name":name,"description":description,"enabled":true,"builtin":false})).collect()
 }
 
 fn migrate_question_tool(settings: &mut AppSettings) {
-    let has_async = settings.tools.iter().any(|tool| tool["name"] == "request_user_input_async");
-    if has_async { settings.tools.retain(|tool| tool["name"] != "request_user_input"); }
+    let has_current = settings.tools.iter().any(|tool| tool["name"] == "request_user_input");
+    if has_current { settings.tools.retain(|tool| tool["name"] != "request_user_input_async"); }
     for tool in &mut settings.tools {
-        if tool["name"] == "request_user_input" { tool["name"] = json!("request_user_input_async"); }
+        if tool["name"] == "request_user_input_async" { tool["name"] = json!("request_user_input"); }
     }
 }
 
