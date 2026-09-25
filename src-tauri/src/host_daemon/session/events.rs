@@ -102,7 +102,12 @@ impl Session {
         if !interactive(&event) {
             return Some(event);
         }
-        let id = text(&event, "id");
+        self.receive_dialog(&event);
+        None
+    }
+
+    fn receive_dialog(&self, event: &Value) {
+        let id = text(event, "id");
         let generation = Uuid::new_v4().to_string();
         set(
             &mut self.state().dialogs,
@@ -128,7 +133,6 @@ impl Session {
             });
         }
         self.route_dialogs();
-        None
     }
 
     fn receive_status(&self, event: &Value) -> bool {
@@ -138,25 +142,8 @@ impl Session {
                 Ok(requests) => self.receive_questions(requests),
                 Err(error) => self.host.output(json!({"type":"diagnostic","line":error.to_string()})),
             },
-            Some("pi-desktop-turn-capture") => match parsed() {
-                Ok(mut capture) => {
-                    capture["type"] = json!("turn_capture");
-                    capture["sessionKey"] = json!(self.key());
-                    capture["ephemeral"] = json!(self.ephemeral);
-                    self.host.output(capture);
-                }
-                Err(error) => self.host.output(json!({"type":"diagnostic","line":error.to_string()})),
-            },
-            Some("pi-desktop-worktree-presence") => {
-                if let Ok(presence) = parsed() {
-                    {
-                        let mut state = self.state();
-                        state.worktree = presence["worktree"].clone();
-                        state.presence_id = presence["id"].clone();
-                    }
-                    self.publish_state();
-                }
-            }
+            Some("pi-desktop-turn-capture") => self.receive_capture(parsed()),
+            Some("pi-desktop-worktree-presence") => self.receive_presence(parsed()),
             Some("piop-input-rejected") => {
                 if let Ok(rejection) = parsed() {
                     self.state().input_rejection = rejection;
@@ -165,6 +152,29 @@ impl Session {
             _ => return false,
         }
         true
+    }
+
+    fn receive_capture(&self, parsed: serde_json::Result<Value>) {
+        match parsed {
+            Ok(mut capture) => {
+                capture["type"] = json!("turn_capture");
+                capture["sessionKey"] = json!(self.key());
+                capture["ephemeral"] = json!(self.ephemeral);
+                self.host.output(capture);
+            }
+            Err(error) => self.host.output(json!({"type":"diagnostic","line":error.to_string()})),
+        }
+    }
+
+    fn receive_presence(&self, parsed: serde_json::Result<Value>) {
+        if let Ok(presence) = parsed {
+            {
+                let mut state = self.state();
+                state.worktree = presence["worktree"].clone();
+                state.presence_id = presence["id"].clone();
+            }
+            self.publish_state();
+        }
     }
 
     fn receive_questions(&self, requests: Value) {

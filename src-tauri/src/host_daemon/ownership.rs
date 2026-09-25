@@ -226,54 +226,16 @@ impl ConversationOwnership {
         let lock = self.lock(id, false).await?;
         let record = self.read(id)?;
         let previous = record.clone().unwrap_or(Value::Null);
-        let path = options["path"]
-            .as_str()
-            .filter(|path| !path.is_empty())
-            .or_else(|| previous["path"].as_str());
-        let saved = self.locate(id, path, flag(options, "archived"), false)?;
-        if flag(&previous, "deleted") && !flag(options, "archived") || saved.is_none() && !flag(options, "create") {
-            return Err("This conversation has been deleted or archived".into());
-        }
-        let other = previous["client"]
-            .as_str()
-            .is_some_and(|owner| !owner.is_empty() && owner != client);
-        if other && !flag(options, "take") {
+        let saved = self.saved_for_claim(id, &previous, options)?;
+        if owned_by_other(&previous, client) && !flag(options, "take") {
             return Ok(Guard {
                 owned: false,
                 ..Guard::ephemeral()
             });
         }
-        let returning = previous["client"].as_str().is_none_or(str::is_empty)
-            && previous["previousClient"] == client
-            && previous["endpoint"] == self.endpoint
-            && previous["token"] == self.token;
-        let handoff = record.is_some()
-            && ((!returning && previous["client"] != client) || previous["endpoint"] != self.endpoint || flag(options, "mutation"));
-        if handoff {
-            self.release_previous(
-                id,
-                &previous,
-                if flag(options, "message") {
-                    "message"
-                } else if flag(options, "archive") {
-                    "archive"
-                } else {
-                    "transfer"
-                },
-            )
-            .await?;
-        }
-        let mut worker_lock = if record.is_none() || handoff {
-            Some(self.lock(id, true).await?)
-        } else {
-            None
-        };
-        let mut next = json!({"client":client,"endpoint":self.endpoint,"token":self.token,"deleted":false});
-        if let Some(saved) = &saved {
-            next["path"] = json!(saved.path);
-        }
-        self.write(id, &next)?;
-        if !flag(options, "mutation") || flag(options, "message") {
+        let mut worker_lock = self.claim_worker_lock(id, record.as_ref(), client, options).await?;
+        let next = self.write_claim(id, client, saved.as_ref())?;
+        if !exclusive_mutation(options) {
             worker_lock = None;
         }
         Ok(Guard {
@@ -284,6 +246,45 @@ impl ConversationOwnership {
             worker_lock,
             lock: Some(lock),
         })
+    }
+
+    async fn claim_worker_lock(&self, id: &str, previous: Option<&Value>, client: &str, options: &Value) -> Result<Option<File>> {
+        if let Some(previous) = previous {
+            if !self.needs_handoff(previous, client, options) {
+                return Ok(None);
+            }
+            self.release_previous(id, previous, claim_intent(options)).await?;
+        }
+        self.lock(id, true).await.map(Some)
+    }
+
+    fn write_claim(&self, id: &str, client: &str, saved: Option<&SavedConversation>) -> Result<Value> {
+        let mut next = json!({"client":client,"endpoint":self.endpoint,"token":self.token,"deleted":false});
+        if let Some(saved) = saved {
+            next["path"] = json!(saved.path);
+        }
+        self.write(id, &next)?;
+        Ok(next)
+    }
+
+    fn saved_for_claim(&self, id: &str, previous: &Value, options: &Value) -> Result<Option<SavedConversation>> {
+        let path = options["path"]
+            .as_str()
+            .filter(|path| !path.is_empty())
+            .or_else(|| previous["path"].as_str());
+        let saved = self.locate(id, path, flag(options, "archived"), false)?;
+        if flag(previous, "deleted") && !flag(options, "archived") || saved.is_none() && !flag(options, "create") {
+            return Err("This conversation has been deleted or archived".into());
+        }
+        Ok(saved)
+    }
+
+    fn needs_handoff(&self, previous: &Value, client: &str, options: &Value) -> bool {
+        let returning = previous["client"].as_str().is_none_or(str::is_empty)
+            && previous["previousClient"] == client
+            && previous["endpoint"] == self.endpoint
+            && previous["token"] == self.token;
+        (!returning && previous["client"] != client) || previous["endpoint"] != self.endpoint || flag(options, "mutation")
     }
 
     pub async fn release_client(&self, id: &str, client: &str, unused: impl Fn() -> bool) -> Result<()> {
@@ -363,14 +364,61 @@ fn optional_path(path: &Path) -> Result<Option<PathBuf>> {
     }
 }
 
+fn owned_by_other(previous: &Value, client: &str) -> bool {
+    previous["client"]
+        .as_str()
+        .is_some_and(|owner| !owner.is_empty() && owner != client)
+}
+
+fn claim_intent(options: &Value) -> &str {
+    if flag(options, "message") {
+        "message"
+    } else if flag(options, "archive") {
+        "archive"
+    } else {
+        "transfer"
+    }
+}
+
+fn exclusive_mutation(options: &Value) -> bool {
+    flag(options, "mutation") && !flag(options, "message")
+}
+
+fn validate_saved_path(path: &Path, root: &Path) -> Result<()> {
+    if !path.starts_with(root) || path == root || path.extension().is_none_or(|extension| extension != "jsonl") {
+        return Err("Invalid conversation path".into());
+    }
+    Ok(())
+}
+
 fn read_candidate(id: &str, path: &Path, root: &Path, metadata_only: bool) -> Result<Option<SavedConversation>> {
     let Some(path) = optional_path(path)? else {
         return Ok(None);
     };
-    if !path.starts_with(root) || path == root || path.extension().is_none_or(|extension| extension != "jsonl") {
-        return Err("Invalid conversation path".into());
-    }
-    let file = match File::open(&path) {
+    validate_saved_path(&path, root)?;
+    let Some((header, metadata)) = read_saved_header(id, &path)? else {
+        return Ok(None);
+    };
+    let revision = saved_revision(id, &metadata);
+    let lines = if metadata_only {
+        Vec::new()
+    } else {
+        match std::fs::read_to_string(&path) {
+            Ok(content) => content.trim_end().split('\n').map(str::to_owned).collect(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.to_string()),
+        }
+    };
+    Ok(Some(SavedConversation {
+        path,
+        header,
+        lines,
+        revision,
+    }))
+}
+
+fn read_saved_header(id: &str, path: &Path) -> Result<Option<(Value, std::fs::Metadata)>> {
+    let file = match File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.to_string()),
@@ -388,6 +436,10 @@ fn read_candidate(id: &str, path: &Path, root: &Path, metadata_only: bool) -> Re
     if header["id"] != id {
         return Ok(None);
     }
+    Ok(Some((header, metadata)))
+}
+
+fn saved_revision(id: &str, metadata: &std::fs::Metadata) -> String {
     #[cfg(unix)]
     let revision = {
         use std::os::unix::fs::MetadataExt;
@@ -397,21 +449,7 @@ fn read_candidate(id: &str, path: &Path, root: &Path, metadata_only: bool) -> Re
     };
     #[cfg(not(unix))]
     let revision = format!("{id}:{}:{:?}:{:?}", metadata.len(), metadata.modified(), metadata.created());
-    let lines = if metadata_only {
-        Vec::new()
-    } else {
-        match std::fs::read_to_string(&path) {
-            Ok(content) => content.trim_end().split('\n').map(str::to_owned).collect(),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.to_string()),
-        }
-    };
-    Ok(Some(SavedConversation {
-        path,
-        header,
-        lines,
-        revision,
-    }))
+    revision
 }
 
 fn connection_refused(error: &reqwest::Error) -> bool {
@@ -430,6 +468,16 @@ fn connection_refused(error: &reqwest::Error) -> bool {
 }
 
 async fn read_request(stream: &mut TcpStream, token: &str) -> Result<Option<Value>> {
+    let header = request_header(stream).await?;
+    let Some(length) = request_length(&header, token)? else {
+        return Ok(None);
+    };
+    let mut body = vec![0; length];
+    stream.read_exact(&mut body).await.map_err(|error| error.to_string())?;
+    serde_json::from_slice(&body).map(Some).map_err(|error| error.to_string())
+}
+
+async fn request_header(stream: &mut TcpStream) -> Result<String> {
     let mut header = Vec::new();
     while !header.ends_with(b"\r\n\r\n") {
         if header.len() >= 16384 {
@@ -437,7 +485,10 @@ async fn read_request(stream: &mut TcpStream, token: &str) -> Result<Option<Valu
         }
         header.push(stream.read_u8().await.map_err(|error| error.to_string())?);
     }
-    let header = std::str::from_utf8(&header).map_err(|error| error.to_string())?;
+    String::from_utf8(header).map_err(|error| error.to_string())
+}
+
+fn request_length(header: &str, token: &str) -> Result<Option<usize>> {
     let mut lines = header.split("\r\n");
     let post = lines.next().is_some_and(|line| line.starts_with("POST "));
     let headers: Vec<_> = lines
@@ -461,7 +512,5 @@ async fn read_request(stream: &mut TcpStream, token: &str) -> Result<Option<Valu
     if length > 8192 {
         return Err("Request is too large".into());
     }
-    let mut body = vec![0; length];
-    stream.read_exact(&mut body).await.map_err(|error| error.to_string())?;
-    serde_json::from_slice(&body).map(Some).map_err(|error| error.to_string())
+    Ok(Some(length))
 }
