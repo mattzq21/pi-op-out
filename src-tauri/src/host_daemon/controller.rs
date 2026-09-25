@@ -1,3 +1,6 @@
+mod attachment;
+mod requests;
+
 use super::{
     ownership::{ownership_error, ConversationOwnership, Guard, Revocation},
     payload::{client_payload, saved_tool_payload, tool_payload_page},
@@ -324,6 +327,10 @@ impl Host {
             session.stop().await;
             self.registry().captures.entry(id.into()).or_default().insert(session.key());
         }
+        self.drain_captures(id).await
+    }
+
+    async fn drain_captures(&self, id: &str) -> Result<()> {
         let keys = self.registry().captures.get(id).cloned().unwrap_or_default();
         for key in keys {
             let request = Uuid::new_v4().to_string();
@@ -339,125 +346,6 @@ impl Host {
         }
         self.registry().captures.remove(id);
         Ok(())
-    }
-
-    pub async fn handle(self: &Arc<Self>, packet: Value) -> Result<Value> {
-        let runtime = text(&packet, "runtimeId");
-        let name = kind(&packet);
-        if name == "detach" {
-            self.registry().attachments.remove(&runtime);
-        }
-        match name {
-            "voice" | "provider_auth" | "provider_auth_cancel_owner" => return self.services.handle(packet).await,
-            "ownership_drained" => {
-                if let Some(sender) = self.registry().drains.remove(&text(&packet, "requestId")) {
-                    let result = packet["error"]
-                        .as_str()
-                        .filter(|error| !error.is_empty())
-                        .map(|error| Err(error.into()))
-                        .unwrap_or(Ok(()));
-                    let _ = sender.send(result);
-                }
-                return Ok(Value::Null);
-            }
-            "conversation_mutation" => {
-                let operation = text(&packet, "operation");
-                let guard = self.ownership().begin(&text(&packet,"sessionId"), &text(&packet,"clientId"), &json!({"mutation":operation!="save_diffs","message":operation=="message","archive":operation=="archive","path":packet["sessionPath"],"archived":packet["archived"]})).await?;
-                if !guard.owned {
-                    return Err(ownership_error());
-                }
-                let token = Uuid::new_v4().to_string();
-                self.registry().guards.insert(token.clone(), (guard, operation));
-                return Ok(json!({"token":token}));
-            }
-            "conversation_mutation_end" => {
-                let guard = self.registry().guards.remove(&text(&packet, "token"));
-                if let Some((guard, operation)) = guard {
-                    guard.release(
-                        self.ownership(),
-                        flag(&packet, "success") && matches!(operation.as_str(), "delete" | "archive"),
-                    )?;
-                }
-                return Ok(Value::Null);
-            }
-            "configure" => {
-                self.configure(&packet["configuration"])?;
-                return Ok(Value::Null);
-            }
-            "attach" => return self.attach(packet).await,
-            "shutdown" => {
-                self.shutdown().await;
-                return Ok(Value::Null);
-            }
-            "retire" => {
-                let session = {
-                    let registry = self.registry();
-                    registry.sessions.get(&text(&packet, "sessionKey")).cloned().or_else(|| {
-                        registry
-                            .sessions
-                            .values()
-                            .find(|session| {
-                                session.saved_state()["sessionFile"] == packet["sessionPath"]
-                                    || session.reserved_path().as_deref() == packet["sessionPath"].as_str()
-                            })
-                            .cloned()
-                    })
-                };
-                if let Some(session) = session {
-                    session.retire().await?;
-                }
-                return Ok(Value::Null);
-            }
-            "session_command" => {
-                let session = self
-                    .registry()
-                    .sessions
-                    .get(&text(&packet, "sessionKey"))
-                    .cloned()
-                    .ok_or("Conversation is no longer running")?;
-                return session.execute(packet["command"].clone()).await;
-            }
-            _ => {}
-        }
-        if name == "command" && packet["command"]["type"] == "take_ownership" {
-            let mut target = self
-                .registry()
-                .attachments
-                .get(&runtime)
-                .map(|value| (**value).clone())
-                .ok_or("This conversation has been deleted or closed")?;
-            if flag(&target["presence"], "readOnly") {
-                return Err("This view is read-only".into());
-            }
-            target["takeOwnership"] = json!(true);
-            return self.attach(target).await;
-        }
-        let readonly = self.registry().readonly.get(&runtime).cloned();
-        if let Some(target) = readonly {
-            return self.readonly_command(&packet, target).await;
-        }
-        let session = self.registry().subscriptions.get(&runtime).cloned();
-        let Some(session) = session else {
-            if name == "detach" {
-                return Ok(json!({"stopped":false}));
-            }
-            return Err("Pi is not running".into());
-        };
-        if name == "detach" {
-            self.registry().subscriptions.remove(&runtime);
-            session.detach_view(&runtime);
-            self.services.detach_voice(&runtime).await;
-            let result = session
-                .finish_detach(flag(&packet, "discardBlank"), flag(&packet, "preserveRunning"))
-                .await;
-            self.release_unused(&session).await?;
-            return Ok(result);
-        }
-        if name == "presence" {
-            session.presence(&runtime, packet["presence"].clone());
-            return Ok(Value::Null);
-        }
-        self.session_command(session, &runtime, packet["command"].clone()).await
     }
 
     fn configure(self: &Arc<Self>, configuration: &Value) -> Result<()> {
@@ -482,146 +370,6 @@ impl Host {
         Ok(())
     }
 
-    async fn attach(self: &Arc<Self>, packet: Value) -> Result<Value> {
-        let runtime = text(&packet, "runtimeId");
-        let packet = Arc::new(packet);
-        self.registry().attachments.insert(runtime.clone(), packet.clone());
-        let mut spec: LaunchSpec = serde_json::from_value(packet["spec"].clone()).map_err(|error| error.to_string())?;
-        let identity = spec.identity(&text(&packet, "sessionKey"))?;
-        let path = spec.argument("--session").map(str::to_owned);
-        self.assert_attachment(&runtime, &packet)?;
-        if flag(&packet["presence"], "readOnly") {
-            if path.is_none() || self.ownership().locate(&identity, path.as_deref(), false, true)?.is_none() {
-                return Err("This conversation has been deleted or archived".into());
-            }
-            self.assert_attachment(&runtime, &packet)?;
-            self.registry().readonly.insert(runtime, ReadonlyView { id: identity, path });
-            return Ok(json!({"attached":true,"owned":false}));
-        }
-        let guard = if flag(&packet, "ephemeral") {
-            Guard::ephemeral()
-        } else {
-            self.ownership()
-                .begin(
-                    &identity,
-                    &text(&packet, "clientId"),
-                    &json!({"take":packet["takeOwnership"],"path":path,"create":path.is_none()}),
-                )
-                .await?
-        };
-        let owned = guard.owned;
-        let mut opened = None;
-        let result = async {
-            self.assert_attachment(&runtime, &packet)?;
-            if !owned {
-                self.registry().readonly.insert(
-                    runtime.clone(),
-                    ReadonlyView {
-                        id: identity.clone(),
-                        path: path.clone(),
-                    },
-                );
-                return Ok(json!({"attached":true,"owned":false}));
-            }
-            let cwd = guard
-                .saved
-                .as_ref()
-                .and_then(|saved| saved.header["cwd"].as_str())
-                .or_else(|| packet["cwd"].as_str())
-                .map(|cwd| expand_home(cwd, &self.home).to_string_lossy().into_owned());
-            if spec.env.contains_key("PIOP_REMOTE_SESSION_CLAIMS") {
-                spec.env.insert("PIOP_SESSION_CWD".into(), cwd.clone().unwrap_or("~".into()));
-            } else if cwd.is_some() {
-                spec.cwd = cwd.clone();
-            }
-            let gate = self
-                .registry()
-                .session_gates
-                .entry(identity.clone())
-                .or_insert_with(|| Arc::new(AsyncMutex::new(())))
-                .clone();
-            let _creation = gate.lock().await;
-            let mut session = self.find_session(&identity);
-            if session.as_ref().is_some_and(|session| session.transient()) {
-                return Err("This conversation branch is still being prepared".into());
-            }
-            if let Some(stopping) = session.as_ref().filter(|session| session.stopping()) {
-                stopping.stop().await;
-                session = self.find_session(&identity);
-            }
-            let session = match session {
-                Some(session) => session,
-                None => self.spawn_session(SessionLaunch {
-                    key: identity.clone(),
-                    spec,
-                    timeout: Duration::from_millis(packet["timeout"].as_u64().unwrap_or(630000)),
-                    ephemeral: flag(&packet, "ephemeral"),
-                    transient: false,
-                    client_id: text(&packet, "clientId"),
-                    cwd,
-                })?,
-            };
-            opened = Some(session.clone());
-            session.execute(json!({"type":"get_state"})).await?;
-            self.assert_attachment(&runtime, &packet)?;
-            self.registry().readonly.remove(&runtime);
-            self.attach_view(&runtime, session.clone(), packet["presence"].clone());
-            self.remember(&runtime, &session);
-            self.reconcile(session.clone());
-            Ok(json!({"attached":session.views().len()>1||session.submitted(),"owned":true}))
-        }
-        .await;
-        let released = guard.release(self.ownership(), false);
-        // Successful attachment replaces the launch packet with the normalized session spec.
-        let still_attached = {
-            let registry = self.registry();
-            registry
-                .subscriptions
-                .get(&runtime)
-                .is_some_and(|session| opened.as_ref().is_some_and(|opened| Arc::ptr_eq(session, opened)))
-                || registry
-                    .attachments
-                    .get(&runtime)
-                    .is_some_and(|current| Arc::ptr_eq(current, &packet))
-        };
-        if !still_attached {
-            if let Some(session) = opened {
-                if session.views().is_empty() {
-                    if !session.submitted() && !session.working() {
-                        session.stop().await;
-                    } else {
-                        self.release_unused(&session).await?;
-                    }
-                }
-            } else if owned {
-                self.ownership()
-                    .release_client(&identity, &text(&packet, "clientId"), || {
-                        !self
-                            .registry()
-                            .attachments
-                            .values()
-                            .any(|value| value["clientId"] == packet["clientId"] && value["sessionKey"] == packet["sessionKey"])
-                    })
-                    .await?;
-            }
-        }
-        released?;
-        result
-    }
-
-    fn assert_attachment(&self, runtime: &str, packet: &Arc<Value>) -> Result<()> {
-        if self
-            .registry()
-            .attachments
-            .get(runtime)
-            .is_some_and(|current| Arc::ptr_eq(current, packet))
-        {
-            Ok(())
-        } else {
-            Err("The conversation was closed while attaching".into())
-        }
-    }
-
     async fn readonly_command(&self, packet: &Value, target: ReadonlyView) -> Result<Value> {
         let runtime = text(packet, "runtimeId");
         if kind(packet) == "detach" {
@@ -643,6 +391,10 @@ impl Host {
         if let Some(session) = self.find_session(&target.id).filter(|session| !session.transient()) {
             return session.execute(command.clone()).await;
         }
+        self.read_saved_conversation(&target, command)
+    }
+
+    fn read_saved_conversation(&self, target: &ReadonlyView, command: &Value) -> Result<Value> {
         if kind(command) == "get_session_revision" {
             return self.ownership().revision(&target.id, target.path.as_deref());
         }
