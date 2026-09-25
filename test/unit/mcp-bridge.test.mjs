@@ -139,7 +139,7 @@ test('MCP tool names remain unique and stable across normalization collisions an
   assert.equal(f.tools.size, 6);
 }));
 
-test('MCP bridge discovers paginated tools and forwards calls with a private agent identity', async () => fixture([stdio], async f => {
+test('MCP bridge discovers paginated tools and forwards calls with an opted-in private agent identity', async () => fixture([{ ...stdio, injectAgentId: true }], async f => {
   globalThis.__MCP_TEST_PAGES__ = {
     first: { tools: [{ name: 'Look up', inputSchema: { type: 'object', properties: { agent_id: { type: 'string' }, query: { type: 'string' } }, required: ['agent_id', 'query'] } }], nextCursor: 'next' },
     next: { tools: [{ name: 'other' }] },
@@ -172,7 +172,7 @@ test('MCP bridge configures HTTP headers and reconnects on agent changes without
   globalThis.__MCP_TEST_RESULT__ = { isError: true, content: [{ type: 'text', text: 'remote failure' }] };
   await assert.rejects(tool.execute('call', {}), /remote failure/);
   globalThis.__MCP_TEST_RESULT__ = { structuredContent: { value: 3 } };
-  assert.deepEqual(JSON.parse((await tool.execute('call', {})).content[0].text), globalThis.__MCP_TEST_RESULT__);
+  assert.deepEqual(JSON.parse((await tool.execute('call', {})).content[0].text), globalThis.__MCP_TEST_RESULT__.structuredContent);
   f.clients.at(-1).onclose(); await assert.rejects(tool.execute('call', {}), /not connected/);
   await f.select(['http'], 'different-agent'); assert.equal(f.clients.length, 3);
 }));

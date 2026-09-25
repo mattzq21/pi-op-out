@@ -79,6 +79,7 @@ describe('composer interactions', () => {
     await click(control('Stop piop')); assert.equal(stops, 1); assert.equal(document.querySelector('[role=alert]').textContent, 'cannot stop');
     await act(async () => pending.reject(new Error('cannot pause'))); assert.equal(document.querySelector('[role=alert]').textContent, 'cannot pause');
     const resuming = Promise.withResolvers();
+    await enterText(editor(), '');
     await render({ streaming: false, paused: true, onResume: () => { resumes++; return resuming.promise; } });
     await click(control('Resume piop')); assert.equal(control('Stop piop').disabled, true); assert.match(document.querySelector('.stream-status').textContent, /Resuming/);
     await act(async () => resuming.resolve()); assert.equal(resumes, 1); assert.equal(control('Resume piop').disabled, false);

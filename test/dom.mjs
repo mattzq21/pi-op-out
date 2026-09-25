@@ -1,6 +1,7 @@
 import { JSDOM } from 'jsdom';
 import { createComponent, createComputed, createRoot, createSignal, mergeProps } from 'solid-js';
 import { clearDelegatedEvents, render } from 'solid-js/web';
+import { mockIPC, clearMocks } from './mock-ipc.mjs';
 
 export async function act(action) { await action(); await new Promise(resolve => setImmediate(resolve)); }
 
@@ -17,6 +18,7 @@ export function installDom() {
   const values = { window: dom.window, document: dom.window.document, localStorage: dom.window.localStorage, navigator: dom.window.navigator };
   for (const key of ['HTMLElement', 'HTMLHeadElement', 'HTMLInputElement', 'HTMLTextAreaElement', 'Element', 'Node', 'NodeFilter', 'MutationObserver', 'KeyboardEvent', 'MouseEvent', 'Event']) values[key] = dom.window[key];
   values.getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
+  values.CustomEvent = dom.window.CustomEvent;
   const frames = new Map(); let frame = 0;
   const pointerCaptures = new Map();
   dom.window.HTMLElement.prototype.setPointerCapture = function (id) { pointerCaptures.set(id, this); };
@@ -28,10 +30,12 @@ export function installDom() {
   values.cancelAnimationFrame = id => frames.delete(id);
   const previous = new Map(Object.keys(values).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   for (const [key, value] of Object.entries(values)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  mockIPC(() => undefined, { shouldMockEvents: true });
   return {
     frames,
     async flushFrames() { await act(async () => { const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(callback => callback(0)); }); },
     restore() {
+      clearMocks();
       clearDelegatedEvents(dom.window.document);
       for (const [target, type, listener, options] of listeners) target.removeEventListener(type, listener, options);
       for (const [target, add] of targets) target.addEventListener = add;

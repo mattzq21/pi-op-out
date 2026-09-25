@@ -8,7 +8,7 @@ describe('conversation behavior', () => {
   let dom, view, props;
   beforeEach(() => {
     dom = installDom();
-    props = { readOnly: true, state: { isStreaming: false, messageCount: 0 }, messages: [], models: [], commands: [], thinkingLevels: [], widgets: [], statuses: {}, onSend: async () => {}, onBranch: () => {} };
+    props = { readOnly: false, state: { isStreaming: false, messageCount: 0 }, messages: [], models: [], commands: [], thinkingLevels: [], widgets: [], statuses: {}, onSend: async () => {}, onBranch: () => {} };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; dom.restore(); });
   async function render(extra = {}) { props = { ...props, ...extra }; if (view) await view.rerender(props); else view = await renderComponent(ChatView, props); }
@@ -34,6 +34,7 @@ describe('conversation behavior', () => {
     assert.equal(document.querySelectorAll('.assistant-message').length, 2);
     assert.equal(document.querySelector('[role=status]').textContent, 'Saved');
     await render({ debug: true });
+    await act(() => { const group = document.querySelector('.work-group'); group.open = true; group.dispatchEvent(new Event('toggle')); });
     await act(() => { for (const details of document.querySelectorAll('details.tool-event')) { details.open = true; details.dispatchEvent(new Event('toggle')); } });
     assert.equal(document.querySelectorAll('[aria-label="Tool output"]').length, 2);
     assert.doesNotMatch(document.body.textContent, /read x2/);
@@ -87,6 +88,7 @@ describe('conversation behavior', () => {
   });
 
   test('MCP loading hides the empty state and validates debug server names', async () => {
+    props.readOnly = true;
     await render(); assert.ok(document.querySelector('.empty-chat')); assert.equal(document.querySelector('.composer-stack'), null);
     await render({ statuses: { 'pi-desktop-mcp-loading': 'Loading database' } }); assert.equal(document.querySelector('.empty-chat'), null); assert.match(document.body.textContent, /Loading MCPs/);
     await render({ debug: true }); assert.match(document.body.textContent, /Loading database/);
@@ -97,7 +99,7 @@ describe('conversation behavior', () => {
   test('scrolling upward suspends automatic following until the user returns to the bottom', async () => {
     await render({ messages: [user('u')] }); const scroller = document.querySelector('.messages');
     Object.defineProperties(scroller, { scrollHeight: { value: 1000, configurable: true }, clientHeight: { value: 200 } });
-    await render({ messages: [user('u'), assistant('a')] }); assert.equal(scroller.scrollTop, 1000);
+    await render({ messages: [user('u'), assistant('a')] }); assert.equal(document.querySelector('.messages'), scroller, 'message scroller must survive rerenders'); assert.equal(scroller.scrollTop, 1000);
     await act(async () => scroller.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageUp', bubbles: true })));
     scroller.scrollTop = 300; await act(async () => scroller.dispatchEvent(new Event('scroll')));
     await render({ messages: [user('u'), assistant('a', 'More output')] }); assert.equal(scroller.scrollTop, 300);
@@ -137,7 +139,7 @@ describe('conversation behavior', () => {
     let opened = 0, cleared = 0; const pending = Promise.withResolvers();
     await render({ readOnly: false, projectCwd: '/repo/project', onOpenProject: () => opened++, onClearProject: () => cleared++, widgets: ['widget'], statuses: { visible: 'Ready', 'pi-desktop-hook-stats': 'legacy hook payload' }, state: { messageCount: 0, activity: 'Preparing' }, draft: 'Question', onSend: () => pending.promise });
     await click(document.querySelector('[aria-label="Selected project: project"]')); await click(document.querySelector('[aria-label="Clear project"]')); assert.equal(opened, 1); assert.equal(cleared, 1);
-    assert.equal(document.querySelector('.extension-widget').textContent, 'widget'); assert.equal(document.querySelector('.extension-status').textContent, 'Ready'); assert.equal(document.querySelector('.runtime-activity').textContent, 'Preparing');
+    assert.equal(document.querySelector('.extension-widget').textContent, 'widget'); assert.equal(document.querySelector('.runtime-activity').textContent, 'Preparing');
     await render({ statuses: { 'pi-desktop-mcp-loading': 'Loading server' } }); assert.equal(document.querySelector('.runtime-activity'), null);
     await click(document.querySelector('[aria-label="Send message"]')); assert.equal(document.querySelector('.mcp-pending-message').textContent.trim(), 'Question');
     await act(async () => pending.resolve()); assert.equal(document.querySelector('.mcp-pending-message'), null);

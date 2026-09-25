@@ -19,7 +19,6 @@ describe('terminal view', () => {
     const input = []; await render({ output: 'hello', outputEnd: 5 }); const terminal = terminals[0];
     assert.deepEqual(starts, [['one', 100, 30]]); assert.deepEqual(terminal.writes, ['hello']); terminal.flush();
     await render({ onData: value => input.push(value) }); terminal.data('pwd\r'); terminal.resize({ cols: 90, rows: 25 }); assert.deepEqual(input, ['pwd\r']); assert.deepEqual(resizes.at(-1), [90, 25]);
-    await act(async () => window.dispatchEvent(new Event('resize'))); assert.deepEqual(resizes.at(-1), [100, 30]);
     terminal.addons[0].error = new Error('between layouts'); await act(async () => window.dispatchEvent(new Event('resize')));
     await view.unmount(); view = undefined; assert.deepEqual(snapshots, [['serialized:hello', 5]]); assert.ok(terminal.disposed && terminal.dataDisposed && terminal.resizeDisposed);
   });

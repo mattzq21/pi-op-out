@@ -180,34 +180,33 @@ describe('session runtime pool', () => {
     assert.equal(commands('start_pi')[0].args.hostId, 'remote');
   });
 
-  test('ephemeral turns merge captured diffs in memory without saving them to the source session', async () => {
+  test('ephemeral turns retain daemon diffs in memory without saving them to the source session', async () => {
     responses.set('load_git_diffs', { previous: patch });
-    responses.set('capture_git_tree', 'tree');
-    responses.set('load_git_diff', { patch, repositoryRoot: '/repo' });
-    responses.set('pi_command:get_entries', { entries: [{ id: 'user', parentId: null, type: 'message', message: { role: 'user', content: 'change', timestamp: 1 } }, { id: 'answer', parentId: 'user', type: 'message', message: { role: 'assistant', content: 'done', timestamp: 2 } }], leafId: 'answer' });
     const client = pool.createEphemeralFork({ cwd: '/repo' }, '/source'); const id = await connect(client);
-    await send(id, { type: 'agent_start' }); await send(id, { type: 'agent_end' }); await settled();
-    assert.deepEqual(pool.gitDiffs(client), { previous: patch, answer: { patch, repositoryRoot: '/repo', toolPaths: [] } });
+    responses.set('pi_command:get_state', { sessionId: 'fork', sessionFile: '/fork' });
+    await client.command({ type: 'get_state' });
+    const snapshot = { patch, repositoryRoot: '/repo' };
+    await send(id, { type: 'turn_diff', hostId: 'remote', sessionPath: '/fork', messageId: 'wrong-host', snapshot });
+    await send(id, { type: 'turn_diff', hostId: 'local', sessionPath: '/other', messageId: 'wrong-path', snapshot });
+    await send(id, { type: 'turn_diff', hostId: 'local', sessionPath: '/fork', messageId: 'answer', snapshot });
+    await settled();
+    assert.deepEqual(pool.gitDiffs(client), { previous: patch, answer: snapshot });
+    assert.deepEqual(await pool.captureMemoryDiffs(client), { previous: patch, answer: snapshot });
     assert.equal(commands('save_git_diffs').length, 0);
-    await send(id, { type: 'agent_settled' }); await settled();
-    assert.equal(commands('load_git_diff').length, 1);
-    await send(id, { type: 'agent_start' }); await send(id, { type: 'disconnected' }); await settled();
-    assert.equal(commands('discard_git_tree')[0].args.snapshot, 'tree');
+    assert.equal(commands('capture_git_tree').length, 0);
   });
 
-  test('ephemeral capture releases snapshots when state is missing or history retrieval fails', async () => {
-    responses.set('capture_git_tree', 'tree');
-    responses.set('pi_command:get_entries', { entries: [], leafId: null });
-    responses.set('pi_command:get_state', {});
-    const client = pool.createEphemeralFork({ cwd: '/repo' }, ''); const id = await connect(client);
-    await send(id, { type: 'agent_start' }); await send(id, { type: 'agent_end' }); await settled();
-    assert.equal(commands('discard_git_tree').length, 1);
-    assert.deepEqual(pool.gitDiffs(client), {});
-    responses.set('pi_command:get_entries', new Error('history unavailable'));
-    await send(id, { type: 'agent_start' }); await send(id, { type: 'agent_end' }); await settled();
-    assert.equal(commands('discard_git_tree').length, 2);
-    responses.set('pi_command:get_state', new Error('state unavailable'));
-    await send(id, { type: 'message_start', message: { role: 'user', content: 'prompt' } }); await settled();
-    assert.match(errors[0], /Could not list the retained session: state unavailable/);
+  test('late ephemeral diff events cannot restore a released session', async () => {
+    const pending = Promise.withResolvers();
+    responses.set('load_git_diffs', () => pending.promise);
+    const client = pool.createEphemeralFork({ cwd: '/repo' }, '/source'); const id = await connect(client);
+    responses.set('pi_command:get_state', { sessionId: 'fork', sessionFile: '/fork' });
+    await client.command({ type: 'get_state' });
+    await send(id, { type: 'turn_diff', hostId: 'local', sessionPath: '/fork', messageId: 'answer', snapshot: { patch } });
+    await pool.release(client);
+    pending.resolve({ previous: patch }); await settled();
+    assert.equal(pool.isRetained(client), false);
+    assert.equal(commands('save_git_diffs').length, 0);
+    assert.deepEqual(pool.liveSessionSummaries(), []);
   });
 });

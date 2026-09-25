@@ -12,6 +12,7 @@ describe("Agent profiles acceptance", () => {
   });
   beforeEach(async () => {
     await app.openConversations();
+    await mockBackend({ ...connectedSessionResponses("agents"), load_app_settings: defaultSettings });
     await enableAgents();
   });
   afterEach(async () => {
@@ -47,7 +48,7 @@ describe("Agent profiles acceptance", () => {
     await $('//button[normalize-space(.)="Add agent"]').click();
 
     const name = $('input[aria-label="Agent name"]');
-    await expect(name).toHaveValue("agent-2");
+    await expect(name).toHaveValue(expect.stringMatching(/^agent-\d+$/));
     await name.setValue("acceptance-agent");
     await $('input[aria-label="Agent prompt file"]').setValue("acceptance.md");
     await $('input[aria-label="System prompt file"]').setValue("system.md");

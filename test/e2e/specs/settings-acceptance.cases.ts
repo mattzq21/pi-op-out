@@ -14,7 +14,7 @@ describe("Settings acceptance", () => {
 
   it("saves the current configuration and confirms success", async () => {
     const [provider, ...modelParts] = defaultSettings.defaultModel.split("/");
-    const model = { provider, id: modelParts.join("/"), name: "Configured model" };
+    const model = { provider, id: modelParts.join("/"), name: "Configured model", reasoning: true };
     await mockBackend({
       ...connectedSessionResponses("settings-save"),
       load_app_settings: defaultSettings, save_app_settings: { settings: { ...defaultSettings, autoRetry: !defaultSettings.autoRetry } }, start_pi: {}, stop_pi: {},
@@ -32,6 +32,7 @@ describe("Settings acceptance", () => {
       await app.saveSettingsButton.click();
 
       await expect(app.saveSettingsButton).toHaveText("Saved");
+      await updateBackendResponse("load_app_settings", { ...defaultSettings, autoRetry: !defaultSettings.autoRetry });
       await app.automaticRetryToggle.click();
       await updateBackendResponse("save_app_settings", { settings: defaultSettings });
       await app.saveSettingsButton.click();
@@ -96,12 +97,12 @@ describe("Settings acceptance", () => {
     await name.setValue("Acceptance machine");
     const card = await name.$('./ancestor::div[contains(@class, "mcp-card")]');
     const target = await card.$('input[placeholder="user@example.com"]');
-    const executable = await card.$('input[placeholder="pi"]');
+    const executable = await card.$('input[aria-label$="Piop daemon executable"]');
     await target.setValue("tester@example.com");
-    await executable.setValue("/opt/pi/bin/pi");
+    await executable.setValue("/opt/pi/bin/piop-daemon");
 
     await expect(target).toHaveValue("tester@example.com");
-    await expect(executable).toHaveValue("/opt/pi/bin/pi");
+    await expect(executable).toHaveValue("/opt/pi/bin/piop-daemon");
     await $('button[aria-label="Remove Acceptance machine"]').click();
     await expect($$("input[aria-label='Machine name']")).toBeElementsArrayOfSize(before.length);
     await app.openConversations();

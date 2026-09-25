@@ -51,7 +51,7 @@ export function TerminalView(componentProps: Props) {
     let restored = !capturedSnapshot1;
     if (capturedSnapshot1) { queuedOutputEnd.current = capturedSnapshotEnd2 ?? 0; instance.write((capturedSnapshot1)!, () => { if (terminal.current !== instance) return; lastOutputEnd.current = capturedSnapshotEnd2 ?? 0; restored = true; }); }
     if (!capturedStarted3) callbacks.current.onStart(capturedActiveId4, instance.cols, instance.rows); else callbacks.current.onResize(instance.cols, instance.rows);
-    instance.focus();
+    requestAnimationFrame(() => { if (terminal.current === instance) instance.focus(); });
     const data = instance.onData((value) => callbacks.current.onData(value)); const resize = instance.onResize(({ cols, rows }) => callbacks.current.onResize(cols, rows));
     const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(fitAndResize); observer?.observe(host.current); window.addEventListener("resize", fitAndResize);
     return () => { saveSnapshot(restored ? serializer.serialize() : capturedSnapshot1 || "", restored ? lastOutputEnd.current : capturedSnapshotEnd2 ?? 0); observer?.disconnect(); window.removeEventListener("resize", fitAndResize); data.dispose(); resize.dispose(); instance.dispose(); terminal.current = undefined; lastOutputEnd.current = 0; queuedOutputEnd.current = 0; };

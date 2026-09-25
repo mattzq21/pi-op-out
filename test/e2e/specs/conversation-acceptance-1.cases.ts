@@ -1,7 +1,7 @@
 import { $, $$, browser, expect } from "@wdio/globals";
 
 import { app } from "../pageobjects/app.page.js";
-import { mockBackend, backendCalls, resetBackend, resetApp, emitPiEvent, defaultSettings, pressShortcut, connectedSessionResponses } from './acceptance-fixture.js';
+import { mockBackend, backendCalls, updateBackendResponse, resetBackend, resetApp, emitPiEvent, defaultSettings, pressShortcut, connectedSessionResponses } from './acceptance-fixture.js';
 
 describe("Conversation acceptance", () => {
   before(async () => {
@@ -34,7 +34,7 @@ describe("Conversation acceptance", () => {
 
     await expect(app.sendMessageButton).toBeClickable();
     await app.openSettings();
-    await expect(app.settingsHeading).toHaveText("Settings");
+    await expect(app.settingsHeading).toHaveText("Local daemon settings");
 
     await app.openConversations();
     await expect(app.composer).toHaveValue(draft);
@@ -65,7 +65,7 @@ describe("Conversation acceptance", () => {
 
   it("opens settings from the keyboard", async () => {
     await browser.keys(["Control", ","]);
-    await expect(app.settingsHeading).toHaveText("Settings");
+    await expect(app.settingsHeading).toHaveText("Client settings");
     await app.openConversations();
   });
 
@@ -201,6 +201,7 @@ describe("Conversation acceptance", () => {
       await expect($('[role="alert"]')).toHaveText("Path can't be empty");
 
       await replacement.setValue("/tmp/relocated-acceptance-project");
+      await updateBackendResponse("list_sessions", [{ ...indexed, cwd: "/tmp/relocated-acceptance-project", cwdExists: true }]);
       await $('//dialog//button[normalize-space(.)="Continue"]').click();
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "relocate_session") && (await backendCalls()).some(({ command }) => command === "start_pi"));
       expect((await backendCalls()).find(({ command }) => command === "relocate_session")?.args).toEqual({ sessionPath: indexed.path, cwd: "/tmp/relocated-acceptance-project", hostId: "local" });

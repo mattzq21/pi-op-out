@@ -314,6 +314,8 @@ describe("Conversation acceptance", () => {
 
   it("renders a tool call from running through completion", async () => {
     const enableDebug = $('button[aria-label="Enable debug mode"]'); if (await enableDebug.isExisting()) await enableDebug.click();
+    await expect($('button[aria-label="Disable debug mode"]')).toBeEnabled();
+    await emitPiEvent({ type: "agent_start" });
     await emitPiEvent({ type: "tool_execution_start", toolCallId: "acceptance-tool", toolName: "acceptance_tool", args: { path: "README.md" } });
     const tool = $('//details[contains(@class,"tool-event")][.//strong[contains(.,"acceptance_tool")]]');
     await expect(tool).toHaveText(expect.stringContaining("Running…"));
@@ -321,7 +323,9 @@ describe("Conversation acceptance", () => {
     await emitPiEvent({ type: "tool_execution_update", toolCallId: "acceptance-tool", partialResult: { content: "Reading…" } });
     await emitPiEvent({ type: "tool_execution_end", toolCallId: "acceptance-tool", result: { content: "Tool finished" }, isError: false });
     await expect(tool).toHaveText(expect.stringContaining("Completed"));
+    await updateBackendResponse("pi_command:get_tool_payload", { chunk: JSON.stringify({ content: "Tool finished" }), length: 0, revision: "tool" });
     await tool.$("summary").click();
     await expect(tool.$(".tool-output pre")).toHaveText("Tool finished");
+    await emitPiEvent({ type: "agent_end" });
   });
 });

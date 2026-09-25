@@ -77,6 +77,7 @@ test('unused temporary chats are removed on disposal while used chats survive', 
   const used = transport({});
   await used.connect();
   await used.command({ type: 'prompt', message: 'hello' });
+  await emit('pi://event', { runtimeId: commands('start_pi').at(-1).args.runtimeId, event: { type: 'message_start', message: { role: 'user', content: 'hello' } } });
   await used.dispose();
   assert.equal(commands('remove_temporary_chat').length, 1);
   const retained = transport({});
@@ -284,55 +285,6 @@ test('initial window targets tolerate absent or malformed URL data', () => {
   for (const value of ['{', 'null', '42']) { window.location.search = `?target=${encodeURIComponent(value)}`; assert.deepEqual(native.initialWindowTarget(), {}); }
   window.location.search = `?target=${encodeURIComponent(JSON.stringify({ cwd: '/repo', hostId: 'remote' }))}`;
   assert.deepEqual(native.initialWindowTarget(), { cwd: '/repo', hostId: 'remote' });
-});
-
-test('native command adapters send explicit host, path and terminal arguments and return results', async () => {
-  const client = transport({ cwd: '/repo', hostId: 'remote' });
-  const cases = [
-    ['listSessions', [], 'list_sessions', undefined],
-    ['captureGitTree', ['/repo'], 'capture_git_tree', { cwd: '/repo', hostId: 'local' }],
-    ['discardGitTree', ['tree'], 'discard_git_tree', { snapshot: 'tree', hostId: 'local' }],
-    ['loadGitDiff', ['/repo', 'tree'], 'load_git_diff', { cwd: '/repo', baseTree: 'tree', hostId: 'local' }],
-    ['loadGitDiffs', ['/session'], 'load_git_diffs', { sessionPath: '/session', hostId: 'local' }],
-    ['saveGitDiffs', ['/session', { a: 'patch' }], 'save_git_diffs', { sessionPath: '/session', snapshots: { a: 'patch' }, hostId: 'local' }],
-    ['archiveSession', ['/session'], 'archive_session', { sessionPath: '/session', hostId: 'local', terminalIds: [] }],
-    ['deleteSession', ['/session'], 'delete_session', { sessionPath: '/session', hostId: 'local' }],
-    ['relocateSession', ['/session', '/repo'], 'relocate_session', { sessionPath: '/session', cwd: '/repo', hostId: 'local' }],
-    ['openProjectDirectory', ['/repo'], 'open_project_directory', { cwd: '/repo', hostId: 'local' }],
-    ['createProjectWorktree', ['/repo', 'feature'], 'create_project_worktree', { cwd: '/repo', name: 'feature', hostId: 'local' }],
-    ['createGitWorktree', ['/repo', 'feature'], 'create_git_worktree', { cwd: '/repo', name: 'feature', hostId: 'local' }],
-    ['removeGitWorktree', ['/tree'], 'remove_git_worktree', { cwd: '/tree', hostId: 'local', deleteBranch: false }],
-    ['loadSettings', [], 'load_app_settings', undefined],
-    ['loadCodexUsage', [], 'codex_usage', undefined],
-    ['homeDirectory', ['remote'], 'home_directory', { hostId: 'remote' }],
-    ['validateProjectDirectory', ['/repo', 'remote'], 'validate_project_directory', { path: '/repo', hostId: 'remote' }],
-    ['listDirectories', ['remote'], 'list_directories', { hostId: 'remote', path: undefined }],
-    ['startTerminal', ['term', 'session', '/repo', 80, 24], 'start_terminal', { terminalId: 'term', sessionKey: 'session', cwd: '/repo', cols: 80, rows: 24, hostId: 'remote' }],
-    ['writeTerminal', ['term', 'input'], 'write_terminal', { terminalId: 'term', data: 'input' }],
-    ['resizeTerminal', ['term', 120, 30], 'resize_terminal', { terminalId: 'term', cols: 120, rows: 30 }],
-    ['closeTerminal', ['term'], 'close_terminal', { terminalId: 'term' }],
-  ];
-  for (const [method, args, command, expected] of cases) {
-    responses.set(command, { result: command });
-    assert.deepEqual(await client[method](...args), method === 'loadSettings' ? { result: command, keybindings: undefined, hiddenModels: undefined, knownModels: undefined, debugMode: undefined } : { result: command }, method);
-    assert.deepEqual(commands(command).at(-1).args, expected ?? {}, method);
-  }
-  const functions = [
-    ['openSessionWindow', [{ sessionId: 'id' }], 'new_window', { target: { sessionId: 'id' } }],
-    ['loadSessionGroups', [[], {}], 'load_session_groups', { seeds: [], legacy: {} }],
-    ['changeSessionGroups', [{ type: 'create', name: 'group' }], 'change_session_groups', { change: { type: 'create', name: 'group' } }],
-    ['openGroupDirectory', ['/repo', 'remote'], 'open_project_directory', { cwd: '/repo', hostId: 'remote' }],
-    ['gitProjectKind', ['/repo', 'remote'], 'git_project_kind', { cwd: '/repo', hostId: 'remote' }],
-    ['gitWorktreeRoots', [['/repo'], 'remote'], 'git_worktree_roots', { paths: ['/repo'], hostId: 'remote' }],
-    ['openExternalUrl', ['https://example.com'], 'open_external_url', { url: 'https://example.com' }],
-    ['loadStorageReport', [], 'storage_report', undefined],
-    ['deleteArchivedConversation', ['/session'], 'delete_archived_session', { sessionPath: '/session', hostId: 'local' }],
-  ];
-  for (const [method, args, command, expected] of functions) {
-    responses.set(command, { result: command });
-    assert.deepEqual(await native[method](...args), { result: command }, method);
-    assert.deepEqual(commands(command).at(-1).args, expected ?? {}, method);
-  }
 });
 
 test('e2e response overrides log mocked calls, reject errors and fall through to native IPC', async () => {

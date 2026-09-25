@@ -28,7 +28,8 @@ fn concurrent_group_changes_persist_every_update_before_notifying() {
     assert_eq!(state.groups.len(), 12);
     assert_eq!(state.groups.iter().map(|group| group.id.clone()).collect::<HashSet<_>>().len(), 12);
     for index in 0..12 { assert!(state.groups.iter().any(|group| group.name == format!("Group {index}"))); }
-    assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 1);
+    assert!(path.with_extension("lock").is_file());
+    assert_eq!(fs::read_dir(&directory.0).unwrap().count(), 2);
 }
 
 #[test]

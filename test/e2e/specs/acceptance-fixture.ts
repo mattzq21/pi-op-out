@@ -23,19 +23,32 @@ export const isolatedUsageResponses = {
   opencode_go_usage: { error: "Usage lookup disabled in conversation fixtures" },
 };
 
-export const withSessionSnapshot = (responses: Record<string, unknown>) => {
+const withKnownModels = (responses: Record<string, unknown>) => {
   responses = { ...responses };
   const models = (responses["pi_command:get_available_models"] as { models?: Array<{ provider: string; id: string }> })?.models ?? [];
   const known = (settings: AppSettings) => ({ ...settings, knownModels: [...new Set([...(settings.knownModels ?? []), ...models.map(model => `${model.provider}/${model.id}`)])] });
   if (responses.load_app_settings && !(responses.load_app_settings as { error?: unknown }).error) responses.load_app_settings = known(responses.load_app_settings as AppSettings);
   const saved = responses.save_app_settings as { settings?: AppSettings } | undefined;
   if (saved?.settings) responses.save_app_settings = { ...saved, settings: known(saved.settings) };
+  return responses;
+};
+
+export const withSessionSnapshot = (responses: Record<string, unknown>) => {
+  responses = withKnownModels(responses);
+  if (responses.start_pi && agentEvent) responses.start_pi = { ...responses.start_pi as object, events: [agentEvent] };
   const state = responses["pi_command:get_state"];
   if (!state) return responses;
   return { ...responses, "pi_command:get_session_revision": { revision: "changed" }, "pi_command:get_snapshot": { revision: "snapshot", state, history: responses["pi_command:get_entries"] ?? { entries: [], leafId: null }, queue: { pendingMessages: [] }, liveTools: [], sequence: 0, epoch: "e2e" } };
 };
 
 export const mockBackend = async (responses: Record<string, unknown>) => {
+  const models = (responses["pi_command:get_available_models"] as { models?: Array<{ provider: string; id: string }> })?.models;
+  if (models) await browser.execute((ids) => {
+    const preferences = JSON.parse(localStorage.getItem("piop-client-settings") ?? "{}");
+    preferences.knownModels = [...new Set([...(preferences.knownModels ?? []), ...ids])];
+    preferences.hiddenModels = (preferences.hiddenModels ?? []).filter((id: string) => !ids.includes(id));
+    localStorage.setItem("piop-client-settings", JSON.stringify(preferences));
+  }, models.map(model => `${model.provider}/${model.id}`));
   await callBridge().setValue("[]");
   await responseBridge().setValue(JSON.stringify(withSessionSnapshot({ ...isolatedUsageResponses, ...responses })));
 };
@@ -47,11 +60,11 @@ export const backendCalls = async () => (JSON.parse(await callBridge().getValue(
 }));
 
 export const updateBackendResponse = async (command: string, response: unknown) => {
-  const responses = JSON.parse(await responseBridge().getValue()) as Record<string, unknown>;
+  const responses = JSON.parse(await responseBridge().getValue() || "{}") as Record<string, unknown>;
   await responseBridge().setValue(JSON.stringify(withSessionSnapshot({ ...responses, [command]: response })));
 };
 
-export const resetBackend = async () => { await callBridge().setValue("[]"); await responseBridge().setValue(JSON.stringify(isolatedUsageResponses)); };
+export const resetBackend = async () => { agentEvent = undefined; await callBridge().setValue("[]"); await responseBridge().setValue(JSON.stringify(isolatedUsageResponses)); };
 
 export const resetApp = async () => {
   try { await resetBackend(); }
@@ -105,13 +118,14 @@ export const installedAgents = (): DefinedAgentsCapability => {
   };
 };
 
-export const enableAgents = async (capability = acceptanceAgents()) => emitPiEvent({
-  type: "extension_ui_request",
-  id: "acceptance-agents",
-  method: "setStatus",
-  statusKey: "pi-define-agents",
-  statusText: `json:${encodeAgentValue(capability)}`,
-});
+let agentEvent: Record<string, unknown> | undefined;
+
+export const enableAgents = async (capability = acceptanceAgents()) => {
+  agentEvent = { type: "extension_ui_request", id: "acceptance-agents", method: "setStatus", statusKey: "pi-define-agents", statusText: `json:${encodeAgentValue(capability)}` };
+  const responses = JSON.parse(await responseBridge().getValue() || "{}");
+  if (responses.start_pi) await updateBackendResponse("start_pi", { ...responses.start_pi, events: [agentEvent] });
+  await emitPiEvent(agentEvent);
+};
 
 export const setSelectValue = (selector: string, value: string) => browser.execute((target, next) => {
   const select = document.querySelector<HTMLSelectElement>(target)!; select.value = next; select.dispatchEvent(new Event("change", { bubbles: true }));
@@ -127,7 +141,7 @@ export const connectedSessionResponses = (sessionId: string) => ({
   start_pi: { attached: false, owned: true }, stop_pi: {},
   load_git_diffs: {}, save_git_diffs: {},
   "pi_command:get_state": { model: { provider: "e2e", id: "acceptance" }, thinkingLevel: "high", isStreaming: false, sessionId, messageCount: 0, pendingMessageCount: 0 },
-  "pi_command:get_entries": { entries: [], leafId: null }, "pi_command:get_available_models": { models: [{ provider: "e2e", id: "acceptance", name: "Acceptance model" }, { provider: "e2e", id: "alternate", name: "Alternate model" }] },
+  "pi_command:get_entries": { entries: [], leafId: null }, "pi_command:get_available_models": { models: [{ provider: "e2e", id: "acceptance", name: "Acceptance model", reasoning: true }, { provider: "e2e", id: "alternate", name: "Alternate model", reasoning: true }] },
   "pi_command:get_available_thinking_levels": { levels: ["off", "high"] }, "pi_command:get_commands": { commands: [{ name: "fast", source: "extension", sourceInfo: { source: "npm:pi-openai-fast-mode-piop" } }] }, "pi_command:get_session_stats": {},
   "pi_command:prompt": {},
   "pi_command:set_auto_compaction": {}, "pi_command:set_auto_retry": {}, "pi_command:set_thinking_level": {},

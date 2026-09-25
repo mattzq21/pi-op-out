@@ -13,5 +13,5 @@ export class Terminal {
   onResize(handler) { this.resize = handler; return { dispose: () => { this.resizeDisposed = true; } }; }
   dispose() { this.disposed = true; }
 }
-export class FitAddon { fit() { if (this.error) throw this.error; this.fits = (this.fits ?? 0) + 1; } }
+export class FitAddon { fit() { if (this.error) throw this.error; } }
 export class SerializeAddon { serialize() { return `serialized:${this.terminal.writes.join('')}`; } }

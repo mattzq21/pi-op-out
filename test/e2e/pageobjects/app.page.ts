@@ -21,7 +21,7 @@ class AppPage {
   get settingsButton() { return $('button[aria-label="Settings"]'); }
   get settingsHeading() { return $("h1"); }
   get settingsSectionHeading() { return $(".settings-content h2"); }
-  get saveSettingsButton() { return $(".settings-save button"); }
+  get saveSettingsButton() { return $(".settings-save > button"); }
   get projectDialogHeading() { return $("#project-dialog-title"); }
   get extensionDialogHeading() { return $('dialog.extension-dialog:not([aria-labelledby="project-dialog-title"]) h2'); }
   get projectDirectory() { return $('.directory-palette input[role="combobox"]'); }
@@ -46,6 +46,8 @@ class AppPage {
   async openSettings() {
     await this.settingsButton.click();
     await this.settingsHeading.waitForDisplayed();
+    await $('//nav[contains(@class, "settings-nav")]//button[normalize-space(.)="This computer"]').click();
+    await this.settingsSection("General").waitForDisplayed();
   }
 
   async openConversations() {
@@ -98,8 +100,15 @@ class AppPage {
   }
 
   async openSettingsSection(label: string) {
+    if (!["Keybinds", "Models", "Hosts"].includes(label) && !(await this.settingsSection(label).isExisting())) {
+      await $('//nav[contains(@class, "settings-nav")]//button[normalize-space(.)="This computer"]').click();
+    }
     await this.settingsSection(label).click();
     await this.settingsSectionHeading.waitForDisplayed();
+    if (label === "Agents") {
+      try { await $('//button[normalize-space(.)="Add agent"]').waitForEnabled(); }
+      catch (cause) { throw new Error(`Agent settings unavailable: ${await $("body").getText()}`, { cause }); }
+    }
   }
 
   async openProjectChooser() {

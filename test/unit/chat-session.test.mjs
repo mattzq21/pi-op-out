@@ -115,8 +115,9 @@ describe('chat session hook', () => {
   test('changing conversations rejects obsolete refreshes and ignores old event handlers', async () => {
     const pending = Promise.withResolvers(); responses.set('get_snapshot', () => pending.promise);
     const old = { ...hook.current }; let operation; await act(async () => { operation = old.refresh(); });
+    const rejected = assert.rejects(operation, /Conversation changed/);
     await hook.rerender({ command: transport.command, subscribe: transport.subscribe });
-    await act(async () => { old.handleEvent(message('message_start', 'user', 'stale')); pending.resolve(snapshot()); await assert.rejects(operation, /Conversation changed/); await assert.rejects(old.refresh(), /Conversation changed/); });
+    await act(async () => { old.handleEvent(message('message_start', 'user', 'stale')); pending.resolve(snapshot()); await rejected; await assert.rejects(old.refresh(), /Conversation changed/); });
     assert.deepEqual(hook.current.messages, []);
   });
 

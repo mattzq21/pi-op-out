@@ -17,6 +17,9 @@ async function fixture(t) {
     .replace(/import \{ getAgentDir \} from "@earendil-works\/pi-coding-agent";/, 'const getAgentDir = () => "unused";')
     .replace('const url = process.env.PI_DESKTOP_BROKER_URL;', 'const url = "http://fixture";')
     .replace('const token = process.env.PI_DESKTOP_BROKER_TOKEN;', 'const token = "fixture";');
+  const askSource = (await readFile(new URL('../../src-tauri/resources/ask-user.ts', import.meta.url), 'utf8')).replace('import { Type } from "@earendil-works/pi-ai";', 'const Type = new Proxy({}, { get: () => value => value });');
+  await writeFile(join(dir, 'ask-user.mjs'), (await transform(askSource, { loader: 'ts', format: 'esm' })).code);
+  source = source.replace('./ask-user.ts', './ask-user.mjs');
   await writeFile(join(dir, 'broker.mjs'), (await transform(source, { loader: 'ts', format: 'esm' })).code);
   const module = await import(pathToFileURL(join(dir, 'broker.mjs')));
   const entries = [

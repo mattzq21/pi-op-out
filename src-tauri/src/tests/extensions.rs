@@ -339,7 +339,11 @@ fn bundled_extension_installers_refresh_private_files_at_the_expected_paths() {
             assert_eq!(fs::metadata(&target).unwrap().permissions().mode() & 0o777, 0o600);
             assert_eq!(fs::metadata(target.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700);
         }
-        assert_eq!(fs::read_dir(target.parent().unwrap()).unwrap().count(), 2);
+        let expected_files = if relative == "session-broker.ts" {
+            assert_eq!(fs::read_to_string(target.with_file_name("ask-user.ts")).unwrap(), include_str!("../../resources/ask-user.ts"));
+            3
+        } else { 2 };
+        assert_eq!(fs::read_dir(target.parent().unwrap()).unwrap().count(), expected_files);
         fs::remove_file(&target).unwrap(); fs::create_dir(&target).unwrap();
         fs::write(target.join("keep"), "original directory").unwrap();
         assert!(install().is_err());

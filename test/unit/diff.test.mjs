@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseDiff } from '../../src/lib/diff.ts';
-import { mergeDiffSnapshots, turnDiff } from '../../src/lib/turnDiff.ts';
+import { turnDiff } from '../../src/lib/turnDiff.ts';
 
 const patch = (path, before = 'const value = 1;', after = 'const value = 2;') => `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-${before}\n+${after}\n`;
-const snapshot = (text, extra = {}) => ({ id: 'snapshot', cwd: '/repo', patch: text, paths: [], warnings: [], toolCallIds: [], ...extra });
 
 test('unified diffs count lines and highlight only the changed tokens', () => {
   const [file] = parseDiff('ignored\n' + patch('a.ts'));
@@ -98,45 +97,14 @@ test('diff rendering limits oversized input, lines and line counts', () => {
   assert.match(bounded.lines.at(-1).text, /truncated/);
 });
 
-test('merged snapshots prefer Git coverage including rename sources and retain untracked changes', () => {
-  const git = { patch: patch('a') + 'diff --git a/old b/new\nrename from old\nrename to new', repositoryRoot: '/repo', toolPaths: [{ toolCallId: 'git' }] };
-  const snapshots = [snapshot(patch('a') + patch('old') + patch('untracked'), { toolPaths: [{ toolCallId: 'tool' }] })];
-  const merged = mergeDiffSnapshots(git, snapshots, '/elsewhere');
-  assert.deepEqual(parseDiff(merged.patch).map(file => file.path), ['a', 'new', 'untracked']);
-  assert.deepEqual(merged.toolPaths, [{ toolCallId: 'git' }, { toolCallId: 'tool' }]);
-  assert.equal(merged.repositoryRoot, '/repo');
-  assert.equal(mergeDiffSnapshots(null, [], '/repo'), null);
-  assert.equal(mergeDiffSnapshots('', [snapshot('ignored')], '/repo'), null);
-  assert.equal(mergeDiffSnapshots(patch('a'), [], '/repo').repositoryRoot, '/repo');
-});
-
-test('turn diffs combine subsequent changes and deduplicate warnings across snapshots', () => {
-  const messages = [{ role: 'tool', fileChanges: [snapshot(patch('a'), { warnings: ['warning'] }), snapshot(patch('./a'), { warnings: ['warning', 'other'] }), snapshot(patch('../outside'))] }];
-  const result = turnDiff(messages);
-  assert.deepEqual(result.warnings, ['warning', 'other']);
-  assert.deepEqual(result.files.map(file => file.path), ['a', '/outside']);
-  assert.equal(result.files[0].additions, 2);
-  assert.ok(result.files[0].lines.some(line => line.text === 'Subsequent changes'));
-  assert.deepEqual(turnDiff([]), { files: [], warnings: [] });
-  const git = turnDiff(messages, { patch: patch('a'), repositoryRoot: '/repo' });
-  assert.equal(git.files[0].additions, 1);
-});
-
-test('turn diffs filter failed tools and prefer captured canonical files over tool patches', () => {
-  const tool = { role: 'tool', id: 'call', toolName: 'namespace.edit', toolStatus: 'done', toolInput: { path: 'alias' }, details: { diff: '- 1 old\n+ 1 new' } };
-  assert.equal(turnDiff([tool], undefined, '/repo').files[0].path, 'alias');
-  for (const toolStatus of ['running', 'error']) assert.deepEqual(turnDiff([{ ...tool, toolStatus }]).files, []);
-  assert.deepEqual(turnDiff([{ ...tool, role: 'assistant' }]).files, []);
-  assert.deepEqual(turnDiff([{ ...tool, details: {} }]).files, []);
-  const mapping = { toolCallId: 'call', path: 'alias', absolutePath: '/repo/alias', canonicalPath: '/repo/real' };
-  const captured = snapshot(patch('real'), { toolCallIds: ['call'], paths: ['/repo/real'], toolPaths: [mapping] });
-  assert.equal(turnDiff([{ ...tool, fileChanges: [captured] }]).files.length, 1);
-  const mapped = turnDiff([tool], { patch: '', repositoryRoot: '/repo', toolPaths: [mapping] }, '/repo');
-  assert.equal(mapped.files[0].id, '/repo/real');
-  assert.equal(turnDiff([{ ...tool, toolInput: { path: './alias' } }], { patch: '', repositoryRoot: '/repo', toolPaths: [mapping] }, '/repo').files[0].id, '/repo/real');
-  const apply = { role: 'tool', toolName: 'apply_patch', toolInput: { input: '*** Add File: /repo/new\n+hello\n*** End Patch' } };
-  assert.equal(turnDiff([apply], '', '/repo/').files[0].path, 'new');
-  assert.equal(turnDiff([{ ...apply, toolInput: { patch: patch('a') } }], '', '/repo').files[0].path, 'a');
-  assert.equal(turnDiff([{ role: 'tool', details: { patch: patch('a') } }], '', '/repo').files[0].path, 'a');
-  assert.equal(turnDiff([{ ...tool, fileChanges: [captured] }], { patch: 'diff --git a/real b/renamed\nrename from real\nrename to renamed', repositoryRoot: '/repo', toolPaths: [mapping] }).files.length, 1);
+test('turn diffs render daemon snapshots and tolerate absent patches', () => {
+  for (const value of [undefined, '', { patch: '' }]) assert.deepEqual(turnDiff(value), { files: [], warnings: [] });
+  const text = patch('a') + 'diff --git a/old b/new\nrename from old\nrename to new';
+  for (const value of [text, { patch: text, repositoryRoot: '/repo' }]) {
+    const result = turnDiff(value);
+    assert.deepEqual(result.files.map(file => file.path), ['a', 'new']);
+    assert.equal(result.files[0].additions, 1);
+    assert.equal(result.files[0].deletions, 1);
+    assert.deepEqual(result.warnings, []);
+  }
 });
