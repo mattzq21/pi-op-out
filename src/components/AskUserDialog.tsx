@@ -3,6 +3,7 @@ import type { ExtensionUiRequest } from "../types";
 import { createDependencyEffect } from "../lib/solid";
 import { ArrowRight, CircleHelp, Pencil, X } from "lucide-solid";
 import { DictationControls } from "./DictationControls";
+import { anchorQuestion } from "../lib/anchorQuestion";
 
 type Question = { id: string; header: string; question: string; options: { label: string; description: string }[] };
 type Answer = { selected: number; notes: string };
@@ -25,7 +26,7 @@ function validQuestion(value: Question) {
     && value.options.every((option) => option && typeof option.label === "string" && typeof option.description === "string");
 }
 
-export function AskUserDialog(props: { request: ExtensionUiRequest; owner?: string; onRespond: (response: Record<string, unknown>) => void | Promise<void> }) {
+export function AskUserDialog(props: { request: ExtensionUiRequest; owner?: string; anchorSelector?: string; onRespond: (response: Record<string, unknown>) => void | Promise<void> }) {
   const questions = readQuestions(props.request);
   const [index, setIndex] = createSignal(0);
   const [answers, setAnswers] = createSignal<Answer[]>(questions.map(() => ({ selected: -1, notes: "" })));
@@ -38,6 +39,7 @@ export function AskUserDialog(props: { request: ExtensionUiRequest; owner?: stri
     dialog.showModal();
     return () => { dialog.close(); if (previousFocus instanceof HTMLElement) previousFocus.focus(); };
   }, () => []);
+  createDependencyEffect(() => anchorQuestion(dialog, props.anchorSelector ?? ".chat-panes > .chat-shell .composer"), () => [props.anchorSelector]);
   const answer = () => answers()[index()];
   const update = (change: Partial<Answer>) => setAnswers((current) => current.map((item, i) => i === index() ? { ...item, ...change } : item));
   const respond = async (response: Record<string, unknown>) => {

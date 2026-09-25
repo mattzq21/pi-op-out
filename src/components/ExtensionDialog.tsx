@@ -4,7 +4,7 @@ import { createDependencyEffect, createRef } from "../lib/solid";
 import type { ExtensionUiRequest } from "../types";
 import { AskUserDialog, isAskUserRequest } from "./AskUserDialog";
 
-export function ExtensionDialog(componentProps: { request: ExtensionUiRequest; owner?: string; onRespond: (response: Record<string, unknown>) => void | Promise<void> }) {
+export function ExtensionDialog(componentProps: { request: ExtensionUiRequest; owner?: string; anchorSelector?: string; onRespond: (response: Record<string, unknown>) => void | Promise<void> }) {
   return isAskUserRequest(componentProps.request) ? <AskUserDialog {...componentProps} /> : <GenericExtensionDialog {...componentProps} />;
 }
 
