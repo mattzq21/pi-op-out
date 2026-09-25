@@ -313,7 +313,7 @@ type ConversationTurnProps = { onOpenFile?: (file: FileReference) => void; messa
 function ConversationTurn(componentProps: ConversationTurnProps) {
   const changes = createMemo(() => {
     const final = [...componentProps.messages].reverse().find((message) => message.role === "assistant" && (textOf(message.content).trim() || message.stopReason === "aborted" || message.stopReason === "error"));
-    return turnDiff(componentProps.messages, final ? componentProps.gitDiffs?.[final.id] : undefined, componentProps.cwd);
+    return turnDiff(final ? componentProps.gitDiffs?.[final.id] : undefined);
   });
   const [retryError, setRetryError] = createSignal<string>();
   const [workOpen, setWorkOpen] = createSignal(false);
