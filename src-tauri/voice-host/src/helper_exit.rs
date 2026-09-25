@@ -28,14 +28,4 @@ impl HelperExitStage {
     pub fn code(self) -> i32 {
         self as i32
     }
-
-    pub fn from_code(code: i32) -> Option<Self> {
-        [
-            Self::ControlRead, Self::ControlQueue, Self::ParentGone, Self::Runtime,
-            Self::Transport, Self::OpenDevices, Self::AudioIngress, Self::AudioService,
-            Self::InspectAudio, Self::AudioControls, Self::Reply, Self::Shutdown,
-            Self::ControlSequence, Self::Playout, Self::Render, Self::Capture,
-            Self::Device, Self::Send,
-        ].into_iter().find(|stage| stage.code() == code)
-    }
 }
