@@ -99,7 +99,6 @@ export function cloneConfig(
   };
 }
 
-/** Keep the persisted toggle while replacing targets with this package's current list. */
 export function syncSupportedTargets(config: FastModeConfig): FastModeConfig {
   return {
     enabled: config.enabled,
@@ -155,13 +154,6 @@ export function normalizeTargets(
   return normalized;
 }
 
-/**
- * Convert arbitrary config input into a safe Fast Mode config.
- *
- * Invalid top-level values fall back entirely. Invalid or missing fields fall
- * back field-by-field, while an explicit empty targets array is preserved so a
- * user can opt out of every target in a scoped config.
- */
 export function normalizeConfig(
   raw: unknown,
   fallback: FastModeConfig = DEFAULT_CONFIG,

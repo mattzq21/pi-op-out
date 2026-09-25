@@ -81,8 +81,6 @@ async fn serve(host: std::sync::Arc<controller::Host>, mut packets: tokio::sync:
                     if let Some(id) = id { response["id"] = id; }
                     current.output(response);
                 });
-                // Start each handler in wire order before allowing later
-                // requests to run, preserving attach/detach and queue order.
                 if request.as_mut().now_or_never().is_none() { tasks.spawn(request); }
             }
         }

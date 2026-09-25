@@ -5,8 +5,6 @@ import { pathToFileURL } from 'node:url';
 import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
 
-// This adapter only invokes Pi's JavaScript provider SDK. Rust owns the service
-// protocol, login flows, configuration files, and all agent session processes.
 const emit = (packet) => process.stdout.write(JSON.stringify(packet) + '\n');
 const logins = new Map();
 const cancelled = new Set();
@@ -19,7 +17,7 @@ async function resolveExecutable() {
   const candidates = /[/\\]/.test(expanded) ? [resolve(expanded)] : (process.env.PATH || '').split(delimiter).map((directory) => join(directory, expanded));
   let entry;
   for (const candidate of candidates) {
-    try { entry = await realpath(candidate); break; } catch { /* Try the next PATH entry. */ }
+    try { entry = await realpath(candidate); break; } catch { }
   }
   if (!entry) throw new Error('Pi is unavailable on this host. Check its Pi executable setting.');
   return entry;
@@ -30,7 +28,7 @@ async function loadRuntime() {
   let directory = dirname(entry);
   while (directory !== dirname(directory)) {
     let metadata;
-    try { metadata = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8')); } catch { /* Not a package root. */ }
+    try { metadata = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8')); } catch { }
     if (['@earendil-works/pi-coding-agent', '@mariozechner/pi-coding-agent'].includes(metadata?.name)) {
       const sdk = await import(pathToFileURL(join(directory, 'dist/core/model-runtime.js')).href).catch(() => undefined);
       if (!sdk?.ModelRuntime?.create) break;

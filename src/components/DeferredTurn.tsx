@@ -24,8 +24,6 @@ function observeTurn(root: Element, element: Element, reveal: () => void) {
   };
 }
 
-// History stays in the session cache. Only Markdown rendering waits for
-// the viewport. Keep visited turns mounted to preserve expanded work and tools.
 export function DeferredTurn(componentProps: { children: JSXElement; scrollRoot: RefObject<HTMLDivElement | null>; eager: boolean }) {
   const element = createRef<HTMLDivElement>(null);
   const [revealed, setRevealed] = createSignal(componentProps.eager);

@@ -13,7 +13,6 @@ if (header?.type !== 'session' || !saved || !path.isAbsolute(saved.path ?? '') |
   || !/^[a-f0-9]{40,64}$/.test(saved.commit ?? '')) throw new Error('No saved worktree checkpoint is available');
 const owner = typeof header.id === 'string' ? header.id.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session' : undefined;
 if (!owner || !saved.ref.startsWith(`refs/pi-session-snapshots/chats/${owner}/`)) throw new Error('The restoration checkpoint is not owned by this archive');
-// Both paths were canonicalized before deletion; the original cwd may be an alias.
 const conversationPath = saved.conversationPath ?? header.cwd;
 if (typeof conversationPath !== 'string' || !path.isAbsolute(conversationPath)) throw new Error('Invalid archived conversation location');
 const relative = path.relative(saved.path, conversationPath);
@@ -34,7 +33,6 @@ const snapshot = response && entries.findLast((entry) => entry.type === 'custom'
 if (!snapshot || snapshot.data.unavailable || snapshot.data.ref !== saved.ref || snapshot.data.commit !== saved.commit) throw new Error('The last response checkpoint cannot be verified');
 try { fs.lstatSync(saved.path); throw new Error('The worktree path already exists; it will not be overwritten'); }
 catch (error) { if (error.code !== 'ENOENT') throw error; }
-// A fresh branch keeps the saved state exact without resetting an existing branch.
 const { randomUUID } = require('node:crypto');
 const branch = `piop-restored-${randomUUID()}`;
 git(['worktree', 'add', '-b', branch, saved.path, saved.commit]);

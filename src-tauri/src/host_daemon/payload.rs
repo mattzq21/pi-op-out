@@ -224,7 +224,6 @@ pub(super) fn assistant_delta(message: &Value, event: &Value) -> Value {
     } else {
         Vec::new()
     };
-    // A malformed worker event must not allocate an unbounded sparse array.
     if index > 1_000_000 {
         return message.clone();
     }

@@ -32,7 +32,7 @@ async function traceFiles(root: string): Promise<TraceFile[]> {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) await visit(path);
       else if (entry.isFile() && extname(entry.name).toLowerCase() === ".jsonl") {
-        try { files.push({ path, modified: (await stat(path)).mtimeMs }); } catch { /* The file may disappear while sessions are being indexed. */ }
+        try { files.push({ path, modified: (await stat(path)).mtimeMs }); } catch { }
       }
     }));
   };

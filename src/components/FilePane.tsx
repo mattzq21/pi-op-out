@@ -18,7 +18,7 @@ export function FilePane(props: { request: FilePaneRequest; hidden?: boolean; on
   const resize = (value: number) => {
     const next = Math.round(Math.min(maxWidth(), Math.max(300, value)));
     setWidth(next);
-    try { localStorage.setItem("piop.files.width", String(next)); } catch { /* Width persistence is optional. */ }
+    try { localStorage.setItem("piop.files.width", String(next)); } catch { }
   };
   let pane!: HTMLElement;
   let drag: { x: number; width: number; pointer: number } | undefined;

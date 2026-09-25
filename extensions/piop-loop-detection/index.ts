@@ -72,7 +72,6 @@ export default function loopDetection(pi: ExtensionAPI) {
       if (validConfig(config)) detector.state.config = { ...config };
     }
     detector.restore(loadCheckpoint(ctx, configuration), Date.now());
-    // Clear a retained status from another branch even when this one has no warning.
     ctx.ui.setStatus(ENTRY, undefined); publish(ctx);
   };
 

@@ -10,7 +10,7 @@ const header = JSON.parse(lines[0]);
 if (header.type !== 'session') throw new Error('Invalid session header');
 const git = (args) => execFileSync('git', ['-C', replacement, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000 }).trim();
 let root;
-try { root = fs.realpathSync(git(['rev-parse', '--show-toplevel'])); } catch { /* Relocation also supports directories without Git. */ }
+try { root = fs.realpathSync(git(['rev-parse', '--show-toplevel'])); } catch { }
 const verified = new Map();
 if (root) {
   for (let index = 1; index < lines.length; index++) {

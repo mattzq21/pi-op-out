@@ -22,7 +22,6 @@ export function fingerprint(value: unknown): string | undefined {
 }
 
 function polling(command: string) {
-  // Ambiguous shell syntax stays observable, even when quoted or escaped.
   if (/[;&|`$<>\r\n(){}\\]/.test(command)) return false;
   return /^(?:sleep|watch|wait|test)(?:\s|$)/.test(command)
     || /^tail\s+.*(?:-f|--follow)\b/.test(command)
@@ -56,11 +55,9 @@ export function observe(event: ToolCallEvent): Observation | undefined {
   const kind = toolKind(name, event.input);
   if (!kind) return;
   const input: Record<string, unknown> = { ...event.input };
-  // Yield timing does not change the operation; execution timeouts still matter.
   delete input.yield_time_ms;
   const key = fingerprint([event.toolName, input]);
   if (!key) return;
-  // Refer to the existing tool call without copying commands, queries, or secrets.
   return { key, kind, label: `${name.slice(0, 64)} call ${event.toolCallId.replace(/[^\w.-]/g, "").slice(0, 64)}` };
 }
 
@@ -77,7 +74,7 @@ function shellEnvelope(text: string) {
   try {
     const value = JSON.parse(text);
     if (typeof value?.output === "string") return { text: value.output, exit: value.exit_code, running: value.session_id != null && value.exit_code == null };
-  } catch { /* Most tools return plain text. */ }
+  } catch { }
   const exit = text.match(/(?:^|\n)Process exited with code (\d+)(?:\n|$)/)?.[1];
   const output = text.match(/(?:^|\n)(?:Final output|Output):\n([\s\S]*)$/)?.[1];
   if (exit && output !== undefined) return { text: output, exit: Number(exit), running: false };

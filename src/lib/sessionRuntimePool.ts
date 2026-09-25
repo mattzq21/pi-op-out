@@ -90,8 +90,6 @@ export class SessionRuntimePool {
   }
 
   private retainSession(transport: NativeTransport, prompt?: string, lastMessageAt?: number) {
-    // MCP setup precedes message_start. Protect the runtime synchronously so a
-    // switch cannot dispose it while get_state is still in flight.
     this.retainedTransports.add(transport);
     void transport.command<import("../types").AgentState>({ type: "get_state" }).then((state) => {
       if (!state.sessionId || !this.transports.has(transport)) return;
@@ -116,7 +114,7 @@ export class SessionRuntimePool {
         try {
           const statuses: unknown = JSON.parse(request.statusText.slice(5));
           if (Array.isArray(statuses) && statuses.some((value) => value?.status === "starting")) this.retainSession(transport);
-        } catch { /* Ignore malformed extension status payloads. */ }
+        } catch { }
       }
     }
   }

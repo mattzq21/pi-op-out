@@ -1,7 +1,3 @@
-//! Pumps bounded device queues through capture processing and the outgoing audio track.
-//! Devices retain real stream ownership; all queued and partial capture obey mute generations.
-//! Muted sessions send generated Opus silence independently of device capture.
-//! Retain at most one encoded batch and return between packets so controls can take priority.
 
 use std::collections::VecDeque;
 use std::io;
@@ -25,7 +21,6 @@ impl CaptureWorker {
         &mut self,
         controls: crate::protocol::AudioControls,
     ) -> io::Result<()> {
-        // Retire the old sink before rebuilding microphone processing.
         self.buffers
             .set_speaker_disabled(controls.speaker_suppressed)?;
         let previous = self.buffers.microphone.load(Ordering::Acquire);
@@ -130,7 +125,6 @@ impl CaptureWorker {
         audio: &mut crate::audio_track::AudioTrack,
         now: impl Fn() -> Instant,
     ) -> io::Result<usize> {
-        // Some backends start callbacks during stream construction, before open returns.
         self.buffers.serviced.store(true, Ordering::Release);
         let generation = self.buffers.microphone.load(Ordering::Acquire);
         self.reset_dropped()?;

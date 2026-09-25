@@ -9,7 +9,7 @@ function preferences(settings: AppSettings): ClientSettings {
 
 function storedPreferences(): Partial<ClientSettings> {
   let stored: Partial<ClientSettings> = {};
-  try { stored = JSON.parse(localStorage.getItem(storageKey) ?? "null") ?? {}; } catch { /* Keep the existing preferences when storage is unavailable. */ }
+  try { stored = JSON.parse(localStorage.getItem(storageKey) ?? "null") ?? {}; } catch { }
   return stored;
 }
 

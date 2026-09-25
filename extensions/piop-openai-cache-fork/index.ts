@@ -131,7 +131,6 @@ export default function openAICacheFork(pi: ExtensionAPI): void {
       try {
         pi.appendEntry(CACHE_FORK_ENTRY, { id: cacheLineageId });
       } catch {
-        // The in-memory lineage still fixes this process even if the marker cannot be persisted.
       }
     }
     return cacheLineageId;

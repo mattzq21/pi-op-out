@@ -1,4 +1,3 @@
-/// <reference types="vite/client" />
 import { forgetSession, retainSessionResource } from "./sessionMemory";
 import { preserveDaemonPreferences, saveClientSettings, withClientSettings } from "./clientSettings";
 import { keybindingsError } from "./keybindings";
@@ -182,8 +181,6 @@ export class NativeTransport {
     const localFastPackages = ["piop-openai-fast-mode", "pi-openai-fast-mode-piop"];
     const fastCommands = commands.filter((item) => item.source === "extension" && /^fast(?::\d+)?$/.test(item.name) && [...localFastPackages, "pi-openai-fast-mode"].some((name) => fromPackage(item, name)));
     this.fastCommands = new Set(fastCommands.map((item) => item.name));
-    // The local fork publishes its live state directly. Only the original
-    // TUI-only package needs the compatibility query after each command.
     this.fastStatusCommand = fastCommands.some((item) => localFastPackages.some((name) => fromPackage(item, name))) ? undefined : commands.find((item) => item.source === "extension" && item.name === "pi-desktop-fast-status")?.name;
     await this.refreshFastStatus(false);
   }
@@ -205,7 +202,6 @@ export class NativeTransport {
       try {
         listener(event);
       } catch (reason) {
-        // One poison event must not starve the remaining listeners.
         queueMicrotask(() => { throw reason; });
       }
     }
@@ -260,7 +256,6 @@ export class NativeTransport {
     });
     if (version !== this.connectionVersion) { unlisten(); stderrUnlisten(); return; }
     this.unlisten = unlisten; this.stderrUnlisten = stderrUnlisten;
-    // Pi can resume by ID before a fresh session has a file on disk.
     const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call<{ attached: boolean; owned?: boolean; daemonId?: string }>("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: !this.readOnly && this.sessionId && this.sessionId !== ORCHESTRATOR_SESSION_ID ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }));
     if (version !== this.connectionVersion || !attached) throw new Error("The conversation disconnected while starting. Reconnect to try again.");
     this.daemonId = attached.daemonId;
@@ -289,7 +284,6 @@ export class NativeTransport {
   private async refreshFastStatus(reload: boolean) {
     if (!this.fastStatusCommand) return;
     try {
-      // Internal queries must not count as prompts that keep a temporary chat.
       await call("pi_command", { runtimeId: this.runtimeId, command: { type: "prompt", message: `/${this.fastStatusCommand}${reload ? " refresh" : ""}` } });
     } catch {
       this.emit({ type: "extension_ui_request", method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: "Fast mode status unavailable" });
@@ -390,7 +384,7 @@ export class NativeTransport {
       try { if (this.hostId !== "local" && !settings.hosts.some((host) => host.id === this.hostId)) { this.hostId = "local"; this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined; this.temporaryChat = false; this.temporaryChatUsed = false; } await this.disconnect(); await this.connect(); }
       catch (reason) {
         await call<void>("save_app_settings", { settings: previous }); this.cwd = connection.cwd; this.sessionPath = connection.sessionPath; this.sessionId = connection.sessionId; this.hostId = connection.hostId;
-        try { await this.disconnect(); await this.connect(); } catch { /* Preserve the original failure; the persisted settings are already restored. */ }
+        try { await this.disconnect(); await this.connect(); } catch { }
         throw reason;
       }
       return change;

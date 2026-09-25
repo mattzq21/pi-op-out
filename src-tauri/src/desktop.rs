@@ -183,8 +183,6 @@ pub fn run() {
         let mut context = context;
         let window = context.config_mut().app.windows.first_mut().expect("Missing main window configuration");
         let start_window = window.visible.then(|| (window.label.clone(), window.focus));
-        // Configure GTK's focus-on-map policy before the first show. Keeping the window
-        // hidden also lets Tao apply decorations before GNOME chooses its geometry.
         window.visible = false;
         if let Ok(value) = std::env::var("PI_WINDOW_BOUNDS") {
             #[derive(Deserialize)]

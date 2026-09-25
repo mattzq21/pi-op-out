@@ -10,7 +10,7 @@ const conversationClientId = (() => {
   const id = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}-${Math.random()}`;
   const fresh = `${isMobile ? "mobile" : "desktop"}:${id}`;
   const key = `piop-conversation-client:${isMobile ? "mobile" : "desktop"}`;
-  try { const saved = localStorage.getItem(key); if (saved) return saved; localStorage.setItem(key, fresh); } catch { /* Keep a stable identity for this client lifetime. */ }
+  try { const saved = localStorage.getItem(key); if (saved) return saved; localStorage.setItem(key, fresh); } catch { }
   return fresh;
 })();
 export const listen = <T>(event: string, handler: EventCallback<T>): Promise<UnlistenFn> => isMobile ? remoteClient.listen(event, handler) : nativeListen(event, handler, { target: { kind: "WebviewWindow", label: getCurrentWebviewWindow().label } });

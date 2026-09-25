@@ -84,7 +84,6 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
         const next = validate({ ...previous, ...request.settings });
         processState[key] = next;
         if (request.reloadAgents || skillsChanged(previous, next)) {
-          // Pi exposes skill registry updates through resource reload, without restarting the process.
           await ctx.reload();
         } else {
           applyTools();

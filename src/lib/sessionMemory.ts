@@ -21,8 +21,6 @@ const fifo = new Map<SessionMemory, number>();
 const measured = new WeakMap<object, number>();
 let toolPayloadTransfers: Promise<void> = Promise.resolve();
 
-// Conservative retained-data accounting; strings are charged as UTF-16 and
-// objects include allocation overhead. Shared immutable values may be overcounted.
 function bytes(value: unknown): number {
   if (typeof value === "string") return 24 + value.length * 2;
   if (!value || typeof value !== "object") return 16;
@@ -136,7 +134,7 @@ export class SessionMemory {
 
   private commit() {
     if (this.batching) return;
-    fifo.set(this, this.trim()); // Updating an existing entry preserves FIFO order.
+    fifo.set(this, this.trim());
     enforceCacheLimit();
     this.notify();
   }
@@ -181,7 +179,6 @@ export class SessionMemory {
     for (;;) {
       const page = await this.transport.command<{ chunk: string; length: number; revision: string }>({ type: "get_tool_payload", toolCallId: id, offset: serialized.length, revision });
       if (generation !== this.generation) return;
-      // Leave room for both the transfer string and its decoded representation.
       if (page.length * 6 > SESSION_LIMIT) throw new Error("This tool payload exceeds the client memory limit.");
       this.reserved = page.length * 6;
       this.commit();

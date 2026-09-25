@@ -9,8 +9,6 @@ const windowSlots = [topWindowBounds, bottomWindowBounds, tertiaryWindowBounds, 
 export function selectWindowBounds() {
   try {
     const windows = execFileSync("xwininfo", ["-root", "-tree"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-    // Both sibling apps share these slots. Match titles so custom-named test
-    // binaries still count even when their WM_CLASS differs.
     const siblingWindows = windows.split("\n")
       .filter((line) => /"(?:piop|codop)(?: dev)?": \(/i.test(line))
       .map((line) => line.match(/(\d+)x(\d+)[+-]-?\d+[+-]-?\d+\s+([+-]-?\d+)([+-]-?\d+)\s*$/))

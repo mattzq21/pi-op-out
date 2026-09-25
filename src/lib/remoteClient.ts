@@ -9,7 +9,6 @@ export function validateHost(connection: HostConnection): string {
   return url.href;
 }
 
-/** A dropped connection rejects calls. Mutations are deliberately never retried. */
 export class RemoteClient {
   private socket?: WebSocket;
   private sequence = 0;
@@ -58,13 +57,9 @@ export class RemoteClient {
       socket.onerror = () => { if (!ready) settleReject(new Error("Could not connect. Check the address, trusted TLS certificate, and host availability.")); };
       socket.onclose = () => {
         clearTimeout(timer);
-        // Preserve the first specific error: a rejected promise must not be
-        // overwritten by the generic disconnect notice.
         if (!ready) settleReject(new Error("Host rejected the connection. Check Tailscale Serve and sign both devices into the same Tailscale account."));
         if (this.socket !== socket) return;
         this.failPending();
-        // Only report a generic disconnect for established connections; the
-        // specific connect error above already covers the never-connected case.
         if (ready) this.onDisconnect?.("Connection lost. Reconnect to reload saved conversations. A command sent just before disconnection may have completed on the host.");
       };
     });

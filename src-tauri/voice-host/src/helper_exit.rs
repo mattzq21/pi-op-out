@@ -1,5 +1,3 @@
-//! Fixed helper exit phases for safe diagnostics when its framed output closes.
-//! The same-build handshake keeps these codes aligned between parent and helper.
 
 #[derive(Clone, Copy, Debug)]
 #[repr(i32)]

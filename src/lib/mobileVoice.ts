@@ -41,7 +41,6 @@ async function start(args: Record<string, unknown>) {
     speaker = new Audio(); speaker.autoplay = true;
     connection.ontrack = ({ streams }) => { if (speaker) { speaker.srcObject = streams[0]; void speaker.play().catch(() => undefined); } };
     microphone.getTracks().forEach((track) => connection.addTrack(track, microphone!));
-    // Keep the WebRTC data channel in the offer, matching the native voice transport.
     connection.createDataChannel("oai-events");
     unlisten = await remoteClient.listen<{ callId: string; event: { type: string } }>("pi://voice", ({ payload }) => {
       if (payload.callId === args.callId && payload.event.type === "ended") closeMobileVoice();

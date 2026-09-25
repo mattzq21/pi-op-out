@@ -210,27 +210,27 @@ export function SessionPanel(props: Props) {
     const releasedSessions = orderedSessions(projectKey, capturedPanel.sessions.filter((session) => visualProjectKey(session) === projectKey), capturedSessionOrders);
     const releasedTokens = releasedSessions.map((session) => sessionLayoutToken(sessionKey(session)));
     await storedGroups.change({ type: "remove", id: projectKey });
-    setSessionOrders((current) => { const next = { ...current }; delete next[projectKey]; try { localStorage.setItem(SESSION_ORDERS_KEY, JSON.stringify(next)); } catch { /* Persistence is best-effort. */ } return next; });
-    setCollapsedProjects((current) => { const next = new Set(current); next.delete(projectKey); try { localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...next])); } catch { /* Persistence is best-effort. */ } return next; });
+    setSessionOrders((current) => { const next = { ...current }; delete next[projectKey]; try { localStorage.setItem(SESSION_ORDERS_KEY, JSON.stringify(next)); } catch { } return next; });
+    setCollapsedProjects((current) => { const next = new Set(current); next.delete(projectKey); try { localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...next])); } catch { } return next; });
     setSidebarOrder((current) => {
       const token = groupLayoutToken(projectKey);
       const next = current.filter((entry) => !releasedTokens.includes(entry));
       const index = next.indexOf(token);
       next.splice(index < 0 ? next.length : index, index < 0 ? 0 : 1, ...releasedTokens);
-      try { localStorage.setItem(SIDEBAR_ORDER_KEY, JSON.stringify(next)); } catch { /* Persistence is best-effort. */ }
+      try { localStorage.setItem(SIDEBAR_ORDER_KEY, JSON.stringify(next)); } catch { }
       return next;
     });
   };
   const toggleProject = (projectKey: string) => setCollapsedProjects((current) => {
     const next = new Set(current); if (next.has(projectKey)) next.delete(projectKey); else next.add(projectKey);
-    try { localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...next])); } catch { /* Persistence is best-effort. */ }
+    try { localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...next])); } catch { }
     return next;
   });
   const expandProject = (projectKey: string) => {
     setCollapsedProjects((current) => {
       if (!current.has(projectKey)) return current;
       const next = new Set(current); next.delete(projectKey);
-      try { localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...next])); } catch { /* Persistence is best-effort. */ }
+      try { localStorage.setItem(COLLAPSED_PROJECTS_KEY, JSON.stringify([...next])); } catch { }
       return next;
     });
   };
@@ -242,7 +242,7 @@ export function SessionPanel(props: Props) {
     nextOrder.splice(targetIndex < 0 ? nextOrder.length : targetIndex + (edge === "after" ? 1 : 0), 0, drag.sessionKey);
     setSessionOrders((current) => {
       const next = { ...current, [destinationKey]: nextOrder };
-      try { localStorage.setItem(SESSION_ORDERS_KEY, JSON.stringify(next)); } catch { /* Persistence is best-effort. */ }
+      try { localStorage.setItem(SESSION_ORDERS_KEY, JSON.stringify(next)); } catch { }
       return next;
     });
     return storedGroups.change({ type: "assign", key: drag.sessionKey, group: destinationKey === RECENT_KEY ? null : destinationKey }).catch(() => undefined);
@@ -254,7 +254,7 @@ export function SessionPanel(props: Props) {
     const targetIndex = beforeToken === null ? -1 : next.indexOf(beforeToken);
     next.splice(targetIndex < 0 ? next.length : targetIndex, 0, token);
     setSidebarOrder(next);
-    try { localStorage.setItem(SIDEBAR_ORDER_KEY, JSON.stringify(next)); } catch { /* Persistence is best-effort. */ }
+    try { localStorage.setItem(SIDEBAR_ORDER_KEY, JSON.stringify(next)); } catch { }
   };
   const projectDetails = createMemo(() => {
     const details = new Map<string, SessionSummary>();
@@ -290,13 +290,12 @@ export function SessionPanel(props: Props) {
       const added = capturedRecentKeys.split("\n").filter((key) => key && !known.has(key));
       if (!added.length) return current;
       const next = { ...current, [RECENT_KEY]: [...added, ...saved] };
-      try { localStorage.setItem(SESSION_ORDERS_KEY, JSON.stringify(next)); } catch { /* Persistence is best-effort. */ }
+      try { localStorage.setItem(SESSION_ORDERS_KEY, JSON.stringify(next)); } catch { }
       return next;
     });
   }, () => [recentKeys(), normalizedQuery()]);
   const physicalGroups = createMemo(() => (savedGroups().filter((group) => group.cwd && !isTemporaryChatCwd(group.cwd)).map((group) => [group.id, group.name, group.hostId ?? "local", group.hostName ?? undefined, orderedSessions(group.id, groupedSessions()[group.id] ?? [], sessionOrders())] as const)));
   const customVisualGroups = createMemo(() => (customGroups().map((group) => [group.id, group.name, "", undefined, orderedSessions(group.id, groupedSessions()[group.id] ?? [], sessionOrders())] as const)));
-  // Remember projects even while search or session placement hides them.
   const projectOrderKey = createMemo(() => (JSON.stringify(savedGroups().map((group) => groupLayoutToken(group.id)))));
   createDependencyEffect(() => { const capturedProjectOrderKey = projectOrderKey();
     const projectTokens: string[] = JSON.parse(capturedProjectOrderKey);
@@ -304,7 +303,7 @@ export function SessionPanel(props: Props) {
       const added = projectTokens.filter((token) => !current.includes(token));
       if (!added.length) return current;
       const next = [...added, ...current];
-      try { localStorage.setItem(SIDEBAR_ORDER_KEY, JSON.stringify(next)); } catch { /* Persistence is best-effort. */ }
+      try { localStorage.setItem(SIDEBAR_ORDER_KEY, JSON.stringify(next)); } catch { }
       return next;
     });
   }, () => [projectOrderKey()]);

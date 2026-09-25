@@ -1,4 +1,3 @@
-//! Bounded same-build controls and redacted signaling; audio never crosses this pipe.
 
 use std::io;
 use std::io::Read;
@@ -15,7 +14,6 @@ pub struct AudioControls {
     pub speaker_suppressed: bool,
 }
 
-/// Peaks contain levels only, never retained audio or backend messages.
 #[derive(Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AudioState {
@@ -23,7 +21,6 @@ pub struct AudioState {
     pub speaker_peak: u16,
 }
 
-/// SDP contains ICE credentials. Bound it at construction and never expose it in diagnostics.
 #[derive(Deserialize, PartialEq, Serialize)]
 #[serde(try_from = "String")]
 pub struct SessionDescription(String);
@@ -114,7 +111,7 @@ pub fn read_message(reader: &mut impl Read) -> io::Result<Option<Message>> {
     decode_frame(&header)?;
     let length = u32::from_be_bytes(header) as usize;
     let mut frame = header.to_vec();
-    frame.resize(length + 4, /*value*/ 0);
+    frame.resize(length + 4,           0);
     reader.read_exact(&mut frame[4..])?;
     decode_frame(&frame)
 }

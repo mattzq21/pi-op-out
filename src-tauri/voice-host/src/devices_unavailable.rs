@@ -1,4 +1,3 @@
-//! Keep non-native helper targets buildable without linking a host audio backend.
 
 use std::io;
 

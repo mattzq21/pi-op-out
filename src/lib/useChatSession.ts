@@ -47,8 +47,6 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   const liveRevision = createRef(0); const activeAssistantId = createRef<string | undefined>(undefined); const activeMessageIds = createRef(new Map<string, string>()); const liveMessageSequence = createRef(0); const pendingUpdates = createRef<MessageUpdate[]>([]); const frame = createRef<number | undefined>(undefined);
   const nextLiveMessageId = (role: unknown) => `live-${String(role).slice(0, 32)}-${Date.now()}-${++liveMessageSequence.current}`;
   const trackLiveId = (roleKey: string, liveId: string) => {
-    // Role strings are backend-controlled; cap the registry so distinct
-    // unended roles cannot grow it without bound (F-052).
     if (activeMessageIds.current.size >= 32 && !activeMessageIds.current.has(roleKey)) {
       const oldest = activeMessageIds.current.keys().next();
       if (!oldest.done) activeMessageIds.current.delete(oldest.value);
@@ -147,7 +145,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     let viewing = capturedTransport.ownsConversation?.() === false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
-      try { await refresh(); } catch { /* Reconnect or the next refresh will retry. */ }
+      try { await refresh(); } catch { }
       if (!stopped && viewing) timer = setTimeout(() => void poll(), 2000);
     };
     const unsubscribe = capturedTransport.subscribe((event) => {
@@ -173,7 +171,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
             liveRevision.current += 1;
             session.setMessages((current) => current.map((message) => message.role === "user" && (message.promptTimestamp ?? message.timestamp) === context.userTimestamp && !message.promptContext ? { ...message, promptContext: context } : message));
           }
-        } catch { /* Ignore malformed extension status data. */ }
+        } catch { }
       }
     };
     const handleEntryAppended = () => {

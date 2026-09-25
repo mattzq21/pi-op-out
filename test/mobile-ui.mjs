@@ -11,7 +11,7 @@ const server = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--mode
 let browser;
 try {
  for (let attempt = 0; attempt < 60; attempt++) {
-  try { if ((await fetch('http://127.0.0.1:1424')).ok) break; } catch { /* Wait for Vite startup. */ }
+  try { if ((await fetch('http://127.0.0.1:1424')).ok) break; } catch { }
   await new Promise(resolve => setTimeout(resolve, 250));
  }
  browser = await chromium.launch({ executablePath: chromePath, headless: true, args: ['--no-sandbox'] });

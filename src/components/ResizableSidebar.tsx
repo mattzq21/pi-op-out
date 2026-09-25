@@ -11,7 +11,7 @@ export function ResizableSidebar(componentProps: { compact: boolean; children: J
     try {
       const saved = Number(localStorage.getItem(WIDTH_KEY));
       if (Number.isFinite(saved) && saved >= MIN_WIDTH) return saved;
-    } catch { /* Persistence is best-effort. */ }
+    } catch { }
     return window.innerWidth <= 1050 ? 232 : 260;
   })());
   const [dragging, setDragging] = createSignal(false);
@@ -26,7 +26,7 @@ export function ResizableSidebar(componentProps: { compact: boolean; children: J
   }, () => []);
 
   createDependencyEffect(() => { const capturedWidth = width();
-    try { localStorage.setItem(WIDTH_KEY, String(capturedWidth)); } catch { /* Persistence is best-effort. */ }
+    try { localStorage.setItem(WIDTH_KEY, String(capturedWidth)); } catch { }
   }, () => [width()]);
 
   createDependencyEffect(() => { const capturedDragging = dragging(); const capturedCompact0 = componentProps.compact;

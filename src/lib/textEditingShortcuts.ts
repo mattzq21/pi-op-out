@@ -13,7 +13,6 @@ function historyCommand(event: KeyboardEvent) {
   return key === "y" && !event.shiftKey ? "redo" : undefined;
 }
 
-/** Webviews do not consistently bind the platform's undo/redo shortcuts. */
 export function installTextEditingShortcuts() {
   const handleKeyDown = (event: KeyboardEvent) => {
     if (event.defaultPrevented || event.isComposing || event.altKey || !(event.ctrlKey || event.metaKey)) return;
@@ -23,9 +22,6 @@ export function installTextEditingShortcuts() {
     if (!isEditableField(document.activeElement)) return;
     if (document.activeElement?.closest("[data-custom-history]")) return;
 
-    // Use the browser's history so typing, paste, selection and IME edits retain
-    // their native undo boundaries and emit input events for controlled fields.
-    // Consume even an empty history before configurable app shortcuts see it.
     event.preventDefault();
     event.stopPropagation();
     document.execCommand(command);

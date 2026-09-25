@@ -3,7 +3,6 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{mpsc as async_mpsc, Mutex as AsyncMutex};
 use tokio_tungstenite::{connect_async_with_config, tungstenite::{Message, protocol::WebSocketConfig}};
 
-// Conversation snapshots are sent as one frame and can include long tool histories.
 const MAX_DAEMON_RESPONSE: usize = 128 * 1024 * 1024;
 
 #[derive(Default)]
@@ -244,8 +243,6 @@ fn spawn_local_daemon(executable: PathBuf) -> Result<PathBuf, String> {
     { use std::os::unix::process::CommandExt; command.process_group(0); }
     let mut child = command.spawn().map_err(|error| format!("Could not start Piop daemon: {error}"))?;
     thread::spawn(move || {
-        // Keep the pipe open for the client's lifetime, even if all windows
-        // temporarily detach. OS closure also covers crashes and dev reloads.
         let lifetime = child.stdin.take();
         let _ = child.wait();
         drop(lifetime);
@@ -259,8 +256,6 @@ fn ensure_development_daemon() -> Result<(), String> {
     BUILD.get_or_init(|| {
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
         if !manifest.join("Cargo.toml").is_file() { return Ok(()); }
-        // Tauri's beforeDevCommand runs once, while Cargo reloads the desktop
-        // after source changes. Build its companion again before connecting.
         let output = Command::new("cargo")
             .args(["build", "--locked", "--no-default-features", "--features", "daemon", "--bin", "piop-daemon", "--target-dir"])
             .arg(manifest.join("target")).current_dir(manifest).output()

@@ -216,7 +216,6 @@ async fn run_media(app: &AppHandle, id: &str, runtime_id: &str, daemon: Arc<Host
     let result = async {
         let offer = tokio::select! { biased; _ = closing.changed() => return Ok(()), offer = helper.offer() => offer? };
         if *closing.borrow() { return Ok(()); }
-        // Await the host response so the final stop cannot overtake start.
         let answer = request(daemon, json!({"type":"voice","action":"start","callId":id,"runtimeId":runtime_id,"offer":offer})).await?;
         if *closing.borrow() { return Ok(()); }
         helper.connect(answer.as_str().ok_or("Missing voice connection answer")?.to_owned()).await?;

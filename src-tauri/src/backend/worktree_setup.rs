@@ -161,7 +161,6 @@ fn run_setup_process(command: &mut Command, cancelled: &AtomicBool, context: &st
     thread::spawn(move || {
         let prefix = format!("{completion_marker} ");
         let mut line = Vec::new();
-        // Login profiles may print output; retain only short protocol lines.
         for byte in BufReader::new(stdout).bytes() {
             let Ok(byte) = byte else { break };
             if byte == b'\n' {
@@ -192,7 +191,6 @@ fn run_setup_process(command: &mut Command, cancelled: &AtomicBool, context: &st
     drop(input);
     if let Some(reason) = stop_reason { return Err(reason); }
     if cancelled.load(Ordering::SeqCst) { return Err(cancellation_message.into()); }
-    // Collect final diagnostics without waiting indefinitely on inherited descriptors.
     let _ = done_rx.recv_timeout(Duration::from_millis(100));
     let stderr = retained.lock().map_err(|_| "Setup output lock was poisoned")?.clone();
     Ok((status, stderr))
@@ -228,8 +226,6 @@ fn wait_setup_process(child: &mut Child, input: &mut Option<ChildStdin>, complet
             return Err(stop_reason.unwrap_or_else(|| wait.cancellation_message.to_string()));
         }
         if let Ok(status) = completed_rx.try_recv() {
-            // The wrapper has finished and stopped its cancellation watcher. Only
-            // close the transport without signalling the script's process group.
             let _ = child.kill();
             let _ = child.wait();
             break status;

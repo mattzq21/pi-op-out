@@ -13,7 +13,7 @@ for (const candidate of candidates) {
   if (path.dirname(file) !== realRoot || !file.endsWith(".jsonl")) continue;
   let entries;
   try { entries = fs.readFileSync(file, "utf8").split("\n").filter(line => line.trim()).map(JSON.parse); }
-  catch { continue; } // Incomplete or unrecognised data must be retained.
+  catch { continue; }
   const header = entries[0];
   if (header?.id === '00000000-0000-4000-8000-000000000001') continue;
   if (header?.type !== "session" || !header.id || (target.id && header.id !== target.id)) continue;

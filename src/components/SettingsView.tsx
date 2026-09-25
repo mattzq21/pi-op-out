@@ -90,8 +90,6 @@ export function SettingsView(props: SettingsViewProps) {
   createDependencyEffect(() => {
     const capturedSettingsProps = { ...settingsProps() }; const capturedSaving = saving();
  capturedSettingsProps.onSavingChange?.(capturedSaving); return () => capturedSettingsProps.onSavingChange?.(false); }, () => [saving(), settingsProps().onSavingChange]);
-  // Saving reloads extensions. Keep the last discovered capabilities until the
-  // save finishes, then reconcile actual removals against the fresh discovery.
   const capabilitiesBeforeSave = createRef({ configuration: settingsProps().incomingConfiguration });
   createComputed(() => { if (!saving()) capabilitiesBeforeSave.current = { configuration: settingsProps().incomingConfiguration }; });
   const agentConfig = createMemo(() => (saving() ? capabilitiesBeforeSave.current.configuration : settingsProps().incomingConfiguration));
@@ -156,8 +154,6 @@ export function SettingsView(props: SettingsViewProps) {
  if (capturedDirty) setSaved(false); }, () => [dirty()]);
   createDependencyEffect(() => { setSaveError(undefined); }, () => [currentSnapshot()]);
   createDependencyEffect(() => { const capturedAgentConfigSnapshot = agentConfigSnapshot(); const capturedAgentConfigDirty = agentConfigDirty(); const capturedAgentConfig = agentConfig();
-    // A newly discovered configuration is not a user edit. Load it without
-    // replacing edits to general settings or an existing agentConfig draft.
     if (saving() || incomingAgentConfigRef.current === capturedAgentConfigSnapshot) return;
     if (capturedAgentConfigDirty) {
       if (agentEditsSnapshot(currentAgentConfig()) !== capturedAgentConfigSnapshot) setAgentsConflict(true);

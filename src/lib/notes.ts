@@ -10,7 +10,7 @@ export function notePreference(key: string, fallback = "") {
 }
 
 export function rememberNotePreference(key: string, value: string) {
-  try { localStorage.setItem(PREFIX + key, value); } catch { /* File storage remains available. */ }
+  try { localStorage.setItem(PREFIX + key, value); } catch { }
 }
 
 const draftKey = (root: string, path: string) => PREFIX + JSON.stringify([root, path]);
@@ -18,13 +18,13 @@ function readDraft(root: string, path: string): NoteDocument | undefined {
   try {
     const value = JSON.parse(localStorage.getItem(draftKey(root, path)) ?? "null") as NoteDocument | null;
     if (value && typeof value.content === "string" && typeof value.version === "string") return value;
-  } catch { /* Ignore an invalid recovery draft. */ }
+  } catch { }
 }
 function clearDraft(root: string, path: string) {
-  try { localStorage.removeItem(draftKey(root, path)); } catch { /* Persistence is best-effort. */ }
+  try { localStorage.removeItem(draftKey(root, path)); } catch { }
 }
 function cacheDraft(root: string, current: NoteDocument, content: string) {
-  try { localStorage.setItem(draftKey(root, current.path), JSON.stringify({ ...current, content })); } catch { /* The unload guard protects unsaved edits. */ }
+  try { localStorage.setItem(draftKey(root, current.path), JSON.stringify({ ...current, content })); } catch { }
 }
 export const noteName = (path: string) => path.replace(/\.md$/i, "");
 export const markdownPath = (path: string) => /\.md$/i.test(path.trim()) ? path.trim() : `${path.trim()}.md`;

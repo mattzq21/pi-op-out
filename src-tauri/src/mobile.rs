@@ -1,4 +1,3 @@
-//! Opt-in authenticated companion endpoint. Terminate TLS at a trusted reverse proxy.
 use super::*;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, Semaphore};
@@ -45,7 +44,6 @@ pub(super) fn start(app: AppHandle) -> Result<(), String> {
 
 fn authenticated(value: &Value, expected: &str) -> bool {
     let Some(token) = value.get("token").and_then(Value::as_str) else { return false; };
-    // Compare the entire secret without an early return on a differing byte.
     let mut difference = token.len() ^ expected.len();
     for (index, byte) in expected.bytes().enumerate() { difference |= usize::from(byte ^ token.as_bytes().get(index).copied().unwrap_or(0)); }
     difference == 0 && value.get("type").and_then(Value::as_str) == Some("authenticate")
@@ -125,8 +123,6 @@ async fn serve_connection_mode<S: tokio::io::AsyncRead + tokio::io::AsyncWrite +
         if !send_outgoing(&mut socket, outgoing).await { break; }
     }
     let _ = tokio::time::timeout(Duration::from_secs(2), socket.close(None)).await;
-    // Hide disconnected viewers immediately so dialogs can move to a returning
-    // client. Preserve workers, finish mutations, then catch any late attaches.
     drop(receiver);
     detach_connection(app, owner, pending).await
 }

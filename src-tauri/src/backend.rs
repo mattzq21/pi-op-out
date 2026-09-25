@@ -192,7 +192,6 @@ fn claim_session_id(id: &str) -> Result<fs::File, String> {
     let dir = claims_dir()?;
     let name = format!("id-{}.lock", hash_claim_key(id.as_bytes()));
     let file = dir.join(&name);
-    // Keep the inode in place: unlinking a locked file would permit a second owner.
     let mut options = OpenOptions::new(); options.read(true).write(true).create(true).truncate(false);
     #[cfg(unix)]
     { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
@@ -233,7 +232,6 @@ fn exec_session_worker() -> Result<(), String> {
         id
     };
     let claim = claim_session_id(&id)?;
-    // exec preserves the PID and transfers the lock to Pi until that worker exits.
     let fd = claim.as_raw_fd();
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
     if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } < 0 { return Err(std::io::Error::last_os_error().to_string()); }

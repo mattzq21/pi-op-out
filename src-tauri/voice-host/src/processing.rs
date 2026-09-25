@@ -1,5 +1,3 @@
-//! Streaming device-rate conversion, echo/noise/gain processing, and 20 ms Opus encoding.
-//! Mute transitions and capture gaps reset history; delayed pre-unmute buffers are discarded.
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -20,7 +18,7 @@ use crate::audio_track::EncodedAudio;
 
 type Result<T> = std::result::Result<T, &'static str>;
 const BLOCK: usize = 480;
-pub(super) const MAX_PROCESSING_DELAY: Duration = Duration::from_millis(/*millis*/ 500);
+pub(super) const MAX_PROCESSING_DELAY: Duration = Duration::from_millis(           500);
 pub(super) const PROCESSING_LATE: &str = "voice processing fell behind";
 
 struct Converter {
@@ -36,10 +34,10 @@ impl Converter {
     fn new(rate: u32) -> Result<Self> {
         let resampler = rubato::Async::new_sinc(
             48_000.0 / f64::from(rate),
-            /*max_resample_ratio_relative*/ 1.0,
+                                            1.0,
             &rubato::SincInterpolationParameters::default(),
             rate.div_ceil(100) as usize,
-            /*nbr_channels*/ 1,
+                             1,
             rubato::FixedAsync::Input,
         )
         .map_err(|_| "failed to create voice resampler")?;
@@ -66,15 +64,15 @@ impl Converter {
         self.input.extend(&frame.samples[..frame.len]);
         while self.input.len() >= self.resampler.input_frames_next() {
             let samples = self.input.make_contiguous();
-            let input = InterleavedSlice::new(samples, /*channels*/ 1, samples.len())
+            let input = InterleavedSlice::new(samples,              1, samples.len())
                 .map_err(|_| "invalid voice resampler input")?;
             let capacity = self.scratch.len();
             let mut output =
-                InterleavedSlice::new_mut(&mut self.scratch, /*channels*/ 1, capacity)
+                InterleavedSlice::new_mut(&mut self.scratch,              1, capacity)
                     .map_err(|_| "invalid voice resampler output")?;
             let (consumed, produced) = self
                 .resampler
-                .process_into_buffer(&input, &mut output, /*indexing*/ None)
+                .process_into_buffer(&input, &mut output,              None)
                 .map_err(|_| "failed to resample voice audio")?;
             self.input.drain(..consumed);
             self.output.extend(&self.scratch[..produced]);
@@ -127,14 +125,14 @@ impl Processor {
                     ..Default::default()
                 })
                 .capture_config(StreamConfig::new(
-                    /*sample_rate_hz*/ 48_000, /*num_channels*/ 1,
+                                       48_000,                  1,
                 ))
                 .render_config(StreamConfig::new(
-                    /*sample_rate_hz*/ 48_000, /*num_channels*/ 1,
+                                       48_000,                  1,
                 ))
                 .build(),
             encoder: opus::Encoder::new(
-                /*sample_rate*/ 48_000,
+                                48_000,
                 opus::Channels::Mono,
                 opus::Application::Voip,
             )
@@ -152,7 +150,6 @@ impl Processor {
     }
 
     pub(super) fn set_render_rate(&mut self, rate: u32) -> Result<()> {
-        // Capture keeps its own rate and history across speaker-only changes.
         if self.render.rate != rate {
             self.render = Converter::new(rate)?;
         }
@@ -161,7 +158,6 @@ impl Processor {
     }
 
     pub(super) fn reset_render(&mut self) {
-        // Speaker changes discard old references without resetting capture or APM state.
         self.render.resampler.reset();
         self.render.input.clear();
         self.render.output.clear();
@@ -176,8 +172,6 @@ impl Processor {
     ) -> Result<()> {
         let mut delay = super::super::DEVICE_SERVICE_INTERVAL;
         for (converter, frames) in [(&self.capture, input_frames), (&self.render, output_frames)] {
-            // Include callback and queue packing latency, plus the resampler's
-            // actual delay and one processing block, for both device directions.
             delay += Duration::from_secs_f64(
                 (f64::from(frames) + super::buffers::BLOCK as f64) / f64::from(converter.rate)
                     + (converter.resampler.output_delay() + BLOCK) as f64 / 48_000.0,
@@ -246,8 +240,6 @@ impl Processor {
             .end
             .is_some_and(|end| frame.at.saturating_duration_since(end) > CAPTURE_GAP_TOLERANCE)
         {
-            // Drop resampler, APM and half-packet history without advancing the
-            // unmute boundary: this frame may already have waited in the queue.
             let cutoff = self.cutoff;
             self.reset()?;
             self.cutoff = cutoff;

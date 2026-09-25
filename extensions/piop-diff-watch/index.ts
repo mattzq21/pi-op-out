@@ -282,7 +282,6 @@ async function capturePrompt(root: string, ctx: ExtensionContext): Promise<Promp
   return { key, owner: sessionId, commit, base, capturedAt };
 }
 
-// A child owns its own refs, so deleting or advancing its parent cannot expire them.
 async function pinPromptHistory(root: string, sessionId: string, entries: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>, sourceOwner?: string) {
   const checkpoints = entries.flatMap((entry) => entry.type === "custom" && entry.customType === PROMPT_ENTRY
     ? [checkpointData(entry.data)].filter((value): value is PromptCheckpoint => Boolean(value)) : []);
@@ -347,7 +346,6 @@ function validateBranchMessage(history: CheckpointHistory, entryId: string, afte
 }
 
 function precedingCheckpoint(history: CheckpointHistory, afterResponse: boolean) {
-  // Stop at the previous user; a failed/missing capture must never borrow its checkpoint.
   let checkpoint: PromptCheckpoint | undefined;
   for (let i = history.length - 2; !afterResponse && i >= 0; i--) {
     const entry = history[i];
@@ -364,7 +362,6 @@ async function responseCheckpoint(ctx: ExtensionContext, root: string, entryId: 
   if (!data?.commit || !/^[a-f0-9]{40,64}$/.test(data.commit)) {
     throw new Error("No settled Git checkpoint is available for this response. Wait for the agent to settle or stop it first.");
   }
-  // Forks retain the commit through their own baseline even after the source session's refs are deleted.
   await runGit(root, ["cat-file", "-e", `${data.commit}^{commit}`]);
   return { key: "", owner, commit: data.commit, base: data.commit, capturedAt: "" };
 }
@@ -459,8 +456,6 @@ export default function diffWatch(pi: ExtensionAPI) {
     return snapshotQueue;
   });
 
-  // Pi awaits message_start handlers before proceeding. This also covers consumed
-  // follow-ups and steering messages; queue submission itself is not a checkpoint.
   pi.on("message_start", (event, ctx) => {
     if (event.message.role !== "user") return;
     const text = typeof event.message.content === "string" ? event.message.content

@@ -34,7 +34,6 @@ async function directoryEntry(directory: string): Promise<string> {
   throw new Error("Directory has no index.ts, index.js, index.mjs or index.cjs");
 }
 
-/** A group shares the session's API/context. Registrations are published only after every factory succeeds. */
 export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
   let current: Group | undefined;
   const dispatchedEvents = new Map<string, number>();
@@ -101,7 +100,6 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
         if (visiting.includes(entry)) throw new Error(`Circular piop extension dependency: ${[...visiting, entry].join(" -> ")}`);
         if (loaded.has(entry)) return;
         visiting.push(entry);
-        // Pi's module loader supports TypeScript and the Pi API package aliases.
         const module = await import(entry);
         if (typeof module.default !== "function") throw new Error("Expected a default piop extension factory");
         for (const dependency of extensionPaths(module.extensions)) await load(dependency, dirname(entry));
@@ -128,7 +126,6 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
     for (const [event, handlers] of group.handlers) {
       if (event === "session_start") continue;
       for (let index = dispatchedEvents.get(event) ?? 0; index < handlers.length; index++) {
-        // Individual slots let Pi preserve its native transform/cancellation semantics.
         const subscribe = pi.on as unknown as (event: string, handler: Handler) => void;
         subscribe.call(pi, event, (...args: unknown[]) => current?.handlers.get(event)?.[index]?.(...args));
       }
@@ -155,7 +152,6 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
         }
       });
     } else {
-      // Renderers remain available for historical messages in the universal context.
       const values = method === "registerShortcut" ? [args[0], { ...args[1] as object, handler: (...values: unknown[]) => (current?.registrations.get(method)?.get(name)?.[1] as { handler: Handler } | undefined)?.handler(...values) }] : args;
       Reflect.get(pi, method).apply(pi, values);
     }
@@ -192,7 +188,6 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
     } catch (error) {
       await shutdown(group, ctx);
       stop(group); current = previous;
-      // Restore schemas as well as dispatch after failed startup.
       for (const [name, args] of previous?.registrations.get("registerTool") ?? []) publishRegistration("registerTool", name, args);
       throw error;
     }

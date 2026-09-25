@@ -16,8 +16,6 @@ pub(crate) fn stop_message_worker(child: &mut Child) {
     #[cfg(target_os = "linux")]
     {
         use std::os::fd::AsRawFd;
-        // Pi normally stops its detached tools in its SIGTERM handler. Keep
-        // handles to those descendants for bounded cleanup if that handler stalls.
         for process in descendants {
             unsafe { libc::syscall(libc::SYS_pidfd_send_signal, process.as_raw_fd(), libc::SIGKILL, std::ptr::null::<libc::siginfo_t>(), 0); }
         }
@@ -52,8 +50,6 @@ fn descendant_handles(parent: u32) -> Vec<std::os::fd::OwnedFd> {
         let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
         if fd < 0 { return None; }
         let handle = unsafe { OwnedFd::from_raw_fd(fd as i32) };
-        // A process may exit while /proc is being scanned. Never signal a PID
-        // replacement that was not part of this worker's process tree.
         let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
         let started = stat.rsplit_once(')')?.1.split_whitespace().nth(19)?;
         (processes.get(&pid)?.1 == started).then_some(handle)

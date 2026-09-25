@@ -100,7 +100,6 @@ impl Connection {
 }
 
 fn executable(host: &RemoteHost) -> String {
-    // Preserve old machine entries while moving their transport to Piop.
     let path = if host.pi_path == "pi" { "piop-daemon".into() }
         else if host.pi_path.ends_with("/pi") { format!("{}piop-daemon", &host.pi_path[..host.pi_path.len() - 2]) }
         else { host.pi_path.clone() };

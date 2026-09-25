@@ -1,5 +1,3 @@
-//! Stock GstAudioSink scheduling with a bounded, epoch-owned CPAL writer.
-//! Native resets outside an owner-initiated teardown fail the session closed.
 
 use super::playback::PlaybackWriter;
 use audio::prelude::*;
@@ -50,7 +48,7 @@ mod imp {
                         .field("channels", 1i32)
                         .field(
                             "rate",
-                            gst::IntRange::<i32>::new(/*min*/ 8000, /*max*/ 384000),
+                            gst::IntRange::<i32>::new(        8000,         384000),
                         )
                         .build(),
                 )

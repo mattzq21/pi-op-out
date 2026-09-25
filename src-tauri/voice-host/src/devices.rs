@@ -1,7 +1,3 @@
-//! Owns local device streams on the helper worker. Callbacks allocate no buffers and take no locks.
-//! Small callbacks share full queue slots; overload discards stale media and resumes fresh audio.
-//! Capture and actual rendered output carry device timing.
-//! References start with worker service; unmute rejects earlier device capture buffers.
 
 #[path = "audio_sink.rs"]
 mod audio_sink;
@@ -41,7 +37,7 @@ use buffers::Playback;
 use buffers::QUEUE_CAPACITY;
 use playback::PlaybackPort;
 
-const MAX_CAPTURE_AGE: Duration = Duration::from_secs(/*secs*/ 1);
+const MAX_CAPTURE_AGE: Duration = Duration::from_secs(         1);
 
 pub(super) struct Devices {
     _input: cpal::Stream,
@@ -157,11 +153,8 @@ impl Devices {
     }
 
     fn clear_speaker(&mut self, buffers: &Buffers) -> io::Result<()> {
-        // Stop callbacks before native teardown can block the worker.
         drop(self.output.take());
         drop(self.playout.take());
-        // The new epoch cancelled writers before either teardown; wait for
-        // any in-flight write before resetting its queue.
         let producer = self
             .playback
             .0
@@ -170,8 +163,8 @@ impl Devices {
             .map_err(|_| io::Error::other("speaker writer failed"))?;
         while buffers.playback.pop().is_some() {}
         while buffers.rendered.pop().is_some() {}
-        buffers.queued.store(/*val*/ 0, Ordering::Release);
-        buffers.last_dac_ns.store(/*val*/ 0, Ordering::Release);
+        buffers.queued.store(        0, Ordering::Release);
+        buffers.last_dac_ns.store(        0, Ordering::Release);
         drop(producer);
         while buffers.rendered.pop().is_some() {}
         Ok(())
@@ -182,9 +175,6 @@ impl Devices {
         buffers: Arc<Buffers>,
         speaker_suppressed: bool,
     ) -> io::Result<()> {
-        // Opening a Bluetooth microphone can change the speaker's format.
-        // Requery after stopping the old stream rather than restoring its
-        // pre-microphone rate, which the device may no longer support.
         let output_config = self
             .output_device
             .default_output_config()
@@ -282,16 +272,10 @@ fn bounded_stream_config(
     if min > max {
         return Err(io::Error::other("unsupported audio callback size range"));
     }
-    // ALSA allocates two periods. A 20 ms ring can be smaller than one PipeWire
-    // graph cycle (e.g. 2048 frames at 48 kHz), silently losing capture samples
-    // every cycle. Give Linux a bounded 100 ms ring instead, while retaining
-    // 10 ms callbacks elsewhere and rejecting incompatible device ranges below.
     let periods_per_second = if cfg!(target_os = "linux") { 20 } else { 100 };
     let frames = (config.sample_rate / periods_per_second).clamp(min, max);
     let callback_duration =
         Duration::from_secs_f64(f64::from(frames) / f64::from(config.sample_rate));
-    // Backends may deliver smaller callbacks than requested. Packing makes queue
-    // coverage depend on samples, while an incomplete block adds bounded latency.
     let packing_duration = Duration::from_secs_f64(BLOCK as f64 / f64::from(config.sample_rate));
     let queue_duration = packing_duration * QUEUE_CAPACITY as u32;
     if callback_duration + packing_duration + super::DEVICE_SERVICE_INTERVAL >= MAX_CAPTURE_AGE
@@ -310,7 +294,6 @@ fn record_peak(peak: &AtomicU16, sample: f32) {
     );
 }
 
-// CPAL reports recoverable underruns/overruns through the same callback as device loss.
 fn handle_stream_error(buffers: &Buffers, error: cpal::Error) {
     if error.kind() != cpal::ErrorKind::Xrun {
         buffers.failed.store(true, Ordering::Release);
@@ -389,7 +372,7 @@ where
             }
         },
         move |error| handle_stream_error(&failure, error),
-        /*timeout*/ None,
+                    None,
     )
 }
 
@@ -411,7 +394,7 @@ where
         move |data: &mut [T], info: &cpal::OutputCallbackInfo| {
             buffers
                 .callback_sequence
-                .fetch_add(/*val*/ 1, Ordering::AcqRel);
+                .fetch_add(        1, Ordering::AcqRel);
             let timestamp = info.timestamp();
             let start = Instant::now()
                 + timestamp
@@ -421,10 +404,10 @@ where
             render_output(data, channels, rate, start, &buffers, &mut output);
             buffers
                 .callback_sequence
-                .fetch_add(/*val*/ 1, Ordering::Release);
+                .fetch_add(        1, Ordering::Release);
         },
         move |error| handle_stream_error(&failure, error),
-        /*timeout*/ None,
+                    None,
     )
 }
 

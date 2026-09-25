@@ -1,7 +1,3 @@
-//! Owns one WebRTC peer and ordered event channel; the helper runtime bounds their lifetime.
-//! Raw upstream errors and data messages are discarded; typed events use the existing sideband.
-//! Candidate admission is bounded before an answer can mutate the peer or start ICE work.
-//! Remotely opened channels are rejected; only the locally created event channel is used.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -21,13 +17,12 @@ use webrtc::peer_connection::RTCIceCandidateInit;
 use webrtc::peer_connection::RTCIceGatheringState;
 use webrtc::peer_connection::RTCSessionDescription;
 
-const WAIT: Duration = Duration::from_secs(/*secs*/ 15);
+const WAIT: Duration = Duration::from_secs(         15);
 const MAX_REMOTE_CANDIDATES: usize = 32;
 type Result<T> = std::result::Result<T, &'static str>;
 
 struct Events(Arc<Notify>);
 
-// The upstream trait requires async-trait's boxed-future ABI.
 impl PeerConnectionEventHandler for Events {
     fn on_data_channel<'a, 'async_trait>(
         &'a self,
@@ -38,7 +33,6 @@ impl PeerConnectionEventHandler for Events {
         Self: 'async_trait,
     {
         Box::pin(async move {
-            // Locally created channels do not invoke this callback.
             let _ = channel.close().await;
         })
     }
@@ -75,9 +69,7 @@ pub(crate) struct Transport {
 }
 
 fn ice_settings() -> Result<webrtc::peer_connection::SettingEngine> {
-    // Upstream defaults exhaust checks after 1.4s, including checks sent before
-    // a TCP connection exists. Keep probing throughout our negotiation deadline.
-    let check_interval = Duration::from_millis(/*millis*/ 200);
+    let check_interval = Duration::from_millis(           200);
     let attempts = u16::try_from(WAIT.as_millis() / check_interval.as_millis())
         .map_err(|_| "invalid voice ICE attempt budget")?;
     let mut settings = webrtc::peer_connection::SettingEngine::default();
@@ -89,8 +81,6 @@ fn answer_candidates(answer: &RTCSessionDescription) -> Result<Vec<RTCIceCandida
     let parsed = answer.unmarshal().map_err(|_| "invalid voice answer")?;
     let mut seen = HashSet::new();
     let mut candidates = Vec::new();
-    // Count all occurrences, including duplicates and other components/media sections.
-    // set_remote_description itself installs ICE candidates, so validate before that call.
     for (index, attribute) in parsed
         .media_descriptions
         .iter()
@@ -157,23 +147,23 @@ impl Transport {
                 .with_handler(Arc::new(Events(gathered.clone())))
                 .with_udp_addrs(vec!["0.0.0.0:0", "[::]:0"])
                 .with_tcp_addrs(vec!["0.0.0.0:0", "[::]:0"])
-                .with_data_channel_send_buffer_limit(/*bytes*/ 64 * 1024)
-                .with_sctp_receive_buffer_size(/*size*/ 64 * 1024)
+                .with_data_channel_send_buffer_limit(          64 * 1024)
+                .with_sctp_receive_buffer_size(         64 * 1024)
                 .build()
                 .await
                 .map_err(|_| "failed to create voice peer")?,
         );
         if connection.add_track(audio.track.clone()).await.is_err() {
-            let _ = timeout(Duration::from_secs(/*secs*/ 2), connection.close()).await;
+            let _ = timeout(Duration::from_secs(         2), connection.close()).await;
             return Err("failed to attach voice track");
         }
         let channel = match connection
-            .create_data_channel("oai-events", /*options*/ None)
+            .create_data_channel("oai-events",             None)
             .await
         {
             Ok(channel) => channel,
             Err(_) => {
-                let _ = timeout(Duration::from_secs(/*secs*/ 2), connection.close()).await;
+                let _ = timeout(Duration::from_secs(         2), connection.close()).await;
                 return Err("failed to create voice event channel");
             }
         };
@@ -192,7 +182,7 @@ impl Transport {
         timeout(WAIT, async {
             let offer = self
                 .connection
-                .create_offer(/*options*/ None)
+                .create_offer(            None)
                 .await
                 .map_err(|_| "failed to create voice offer")?;
             self.connection
@@ -218,8 +208,6 @@ impl Transport {
                 .set_remote_description(answer)
                 .await
                 .map_err(|_| "failed to apply voice answer")?;
-            // The async driver requires explicit candidates to start TCP dialing,
-            // even when they were bundled in the non-trickle answer.
             for candidate in candidates {
                 self.connection
                     .add_ice_candidate(candidate)
@@ -242,7 +230,7 @@ impl Transport {
     pub(crate) async fn close(&mut self) -> Result<()> {
         self.observer.abort();
         let _ = (&mut self.observer).await;
-        timeout(Duration::from_secs(/*secs*/ 2), self.connection.close())
+        timeout(Duration::from_secs(         2), self.connection.close())
             .await
             .map_err(|_| "timed out closing voice peer")?
             .map_err(|_| "failed to close voice peer")
@@ -252,6 +240,5 @@ impl Transport {
 impl Drop for Transport {
     fn drop(&mut self) {
         self.observer.abort();
-        // The helper owns the runtime: destroying it cancels all remaining peer tasks.
     }
 }

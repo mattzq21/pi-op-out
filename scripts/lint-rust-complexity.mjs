@@ -27,7 +27,6 @@ function checkLines(space, file) {
   if (!Number.isFinite(ploc) || !Number.isFinite(blank)) {
     throw new Error(`Invalid line metrics for ${file}`);
   }
-  // Physical code lines plus blanks excludes only comment-only lines.
   const lines = ploc + blank;
   if (lines <= lineLimit) return 0;
   console.error(`${file}: ${lines} lines excluding comment-only lines (maximum ${lineLimit})`);

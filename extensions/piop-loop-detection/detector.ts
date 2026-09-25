@@ -85,7 +85,6 @@ export class LoopDetector {
   private learn(result: string) {
     if (this.state.information.includes(result)) return;
     this.state.information = [...this.state.information, result].slice(-LIMIT);
-    // New information weakens old evidence without letting a repeated read erase it.
     this.state.attempts = this.state.attempts.filter(item => --item.count > 0);
     this.state.warning = undefined;
   }
