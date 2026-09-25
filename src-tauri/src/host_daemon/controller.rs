@@ -444,10 +444,11 @@ impl Host {
             return Err("Pi is not running".into());
         };
         if name == "detach" {
-            self.services.detach_voice(&runtime).await;
             self.registry().subscriptions.remove(&runtime);
+            session.detach_view(&runtime);
+            self.services.detach_voice(&runtime).await;
             let result = session
-                .detach(&runtime, flag(&packet, "discardBlank"), flag(&packet, "preserveRunning"))
+                .finish_detach(flag(&packet, "discardBlank"), flag(&packet, "preserveRunning"))
                 .await;
             self.release_unused(&session).await?;
             return Ok(result);

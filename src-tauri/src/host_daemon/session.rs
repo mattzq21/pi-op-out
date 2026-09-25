@@ -446,8 +446,7 @@ impl Session {
         self.publish_presence();
     }
 
-    pub async fn detach(&self, runtime: &str, discard_blank: bool, preserve_running: bool) -> Value {
-        self.detach_view(runtime);
+    pub async fn finish_detach(&self, discard_blank: bool, preserve_running: bool) -> Value {
         let (stopped, submitted) = {
             let state = self.state();
             (
