@@ -25,7 +25,6 @@ import { keybindDefinitions, matchesShortcut } from "./lib/keybindings";
 import { branchMessages, type PiEntry } from "./lib/messages";
 import { recordSeenModels } from "./lib/modelVisibility";
 import { initialWindowTarget, NativeTransport, openOrchestratorChat, openSessionWindow } from "./lib/nativeTransport";
-import { notePreference, rememberNotePreference } from "./lib/notes";
 import { ORCHESTRATOR_SESSION_ID, VOICE_ORCHESTRATOR_AGENT } from "./lib/orchestrator";
 import { isMobile, listen } from "./lib/platform";
 import { updateSessionGroups, type SessionGroup } from "./lib/sessionGroups";
@@ -105,8 +104,8 @@ export default function App() {
   const [relocatingSession, setRelocatingSession] = createSignal<SessionSummary>(); const [relocationError, setRelocationError] = createSignal<string>();
   const relocationActionRef = createRef<"select" | "split" | "rename">("select");
   const [terminalOpen, setTerminalOpen] = createSignal(false);
-  const [notesOpen, setNotesOpen] = createSignal(notePreference("open", window.innerWidth > 1100 ? "true" : "false") === "true");
-  const toggleNotes = (open: boolean) => { setNotesOpen(open); rememberNotePreference("open", String(open)); };
+  const [notesOpen, setNotesOpen] = createSignal(false);
+  const toggleNotes = (open: boolean) => setNotesOpen(open);
   const [terminalTarget, setTerminalTarget] = createSignal<TerminalTarget>();
   const [composerDrafts, setComposerDrafts] = createSignal<Record<string, string>>({});
   const [uploadsByTransport, setUploadsByTransport] = createSignal<Map<NativeTransport, ComposerUpload[]>>((() => new Map())());
