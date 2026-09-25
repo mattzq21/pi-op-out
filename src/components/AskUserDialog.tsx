@@ -1,9 +1,7 @@
 import { createSignal, createUniqueId, For, Show } from "solid-js";
 import type { ExtensionUiRequest } from "../types";
-import { createDependencyEffect } from "../lib/solid";
 import { ArrowRight, CircleHelp, Pencil, X } from "lucide-solid";
 import { DictationControls } from "./DictationControls";
-import { anchorQuestion } from "../lib/anchorQuestion";
 
 type Question = { id: string; header: string; question: string; options: { label: string; description: string }[] };
 type Answer = { selected: number; notes: string };
@@ -26,20 +24,13 @@ function validQuestion(value: Question) {
     && value.options.every((option) => option && typeof option.label === "string" && typeof option.description === "string");
 }
 
-export function AskUserDialog(props: { request: ExtensionUiRequest; owner?: string; anchorSelector?: string; onRespond: (response: Record<string, unknown>) => void | Promise<void> }) {
+export function AskUserDialog(props: { request: ExtensionUiRequest; owner?: string; onRespond: (response: Record<string, unknown>) => void | Promise<void> }) {
   const questions = readQuestions(props.request);
   const [index, setIndex] = createSignal(0);
   const [answers, setAnswers] = createSignal<Answer[]>(questions.map(() => ({ selected: -1, notes: "" })));
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal(questions.length ? "" : "The question request is invalid. Cancel to let the agent retry.");
   const titleId = createUniqueId();
-  let dialog!: HTMLDialogElement;
-  const previousFocus = document.activeElement;
-  createDependencyEffect(() => {
-    dialog.showModal();
-    return () => { dialog.close(); if (previousFocus instanceof HTMLElement) previousFocus.focus(); };
-  }, () => []);
-  createDependencyEffect(() => anchorQuestion(dialog, props.anchorSelector ?? ".chat-panes > .chat-shell .composer"), () => [props.anchorSelector]);
   const answer = () => answers()[index()];
   const update = (change: Partial<Answer>) => setAnswers((current) => current.map((item, i) => i === index() ? { ...item, ...change } : item));
   const respond = async (response: Record<string, unknown>) => {
@@ -62,7 +53,7 @@ export function AskUserDialog(props: { request: ExtensionUiRequest; owner?: stri
   const choose = (selected: number) => { update({ selected, notes: "" }); submit(); };
   const skip = () => { update({ selected: -1, notes: "" }); submit(); };
   const write = (notes: string) => update({ selected: -1, notes });
-  return <dialog ref={dialog} class="ask-user-dialog" aria-labelledby={titleId} onCancel={(event) => { event.preventDefault(); void respond({ cancelled: true }); }}>
+  return <section class="ask-user-dialog" aria-labelledby={titleId} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); void respond({ cancelled: true }); } }}>
     <header class="ask-user-header"><CircleHelp size={13} /><span title={props.owner}>Question</span>
       <Show when={questions.length > 1}><span class="ask-user-progress">{index() + 1} of {questions.length}</span></Show>
       <button type="button" class="ask-user-close" aria-label="Close question" disabled={busy()} onClick={() => void respond({ cancelled: true })}><X size={14} /></button>
@@ -89,5 +80,5 @@ export function AskUserDialog(props: { request: ExtensionUiRequest; owner?: stri
       </div>
     </form>}</Show>
     <Show when={!questions.length}><p id={titleId} role="alert">{error()}</p><button disabled={busy()} onClick={() => void respond({ cancelled: true })}>Cancel</button></Show>
-  </dialog>;
+  </section>;
 }

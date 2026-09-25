@@ -14,6 +14,7 @@ import { cacheHitStats } from "../lib/messages";
 import { turnDiff } from "../lib/turnDiff";
 import type { AgentProfile, AgentState, ChatMessage, ComposerUpload, GitDiffSnapshots, ImageAttachment, Model, PromptContextInfo, SlashCommand } from "../types";
 import { Composer } from "./Composer";
+import { ConversationQuestions } from "./ConversationQuestions";
 import { DeferredTurn } from "./DeferredTurn";
 import { DiffViewer } from "./DiffViewer";
 import { Message } from "./Message";
@@ -139,6 +140,8 @@ export function ChatView(props: Props) {
     const observer = new ResizeObserver(updateLayout);
     observer.observe(composer);
     observer.observe(messages);
+    const conversation = messages.querySelector(".conversation");
+    if (conversation) observer.observe(conversation);
     return () => {
       observer.disconnect();
       messages.style.removeProperty("--composer-height");
@@ -204,6 +207,7 @@ export function ChatView(props: Props) {
           {submittedMessage() && <div class="mcp-pending-message"><Message message={(submittedMessage())!} showActions={false} /></div>}
           <div class="mcp-loading-list" role="status">{props.debug ? <Key each={loadingServers()} by={(server) => server.id}>{(server, index) => <div class="mcp-loading" ><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading {server().name}</span></div>}</Key> : <div class="mcp-loading"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading MCPs</span></div>}</div>
         </section>}
+        <Show when={ownsConversation() && !props.readOnly}><ConversationQuestions transport={props.voiceTransport} /></Show>
       </div></div>);
     const renderSelectionBtwTip = () => (selectionBtwTip() && <button type="button" class={`selection-btw-tip${(selectionBtwTip())!.below ? " below" : ""}${selectionBtwError() ? " error" : ""}`} style={{ left: cssPixels((selectionBtwTip())!.left), top: cssPixels((selectionBtwTip())!.top) }} aria-label="Ask about selected text in a side chat with /btw" aria-live="polite" disabled={askingSelection()} onPointerDown={(event) => event.preventDefault()} onClick={() => void askSelectionInBtw()}><span>{askingSelection() ? "Opening side chat…" : selectionBtwError() ? "Could not open side chat" : "Ask in side chat"}</span><kbd>/btw</kbd></button>);
     const renderComposerStack = () => {

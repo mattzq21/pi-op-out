@@ -242,8 +242,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .extension-dialog > .dialog-error { margin: 7px 1px 0; color: #c64f38; font-size: 12px; }.dialog-actions .browse-directory { margin-right: auto; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--muted); padding: 0 10px; }.dialog-actions .browse-directory:hover { background: #efede7; color: var(--ink); }.dialog-actions .browse-directory:disabled { opacity: .6; cursor: default; }
 .dialog-checkbox { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: var(--muted); font-size: 12px; }.dialog-checkbox input { margin: 0; }
 .extension-dialog > .worktree-preview { margin: 8px 1px 0; color: var(--muted); font-size: 11px; }.worktree-preview code { color: var(--ink); font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; }
-.ask-user-dialog { --question-bg: #2c2c2c; --question-hover: #373737; --question-border: #404040; --question-text: #f3f3f3; --question-muted: #aaa; position: fixed; inset: auto 0 max(10px, env(safe-area-inset-bottom)); width: min(736px, calc(100vw - 40px)); max-height: calc(100dvh - 40px); overflow: auto; margin: 0 auto; padding: 12px 8px 14px; border: 1px solid var(--question-border); border-radius: 21px; background: var(--question-bg); color: var(--question-text); box-shadow: 0 12px 40px #0002; font: 13px/1.5 "DM Sans", system-ui, sans-serif; }
-.ask-user-dialog::backdrop { background: transparent; }
+.ask-user-dialog { --question-bg: #2c2c2c; --question-hover: #373737; --question-border: #404040; --question-text: #f3f3f3; --question-muted: #aaa; width: 100%; min-width: 0; margin: 16px 0 0; padding: 12px 8px 14px; border: 1px solid var(--question-border); border-radius: 21px; background: var(--question-bg); color: var(--question-text); box-shadow: 0 12px 40px #0002; font: 13px/1.5 "DM Sans", system-ui, sans-serif; }
 .ask-user-header { display: flex; align-items: center; gap: 9px; min-height: 28px; margin: 0 8px 12px; color: var(--question-muted); }
 .ask-user-progress { font-size: 11px; }
 .ask-user-dialog button { font: inherit; color: inherit; cursor: pointer; }
@@ -271,7 +270,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .ask-user-dialog .dictation-controls button { min-height: 28px; padding: 4px; border: 0; border-radius: 50%; background: transparent; }
 .ask-user-dialog .dictation-controls button:hover { background: var(--question-hover); }
 .ask-user-dialog .dialog-error { margin: 8px; color: #ff9680; font-size: 12px; }
-@media (max-width: 480px) { .ask-user-dialog { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); }.ask-user-footer { flex-wrap: wrap; gap: 6px; }.ask-user-response { flex-basis: calc(100% - 40px); }.ask-user-secondary:first-of-type { margin-left: auto; } }
+@media (max-width: 480px) { .ask-user-footer { flex-wrap: wrap; gap: 6px; }.ask-user-response { flex-basis: calc(100% - 40px); }.ask-user-secondary:first-of-type { margin-left: auto; } }
 .directory-palette { width: min(620px, calc(100vw - 40px)); margin-top: min(18vh, 150px); padding: 0; overflow: hidden; }
 .directory-palette-heading { display: flex; align-items: center; gap: 10px; padding: 14px 18px 0; }
 .directory-palette-heading h2 { flex: 1; margin: 0; font: 500 12px "DM Sans"; color: var(--muted); }

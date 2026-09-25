@@ -5,6 +5,8 @@ import { appendTerminalOutputs, AppLoading, dialogOwnerName, goUsageBadge, initi
 import { createBranchConversation } from "./branchConversation";
 import { ChatView } from "./components/ChatView";
 import { ExtensionDialog } from "./components/ExtensionDialog";
+import { ConversationQuestionsContext } from "./components/ConversationQuestions";
+import { isAskUserRequest } from "./components/AskUserDialog";
 import { FindInPage } from "./components/FindInPage";
 import { IconButton } from "./components/IconButton";
 import { LocalSettingsView } from "./components/LocalSettingsView";
@@ -719,7 +721,11 @@ export default function App() {
     return () => window.removeEventListener("piop-mobile-back", back);
   });
   const extensionStateIsCurrent = createMemo(() => (extensionOwner() === transport()));
-  const activeDialog = createMemo(() => (dialogs()[0]));
+  const activeDialog = createMemo(() => dialogs().find((item) => !isAskUserRequest(item.request)));
+  const questionContext = { requests: dialogs, respond: async (item: OwnedExtensionDialog, response: Record<string, unknown>) => {
+    await item.transport.command({ type: "extension_ui_response", id: item.request.id, ...response });
+    setDialogs((current) => current.filter((dialog) => dialog !== item));
+  } };
   const projectCwd = createMemo(() => (selectedProjectCwd(activeCwd(), transport().isTemporaryChat() || isOrchestrator())));
   const renderMobileSidebarBackdrop = () => (panelOpen() && view() === "chat" && <button class="mobile-sidebar-backdrop" aria-label="Close conversations" onClick={() => setPanelOpen(false)} />);
   const renderSidebar = () => {
@@ -750,8 +756,8 @@ export default function App() {
       {error() && <div class="error-toast" role="alert"><strong>piop could not connect</strong><span>{(error())!}</span><button onClick={reconnectMain} disabled={reconnectPending.current.has(transport())}>Retry</button><button aria-label="Dismiss connection error" onClick={() => setError(undefined)}>×</button></div>}
       {<Key each={notices()} by={(notice) => notice.id}>{(notice, index) => <div class="error-toast" role="alert" ><strong>{notice().title}</strong><span>{notice().message}</span><button aria-label={`Dismiss ${notice().title}`} onClick={() => setNotices((current) => current.filter((item) => item.id !== notice().id))}>×</button></div>}</Key>}
     </div>);
-  const renderExtensionDialog = () => (activeDialog() && !projectOpen() && !renameSession() && !relocatingSession() && !worktreeTarget() && <Rerun on={() => activeDialog()?.queueId}>{(_key) => <ExtensionDialog anchorSelector={activeDialog().transport === transport() ? ".chat-panes > .chat-shell .composer" : ".split-chat .composer"} request={activeDialog().request} owner={activeDialog().owner} onRespond={async (response) => {
-    const capturedActiveDialog = activeDialog();
+  const renderExtensionDialog = () => (activeDialog() && !projectOpen() && !renameSession() && !relocatingSession() && !worktreeTarget() && <Rerun on={() => activeDialog()?.queueId}>{(_key) => <ExtensionDialog request={activeDialog()!.request} owner={activeDialog()!.owner} onRespond={async (response) => {
+    const capturedActiveDialog = activeDialog()!;
  await capturedActiveDialog.transport.command({ type: "extension_ui_response", id: capturedActiveDialog.request.id, ...response }); setDialogs((current) => current.filter((item) => item !== capturedActiveDialog)); }} />}</Rerun>);
   const renderProjectDialog = () => (projectOpen() && <ProjectDialog initialPath={projectCwd() ?? ""} hosts={(settings())!.hosts} initialHostId={activeHostId()} onHomeDirectory={resolveHomeDirectory} onChooseDirectory={(currentPath, hostId) => transport().listDirectories(hostId, currentPath || undefined)} onOpen={openProject} onCancel={() => { projectOpenRef.current = false; setProjectOpen(false); }} />);
   const renderRelocationDialog = () => (relocatingSession() && <Rerun on={() => relocatingSession()?.id}>{(_key) => <ExtensionDialog request={{ type: "extension_ui_request", id: `relocate-${(relocatingSession())!.id}`, method: "input", title: "Locate conversation project", message: `The original project directory no longer exists: ${(relocatingSession())!.cwd}. Enter its new location to open this conversation.`, error: relocationError(), placeholder: "Replacement project directory", prefill: sessions().find((session) => session.id === chatSession().state.sessionId && (session.hostId ?? "local") === activeHostId() && session.cwdExists !== false)?.cwd || "" }} onRespond={async (response) => {
@@ -784,7 +790,7 @@ export default function App() {
     {renderMobileSidebarBackdrop()}
     {import.meta.env.MODE === "e2e" && <div class="e2e-bridge"><textarea id="pi-e2e-responses" aria-label="E2E responses" placeholder="E2E responses" /><textarea id="pi-e2e-calls" aria-label="E2E calls" placeholder="E2E calls" /></div>}
     {renderSidebar()}
-    {renderChatWorkspace()}
+    <ConversationQuestionsContext.Provider value={questionContext}>{renderChatWorkspace()}</ConversationQuestionsContext.Provider>
     {renderSettingsView()}
     <NotesPane hidden={view() !== "chat"} open={notesOpen()} onClose={() => toggleNotes(false)} />
     <FindInPage selector=".chat-panes > .chat-shell" scopeKey={activeConversationKey()} onActivate={() => setActivePane("main")} active={activePane() === "main" || !hasSidePane()} enabled={view() === "chat"} />
