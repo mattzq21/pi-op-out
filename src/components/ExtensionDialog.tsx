@@ -2,7 +2,6 @@ import { createSignal, createUniqueId, Index } from "solid-js";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
 import type { ExtensionUiRequest } from "../types";
-
 export function ExtensionDialog(componentProps: { request: ExtensionUiRequest; owner?: string; onRespond: (response: Record<string, unknown>) => void | Promise<void> }) {
   const [value, setValue] = createSignal(componentProps.request.prefill ?? "");
   const [responseError, setResponseError] = createSignal<string>();

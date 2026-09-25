@@ -307,7 +307,7 @@ class Session {
 
   publishState() {
     if (this.transient) return;
-    output({ type: 'session_state', sessionKey: this.key, state: this.state, working: this.working, worktree: this.worktree, presenceId: this.presenceId, messageable: !this.views.size && !this.configurationBusy() && !this.configurationPromise && !this.dialogs.size && !this.pauseState?.isPausing });
+    output({ type: 'session_state', sessionKey: this.key, state: this.state, working: this.working, worktree: this.worktree, presenceId: this.presenceId, messageable: !this.views.size && !this.configurationBusy() && !this.configurationPromise && !this.hasBlockingDialogs() && !this.pauseState?.isPausing });
   }
 
   publishPresence() {
@@ -328,7 +328,7 @@ class Session {
     if (this.transient) throw new Error('This conversation branch is still being prepared');
     const assertIdle = (state) => {
       if (this.views.size) throw new Error('Close this conversation in all windows before messaging or archiving it');
-      if (this.configurationBusy(state) || this.configurationPromise || state?.isPausing || this.pauseState?.isPausing || this.dialogs.size) throw new Error('Finish the response, queued messages, and settings changes before messaging or archiving this conversation');
+      if (this.configurationBusy(state) || this.configurationPromise || state?.isPausing || this.pauseState?.isPausing || this.hasBlockingDialogs()) throw new Error('Finish the response, queued messages, and settings changes before messaging or archiving this conversation');
     };
     if (this.closed) return;
     assertIdle();
@@ -340,6 +340,8 @@ class Session {
       await this.stop();
     });
   }
+
+  hasBlockingDialogs() { return [...this.dialogs.values()].some((dialog) => !dialog.event.asyncQuestion || dialog.answering); }
 
   routeDialogs() {
     for (const [id, dialog] of this.dialogs) {
@@ -386,7 +388,7 @@ class Session {
   }
 
   async releaseUnusedOwnership() {
-    const unused = () => !this.views.size && !this.configurationBusy() && !this.configurationPromise && !this.dialogs.size && !this.pauseState?.isPausing;
+    const unused = () => !this.views.size && !this.configurationBusy() && !this.configurationPromise && !this.hasBlockingDialogs() && !this.pauseState?.isPausing;
     if (!this.ephemeral && unused()) await ownership.releaseClient(this.identity, this.clientId, unused);
   }
 
@@ -473,6 +475,19 @@ class Session {
     if (event.type === 'tool_execution_end') this.tools.delete(event.toolCallId);
   }
 
+  receiveQuestions(statusText) {
+    const requests = JSON.parse(statusText);
+    const ids = new Set(requests.map((request) => `question:${request.id}`));
+    for (const [id, dialog] of this.dialogs) if (dialog.event.asyncQuestion && !ids.has(id)) this.resolveDialog(id);
+    for (const request of requests) {
+      const id = `question:${request.id}`;
+      if (this.dialogs.has(id)) continue;
+      const questions = request.questions.map((question, index) => ({ id: `question_${index}`, header: 'Question', question: question.title, options: (question.options ?? []).map((label) => ({ label, description: '' })) }));
+      this.dialogs.set(id, { event: { type: 'extension_ui_request', id, method: 'input', title: '__piop_request_user_input__', asyncQuestion: request.id, placeholder: JSON.stringify({ questions }) } });
+    }
+    this.routeDialogs();
+  }
+
   receiveExtension(event) {
     if (this.receiveExtensionStatus(event)) return;
     if (event.method === 'notify' && event.notifyType === 'error' && event.message === this.inputRejection?.error) event = { ...event, inputRejected: true };
@@ -490,16 +505,21 @@ class Session {
   }
 
   receiveExtensionStatus(event) {
-    if (event.method === 'setStatus' && event.statusKey === 'pi-desktop-turn-capture') {
+    if (event.method !== 'setStatus') return false;
+    if (event.statusKey === 'piop-async-questions') {
+      this.receiveQuestions(event.statusText);
+      return true;
+    }
+    if (event.statusKey === 'pi-desktop-turn-capture') {
       const capture = JSON.parse(event.statusText);
       output({ ...capture, type: 'turn_capture', sessionKey: this.key, ephemeral: this.ephemeral });
       return true;
     }
-    if (event.method === 'setStatus' && event.statusKey === 'pi-desktop-worktree-presence') {
+    if (event.statusKey === 'pi-desktop-worktree-presence') {
       try { const presence = JSON.parse(event.statusText); this.worktree = presence.worktree; this.presenceId = presence.id; this.publishState(); } catch { /* Ignore incomplete presence. */ }
       return true;
     }
-    if (event.method === 'setStatus' && event.statusKey === 'piop-input-rejected') {
+    if (event.statusKey === 'piop-input-rejected') {
       try { this.inputRejection = JSON.parse(event.statusText); } catch { /* Ignore malformed rejections. */ }
       return true;
     }
@@ -579,7 +599,7 @@ class Session {
     if (requestType === 'prompt') { this.inputRejection = undefined; this.commandErrors.clear(); }
     let wire = { ...command, id };
     const action = { pause: 'pause', resume: 'resume', abort: 'stop', cancel_preparation: 'cancel-preparation', get_pause_state: 'state' }[command.type];
-    const extension = { provider_auth_refresh: 'piop-provider-auth-refresh', runtime_settings: 'piop-runtime-settings', branch_checkpoint: 'pi-desktop-branch-checkpoint', fork_and_forget: 'pi-desktop-fork-and-forget', fork_after: 'pi-desktop-fork-after', voice_history: 'pi-desktop-voice-history' }[command.type];
+    const extension = { answer_question: 'piop-answer-question', provider_auth_refresh: 'piop-provider-auth-refresh', runtime_settings: 'piop-runtime-settings', branch_checkpoint: 'pi-desktop-branch-checkpoint', fork_and_forget: 'pi-desktop-fork-and-forget', fork_after: 'pi-desktop-fork-after', voice_history: 'pi-desktop-voice-history' }[command.type];
     if (action || extension) wire = { type: 'prompt', id: `${id}:desktop-control`, message: `/${extension ?? 'pi-desktop-control'} ${JSON.stringify(action ? { id, action } : { ...command, id })}` };
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {

@@ -1,3 +1,4 @@
+import { registerRequestUserInput } from "./ask-user.ts";
 import { Type, type AssistantMessage } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
@@ -414,6 +415,7 @@ export default function sessionBroker(pi: ExtensionAPI) {
   registerForkAndForget(pi);
   registerSessionOperations(pi);
   registerSubagents(pi);
+  registerRequestUserInput(pi);
   pi.registerTool({
     name: "list_agents", label: "List agents", description: "List Pi agents addressable through piop", promptSnippet: "List agents by hostId and sessionId",
     parameters: Type.Object({}),
@@ -466,6 +468,7 @@ const currentHost = () => process.env.PI_DESKTOP_HOST_ID || "local";
 
 const SUBAGENT_RUN = "piop-subagent-run";
 const SUBAGENT_PARENT = "piop-subagent-parent";
+
 const SUBAGENT_TIMEOUT_MS = 600_000;
 type SubagentTask = { task: string; name: string; agent?: string; sessionId?: string };
 type SubagentRun = { version: 1; toolCallId: string; parentSessionId: string; sessionId: string; sessionPath: string; hostId: string; name: string; task: string; status: "running" | "completed" | "failed" | "cancelled"; startedAt: number; endedAt?: number; output?: string; apiCost?: number };

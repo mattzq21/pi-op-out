@@ -212,17 +212,35 @@ async function handleReadonly(packet) {
 }
 
 async function executeSessionCommand(session, runtimeId, command) {
-  if (command.type === 'extension_ui_response') {
-    const dialog = session.dialogs.get(command.id);
-    if (!dialog || dialog.owner !== runtimeId) return;
-    session.resolveDialog(command.id);
-    session.child.stdin.write(JSON.stringify(command) + '\n');
-    return;
-  }
+  if (command.type === 'extension_ui_response') return answerExtensionDialog(session, runtimeId, command);
   if (!command.type.startsWith('get_') || command.type === 'get_snapshot') await session.reconcileConfiguration();
   if (!command.type.startsWith('get_') && session.configurationFailed && session.settingsPending()) throw new Error(session.configurationError);
   if (['fork', 'fork_after', 'clone', 'new_session', 'switch_session'].includes(command.type)) return switchConversation(session, runtimeId, command);
   return queueSessionCommand(session, command);
+}
+
+function answerExtensionDialog(session, runtimeId, command) {
+  const dialog = session.dialogs.get(command.id);
+  if (!dialog || dialog.owner !== runtimeId) throw new Error('This question is no longer owned by this view. Reopen the conversation to refresh it.');
+  if (dialog.event.asyncQuestion) return answerQuestion(session, dialog, command);
+  session.resolveDialog(command.id);
+  session.child.stdin.write(JSON.stringify(command) + '\n');
+}
+
+async function answerQuestion(session, dialog, command) {
+  if (dialog.answering) return dialog.answering;
+  const response = dialog.queuedResponse ?? { type: 'answer_question', requestId: dialog.event.asyncQuestion, value: command.value, cancelled: command.cancelled === true };
+  const deliver = async () => {
+    const { message } = await session.raw({ ...response, action: 'prepare' });
+    if (message && !dialog.answerQueued) {
+      await session.queue.command({ type: 'follow_up', message });
+      dialog.answerQueued = true;
+      dialog.queuedResponse = response;
+    }
+    await session.raw({ ...response, action: 'resolve' });
+  };
+  dialog.answering = deliver().finally(() => { dialog.answering = undefined; });
+  return dialog.answering;
 }
 
 async function switchConversation(session, runtimeId, command) {
