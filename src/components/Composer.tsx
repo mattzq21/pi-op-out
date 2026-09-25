@@ -480,8 +480,8 @@ export function Composer(props: Props) {
   };
   return <div class="composer-wrap">
     {imageInputError() && <div class="image-input-toast" role="alert"><CircleX size={14} aria-hidden="true" /><span>This model does not support image inputs. Try a different model</span><button type="button" aria-label="Dismiss image input error" onClick={() => setImageInputError(false)}><X size={14} /></button></div>}
-    {renderStreamBanner()}
     <div class="composer-above">
+    {renderStreamBanner()}
     {composer().pendingMessages.length > 0 && <div class="pending-messages" aria-label="Pending messages">{<Key each={composer().pendingMessages.filter((message) => message && typeof message.id === "string")} by={(message) => message.id}>{(message, index) => {
       const text = createMemo(() => (typeof message().message === "string" ? message().message : String(message().message ?? "")));
       const change = (action: import("../types").PendingMessageAction) => changePending(message().id, action);
