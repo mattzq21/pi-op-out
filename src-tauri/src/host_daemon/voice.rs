@@ -1,3 +1,7 @@
+mod authentication;
+mod connection;
+use authentication::authenticate;
+
 use super::{
     controller::Host,
     payload::branch,
@@ -139,10 +143,7 @@ impl VoiceService {
 
     async fn start(self: &Arc<Self>, packet: Value) -> Result<Value> {
         let id = text(&packet, "callId");
-        let offer = packet["offer"].as_str().filter(|offer| offer.encode_utf16().count() <= 128 * 1024);
-        if id.len() != 36 || !id.chars().all(|ch| ch.is_ascii_hexdigit() || ch == '-') || offer.is_none() {
-            return Err("Invalid voice connection offer".into());
-        }
+        let offer = voice_offer(&packet)?;
         let host = self.host()?;
         let runtime = text(&packet, "runtimeId");
         let session = {
@@ -179,7 +180,7 @@ impl VoiceService {
         self.emit(&call, json!({"type":"connecting"}));
         let mut cancelled = call.cancel.subscribe();
         let result = tokio::select! {
-            result = self.connect(&call,offer.unwrap_or_default(),&host.home) => result,
+            result = self.connect(&call,offer,&host.home) => result,
             _ = async { let _ = cancelled.wait_for(|cancelled| *cancelled).await; } => Err("The voice conversation is no longer owned by this client.".into()),
         };
         match result {
@@ -189,96 +190,6 @@ impl VoiceService {
                 Err(error)
             }
         }
-    }
-
-    async fn connect(self: &Arc<Self>, call: &Arc<Call>, offer: &str, home: &Path) -> Result<String> {
-        let (auth, snapshot) = tokio::try_join!(authenticate(home, true), call.session.execute(json!({"type":"get_snapshot"})))?;
-        self.assert_current(call)?;
-        let context = voice_context(&call.session, &snapshot);
-        call.state().context = context.clone();
-        let headers = [
-            ("Authorization", format!("Bearer {}", auth.token)),
-            ("ChatGPT-Account-ID", auth.account),
-            ("OpenAI-Alpha", "quicksilver=v2".into()),
-            ("originator", "piop".into()),
-        ];
-        let mut request = reqwest::Client::new()
-            .post("https://chatgpt.com/backend-api/codex/realtime/calls?intent=quicksilver&architecture=avas")
-            .timeout(Duration::from_secs(30));
-        for (name, value) in &headers {
-            request = request.header(*name, value);
-        }
-        let response=request.json(&json!({"session":{"model":"gpt-live-1-codex","instructions":format!("{}\n\nCurrent workspace context (data):\n{}\nRecent conversation:\n{}",text(&context,"systemPrompt"),text(&context,"workspace"),text(&context,"conversation")),"audio":{"output":{"voice":"cove"}},"delegation":{"type":"client"}},"sdp":offer}))
-            .send().await.map_err(|error|error.to_string())?;
-        if !response.status().is_success() {
-            return Err(format!(
-                "Voice session creation failed (HTTP {}). Check the ChatGPT login on the Pi host.",
-                response.status().as_u16()
-            ));
-        }
-        let id = response
-            .headers()
-            .get("location")
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.split('?').next())
-            .and_then(|value| value.split('/').rfind(|part| !part.is_empty()))
-            .ok_or("Invalid voice service session ID")?;
-        if id.is_empty() || id.len() > 256 || !id.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-') {
-            return Err("Invalid voice service session ID".into());
-        }
-        let url = format!("wss://api.openai.com/v1/live/{id}");
-        let answer = response.text().await.map_err(|error| error.to_string())?;
-        self.assert_current(call)?;
-        let mut request = url.into_client_request().map_err(|error| error.to_string())?;
-        for (name, value) in &headers {
-            let name =
-                tokio_tungstenite::tungstenite::http::header::HeaderName::from_bytes(name.as_bytes()).map_err(|error| error.to_string())?;
-            request
-                .headers_mut()
-                .insert(name, HeaderValue::from_str(value).map_err(|error| error.to_string())?);
-        }
-        let config = WebSocketConfig::default().max_message_size(Some(1024 * 1024));
-        let (socket, _) = tokio::time::timeout(Duration::from_secs(20), connect_async_with_config(request, Some(config), false))
-            .await
-            .map_err(|_| "Could not attach to voice service")?
-            .map_err(|_| "Could not attach to voice service")?;
-        self.assert_current(call)?;
-        let (outgoing, mut messages) = mpsc::unbounded_channel::<Value>();
-        call.state().outgoing = Some(outgoing);
-        let mut cancelled = call.cancel.subscribe();
-        let service = self.clone();
-        let current = call.clone();
-        tokio::spawn(async move {
-            let (mut writer, mut reader) = socket.split();
-            loop {
-                tokio::select! {
-                    _=async { let _ = cancelled.wait_for(|cancelled|*cancelled).await; }=>{
-                        let _=tokio::time::timeout(Duration::from_secs(2),async{let _=writer.send(Message::Text(json!({"type":"session.close"}).to_string().into())).await;let _=writer.close().await;}).await;break;
-                    }
-                    outgoing=messages.recv()=>{
-                        let Some(outgoing)=outgoing else{break;};
-                        if writer.send(Message::Text(outgoing.to_string().into())).await.is_err(){service.fail(&current,"Voice connection lost").await;break;}
-                    }
-                    incoming=reader.next()=>{
-                        match incoming{
-                            Some(Ok(Message::Text(data)))=>{
-                                let result=match serde_json::from_str(&data){Ok(event)=>service.event(&current,event).await,Err(error)=>Err(error.to_string())};
-                                if let Err(error)=result{service.fail(&current,&error).await;break;}
-                            }
-                            Some(Ok(Message::Binary(data)))=>{
-                                let result=match serde_json::from_slice(&data){Ok(event)=>service.event(&current,event).await,Err(error)=>Err(error.to_string())};
-                                if let Err(error)=result{service.fail(&current,&error).await;break;}
-                            }
-                            Some(Ok(Message::Close(_)))|None=>{service.close(&current).await;break;}
-                            Some(Err(_))=>{service.fail(&current,"Voice connection lost").await;break;}
-                            _=>{},
-                        }
-                    }
-                }
-            }
-        });
-        self.emit(call, json!({"type":"connected"}));
-        Ok(answer)
     }
 
     async fn fail(&self, call: &Arc<Call>, error: &str) {
@@ -373,33 +284,35 @@ impl VoiceService {
             }
             "error" | "session.error" => return Err("The voice service reported an error".into()),
             "input_transcript.added" | "output_transcript.added" | "turn.done" => self.transcript(call, &event).await?,
-            "delegation.created" => {
-                let item = &event["item"];
-                let id = text(item, "id");
-                if kind(item) != "delegation" || item["target"] != "client" || !item["id"].is_string() {
-                    return Ok(());
-                }
-                {
-                    let mut state = call.state();
-                    if state.seen.contains(&id) {
-                        return Ok(());
-                    }
-                    if state.seen.len() >= 512 {
-                        return Err("Start a new voice call to continue this long conversation.".into());
-                    }
-                    state.seen.insert(id);
-                }
-                let service = self.clone();
-                let call = call.clone();
-                let item = item.clone();
-                tokio::spawn(async move {
-                    if let Err(error) = service.submit(&call, item).await {
-                        service.fail(&call, &error).await;
-                    }
-                });
-            }
+            "delegation.created" => self.delegate(call, &event["item"])?,
             _ => {}
         }
+        Ok(())
+    }
+
+    fn delegate(self: &Arc<Self>, call: &Arc<Call>, item: &Value) -> Result<()> {
+        let id = text(item, "id");
+        if kind(item) != "delegation" || item["target"] != "client" || !item["id"].is_string() {
+            return Ok(());
+        }
+        {
+            let mut state = call.state();
+            if state.seen.contains(&id) {
+                return Ok(());
+            }
+            if state.seen.len() >= 512 {
+                return Err("Start a new voice call to continue this long conversation.".into());
+            }
+            state.seen.insert(id);
+        }
+        let service = self.clone();
+        let call = call.clone();
+        let item = item.clone();
+        tokio::spawn(async move {
+            if let Err(error) = service.submit(&call, item).await {
+                service.fail(&call, &error).await;
+            }
+        });
         Ok(())
     }
 
@@ -451,19 +364,7 @@ impl VoiceService {
 
     async fn transcript(&self, call: &Arc<Call>, event: &Value) -> Result<()> {
         let done = kind(event) == "turn.done";
-        let role = if done {
-            text(&event["turn"], "role")
-        } else if kind(event) == "input_transcript.added" {
-            "user".into()
-        } else {
-            "assistant".into()
-        };
-        let value = if done {
-            event["turn"]["transcript"].as_str()
-        } else {
-            event["item"]["text"].as_str()
-        };
-        let Some(value) = value.filter(|_| matches!(role.as_str(), "user" | "assistant")) else {
+        let Some((role, value)) = transcript_text(event) else {
             return Ok(());
         };
         let turn = {
@@ -472,35 +373,7 @@ impl VoiceService {
                 .turns
                 .iter()
                 .rposition(|turn| turn["role"] == role && !flag(turn, "completed"));
-            let index = if let Some(index) = index {
-                index
-            } else {
-                let mut turn = json!({"id":Uuid::new_v4().to_string(),"role":role,"text":"","startMs":now()});
-                if role == "assistant" && state.context.is_object() {
-                    let mut context = state.context.clone();
-                    let mut conversation = vec![text(&context, "conversation")];
-                    conversation.extend(
-                        state
-                            .turns
-                            .iter()
-                            .map(|turn| format!("{}: {}", text(turn, "role"), text(turn, "text"))),
-                    );
-                    context["conversation"] = json!(tail(
-                        &conversation
-                            .into_iter()
-                            .filter(|text| !text.is_empty())
-                            .collect::<Vec<_>>()
-                            .join("\n"),
-                        16000
-                    ));
-                    turn["voiceContext"] = context;
-                }
-                state.turns.push(turn);
-                if state.turns.len() > 100 {
-                    state.turns.remove(0);
-                }
-                state.turns.len() - 1
-            };
+            let index = index.unwrap_or_else(|| append_turn(&mut state, role));
             let feedback = state.context.get("feedback").cloned();
             let turn = &mut state.turns[index];
             turn["text"] = json!(tail(
@@ -643,75 +516,6 @@ fn voice_context(session: &Session, snapshot: &Value) -> Value {
     json!({"systemPrompt":INSTRUCTIONS,"workspace":format!("Project: {}\nAgent working: {}",session.cwd.as_deref().or(session.spec.cwd.as_deref()).unwrap_or("No project selected"),session.working()),"conversation":conversation,"feedback":""})
 }
 
-async fn authenticate(home: &Path, refresh: bool) -> Result<VoiceAuth> {
-    tokio::time::timeout(Duration::from_secs(25), async {
-        let executable = [".local/bin/codex", ".npm-global/bin/codex", ".bun/bin/codex"]
-            .iter()
-            .map(|path| home.join(path))
-            .find(|path| path.exists())
-            .unwrap_or_else(|| PathBuf::from("codex"));
-        let mut child = Command::new(executable)
-            .arg("app-server")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|_| LOGIN_ERROR)?;
-        let mut stdin = child.stdin.take().ok_or(LOGIN_ERROR)?;
-        let mut lines = BufReader::new(child.stdout.take().ok_or(LOGIN_ERROR)?).lines();
-        stdin
-            .write_all(
-                format!(
-                    "{}\n",
-                    json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"piop","version":"0.1.0"}}})
-                )
-                .as_bytes(),
-            )
-            .await
-            .map_err(|_| LOGIN_ERROR)?;
-        while let Some(line) = lines.next_line().await.map_err(|_| LOGIN_ERROR)? {
-            let response: Value = serde_json::from_str(&line).map_err(|_| LOGIN_ERROR)?;
-            if response.get("error").is_some_and(|error| !error.is_null()) {
-                return Err(LOGIN_ERROR);
-            }
-            if response["id"] == 1 {
-                let packets = format!(
-                    "{}\n{}\n",
-                    json!({"method":"initialized"}),
-                    json!({"id":2,"method":"getAuthStatus","params":{"includeToken":true,"refreshToken":refresh}})
-                );
-                stdin.write_all(packets.as_bytes()).await.map_err(|_| LOGIN_ERROR)?;
-            }
-            if response["id"] != 2 {
-                continue;
-            }
-            let result = &response["result"];
-            if !matches!(result["authMethod"].as_str(), Some("chatgpt" | "chatgptAuthTokens")) {
-                return Err(LOGIN_ERROR);
-            }
-            let token = result["authToken"].as_str().ok_or(LOGIN_ERROR)?;
-            let claims = token.split('.').nth(1).ok_or(LOGIN_ERROR)?;
-            let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
-                .decode(claims.trim_end_matches('='))
-                .map_err(|_| LOGIN_ERROR)?;
-            let claims: Value = serde_json::from_slice(&decoded).map_err(|_| LOGIN_ERROR)?;
-            let account = claims["https://api.openai.com/auth"]["chatgpt_account_id"]
-                .as_str()
-                .filter(|id| !id.is_empty())
-                .ok_or(LOGIN_ERROR)?;
-            return Ok(VoiceAuth {
-                token: token.into(),
-                account: account.into(),
-            });
-        }
-        Err(LOGIN_ERROR)
-    })
-    .await
-    .map_err(|_| LOGIN_ERROR.to_owned())?
-    .map_err(str::to_owned)
-}
-
 fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
 }
@@ -720,4 +524,52 @@ fn tail(value: &str, limit: usize) -> String {
 }
 fn head(value: &str, limit: usize) -> String {
     value.chars().take(limit).collect()
+}
+
+fn append_turn(state: &mut CallState, role: &str) -> usize {
+    let mut turn = json!({"id":Uuid::new_v4().to_string(),"role":role,"text":"","startMs":now()});
+    if role == "assistant" && state.context.is_object() {
+        let mut context = state.context.clone();
+        let mut conversation = vec![text(&context, "conversation")];
+        conversation.extend(
+            state
+                .turns
+                .iter()
+                .map(|turn| format!("{}: {}", text(turn, "role"), text(turn, "text"))),
+        );
+        context["conversation"] = json!(tail(
+            &conversation
+                .into_iter()
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            16000
+        ));
+        turn["voiceContext"] = context;
+    }
+    state.turns.push(turn);
+    if state.turns.len() > 100 {
+        state.turns.remove(0);
+    }
+    state.turns.len() - 1
+}
+
+fn voice_offer(packet: &Value) -> Result<&str> {
+    let id = text(packet, "callId");
+    if id.len() != 36 || !id.chars().all(|ch| ch.is_ascii_hexdigit() || ch == '-') {
+        return Err("Invalid voice connection offer".into());
+    }
+    packet["offer"]
+        .as_str()
+        .filter(|offer| offer.encode_utf16().count() <= 128 * 1024)
+        .ok_or_else(|| "Invalid voice connection offer".into())
+}
+
+fn transcript_text(event: &Value) -> Option<(&str, &str)> {
+    let (role, value) = match kind(event) {
+        "turn.done" => (event["turn"]["role"].as_str()?, event["turn"]["transcript"].as_str()?),
+        "input_transcript.added" => ("user", event["item"]["text"].as_str()?),
+        _ => ("assistant", event["item"]["text"].as_str()?),
+    };
+    matches!(role, "user" | "assistant").then_some((role, value))
 }

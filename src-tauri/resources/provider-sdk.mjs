@@ -13,7 +13,7 @@ const cancelled = new Set();
 const accounts = new Map();
 let initializing, syncing;
 
-async function loadRuntime() {
+async function resolveExecutable() {
   const executable = process.argv[1] || 'pi';
   const expanded = executable.startsWith('~/') ? join(homedir(), executable.slice(2)) : executable;
   const candidates = /[/\\]/.test(expanded) ? [resolve(expanded)] : (process.env.PATH || '').split(delimiter).map((directory) => join(directory, expanded));
@@ -22,6 +22,11 @@ async function loadRuntime() {
     try { entry = await realpath(candidate); break; } catch { /* Try the next PATH entry. */ }
   }
   if (!entry) throw new Error('Pi is unavailable on this host. Check its Pi executable setting.');
+  return entry;
+}
+
+async function loadRuntime() {
+  const entry = await resolveExecutable();
   let directory = dirname(entry);
   while (directory !== dirname(directory)) {
     let metadata;
@@ -95,25 +100,32 @@ async function login(packet) {
     if (accounts.has(packet.providerId)) await loaded.runtime.refresh({ providers: [packet.providerId], allowNetwork: true, signal: state.controller.signal });
     return { status: 'complete' };
   } catch (error) {
-    if (error?.operation === 'login' && error?.credential) return { status: 'complete' };
-    if (state.controller.signal.aborted) return { status: 'cancelled' };
-    return { status: 'failed', error: error instanceof Error && error.message.trim() ? error.message.slice(0, 400) : 'Provider login failed. Check your details and try again.' };
+    return loginFailure(error, state.controller.signal);
   } finally { state.answer?.(null); logins.delete(packet.flowId); }
+}
+
+function loginFailure(error, signal) {
+  if (error?.operation === 'login' && error?.credential) return { status: 'complete' };
+  if (signal.aborted) return { status: 'cancelled' };
+  return { status: 'failed', error: error instanceof Error && error.message.trim() ? error.message.slice(0, 400) : 'Provider login failed. Check your details and try again.' };
+}
+
+function cancelLogin(packet) {
+  const login = logins.get(packet.flowId);
+  if (login) login.controller.abort();
+  else { cancelled.add(packet.flowId); if (cancelled.size > 1024) cancelled.delete(cancelled.values().next().value); }
+}
+
+function answerLogin(packet) {
+  const state = logins.get(packet.flowId);
+  if (!state?.answer || state.promptId !== packet.promptId) throw new Error('This login prompt has expired');
+  state.answer(packet.answer);
 }
 
 async function handle(packet) {
   if (packet.method === 'login') return login(packet);
-  if (packet.method === 'cancel') {
-    const login = logins.get(packet.flowId);
-    if (login) login.controller.abort();
-    else { cancelled.add(packet.flowId); if (cancelled.size > 1024) cancelled.delete(cancelled.values().next().value); }
-    return;
-  }
-  if (packet.method === 'answer') {
-    const state = logins.get(packet.flowId);
-    if (!state?.answer || state.promptId !== packet.promptId) throw new Error('This login prompt has expired');
-    state.answer(packet.answer); return;
-  }
+  if (packet.method === 'cancel') return cancelLogin(packet);
+  if (packet.method === 'answer') return answerLogin(packet);
   const loaded = await runtime();
   if (packet.method === 'initialize') return { authPath: loaded.authPath, builtinIds: loaded.builtinIds };
   await syncAccounts(loaded);
