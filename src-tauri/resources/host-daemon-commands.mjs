@@ -233,7 +233,7 @@ async function answerQuestion(session, dialog, command) {
   const deliver = async () => {
     const { message } = await session.raw({ ...response, action: 'prepare' });
     if (message && !dialog.answerQueued) {
-      await session.queue.command({ type: 'follow_up', message });
+      await session.queue.command({ type: session.working ? 'steer' : 'follow_up', message });
       dialog.answerQueued = true;
       dialog.queuedResponse = response;
     }
