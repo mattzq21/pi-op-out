@@ -2,8 +2,8 @@ import { execFileSync } from "node:child_process";
 
 export const topWindowBounds = Object.freeze({ x: 2560, y: 56, width: 1280, height: 692 });
 export const bottomWindowBounds = Object.freeze({ x: 2560, y: 748, width: 1280, height: 692 });
-export const tertiaryWindowBounds = Object.freeze({ x: 1285, y: 56, width: 1275, height: 692 });
-export const quaternaryWindowBounds = Object.freeze({ x: 1285, y: 748, width: 1275, height: 692 });
+export const tertiaryWindowBounds = Object.freeze({ x: 3840, y: 56, width: 1280, height: 692 });
+export const quaternaryWindowBounds = Object.freeze({ x: 3840, y: 748, width: 1280, height: 692 });
 const windowSlots = [topWindowBounds, bottomWindowBounds, tertiaryWindowBounds, quaternaryWindowBounds];
 
 export function selectWindowBounds() {
