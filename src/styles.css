@@ -243,6 +243,10 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .dialog-checkbox { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: var(--muted); font-size: 12px; }.dialog-checkbox input { margin: 0; }
 .extension-dialog > .worktree-preview { margin: 8px 1px 0; color: var(--muted); font-size: 11px; }.worktree-preview code { color: var(--ink); font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; }
 .ask-user-dialog { --question-bg: #2c2c2c; --question-hover: #373737; --question-border: #404040; --question-text: #f3f3f3; --question-muted: #aaa; width: 100%; min-width: 0; margin: 16px 0 0; padding: 12px 8px 14px; border: 1px solid var(--question-border); border-radius: 21px; background: var(--question-bg); color: var(--question-text); box-shadow: 0 12px 40px #0002; font: 13px/1.5 "DM Sans", system-ui, sans-serif; }
+.composer-questions { width: min(740px, calc(100% - 72px)); max-height: min(45vh, 480px); overflow-y: auto; overscroll-behavior: contain; margin: 0 auto 8px; border-radius: 21px; }
+.composer-questions:empty { display: none; }
+.composer-questions > .ask-user-dialog { margin-top: 8px; box-shadow: none; }
+.composer-questions > .ask-user-dialog:first-child { margin-top: 0; }
 .ask-user-header { display: flex; align-items: center; gap: 9px; min-height: 28px; margin: 0 8px 12px; color: var(--question-muted); }
 .ask-user-progress { font-size: 11px; }
 .ask-user-dialog button { font: inherit; color: inherit; cursor: pointer; }

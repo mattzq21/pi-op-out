@@ -53,7 +53,7 @@ html[data-mobile] .app { padding-top: calc(52px + env(safe-area-inset-top)); }
   .message { padding-inline: 12px; }
   .message-content { min-width: 0; overflow-wrap: anywhere; }
   .message-content pre, .message-content table { max-width: 100%; overflow-x: auto; }
-  .conversation, .composer-wrap, .extension-widget, .runtime-activity { width: calc(100% - 16px); }
+  .conversation, .composer-wrap, .composer-questions, .extension-widget, .runtime-activity { width: calc(100% - 16px); }
   .composer { margin-inline: 0; }
   .composer-bar { flex-wrap: wrap; }
   .composer-tools { flex-wrap: wrap; }
