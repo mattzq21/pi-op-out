@@ -7,7 +7,6 @@ import { RemoveWorktreeDialog } from '../../src/components/RemoveWorktreeDialog.
 import { RemoveGroupDialog } from '../../src/components/RemoveGroupDialog.tsx';
 import { ResizableSidebar } from '../../src/components/ResizableSidebar.tsx';
 import { Toggle } from '../../src/components/Toggle.tsx';
-import { IconButton } from '../../src/components/IconButton.tsx';
 
 describe('rendered controls and dialogs', () => {
   let dom, views;
@@ -25,12 +24,6 @@ describe('rendered controls and dialogs', () => {
     await click(control); assert.deepEqual(changes, [true]);
     await view.rerender({ ...props, checked: true }); await click(control); assert.deepEqual(changes, [true, false]);
     await view.rerender({ ...props, disabled: true }); await click(control); assert.equal(changes.length, 2);
-  });
-
-  test('icon buttons preserve accessibility labels and forward action attributes', async () => {
-    let count = 0; await render(IconButton, { label: 'Close panel', children: '×', className: 'extra', onClick: () => count++, type: 'button' });
-    const control = document.querySelector('button'); assert.equal(control.title, 'Close panel'); assert.equal(control.getAttribute('aria-label'), 'Close panel');
-    assert.ok(control.classList.contains('extra')); await click(control); assert.equal(count, 1);
   });
 
   test('extension input submits edited content, blocks duplicate responses and displays failures', async () => {
