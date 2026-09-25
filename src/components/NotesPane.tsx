@@ -41,7 +41,8 @@ export function NotesPane(props: { hidden: boolean; open: boolean; onClose: () =
   window.addEventListener("resize", onResize);
   onCleanup(() => window.removeEventListener("resize", onResize));
   const focusEditor = () => { setPreview(false); queueMicrotask(() => editor?.focus()); };
-  const begin = (action: FormAction, value = "") => { setConfirmation(undefined); setForm({ action, value }); };
+  const clearFormError = () => { notes.clearError(); setLinkError(""); };
+  const begin = (action: FormAction, value = "") => { clearFormError(); setConfirmation(undefined); setForm({ action, value }); };
   const submit = async (event: SubmitEvent) => {
     event.preventDefault();
     const current = form();
@@ -52,7 +53,7 @@ export function NotesPane(props: { hidden: boolean; open: boolean; onClose: () =
       rename: () => notes.rename(current.value),
       vault: () => notes.openVault(current.value),
     };
-    if (await actions[current.action]()) { setForm(undefined); setQuery(""); focusEditor(); }
+    if (await actions[current.action]()) { clearFormError(); setForm(undefined); setQuery(""); focusEditor(); }
   };
   const select = async (path: string) => {
     if (notes.busy()) return;
@@ -64,13 +65,14 @@ export function NotesPane(props: { hidden: boolean; open: boolean; onClose: () =
     try { decoded = decodeURIComponent(target); } catch { /* A literal percent sign is valid in a note title. */ }
     const path = resolveNoteLink(decoded, notes.document()?.path ?? "", notes.paths());
     if (path) { void select(path); return; }
-    setLinkError(`No unique note found for “${decoded}”. Choose a note below or create it.`);
     begin("create", markdownPath(decoded.split("#")[0]));
+    setLinkError(`No unique note found for “${decoded}”. Choose a note below or create it.`);
   };
   const confirm = async () => {
     const action = confirmation();
-    const succeeded = action === "trash" ? await notes.trash() : await notes.reload();
-    if (succeeded) setConfirmation(undefined);
+    if (!action) return;
+    setConfirmation(undefined);
+    if (action === "trash") await notes.trash(); else await notes.reload();
   };
   const editorKeyDown = (event: KeyboardEvent) => {
     if (event.isComposing) return;
@@ -128,10 +130,10 @@ export function NotesPane(props: { hidden: boolean; open: boolean; onClose: () =
       <div class="notes-vault" title={notes.root()}>{notes.root() || "Your Markdown notebook"}</div>
       <Show when={form()}>{current => <form class="notes-form" onSubmit={submit}>
         <label for="note-filename">{formLabels[current().action]}</label>
-        <div><input id="note-filename" ref={element => queueMicrotask(() => { element.focus(); element.select(); })} value={current().value} onInput={event => setForm({ ...current(), value: event.currentTarget.value })} placeholder={current().action === "vault" ? "/path/to/notes" : "Ideas/My note.md"} disabled={notes.busy()} autocomplete="off" required />
+        <div><input id="note-filename" aria-describedby="note-filename-help" ref={element => queueMicrotask(() => { element.focus(); element.select(); })} value={current().value} onInput={event => { clearFormError(); setForm({ ...current(), value: event.currentTarget.value }); }} placeholder={current().action === "vault" ? "/path/to/notes" : "Ideas/My note.md"} disabled={notes.busy()} autocomplete="off" required />
           <IconButton label="Confirm" type="submit" disabled={notes.busy()}><Check size={16} /></IconButton>
-          <IconButton label="Cancel" type="button" disabled={notes.busy()} onClick={() => setForm(undefined)}><X size={16} /></IconButton></div>
-        <small>{current().action === "vault" ? "Open an existing folder on this Piop host. Files stay in that folder." : "Use / to organize notes into folders. Files use Markdown."}</small>
+          <IconButton label="Cancel" type="button" disabled={notes.busy()} onClick={() => { clearFormError(); setForm(undefined); }}><X size={16} /></IconButton></div>
+        <small id="note-filename-help">{current().action === "vault" ? "Open an existing folder on this Piop host. Files stay in that folder." : "Use / to organize notes into folders. Files use Markdown."}</small>
       </form>}</Show>
       {renderError()}
       <label class="notes-search"><Search size={14} /><input aria-label="Search notes" placeholder="Find a note…" value={query()} onInput={event => setQuery(event.currentTarget.value)} /><span>{filtered().length}</span></label>

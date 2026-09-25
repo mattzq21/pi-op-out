@@ -315,8 +315,8 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
   let created = false;
   let sessionWritten = false;
   try {
-    created = true;
     await runGit(root, ["worktree", "add", "-b", branch, target, checkpoint.commit]);
+    created = true;
     const entries = await branchSessionEntries(ctx, root, id, history, owner, checkpoint, timestamp, target, afterResponse, entryId);
     const session = await open(sessionPath, "wx", 0o600);
     sessionWritten = true;
@@ -327,8 +327,8 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
     if (sessionWritten) await rm(sessionPath, { force: true });
     for (const { ref, commit } of [...await promptRefs(root, id), ...await sessionSnapshots(root, id)]) await runGit(root, ["update-ref", "-d", ref, commit]);
     if (created) {
-      await runGit(root, ["worktree", "remove", "--force", target]).catch(() => undefined);
-      await runGit(root, ["branch", "-D", branch]).catch(() => undefined);
+      await runGit(root, ["worktree", "remove", "--force", target])
+        .then(() => runGit(root, ["branch", "-D", branch])).catch(() => undefined);
     }
     throw error;
   }

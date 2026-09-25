@@ -13,6 +13,7 @@ function responseKey(command: string, args?: Record<string, unknown>) {
 }
 
 const terminalWrites = new Map<string, Promise<void>>();
+const terminalStarts = new Map<string, Promise<void>>();
 
 const call = <T>(command: string, args?: Record<string, unknown>) => {
   if (import.meta.env.MODE !== "e2e") return invoke<T>(command, args);
@@ -130,6 +131,7 @@ export class NativeTransport {
   private hostId = "local";
   private daemonId?: string;
   private running = false;
+  private connectionAttempted = false;
   private temporaryChat = false;
   private temporaryChatUsed = false;
   private terminalActivity = false;
@@ -220,6 +222,7 @@ export class NativeTransport {
     if (cwd !== undefined) this.cwd = cwd; if (sessionPath !== undefined) { this.sessionPath = sessionPath; this.sessionId = undefined; } if (hostId !== undefined) this.hostId = hostId;
     if (this.running) return;
     if (this.connectPromise) return this.connectPromise;
+    this.connectionAttempted = true;
     const pending = this.establishConnection(forkPath, ephemeral); this.connectPromise = pending;
     try { await pending; } finally { if (this.connectPromise === pending) this.connectPromise = undefined; }
   }
@@ -279,7 +282,7 @@ export class NativeTransport {
     try { await this.connect(); }
     catch (reason) { this.emit({ type: "disconnected" }); throw reason; }
   }
-  async dispose() { this.disposed = true; this.pendingSettings = undefined; await this.applyingSettings; const temporaryPath = this.temporaryChat && !this.temporaryChatUsed ? this.cwd : undefined; const temporaryHost = this.hostId; const stopped = await this.disconnect(true); if (temporaryPath && stopped) await call<void>("remove_temporary_chat", { path: temporaryPath, hostId: temporaryHost }); this.temporaryChat = false; this.temporaryChatUsed = false; }
+  async dispose() { this.disposed = true; this.pendingSettings = undefined; await this.applyingSettings; const temporaryPath = this.temporaryChat && !this.temporaryChatUsed ? this.cwd : undefined; const temporaryHost = this.hostId; const stopped = await this.disconnect(true); if (temporaryPath && (stopped || !this.connectionAttempted)) await call<void>("remove_temporary_chat", { path: temporaryPath, hostId: temporaryHost }); this.temporaryChat = false; this.temporaryChatUsed = false; }
   private async refreshFastStatus(reload: boolean) {
     if (!this.fastStatusCommand) return;
     try {
@@ -400,16 +403,23 @@ export class NativeTransport {
   async prepareTemporaryChat(hostId: string) { const chat = await call<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId, e2e: import.meta.env.MODE === "e2e" }); this.cwd = chat.cwd; this.sessionPath = undefined; this.sessionId = chat.sessionId; this.hostId = hostId; this.temporaryChat = true; this.temporaryChatUsed = false; return chat.cwd; }
   startTerminal(terminalId: string, sessionKey: string, cwd: string, cols: number, rows: number, hostId = this.hostId) {
     if (cwd === this.cwd && hostId === this.hostId) { this.terminalActivity = true; this.temporaryChatUsed = true; }
-    return call<void>("start_terminal", { terminalId, sessionKey, cwd, cols, rows, hostId });
+    const pending = call<void>("start_terminal", { terminalId, sessionKey, cwd, cols, rows, hostId });
+    terminalStarts.set(terminalId, pending);
+    const clear = () => { if (terminalStarts.get(terminalId) === pending) terminalStarts.delete(terminalId); };
+    void pending.then(clear, clear);
+    return pending;
   }
   writeTerminal(terminalId: string, data: string) {
-    const next = (terminalWrites.get(terminalId) ?? Promise.resolve()).then(() => call<void>("write_terminal", { terminalId, data }));
+    const starting = terminalStarts.get(terminalId);
+    const next = (terminalWrites.get(terminalId) ?? Promise.resolve()).catch(() => undefined)
+      .then(() => starting).then(() => call<void>("write_terminal", { terminalId, data }));
     terminalWrites.set(terminalId, next);
-    void next.then(() => { if (terminalWrites.get(terminalId) === next) terminalWrites.delete(terminalId); }, () => undefined);
+    const clear = () => { if (terminalWrites.get(terminalId) === next) terminalWrites.delete(terminalId); };
+    void next.then(clear, clear);
     return next;
   }
-  resizeTerminal(terminalId: string, cols: number, rows: number) { return call<void>("resize_terminal", { terminalId, cols, rows }); }
-  async closeTerminal(terminalId: string) { await terminalWrites.get(terminalId)?.catch(() => undefined); terminalWrites.delete(terminalId); return call<void>("close_terminal", { terminalId }); }
+  async resizeTerminal(terminalId: string, cols: number, rows: number) { await terminalStarts.get(terminalId); return call<void>("resize_terminal", { terminalId, cols, rows }); }
+  async closeTerminal(terminalId: string) { await terminalStarts.get(terminalId)?.catch(() => undefined); await terminalWrites.get(terminalId)?.catch(() => undefined); terminalWrites.delete(terminalId); return call<void>("close_terminal", { terminalId }); }
 }
 
 export async function readDroppedFile(path: string): Promise<File> {

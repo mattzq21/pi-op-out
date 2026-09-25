@@ -183,5 +183,6 @@ export function useNotes() {
   };
   window.addEventListener("beforeunload", beforeUnload);
   onCleanup(() => { clearTimeout(timer); window.removeEventListener("beforeunload", beforeUnload); void save(); });
-  return { root, paths, document, content, busy, saving, error, ready, dirty, edit, save, open, openVault, refresh, create, rename, trash, reload };
+  const clearError = () => setError("");
+  return { root, paths, document, content, busy, saving, error, clearError, ready, dirty, edit, save, open, openVault, refresh, create, rename, trash, reload };
 }
