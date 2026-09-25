@@ -48,10 +48,14 @@ async function discoverTools(client: Client, signal: AbortSignal) {
   return discovered;
 }
 
+function isStringSchema(value: unknown): boolean {
+  return value !== null && typeof value === "object" && !Array.isArray(value) && (value as { type?: unknown }).type === "string";
+}
+
 function toolParameters(inputSchema: Awaited<ReturnType<Client["listTools"]>>["tools"][number]["inputSchema"], inject = false) {
   const schema = inputSchema ?? { type: "object", properties: {} };
   const agentId = schema.properties?.agent_id;
-  const injectAgentId = inject && agentId !== null && typeof agentId === "object" && !Array.isArray(agentId) && agentId.type === "string";
+  const injectAgentId = inject && isStringSchema(agentId);
   const parameters = injectAgentId ? {
     ...schema,
     properties: Object.fromEntries(Object.entries(schema.properties ?? {}).filter(([key]) => key !== "agent_id")),
@@ -105,14 +109,15 @@ async function connectClient(client: Client, config: ServerConfig, instanceId: s
   catch (error) { await client.close().catch(() => undefined); throw error; }
 }
 
+function contentPart(part: Record<string, unknown>): { type: "text"; text: string } | { type: "image"; data: string; mimeType: string } {
+  if (part.type === "text" && typeof part.text === "string") return { type: "text", text: part.text };
+  if (part.type === "image" && typeof part.data === "string" && typeof part.mimeType === "string") return { type: "image", data: part.data, mimeType: part.mimeType };
+  return { type: "text", text: JSON.stringify(part, null, 2) };
+}
+
 function resultContent(result: unknown) {
   const content = (result as { content?: Array<Record<string, unknown>> })?.content ?? [];
-  const mapped: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }> = [];
-  for (const part of content) {
-    if (part.type === "text" && typeof part.text === "string") mapped.push({ type: "text", text: part.text });
-    else if (part.type === "image" && typeof part.data === "string" && typeof part.mimeType === "string") mapped.push({ type: "image", data: part.data, mimeType: part.mimeType });
-    else mapped.push({ type: "text", text: JSON.stringify(part, null, 2) });
-  }
+  const mapped = content.map(contentPart);
   const structured = (result as { structuredContent?: unknown })?.structuredContent;
   if (structured !== undefined) mapped.push({ type: "text", text: JSON.stringify(structured, null, 2) });
   return mapped.length ? mapped : [{ type: "text" as const, text: JSON.stringify(result, null, 2) }];

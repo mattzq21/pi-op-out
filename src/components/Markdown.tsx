@@ -116,13 +116,16 @@ export function Markdown(props: { children: string; onNoteLink?: (target: string
     const timer = setTimeout(() => { button.textContent = "⧉"; button.setAttribute("aria-label", "Copy code"); button.closest(".code-block")?.querySelector("[role=status]")?.remove(); timers.delete(timer); }, 1800);
     timers.add(timer);
   };
+  const openFileLink = (link: HTMLButtonElement) => {
+    const reference = fileReference(link.dataset.fileReference ?? "");
+    if (reference) props.onOpenFile?.(reference);
+  };
   const click = (event: MouseEvent) => {
     if (!(event.target instanceof Element)) return;
     const fileLink = event.target.closest<HTMLButtonElement>("button.file-link");
     if (fileLink) {
       event.preventDefault();
-      const reference = fileReference(fileLink.dataset.fileReference ?? "");
-      if (reference) props.onOpenFile?.(reference);
+      openFileLink(fileLink);
       return;
     }
     const link = event.target.closest<HTMLAnchorElement>("a");

@@ -68,6 +68,7 @@ function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; e
   const input = createMemo(() => (toolInputLines(componentProps.message)));
   const output = createMemo(() => (textOf(componentProps.message.content)));
   const runs = createMemo(() => componentProps.message.toolName === "subagent" ? subagentRuns(componentProps.message.details) : []);
+  const needsLoad = () => !componentProps.loading && !componentProps.error && componentProps.message.deferredToolPayload && !componentProps.message.toolPayloadLoaded;
   return <>
     {runs().length > 0 ? <SubagentResults runs={runs()} /> : <>
       {input() !== undefined && <div class="tool-payload"><div class="tool-payload-label">In</div><div class="tool-input" aria-label="Tool arguments"><pre>{(input())!}</pre></div></div>}
@@ -76,7 +77,7 @@ function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; e
     {componentProps.loading && <div role="status">Loading tool input and output…</div>}
     {componentProps.error && <div role="alert">{(componentProps.error)!} <button onClick={componentProps.retry}>Retry</button></div>}
     {Array.isArray(componentProps.message.content) && <Index each={componentProps.message.content.filter((part) => part.type === "image")}>{(part) => part().type === "image" && part().data && /^image\/(png|jpeg|gif|webp)$/.test(part().mimeType ?? "") ? <img src={`data:${part().mimeType};base64,${part().data}`} alt="Tool result" style={{ "max-width": "100%", "max-height": "320px", "object-fit": "contain" }} /> : null}</Index>}
-    {!componentProps.loading && !componentProps.error && componentProps.message.deferredToolPayload && !componentProps.message.toolPayloadLoaded && <button onClick={componentProps.retry}>Load input and output</button>}
+    {needsLoad() && <button onClick={componentProps.retry}>Load input and output</button>}
   </>;
 }
 
@@ -131,8 +132,8 @@ export function Message(componentProps: Props) {
     const parts = createMemo(() => userMessageParts(textOf(componentProps.message.content)));
     const sentTime = createMemo(() => formatMessageTime(componentProps.message.timestamp));
     return <article class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`} title={sentTime() ? `Sent ${sentTime()!.full}` : undefined}>
-      <div class="message-body">{<Key each={parts().skills} by={(skill) => skill}>{(skill, index) => <span class="skill-reference" >${skill()}</span>}</Key>}{parts().text && (parts().literalSkill ? <span class="literal-skill-content">{parts().text}</span> : <Markdown>{parts().text}</Markdown>)}</div>
-      {Array.isArray(componentProps.message.content) && <Index each={componentProps.message.content.flatMap(part => part.type === "image" ? [part] : [])}>{(part, index) => part().type === "image" && part().data && part().mimeType && /^image\/(png|jpeg|gif|webp)$/.test(part().mimeType) ? <img  src={`data:${part().mimeType};base64,${part().data}`} alt="Sent attachment" style={{ "max-width": "100%", "max-height": cssPixels(320), "object-fit": "contain" }} /> : null}</Index>}
+      <div class="message-body">{<Key each={parts().skills} by={(skill) => skill}>{(skill, _index) => <span class="skill-reference" >${skill()}</span>}</Key>}{parts().text && (parts().literalSkill ? <span class="literal-skill-content">{parts().text}</span> : <Markdown>{parts().text}</Markdown>)}</div>
+      {Array.isArray(componentProps.message.content) && <Index each={componentProps.message.content.flatMap(part => part.type === "image" ? [part] : [])}>{(part, _index) => part().type === "image" && part().data && part().mimeType && /^image\/(png|jpeg|gif|webp)$/.test(part().mimeType) ? <img  src={`data:${part().mimeType};base64,${part().data}`} alt="Sent attachment" style={{ "max-width": "100%", "max-height": cssPixels(320), "object-fit": "contain" }} /> : null}</Index>}
       <div class="message-actions">
         {sentTime() && <span class="message-time" title={sentTime()!.full}>{sentTime()!.short}</span>}
         <MessageCopyButton state={copyState()} copy={copy} />

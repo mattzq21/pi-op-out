@@ -550,7 +550,7 @@ export function SessionPanel(props: Props) {
       if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); items[(index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus(); }
       else if (event.key === "Home" || event.key === "End") { event.preventDefault(); items[event.key === "Home" ? 0 : items.length - 1]?.focus(); }
       else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeMenu(true); }
-    }}>{<Key each={menuActions().menuItems} by={({ label, Icon, disabled, run }) => label}>{(entry, index) => <button  role="menuitem" disabled={entry().disabled} title={entry().disabled ? groupMenu() ? "Custom groups have no directory" : "Send a message before cloning this draft" : undefined} onClick={() => { const run = entry().run; run(); closeMenu(true); }}><Dynamic component={entry().Icon} size={14} />{entry().label}</button>}</Key>}</div>);
+    }}>{<Key each={menuActions().menuItems} by={({ label }) => label}>{(entry, _index) => <button  role="menuitem" disabled={entry().disabled} title={entry().disabled ? groupMenu() ? "Custom groups have no directory" : "Send a message before cloning this draft" : undefined} onClick={() => { const run = entry().run; run(); closeMenu(true); }}><Dynamic component={entry().Icon} size={14} />{entry().label}</button>}</Key>}</div>);
   return <aside class="session-panel">
     {removingGroup() && <RemoveGroupDialog name={(removingGroup())!.name} onCancel={() => setRemovingGroup(undefined)} onRemove={async () => {
     const capturedRemovingGroup = removingGroup();

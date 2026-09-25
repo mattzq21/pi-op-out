@@ -55,9 +55,15 @@ function requestOptions(body: unknown, signal: AbortSignal) {
   return { method: body ? "POST" : "GET", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: body ? JSON.stringify({ ...(body as Record<string, unknown>), clientId: process.env.PIOP_CONVERSATION_CLIENT }) : undefined, signal };
 }
 
+async function brokerResponse(response: Response) {
+  const result = await response.json() as { error?: string; data?: unknown };
+  if (!response.ok || result.error) throw new Error(result.error || `Session broker returned HTTP ${response.status}`);
+  return result.data;
+}
+
 async function request(path: string, body?: unknown, signal?: AbortSignal, timeoutMs = 10_000) {
   signal?.throwIfAborted();
-  if (!url || !token) throw new Error("piop session broker is unavailable");
+  assertBrokerAvailable();
   const controller = new AbortController();
   const operationId = path.startsWith("/worktrees/") ? randomUUID() : undefined;
   if (operationId) body = { ...(body as Record<string, unknown>), requestId: operationId, deadline: Date.now() + timeoutMs };
@@ -67,11 +73,13 @@ async function request(path: string, body?: unknown, signal?: AbortSignal, timeo
   const abort = () => controller.abort(signal?.reason); signal?.addEventListener("abort", abort, { once: true });
   try {
     const response = await fetch(`${url}${path}`, requestOptions(body, controller.signal));
-    const result = await response.json() as { error?: string; data?: unknown };
-    if (!response.ok || result.error) throw new Error(result.error || `Session broker returned HTTP ${response.status}`);
-    return result.data;
+    return await brokerResponse(response);
   } catch (error) { if (operationId) await cancelRequest(operationId); throw error; }
   finally { clearTimeout(timeout); controller.signal.removeEventListener("abort", cancelOperation); signal?.removeEventListener("abort", abort); }
+}
+
+function assertBrokerAvailable() {
+  if (!url || !token) throw new Error("piop session broker is unavailable");
 }
 
 export interface PauseController {
@@ -79,6 +87,10 @@ export interface PauseController {
   pause(ctx: ExtensionContext): Promise<void>;
   resume(ctx: ExtensionContext): string | undefined;
   stop(ctx: ExtensionContext): Promise<void>;
+}
+
+function wasAborted(message: AssistantMessage, ctx: ExtensionContext) {
+  return message.stopReason === "aborted" || (message.stopReason === "error" && (ctx.signal?.aborted || message.errorMessage === "This operation was aborted"));
 }
 
 export function registerPauseControl(pi: ExtensionAPI): PauseController {
@@ -131,7 +143,7 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
     if (event.message.role !== "assistant") return;
     const content = [...completedBlocks].sort(([left], [right]) => left - right).map(([, block]) => block);
     completedBlocks.clear();
-    if ((isPausing || pauseStopped) && (event.message.stopReason === "aborted" || (event.message.stopReason === "error" && (ctx.signal?.aborted || event.message.errorMessage === "This operation was aborted")))) {
+    if ((isPausing || pauseStopped) && wasAborted(event.message, ctx)) {
       if (isPausing && !pauseStopped) return { message: { ...event.message, stopReason: "aborted", errorMessage: "Response paused" } };
       const message: StoppedAssistantMessage = { ...event.message, stopReason: "aborted", errorMessage: undefined, content, piopCompletedBlocks: true };
       return { message };
@@ -367,6 +379,7 @@ export function registerCatchUp(pi: ExtensionAPI) {
   function assertMainWorktree(first: string[], main: string | undefined): asserts main is string {
     if (!main || first.includes("bare")) throw new Error("No main working tree is available for this repository.");
   }
+  const catchUpError = (error: unknown) => error instanceof Error ? error.message : String(error);
   pi.registerCommand("catch-up", {
     description: "Reset this secondary worktree to the main worktree's commit (discards tracked changes)",
     async handler(args, ctx) {
@@ -399,7 +412,7 @@ export function registerCatchUp(pi: ExtensionAPI) {
         await git(root, "reset", "--hard", commit);
         report(`Caught up to the main worktree at ${commit.slice(0, 12)}.`);
       } catch (error) {
-        report(`Catch-up failed: ${error instanceof Error ? error.message : String(error)}`);
+        report(`Catch-up failed: ${catchUpError(error)}`);
       } finally { running = false; }
     },
   });
@@ -439,6 +452,15 @@ function validSpokenTurn(turn: { id?: unknown; role?: unknown; text?: unknown; s
   return turn && typeof turn.id === "string" && /^[a-f0-9-]{36}$/.test(turn.id) && ["user", "assistant"].includes(String(turn.role)) && typeof turn.text === "string" && turn.text.length <= 8000 && Number.isFinite(turn.startMs) && Number.isFinite(turn.endMs);
 }
 
+function validateVoiceContext(voiceContext: Record<string, unknown> | undefined) {
+  if (voiceContext !== undefined && (!voiceContext || !["systemPrompt", "workspace", "conversation", "feedback"].every(key => typeof voiceContext[key] === "string" && voiceContext[key].length <= 16000))) throw new Error("Invalid voice context");
+}
+
+function flushVoiceHistory(ctx: ExtensionContext) {
+  const manager = ctx.sessionManager as unknown as { isPersisted(): boolean; flushed: boolean; _rewriteFile(): void };
+  if (manager.isPersisted() && !manager.flushed) { manager._rewriteFile(); manager.flushed = true; }
+}
+
 function registerVoiceHistory(pi: ExtensionAPI) {
   pi.registerCommand("pi-desktop-voice-history", {
     description: "Save a spoken conversation turn",
@@ -450,10 +472,9 @@ function registerVoiceHistory(pi: ExtensionAPI) {
         if (!id || ctx.mode !== "rpc" || request.sessionId !== ctx.sessionManager.getSessionId()) throw new Error("Voice conversation changed");
         if (!validSpokenTurn(turn)) throw new Error("Invalid spoken turn");
         const voiceContext = turn.voiceContext;
-        if (voiceContext !== undefined && (!voiceContext || !["systemPrompt", "workspace", "conversation", "feedback"].every(key => typeof voiceContext[key] === "string" && voiceContext[key].length <= 16000))) throw new Error("Invalid voice context");
+        validateVoiceContext(voiceContext);
         pi.appendEntry("piop-voice", { id: turn.id, role: turn.role, text: turn.text, startMs: turn.startMs, endMs: turn.endMs, completed: true, ...(voiceContext ? { voiceContext } : {}) });
-        const manager = ctx.sessionManager as unknown as { isPersisted(): boolean; flushed: boolean; _rewriteFile(): void };
-        if (manager.isPersisted() && !manager.flushed) { manager._rewriteFile(); manager.flushed = true; }
+        flushVoiceHistory(ctx);
         ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id, success: true, data: {} })}`);
       } catch (error) {
         if (id) ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id, success: false, error: error instanceof Error ? error.message : String(error) })}`);

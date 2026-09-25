@@ -130,46 +130,58 @@ async function handleConfigure(packet) {
   return;
 }
 
+function assertAttached(stillAttached) {
+  if (!stillAttached()) throw new Error('The conversation was closed while attaching');
+}
+
+async function attachReadonly(packet, identity, path, stillAttached) {
+  if (!path || !await ownership.locate(identity, path, false, true)) throw new Error('This conversation has been deleted or archived');
+  assertAttached(stillAttached);
+  readonlyViews.set(packet.runtimeId, { id: identity, path });
+  return { attached: true, owned: false };
+}
+
+async function releaseAttachment(packet, guard, identity, session, stillAttached) {
+  await guard.release?.();
+  if (!stillAttached() && session && !session.views.size) {
+    if (!session.submitted && !session.working) await session.stop();
+    else await session.releaseUnusedOwnership();
+  }
+  if (!stillAttached() && guard.owned && !session) {
+    await ownership.releaseClient(identity, packet.clientId, () => ![...attachments.values()].some((value) => value.clientId === packet.clientId && value.sessionKey === packet.sessionKey));
+  }
+}
+
 async function handleAttach(packet) {
   const { runtimeId } = packet;
   attachments.set(runtimeId, packet);
   const stillAttached = () => attachments.get(runtimeId) === packet;
   const identity = await sessionIdentity(packet.spec, packet.sessionKey);
-  if (!stillAttached()) throw new Error('The conversation was closed while attaching');
+  assertAttached(stillAttached);
   const pathIndex = packet.spec.args.lastIndexOf('--session');
   const path = pathIndex < 0 ? undefined : packet.spec.args[pathIndex + 1];
   if (packet.presence?.readOnly) {
-    if (!path || !await ownership.locate(identity, path, false, true)) throw new Error('This conversation has been deleted or archived');
-    if (!stillAttached()) throw new Error('The conversation was closed while attaching');
-    readonlyViews.set(runtimeId, { id: identity, path });
-    return { attached: true, owned: false };
+    return attachReadonly(packet, identity, path, stillAttached);
   }
   const guard = packet.ephemeral ? { owned: true, release: async () => { } } : await ownership.begin(identity, packet.clientId, { take: packet.takeOwnership, path, create: !path });
   let session;
   try {
-    if (!stillAttached()) throw new Error('The conversation was closed while attaching');
+    assertAttached(stillAttached);
     if (!guard.owned) { readonlyViews.set(runtimeId, { id: identity, path }); return { attached: true, owned: false }; }
     session = await attachedSession(packet, guard, identity);
     await session.execute({ type: 'get_state' });
-    if (!stillAttached()) throw new Error('The conversation was closed while attaching');
+    assertAttached(stillAttached);
     readonlyViews.delete(runtimeId);
     session.attach(runtimeId, packet.presence);
     rememberAttachment(runtimeId, session);
     void session.reconcileConfiguration(true);
     return { attached: session.views.size > 1 || session.submitted, owned: true };
   } finally {
-    await guard.release?.();
-    if (!stillAttached() && session && !session.views.size) {
-      if (!session.submitted && !session.working) await session.stop();
-      else await session.releaseUnusedOwnership();
-    }
-    if (!stillAttached() && guard.owned && !session) {
-      await ownership.releaseClient(identity, packet.clientId, () => ![...attachments.values()].some((value) => value.clientId === packet.clientId && value.sessionKey === packet.sessionKey));
-    }
+    await releaseAttachment(packet, guard, identity, session, stillAttached);
   }
 }
 
-async function handleShutdown(packet) {
+async function handleShutdown(_packet) {
   await hostVoice.shutdown(); providerAuth?.shutdown(); await Promise.all([...sessions.values()].map((session) => session.stop())); process.exit(0);
 }
 

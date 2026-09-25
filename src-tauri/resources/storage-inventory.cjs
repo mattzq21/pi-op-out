@@ -162,7 +162,11 @@ async function archivedWorktree(header) {
     const own = await fs.realpath((await git(root, ['rev-parse', '--absolute-git-dir'])).trim());
     return own !== common ? { worktreePath: root } : {};
   } catch {
-    const saved = header.worktreeRestore;
+    return restorableWorktree(header.worktreeRestore);
+  }
+}
+
+async function restorableWorktree(saved) {
     if (!saved || !path.isAbsolute(saved.path ?? '') || !snapshotCheckpoint(saved)) return {};
     try {
       await fs.lstat(saved.path);
@@ -172,7 +176,6 @@ async function archivedWorktree(header) {
       if ((await git(saved.repositoryRoot, ['rev-parse', '--verify', saved.ref])).trim() === saved.commit) return { restorable: true };
     } catch { }
     return { restoreError: 'The last response checkpoint is unavailable.' };
-  }
 }
 
 function archiveLocation(header, file) {

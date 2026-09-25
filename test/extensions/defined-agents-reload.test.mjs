@@ -28,7 +28,7 @@ test('agent definitions survive reload while selected MCP tools are pending', as
       isIdle: () => true,
       model: undefined, modelRegistry: { find() {} },
       sessionManager: { getSessionFile: () => '/fixture/session', getSessionId: () => 'fixture', getBranch: () => entries },
-      ui: { setStatus(key, text) { status = text; statuses.push(text); } },
+      ui: { setStatus(_key, text) { status = text; statuses.push(text); } },
       reload: async () => {
         await handlers.session_shutdown({}, ctx);
         await load();

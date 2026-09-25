@@ -6,6 +6,7 @@ import { join as ownershipJoin, sep as ownershipSeparator } from 'node:path';
 import { homedir as ownershipHome } from 'node:os';
 
 const ownershipError = () => new Error('Take ownership of this conversation before changing it');
+const ownershipIntent = (options) => options.message ? 'message' : options.archive ? 'archive' : 'transfer';
 function requireOwnershipClient(client) {
   if (typeof client !== 'string' || !client) throw new Error('Conversation client is missing');
 }
@@ -128,7 +129,7 @@ class ConversationOwnership {
     try {
       const { record, saved, denied, handoff, next } = await this.inspect(id, client, options);
       if (denied) { await unlock(); return { owned: false }; }
-      if (handoff) await this.releasePrevious(id, record, options.message ? 'message' : options.archive ? 'archive' : 'transfer');
+      if (handoff) await this.releasePrevious(id, record, ownershipIntent(options));
       if (!record || handoff) workerUnlock = await this.lock(id, true);
       await this.write(id, next);
       if (!options.mutation || options.message) { await workerUnlock(); workerUnlock = async () => {}; }
@@ -141,10 +142,15 @@ class ConversationOwnership {
     const saved = await this.locate(id, options.path || record?.path, options.archived);
     this.assertAvailable(record, saved, options);
     const otherClient = Boolean(record?.client && record.client !== client);
-    const returningClient = !record?.client && record?.previousClient === client && record?.endpoint === this.endpoint && record?.token === this.token;
-    const handoff = Boolean(record && ((!returningClient && record.client !== client) || record.endpoint !== this.endpoint || options.mutation));
+    const handoff = this.needsHandoff(record, client, options);
     const next = { client, endpoint: this.endpoint, token: this.token, path: saved?.path, deleted: false };
     return { record, saved, denied: otherClient && !options.take, handoff, next };
+  }
+
+  needsHandoff(record, client, options) {
+    if (!record) return false;
+    const returningClient = !record.client && record.previousClient === client && record.endpoint === this.endpoint && record.token === this.token;
+    return (!returningClient && record.client !== client) || record.endpoint !== this.endpoint || Boolean(options.mutation);
   }
 
   assertAvailable(record, saved, options) {

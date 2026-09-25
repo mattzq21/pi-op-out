@@ -36,7 +36,7 @@ function record(value: unknown): value is RecordValue {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-async function selectModel(ctx: ExtensionContext) {
+function rankedModels(ctx: ExtensionContext) {
   const isCodex = (model: NonNullable<ExtensionContext["model"]>) =>
     model.provider.replace(/--piop-account-\d+$/, "") === "openai-codex" && model.api === "openai-codex-responses";
   const override = process.env.PIOP_WEB_SEARCH_MODEL?.trim();
@@ -51,6 +51,11 @@ async function selectModel(ctx: ExtensionContext) {
     ...candidates,
   ];
   if (override && !ranked.length) throw new Error(`Unknown Codex web search model: ${override}`);
+  return ranked;
+}
+
+async function selectModel(ctx: ExtensionContext) {
+  const ranked = rankedModels(ctx);
   const seen = new Set<string>();
   for (const model of ranked) {
     const key = `${model.provider}/${model.id}`;

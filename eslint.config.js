@@ -1,9 +1,11 @@
 import tsParser from '@typescript-eslint/parser';
 import tsPlugin from '@typescript-eslint/eslint-plugin';
+import daemonScope from './scripts/eslint-daemon-scope.mjs';
 
 const unusedOptions = { args: 'all', argsIgnorePattern: '^_', caughtErrors: 'all', caughtErrorsIgnorePattern: '^_', ignoreRestSiblings: true };
 
 export default [
+  daemonScope,
   {
     ignores: [
       '**/node_modules/**',

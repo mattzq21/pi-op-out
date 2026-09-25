@@ -27,16 +27,7 @@ function archiveOwnedRef(sessionId, snapshot) {
   return ref;
 }
 
-function preserve(file) {
-  const stat = fs.lstatSync(file);
-  if (!stat.isFile()) return;
-  const body = fs.readFileSync(file, 'utf8');
-  const lines = body.split('\n');
-  let entries;
-  try { entries = lines.filter((line) => line.trim()).map(JSON.parse); } catch { return; }
-  const header = entries[0];
-  if (header?.type !== 'session' || typeof header.id !== 'string') return;
-  let changed = false;
+function lastResponseSnapshot(entries) {
   // Follow the selected conversation branch, rather than an abandoned response.
   const byId = new Map(entries.filter((entry) => entry.id).map((entry) => [entry.id, entry]));
   let cursor = entries.at(-1);
@@ -47,20 +38,28 @@ function preserve(file) {
     if (cursor.type === 'message' && cursor.message?.role === 'assistant') { response = cursor; break; }
     cursor = byId.get(cursor.parentId);
   }
-  const snapshot = response && entries.findLast((entry) => entry.type === 'custom'
+  return response && entries.findLast((entry) => entry.type === 'custom'
     && entry.customType === 'pi-project-files-watch-snapshot'
     && entry.data?.responseEntryIds?.includes(response.id));
+}
+
+function preserveResponse(header, entries) {
   if (typeof header.cwd === 'string' && sameRepository(header.cwd)
     && fs.realpathSync(git(header.cwd, ['rev-parse', '--show-toplevel'])) === fs.realpathSync(target)) {
     // Never substitute a prompt checkpoint or capture the files being deleted.
+    const snapshot = lastResponseSnapshot(entries);
     if (!snapshot || snapshot.data?.unavailable) throw new Error('The archived conversation has no checkpoint for its last response');
     // Copied response entries can name the parent's ref. Retain the exact commit
     // under this archive's ownership and update the response entry used to verify it.
     snapshot.data.ref = archiveOwnedRef(header.id, snapshot.data);
     snapshot.data.repositoryRoot = common;
     header.worktreeRestore = { path: fs.realpathSync(target), conversationPath: fs.realpathSync(header.cwd), repositoryRoot: common, ref: snapshot.data.ref, commit: snapshot.data.commit };
-    changed = true;
+    return true;
   }
+  return false;
+}
+
+function preservePrompts(header, entries) {
   const promptRoot = header.checkpointRepositoryRoot ?? header.cwd;
   const prompts = entries.filter((entry) => entry.type === 'custom' && entry.customType === 'pi-project-prompt-checkpoint' && !entry.data?.unavailable);
   if (prompts.length && promptRoot !== common && sameRepository(promptRoot)) {
@@ -70,8 +69,13 @@ function preserve(file) {
       verifyRef(`refs/pi-session-snapshots/chats/${id}/prompts/${entry.data.key}`, entry.data.commit);
     }
     header.checkpointRepositoryRoot = common;
-    changed = true;
+    return true;
   }
+  return false;
+}
+
+function preserveSnapshotRoots(entries) {
+  let changed = false;
   for (const entry of entries) {
     if (entry.type !== 'custom' || entry.customType !== 'pi-project-files-watch-snapshot' || entry.data?.unavailable) continue;
     const data = entry.data;
@@ -80,7 +84,10 @@ function preserve(file) {
     data.repositoryRoot = common;
     changed = true;
   }
-  if (!changed) return;
+  return changed;
+}
+
+function writePreservedArchive(file, entries, stat) {
   const temporary = `${file}.${randomUUID()}.tmp`;
   let fd;
   try {
@@ -94,6 +101,20 @@ function preserve(file) {
     if (fd !== undefined) fs.closeSync(fd);
     fs.rmSync(temporary, { force: true });
   }
+}
+
+function preserve(file) {
+  const stat = fs.lstatSync(file);
+  if (!stat.isFile()) return;
+  const body = fs.readFileSync(file, 'utf8');
+  let entries;
+  try { entries = body.split('\n').filter((line) => line.trim()).map(JSON.parse); } catch { return; }
+  const header = entries[0];
+  if (header?.type !== 'session' || typeof header.id !== 'string') return;
+  const responseChanged = preserveResponse(header, entries);
+  const promptsChanged = preservePrompts(header, entries);
+  const rootsChanged = preserveSnapshotRoots(entries);
+  if (responseChanged || promptsChanged || rootsChanged) writePreservedArchive(file, entries, stat);
 }
 
 function visit(directory) {

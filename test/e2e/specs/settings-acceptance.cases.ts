@@ -1,7 +1,5 @@
 import { $, $$, browser, expect } from "@wdio/globals";
 
-import { join } from "node:path";
-
 import type { AppSettings } from "../../../src/types.js";
 import { app } from "../pageobjects/app.page.js";
 import { mockBackend, backendCalls, updateBackendResponse, resetApp, emitPiEvent, defaultSettings, enableAgents, connectedSessionResponses } from './acceptance-fixture.js';

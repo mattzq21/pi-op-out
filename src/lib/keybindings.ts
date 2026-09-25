@@ -30,8 +30,12 @@ export function shortcutError(shortcut: string) {
   const parsed = parseShortcut(shortcut);
   if (!parsed || parsed.key === "control") return `Shortcut “${shortcut}” needs exactly one non-modifier key`;
   if (!parsed.mod && !parsed.ctrl && !parsed.meta && !parsed.alt) return `Shortcut “${shortcut}” needs Ctrl, Alt, or Meta`;
-  if ((parsed.key === "f" || parsed.key === "g") && !parsed.alt && !parsed.shift && (parsed.mod || parsed.ctrl || parsed.meta)) return `Shortcut “${shortcut}” is reserved for search`;
+  if (isSearchShortcut(parsed)) return `Shortcut “${shortcut}” is reserved for search`;
   return undefined;
+}
+
+function isSearchShortcut(parsed: NonNullable<ReturnType<typeof parseShortcut>>) {
+  return ["f", "g"].includes(parsed.key) && !parsed.alt && !parsed.shift && (parsed.mod || parsed.ctrl || parsed.meta);
 }
 
 export function keybindingsError(keybindings: Keybindings) {

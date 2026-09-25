@@ -192,17 +192,18 @@ class HostVoiceService {
       this.context(call, `The request could not be delivered: ${errorText(error).slice(0, 500)}`, item.id, true);
     }
   }
-  async transcript(call, event) {
-    const { done, role, text } = voiceTurn(event);
-    if (!['user', 'assistant'].includes(role) || typeof text !== 'string') return;
-    let turn = [...call.turns].reverse().find((item) => item.role === role && !item.completed);
-    if (!turn) {
+  newTranscriptTurn(call, role) {
       const voiceContext = role === 'assistant' && call.context ? {
         ...call.context,
         conversation: [call.context.conversation, ...call.turns.map(turn => `${turn.role}: ${turn.text}`)].filter(Boolean).join('\n').slice(-16000),
       } : undefined;
-      turn = { id: randomUUID(), role, text: '', startMs: Date.now(), ...(voiceContext ? { voiceContext } : {}) }; call.turns.push(turn); call.turns = call.turns.slice(-100);
-    }
+      const turn = { id: randomUUID(), role, text: '', startMs: Date.now(), ...(voiceContext ? { voiceContext } : {}) }; call.turns.push(turn); call.turns = call.turns.slice(-100);
+      return turn;
+  }
+  async transcript(call, event) {
+    const { done, role, text } = voiceTurn(event);
+    if (!['user', 'assistant'].includes(role) || typeof text !== 'string') return;
+    const turn = [...call.turns].reverse().find((item) => item.role === role && !item.completed) ?? this.newTranscriptTurn(call, role);
     Object.assign(turn, { text: (done ? text : turn.text + text).slice(-8000), endMs: Date.now(), completed: done });
     if (turn.voiceContext && call.context) turn.voiceContext = { ...turn.voiceContext, feedback: call.context.feedback };
     this.emit(call, { type: 'transcript', turn: { ...turn } });

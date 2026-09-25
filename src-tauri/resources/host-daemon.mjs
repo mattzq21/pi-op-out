@@ -35,6 +35,20 @@ function clientToolPayload(value) {
   return value;
 }
 
+function toolResultPatch(entry, input) {
+  if (entry.message.details?.patch != null) return entry.message.details.patch;
+  if (entry.message.toolName === 'edit') return entry.message.details?.diff;
+  if (entry.message.toolName === 'apply_patch') return input?.patch ?? input?.input;
+}
+
+function clientHistoryEntry(entry, inputs) {
+  if (entry.message?.role !== 'toolResult') return entry;
+  const input = inputs.get(entry.message.toolCallId);
+  const patch = toolResultPatch(entry, input);
+  if (typeof patch !== 'string' || patch.length > 2 * 1024 * 1024) return entry;
+  return { ...entry, message: { ...entry.message, toolDiff: { patch, path: typeof input?.path === 'string' ? input.path : undefined } } };
+}
+
 function clientHistory(history) {
   // Bound initial transfers too, after removing tool bodies. Allow headroom for
   // the decoded history and normalized messages to coexist during installation.
@@ -51,12 +65,8 @@ function clientHistory(history) {
     branch.push(entry); cursor = entry.parentId;
   }
   let size = 0;
-  for (let entry of branch) {
-    if (entry.message?.role === 'toolResult') {
-      const input = inputs.get(entry.message.toolCallId);
-      const patch = entry.message.details?.patch ?? (entry.message.toolName === 'edit' ? entry.message.details?.diff : entry.message.toolName === 'apply_patch' ? input?.patch ?? input?.input : undefined);
-      if (typeof patch === 'string' && patch.length <= 2 * 1024 * 1024) entry = { ...entry, message: { ...entry.message, toolDiff: { patch, path: typeof input?.path === 'string' ? input.path : undefined } } };
-    }
+  for (const saved of branch) {
+    const entry = clientHistoryEntry(saved, inputs);
     const cost = JSON.stringify(entry, clientPayload).length * 4 + 256;
     if (size + cost > limit) break;
     size += cost; entries.push(entry);
@@ -93,18 +103,21 @@ function toolPayloadPage(message, command) {
   return { revision, length: serialized.length, chunk: serialized.slice(offset, offset + 524288) };
 }
 const errorText = (error) => error instanceof Error ? error.message : String(error);
+async function stopOwnedSession(session, id, intent) {
+  if (intent === 'message' || intent === 'archive') await session.retire();
+  await hostVoice.release(session);
+  for (const runtimeId of session.views.keys()) readonlyViews.set(runtimeId, { id, path: session.state?.sessionFile });
+  session.publish({ type: 'ownership_lost' });
+  if (session.working || session.compacting) { try { await session.raw({ type: 'abort' }); } catch { /* Stopping the worker below still fences all writes. */ } }
+  await session.stop();
+}
 async function releaseConversation(id, intent) {
   if (ownershipReleases.has(id)) return ownershipReleases.get(id);
   const pending = (async () => {
     const keys = ownershipCaptureKeys.get(id) ?? new Set();
     ownershipCaptureKeys.set(id, keys);
     for (const session of [...sessions.values()].filter((item) => item.identity === id)) {
-      if (intent === 'message' || intent === 'archive') await session.retire();
-      await hostVoice.release(session);
-      for (const runtimeId of session.views.keys()) readonlyViews.set(runtimeId, { id, path: session.state?.sessionFile });
-      session.publish({ type: 'ownership_lost' });
-      if (session.working || session.compacting) { try { await session.raw({ type: 'abort' }); } catch { /* Stopping the worker below still fences all writes. */ } }
-      await session.stop();
+      await stopOwnedSession(session, id, intent);
       keys.add(session.key);
     }
     for (const key of keys) {

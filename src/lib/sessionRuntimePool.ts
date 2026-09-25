@@ -99,10 +99,14 @@ export class SessionRuntimePool {
       this.bind(transport.currentHostId(), state.sessionId, transport);
       const cwd = transport.currentCwd() || "";
       const previous = this.liveSessions.get(transport);
-      const projectDetails = previous?.cwd === cwd && previous.hostId === transport.currentHostId() ? { projectKind: previous.projectKind, projectRoot: previous.projectRoot, cwdExists: previous.cwdExists } : {};
+      const projectDetails = this.retainedProjectDetails(previous, cwd, transport.currentHostId());
       this.liveSessions.set(transport, { ...projectDetails, id: state.sessionId, path: state.sessionFile || "", name: retainedName(state, prompt, previous), project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, ...retainedActivity(state, previous, prompt, lastMessageAt), daemonId: transport.currentDaemonId(), hostId: transport.currentHostId() });
       this.liveRevision += 1; this.notify();
     }).catch((reason) => this.errorHandler?.(`Could not list the retained session: ${reason instanceof Error ? reason.message : String(reason)}`));
+  }
+
+  private retainedProjectDetails(previous: SessionSummary | undefined, cwd: string, hostId: string) {
+    return previous?.cwd === cwd && previous.hostId === hostId ? { projectKind: previous.projectKind, projectRoot: previous.projectRoot, cwdExists: previous.cwdExists } : {};
   }
 
   private retainMcpSession(transport: NativeTransport, event: RpcEvent) {
@@ -127,7 +131,8 @@ export class SessionRuntimePool {
 
   private captureDiffEvent(transport: NativeTransport, event: RpcEvent) {
     const state = this.diffState(transport);
-    if (state.persistence === "memory" && event.type === "turn_diff" && event.hostId === transport.currentHostId() && event.sessionPath === transport.currentSessionPath() && typeof event.messageId === "string" && event.snapshot) {
+    if (event.hostId !== transport.currentHostId() || event.sessionPath !== transport.currentSessionPath()) return;
+    if (state.persistence === "memory" && event.type === "turn_diff" && typeof event.messageId === "string" && event.snapshot) {
       const messageId = event.messageId;
       const snapshot = event.snapshot as GitDiffSnapshot;
       void (state.load?.promise ?? Promise.resolve()).then(() => {
@@ -136,7 +141,7 @@ export class SessionRuntimePool {
         this.retainDiffs(transport, state); this.notify();
       });
     }
-    if (event.type === "diffs_changed" && event.hostId === transport.currentHostId() && event.sessionPath === transport.currentSessionPath()) {
+    if (event.type === "diffs_changed") {
       this.diffState(transport).load = undefined;
       void this.loadSavedDiffs(transport, String(event.sessionPath));
     }

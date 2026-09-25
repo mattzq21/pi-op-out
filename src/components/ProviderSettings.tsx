@@ -47,7 +47,7 @@ function LoginNotice(componentProps: { notice: AuthNotice }) {
     {componentProps.notice.message && <p>{componentProps.notice.message}</p>}
     {componentProps.notice.userCode && <p>Enter this code: <strong class="provider-device-code">{componentProps.notice.userCode}</strong></p>}
     {componentProps.notice.url && <LoginLink url={componentProps.notice.url} label="Open provider login" />}
-    {<Key each={componentProps.notice.links?.filter((link) => link.url)} by={(link) => link.url}>{(link, index) => <LoginLink  url={link().url!} label={link().label || "Open provider page"} />}</Key>}
+    {<Key each={componentProps.notice.links?.filter((link) => link.url)} by={(link) => link.url}>{(link, _index) => <LoginLink  url={link().url!} label={link().label || "Open provider page"} />}</Key>}
   </div>;
 }
 
@@ -56,7 +56,7 @@ function LoginPrompt(componentProps: { prompt: NonNullable<AuthFlow["prompt"]>; 
   const submit = () => { const value = answer(); setAnswer(""); void componentProps.reply(value); };
   return <form class="provider-login-prompt" onSubmit={(event) => { event.preventDefault(); submit(); }}>
     <label class="field"><span>{componentProps.prompt.message}</span>
-      {componentProps.prompt.type === "select" ? <select autofocus value={answer()} onChange={(event) => setAnswer(event.target.value)} disabled={componentProps.working}><option value="">Select an option</option>{<Key each={componentProps.prompt.options} by={(option) => option.id}>{(option, index) => <option  value={option().id}>{option().label}{option().description ? ` — ${option().description}` : ""}</option>}</Key>}</select>
+      {componentProps.prompt.type === "select" ? <select autofocus value={answer()} onChange={(event) => setAnswer(event.target.value)} disabled={componentProps.working}><option value="">Select an option</option>{<Key each={componentProps.prompt.options} by={(option) => option.id}>{(option, _index) => <option  value={option().id}>{option().label}{option().description ? ` — ${option().description}` : ""}</option>}</Key>}</select>
         : <input autofocus type={componentProps.prompt.type === "secret" || componentProps.prompt.type === "manual_code" ? "password" : "text"} value={answer()} onInput={(event) => setAnswer(event.target.value)} placeholder={componentProps.prompt.placeholder} autocomplete="off" autoCapitalize="none" spellcheck={false} disabled={componentProps.working} />}
     </label>
     {componentProps.prompt.type === "manual_code" && <p class="provider-login-help">If the callback page cannot open on this device, paste its full address or the code requested by the provider.</p>}
@@ -82,10 +82,11 @@ export function ProviderSettings(componentProps: { hosts: RemoteHost[]; initialH
   const hostName = createMemo(() => (selectedHostName(componentProps.hosts, hostId())));
   const providers = createMemo(() => (providerGroups(auth.providers).filter((group) => `${group.name} ${group.base.providerId} ${group.accounts.map((account) => account.name).join(" ")}`.toLowerCase().includes(filter().toLowerCase().trim()))
     .sort((left, right) => Number(right.accounts.length > 0) - Number(left.accounts.length > 0))));
+  const loadingProviders = () => auth.loading && !auth.providers.length;
   return <div class="settings-section provider-settings">
     <div class="section-title"><div><h2>Providers</h2><p>Sign in to providers on the machine running Pi. Credentials stay on that host and remain available after you disconnect.</p></div></div>
     <div class="provider-toolbar">
-      {!(componentProps.fixedHost === undefined ? false : componentProps.fixedHost) && <label>Host <select aria-label="Provider host" value={hostId()} disabled={disabled()} onChange={(event) => setHostId(event.target.value)}><option value="local">{localHostLabel}</option>{<Key each={componentProps.hosts} by={(host) => host.id}>{(host, index) => <option  value={host().id}>{host().name}</option>}</Key>}</select></label>}
+      {!(componentProps.fixedHost === undefined ? false : componentProps.fixedHost) && <label>Host <select aria-label="Provider host" value={hostId()} disabled={disabled()} onChange={(event) => setHostId(event.target.value)}><option value="local">{localHostLabel}</option>{<Key each={componentProps.hosts} by={(host) => host.id}>{(host, _index) => <option  value={host().id}>{host().name}</option>}</Key>}</select></label>}
       <label class="section-filter"><Search size={14} /><input aria-label="Filter providers" placeholder="Filter providers" value={filter()} onInput={(event) => setFilter(event.target.value)} /></label>
       <button class="section-toggle-all" disabled={auth.loading || disabled()} onClick={auth.refresh}><RefreshCw size={14} />Refresh</button>
       <button class="section-toggle-all provider-add-custom" disabled={disabled() || adding()} onClick={() => setAdding(true)}>Add custom provider</button>
@@ -93,7 +94,7 @@ export function ProviderSettings(componentProps: { hosts: RemoteHost[]; initialH
     {auth.error && <p class="provider-error" role="alert">{auth.error}</p>}
     {adding() && <Rerun on={() => hostId()}>{(_key) => <CustomProviderForm  working={!!disabled()} save={auth.createProvider} close={() => setAdding(false)} />}</Rerun>}
     {auth.flow && <LoginPanel flow={auth.flow} auth={auth} />}
-    {auth.loading && !auth.providers.length && <div class="empty-small" role="status">Loading providers on {hostName()}…</div>}
+    {loadingProviders() && <div class="empty-small" role="status">Loading providers on {hostName()}…</div>}
     <ProviderList providers={providers()} auth={auth} disabled={disabled()} />
     <p class="provider-login-help">Removing a saved login leaves credentials from environment variables or other host configuration in place. Voice uses the host’s separate Codex login.</p>
   </div>;
@@ -104,21 +105,21 @@ function LoginPanel(componentProps: { flow: AuthFlow; auth: AuthControls }) {
   return <div class="provider-login-panel" aria-label="Provider login">
     <strong>{componentProps.flow.name ?? componentProps.auth.providers.find((provider) => provider.id === componentProps.flow.providerId)?.name ?? componentProps.flow.providerId}</strong>
     <FlowStatus flow={componentProps.flow} />
-    {<Index each={componentProps.flow.notices}>{(notice, index) => <LoginNotice  notice={notice()} />}</Index>}
+    {<Index each={componentProps.flow.notices}>{(notice, _index) => <LoginNotice  notice={notice()} />}</Index>}
     {componentProps.flow.prompt && <Rerun on={promptId}>{(_key) => <LoginPrompt  prompt={componentProps.flow.prompt!} working={componentProps.auth.working} reply={componentProps.auth.reply} />}</Rerun>}
     {componentProps.flow.status === "pending" && <button type="button" disabled={componentProps.auth.working} onClick={() => void componentProps.auth.cancel()}>Cancel login</button>}
   </div>;
 }
 
 function ProviderList(componentProps: { providers: ProviderGroup[]; auth: AuthControls; disabled: boolean }) {
-  return <><div class="config-list">{<Key each={componentProps.providers} by={(group) => group.key}>{(group, index) => <section class="provider-group"  aria-label={group().name}>
+  return <><div class="config-list">{<Key each={componentProps.providers} by={(group) => group.key}>{(group, _index) => <section class="provider-group"  aria-label={group().name}>
     <div class="provider-account provider-heading">
       <div><strong>{group().name}</strong>{!group().accounts.length && <small>Not configured</small>}</div>
       <div class="provider-account-actions">{group().method.interactive
         ? <button disabled={componentProps.disabled || componentProps.auth.loading} onClick={() => void componentProps.auth.begin(group().base.id, group().method.type, group().base.configured || !!group().base.storedType)}>Add account</button>
         : <small>Configured through the host environment</small>}</div>
     </div>
-    {<Key each={group().accounts} by={(account) => account.id}>{(account, index) => <div class="provider-account provider-account-child" >
+    {<Key each={group().accounts} by={(account) => account.id}>{(account, _index) => <div class="provider-account provider-account-child" >
       <div><strong>{group().name} #{account().number}</strong><small>Configured{account().source && <> · <span class={account().source === "stored" ? "provider-stored" : undefined}>{account().source}</span></>}</small></div>
       <div class="provider-account-actions">{account().storedType && <button disabled={componentProps.disabled || componentProps.auth.loading} onClick={() => void componentProps.auth.logout(account().id)}>Remove saved login</button>}</div>
     </div>}</Key>}

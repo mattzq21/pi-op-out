@@ -530,6 +530,10 @@ export default function diffWatch(pi: ExtensionAPI) {
   });
 
   const clearIdleSnapshot = async (ctx: ExtensionContext) => { if (pendingSnapshotCleanup && ctx.isIdle()) { await pendingSnapshotCleanup(); pendingSnapshotCleanup = undefined; } };
+  const inputSnapshot = async (ctx: ExtensionContext, root: string) => {
+    const snapshot = await currentSnapshot(root, ctx.sessionManager.getSessionId());
+    return snapshot ?? await inheritSnapshot(ctx, ctx.sessionManager.getHeader()?.parentSession);
+  };
 
   pi.on("input", async (event, ctx) => {
     pendingContext = undefined;
@@ -541,9 +545,7 @@ export default function diffWatch(pi: ExtensionAPI) {
     try {
       const root = await repositoryRoot(ctx.cwd);
       if (!root) return { action: "continue" };
-      const sessionId = ctx.sessionManager.getSessionId();
-      let snapshot = await currentSnapshot(root, sessionId);
-      if (!snapshot) snapshot = await inheritSnapshot(ctx, ctx.sessionManager.getHeader()?.parentSession);
+      const snapshot = await inputSnapshot(ctx, root);
       if (!snapshot) return { action: "continue" };
       const current = await worktreeTree(root, true);
       let rawPaths: string;
@@ -594,7 +596,8 @@ export default function diffWatch(pi: ExtensionAPI) {
     for (let index = contextIndex - 1; index >= 0; index -= 1) {
       if (sourceMessages[index].role === "user") { userIndex = index; break; }
     }
-    if (userIndex < 0 || contextIndex !== userIndex + 1 || sourceMessages[contextIndex + 1]?.role === "user") return { messages: sourceMessages };
+    const adjacentUser = () => sourceMessages[contextIndex + 1]?.role === "user";
+    if (userIndex < 0 || contextIndex !== userIndex + 1 || adjacentUser()) return { messages: sourceMessages };
     const messages = [...sourceMessages];
     const [context] = messages.splice(contextIndex, 1);
     messages.splice(userIndex, 0, context);

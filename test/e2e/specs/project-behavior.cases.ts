@@ -1,7 +1,5 @@
 import { $, browser, expect } from "@wdio/globals";
 
-import { join } from "node:path";
-
 import { app } from "../pageobjects/app.page.js";
 import { callBridge, mockBackend, backendCalls, updateBackendResponse, resetBackend, resetApp, emitPiEvent, defaultSettings, setSelectValue, connectedSessionResponses, startTemporaryConversation } from './acceptance-fixture.js';
 
