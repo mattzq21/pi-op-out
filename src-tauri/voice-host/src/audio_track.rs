@@ -1,5 +1,3 @@
-//! A single Opus RTP track. Muted capture sends generated silence to keep the peer alive;
-//! elapsed time still advances its clock without inventing packet loss.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,7 +14,7 @@ use webrtc::media_stream::track_local::static_sample::TrackLocalStaticSample;
 use webrtc::peer_connection::MediaEngine;
 
 pub(crate) const OPUS_PAYLOAD_TYPE: u8 = 111;
-pub(crate) const SEND_TIMEOUT: Duration = Duration::from_millis(/*millis*/ 100);
+pub(crate) const SEND_TIMEOUT: Duration = Duration::from_millis(           100);
 
 pub(crate) struct EncodedAudio {
     pub(crate) data: Vec<u8>,
@@ -77,8 +75,6 @@ impl AudioTrack {
         ))
     }
 
-    /// Send only synthetic silence while muted, never a device or processing buffer.
-    /// Reuse the encoded packet and pace it by the same RTP clock as live capture.
     #[cfg(any(
         target_os = "macos",
         all(target_os = "linux", target_env = "gnu"),
@@ -90,7 +86,7 @@ impl AudioTrack {
         }
         if self.silence.is_none() {
             let mut encoder = opus::Encoder::new(
-                /*sample_rate*/ 48_000,
+                                48_000,
                 opus::Channels::Mono,
                 opus::Application::Voip,
             )
@@ -120,11 +116,11 @@ impl AudioTrack {
                 .map(|end| frame.at.saturating_duration_since(end))
                 .unwrap_or_default();
             while !gap.is_zero() {
-                let duration = gap.min(Duration::from_secs(/*secs*/ 3600));
+                let duration = gap.min(Duration::from_secs(         3600));
                 self.track
                     .write_sample(
                         self.ssrc,
-                        /*payload_type*/ OPUS_PAYLOAD_TYPE,
+                                         OPUS_PAYLOAD_TYPE,
                         &Sample {
                             duration,
                             ..Default::default()
@@ -135,11 +131,11 @@ impl AudioTrack {
                     .map_err(|_| "failed to advance voice clock")?;
                 gap -= duration;
             }
-            let duration = Duration::from_millis(/*millis*/ 20);
+            let duration = Duration::from_millis(           20);
             self.track
                 .write_sample(
                     self.ssrc,
-                    /*payload_type*/ OPUS_PAYLOAD_TYPE,
+                                     OPUS_PAYLOAD_TYPE,
                     &Sample {
                         data: frame.data.into(),
                         duration,

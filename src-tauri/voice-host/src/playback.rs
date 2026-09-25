@@ -1,6 +1,3 @@
-//! Bounded mono F32LE writes for the native sink, never called from a device callback.
-//! Each writer belongs to one speaker epoch. Reset cancels it before locking the producer.
-//! Delay queries retain the last coherent estimate during brief callback contention.
 
 use super::buffers::BLOCK;
 use super::buffers::Buffers;
@@ -40,7 +37,7 @@ impl PlaybackPort {
         PlaybackWriter {
             state: self.0.clone(),
             epoch: self.0.buffers.speaker.load(Ordering::Acquire),
-            last_delay: AtomicU32::new(/*v*/ 0),
+            last_delay: AtomicU32::new(      0),
         }
     }
 }
@@ -98,10 +95,8 @@ impl PlaybackWriter {
             .producer
             .lock()
             .map_err(|_| "speaker writer failed")?;
-        let deadline = Instant::now() + Duration::from_millis(/*millis*/ 100);
+        let deadline = Instant::now() + Duration::from_millis(           100);
         let buffers = &self.state.buffers;
-        // Linux requests 50 ms callbacks; retain two callbacks of audio so a
-        // callback can fill without racing the producer. Keep the queue cap.
         let windows_per_second = if cfg!(target_os = "linux") { 10 } else { 25 };
         let limit = (self.state.rate / windows_per_second)
             .min((BLOCK * buffers.playback.capacity()) as u32);
@@ -117,17 +112,15 @@ impl PlaybackWriter {
                 return Ok(bytes);
             }
             if Instant::now() >= deadline {
-                // The sink must consume this chunk to catch up with the device clock.
-                // Dropping it keeps the bounded queue and current epoch intact.
                 return Ok(frame.len * 4);
             }
-            std::thread::park_timeout(Duration::from_millis(/*millis*/ 1));
+            std::thread::park_timeout(Duration::from_millis(           1));
         }
     }
 
     pub(crate) fn delay(&self) -> u32 {
         let buffers = &self.state.buffers;
-        let deadline = Instant::now() + Duration::from_millis(/*millis*/ 10);
+        let deadline = Instant::now() + Duration::from_millis(           10);
         loop {
             let sequence = buffers.callback_sequence.load(Ordering::Acquire);
             if buffers.speaker.load(Ordering::Acquire) != self.epoch || self.epoch % 2 == 1 {

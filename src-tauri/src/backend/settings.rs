@@ -84,8 +84,6 @@ fn discover_skills_in(root: &Path, include_root_markdown: bool) -> Vec<Value> {
         .collect();
     skill_files.sort_by_key(|path| path.components().count());
 
-    // A directory containing SKILL.md is one skill. Pi does not continue looking
-    // for nested skills inside that directory.
     let mut skill_roots: Vec<PathBuf> = Vec::new();
     let mut discovered = Vec::new();
     for skill_file in skill_files {
@@ -106,7 +104,6 @@ fn discover_skills_in(root: &Path, include_root_markdown: bool) -> Vec<Value> {
         }));
     }
 
-    // Pi also treats direct .md children of ~/.pi/agent/skills as skills.
     if include_root_markdown {
         if let Ok(entries) = fs::read_dir(root) {
             for entry in entries.filter_map(Result::ok) {
@@ -144,8 +141,6 @@ fn merge_discovered_skills_at(settings: &mut AppSettings, home: &Path) {
         Some((path, skill.get("enabled").and_then(Value::as_bool).unwrap_or(true)))
     }).collect();
 
-    // Preserve manually-added paths, but rebuild entries belonging to discovery
-    // roots so deleted skills disappear and newly installed skills show up.
     settings.skills.retain(|skill| {
         let Some(path) = skill.get("path").and_then(Value::as_str).map(|path| expand_skill_path(path, home)) else { return true };
         !roots.iter().any(|(root, _)| skill_path_is_within(&path, root))

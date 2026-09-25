@@ -167,8 +167,6 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
     const userIndex = branch.findLastIndex((entry) => entry.type === "message" && entry.message.role === "user" && !resumeMessages.has(textContent(entry.message.content)));
     const user = branch[userIndex];
     if (!user || user.type !== "message") return;
-    // The initial snapshot belongs to the user prompt, including across resume
-    // and reload. Later model calls reuse it without rebuilding or saving it.
     if (branch.slice(userIndex + 1).some((entry) => entry.type === "custom" && entry.customType === STATUS_KEY)) return;
     const systemPrompt = ctx.getSystemPrompt();
     const { block: skillPrompt, skills } = skillsFromPrompt(systemPrompt);

@@ -68,7 +68,6 @@ export const emitPiEvent = async (payload: Record<string, unknown>) => {
   await browser.execute(async (event) => {
     const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
     await tauri.invoke("plugin:event|emit", { event: "pi://event", payload: event });
-    // A completed native turn settles after agent_end; fixtures model both events.
     if (event.type === "agent_end") await tauri.invoke("plugin:event|emit", { event: "pi://event", payload: { type: "agent_settled" } });
   }, payload);
   await browser.execute(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));

@@ -17,7 +17,6 @@ function validProviderAccount(record) {
 export async function allocateProviderAccount(authPath, providerId, occupied) {
   await accountMkdir(accountDirname(authPath), { recursive: true, mode: 0o700 });
   await readProviderAccounts(authPath);
-  // A host file lock also serializes allocations from separate desktop/daemon processes.
   const script = `
     const fs = require('node:fs');
     const [path, providerId, occupiedJson] = process.argv.slice(1);
@@ -49,7 +48,6 @@ export async function allocateProviderAccount(authPath, providerId, occupied) {
 export function accountProvider(base, record) {
   const model = (value) => ({ ...value, provider: record.id });
   const original = (value) => ({ ...value, provider: base.id });
-  // No environment fallback for extra accounts: a missing login must never use #1's key.
   const apiKey = base.auth.apiKey && { ...base.auth.apiKey, resolve: (input) => input.credential ? base.auth.apiKey.resolve(input) : undefined };
   if (apiKey?.check) apiKey.check = (input) => input.credential ? base.auth.apiKey.check(input) : undefined;
   const originalContext = (context) => ({ ...context, messages: context.messages.map((message) => message.provider === record.id ? { ...message, provider: base.id } : message) });
@@ -88,7 +86,6 @@ export async function loadAccountProviders(authPath, createRuntime, existing = n
   });
   for (const record of records) {
     if (existing.has(record.id) && accountConfigurations.get(existing.get(record.id)) === configuration) continue;
-    // Separate provider instances keep credential-dependent catalogs isolated between accounts.
     const runtime = await createRuntime();
     const base = runtime.getProvider(record.providerId);
     if (base) {

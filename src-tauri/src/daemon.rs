@@ -172,7 +172,6 @@ fn persist_capture(app: &AppHandle, daemon: &Arc<Daemon>, host_id: &str, packet:
                 let current = packet["current"].as_str();
                 let result = (|| -> Result<(), String> {
                     let (Some(baseline), Some(current), Some(cwd), Some(path), Some(id)) = (baseline.as_deref(), current, packet["cwd"].as_str(), packet["sessionPath"].as_str(), packet["messageId"].as_str()) else { return Ok(()); };
-                    // Both trees and the response ID were fixed by Pi's awaited lifecycle hooks.
                     if let Some(diff) = load_git_diff_between_at_host(cwd, baseline, current, host.as_ref())? {
                         if packet["ephemeral"] == true {
                             let _ = app.emit("pi://event", json!({"type":"turn_diff","hostId":host_id,"sessionPath":path,"messageId":id,"snapshot":diff}));

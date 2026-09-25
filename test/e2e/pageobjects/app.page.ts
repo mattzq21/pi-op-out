@@ -83,7 +83,6 @@ class AppPage {
   }
 
   async refreshForReset() {
-    // Intentional test resets discard drafts; normal navigation keeps its unload protection.
     await browser.execute(() => {
       window.addEventListener("beforeunload", (event) => event.stopImmediatePropagation(), { capture: true, once: true });
     });

@@ -1,7 +1,3 @@
-//! Meter reads clear accumulated peaks and surface callback failures.
-//! Preallocated callback buffers pack small callbacks into full queue slots without locks.
-//! Generation changes, rejected capture buffers and capture gaps discard incomplete frames.
-//! Capture/render capacity covers the worker deadline; playback and callback limits stay fixed.
 
 use std::sync::Mutex;
 use std::sync::PoisonError;
@@ -18,8 +14,7 @@ use crossbeam_queue::ArrayQueue;
 pub(super) const BLOCK: usize = 256;
 pub(super) const QUEUE_CAPACITY: usize = 32;
 pub(super) const MAX_CALLBACK_FRAMES: usize = BLOCK * QUEUE_CAPACITY;
-// Allow ordinary timestamp jitter consistently at both capture buffering boundaries.
-pub(super) const CAPTURE_GAP_TOLERANCE: Duration = Duration::from_millis(/*millis*/ 20);
+pub(super) const CAPTURE_GAP_TOLERANCE: Duration = Duration::from_millis(           20);
 
 pub(super) struct Frame {
     pub(super) samples: [f32; BLOCK],
@@ -28,8 +23,6 @@ pub(super) struct Frame {
     pub(super) generation: u64,
 }
 
-/// Packs serialized callbacks without allocating; only complete blocks enter the queue.
-/// The oldest sample keeps its timestamp. Callers reset after rejected capture data.
 #[derive(Default)]
 pub(super) struct FramePacker {
     frame: Option<Frame>,
@@ -40,8 +33,6 @@ impl FramePacker {
         self.frame = None;
     }
 
-    // Capture checks continuity before packing can hide a gap inside an old partial block.
-    // Render callbacks retain their separate existing packing behavior.
     pub(super) fn discard_capture_gap(&mut self, start: Instant, rate: f64) {
         if self.frame.as_ref().is_some_and(|partial| {
             let end = partial.at + Duration::from_secs_f64(partial.len as f64 / rate);
@@ -76,8 +67,6 @@ impl FramePacker {
                 && let Some(full) = self.frame.take()
                 && let Err(rejected) = queue.push(full)
             {
-                // Suppressed output is known silence; dropping it cannot lose audible output.
-                // Never discard an active generation or a block containing real audio.
                 if rejected.generation.is_multiple_of(2)
                     || rejected.samples.iter().any(|sample| *sample != 0.0)
                 {
@@ -114,14 +103,12 @@ impl Buffers {
             return Err(std::io::Error::other("audio device failed"));
         }
         Ok(crate::protocol::AudioState {
-            microphone_peak: self.microphone_peak.swap(/*val*/ 0, Ordering::AcqRel),
-            speaker_peak: self.speaker_peak.swap(/*val*/ 0, Ordering::AcqRel),
+            microphone_peak: self.microphone_peak.swap(        0, Ordering::AcqRel),
+            speaker_peak: self.speaker_peak.swap(        0, Ordering::AcqRel),
         })
     }
 
     pub(super) fn new(input_rate: u32, output_rate: u32) -> Self {
-        // Rates are validated before opening devices. A pending batch can defer
-        // capture consumption until its freshness deadline plus one in-flight send.
         let budget = super::processing::MAX_PROCESSING_DELAY
             + crate::audio_track::SEND_TIMEOUT
             + 2 * crate::DEVICE_SERVICE_INTERVAL;
@@ -133,19 +120,19 @@ impl Buffers {
             capture: ArrayQueue::new(capacity(input_rate)),
             rendered: ArrayQueue::new(capacity(output_rate)),
             playback: ArrayQueue::new(QUEUE_CAPACITY),
-            microphone: AtomicU64::new(/*v*/ 1),
-            speaker: AtomicU64::new(/*v*/ 1),
+            microphone: AtomicU64::new(      1),
+            speaker: AtomicU64::new(      1),
             speaker_failure_gate: Mutex::new(()),
             serviced: AtomicBool::new(false),
             failed: AtomicBool::new(false),
             capture_dropped: AtomicBool::new(false),
             render_dropped: AtomicBool::new(false),
-            microphone_peak: AtomicU16::new(/*v*/ 0),
-            speaker_peak: AtomicU16::new(/*v*/ 0),
-            queued: AtomicU32::new(/*v*/ 0),
-            last_dac_ns: AtomicU64::new(/*v*/ 0),
+            microphone_peak: AtomicU16::new(      0),
+            speaker_peak: AtomicU16::new(      0),
+            queued: AtomicU32::new(      0),
+            last_dac_ns: AtomicU64::new(      0),
             clock: Instant::now(),
-            callback_sequence: AtomicU64::new(/*v*/ 0),
+            callback_sequence: AtomicU64::new(      0),
         }
     }
 
@@ -165,8 +152,6 @@ impl Buffers {
         Self::set_disabled(&self.speaker, disabled)
     }
 
-    // One control worker writes each epoch. Odd epochs are disabled; every
-    // transition advances the epoch so disable/re-enable cannot replay old audio.
     pub(super) fn set_disabled(epoch: &AtomicU64, disabled: bool) -> std::io::Result<()> {
         let current = epoch.load(Ordering::Acquire);
         if (current % 2 == 1) != disabled {
@@ -181,8 +166,6 @@ impl Buffers {
     }
 }
 
-/// Rejects capture backlog after unmute, using offsets in the device's clock.
-/// This is conservative software admission, not a guarantee of hardware clock accuracy.
 #[derive(Default)]
 pub(super) struct CaptureBoundary {
     generation: Option<u64>,
@@ -201,8 +184,6 @@ impl CaptureBoundary {
             self.generation = Some(generation);
             self.cutoff = None;
             self.previous_capture = None;
-            // The current callback timestamp may have been sampled before unmute.
-            // Wait for the next serialized callback before establishing a cutoff.
             return false;
         }
         let accepted = capture >= *self.cutoff.get_or_insert(callback)
@@ -242,7 +223,6 @@ impl Playback {
     pub(super) fn next(&mut self, buffers: &Buffers) -> Option<f32> {
         let epoch = buffers.speaker.load(Ordering::Acquire);
         self.retire_frame(buffers, epoch);
-        // Bound stale-frame work even if a producer keeps writing during a mute.
         for _ in 0..buffers.playback.capacity() {
             if self.frame.is_some() {
                 break;
@@ -266,7 +246,7 @@ impl Playback {
         };
         let sample = frame.samples[self.offset];
         self.offset += 1;
-        buffers.queued.fetch_sub(/*val*/ 1, Ordering::AcqRel);
+        buffers.queued.fetch_sub(        1, Ordering::AcqRel);
         if epoch % 2 == 1 || !sample.is_finite() {
             Some(0.0)
         } else {

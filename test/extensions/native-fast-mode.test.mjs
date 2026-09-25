@@ -2,8 +2,6 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { build } from 'esbuild';
 
-// Keep the real transport command discovery and default-setting path; replace
-// only the native bridge so the regression runs without a desktop window.
 const compiled = await build({
   stdin: { contents: 'export { NativeTransport } from "./src/lib/nativeTransport"; export { calls, setCommands } from "./platform";', resolveDir: process.cwd() },
   bundle: true, write: false, format: 'esm', platform: 'node',

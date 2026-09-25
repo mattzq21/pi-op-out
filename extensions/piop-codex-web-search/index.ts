@@ -41,7 +41,6 @@ function rankedModels(ctx: ExtensionContext) {
     model.provider.replace(/--piop-account-\d+$/, "") === "openai-codex" && model.api === "openai-codex-responses";
   const override = process.env.PIOP_WEB_SEARCH_MODEL?.trim();
   const models = ctx.modelRegistry.getAll().filter(isCodex);
-  // Match upstream's independent search-model preference when the chat isn't Codex.
   const candidates = models.filter((model) => !model.id.split("-").some((part) => part === "pro" || part === "ultra"))
     .sort((a, b) => b.id.localeCompare(a.id, undefined, { numeric: true }));
   const ranked = override ? models.filter((model) => model.id === override) : [
@@ -72,7 +71,7 @@ function accountId(token: string): string {
     const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
     const id = payload?.["https://api.openai.com/auth"]?.chatgpt_account_id;
     if (typeof id === "string" && id.trim()) return id;
-  } catch { /* Report an actionable error without exposing the token. */ }
+  } catch { }
   throw new Error("Codex account ID is missing. Sign in again with Pi /login on this host.");
 }
 
@@ -93,7 +92,6 @@ function responseError(payload: RecordValue): string | undefined {
   if (payload.status && payload.status !== "completed") return `Codex web search response was ${payload.status}`;
 }
 
-// Codex uses SSE even though the caller only needs the completed answer.
 function streamEvent(frame: string) {
   const data = frame.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trimStart()).join("\n");
   if (!data || data === "[DONE]") return undefined;

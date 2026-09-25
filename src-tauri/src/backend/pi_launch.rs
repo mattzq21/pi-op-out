@@ -182,12 +182,10 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     for name in LEGACY_FILE_CHANGE_ASSETS {
         remote.push_str(&format!(r#" && rm -f -- "$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/{name}""#));
     }
-    // Bundled extensions can exceed the OS limit for a single command argument.
     stage_extension_script(ssh(host).arg("sh -s"), &host.name, remote)
 }
 
 fn stage_extension_script(command: &mut Command, host_name: &str, remote: String) -> Result<(), String> {
-    // Bundled extensions can exceed the OS limit for a single command argument.
     let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| format!("Could not install piop extensions on {host_name}: {error}"))?;
     let mut stdin = child.stdin.take().ok_or("Remote extension staging stdin was unavailable")?;
     let writer = thread::spawn(move || stdin.write_all(remote.as_bytes()));

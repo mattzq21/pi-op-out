@@ -141,7 +141,6 @@ impl Worker {
         let process = worker.clone();
         tokio::spawn(async move {
             supervise(&mut child, incoming_signals).await;
-            // Drain the final response and stderr before closing outstanding requests.
             let _ = stdout_task.await;
             let _ = stderr_task.await;
             process.exited.store(true, Ordering::SeqCst);

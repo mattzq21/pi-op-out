@@ -97,7 +97,6 @@ export default function App() {
     return Boolean(key && composerDrafts()[key]) || runtimePool().liveSessionSummaries().some(session => session.isDraft && `${session.hostId ?? "local"}:${session.id}` === key);
   };
   const releaseSplitTransport = async (ownerTransport: NativeTransport) => { const capturedRuntimePool = runtimePool();
-    // Selecting a split conversation transfers its runtime to the main pane.
     if (activeTransportRef.current === ownerTransport) return;
     await closeTransportDialogs(ownerTransport);
     if (!ownerTransport.isEphemeral() && hasRetainedDraft(ownerTransport)) return;
@@ -474,8 +473,6 @@ export default function App() {
     if (!capturedSettings) throw new Error("Settings are still loading");
     const next = value;
     const agentHostId = nextConfig ? "local" : undefined;
-    // Use a separate, sessionless runtime to persist agent definitions without
-    // reloading the extension inside a conversation that is still responding.
     const writeAgents = async (configuration: AgentConfig) => {
       const writer = new NativeTransport({ cwd: "~", hostId: "local" });
       try {

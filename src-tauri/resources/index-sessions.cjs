@@ -42,7 +42,6 @@ class SessionIndex {
   }
 
   recordMessage(message, content, voice, entry) {
-    // Sidebar recency follows prompts, not later assistant/tool activity.
     if (message.role === 'user') this.lastMessageAt = Math.max(this.lastMessageAt, timestamp(voice?.startMs ?? message.timestamp ?? entry.timestamp));
     this.count++;
     if (content) {

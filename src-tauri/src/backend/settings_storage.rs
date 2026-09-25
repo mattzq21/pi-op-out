@@ -95,7 +95,6 @@ fn atomic_write_private(path: &Path, body: &[u8]) -> Result<(), String> {
 }
 
 fn canonical_shortcut(shortcut: &str) -> Result<Option<String>, String> {
-    // A single trailing "+" denotes the "+" key itself: "Ctrl++" -> ["ctrl", "+"].
     let mut raw: Vec<&str> = shortcut.split('+').collect();
     let mut plus_key = false;
     if raw.len() > 1 && raw[raw.len() - 1].trim().is_empty() { plus_key = true; raw.pop(); }
@@ -113,7 +112,6 @@ fn canonical_shortcut(shortcut: &str) -> Result<Option<String>, String> {
 }
 
 fn migrate_keybindings(settings: &mut AppSettings) {
-    // Retired actions can retain shortcuts now reserved by the app (e.g. conversation search).
     let supported = default_keybindings();
     settings.keybindings.retain(|action, _| supported.contains_key(action));
     for (action, shortcut) in supported {

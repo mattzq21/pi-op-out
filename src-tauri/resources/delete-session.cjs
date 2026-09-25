@@ -28,8 +28,6 @@ async function readFile(file, optional = false) {
 async function restoreFile(saved) {
   if (!saved.staged) return;
   try {
-    // link() creates the destination only if it is still absent, without copying
-    // the staged bytes or opening a check-then-rename race.
     await fs.link(saved.stagedPath, saved.file);
   } catch (error) {
     if (error.code === "EEXIST") throw new Error(`Refusing to overwrite a replacement created during deletion: ${saved.file}`);
@@ -164,7 +162,6 @@ async function main() {
       throw new Error(`Conversation refs were removed, but staged files could not be erased: ${error.message}. Recovery files retained in ${lock}`);
     }
   } finally {
-    // Lock cleanup is bookkeeping after commit/rollback, not a failed deletion.
     if (!preserveRecovery && !lockRemoved) await fs.rm(lock, { recursive: true }).catch((error) => console.error(`Could not remove deletion recovery directory ${lock}: ${error.message}`));
   }
 }

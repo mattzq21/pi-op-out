@@ -28,7 +28,6 @@ function archiveOwnedRef(sessionId, snapshot) {
 }
 
 function lastResponseSnapshot(entries) {
-  // Follow the selected conversation branch, rather than an abandoned response.
   const byId = new Map(entries.filter((entry) => entry.id).map((entry) => [entry.id, entry]));
   let cursor = entries.at(-1);
   let response;
@@ -46,11 +45,8 @@ function lastResponseSnapshot(entries) {
 function preserveResponse(header, entries) {
   if (typeof header.cwd === 'string' && sameRepository(header.cwd)
     && fs.realpathSync(git(header.cwd, ['rev-parse', '--show-toplevel'])) === fs.realpathSync(target)) {
-    // Never substitute a prompt checkpoint or capture the files being deleted.
     const snapshot = lastResponseSnapshot(entries);
     if (!snapshot || snapshot.data?.unavailable) throw new Error('The archived conversation has no checkpoint for its last response');
-    // Copied response entries can name the parent's ref. Retain the exact commit
-    // under this archive's ownership and update the response entry used to verify it.
     snapshot.data.ref = archiveOwnedRef(header.id, snapshot.data);
     snapshot.data.repositoryRoot = common;
     header.worktreeRestore = { path: fs.realpathSync(target), conversationPath: fs.realpathSync(header.cwd), repositoryRoot: common, ref: snapshot.data.ref, commit: snapshot.data.commit };

@@ -166,7 +166,6 @@ describe("Conversation acceptance", () => {
       await expect($(".assistant-message")).toHaveText(expect.stringContaining("const answer = 42;"));
 
       await expect($(".assistant-message").$('button[aria-label^="Copy assistant response"]')).toBeEnabled();
-      // The native fixture stays unfocused, so hover-only controls need DOM activation.
       await browser.execute(() => document.querySelector<HTMLButtonElement>('.assistant-message button[aria-label^="Copy assistant response"]')!.click());
       expect(await browser.execute(() => (window as unknown as { __e2eClipboard?: string }).__e2eClipboard)).toBe(response);
       await $('button[aria-label="Copy code"]').click();
@@ -266,7 +265,6 @@ describe("Conversation acceptance", () => {
     try {
       await emitPiEvent({ type: "agent_start" });
       await app.prepareMessage("Check this after the current response");
-      // The real runtime publishes its queue before acknowledging the prompt.
       await emitPiEvent({ type: "queue_update", steering: [], followUp: [pending.message], pendingMessages: [pending] });
       await browser.keys("Enter");
 

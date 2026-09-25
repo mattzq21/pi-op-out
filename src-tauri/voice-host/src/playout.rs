@@ -1,5 +1,3 @@
-//! One explicit RTP jitter/decode pipeline per audible epoch; no autoplugging or device discovery.
-//! Owned RTP memory retains ingress permits, and native bus messages never accumulate or escape.
 
 use super::audio_sink::Sink;
 use super::playback::PlaybackWriter;

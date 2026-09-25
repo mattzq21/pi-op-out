@@ -121,7 +121,6 @@ fn retire_archived_session(app: &AppHandle, client: &PiRuntime, host_id: &str, s
         let path = desktop_session_file(&settings, host_id, session_path)?;
         let key = session_identity(&settings, host_id, &path)?;
         if daemon.alive.load(Ordering::SeqCst) { daemon.request(json!({"type":"retire","sessionKey":key,"sessionPath":path}))?; }
-        // Retirement stops new captures; its response follows all previously queued capture packets.
         daemon.drain_captures(Some(&key))?;
     }
 

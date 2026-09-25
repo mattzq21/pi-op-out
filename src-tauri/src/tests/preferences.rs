@@ -50,9 +50,6 @@ fn worktree_names_validate_user_input_and_sanitize_project_prefixes() {
 }
 include!("../test_directory.rs");
 
-// Tests exercising installers that read HOME must serialize the process-wide
-// override and restore the original value: the test harness runs tests in
-// parallel threads within one process.
 struct HomeOverride { _guard: std::sync::MutexGuard<'static, ()>, previous: Option<std::ffi::OsString> }
 
 impl HomeOverride {

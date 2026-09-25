@@ -1,5 +1,3 @@
-//! Bounds retained inbound TCP streams across one peer's listeners before authentication.
-//! Weak references reuse slots after stream ownership ends; other Tokio I/O stays unchanged.
 
 use std::future::Future;
 use std::io;

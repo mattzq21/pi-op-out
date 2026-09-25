@@ -136,7 +136,6 @@ const SELECT_EVENT = "piop:mcp:select";
 export default async function mcpBridge(pi: ExtensionAPI) {
   let servers: ServerConfig[] = [];
   const connections = new Map<string, Connection>();
-  // Keep ownership across reconnects so retained tool registrations cannot alias.
   const toolNames = new Map<string, string>();
   const toolOwners = new Map<string, string>();
   const registeredName = (serverId: string, toolName: string) => {
@@ -200,7 +199,6 @@ export default async function mcpBridge(pi: ExtensionAPI) {
     const next = selection.servers.filter((server) => server.enabled);
     const wanted = new Set(next.map((server) => server.id));
     const instanceFor = (id: string) => `piop-${createHash("sha256").update(JSON.stringify([selection.sessionId, selection.agentName, id])).digest("hex").slice(0, 32)}`;
-    // Close the old lease before requesting a new one, including on agent changes.
     await Promise.all([...connections].filter(([id, connection]) => !wanted.has(id) || connection.instanceId !== instanceFor(id) || !connection.connected || JSON.stringify(servers.find((server) => server.id === id)) !== JSON.stringify(next.find((server) => server.id === id))).map(([id]) => close(id)));
     servers = structuredClone(next);
     for (const id of statuses.keys()) if (!wanted.has(id)) statuses.delete(id);
@@ -249,7 +247,6 @@ export default async function mcpBridge(pi: ExtensionAPI) {
     if (errors.length) throw new Error(errors.join("\n"));
     return [...wanted].flatMap((id) => connections.get(id)?.tools ?? []);
   };
-  // The event bus dispatches synchronously; the caller awaits the assigned promise.
   const unsubscribe = pi.events.on(SELECT_EVENT, (value) => {
     const selection = value as Selection;
     selection.ready = pending.then(() => select(selection));

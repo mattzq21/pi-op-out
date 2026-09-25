@@ -1,6 +1,5 @@
 fn unix_timestamp(time: SystemTime) -> u64 { time.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs() }
 
-// Inspect each distinct directory once per refresh, batching remote checks into one SSH call per batch.
 fn inspect_session_projects(sessions: &mut [SessionSummary], host: Option<&RemoteHost>) -> Result<(), String> {
     inspect_session_projects_with(sessions, |script, batch| {
         if let Some(host) = host {

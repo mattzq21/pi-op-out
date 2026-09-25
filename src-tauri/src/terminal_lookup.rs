@@ -34,7 +34,6 @@ impl Transcript {
 
 pub(super) fn start(runtime: &TerminalRuntime, id: &str, session_key: &str, cwd: &str, host_id: &str, owner: &str, generation: Uuid) -> Result<(), String> {
     let mut history = runtime.history.lock().map_err(|_| "Terminal history lock was poisoned")?;
-    // A peer's session key contains the referring machine's host alias.
     let session_id = session_key.rsplit_once(':').map_or(session_key, |(_, id)| id);
     history.insert(id.into(), Transcript { session_id: session_id.into(), host_id: host_id.into(), owner: owner.into(), cwd: cwd.into(), generation,
         output: String::new(), end: 0, updated: SystemTime::now(), running: true });

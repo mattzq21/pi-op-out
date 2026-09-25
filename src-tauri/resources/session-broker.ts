@@ -124,8 +124,6 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
   pi.on("session_start", (_event, ctx) => { restorePause(ctx); });
   pi.on("session_tree", (_event, ctx) => { restorePause(ctx); });
   pi.on("agent_start", (_event, ctx) => {
-    // Pi can restart its agent loop to drain queued messages after an abort.
-    // Keep those runs aborted until every queued message (including images) is saved.
     if (isPausing) { ctx.abort(); return; }
     pauseStopped = false;
     if (isPaused) { persistPause(false); publishPause(); }
@@ -228,7 +226,7 @@ export function registerFastModeStatus(pi: ExtensionAPI) {
     try {
       const value = JSON.parse(await readFile(path, "utf8")) as Partial<FastConfig>;
       if (typeof value.enabled === "boolean" && Array.isArray(value.targets) && value.targets.every((target) => target && typeof target.provider === "string" && typeof target.model === "string")) config = value as FastConfig;
-    } catch { /* A missing or unreadable setting must not appear as disabled. */ }
+    } catch { }
   };
   const publish = (ctx: ExtensionContext, model = ctx.model) => {
     const supported = config?.targets.some((target) => target.provider === model?.provider && target.model === model?.id && ["openai", "openai-codex"].includes(target.provider));
@@ -252,10 +250,6 @@ export function registerFastModeStatus(pi: ExtensionAPI) {
     }
     publish(ctx);
   };
-  // The package only draws its indicator in TUI mode. Desktop asks after
-  // startup and after /fast finishes writing its scoped configuration.
-  // Keep that snapshot for model changes: another session may share the file
-  // while each extension instance retains its own in-memory toggle.
   pi.registerCommand("pi-desktop-fast-status", {
     description: "Read Fast Mode status for piop", handler: (args, ctx) => {
       const next = queue.then(() => refresh(ctx, args.trim() === "refresh"));
@@ -338,7 +332,6 @@ function registerTurnCapture(pi: ExtensionAPI) {
     cancel(ctx);
     const started = { id: crypto.randomUUID(), cwd: ctx.cwd, sessionId: ctx.sessionManager.getSessionId(), entries: new Set(ctx.sessionManager.getBranch().map((entry) => entry.id)) };
     try {
-      // Pi awaits this hook before inference, including automatic queued continuations.
       const baseline = await snapshot(started.cwd);
       if (baseline) { turn = started; publish(ctx, { phase: "start", turnId: started.id, cwd: started.cwd, baseline }); }
     } catch (error) { ctx.ui.notify(`Could not capture project changes: ${error instanceof Error ? error.message : String(error)}`, "error"); }
@@ -354,7 +347,6 @@ function registerTurnCapture(pi: ExtensionAPI) {
       const response = [...ctx.sessionManager.getBranch()].reverse().find((entry) => entry.type === "message" && !ended.entries.has(entry.id) && entry.message.role === "assistant" && (entry.message.content.some((part) => part.type === "text" && part.text.trim()) || ["aborted", "error"].includes(entry.message.stopReason)));
       if (!response) return;
       messageId = response.id;
-      // Freeze the endpoint before Pi may start its next run; persistence uses only these trees.
       current = await snapshot(ended.cwd);
     } catch (error) { ctx.ui.notify(`Could not capture project changes: ${error instanceof Error ? error.message : String(error)}`, "error"); }
     finally { publish(ctx, { phase: "end", turnId: ended.id, cwd: ended.cwd, current, sessionPath, messageId }); }
@@ -394,7 +386,6 @@ export function registerCatchUp(pi: ExtensionAPI) {
           return stdout;
         };
         const root = (await git(ctx.cwd, "rev-parse", "--show-toplevel")).trimEnd();
-        // Git lists the main worktree first. NUL delimiters preserve quoted paths.
         const first = (await git(root, "worktree", "list", "--porcelain", "-z")).split("\0\0")[0].split("\0");
         const main = first.find((field) => field.startsWith("worktree "))?.slice(9);
         assertMainWorktree(first, main);
@@ -622,8 +613,6 @@ export function registerSubagents(pi: ExtensionAPI) {
   });
 }
 
-// Both slash commands and model tools use these operations. Forking never changes
-// the running agent's session, and never copies an unfinished tool-call turn.
 export async function forkConversation(ctx: ExtensionContext, options: ForkOptions, createWorktree: (name: string) => Promise<CreatedWorktree>) {
   const retained = forkHistory(ctx, options.entryId);
   const header = ctx.sessionManager.getHeader();

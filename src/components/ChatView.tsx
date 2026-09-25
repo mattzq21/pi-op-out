@@ -191,8 +191,6 @@ export function ChatView(props: Props) {
       onScroll={(event) => {
         setSelectionBtwTip(undefined);
         const element = event.currentTarget;
-        // Our own scroll writes update lastScrollTop before their scroll event.
-        // Only downward movement all the way to the bottom resumes following.
         if (element.scrollTop < lastScrollTop.current) followLatest.current = false;
         else if (element.scrollTop > lastScrollTop.current) followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight <= 2;
         lastScrollTop.current = element.scrollTop;
@@ -239,8 +237,6 @@ function groupTurns(messages: ChatMessage[], previous: ConversationGroup[] = [])
         continue;
       }
       const promptedAt = prompt.promptTimestamp ?? prompt.promptContext.userTimestamp ?? prompt.timestamp;
-      // Voice replies have their own turns. Put Pi's context above the first
-      // regular-agent work after the delegated prompt, not above the transcript.
       const target = turns.slice(index + 1).find(turn => turn.messages.some(message =>
         message.customType !== VOICE_MESSAGE && (message.role === "assistant" || message.role === "tool") &&
         (promptedAt === undefined || message.timestamp === undefined || message.timestamp >= promptedAt)

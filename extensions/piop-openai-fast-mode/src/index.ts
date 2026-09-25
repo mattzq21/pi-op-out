@@ -17,9 +17,7 @@ import { clearFastStatus, updateFastStatus } from "./status";
 import type { FastModeConfig, ModelRef } from "./types";
 
 export type FastModeExtensionOptions = {
-  /** Directory containing the extension entry point; used to detect project-local package installs. */
   extensionDir?: string;
-  /** Test/advanced override for Pi's user-level agent directory. */
   agentDir?: string;
 };
 

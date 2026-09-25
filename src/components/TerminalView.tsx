@@ -46,7 +46,7 @@ export function TerminalView(componentProps: Props) {
       }
       return false;
     });
-    const fitAndResize = () => { try { fit.fit(); } catch { /* The panel may be between layouts. */ } };
+    const fitAndResize = () => { try { fit.fit(); } catch { } };
     fit.fit();
     let restored = !capturedSnapshot1;
     if (capturedSnapshot1) { queuedOutputEnd.current = capturedSnapshotEnd2 ?? 0; instance.write((capturedSnapshot1)!, () => { if (terminal.current !== instance) return; lastOutputEnd.current = capturedSnapshotEnd2 ?? 0; restored = true; }); }

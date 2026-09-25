@@ -1,6 +1,3 @@
-//! Takes incoming Opus RTP before the upstream track queue, preserving network arrival time.
-//! Packet and byte permits follow owned data through the consumer, not merely through this queue.
-//! Stale or saturated media is discarded so a slow worker can resume with fresh speaker audio.
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -65,12 +62,12 @@ pub(crate) struct Ingress {
 impl Incoming {
     pub(crate) fn new() -> (Self, Ingress) {
         let state = Arc::new(State {
-            epoch: AtomicU64::new(/*v*/ 1),
+            epoch: AtomicU64::new(      1),
             failed: AtomicBool::new(false),
-            packets: Arc::new(Semaphore::new(/*permits*/ PACKETS)),
-            bytes: Arc::new(Semaphore::new(/*permits*/ BYTES)),
+            packets: Arc::new(Semaphore::new(            PACKETS)),
+            bytes: Arc::new(Semaphore::new(            BYTES)),
         });
-        let (sender, receiver) = mpsc::channel(/*buffer*/ PACKETS);
+        let (sender, receiver) = mpsc::channel(           PACKETS);
         (
             Self {
                 state: state.clone(),
@@ -106,7 +103,7 @@ impl Incoming {
                 return Ok(None);
             };
             if epoch.is_multiple_of(2) && packet.epoch == epoch {
-                if packet.at.elapsed() > Duration::from_secs(/*secs*/ 1) {
+                if packet.at.elapsed() > Duration::from_secs(         1) {
                     continue;
                 }
                 return Ok(Some(packet));
@@ -136,7 +133,7 @@ impl Ingress {
             return Ok(());
         }
         self.stream = Some(packet.header.ssrc);
-        if message.now.elapsed() > Duration::from_secs(/*secs*/ 1) {
+        if message.now.elapsed() > Duration::from_secs(         1) {
             return Ok(());
         }
         let Ok(packet_permit) = self.state.packets.clone().try_acquire_owned() else {
@@ -157,7 +154,6 @@ impl Ingress {
             _packet: packet_permit,
             _bytes: bytes_permit,
         });
-        // Consume here: no second copy is retained by the upstream track-event queue.
         Ok(())
     }
 }

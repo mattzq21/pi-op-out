@@ -5,7 +5,6 @@ type Configuration = { enabled: boolean; loading: boolean };
 const MAX_SECONDS = 120;
 const SILENCE_SECONDS = 3;
 const SPEECH_CONFIRMATION_SECONDS = 0.1;
-// Fixed input level, approximately -46 dBFS.
 const SPEECH_RMS_THRESHOLD = 0.005;
 let recordingOwner: symbol | undefined;
 

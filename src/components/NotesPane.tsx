@@ -62,7 +62,7 @@ export function NotesPane(props: { hidden: boolean; open: boolean; onClose: () =
   };
   const openLink = (target: string) => {
     let decoded = target;
-    try { decoded = decodeURIComponent(target); } catch { /* A literal percent sign is valid in a note title. */ }
+    try { decoded = decodeURIComponent(target); } catch { }
     const path = resolveNoteLink(decoded, notes.document()?.path ?? "", notes.paths());
     if (path) { void select(path); return; }
     begin("create", markdownPath(decoded.split("#")[0]));

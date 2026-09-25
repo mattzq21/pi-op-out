@@ -1,5 +1,3 @@
-// A deterministic terminal boundary: rendering/parsing belongs to xterm;
-// these doubles expose writes, completion timing and lifecycle to component tests.
 export const terminals = [];
 export class Terminal {
   constructor(options) { this.options = options; this.cols = 100; this.rows = 30; this.writes = []; this.completions = []; this.addons = []; this.selection = ''; this.resets = 0; terminals.push(this); }

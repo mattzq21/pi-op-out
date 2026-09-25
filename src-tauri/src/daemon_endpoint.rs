@@ -35,7 +35,6 @@ pub(crate) struct Endpoint {
 pub(crate) fn directory() -> Result<PathBuf, String> {
     let root = home_dir()?.join(STORAGE_DIRECTORY);
     if !DEVELOPMENT { return Ok(root); }
-    // Both debug binaries are built from this worktree, independently of cwd.
     let key = env!("CARGO_MANIFEST_DIR").bytes().fold(0xcbf29ce484222325u64, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3));
     Ok(root.join("daemons").join(format!("{key:016x}")))
 }

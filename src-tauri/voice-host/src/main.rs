@@ -1,7 +1,4 @@
-//! Same-build helper lifecycle with privately owned runtime, transport and opt-in local devices.
-//! Queued privacy controls take priority over starting another capture batch.
 
-// Non-native helper targets negotiate transport but have no device backend to send audio.
 #[cfg_attr(
     not(any(
         target_os = "macos",
@@ -40,12 +37,12 @@ use crate::protocol::read_message;
 use helper_exit::HelperExitStage;
 use service_failure::ServiceFailure;
 
-const DEVICE_SERVICE_INTERVAL: Duration = Duration::from_millis(/*millis*/ 5);
+const DEVICE_SERVICE_INTERVAL: Duration = Duration::from_millis(           5);
 
 const BUILD_COMMIT: &str = "piop-voice-1";
 
 fn main() {
-    let mut args = std::env::args_os().skip(/*n*/ 1);
+    let mut args = std::env::args_os().skip(      1);
     match (args.next(), args.next()) {
         (Some(arg), None) if arg == "--build-commit" => println!("{BUILD_COMMIT}"),
         (None, None) => {
@@ -61,7 +58,7 @@ fn main() {
                 std::process::exit(phase.get().code());
             }
         }
-        _ => std::process::exit(/*code*/ 2),
+        _ => std::process::exit(         2),
     }
 }
 
@@ -361,8 +358,6 @@ fn set_service_failure(phase: &Cell<HelperExitStage>, error: &io::Error) {
     }
 }
 
-// Pending privacy controls and shutdown always precede the next capture batch.
-// A command arriving after service begins cannot retract an already in-flight packet.
 fn wait_for_control(
     receiver: &mpsc::Receiver<Message>,
     mut service: impl FnMut() -> io::Result<()>,

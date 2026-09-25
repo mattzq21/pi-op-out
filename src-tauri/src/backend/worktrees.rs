@@ -110,7 +110,6 @@ fn copy_untracked_directory(source_root: &Path, target_root: &Path, relative: &P
         fs::create_dir_all(&target).map_err(|error| format!("Could not prepare untracked directory {}: {error}", relative.display()))?;
         for entry in fs::read_dir(&source).map_err(|error| format!("Could not read untracked directory {}: {error}", relative.display()))? {
             let entry = entry.map_err(|error| format!("Could not read untracked directory {}: {error}", relative.display()))?;
-            // Nested repositories are copied as files, never with Git metadata pointing at the source.
             if entry.file_name() == ".git" { continue; }
             copy_untracked_file(source_root, target_root, &relative.join(entry.file_name()))?;
         }

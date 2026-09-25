@@ -1,4 +1,3 @@
-// Shared daemon command allowlist for desktop and mobile clients.
 use super::*;
 
 fn argument<T: serde::de::DeserializeOwned>(args: &Value, key: &str) -> Result<T, String> {

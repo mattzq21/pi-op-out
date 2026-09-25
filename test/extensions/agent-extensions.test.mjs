@@ -297,7 +297,6 @@ test('agent switching requires idle state while model and effort survive restore
   assert.equal(f.ctx.model.id, 'another-model');
   assert.equal(f.pi.getThinkingLevel(), 'low');
 
-  // Restore in a fresh extension instance, as on reconnect or resource reload.
   const restored = await sessionAgentFixture(t);
   restored.entries.push(...structuredClone(f.entries));
   await restored.emit('session_start');

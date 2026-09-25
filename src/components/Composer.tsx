@@ -72,7 +72,6 @@ function expandSkillReference(value: string, commands: SlashCommand[]) {
   const reference = /(^|[^a-zA-Z0-9_$])\$([a-zA-Z0-9][a-zA-Z0-9_-]*)\b/g;
   let primary: string | undefined;
   let rest = value;
-  // Invoke the first skill and preserve the rest of the user's references.
   const prose = value.replace(/(^|\n)( {0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n\2\3[^\n]*(?=\n|$)|$)|(`+)[^`]*?\4/g, (code) => code.replace(/[^\n]/g, " "));
   for (const match of [...prose.matchAll(reference)]) {
     const name = skills.get(match[2].toLowerCase());

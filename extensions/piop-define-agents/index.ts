@@ -62,7 +62,6 @@ async function writeConfig(value: Config, createOnly = false) {
   try {
     await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600, flag: "wx" });
     if (createOnly) {
-      // Publish a complete file without replacing a concurrent migration's result.
       try { await link(temporary, configPath); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
     } else await rename(temporary, configPath);
@@ -128,7 +127,7 @@ async function migrateAgentPrompt(agent: StoredAgent) {
 }
 
 function storedRuntimeDefaults(session: string): RuntimeDefaults | undefined {
-  try { const stored = JSON.parse(process.env[DEFAULTS_ENV] || "null"); if (stored?.session === session && typeof stored.model === "string" && typeof stored.effort === "string") return { model: stored.model, effort: stored.effort }; } catch { /* Capture clean runtime defaults below. */ }
+  try { const stored = JSON.parse(process.env[DEFAULTS_ENV] || "null"); if (stored?.session === session && typeof stored.model === "string" && typeof stored.effort === "string") return { model: stored.model, effort: stored.effort }; } catch { }
 }
 
 async function migratePrompts(stored: StoredConfig, pi: ExtensionAPI): Promise<Config> {
@@ -327,7 +326,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const publish = (ctx: ExtensionContext) => ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: currentAgent()?.name ?? active, locked: false, saved: !!snapshot, unavailable: !currentAgent(), config: { ...config, fastModeModels: fastModeModels() } })}`);
   const saveState = () => pi.appendEntry(STATE_ENTRY, { active, locked, modelOverride, effortOverride, snapshot });
   const reload = async (ctx: ExtensionCommandContext) => {
-    // Reloading resources does not invalidate the definitions already loaded.
     publish(ctx);
     reloading = true;
     try { await ctx.reload(); } finally { reloading = false; }
@@ -456,7 +454,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
     locked = sessionIsLocked(states, branch);
     modelOverride = stored?.modelOverride;
     effortOverride = stored?.effortOverride;
-    // Selection applies the agent's configuration; MCP startup waits for input.
     publish(ctx);
     const error = await useAgent(active, ctx, false);
     if (error) ctx.ui.notify(error, "warning");
@@ -480,7 +477,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   });
   pi.registerCommand("pi-define-agents-use", {
     description: "Select a defined agent", handler: async (args, ctx) => {
-      const argument = args.trim(); let name = argument; try { const decoded = decode<unknown>(argument); if (typeof decoded === "string") name = decoded; } catch { /* Plain CLI name. */ }
+      const argument = args.trim(); let name = argument; try { const decoded = decode<unknown>(argument); if (typeof decoded === "string") name = decoded; } catch { }
       if (!ctx.isIdle()) throw new Error("Wait for the current response before changing agents");
       await selectAgent(name, ctx);
     }
@@ -514,7 +511,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
     description: "Update agent definitions", handler: async (args, ctx) => {
       const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied, orchestratorDefaultApplied: config.orchestratorDefaultApplied, subagentsDefaultApplied: config.subagentsDefaultApplied, diagramistDefaultApplied: config.diagramistDefaultApplied, askerAgentDefaultApplied: config.askerAgentDefaultApplied, terminalAgentDefaultApplied: config.terminalAgentDefaultApplied }, pi);
       if (!next.agents.some((agent) => agent.name === VOICE_ORCHESTRATOR_NAME)) next.agents.push(structuredClone(config.agents.find((agent) => agent.name === VOICE_ORCHESTRATOR_NAME)!));
-      // Global edits only affect future selections. This session keeps its snapshot.
       await writeConfig(next);
       config = next;
       publish(ctx);

@@ -70,8 +70,6 @@ export function shortcutsConflict(left: string, right: string) {
 }
 
 function splitShortcut(shortcut: string) {
-  // Keep a literal "+" key: "Ctrl++" -> ["Ctrl", "+"].
-  // A single trailing "+" denotes the "+" key itself: "Ctrl++" -> ["Ctrl", "+"].
   const raw = shortcut.split("+");
   let plusKey = false;
   if (raw.length > 1 && raw[raw.length - 1].trim() === "") { plusKey = true; raw.pop(); }
@@ -113,12 +111,8 @@ export function matchesShortcut(event: ShortcutEvent, shortcut: string) {
     shift: parts.some((part) => part.toLowerCase() === "shift")
   };
   const keys = parts.filter((part) => !MODIFIERS.has(part.toLowerCase()));
-  // Require exactly one non-modifier key; extra trailing tokens must not match loosely.
   if (keys.length !== 1) return false;
   const key = keys[0];
-  // A bare modifier name in the key position (e.g. "Ctrl+Control") must not match a lone modifier tap.
   if (["control", "meta", "alt", "shift", "mod"].includes(key.toLowerCase())) return false;
-  // Every shortcut needs a real modifier (Ctrl, Alt, Meta, or Mod): bare keys
-  // such as "Space" must never match, so typing cannot trigger global actions.
   return matchesModifiers(event, { ...expected, key }) && key.toLowerCase() === keyName(event.key).toLowerCase();
 }

@@ -37,7 +37,6 @@ export function loadCheckpoint(ctx: ExtensionContext, configuration: string | nu
     const message = (entry.data as { message?: unknown } | undefined)?.message;
     return typeof message === "string" ? [message] : [];
   }));
-  // Only ancestors on this branch qualify; sibling branches never share evidence.
   for (const entry of branch.reverse()) {
     const checkpoint = checkpoints.findLast(item => item.anchor === entry.id);
     if (checkpoint) return checkpoint.state;
@@ -67,6 +66,6 @@ export function saveCheckpoint(ctx: ExtensionContext, configuration: string | nu
     writeFileSync(temporary, data, { mode: 0o600, flag: "wx" });
     renameSync(temporary, path);
   } finally {
-    try { unlinkSync(temporary); } catch { /* Rename already removed the temporary path. */ }
+    try { unlinkSync(temporary); } catch { }
   }
 }

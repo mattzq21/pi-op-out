@@ -22,8 +22,6 @@ fn prepare_listener() -> Result<(std::os::unix::net::UnixListener, PathBuf), Str
     ensure_private_dir(&directory)?;
     let path = directory.join("tailscale.sock");
     remove_previous_socket(&path)?;
-    // The daemon instance lock is already held. Only this user and root can
-    // reach this socket; peer credentials further restrict it to tailscaled.
     let listener = std::os::unix::net::UnixListener::bind(&path).map_err(|error| error.to_string())?;
     set_private_file_permissions(&path)?;
     listener.set_nonblocking(true).map_err(|error| error.to_string())?;
@@ -70,8 +68,6 @@ async fn verify_proxy_peer(stream: &tokio::net::UnixStream) -> Result<(), String
     let peer = stream.peer_cred().map_err(|error| error.to_string())?;
     let pid = peer.pid().ok_or("Missing proxy peer PID")?;
     if peer.uid() != 0 { return Err("Untrusted Tailscale proxy peer".into()); }
-    // Unprivileged daemons cannot inspect a root process's /proc/PID/exe.
-    // Ask the system service manager for the trusted proxy's PID instead.
     let mut command = tokio::process::Command::new("/usr/bin/systemctl");
     command.args(["--system", "show", "tailscaled.service", "--property=MainPID", "--value"]).kill_on_drop(true);
     let output = tokio::time::timeout(Duration::from_secs(5), command.output()).await
@@ -109,8 +105,6 @@ impl tokio_tungstenite::tungstenite::handshake::server::Callback for TailscaleId
         use tokio_tungstenite::tungstenite::handshake::server::Response;
         let headers = request.headers();
         let login = headers.get("tailscale-user-login").and_then(|value| value.to_str().ok());
-        // A web page must not borrow the browser's tailnet identity to control
-        // Pi. These are the packaged Capacitor origins; native clients omit it.
         let origin_allowed = match headers.get("origin") {
             None => true,
             Some(value) => matches!(value.to_str(), Ok("https://localhost" | "capacitor://localhost")),

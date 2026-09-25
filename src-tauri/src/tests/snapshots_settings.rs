@@ -259,7 +259,6 @@ fn settings_path_rejects_directory_obstructions_without_changing_their_permissio
     fs::set_permissions(&path, fs::Permissions::from_mode(0o750)).unwrap();
     let result = settings_path_at(&home.0, false, || panic!("existing path must not trigger migration"));
     let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
-    // Restore fixture traversal before assertions so a regression does not prevent cleanup.
     fs::set_permissions(&path, fs::Permissions::from_mode(0o750)).unwrap();
     assert!(result.is_err(), "a directory cannot be used as settings.json");
     assert_eq!(mode, 0o750);

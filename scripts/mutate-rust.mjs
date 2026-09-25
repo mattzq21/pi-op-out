@@ -19,7 +19,6 @@ try {
       filter: source => !['target', 'node_modules', '.git', 'mutants.out', 'mutants.out.old'].includes(basename(source)),
     });
   }
-  // cargo-mutants cannot discover the backend through lib.rs's include! macro.
   const manifest = join(temporaryRoot, 'src-tauri', 'Cargo.toml');
   const manifestSource = await readFile(manifest, 'utf8');
   if (!manifestSource.includes('[lib]\n')) throw new Error('Rust mutation runner requires a library target');

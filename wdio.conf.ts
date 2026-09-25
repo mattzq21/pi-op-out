@@ -18,7 +18,6 @@ const defaultBinary = path.resolve(
   "release",
   process.platform === "win32" ? "piop.exe" : "piop",
 );
-// Each worker and native app share a private fixture root; real preferences are read-only.
 const ownsFixtureHome = !process.env.PIOP_TEST_HOME;
 const fixtureHome = process.env.PIOP_TEST_HOME || mkdtempSync(path.join(tmpdir(), "piop-e2e-"));
 process.env.PIOP_TEST_HOME = fixtureHome;
@@ -124,12 +123,12 @@ const isFixtureProject = (cwd: string, id: string) => path.dirname(cwd) === path
 const cleanupTestSessions = () => {
   for (const sessionFile of sessionFiles().filter((file) => !baselineSessions.has(file))) {
     let header: { type?: string; id?: string; cwd?: string } = {};
-    try { header = JSON.parse(readFileSync(sessionFile, "utf8").split("\n", 1)[0]); } catch { /* A new malformed test artifact still belongs to this run. */ }
+    try { header = JSON.parse(readFileSync(sessionFile, "utf8").split("\n", 1)[0]); } catch { }
     if (header.type !== "session" || !header.id || !header.cwd) continue;
     const cwd = path.resolve(header.cwd);
     if (!isFixtureProject(cwd, header.id)) continue;
     rmSync(sessionFile);
-    try { rmdirSync(path.dirname(sessionFile)); } catch { /* Keep shared or non-empty session directories. */ }
+    try { rmdirSync(path.dirname(sessionFile)); } catch { }
     rmSync(cwd, { recursive: true, force: true });
   }
   for (const project of markedTestProjects().filter((directory) => !baselineProjects.has(directory))) rmSync(project, { recursive: true, force: true });
