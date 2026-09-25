@@ -1,6 +1,8 @@
 import { createSignal, createUniqueId, For, Show } from "solid-js";
 import type { ExtensionUiRequest } from "../types";
 import { createDependencyEffect } from "../lib/solid";
+import { ArrowRight, CircleHelp, Pencil, X } from "lucide-solid";
+import { DictationControls } from "./DictationControls";
 
 type Question = { id: string; header: string; question: string; options: { label: string; description: string }[] };
 type Answer = { selected: number; notes: string };
@@ -26,7 +28,7 @@ function validQuestion(value: Question) {
 export function AskUserDialog(props: { request: ExtensionUiRequest; owner?: string; onRespond: (response: Record<string, unknown>) => void | Promise<void> }) {
   const questions = readQuestions(props.request);
   const [index, setIndex] = createSignal(0);
-  const [answers, setAnswers] = createSignal<Answer[]>(questions.map(() => ({ selected: 0, notes: "" })));
+  const [answers, setAnswers] = createSignal<Answer[]>(questions.map(() => ({ selected: -1, notes: "" })));
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal(questions.length ? "" : "The question request is invalid. Cancel to let the agent retry.");
   const titleId = createUniqueId();
@@ -49,33 +51,39 @@ export function AskUserDialog(props: { request: ExtensionUiRequest; owner?: stri
     if (index() < questions.length - 1) { setIndex(index() + 1); return; }
     const result = Object.fromEntries(questions.map((question, i) => {
       const { selected, notes } = answers()[i];
-      const values = [question.options[selected]?.label ?? "None of the above"];
-      if (notes.trim()) values.push(`user_note: ${notes.trim()}`);
+      const values = selected >= 0 ? [question.options[selected].label] : [];
+      if (notes.trim()) values.push(notes.trim());
       return [question.id, { answers: values }];
     }));
     void respond({ value: JSON.stringify({ answers: result }) });
   };
-  return <dialog ref={dialog} class="extension-dialog ask-user-dialog" aria-labelledby={titleId} onCancel={(event) => { event.preventDefault(); void respond({ cancelled: true }); }}>
-    <p class="eyebrow">Input requested{props.owner ? ` · ${props.owner}` : ""}</p>
-    <Show when={questions[index()]}>{(question) => <form onSubmit={(event) => { event.preventDefault(); submit(); }}>
-      <p class="ask-user-progress">{question().header} · {index() + 1} of {questions.length}</p>
+  const choose = (selected: number) => { update({ selected, notes: "" }); submit(); };
+  const skip = () => { update({ selected: -1, notes: "" }); submit(); };
+  const write = (notes: string) => update({ selected: -1, notes });
+  return <dialog ref={dialog} class="ask-user-dialog" aria-labelledby={titleId} onCancel={(event) => { event.preventDefault(); void respond({ cancelled: true }); }}>
+    <header class="ask-user-header"><CircleHelp size={13} /><span title={props.owner}>Question</span>
+      <Show when={questions.length > 1}><span class="ask-user-progress">{index() + 1} of {questions.length}</span></Show>
+      <button type="button" class="ask-user-close" aria-label="Close question" disabled={busy()} onClick={() => void respond({ cancelled: true })}><X size={14} /></button>
+    </header>
+    <Show when={questions[index()]}>{(question) => <form onSubmit={(event) => { event.preventDefault(); if (answer().notes.trim()) submit(); }}>
       <h2 id={titleId}>{question().question}</h2>
       <fieldset disabled={busy()} class="ask-user-options" aria-labelledby={titleId}>
-        <For each={[...question().options, { label: "None of the above", description: "Add your own answer in the notes below." }]}>{(option, optionIndex) =>
-          <label class="ask-user-option" classList={{ selected: answer().selected === optionIndex() }}>
-            <input type="radio" name={`${titleId}-option`} checked={answer().selected === optionIndex()} onChange={() => update({ selected: optionIndex() })} />
-            <span><strong>{option.label}</strong><small>{option.description}</small></span>
-          </label>
+        <For each={question().options}>{(option, optionIndex) =>
+          <button type="button" class="ask-user-option" classList={{ suggested: optionIndex() === 0 && !answer().notes }} title={option.description} onClick={() => choose(optionIndex())}>
+            <span class="ask-user-number" aria-hidden="true">{optionIndex() + 1}</span>
+            <span class="ask-user-label">{option.label}</span><ArrowRight class="ask-user-arrow" size={16} />
+          </button>
         }</For>
-        <label class="ask-user-notes">{answer().selected === question().options.length ? "Your answer" : "Add notes (optional)"}
-          <textarea rows={3} value={answer().notes} onInput={(event) => update({ notes: event.currentTarget.value })} />
-        </label>
       </fieldset>
       <Show when={error()}><p class="dialog-error" role="alert">{error()}</p></Show>
-      <div class="dialog-actions">
-        <button type="button" disabled={busy()} onClick={() => void respond({ cancelled: true })}>Cancel</button>
-        <Show when={index() > 0}><button type="button" disabled={busy()} onClick={() => setIndex(index() - 1)}>Back</button></Show>
-        <button type="submit" class="primary-button" disabled={busy()}>{index() === questions.length - 1 ? "Submit answers" : "Next"}</button>
+      <div class="ask-user-footer">
+        <label class="ask-user-response"><span class="ask-user-number" aria-hidden="true"><Pencil size={12} /></span>
+          <input aria-label="Your response" placeholder="Or write your own response" disabled={busy()} value={answer().notes} onInput={(event) => write(event.currentTarget.value)} />
+        </label>
+        <Show when={question()} keyed>{(_question) => <DictationControls compact disabled={busy()} onText={(text) => write([answer().notes, text].filter(Boolean).join(" "))} />}</Show>
+        <Show when={index() > 0}><button class="ask-user-secondary" type="button" disabled={busy()} onClick={() => setIndex(index() - 1)}>Back</button></Show>
+        <button class="ask-user-secondary" type="button" disabled={busy()} onClick={skip}>Skip</button>
+        <button type="submit" class="ask-user-send" disabled={busy() || !answer().notes.trim()}>{index() === questions.length - 1 ? "Send" : "Next"}</button>
       </div>
     </form>}</Show>
     <Show when={!questions.length}><p id={titleId} role="alert">{error()}</p><button disabled={busy()} onClick={() => void respond({ cancelled: true })}>Cancel</button></Show>

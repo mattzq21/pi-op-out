@@ -4,7 +4,7 @@ import { DictationRecording, transcribeDictation, useDictationEnabled } from "..
 import { createSubscription } from "../lib/solid";
 import { voiceSession } from "../lib/voiceSession";
 
-export function DictationControls(props: { disabled: boolean; onText: (text: string) => void }) {
+export function DictationControls(props: { disabled: boolean; compact?: boolean; onText: (text: string) => void }) {
   const enabled = useDictationEnabled();
   const voice = createSubscription(() => voiceSession.subscribe, () => voiceSession.getSnapshot);
   const [phase, setPhase] = createSignal<"idle" | "starting" | "recording" | "transcribing">("idle");
@@ -38,11 +38,12 @@ export function DictationControls(props: { disabled: boolean; onText: (text: str
       if (current === generation) { recording = undefined; setPhase("idle"); setError(reason instanceof Error ? reason.message : String(reason)); }
     }
   };
+  const showLabel = () => !props.compact || phase() !== "idle";
   return <span class="dictation-controls">
     <Show when={enabled()}>
       <button type="button" class={phase() === "recording" ? "dictation-recording" : ""} aria-label={phase() === "recording" ? "Stop dictation" : "Dictate"} aria-pressed={phase() === "recording"} disabled={props.disabled || voice().phase !== "idle" || phase() === "starting" || phase() === "transcribing"} onClick={() => void (phase() === "recording" ? finish() : start())}>
         {phase() === "recording" ? <Square size={14} /> : <Mic size={14} />}
-        {phase() === "recording" ? "Stop dictation" : phase() === "transcribing" ? "Transcribing…" : phase() === "starting" ? "Microphone…" : "Dictate"}
+        <Show when={showLabel()}>{phase() === "recording" ? "Stop dictation" : phase() === "transcribing" ? "Transcribing…" : phase() === "starting" ? "Microphone…" : "Dictate"}</Show>
       </button>
       <Show when={phase() !== "idle"}><button type="button" aria-label="Cancel dictation" onClick={cancel}><X size={14} /></button></Show>
     </Show>
