@@ -85,8 +85,9 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .select-control { height: 31px; border: 1px solid var(--line); border-radius: 7px; display: flex; align-items: center; padding: 0 7px; gap: 4px; background: white; }
 .select-control span { font: 10px "DM Sans"; color: var(--faint); text-transform: uppercase; }.select-control select { max-width: 130px; border: 0; outline: 0; appearance: none; font-size: 12px; font-weight: 500; background: transparent; }.select-control.thinking select { max-width: 70px; }
 .messages { position: absolute; inset: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; padding-bottom: var(--composer-height, 0px); scroll-padding-bottom: calc(var(--composer-height, 0px) + 22px); }
-.messages { padding-top: 5vh; }
+.messages { display: flex; flex-direction: column; }
 .conversation, .composer-wrap { width: min(740px, calc(100% - 72px)); margin: 0 auto; }
+.messages > .conversation { flex-shrink: 0; margin-top: auto; }
 .selection-btw-tip { position: fixed; z-index: 20; display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 5px 7px 5px 10px; border: 1px solid #ffffff18; border-radius: 7px; background: #292824; color: #f7f5ef; box-shadow: 0 6px 18px #0004; transform: translate(-50%, -100%); font-size: 11px; font-weight: 500; white-space: nowrap; }
 .selection-btw-tip.below { transform: translate(-50%, 0); }
 .selection-btw-tip:hover { background: #34322e; }
