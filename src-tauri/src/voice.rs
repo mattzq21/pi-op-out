@@ -202,6 +202,15 @@ impl Helper {
 }
 
 #[cfg(feature = "desktop")]
+fn pending_audio_controls(commands: &mut mpsc::Receiver<Control>) -> AudioControls {
+    let mut controls = AudioControls { microphone_muted: false, speaker_suppressed: false };
+    while let Ok(control) = commands.try_recv() {
+        match control { Control::Mute(value) => controls.microphone_muted = value, Control::Suppress(value) => controls.speaker_suppressed = value }
+    }
+    controls
+}
+
+#[cfg(feature = "desktop")]
 async fn run_media(app: &AppHandle, id: &str, runtime_id: &str, daemon: Arc<HostConnection>, path: PathBuf, mut commands: mpsc::Receiver<Control>, mut closing: watch::Receiver<bool>) -> Result<(), String> {
     let mut helper = Helper::spawn(path)?;
     let result = async {
@@ -211,10 +220,7 @@ async fn run_media(app: &AppHandle, id: &str, runtime_id: &str, daemon: Arc<Host
         let answer = request(daemon, json!({"type":"voice","action":"start","callId":id,"runtimeId":runtime_id,"offer":offer})).await?;
         if *closing.borrow() { return Ok(()); }
         helper.connect(answer.as_str().ok_or("Missing voice connection answer")?.to_owned()).await?;
-        let mut controls = AudioControls { microphone_muted: false, speaker_suppressed: false };
-        while let Ok(control) = commands.try_recv() {
-            match control { Control::Mute(value) => controls.microphone_muted = value, Control::Suppress(value) => controls.speaker_suppressed = value }
-        }
+        let mut controls = pending_audio_controls(&mut commands);
         helper.controls(controls).await?;
         emit(app, id, json!({"type":"muted","muted":controls.microphone_muted}));
         emit(app, id, json!({"type":"suppressed","suppressed":controls.speaker_suppressed}));

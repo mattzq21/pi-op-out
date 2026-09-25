@@ -71,25 +71,35 @@ macro_rules! stream {
     };
 }
 
+fn default_devices() -> io::Result<(
+    cpal::Device,
+    cpal::Device,
+    cpal::SupportedStreamConfig,
+    cpal::SupportedStreamConfig,
+)> {
+    let host = cpal::default_host();
+    let input = host
+        .default_input_device()
+        .ok_or_else(|| io::Error::other("microphone unavailable"))?;
+    let output = host
+        .default_output_device()
+        .ok_or_else(|| io::Error::other("speaker unavailable"))?;
+    let input_config = input
+        .default_input_config()
+        .map_err(|_| io::Error::other("microphone configuration unavailable"))?;
+    let output_config = output
+        .default_output_config()
+        .map_err(|_| io::Error::other("speaker configuration unavailable"))?;
+    Ok((input, output, input_config, output_config))
+}
+
 impl Devices {
     pub(super) fn take_state(&self) -> io::Result<crate::protocol::AudioState> {
         self.worker.buffers.take_state()
     }
 
     pub(super) fn open() -> io::Result<Self> {
-        let host = cpal::default_host();
-        let input = host
-            .default_input_device()
-            .ok_or_else(|| io::Error::other("microphone unavailable"))?;
-        let output = host
-            .default_output_device()
-            .ok_or_else(|| io::Error::other("speaker unavailable"))?;
-        let input_config = input
-            .default_input_config()
-            .map_err(|_| io::Error::other("microphone configuration unavailable"))?;
-        let output_config = output
-            .default_output_config()
-            .map_err(|_| io::Error::other("speaker configuration unavailable"))?;
+        let (input, output, input_config, output_config) = default_devices()?;
         let input_stream_config = bounded_stream_config(&input_config)?;
         let output_stream_config = bounded_stream_config(&output_config)?;
         let buffers = Arc::new(Buffers::new(
@@ -146,6 +156,71 @@ impl Devices {
         })
     }
 
+    fn clear_speaker(&mut self, buffers: &Buffers) -> io::Result<()> {
+        // Stop callbacks before native teardown can block the worker.
+        drop(self.output.take());
+        drop(self.playout.take());
+        // The new epoch cancelled writers before either teardown; wait for
+        // any in-flight write before resetting its queue.
+        let producer = self
+            .playback
+            .0
+            .producer
+            .lock()
+            .map_err(|_| io::Error::other("speaker writer failed"))?;
+        while buffers.playback.pop().is_some() {}
+        while buffers.rendered.pop().is_some() {}
+        buffers.queued.store(/*val*/ 0, Ordering::Release);
+        buffers.last_dac_ns.store(/*val*/ 0, Ordering::Release);
+        drop(producer);
+        while buffers.rendered.pop().is_some() {}
+        Ok(())
+    }
+
+    fn restart_speaker(
+        &mut self,
+        buffers: Arc<Buffers>,
+        speaker_suppressed: bool,
+    ) -> io::Result<()> {
+        // Opening a Bluetooth microphone can change the speaker's format.
+        // Requery after stopping the old stream rather than restoring its
+        // pre-microphone rate, which the device may no longer support.
+        let output_config = self
+            .output_device
+            .default_output_config()
+            .map_err(|_| io::Error::other("speaker configuration unavailable"))?;
+        let output_stream_config = bounded_stream_config(&output_config)?;
+        let cpal::BufferSize::Fixed(output_frames) = output_stream_config.buffer_size else {
+            return Err(io::Error::other("audio callback size unavailable"));
+        };
+        self.worker
+            .processor
+            .set_render_rate(output_config.sample_rate())
+            .map_err(io::Error::other)?;
+        self.worker
+            .processor
+            .validate_callback_timing(self.input_frames, output_frames)
+            .map_err(io::Error::other)?;
+        self.playback = PlaybackPort::new(buffers.clone(), output_config.sample_rate());
+        if !speaker_suppressed {
+            self.playout =
+                Some(playout::Playout::new(self.playback.writer()).map_err(io::Error::other)?);
+        }
+        let output = stream!(
+            output_config.sample_format(),
+            build_output,
+            &self.output_device,
+            &output_stream_config,
+            buffers
+        )
+        .map_err(|_| io::Error::other("failed to reset speaker"))?;
+        output
+            .play()
+            .map_err(|_| io::Error::other("failed to restart speaker"))?;
+        self.output = Some(output);
+        Ok(())
+    }
+
     pub(super) fn set_controls(
         &mut self,
         controls: crate::protocol::AudioControls,
@@ -154,59 +229,8 @@ impl Devices {
         let previous = buffers.speaker.load(Ordering::Acquire);
         self.worker.set_controls(controls)?;
         if previous != buffers.speaker.load(Ordering::Acquire) {
-            // Stop callbacks before native teardown can block the worker.
-            drop(self.output.take());
-            drop(self.playout.take());
-            // The new epoch cancelled writers before either teardown; wait for
-            // any in-flight write before resetting its queue.
-            let producer = self
-                .playback
-                .0
-                .producer
-                .lock()
-                .map_err(|_| io::Error::other("speaker writer failed"))?;
-            while buffers.playback.pop().is_some() {}
-            while buffers.rendered.pop().is_some() {}
-            buffers.queued.store(/*val*/ 0, Ordering::Release);
-            buffers.last_dac_ns.store(/*val*/ 0, Ordering::Release);
-            drop(producer);
-            while buffers.rendered.pop().is_some() {}
-            // Opening a Bluetooth microphone can change the speaker's format.
-            // Requery after stopping the old stream rather than restoring its
-            // pre-microphone rate, which the device may no longer support.
-            let output_config = self
-                .output_device
-                .default_output_config()
-                .map_err(|_| io::Error::other("speaker configuration unavailable"))?;
-            let output_stream_config = bounded_stream_config(&output_config)?;
-            let cpal::BufferSize::Fixed(output_frames) = output_stream_config.buffer_size else {
-                return Err(io::Error::other("audio callback size unavailable"));
-            };
-            self.worker
-                .processor
-                .set_render_rate(output_config.sample_rate())
-                .map_err(io::Error::other)?;
-            self.worker
-                .processor
-                .validate_callback_timing(self.input_frames, output_frames)
-                .map_err(io::Error::other)?;
-            self.playback = PlaybackPort::new(buffers.clone(), output_config.sample_rate());
-            if !controls.speaker_suppressed {
-                self.playout =
-                    Some(playout::Playout::new(self.playback.writer()).map_err(io::Error::other)?);
-            }
-            let output = stream!(
-                output_config.sample_format(),
-                build_output,
-                &self.output_device,
-                &output_stream_config,
-                buffers
-            )
-            .map_err(|_| io::Error::other("failed to reset speaker"))?;
-            output
-                .play()
-                .map_err(|_| io::Error::other("failed to restart speaker"))?;
-            self.output = Some(output);
+            self.clear_speaker(&buffers)?;
+            self.restart_speaker(buffers, controls.speaker_suppressed)?;
         }
         Ok(())
     }

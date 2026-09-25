@@ -1,4 +1,4 @@
-import { $, $$, browser, expect } from "@wdio/globals";
+import { $, browser, expect } from "@wdio/globals";
 
 import { app } from "../pageobjects/app.page.js";
 import { mockBackend, backendCalls, resetBackend, resetApp, emitPiEvent, defaultSettings, connectedSessionResponses, startTemporaryConversation } from './acceptance-fixture.js';

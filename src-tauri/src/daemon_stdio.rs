@@ -6,25 +6,34 @@ use tokio_tungstenite::{connect_async_with_config, tungstenite::{Message, protoc
 const MAX_FRAME: usize = 128 * 1024 * 1024;
 type Socket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
-async fn open() -> Result<(Socket, Value), String> {
-    let endpoint = daemon_endpoint::read()?;
-    let url = reqwest::Url::parse(&endpoint.url).map_err(|error| error.to_string())?;
-    if endpoint.protocol != 1 || endpoint.token.len() < 32 || url.scheme() != "ws" || !matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]" | "::1")) {
+fn validate_endpoint(protocol: u32, token: &str, address: &str) -> Result<(), String> {
+    let url = reqwest::Url::parse(address).map_err(|error| error.to_string())?;
+    if protocol != 1 || token.len() < 32 || url.scheme() != "ws" || !matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]" | "::1")) {
         return Err("SSH must attach to a local Piop daemon endpoint".into());
     }
+    Ok(())
+}
+
+async fn authenticate_socket(socket: &mut Socket, token: &str) -> Result<Value, String> {
+    socket.send(Message::Text(json!({"type":"authenticate","token":token,"scope":"peer"}).to_string().into())).await.map_err(|error| error.to_string())?;
+    let reply = socket.next().await.ok_or("Daemon closed during authentication")?.map_err(|error| error.to_string())?;
+    let ready: Value = serde_json::from_str(reply.to_text().map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+    if ready["type"] != "ready" || ready["peerProtocol"] != 1 || ready["daemonId"].as_str().is_none() { return Err("Upgrade the running Piop daemon to enable peer connections".into()); }
+    Ok(ready)
+}
+
+async fn open() -> Result<(Socket, Value), String> {
+    let endpoint = daemon_endpoint::read()?;
+    validate_endpoint(endpoint.protocol, &endpoint.token, &endpoint.url)?;
     tokio::time::timeout(Duration::from_secs(5), async {
         let config = WebSocketConfig::default().max_message_size(Some(MAX_FRAME)).max_frame_size(Some(MAX_FRAME));
         let (mut socket, _) = connect_async_with_config(&endpoint.url, Some(config), false).await.map_err(|error| error.to_string())?;
-        socket.send(Message::Text(json!({"type":"authenticate","token":endpoint.token,"scope":"peer"}).to_string().into())).await.map_err(|error| error.to_string())?;
-        let reply = socket.next().await.ok_or("Daemon closed during authentication")?.map_err(|error| error.to_string())?;
-        let ready: Value = serde_json::from_str(reply.to_text().map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
-        if ready["type"] != "ready" || ready["peerProtocol"] != 1 || ready["daemonId"].as_str().is_none() { return Err("Upgrade the running Piop daemon to enable peer connections".into()); }
+        let ready = authenticate_socket(&mut socket, &endpoint.token).await?;
         Ok((socket, ready))
     }).await.map_err(|_| "Daemon handshake timed out".to_string())?
 }
 
-async fn connect() -> Result<(Socket, Value), String> {
-    if let Ok(socket) = open().await { return Ok(socket); }
+fn start_daemon() -> Result<PathBuf, String> {
     let directory = daemon_endpoint::directory()?;
     ensure_private_dir(&directory)?;
     let log_path = directory.join("daemon.log");
@@ -39,6 +48,12 @@ async fn connect() -> Result<(Socket, Value), String> {
     }
     let mut child = command.spawn().map_err(|error| error.to_string())?;
     thread::spawn(move || { let _ = child.wait(); });
+    Ok(log_path)
+}
+
+async fn connect() -> Result<(Socket, Value), String> {
+    if let Ok(socket) = open().await { return Ok(socket); }
+    let log_path = start_daemon()?;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
     let mut last_error = String::new();
     while tokio::time::Instant::now() < deadline {

@@ -206,7 +206,7 @@ export function FindInPage(componentProps: { selector: string; scopeKey: string;
   }, () => [open(), matches(), index(), componentProps.selector, componentProps.scopeKey, (componentProps.enabled === undefined ? true : componentProps.enabled)]);
 
   return <>{!open() || !(componentProps.enabled === undefined ? true : componentProps.enabled) ? (null) : (<>
-    <div class="find-highlights" aria-hidden="true">{<Index each={boxes()}>{(box, i) => <span  class={box().active ? "active" : undefined} style={{ left: cssPixels(box().left), top: cssPixels(box().top), width: cssPixels(box().width), height: cssPixels(box().height) }} />}</Index>}</div>
+    <div class="find-highlights" aria-hidden="true">{<Index each={boxes()}>{(box, _i) => <span  class={box().active ? "active" : undefined} style={{ left: cssPixels(box().left), top: cssPixels(box().top), width: cssPixels(box().width), height: cssPixels(box().height) }} />}</Index>}</div>
     <section ref={element => { bar.current = element; }} oncapture:focus={componentProps.onActivate} oncapture:pointerdown={componentProps.onActivate} style={placement() ? { top: `${placement()!.top}px`, right: `${placement()!.right}px`, "max-width": `${placement()!.maxWidth}px` } : undefined} class="find-bar" aria-label="Find in page" role="search">
       <Search size={15} aria-hidden="true" />
       <input ref={element => { input.current = element; }} aria-label="Find in page" placeholder="Find in page…" value={query()} onInput={event => setQuery(event.target.value)} onKeyDown={event => {

@@ -4,6 +4,12 @@ import type { ExtensionUiRequest } from "../types";
 import { AskUserDialog, isAskUserRequest } from "./AskUserDialog";
 
 type QuestionRequest = { request: ExtensionUiRequest; transport: NativeTransport; owner: string; queueId: string };
+export function createConversationQuestions(requests: Accessor<QuestionRequest[]>, remove: (item: QuestionRequest) => void) {
+  return { requests, respond: async (item: QuestionRequest, response: Record<string, unknown>) => {
+    await item.transport.command({ type: "extension_ui_response", id: item.request.id, ...response });
+    remove(item);
+  } };
+}
 export const ConversationQuestionsContext = createContext<{
   requests: Accessor<QuestionRequest[]>;
   respond: (item: QuestionRequest, response: Record<string, unknown>) => Promise<void>;

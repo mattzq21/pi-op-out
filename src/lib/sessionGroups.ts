@@ -72,6 +72,16 @@ function legacyAssignments(groups: Map<string, SessionGroup>, locations: unknown
   return assignments;
 }
 
+function sessionGroupSeed(session: SessionSummary): SessionGroupSeed {
+  const hostId = session.hostId ?? "local";
+  const cwd = session.projectRoot ?? session.cwd;
+  const projectKind = session.projectRoot && session.projectRoot !== session.cwd && session.projectKind === "worktree" ? "main" : session.projectKind;
+  return {
+    sessionKey: `${hostId}:${session.id}`,
+    project: { id: `${hostId}:${cwd}`, name: session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project, cwd, hostId, hostName: session.hostName ?? session.hostId ?? "Local", projectKind },
+  };
+}
+
 export function useSessionGroups(sessions: Accessor<SessionSummary[]>) {
   const [state, setState] = createSignal<SessionGroups>();
   const [error, setError] = createSignal<string>();
@@ -83,10 +93,7 @@ export function useSessionGroups(sessions: Accessor<SessionSummary[]>) {
     const stop = listen<SessionGroups>("pi://groups-changed", ({ payload }) => { eventRevision++; publish(payload); });
     return () => { mounted.current = false; listeners.delete(listener); void stop.then((unlisten) => unlisten()); };
   }, () => []);
-  const seedsJson = createMemo(() => (JSON.stringify(sessions().filter((session) => !isTemporaryChatCwd(session.cwd)).map((session): SessionGroupSeed => ({
-    sessionKey: `${session.hostId ?? "local"}:${session.id}`,
-    project: { id: `${session.hostId ?? "local"}:${session.projectRoot ?? session.cwd}`, name: session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project, cwd: session.projectRoot ?? session.cwd, hostId: session.hostId ?? "local", hostName: session.hostName ?? session.hostId ?? "Local", projectKind: session.projectRoot && session.projectRoot !== session.cwd && session.projectKind === "worktree" ? "main" : session.projectKind },
-  })).sort((a, b) => a.sessionKey.localeCompare(b.sessionKey)))));
+  const seedsJson = createMemo(() => JSON.stringify(sessions().filter((session) => !isTemporaryChatCwd(session.cwd)).map(sessionGroupSeed).sort((a, b) => a.sessionKey.localeCompare(b.sessionKey))));
   createDependencyEffect(() => { const capturedSeedsJson = seedsJson();
     const seeds: SessionGroupSeed[] = JSON.parse(capturedSeedsJson);
     void enqueue(async () => { const revision = eventRevision; const state = await loadSessionGroups(seeds, legacyGroups(seeds)); if (revision === eventRevision) publish(state); }).catch((reason) => { if (mounted.current) setError(String(reason)); });

@@ -259,6 +259,8 @@ export function Composer(props: Props) {
     const capturedComposer = { ...composer() }; const capturedValue = value();
  if (capturedComposer.restoredDraft && (capturedComposer.restoredDraft)!.id !== restoredDraftId.current) { restoredDraftId.current = (capturedComposer.restoredDraft)!.id; if (!capturedValue) setValue((capturedComposer.restoredDraft)!.value); } }, () => [composer().restoredDraft]);
 
+  const readUpload = (file: File, errors: string[]) => file.type.startsWith("image/") ? imageUpload(file, errors) : textUpload(file, errors);
+  const canUploadImage = (file: File) => !imageFile(file) || supportsImagesRef.current;
   const addFiles = async (files: FileList | File[] | null, initialErrors: string[] = [], commitUploads = composer().onUploadsChange ?? setLocalUploads) => { const capturedUploads = uploads();
     if (!files) return;
     setReadingUploads((count) => count + 1);
@@ -268,10 +270,10 @@ export function Composer(props: Props) {
     const errors = [...initialErrors];
     let totalBytes = capturedUploads.reduce((total, upload) => total + upload.byteSize, 0);
     for (const file of Array.from(files)) {
-      if (imageFile(file) && !supportsImagesRef.current) { setImageInputError(true); continue; }
+      if (!canUploadImage(file)) { setImageInputError(true); continue; }
       if (capturedUploads.length + next.length >= UPLOAD_COUNT_LIMIT) { errors.push(`Only ${UPLOAD_COUNT_LIMIT} attachments are allowed`); break; }
       if (file.size + totalBytes > TOTAL_UPLOAD_LIMIT) { errors.push(`${file.name} exceeds the 24 MB attachment limit`); continue; }
-      const upload = file.type.startsWith("image/") ? await imageUpload(file, errors) : await textUpload(file, errors);
+      const upload = await readUpload(file, errors);
       if (!upload) continue;
       next.push(upload);
       totalBytes += file.size;
@@ -419,7 +421,8 @@ export function Composer(props: Props) {
         const renderFastModeIndicator = () => (fastModeSupported() && <button type="button" class={`fast-mode-indicator${fastModeEnabled() ? " active" : ""}`} aria-label="Fast mode" aria-description={(composer().fastModeStatus)!} aria-pressed={fastModeEnabled()} aria-busy={togglingFastMode()} disabled={controls().inputDisabled || togglingFastMode()} onClick={() => void toggleFastMode()}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled() ? "currentColor" : "none"} aria-hidden="true" /></button>);
         const renderModelPicker = () => (<ContainedPicker label="Model" selectedLabel={composer().model ? displayModelName((composer().model)!, composer().models) : undefined} value={composer().model ? `${(composer().model)!.provider}/${(composer().model)!.id}` : ""} disabled={composer().streaming || controls().inputDisabled} options={modelOptions()} onChange={(value) => { const next = composer().models.find((item) => `${item.provider}/${item.id}` === value); if (next) composer().onModel(next); }} />);
         const renderStopButton = () => (<Show when={composer().streaming || composer().compacting || composer().paused || composer().pausing}><IconButton title="" label="Stop piop" class="stop-compact" disabled={controls().stopDisabled} onClick={() => void control("abort")}><CircleStop size={17} /></IconButton></Show>);
-        const renderSend = () => <Show when={composer().streaming || composer().paused && !(hasVisibleText(value()) || uploads().length) || composer().pausing} fallback={<IconButton title="" label="Send message" class="send" disabled={controls().inputDisabled || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>}>
+        const showPauseResume = () => composer().streaming || composer().paused && !(hasVisibleText(value()) || uploads().length) || composer().pausing;
+        const renderSend = () => <Show when={showPauseResume()} fallback={<IconButton title="" label="Send message" class="send" disabled={controls().inputDisabled || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>}>
           <IconButton title="" label={composer().paused ? "Resume piop" : "Pause piop"} class="send" disabled={controls().inputDisabled} onClick={() => void control(composer().paused ? "resume" : "pause")}>{composer().paused ? <Play size={17} /> : <Pause size={17} />}</IconButton>
         </Show>;
         return (<div class="composer-actions">{renderMobileSteer()}
@@ -475,7 +478,7 @@ export function Composer(props: Props) {
       }}>
       {renderComposerDropHint()}
       {renderCommandPalette()}
-      {uploads().length > 0 && <div class="attachments">{<Key each={uploads()} by={(upload) => upload.id}>{(upload, index) => <span >{upload().kind === "image" ? <ImagePlus size={12} /> : <FileText size={12} />}<b>{upload().name}</b><button aria-label={`Remove ${upload().name}`} onClick={() => { updateUploads((current) => current.filter((item) => item.id !== upload().id)); setUploadError(undefined); }}><X size={11} /></button></span>}</Key>}</div>}
+      {uploads().length > 0 && <div class="attachments">{<Key each={uploads()} by={(upload) => upload.id}>{(upload, _index) => <span >{upload().kind === "image" ? <ImagePlus size={12} /> : <FileText size={12} />}<b>{upload().name}</b><button aria-label={`Remove ${upload().name}`} onClick={() => { updateUploads((current) => current.filter((item) => item.id !== upload().id)); setUploadError(undefined); }}><X size={11} /></button></span>}</Key>}</div>}
       {uploadError() && <div class="upload-error" role="alert">{(uploadError())!}</div>}
       {controlError() && <div class="upload-error" role="alert">{(controlError())!}</div>}
       {renderComposerEditor()}
@@ -486,7 +489,7 @@ export function Composer(props: Props) {
     {imageInputError() && <div class="image-input-toast" role="alert"><CircleX size={14} aria-hidden="true" /><span>This model does not support image inputs. Try a different model</span><button type="button" aria-label="Dismiss image input error" onClick={() => setImageInputError(false)}><X size={14} /></button></div>}
     <div class="composer-above">
     {renderStreamBanner()}
-    {composer().pendingMessages.length > 0 && <div class="pending-messages" aria-label="Pending messages">{<Key each={composer().pendingMessages.filter((message) => message && typeof message.id === "string")} by={(message) => message.id}>{(message, index) => {
+    {composer().pendingMessages.length > 0 && <div class="pending-messages" aria-label="Pending messages">{<Key each={composer().pendingMessages.filter((message) => message && typeof message.id === "string")} by={(message) => message.id}>{(message, _index) => {
       const text = createMemo(() => (typeof message().message === "string" ? message().message : String(message().message ?? "")));
       const change = (action: import("../types").PendingMessageAction) => changePending(message().id, action);
       const disabled = createMemo(() => (composer().controlsDisabled || changingPending() || composer().pausing));
@@ -535,13 +538,15 @@ function ContainedPicker(props: { label: string; selectedLabel?: string; value: 
   createDependencyEffect(() => {
     const capturedPicker = { ...picker() };
  if (capturedPicker.disabled) close(); }, () => [picker().disabled]);
+  const menuEdges = () => {
+    const pane = root.current?.closest(".chat-shell")?.getBoundingClientRect();
+    return { leftEdge: Math.max(8, (pane?.left ?? 0) + 8), rightEdge: Math.min(window.innerWidth - 8, (pane?.right ?? window.innerWidth) - 8) };
+  };
   const toggle = () => {
     if (menuStyle()) return close();
     optionChosenRef.current = false;
     const rect = trigger.current?.getBoundingClientRect(); if (!rect) return;
-    const pane = root.current?.closest(".chat-shell")?.getBoundingClientRect();
-    const leftEdge = Math.max(8, (pane?.left ?? 0) + 8);
-    const rightEdge = Math.min(window.innerWidth - 8, (pane?.right ?? window.innerWidth) - 8);
+    const { leftEdge, rightEdge } = menuEdges();
     const width = Math.max(0, Math.min(props.menuMinWidth ?? picker().menuWidth, rightEdge - leftEdge));
     const right = window.innerWidth - Math.min(rightEdge, Math.max(rect.right, leftEdge + width));
     const selectedIndex = picker().options.findIndex((option) => option.value === picker().value && !option.disabled);

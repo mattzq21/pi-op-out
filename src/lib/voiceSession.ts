@@ -36,10 +36,14 @@ export class VoiceSession {
   private report(error: unknown) { this.update({ error: errorText(error) }); }
   connectionLost() { if (this.id) { this.cleanup(); this.report("Host connection ended. Start a new voice call after reconnecting."); } }
 
-  async start(transport: NativeTransport, state: AgentState) {
+  private validateStart(transport: NativeTransport, state: AgentState) {
     if (state.sessionId !== ORCHESTRATOR_SESSION_ID || transport.currentHostId() !== "local") throw new Error("Open Orchestrator to use voice");
     if (this.snapshot.phase !== "idle") throw new Error("End the current voice call first");
     if (!state.sessionId || !transport.ownsConversation()) throw new Error("Connect and take ownership of this conversation before starting voice");
+  }
+
+  async start(transport: NativeTransport, state: AgentState) {
+    this.validateStart(transport, state);
     const id = crypto.randomUUID(); this.id = id;
     this.update({ ...initial, phase: "connecting", transport, sessionId: state.sessionId, label: state.sessionName || transport.connectionTarget().cwd || "This conversation" });
     try {

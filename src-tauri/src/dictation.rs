@@ -80,7 +80,7 @@ impl Drop for AudioFiles {
     fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
 }
 
-async fn transcribe(engine: &Engine, wav: &[u8], timeout: Duration) -> Result<String, String> {
+fn prepare_audio_files() -> Result<AudioFiles, String> {
     let directory = std::env::temp_dir().join(format!("piop-dictation-{}", Uuid::new_v4()));
     fs::create_dir(&directory).map_err(|_| "Could not prepare dictation audio")?;
     let files = AudioFiles(directory);
@@ -89,6 +89,17 @@ async fn transcribe(engine: &Engine, wav: &[u8], timeout: Duration) -> Result<St
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&files.0, fs::Permissions::from_mode(0o700)).map_err(|_| "Could not protect dictation audio")?;
     }
+    Ok(files)
+}
+
+fn read_transcript(output: &Path) -> Result<String, String> {
+    let size = fs::metadata(output).map_err(|_| "Dictation returned no transcript")?.len();
+    if size > MAX_TEXT_BYTES { return Err("Dictation returned too much text".into()); }
+    fs::read_to_string(output).map(|text| text.trim().to_owned()).map_err(|_| "Could not read the transcript".into())
+}
+
+async fn transcribe(engine: &Engine, wav: &[u8], timeout: Duration) -> Result<String, String> {
+    let files = prepare_audio_files()?;
     let audio = files.0.join("audio.wav");
     let output = files.0.join("transcript.txt");
     fs::write(&audio, wav).map_err(|_| "Could not write dictation audio")?;
@@ -101,9 +112,7 @@ async fn transcribe(engine: &Engine, wav: &[u8], timeout: Duration) -> Result<St
         Err(_) => { let _ = child.kill().await; return Err("Dictation timed out".into()); }
     };
     if !status.success() { return Err("The speech model could not transcribe this recording".into()); }
-    let size = fs::metadata(&output).map_err(|_| "Dictation returned no transcript")?.len();
-    if size > MAX_TEXT_BYTES { return Err("Dictation returned too much text".into()); }
-    fs::read_to_string(output).map(|text| text.trim().to_owned()).map_err(|_| "Could not read the transcript".into())
+    read_transcript(&output)
 }
 
 fn silent_wav() -> Vec<u8> {
@@ -117,7 +126,7 @@ fn silent_wav() -> Vec<u8> {
 }
 
 fn validate_wav(wav: &[u8]) -> Result<(), String> {
-    if wav.len() < 46 || wav.len() > MAX_AUDIO_BYTES || wav.len() % 2 != 0 { return Err("Invalid dictation recording length".into()); }
+    if wav.len() < 46 || wav.len() > MAX_AUDIO_BYTES || !wav.len().is_multiple_of(2) { return Err("Invalid dictation recording length".into()); }
     let header = silent_wav();
     if wav[..4] != header[..4] || wav[8..40] != header[8..40]
         || u32::from_le_bytes(wav[4..8].try_into().unwrap()) as usize != wav.len() - 8

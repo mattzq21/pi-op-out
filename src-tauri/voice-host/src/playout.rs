@@ -19,6 +19,36 @@ pub(super) struct Playout {
     latency: Arc<AtomicBool>,
 }
 
+fn decode_elements(caps: gst::Caps) -> Result<[gst::Element; 6], &'static str> {
+    let jitter = gst::ElementFactory::make("rtpjitterbuffer")
+        .property("latency", 120u32)
+        .property_from_str("mode", "slave")
+        .property("drop-on-latency", true)
+        .property("do-lost", true)
+        .property("do-retransmission", false)
+        .build()
+        .map_err(|_| "jitter buffer unavailable")?;
+    let depay = gst::ElementFactory::make("rtpopusdepay")
+        .build()
+        .map_err(|_| "audio depayloader unavailable")?;
+    let decoder = gst::ElementFactory::make("opusdec")
+        .property("plc", true)
+        .property("use-inband-fec", false)
+        .build()
+        .map_err(|_| "audio decoder unavailable")?;
+    let convert = gst::ElementFactory::make("audioconvert")
+        .build()
+        .map_err(|_| "audio converter unavailable")?;
+    let resample = gst::ElementFactory::make("audioresample")
+        .build()
+        .map_err(|_| "audio resampler unavailable")?;
+    let filter = gst::ElementFactory::make("capsfilter")
+        .property("caps", caps)
+        .build()
+        .map_err(|_| "audio format filter unavailable")?;
+    Ok([jitter, depay, decoder, convert, resample, filter])
+}
+
 impl Playout {
     pub(super) fn new(writer: PlaybackWriter) -> Result<Self, &'static str> {
         gst::init().map_err(|_| "audio runtime initialization failed")?;
@@ -43,32 +73,7 @@ impl Playout {
                     .build(),
             )
             .build();
-        let jitter = gst::ElementFactory::make("rtpjitterbuffer")
-            .property("latency", 120u32)
-            .property_from_str("mode", "slave")
-            .property("drop-on-latency", true)
-            .property("do-lost", true)
-            .property("do-retransmission", false)
-            .build()
-            .map_err(|_| "jitter buffer unavailable")?;
-        let depay = gst::ElementFactory::make("rtpopusdepay")
-            .build()
-            .map_err(|_| "audio depayloader unavailable")?;
-        let decoder = gst::ElementFactory::make("opusdec")
-            .property("plc", true)
-            .property("use-inband-fec", false)
-            .build()
-            .map_err(|_| "audio decoder unavailable")?;
-        let convert = gst::ElementFactory::make("audioconvert")
-            .build()
-            .map_err(|_| "audio converter unavailable")?;
-        let resample = gst::ElementFactory::make("audioresample")
-            .build()
-            .map_err(|_| "audio resampler unavailable")?;
-        let filter = gst::ElementFactory::make("capsfilter")
-            .property("caps", caps)
-            .build()
-            .map_err(|_| "audio format filter unavailable")?;
+        let [jitter, depay, decoder, convert, resample, filter] = decode_elements(caps)?;
         let sink = Sink::new(writer);
         let pipeline = gst::Pipeline::new();
         let elements = [

@@ -183,6 +183,6 @@ export function SplitChatPane(componentProps: Props) {
     <header class="split-pane-header"><span><strong title={componentProps.session.name}>{componentProps.session.name}</strong><small title={componentProps.session.cwd}>{componentProps.session.project}</small></span><button class="split-pane-close" aria-label="Close split pane" title="Close split pane" onClick={componentProps.onClose}><X size={15} /></button></header>
     {renderSplitPaneStatus()}
     {renderSplitControlError()}
-    {notices().length > 0 && <div class="split-notices">{<Key each={notices()} by={(notice) => notice.id}>{(notice, index) => <div class="error-toast" role="alert" ><strong>{notice().title}</strong><span>{notice().message}</span><button aria-label={`Dismiss ${notice().title}`} onClick={() => setNotices((current) => current.filter((item) => item.id !== notice().id))}>×</button></div>}</Key>}</div>}
+    {notices().length > 0 && <div class="split-notices">{<Key each={notices()} by={(notice) => notice.id}>{(notice, _index) => <div class="error-toast" role="alert" ><strong>{notice().title}</strong><span>{notice().message}</span><button aria-label={`Dismiss ${notice().title}`} onClick={() => setNotices((current) => current.filter((item) => item.id !== notice().id))}>×</button></div>}</Key>}</div>}
   </section>;
 }

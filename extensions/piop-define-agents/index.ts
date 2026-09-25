@@ -438,6 +438,13 @@ export default async function defineAgents(pi: ExtensionAPI) {
   pi.on("session_shutdown", () => { stopSubagentProfiles(); stopRefresh(); extensions.stop(); });
   pi.on("model_select", (event) => { const model = `${event.model.provider}/${event.model.id}`; if (applyingAgentModel === model) { applyingAgentModel = undefined; return; } modelOverride = model; saveState(); saveRuntimeDefaults({ model, effort: runtimeDefaults?.effort || pi.getThinkingLevel() }); });
   pi.on("thinking_level_select", (event) => { if (applyingAgentEffort === event.level) { applyingAgentEffort = undefined; return; } effortOverride = event.level; saveState(); saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); });
+  const restoreOrchestratorAgent = (ctx: ExtensionContext) => {
+    const voiceOrchestrator = ctx.sessionManager.getSessionId() === VOICE_ORCHESTRATOR_SESSION_ID;
+    if (voiceOrchestrator && active !== VOICE_ORCHESTRATOR_NAME || !voiceOrchestrator && active === VOICE_ORCHESTRATOR_NAME) {
+      active = voiceOrchestrator ? VOICE_ORCHESTRATOR_NAME : "general";
+      snapshot = undefined;
+    }
+  };
   const restoreSession = async (_event: unknown, ctx: ExtensionContext) => {
     restore(ctx);
     const branch = ctx.sessionManager.getBranch();
@@ -445,11 +452,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const stored = states.at(-1);
     snapshot = migrateQuestionSnapshot(stored?.snapshot);
     active = snapshot?.definition.name ?? restoredAgentName(stored?.active);
-    const voiceOrchestrator = ctx.sessionManager.getSessionId() === VOICE_ORCHESTRATOR_SESSION_ID;
-    if (voiceOrchestrator && active !== VOICE_ORCHESTRATOR_NAME || !voiceOrchestrator && active === VOICE_ORCHESTRATOR_NAME) {
-      active = voiceOrchestrator ? VOICE_ORCHESTRATOR_NAME : "general";
-      snapshot = undefined;
-    }
+    restoreOrchestratorAgent(ctx);
     locked = sessionIsLocked(states, branch);
     modelOverride = stored?.modelOverride;
     effortOverride = stored?.effortOverride;

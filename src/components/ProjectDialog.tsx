@@ -186,7 +186,7 @@ export function ProjectDialog(componentProps: Props) {
     }
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.isComposing) { event.preventDefault(); void open(); }
   }}>
-    <header class="directory-palette-heading"><h2 id="project-dialog-title">Jump to a folder</h2><select aria-label="Machine" disabled={opening()} value={hostId()} onChange={(event) => setHostId(event.target.value)}><option value="local">Local</option>{<Key each={componentProps.hosts} by={(host) => host.id}>{(host, index) => <option  value={host().id}>{host().name}</option>}</Key>}</select><button class="directory-palette-escape" disabled={opening()} onClick={componentProps.onCancel}>esc</button></header>
+    <header class="directory-palette-heading"><h2 id="project-dialog-title">Jump to a folder</h2><select aria-label="Machine" disabled={opening()} value={hostId()} onChange={(event) => setHostId(event.target.value)}><option value="local">Local</option>{<Key each={componentProps.hosts} by={(host) => host.id}>{(host, _index) => <option  value={host().id}>{host().name}</option>}</Key>}</select><button class="directory-palette-escape" disabled={opening()} onClick={componentProps.onCancel}>esc</button></header>
     {renderDirectoryPaletteSearch()}
     {renderDirectoryPaletteCaption()}
     {renderDirectoryPaletteResults()}

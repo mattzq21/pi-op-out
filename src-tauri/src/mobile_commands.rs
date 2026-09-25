@@ -30,14 +30,109 @@ async fn dispatch_local(app: AppHandle, owner: String, command: String, args: Va
     if let Some(id) = args.get("terminalId").and_then(Value::as_str) {
         if app.state::<TerminalRuntime>().processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.get(id).is_some_and(|process| process.window_label != owner) { return Err("Terminal belongs to another connection".into()); }
     }
-    match command.as_str() {
-        "reassign_terminal" => terminal_lookup::reassign(&app.state::<TerminalRuntime>(), &owner, &argument::<String>(&args, "terminalId")?, &argument::<String>(&args, "sessionKey")?).map(|_| Value::Null),
-        "notes" => tokio::task::spawn_blocking(move || notes::dispatch(args)).await.map_err(|error| error.to_string())?,
-        "dictation_configuration" => Ok(dictation::configuration(&app)),
-        "dictation_transcribe" => dictation::dictate(app, argument(&args, "audio")?).await,
-        "broker_request" => tokio::task::spawn_blocking(move || peers::local_broker_request(&app, &argument::<String>(&args, "path")?, &argument::<Value>(&args, "body")?)).await.map_err(|error| error.to_string())?,
-        "load_host_settings" => tokio::task::spawn_blocking(move || serde_json::to_value(load_app_settings(app)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "save_host_settings" => tokio::task::spawn_blocking(move || {
+    let handler = COMMANDS.iter().find(|(name, _)| *name == command).map(|(_, handler)| handler)
+        .ok_or_else(|| format!("Command is not available on the daemon: {command}"))?;
+    handler(app, owner, args).await
+}
+
+type CommandFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>>;
+type CommandHandler = fn(AppHandle, String, Value) -> CommandFuture;
+const COMMANDS: &[(&str, CommandHandler)] = &[
+    ("reassign_terminal", handle_reassign_terminal),
+    ("notes", handle_notes),
+    ("dictation_configuration", handle_dictation_configuration),
+    ("dictation_transcribe", handle_dictation_transcribe),
+    ("broker_request", handle_broker_request),
+    ("load_host_settings", handle_load_host_settings),
+    ("save_host_settings", handle_save_host_settings),
+    ("host_storage_report", handle_host_storage_report),
+    ("provider_auth", handle_provider_auth),
+    ("open_project_directory", handle_open_project_directory),
+    ("voice_configuration", handle_voice_configuration),
+    ("mobile_voice_start", handle_mobile_voice_start),
+    ("voice_stop", handle_voice_stop),
+    ("voice_mute", handle_voice_mute),
+    ("voice_suppress", handle_voice_suppress),
+    ("start_pi", handle_start_pi),
+    ("stop_pi", handle_stop_pi),
+    ("pi_command", handle_pi_command),
+    ("pi_presence", handle_pi_presence),
+    ("start_terminal", handle_start_terminal),
+    ("write_terminal", handle_write_terminal),
+    ("resize_terminal", handle_resize_terminal),
+    ("close_terminal", handle_close_terminal),
+    ("list_sessions", handle_list_sessions),
+    ("storage_report", handle_storage_report),
+    ("load_session_groups", handle_load_session_groups),
+    ("change_session_groups", handle_change_session_groups),
+    ("home_directory", handle_home_directory),
+    ("orchestrator_chat", handle_orchestrator_chat),
+    ("create_temporary_chat", handle_create_temporary_chat),
+    ("remove_temporary_chat", handle_remove_temporary_chat),
+    ("validate_project_directory", handle_validate_project_directory),
+    ("list_directories", handle_list_directories),
+    ("list_project_files", handle_list_project_files),
+    ("read_project_file", handle_read_project_file),
+    ("save_project_file", handle_save_project_file),
+    ("is_git_repository", handle_is_git_repository),
+    ("git_branch", handle_git_branch),
+    ("git_project_kind", handle_git_project_kind),
+    ("git_worktree_roots", handle_git_worktree_roots),
+    ("create_project_worktree", handle_create_project_worktree),
+    ("create_git_worktree", handle_create_git_worktree),
+    ("remove_git_worktree", handle_remove_git_worktree),
+    ("prepare_worktree_setup", handle_prepare_worktree_setup),
+    ("cancel_worktree_setup", handle_cancel_worktree_setup),
+    ("run_worktree_setup", handle_run_worktree_setup),
+    ("capture_git_tree", handle_capture_git_tree),
+    ("discard_git_tree", handle_discard_git_tree),
+    ("load_git_diff", handle_load_git_diff),
+    ("load_git_diffs", handle_load_git_diffs),
+    ("save_git_diffs", handle_save_git_diffs),
+    ("archive_session", handle_archive_session),
+    ("delete_session", handle_delete_session),
+    ("delete_archived_session", handle_delete_archived_session),
+    ("restore_archived_worktree", handle_restore_archived_worktree),
+    ("relocate_session", handle_relocate_session),
+    ("load_app_settings", handle_load_app_settings),
+    ("save_app_settings", handle_save_app_settings),
+    ("codex_usage", handle_codex_usage),
+    ("opencode_go_usage", handle_opencode_go_usage),
+];
+
+fn handle_notes(_app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || notes::dispatch(args)).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_dictation_configuration(app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
+    Box::pin(async move {
+        Ok(dictation::configuration(&app))
+    })
+}
+
+fn handle_dictation_transcribe(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        dictation::dictate(app, argument(&args, "audio")?).await
+    })
+}
+
+fn handle_broker_request(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || peers::local_broker_request(&app, &argument::<String>(&args, "path")?, &argument::<Value>(&args, "body")?)).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_load_host_settings(app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(load_app_settings(app)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_save_host_settings(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || {
             let mut settings: AppSettings = argument(&args, "settings")?;
             let previous = load_app_settings(app.clone())?;
             settings.keybindings = previous.keybindings;
@@ -46,65 +141,360 @@ async fn dispatch_local(app: AppHandle, owner: String, command: String, args: Va
             settings.debug_mode = previous.debug_mode;
             let agents_changed: bool = argument(&args, "agentsChanged")?;
             save_app_settings(app, settings, agents_changed.then(|| "local".into()))
-        }).await.map_err(|error| error.to_string())?,
-        "host_storage_report" => tokio::task::spawn_blocking(move || serde_json::to_value(StorageReport { hosts: vec![inspect_storage(None)?] }).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "provider_auth" => tokio::task::spawn_blocking(move || provider_auth::for_owner(app, owner, argument(&args, "hostId")?, argument(&args, "request")?)).await.map_err(|error| error.to_string())?,
-        "open_project_directory" => tokio::task::spawn_blocking(move || open_project_directory(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?).map(|_| Value::Null)).await.map_err(|error| error.to_string())?,
-        "voice_configuration" => voice_configuration(app, argument(&args, "runtimeId")?).await,
-        "mobile_voice_start" => voice::host_request(app, argument(&args, "runtimeId")?, "start".into(), argument(&args, "callId")?, argument(&args, "offer")?).await,
-        "voice_stop" => voice_stop(app, argument(&args, "runtimeId")?, argument(&args, "callId")?).await.map(|_| Value::Null),
-        "voice_mute" => voice_mute(app, argument(&args, "callId")?, argument(&args, "muted")?).map(|_| Value::Null),
-        "voice_suppress" => voice_suppress(app, argument(&args, "callId")?, argument(&args, "suppressed")?).map(|_| Value::Null),
-        "start_pi" => tokio::task::spawn_blocking(move || (|| { let mut result = start_pi_for_owner(app.clone(), owner, app.state(), app.state(), argument(&args, "runtimeId")?, argument(&args, "cwd")?, argument(&args, "sessionPath")?, argument(&args, "sessionId")?, argument(&args, "forkPath")?, argument(&args, "noSession")?, argument(&args, "hostId")?, argument(&args, "presence")?, argument(&args, "clientId")?)?; result["daemonId"] = json!(daemon_endpoint::identity()?); Ok(result) })()).await.map_err(|error| error.to_string())?,
-        "stop_pi" => tokio::task::spawn_blocking(move || {
+        }).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_host_storage_report(_app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(StorageReport { hosts: vec![inspect_storage(None)?] }).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_provider_auth(app: AppHandle, owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || provider_auth::for_owner(app, owner, argument(&args, "hostId")?, argument(&args, "request")?)).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_open_project_directory(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || open_project_directory(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?).map(|_| Value::Null)).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_voice_configuration(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        voice_configuration(app, argument(&args, "runtimeId")?).await
+    })
+}
+
+fn handle_mobile_voice_start(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        voice::host_request(app, argument(&args, "runtimeId")?, "start".into(), argument(&args, "callId")?, argument(&args, "offer")?).await
+    })
+}
+
+fn handle_voice_stop(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        voice_stop(app, argument(&args, "runtimeId")?, argument(&args, "callId")?).await.map(|_| Value::Null)
+    })
+}
+
+fn handle_voice_mute(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        voice_mute(app, argument(&args, "callId")?, argument(&args, "muted")?).map(|_| Value::Null)
+    })
+}
+
+fn handle_voice_suppress(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        voice_suppress(app, argument(&args, "callId")?, argument(&args, "suppressed")?).map(|_| Value::Null)
+    })
+}
+
+fn handle_start_pi(app: AppHandle, owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || (|| { let mut result = start_pi_for_owner(app.clone(), owner, app.state(), app.state(), start_pi_options(&args)?)?; result["daemonId"] = json!(daemon_endpoint::identity()?); Ok(result) })()).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_stop_pi(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || {
             let id = argument::<String>(&args, "runtimeId")?;
             let result = if args["preserveRunning"].as_bool().unwrap_or(false) { detach_pi_with(&app.state(), &id, false, true) }
                 else { stop_pi(app.state(), id, argument(&args, "discardBlank")?) }?;
             serde_json::to_value(result).map_err(|error| error.to_string())
-        }).await.map_err(|error| error.to_string())?,
-        "pi_command" => tokio::task::spawn_blocking(move || serde_json::to_value(pi_command(app.clone(), app.state(), app.state(), argument(&args, "runtimeId")?, argument(&args, "command")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "pi_presence" => tokio::task::spawn_blocking(move || serde_json::to_value(pi_presence(app.state(), argument(&args, "runtimeId")?, argument(&args, "presence")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "start_terminal" => tokio::task::spawn_blocking(move || serde_json::to_value(start_terminal_for_owner(app.clone(), owner, app.state(), argument(&args, "terminalId")?, argument(&args, "sessionKey")?, argument(&args, "cwd")?, argument(&args, "cols")?, argument(&args, "rows")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "write_terminal" => tokio::task::spawn_blocking(move || serde_json::to_value(write_terminal(app.state(), argument(&args, "terminalId")?, argument(&args, "data")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "resize_terminal" => tokio::task::spawn_blocking(move || serde_json::to_value(resize_terminal(app.state(), argument(&args, "terminalId")?, argument(&args, "cols")?, argument(&args, "rows")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "close_terminal" => tokio::task::spawn_blocking(move || serde_json::to_value(close_terminal(app.state(), argument(&args, "terminalId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "list_sessions" => tokio::task::spawn_blocking(move || serde_json::to_value(list_sessions(app.clone(), app.state())?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "storage_report" => tokio::task::spawn_blocking(move || serde_json::to_value(storage_report(app.clone())?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "load_session_groups" => tokio::task::spawn_blocking(move || serde_json::to_value(load_session_groups(argument(&args, "seeds")?, argument(&args, "legacy")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "change_session_groups" => tokio::task::spawn_blocking(move || serde_json::to_value(change_session_groups(app.clone(), argument(&args, "change")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "home_directory" => tokio::task::spawn_blocking(move || serde_json::to_value(home_directory(app.clone(), argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "orchestrator_chat" => tokio::task::spawn_blocking(move || orchestrator_chat(app)).await.map_err(|error| error.to_string())?,
-        "create_temporary_chat" => tokio::task::spawn_blocking(move || serde_json::to_value(create_temporary_chat(app.clone(), argument(&args, "hostId")?, argument(&args, "e2e")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "remove_temporary_chat" => tokio::task::spawn_blocking(move || serde_json::to_value(remove_temporary_chat(app.clone(), argument(&args, "path")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "validate_project_directory" => tokio::task::spawn_blocking(move || serde_json::to_value(validate_project_directory(app.clone(), argument(&args, "path")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "list_directories" => tokio::task::spawn_blocking(move || serde_json::to_value(list_directories(app.clone(), argument(&args, "hostId")?, argument(&args, "path")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "list_project_files" => tokio::task::spawn_blocking(move || project_files::list(&argument::<String>(&args, "cwd")?, &argument::<String>(&args, "path")?)).await.map_err(|error| error.to_string())?,
-        "read_project_file" => tokio::task::spawn_blocking(move || project_files::read(&argument::<String>(&args, "cwd")?, &argument::<String>(&args, "path")?)).await.map_err(|error| error.to_string())?,
-        "save_project_file" => tokio::task::spawn_blocking(move || project_files::save(&argument::<String>(&args, "cwd")?, &argument::<String>(&args, "path")?, &argument::<String>(&args, "content")?, &argument::<String>(&args, "revision")?)).await.map_err(|error| error.to_string())?,
-        "is_git_repository" => tokio::task::spawn_blocking(move || serde_json::to_value(is_git_repository(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "git_branch" => tokio::task::spawn_blocking(move || serde_json::to_value(git_branch(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "git_project_kind" => tokio::task::spawn_blocking(move || serde_json::to_value(git_project_kind(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "git_worktree_roots" => serde_json::to_value(git_worktree_roots(app.clone(), argument(&args, "paths")?, argument(&args, "hostId")?).await?).map_err(|error| error.to_string()),
-        "create_project_worktree" => tokio::task::spawn_blocking(move || serde_json::to_value(create_project_worktree(app.clone(), argument(&args, "cwd")?, argument(&args, "name")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "create_git_worktree" => tokio::task::spawn_blocking(move || serde_json::to_value(create_git_worktree(app.clone(), argument(&args, "cwd")?, argument(&args, "name")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "remove_git_worktree" => serde_json::to_value(remove_git_worktree(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?, argument(&args, "deleteBranch")?).await?).map_err(|error| error.to_string()),
-        "prepare_worktree_setup" => tokio::task::spawn_blocking(move || serde_json::to_value(prepare_worktree_setup(app.state())?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "cancel_worktree_setup" => tokio::task::spawn_blocking(move || serde_json::to_value(cancel_worktree_setup(app.state(), argument(&args, "setupId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "run_worktree_setup" => serde_json::to_value(run_worktree_setup(app.clone(), argument(&args, "setupId")?, argument(&args, "cwd")?, argument(&args, "worktreePath")?, argument(&args, "hostId")?).await?).map_err(|error| error.to_string()),
-        "capture_git_tree" => tokio::task::spawn_blocking(move || serde_json::to_value(capture_git_tree(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "discard_git_tree" => tokio::task::spawn_blocking(move || serde_json::to_value(discard_git_tree(app.clone(), argument(&args, "snapshot")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "load_git_diff" => tokio::task::spawn_blocking(move || serde_json::to_value(load_git_diff(app.clone(), argument(&args, "cwd")?, argument(&args, "baseTree")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "load_git_diffs" => tokio::task::spawn_blocking(move || serde_json::to_value(load_git_diffs(app.clone(), argument(&args, "sessionPath")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "save_git_diffs" => tokio::task::spawn_blocking(move || serde_json::to_value(save_git_diffs(app.clone(), argument(&args, "sessionPath")?, argument(&args, "snapshots")?, argument(&args, "hostId")?, argument(&args, "clientId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "archive_session" => tokio::task::spawn_blocking(move || serde_json::to_value(archive_session(app.clone(), app.state(), argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "terminalIds")?, argument(&args, "clientId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "delete_session" => tokio::task::spawn_blocking(move || serde_json::to_value(delete_session(app.clone(), app.state(), argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "clientId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "delete_archived_session" => tokio::task::spawn_blocking(move || serde_json::to_value(delete_archived_session(app.clone(), app.state(), argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "clientId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "restore_archived_worktree" => tokio::task::spawn_blocking(move || restore_archived_worktree(app.clone(), argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "clientId")?)).await.map_err(|error| error.to_string())?,
-        "relocate_session" => tokio::task::spawn_blocking(move || serde_json::to_value(relocate_session(app.clone(), argument(&args, "sessionPath")?, argument(&args, "cwd")?, argument(&args, "hostId")?, argument(&args, "clientId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "load_app_settings" => tokio::task::spawn_blocking(move || serde_json::to_value(load_app_settings(app.clone())?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "save_app_settings" => tokio::task::spawn_blocking(move || serde_json::to_value(save_app_settings(app.clone(), argument(&args, "settings")?, argument(&args, "agentHostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "codex_usage" => tokio::task::spawn_blocking(move || serde_json::to_value(codex_usage()?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?,
-        "opencode_go_usage" => opencode_go_usage().await.and_then(|usage| serde_json::to_value(usage).map_err(|error| error.to_string())),
-        _ => Err(format!("Command is not available on the daemon: {command}")),
-    }
+        }).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_pi_command(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(pi_command(app.clone(), app.state(), app.state(), argument(&args, "runtimeId")?, argument(&args, "command")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_pi_presence(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(pi_presence(app.state(), argument(&args, "runtimeId")?, argument(&args, "presence")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_start_terminal(app: AppHandle, owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(start_terminal_for_owner(app.clone(), owner, app.state(), start_terminal_options(&args)?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_write_terminal(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(write_terminal(app.state(), argument(&args, "terminalId")?, argument(&args, "data")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_resize_terminal(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(resize_terminal(app.state(), argument(&args, "terminalId")?, argument(&args, "cols")?, argument(&args, "rows")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_close_terminal(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(close_terminal(app.state(), argument(&args, "terminalId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_list_sessions(app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(list_sessions(app.clone(), app.state())?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_storage_report(app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(storage_report(app.clone())?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_load_session_groups(_app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(load_session_groups(argument(&args, "seeds")?, argument(&args, "legacy")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_change_session_groups(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(change_session_groups(app.clone(), argument(&args, "change")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_home_directory(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(home_directory(app.clone(), argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_orchestrator_chat(app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || orchestrator_chat(app)).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_create_temporary_chat(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(create_temporary_chat(app.clone(), argument(&args, "hostId")?, argument(&args, "e2e")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_remove_temporary_chat(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(remove_temporary_chat(app.clone(), argument(&args, "path")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_validate_project_directory(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(validate_project_directory(app.clone(), argument(&args, "path")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_list_directories(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(list_directories(app.clone(), argument(&args, "hostId")?, argument(&args, "path")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_list_project_files(_app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || project_files::list(&argument::<String>(&args, "cwd")?, &argument::<String>(&args, "path")?)).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_read_project_file(_app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || project_files::read(&argument::<String>(&args, "cwd")?, &argument::<String>(&args, "path")?)).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_save_project_file(_app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || project_files::save(&argument::<String>(&args, "cwd")?, &argument::<String>(&args, "path")?, &argument::<String>(&args, "content")?, &argument::<String>(&args, "revision")?)).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_is_git_repository(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(is_git_repository(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_git_branch(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(git_branch(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_git_project_kind(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(git_project_kind(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_git_worktree_roots(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        serde_json::to_value(git_worktree_roots(app.clone(), argument(&args, "paths")?, argument(&args, "hostId")?).await?).map_err(|error| error.to_string())
+    })
+}
+
+fn handle_create_project_worktree(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(create_project_worktree(app.clone(), argument(&args, "cwd")?, argument(&args, "name")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_create_git_worktree(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(create_git_worktree(app.clone(), argument(&args, "cwd")?, argument(&args, "name")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_remove_git_worktree(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        serde_json::to_value(remove_git_worktree(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?, argument(&args, "deleteBranch")?).await?).map_err(|error| error.to_string())
+    })
+}
+
+fn handle_prepare_worktree_setup(app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(prepare_worktree_setup(app.state())?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_cancel_worktree_setup(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(cancel_worktree_setup(app.state(), argument(&args, "setupId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_run_worktree_setup(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        serde_json::to_value(run_worktree_setup(app.clone(), argument(&args, "setupId")?, argument(&args, "cwd")?, argument(&args, "worktreePath")?, argument(&args, "hostId")?).await?).map_err(|error| error.to_string())
+    })
+}
+
+fn handle_capture_git_tree(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(capture_git_tree(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_discard_git_tree(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(discard_git_tree(app.clone(), argument(&args, "snapshot")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_load_git_diff(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(load_git_diff(app.clone(), argument(&args, "cwd")?, argument(&args, "baseTree")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_load_git_diffs(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(load_git_diffs(app.clone(), argument(&args, "sessionPath")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_save_git_diffs(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(save_git_diffs(app.clone(), argument(&args, "sessionPath")?, argument(&args, "snapshots")?, argument(&args, "hostId")?, argument(&args, "clientId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_archive_session(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(archive_session(app.clone(), app.state(), argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "terminalIds")?, argument(&args, "clientId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_delete_session(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(delete_session(app.clone(), app.state(), argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "clientId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_delete_archived_session(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(delete_archived_session(app.clone(), app.state(), argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "clientId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_restore_archived_worktree(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || restore_archived_worktree(app.clone(), argument(&args, "sessionPath")?, argument(&args, "hostId")?, argument(&args, "clientId")?)).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_relocate_session(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(relocate_session(app.clone(), argument(&args, "sessionPath")?, argument(&args, "cwd")?, argument(&args, "hostId")?, argument(&args, "clientId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_load_app_settings(app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(load_app_settings(app.clone())?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_save_app_settings(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(save_app_settings(app.clone(), argument(&args, "settings")?, argument(&args, "agentHostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_codex_usage(_app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(move || serde_json::to_value(codex_usage()?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+    })
+}
+
+fn handle_opencode_go_usage(_app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
+    Box::pin(async move {
+        opencode_go_usage().await.and_then(|usage| serde_json::to_value(usage).map_err(|error| error.to_string()))
+    })
+}
+
+fn start_pi_options(args: &Value) -> Result<StartPiOptions, String> {
+    Ok(StartPiOptions {
+        runtime_id: argument(args, "runtimeId")?,
+        cwd: argument(args, "cwd")?,
+        session_path: argument(args, "sessionPath")?,
+        session_id: argument(args, "sessionId")?,
+        fork_path: argument(args, "forkPath")?,
+        no_session: argument(args, "noSession")?,
+        host_id: argument(args, "hostId")?,
+        presence: argument(args, "presence")?,
+        client_id: argument(args, "clientId")?
+    })
+}
+
+fn start_terminal_options(args: &Value) -> Result<StartTerminalOptions, String> {
+    Ok(StartTerminalOptions {
+        terminal_id: argument(args, "terminalId")?,
+        session_key: argument(args, "sessionKey")?,
+        cwd: argument(args, "cwd")?,
+        cols: argument(args, "cols")?,
+        rows: argument(args, "rows")?,
+        host_id: argument(args, "hostId")?
+    })
+}
+
+fn handle_reassign_terminal(app: AppHandle, owner: String, args: Value) -> CommandFuture {
+    Box::pin(async move {
+        terminal_lookup::reassign(&app.state::<TerminalRuntime>(), &owner, &argument::<String>(&args, "terminalId")?, &argument::<String>(&args, "sessionKey")?).map(|_| Value::Null)
+    })
 }

@@ -1,7 +1,5 @@
 #[cfg(feature = "desktop")]
 pub use tauri::{AppHandle, State};
-#[cfg(all(feature = "desktop", test))]
-pub use tauri::async_runtime;
 
 #[cfg(not(feature = "desktop"))]
 pub use headless::*;
@@ -13,6 +11,11 @@ mod headless {
 
     pub mod async_runtime {
         pub use tokio::{spawn, task::spawn_blocking};
+
+        #[cfg(test)]
+        pub fn block_on<F: std::future::Future>(future: F) -> F::Output {
+            tokio::runtime::Runtime::new().expect("Could not create test runtime").block_on(future)
+        }
     }
 
     type Listener = Arc<dyn Fn(Event) + Send + Sync>;

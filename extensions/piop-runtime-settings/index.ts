@@ -18,9 +18,17 @@ const replyKey = Symbol.for("piop.runtime-settings.reply");
 const bootKey = Symbol.for("piop.runtime-settings.boot");
 const processState = globalThis as typeof globalThis & { [key]?: Settings; [replyKey]?: (value: string) => void; [bootKey]?: boolean };
 
+function isStringList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function skillsChanged(previous: Settings, next: Settings) {
+  return JSON.stringify(previous.skills) !== JSON.stringify(next.skills) || JSON.stringify(previous.explicitOnlySkills) !== JSON.stringify(next.explicitOnlySkills);
+}
+
 function validate(value: Settings): Settings {
-  if (value?.explicitOnlySkills !== undefined && (!Array.isArray(value.explicitOnlySkills) || !value.explicitOnlySkills.every((item) => typeof item === "string"))) throw new Error("Invalid explicit skill policy");
-  if (!value || !Array.isArray(value.tools) || !value.tools.every((item) => typeof item === "string") || !Array.isArray(value.skills) || !value.skills.every((item) => typeof item === "string") || !Number.isSafeInteger(value.contextWindowCap) || value.contextWindowCap < 1000 || typeof value.contextWindowCapEnabled !== "boolean") throw new Error("Invalid runtime settings");
+  if (value?.explicitOnlySkills !== undefined && !isStringList(value.explicitOnlySkills)) throw new Error("Invalid explicit skill policy");
+  if (!value || !isStringList(value.tools) || !isStringList(value.skills) || !Number.isSafeInteger(value.contextWindowCap) || value.contextWindowCap < 1000 || typeof value.contextWindowCapEnabled !== "boolean") throw new Error("Invalid runtime settings");
   return structuredClone(value);
 }
 
@@ -75,7 +83,7 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
         if (ctx.mode !== "rpc" || !ctx.isIdle()) throw new Error("Runtime settings require an idle RPC session");
         const next = validate({ ...previous, ...request.settings });
         processState[key] = next;
-        if (request.reloadAgents || JSON.stringify(previous.skills) !== JSON.stringify(next.skills) || JSON.stringify(previous.explicitOnlySkills) !== JSON.stringify(next.explicitOnlySkills)) {
+        if (request.reloadAgents || skillsChanged(previous, next)) {
           // Pi exposes skill registry updates through resource reload, without restarting the process.
           await ctx.reload();
         } else {

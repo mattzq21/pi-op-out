@@ -6,7 +6,7 @@ import { invoke, listen, type UnlistenFn } from "./platform";
 import { ORCHESTRATOR_SESSION_ID } from "./orchestrator";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { GroupChange, SessionGroups, SessionGroupSeed } from "./sessionGroups";
-import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, OpencodeGoUsage, PendingMessage, RpcCommand, RpcEvent, SessionSummary, SettingsChange, StorageReport } from "../types";
+import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, OpencodeGoUsage, RpcCommand, RpcEvent, SessionSummary, SettingsChange, StorageReport } from "../types";
 
 function responseKey(command: string, args?: Record<string, unknown>) {
   return command === "pi_command" ? `${command}:${String((args?.command as RpcCommand)?.type)}` : command;
@@ -233,13 +233,16 @@ export class NativeTransport {
       this.cwd = this.cwd === "~" ? home : home.replace(/\/$/, "") + "/" + this.cwd.slice(2);
     }
   }
+  private clearConnectionListeners() {
+    this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.stderrLines = [];
+  }
   private async establishConnection(forkPath?: string, _ephemeral = false) {
     const version = ++this.connectionVersion;
     await this.resolveHomeDirectory(version);
     if (version !== this.connectionVersion) return;
     if (!await this.ensureConnectionDirectory(version)) return;
     this.fastStatusCommand = undefined; this.fastCommands.clear();
-    this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.stderrLines = [];
+    this.clearConnectionListeners();
     const unlisten = await listen<RpcEvent | { runtimeId: string; event: RpcEvent }>("pi://event", ({ payload }) => {
       const envelope = payload as { runtimeId?: unknown; event?: RpcEvent };
       if (typeof envelope.runtimeId === "string") { if (envelope.runtimeId === this.runtimeId && envelope.event) { if (envelope.event.type === "ownership_lost") { this.owns = false; this.retainedRequests.clear(); } if (envelope.event.type === "disconnected") this.connectionLost(); this.emit(envelope.event); } }
