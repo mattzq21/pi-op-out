@@ -34,6 +34,21 @@ struct Connection {
     stop: mpsc::UnboundedSender<()>,
 }
 
+struct PendingRequest<'a> {
+    connection: &'a Connection,
+    id: &'a str,
+}
+
+impl Drop for PendingRequest<'_> {
+    fn drop(&mut self) {
+        self.connection
+            .pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(self.id);
+    }
+}
+
 impl Sdk {
     pub fn new(executable: String, events: Arc<dyn Events>) -> Self {
         Self {
@@ -122,6 +137,10 @@ impl Sdk {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .insert(id.clone(), reply);
+        let _pending = PendingRequest {
+            connection: &connection,
+            id: &id,
+        };
         let data = format!("{packet}\n");
         let result = async {
             if connection.closed.load(Ordering::SeqCst) {
@@ -140,7 +159,6 @@ impl Sdk {
                 .map_err(|_| "Pi provider SDK disconnected".to_owned())?
         }
         .await;
-        connection.pending.lock().unwrap_or_else(|error| error.into_inner()).remove(&id);
         result
     }
 
