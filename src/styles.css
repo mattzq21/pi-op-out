@@ -242,6 +242,17 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .extension-dialog > .dialog-error { margin: 7px 1px 0; color: #c64f38; font-size: 12px; }.dialog-actions .browse-directory { margin-right: auto; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--muted); padding: 0 10px; }.dialog-actions .browse-directory:hover { background: #efede7; color: var(--ink); }.dialog-actions .browse-directory:disabled { opacity: .6; cursor: default; }
 .dialog-checkbox { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: var(--muted); font-size: 12px; }.dialog-checkbox input { margin: 0; }
 .extension-dialog > .worktree-preview { margin: 8px 1px 0; color: var(--muted); font-size: 11px; }.worktree-preview code { color: var(--ink); font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; }
+.ask-user-dialog { width: min(540px, calc(100vw - 40px)); }
+.ask-user-progress { font-size: 12px; color: var(--muted); }
+.ask-user-options { display: grid; gap: 8px; border: 0; padding: 0; margin: 16px 0 0; min-width: 0; }
+.ask-user-option { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 8px; padding: 10px; cursor: pointer; }
+.ask-user-option.selected, .ask-user-option:focus-within { border-color: var(--accent); }
+.ask-user-option input { margin-top: 3px; accent-color: var(--accent); }
+.ask-user-option strong { font-size: 13px; font-weight: 600; }
+.ask-user-option small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
+.ask-user-notes { display: grid; gap: 6px; margin-top: 5px; color: var(--muted); font-size: 12px; }
+.ask-user-notes textarea { width: 100%; resize: vertical; border: 1px solid var(--line); border-radius: 7px; padding: 9px; background: var(--paper); color: var(--ink); font: inherit; }
+.ask-user-dialog .dialog-error { color: #c64f38; font-size: 12px; }
 .directory-palette { width: min(620px, calc(100vw - 40px)); margin-top: min(18vh, 150px); padding: 0; overflow: hidden; }
 .directory-palette-heading { display: flex; align-items: center; gap: 10px; padding: 14px 18px 0; }
 .directory-palette-heading h2 { flex: 1; margin: 0; font: 500 12px "DM Sans"; color: var(--muted); }

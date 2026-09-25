@@ -470,7 +470,19 @@ class Session {
       const previous = this.tools.get(event.toolCallId);
       this.tools.set(event.toolCallId, { ...previous, ...event, type: 'tool_execution_start' });
     }
-    if (event.type === 'tool_execution_end') this.tools.delete(event.toolCallId);
+    if (event.type === 'tool_execution_end') {
+      this.tools.delete(event.toolCallId);
+      this.resolveUserInput(event.toolCallId);
+    }
+  }
+
+  resolveUserInput(toolCallId) {
+    for (const [id, { event }] of this.dialogs) {
+      if (event.method !== 'input' || event.title !== '__piop_request_user_input__') continue;
+      try {
+        if (JSON.parse(event.placeholder).toolCallId === toolCallId) this.resolveDialog(id);
+      } catch { /* Ignore malformed extension input. */ }
+    }
   }
 
   receiveExtension(event) {
