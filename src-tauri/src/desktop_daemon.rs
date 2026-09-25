@@ -180,6 +180,8 @@ async fn open(endpoint: &daemon_endpoint::Endpoint, expected_build: Option<&str>
     }).await.map_err(|_| "Piop daemon connection timed out".to_string())?
 }
 async fn local_socket(app: &AppHandle) -> Result<Socket, String> {
+    #[cfg(debug_assertions)]
+    tokio::task::spawn_blocking(ensure_development_daemon).await.map_err(|error| error.to_string())??;
     let executable = daemon_executable(app)?;
     let build_id = daemon_endpoint::executable_identity(&executable)?;
     if let Ok(endpoint) = daemon_endpoint::read() {
@@ -214,6 +216,25 @@ async fn local_socket(app: &AppHandle) -> Result<Socket, String> {
     }
     Err(format!("Piop daemon did not start. See {}", log_path.display()))
 }
+#[cfg(debug_assertions)]
+fn ensure_development_daemon() -> Result<(), String> {
+    static BUILD: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+    BUILD.get_or_init(|| {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        if !manifest.join("Cargo.toml").is_file() { return Ok(()); }
+        // Tauri's beforeDevCommand runs once, while Cargo reloads the desktop
+        // after source changes. Build its companion again before connecting.
+        let output = Command::new("cargo")
+            .args(["build", "--locked", "--no-default-features", "--features", "daemon", "--bin", "piop-daemon", "--target-dir"])
+            .arg(manifest.join("target")).current_dir(manifest).output()
+            .map_err(|error| format!("Could not rebuild the development daemon: {error}"))?;
+        if !output.status.success() {
+            return Err(format!("Could not rebuild the development daemon:\n{}", String::from_utf8_lossy(&output.stderr)));
+        }
+        Ok(())
+    }).clone()
+}
+
 fn daemon_executable(app: &AppHandle) -> Result<PathBuf, String> {
     let name = format!("piop-daemon{}", std::env::consts::EXE_SUFFIX);
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
