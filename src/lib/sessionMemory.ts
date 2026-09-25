@@ -1,5 +1,5 @@
 import { type Accessor, createMemo } from "solid-js";
-import { createSubscription, type StateUpdate } from "../lib/solid";
+import { createMemoFields, createSubscription, type StateUpdate } from "../lib/solid";
 
 import type { AgentState, ChatMessage, Model, SlashCommand } from "../types";
 import type { NativeTransport } from "./nativeTransport";
@@ -167,6 +167,7 @@ export class SessionMemory {
 
   set<K extends keyof CachedSession>(key: K, update: StateUpdate<CachedSession[K]>) {
     const next = typeof update === "function" ? (update as (current: CachedSession[K]) => CachedSession[K])(this.value[key]) : update;
+    if (Object.is(next, this.value[key])) return;
     this.value = { ...this.value, [key]: key === "messages" ? (next as ChatMessage[]).map((message) => this.decorate(message)) : next };
     this.commit();
   }
@@ -231,7 +232,9 @@ export function retainSessionResource(transport: Transport, key: string, value: 
 
 export function useSessionMemory(transport: Accessor<Transport>, initialState: Accessor<AgentState>) {
   const memory = createMemo(() => (memoryFor(transport(), initialState())));
-  const snapshot = createSubscription(() => memory().subscribe, () => memory().getSnapshot);
+  const subscription = createSubscription(() => memory().subscribe, () => memory().getSnapshot);
+  const fields = createMemoFields(subscription);
+  const snapshot = () => fields;
   const setState = (update: StateUpdate<AgentState>) => memory().set("state", update);
   const setMessages = (update: StateUpdate<ChatMessage[]>) => memory().set("messages", update);
   const setModels = (update: StateUpdate<Model[]>) => memory().set("models", update);

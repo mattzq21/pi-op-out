@@ -12,6 +12,16 @@ export type PointerEvent<T = EventTarget | null> = globalThis.PointerEvent & { c
 
 export const cssPixels = (value: string | number | undefined) => typeof value === "number" ? `${value}px` : value;
 
+export function createMemoFields<T extends object>(source: Accessor<T>): T {
+  const value = createMemo(source);
+  const fields = {} as T;
+  for (const key of Object.keys(value()) as Array<keyof T>) {
+    const field = createMemo(() => value()[key]);
+    Object.defineProperty(fields, key, { enumerable: true, get: field });
+  }
+  return fields;
+}
+
 declare module "solid-js" {
   namespace JSX {
     interface CustomCaptureEvents { keydown: globalThis.KeyboardEvent; focus: FocusEvent; pointerdown: globalThis.PointerEvent; }

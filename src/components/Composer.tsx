@@ -6,7 +6,7 @@ import { readDroppedFile } from "../lib/nativeTransport";
 import { DictationControls } from "./DictationControls";
 import { isMobile } from "../lib/platform";
 import { accountModelName, providerAccountLabel } from "../lib/providerAccounts";
-import { createDependencyEffect, createRef, cssPixels, type CSSProperties, type JSXElement, type KeyboardEvent, type StateUpdate } from "../lib/solid";
+import { createDependencyEffect, createMemoFields, createRef, cssPixels, type CSSProperties, type JSXElement, type KeyboardEvent, type StateUpdate } from "../lib/solid";
 
 import { ArrowUp, ChevronDown, ChevronUp, CircleStop, CircleX, CornerDownRight, FileText, ImagePlus, MoveVertical, Pause, Play, TerminalSquare, Trash2, X, Zap } from "lucide-solid";
 import { hasVisibleText } from "../lib/content";
@@ -149,9 +149,13 @@ async function textUpload(file: File, errors: string[]): Promise<ComposerUpload 
 
 export function Composer(props: Props) {
   const [visualProps, controlProps] = splitProps(props, ["voiceControls", "toolbar"]);
-  const composer = createMemo(() => (composerDefaults(controlProps)));
+  const composerFields = createMemoFields(() => composerDefaults(controlProps));
+  const composer = () => composerFields;
   const [localValue, setLocalValue] = createSignal("");
   const value = createMemo(() => (composer().draft ?? localValue()));
+  const agentOptions = createMemo(() => composer().agents.map(agent => ({ value: agent.name, label: agent.name })));
+  const modelOptions = createMemo(() => composer().models.map(item => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item, composer().models), detail: providerAccountLabel(item.provider) })));
+  const thinkingOptions = createMemo(() => composer().thinkingLevels.map(level => ({ value: level, label: level.charAt(0).toUpperCase() + level.slice(1) })));
   const fastModeEnabled = createMemo(() => (composer().fastModeStatus === "Fast mode on"));
   const fastModeSupported = createMemo(() => (fastModeEnabled() || composer().fastModeStatus === "Fast mode off"));
   const [togglingFastMode, setTogglingFastMode] = createSignal(false);
@@ -397,32 +401,32 @@ export function Composer(props: Props) {
 
   const renderStreamBanner = () => {
     const renderStreamStatus = () => (<span class="stream-status" role="status">{composer().paused ? <Pause size={11} /> : <span class="pulse" />}{stopping() ? "Stopping…" : controlAction() === "resume" ? "Resuming…" : composer().pausing || controlAction() === "pause" ? "Pausing…" : composer().compacting ? "Compacting context…" : composer().paused ? "Paused · Completed turns saved" : "piop is working"}{composer().queued > 0 && ` · ${composer().queued} queued`}</span>);
-    return ((composer().streaming || composer().compacting || composer().paused || composer().pausing) && <div class={`stream-banner${composer().paused ? " paused" : ""}`}>
+    return (<Show when={composer().streaming || composer().compacting || composer().paused || composer().pausing}><div class={`stream-banner${composer().paused ? " paused" : ""}`}>
       {renderStreamStatus()}
-    </div>);
+    </div></Show>);
   };
   const renderComposer = () => {
     const renderComposerDropHint = () => (draggingFiles() && !controls().inputDisabled && <div class="composer-drop-hint" role="status">Drop files to attach</div>);
-    const renderCommandPalette = () => (matches().length > 0 && <div class="command-palette" role="listbox" aria-label={skillQuery() === undefined ? "piop commands" : "piop skills"}>{<Key each={matches()} by={(command) => `${command.source}:${command.name}`}>{(command, index) => <button ref={element => { if (index() === selectedMatch()) selectedCommandRef.current = element; }} role="option" aria-selected={index() === selectedMatch()}  type="button" onClick={() => chooseCommand(command())}><span><strong>{skillQuery() !== undefined ? `$${skillName(command())}` : `/${command().name}`}</strong>{command().description && <small>{command().description}</small>}</span></button>}</Key>}</div>);
+    const renderCommandPalette = () => (<Show when={matches().length > 0}><div class="command-palette" role="listbox" aria-label={skillQuery() === undefined ? "piop commands" : "piop skills"}>{<Key each={matches()} by={(command) => `${command.source}:${command.name}`}>{(command, index) => <button ref={element => { if (index() === selectedMatch()) selectedCommandRef.current = element; }} role="option" aria-selected={index() === selectedMatch()}  type="button" onClick={() => chooseCommand(command())}><span><strong>{skillQuery() !== undefined ? `$${skillName(command())}` : `/${command().name}`}</strong>{command().description && <small>{command().description}</small>}</span></button>}</Key>}</div></Show>);
     const renderComposerEditor = () => (<div class="composer-editor">
         <textarea ref={element => { ref.current = element; }} aria-label="Message piop" disabled={composer().controlsDisabled} placeholder={composer().controlsDisabled ? "Connecting to piop…" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setCaretAtEnd(event.currentTarget.selectionStart === event.currentTarget.value.length && event.currentTarget.selectionEnd === event.currentTarget.value.length)} onInput={(event) => { setCaretAtEnd(event.target.selectionStart === event.target.value.length && event.target.selectionEnd === event.target.value.length); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
       </div>);
     const renderComposerBar = () => {
-      const renderComposerTools = () => (<div class="composer-tools">{visualProps.voiceControls}<DictationControls disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); ref.current?.focus(); }} />{composer().onOpenTerminal && <IconButton title="" label="Open terminal" disabled={composer().controlsDisabled} onClick={(composer().onOpenTerminal)!}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage} keyed>{usage => <ContextWheel usage={usage} />}</Show><Show when={composer().sessionCache} keyed>{cache => <span class={`session-cache-hit${cache.low ? " low" : ""}`}>Cache {cache.rate}%</span>}</Show></div>);
+      const renderComposerTools = () => (<div class="composer-tools">{visualProps.voiceControls}<DictationControls disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); ref.current?.focus(); }} />{composer().onOpenTerminal && <IconButton title="" label="Open terminal" disabled={composer().controlsDisabled} onClick={(composer().onOpenTerminal)!}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage}>{usage => <ContextWheel usage={usage()} />}</Show><Show when={composer().sessionCache}>{cache => <span class={`session-cache-hit${cache().low ? " low" : ""}`}>Cache {cache().rate}%</span>}</Show></div>);
       const renderComposerActions = () => {
         const renderMobileSteer = () => (isMobile && composer().streaming && <button class="mobile-steer" disabled={composer().controlsDisabled || readingUploads() > 0 || !hasVisibleText(value())} onClick={() => void submit("steer")}>Steer</button>);
-        const renderAgentPicker = () => (<ContainedPicker label="Agent" selectedLabel={composer().agentUnavailable ? `Agent unavailable: ${composer().activeAgent}` : composer().activeAgent ?? "general"} value={composer().activeAgent ?? "general"} disabled={composer().agentLocked || composer().streaming || controls().inputDisabled} menuMinWidth={130} centered compact options={composer().agents.map((agent) => ({ value: agent.name, label: agent.name }))} onChange={composer().onAgent} />);
+        const renderAgentPicker = () => (<ContainedPicker label="Agent" selectedLabel={composer().agentUnavailable ? `Agent unavailable: ${composer().activeAgent}` : composer().activeAgent ?? "general"} value={composer().activeAgent ?? "general"} disabled={composer().agentLocked || composer().streaming || controls().inputDisabled} menuMinWidth={130} centered compact options={agentOptions()} onChange={composer().onAgent} />);
         const renderFastModeIndicator = () => (fastModeSupported() && <button type="button" class={`fast-mode-indicator${fastModeEnabled() ? " active" : ""}`} aria-label="Fast mode" aria-description={(composer().fastModeStatus)!} aria-pressed={fastModeEnabled()} aria-busy={togglingFastMode()} disabled={controls().inputDisabled || togglingFastMode()} onClick={() => void toggleFastMode()}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled() ? "currentColor" : "none"} aria-hidden="true" /></button>);
-        const renderModelPicker = () => (<ContainedPicker label="Model" selectedLabel={composer().model ? displayModelName((composer().model)!, composer().models) : undefined} value={composer().model ? `${(composer().model)!.provider}/${(composer().model)!.id}` : ""} disabled={composer().streaming || controls().inputDisabled} options={composer().models.map((item) => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item, composer().models), detail: providerAccountLabel(item.provider) }))} onChange={(value) => { const next = composer().models.find((item) => `${item.provider}/${item.id}` === value); if (next) composer().onModel(next); }} />);
-        const renderStopButton = () => ((composer().streaming || composer().compacting || composer().paused || composer().pausing) && <IconButton title="" label="Stop piop" class="stop-compact" disabled={controls().stopDisabled} onClick={() => void control("abort")}><CircleStop size={17} /></IconButton>);
-        const renderSend = () => ((composer().streaming || composer().paused && !(hasVisibleText(value()) || uploads().length) || composer().pausing)
-            ? <IconButton title="" label={composer().paused ? "Resume piop" : "Pause piop"} class="send" disabled={controls().inputDisabled} onClick={() => void control(composer().paused ? "resume" : "pause")}>{composer().paused ? <Play size={17} /> : <Pause size={17} />}</IconButton>
-            : <IconButton title="" label="Send message" class="send" disabled={controls().inputDisabled || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>);
+        const renderModelPicker = () => (<ContainedPicker label="Model" selectedLabel={composer().model ? displayModelName((composer().model)!, composer().models) : undefined} value={composer().model ? `${(composer().model)!.provider}/${(composer().model)!.id}` : ""} disabled={composer().streaming || controls().inputDisabled} options={modelOptions()} onChange={(value) => { const next = composer().models.find((item) => `${item.provider}/${item.id}` === value); if (next) composer().onModel(next); }} />);
+        const renderStopButton = () => (<Show when={composer().streaming || composer().compacting || composer().paused || composer().pausing}><IconButton title="" label="Stop piop" class="stop-compact" disabled={controls().stopDisabled} onClick={() => void control("abort")}><CircleStop size={17} /></IconButton></Show>);
+        const renderSend = () => <Show when={composer().streaming || composer().paused && !(hasVisibleText(value()) || uploads().length) || composer().pausing} fallback={<IconButton title="" label="Send message" class="send" disabled={controls().inputDisabled || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>}>
+          <IconButton title="" label={composer().paused ? "Resume piop" : "Pause piop"} class="send" disabled={controls().inputDisabled} onClick={() => void control(composer().paused ? "resume" : "pause")}>{composer().paused ? <Play size={17} /> : <Pause size={17} />}</IconButton>
+        </Show>;
         return (<div class="composer-actions">{renderMobileSteer()}
           {renderAgentPicker()}
           {renderFastModeIndicator()}
           {renderModelPicker()}
-          <ContainedPicker label="Thinking level" value={composer().thinkingLevel} disabled={composer().streaming || controls().inputDisabled} menuWidth={120} centered compact options={composer().thinkingLevels.map((level) => ({ value: level, label: level.charAt(0).toUpperCase() + level.slice(1) }))} onChange={composer().onThinking} />
+          <ContainedPicker label="Thinking level" value={composer().thinkingLevel} disabled={composer().streaming || controls().inputDisabled} menuWidth={120} centered compact options={thinkingOptions()} onChange={composer().onThinking} />
           <span class="composer-divider" />
           {renderStopButton()}
           {renderSend()}
@@ -518,7 +522,8 @@ function pickerDefaults({ label, selectedLabel, value, options, disabled, menuWi
 }
 
 function ContainedPicker(props: { label: string; selectedLabel?: string; value: string; options: PickerOption[]; disabled?: boolean; menuWidth?: number; menuMinWidth?: number; centered?: boolean; compact?: boolean; onChange: (value: string) => void }) {
-  const picker = createMemo(() => (pickerDefaults(props)));
+  const pickerFields = createMemoFields(() => pickerDefaults(props));
+  const picker = () => pickerFields;
   const [menuStyle, setMenuStyle] = createSignal<CSSProperties>();
   const [activeIndex, setActiveIndex] = createSignal(0);
   const root = createRef<HTMLDivElement>(null);
