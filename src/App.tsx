@@ -673,7 +673,7 @@ export default function App() {
           focusRequest={splitComposerFocusRequest()} onActivate={() => { if (currentPane()) setActivePane("split"); }}
           onOpenTerminal={() => { const current = currentPane(); if (!current) return; terminalPanelRevision.current += 1; setActivePane("split"); setTerminalTarget({ sessionKey: splitConversationKey(current), cwd: current.session.cwd, hostId: current.session.hostId ?? "local" }); setTerminalOpen(true); }}
           onDialogRequest={queueExtensionDialog} onDialogResolved={resolveExtensionDialog} onDialogTransportClosed={closeTransportDialogs}
-          onReleaseTransport={releaseSplitTransport} onSessionChange={changeSession} forkFrom={pane.btw?.forkFrom} forkLeafId={pane.btw?.leafId} initialPrompt={pane.btw?.task} initialImages={pane.btw?.images}
+          onReleaseTransport={releaseSplitTransport} onSessionChange={changeSession} parentTransport={pane.btw?.parentTransport} forkFrom={pane.btw?.forkFrom} forkLeafId={pane.btw?.leafId} initialPrompt={pane.btw?.task} initialImages={pane.btw?.images}
           onReady={pane.btw ? () => respondToBtw(pane.btw!.requestId, { value: "opened" }) : undefined}
           onFailed={pane.btw ? () => respondToBtw(pane.btw!.requestId, { cancelled: true }) : undefined}
           onClose={() => { if (currentPane()) closeSplitPane(); }} />;

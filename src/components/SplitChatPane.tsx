@@ -13,8 +13,19 @@ import type { AgentState, AppSettings, ChatMessage, ComposerUpload, DefinedAgent
 import { branchMessages, type PiEntry } from "../lib/messages";
 import { ChatView } from "./ChatView";
 
-interface Props { uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; forkFrom?: string; forkLeafId?: string; initialPrompt?: string; initialImages?: ImageAttachment[]; onReady?: () => void; onFailed?: (reason: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
+interface Props { parentTransport?: NativeTransport; uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; forkFrom?: string; forkLeafId?: string; initialPrompt?: string; initialImages?: ImageAttachment[]; onReady?: () => void; onFailed?: (reason: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
 const initialState = (session: SessionSummary): AgentState => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, pendingMessageCount: 0 });
+
+async function deliverParentMessage(request: ExtensionUiRequest, source: NativeTransport, parent?: NativeTransport, parentPath?: string) {
+  let value = "delivered";
+  try {
+    if (!parent?.ownsConversation()) throw new Error("The main chat is not connected or is owned by another client");
+    if (parent.currentSessionPath() !== parentPath) throw new Error("The original main conversation is no longer open");
+    if (!request.placeholder?.trim()) throw new Error("A message is required");
+    await parent.command({ type: "prompt", message: `[Message from /btw]\n${request.placeholder}`, streamingBehavior: "followUp" });
+  } catch (error) { value = error instanceof Error ? error.message : String(error); }
+  await source.command({ type: "extension_ui_response", id: request.id, value });
+}
 
 export function SplitChatPane(componentProps: Props) {
   const [transport] = createSignal((() => componentProps.forkFrom ? componentProps.runtimePool.createEphemeralFork({ cwd: componentProps.session.cwd, hostId: componentProps.session.hostId }, (componentProps.forkFrom)!) : componentProps.runtimePool.forSession(componentProps.session))());
@@ -83,6 +94,10 @@ export function SplitChatPane(componentProps: Props) {
       };
       const handleExtensionUiRequest = () => {
         const request = event as unknown as ExtensionUiRequest;
+        if (request.method === "input" && request.title === "__pi_desktop_btw_message__") {
+          void deliverParentMessage(request, capturedTransport, componentProps.parentTransport, capturedForkFrom6).catch(reportControlError);
+          return;
+        }
         if (request.method === "input" && request.title === BTW_REQUEST_TITLE) {
           void capturedTransport.command({ type: "extension_ui_response", id: request.id, cancelled: true }).catch(reportControlError);
           setControlError("To start /btw from this conversation, select it in the main pane first.");

@@ -44,8 +44,9 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
   const current = () => processState[key]!;
   const unsubscribe = pi.events.on("piop:runtime-settings", (value) => { (value as { settings?: Settings }).settings = structuredClone(current()); });
   pi.registerFlag("piop-runtime-settings", { description: "Inherited Piop runtime settings", type: "string" });
-  const applyTools = () => {
-    if (process.env.PI_DEFINE_AGENTS_ACTIVE !== "1") pi.setActiveTools(current().tools.filter((name) => pi.getAllTools().some((tool) => tool.name === name)));
+  const applyTools = (ctx: ExtensionContext) => {
+    const required = { ctx, tools: [] as string[] }; pi.events.emit("piop:required-tools", required);
+    if (process.env.PI_DEFINE_AGENTS_ACTIVE !== "1") pi.setActiveTools([...new Set([...current().tools, ...required.tools])].filter((name) => pi.getAllTools().some((tool) => tool.name === name)));
   };
   pi.on("session_start", (_event, ctx) => {
     processState[replyKey] = (value) => ctx.ui.setStatus("pi-desktop-control-response", value);
@@ -54,7 +55,7 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
       if (typeof inherited === "string") processState[key] = validate(JSON.parse(inherited));
       processState[bootKey] = true;
     }
-    applyTools();
+    applyTools(ctx);
   });
   pi.on("resources_discover", () => process.env.PI_DEFINE_AGENTS_ACTIVE === "1" ? undefined : { skillPaths: current().skills });
   pi.on("before_agent_start", (event) => {
@@ -86,7 +87,7 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
         if (request.reloadAgents || skillsChanged(previous, next)) {
           await ctx.reload();
         } else {
-          applyTools();
+          applyTools(ctx);
           if (process.env.PI_DEFINE_AGENTS_ACTIVE === "1") await update("piop:agents:refresh", ctx);
         }
         processState[replyKey]?.(`json:${JSON.stringify({ type: "response", id: request.id, command: "runtime_settings", success: true })}`);

@@ -405,6 +405,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const tools = new Set([...agent.tools, ...extensions.tools()]);
     const mcpError = await connectAgentMcp(agent, ctx, connectMcp, tools); if (mcpError) return mcpError;
     if (agent.name !== "terminal-agent") tools.delete("lookup_terminals");
+    const required = { ctx, tools: [] as string[] }; pi.events.emit("piop:required-tools", required);
+    for (const tool of required.tools) tools.add(tool);
     pi.setActiveTools([...tools]); return undefined;
   };
   const useAgent = async (name: string, ctx: ExtensionContext, connectMcp: boolean, persistSnapshot = true, applyFastMode: boolean | "restore" = true) => {
@@ -422,7 +424,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
       if (!agent) { pi.setActiveTools([]); publish(request.ctx); return; }
       activeToolError = agentToolError(pi, agent, extensions.tools());
       const mcpTools = pi.getActiveTools().filter((name) => name.startsWith("mcp_"));
-      pi.setActiveTools(activeToolError ? [] : [...new Set([...agent.tools, ...extensions.tools(), ...mcpTools])]);
+      const required = { ctx: request.ctx, tools: [] as string[] }; pi.events.emit("piop:required-tools", required);
+      pi.setActiveTools(activeToolError ? [] : [...new Set([...agent.tools, ...extensions.tools(), ...mcpTools, ...required.tools])]);
       publish(request.ctx);
     });
   });

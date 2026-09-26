@@ -98,7 +98,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
             capturedOptions.setSplitPane({
               key: crypto.randomUUID(),
               session: { id: `btw-${request.id}`, path: "", name: "BTW", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task, messageCount: 0, lastMessageAt: Date.now(), apiCost: 0, hostId: capturedOptions.activeHostIdRef.current },
-              btw: { task: payload.task, forkFrom: payload.sessionFile, leafId: typeof payload.leafId === "string" ? payload.leafId : payload.leafId === null ? "" : undefined, requestId: request.id, images: capturedOptions.btwImages.get(capturedOptions.transport) },
+              btw: { parentTransport: capturedOptions.transport, task: payload.task, forkFrom: payload.sessionFile, leafId: typeof payload.leafId === "string" ? payload.leafId : payload.leafId === null ? "" : undefined, requestId: request.id, images: capturedOptions.btwImages.get(capturedOptions.transport) },
             });
             capturedOptions.btwImages.delete(capturedOptions.transport);
           } catch (reason) {
