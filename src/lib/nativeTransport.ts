@@ -362,7 +362,7 @@ export class NativeTransport {
   }
   async isGitRepository() { if (!this.cwd) return false; return call<boolean>("is_git_repository", { cwd: this.cwd, hostId: this.hostId }); }
   async gitBranch() { if (!this.cwd) return null; const branch = await call<unknown>("git_branch", { cwd: this.cwd, hostId: this.hostId }); return typeof branch === "string" ? branch : null; }
-  async loadSettings() { const settings = withClientSettings(await call<AppSettings>("load_app_settings")); saveClientSettings(settings); return settings; }
+  async loadSettings() { const settings = await withClientSettings(await call<AppSettings>("load_app_settings")); await saveClientSettings(settings); return settings; }
   async loadHostSettings() {
     if (this.hostId === "local") return call<AppSettings>("load_app_settings");
     try { return await call<AppSettings>("load_host_settings", { hostId: this.hostId }); }
@@ -388,8 +388,8 @@ export class NativeTransport {
       const daemonSettings = preserveDaemonPreferences(settings, previous);
       const daemonChanged = JSON.stringify(daemonSettings) !== JSON.stringify(previous) || Boolean(agentHostId);
       const change = daemonChanged ? await call<SettingsChange>("save_app_settings", { settings: daemonSettings, agentHostId }) : { settings: previous };
-      saveClientSettings(settings);
-      change.settings = withClientSettings(change.settings);
+      await saveClientSettings(settings);
+      change.settings = await withClientSettings(change.settings);
       if (!reconnect || !daemonChanged) return change;
       try { if (this.hostId !== "local" && !settings.hosts.some((host) => host.id === this.hostId)) { this.hostId = "local"; this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined; this.temporaryChat = false; this.temporaryChatUsed = false; } await this.disconnect(); await this.connect(); }
       catch (reason) {

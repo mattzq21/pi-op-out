@@ -222,17 +222,19 @@ export default function App() {
     return () => { for (const pending of unsubscribes) void pending.then((unlisten) => unlisten()); };
   }, () => [addNotice, syncSessionIndex]);
   createDependencyEffect(() => {
-    const pending = listen<SettingsChange>("pi://settings-changed", ({ payload }) => {
-      const next = withClientSettings(payload.settings);
-      applyRuntimeSettings(next);
-      setSettings(next);
-    });
-    const updateClientPreferences = (event: StorageEvent) => {
-      if (event.key !== "piop-client-settings") return;
-      setSettings((current) => current ? withClientSettings(current) : current);
+    let revision = 0;
+    const update = (value: AppSettings) => {
+      const current = ++revision;
+      void withClientSettings(value).then(next => {
+        if (current !== revision) return;
+        applyRuntimeSettings(next); setSettings(next);
+      }).catch(reason => addNotice({ title: "Could not load client preferences", message: String(reason) }));
     };
-    window.addEventListener("storage", updateClientPreferences);
-    return () => { void pending.then((unlisten) => unlisten()); window.removeEventListener("storage", updateClientPreferences); };
+    const pending = listen<SettingsChange>("pi://settings-changed", ({ payload }) => {
+      update(payload.settings);
+    });
+    const clientPending = listen("pi://client-settings-changed", () => { const current = settings(); if (current) update(current); });
+    return () => { revision++; void pending.then((unlisten) => unlisten()); void clientPending.then((unlisten) => unlisten()); };
   }, () => [applyRuntimeSettings]);
   const refresh = async (hostId?: string) => { const capturedTransport = transport(); const capturedSession = { ...chatSession() }; const capturedRuntimePool = runtimePool();
     void syncSessionIndex();
