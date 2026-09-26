@@ -28,7 +28,7 @@ export async function agentFixture(t, options = {}) {
     let source = await readFile(new URL(`../extensions/piop-define-agents/${name}.ts`, import.meta.url), 'utf8');
     source = source.replace('./extension-loader.ts', './extension-loader.mjs').replace('./mcp-config.ts', './mcp-config.mjs')
       .replace('import { homedir } from "node:os";', `const homedir = () => ${JSON.stringify(home)};`)
-      .replace(/import \{ formatSkillsForPrompt, type BuildSystemPromptOptions \} from "@earendil-works\/pi-coding-agent";/, 'const formatSkillsForPrompt = (skills, tool) => `Skills via ${tool}: ${skills.map(skill => skill.filePath).join(", ")}`;');
+      .replace(/import \{ formatSkillsForPrompt, type BuildSystemPromptOptions \} from "@earendil-works\/pi-coding-agent";/, 'const formatSkillsForPrompt = (skills, tool) => `Skills via ${tool}: ${skills.map(skill => skill.filePath + (skill.disableModelInvocation ? " (explicit)" : "")).join(", ")}`;');
     if (name === 'index' && options.files['fs.mjs']) source = source.replace('from "node:fs/promises"', 'from "./fs.mjs"');
     await file(`${name}.mjs`, (await transform(source, { loader: 'ts', format: 'esm' })).code);
   }

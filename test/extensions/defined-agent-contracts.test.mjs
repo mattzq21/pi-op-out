@@ -106,12 +106,14 @@ test('fast mode validates configured and override models and applies supported s
   assert.deepEqual(await f.input('hello'), { action: 'handled' }); assert.match(f.notices.at(-1).message, /model test\/review\/model does not support fast mode/);
 });
 
-for (const enabled of [false, true]) test(`restoring an agent preserves the saved fast-mode choice ${enabled}`, async t => {
+for (const enabled of [false, true]) test(`restoring an agent delegates the saved fast-mode choice ${enabled}`, async t => {
   const f = await agentFixture(t, { config: configured([profile('general', { fastMode: !enabled })]), fastModels: ['test/default'] });
   await f.load(); await f.start();
   f.entries.push({ type: 'custom', customType: 'piop-fast-mode-state', data: { enabled } });
+  const requests = [];
+  f.pi.events.on('piop:fast-mode', request => { if (request.apply) requests.push(request); });
   await f.start();
-  assert.equal(f.fastSelections.at(-1).enabled, enabled);
+  assert.deepEqual(requests, [{ apply: true, enabled: !enabled, restore: true, ctx: f.ctx }]);
 });
 
 test('MCP selections wait for readiness, deduplicate tools, and report unavailable or rejected bridges', async t => {
@@ -178,7 +180,7 @@ test('configuration edits normalize resources and persist atomically without mod
 
 for (const development of [false, true]) test(`first run creates private defaults and preserves existing prompts (${development ? 'development' : 'production'})`, async t => {
   const env = development ? { PIOP_STORAGE_DIRECTORY: '.piop-dev' } : {};
-  const allTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'fork_session', 'create_worktree', 'remove_worktree'];
+  const allTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'fork_session', 'create_worktree', 'remove_worktree', 'subagent'];
   const f = await agentFixture(t, { config: null, env, runtime: { tools: allTools, skills: [] }, tools: allTools, files: { 'home/.agents/AGENTS.md': 'Personal instructions' } });
   await f.load(); const config = await f.config();
   assert.deepEqual(config.agents[0], { name: 'general', model: '', effort: development ? 'medium' : 'high', ...(development ? { fastMode: false } : {}), extensions: [], path_systemprompt: 'sysprompt/default.md', path_agentprompt: `~/${development ? '.piop-dev' : '.piop'}/agents/default.md`, tools: allTools, skills: [], mcpServers: [] });
