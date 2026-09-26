@@ -67,7 +67,12 @@ async fn serve_connection<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpi
     serve_connection_mode(app, socket, events, jobs, false).await
 }
 
-async fn serve_connection_mode<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(app: AppHandle, mut socket: tokio_tungstenite::WebSocketStream<S>, events: broadcast::Sender<Value>, jobs: Arc<Semaphore>, peer: bool) -> Result<(), String> {
+async fn serve_connection_mode<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(app: AppHandle, socket: tokio_tungstenite::WebSocketStream<S>, events: broadcast::Sender<Value>, jobs: Arc<Semaphore>, peer: bool) -> Result<(), String> {
+    let _client = app.state::<daemon_clients::DaemonClients>().connect()?;
+    serve_client(app, socket, events, jobs, peer).await
+}
+
+async fn serve_client<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(app: AppHandle, mut socket: tokio_tungstenite::WebSocketStream<S>, events: broadcast::Sender<Value>, jobs: Arc<Semaphore>, peer: bool) -> Result<(), String> {
     let mut events = events.subscribe();
     send_ready(&mut socket).await?;
     let (responses, mut receiver) = tokio::sync::mpsc::channel::<Value>(32);

@@ -99,10 +99,10 @@ describe("Settings acceptance", () => {
     const target = await card.$('input[placeholder="user@example.com"]');
     const executable = await card.$('input[aria-label$="Piop daemon executable"]');
     await target.setValue("tester@example.com");
-    await executable.setValue("/opt/pi/bin/piop-daemon");
+    await executable.setValue("/opt/pi/bin/piopd");
 
     await expect(target).toHaveValue("tester@example.com");
-    await expect(executable).toHaveValue("/opt/pi/bin/piop-daemon");
+    await expect(executable).toHaveValue("/opt/pi/bin/piopd");
     await $('button[aria-label="Remove Acceptance machine"]').click();
     await expect($$("input[aria-label='Machine name']")).toBeElementsArrayOfSize(before.length);
     await app.openConversations();

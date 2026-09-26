@@ -12,7 +12,7 @@ function run(command, args, options = {}) {
 }
 const triple = run('rustc', ['-vV'], { encoding: 'utf8', stdio: 'pipe' }).stdout.match(/^host: (.+)$/m)?.[1];
 if (!triple) throw new Error('Could not determine the native Rust target');
-run('cargo', ['build', '--locked', '--manifest-path', 'src-tauri/Cargo.toml', '--target-dir', 'src-tauri/target', '--no-default-features', '--features', 'daemon', '--bin', 'piop-daemon', ...(debug ? [] : ['--release'])]);
+run('cargo', ['build', '--locked', '--manifest-path', 'src-tauri/Cargo.toml', '--target-dir', 'src-tauri/target', '--no-default-features', '--features', 'daemon', '--bin', 'piopd', ...(debug ? [] : ['--release'])]);
 const extension = process.platform === 'win32' ? '.exe' : '';
 mkdirSync(new URL('../src-tauri/binaries/', import.meta.url), { recursive: true });
-copyFileSync(new URL(`../src-tauri/target/${debug ? 'debug' : 'release'}/piop-daemon${extension}`, import.meta.url), new URL(`../src-tauri/binaries/piop-daemon-${triple}${extension}`, import.meta.url));
+copyFileSync(new URL(`../src-tauri/target/${debug ? 'debug' : 'release'}/piopd${extension}`, import.meta.url), new URL(`../src-tauri/binaries/piopd-${triple}${extension}`, import.meta.url));

@@ -17,7 +17,7 @@
   "bundle": {
     "active": true,
     "targets": ["deb"],
-    "externalBin": ["binaries/piop-daemon"],
+    "externalBin": ["binaries/piopd"],
     "linux": { "deb": { "depends": ["libasound2t64", "libgstreamer1.0-0 (>= 1.28)", "libgstreamer-plugins-base1.0-0 (>= 1.28)", "gstreamer1.0-plugins-base", "gstreamer1.0-plugins-good"] } },
     "icon": [
       "icons/32x32.png",

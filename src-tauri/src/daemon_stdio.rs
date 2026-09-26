@@ -40,7 +40,7 @@ fn start_daemon() -> Result<PathBuf, String> {
     let log = OpenOptions::new().create(true).append(true).open(&log_path).map_err(|error| error.to_string())?;
     set_private_file_permissions(&log_path)?;
     let mut command = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
-    command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(log);
+    command.arg("--exit-on-disconnect").stdin(Stdio::null()).stdout(Stdio::null()).stderr(log);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

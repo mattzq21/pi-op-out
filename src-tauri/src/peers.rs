@@ -99,8 +99,8 @@ impl Connection {
 }
 
 fn executable(host: &RemoteHost) -> String {
-    let path = if host.pi_path == "pi" { "piop-daemon".into() }
-        else if host.pi_path.ends_with("/pi") { format!("{}piop-daemon", &host.pi_path[..host.pi_path.len() - 2]) }
+    let path = if host.pi_path == "pi" { "piopd".into() }
+        else if host.pi_path.ends_with("/pi") { format!("{}piopd", &host.pi_path[..host.pi_path.len() - 2]) }
         else { host.pi_path.clone() };
     path.strip_prefix("~/").map(|rest| format!("\"$HOME\"/{}", shell_quote(rest))).unwrap_or_else(|| shell_quote(&path))
 }
@@ -452,7 +452,7 @@ fn peer_handshake(child: &mut Child, stdout: std::process::ChildStdout, host: &R
         Ok((Ok(ready), reader)) if ready["peerProtocol"] == 1 && ready["daemonId"].as_str().is_some() => (ready, reader),
         _ => {
             let _ = child.kill(); let _ = child.wait();
-            return Err(format!("Could not attach to {}. Install or upgrade piop-daemon on that machine. {}", host.name, diagnostics.lock().map(|text| text.trim().to_string()).unwrap_or_default()));
+            return Err(format!("Could not attach to {}. Install or upgrade piopd on that machine. {}", host.name, diagnostics.lock().map(|text| text.trim().to_string()).unwrap_or_default()));
         }
     };
     let daemon_id = ready["daemonId"].as_str().unwrap().to_owned();

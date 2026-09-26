@@ -23,7 +23,7 @@ path = "src/main.rs"
 required-features = ["desktop"]
 
 [[bin]]
-name = "piop-daemon"
+name = "piopd"
 path = "src/daemon_main.rs"
 required-features = ["daemon"]
 

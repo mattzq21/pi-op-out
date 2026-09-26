@@ -1,5 +1,6 @@
 use super::*;
 
+#[cfg(not(feature = "desktop"))]
 pub(crate) fn executable_identity(path: &Path) -> Result<String, String> {
     use sha2::{Digest, Sha256};
     let mut file = fs::File::open(path).map_err(|error| error.to_string())?;
