@@ -112,6 +112,7 @@ export default function App() {
   const [composerDrafts, setComposerDrafts] = createSignal<Record<string, string>>({});
   const [uploadsByTransport, setUploadsByTransport] = createSignal<Map<NativeTransport, ComposerUpload[]>>((() => new Map())());
   const newSessionPending = createRef(false);
+  const lastNewSessionSelection = createRef<string | undefined>(undefined);
   const abortPending = createRef(new Set<NativeTransport>());
   const pauseResumePending = createRef(new Set<NativeTransport>());
   const branchPending = createRef(new Set<string>());
@@ -357,38 +358,42 @@ export default function App() {
     } catch (reason) { addNotice({ title: "Could not fork and forget", message: reason instanceof Error ? reason.message : String(reason) }); }
     finally { branchPending.current.delete(pendingKey); }
   };
-  const confirmNewSession = (clearProject: boolean) => clearProject || !(hasVisibleText(composerState().composerDraft) || composerState().composerUploads.length) || window.confirm("Start a new conversation and discard the unsent draft?");
-  const canStartNewSession = (clearProject: boolean) => !newSessionPending.current && canLeaveSettings() && confirmNewSession(clearProject);
+  const canStartNewSession = () => !newSessionPending.current && canLeaveSettings();
   const newSessionTarget = (clearProject: boolean, group?: SessionGroup) => ({ hostId: group ? group.hostId ?? "local" : activeHostIdRef.current, projectCwd: group ? group.cwd ?? undefined : clearProject ? undefined : selectedProjectCwd(activeCwd(), transport().isTemporaryChat()) });
   const createSessionTransport = (cwd: string | undefined, hostId: string) => runtimePool().create(cwd ? { cwd, hostId } : { hostId });
-  const startNewSession = async (clearProject = false, group?: SessionGroup) => {
-    if (!canStartNewSession(clearProject)) return;
+  const prepareNewSession = (owner: NativeTransport, hostId: string, cwd?: string) => cwd ? owner.validateProjectDirectory(cwd, hostId) : owner.prepareTemporaryChat(hostId);
+  const assignNewSessionGroup = (owner: NativeTransport, group?: SessionGroup) => { if (group) pendingSessionGroups.current.set(owner, group.id); };
+  const discardNewSessionDraft = (owner: NativeTransport, key: string) => {
+    setComposerDraft(key, ""); setComposerUploads(owner, []); pendingSessionGroups.current.delete(owner);
+    void runtimePool().release(owner).catch(reason => addNotice({ title: "Could not clean up the draft", message: String(reason) })).finally(() => transportConversationKeys.current.delete(owner));
+  };
+  const copyNewSessionDraft = (key: string, owner: NativeTransport, copy: boolean) => {
+    if (!copy) return;
+    setComposerDraft(key, composerState().composerDraft); setComposerUploads(owner, composerState().composerUploads);
+  };
+  const startNewSession = async (clearProject = false, group?: SessionGroup, discardDraft = false) => {
+    if (!canStartNewSession()) return;
     const ownerTransport = transport(); const ownerKey = activeConversationKeyRef.current;
     const isCurrent = () => activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey;
-    const capturedSession = { ...chatSession() }; const pool = runtimePool(); const draft = { ...composerState() };
+    const capturedSession = { ...chatSession() }; const pool = runtimePool();
     const { hostId, projectCwd } = newSessionTarget(clearProject, group);
     const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`;
     const nextTransport = createSessionTransport(projectCwd, hostId);
     let activated = false;
     newSessionPending.current = true;
     try {
-      const cwd = projectCwd ? await nextTransport.validateProjectDirectory(projectCwd, hostId) : await nextTransport.prepareTemporaryChat(hostId);
+      const cwd = await prepareNewSession(nextTransport, hostId, projectCwd);
       if (!isCurrent()) return;
       transportConversationKeys.current.set(nextTransport, conversationKey);
-      if (group) pendingSessionGroups.current.set(nextTransport, group.id);
+      assignNewSessionGroup(nextTransport, group);
       batch(() => {
-        if (clearProject) {
-          setComposerDraft(conversationKey, composerState().composerDraft);
-          setComposerUploads(nextTransport, composerState().composerUploads);
-        } else {
-          if (composerState().composerDraft === draft.composerDraft) setComposerDraft(ownerKey, "");
-          if (composerState().composerUploads === draft.composerUploads) setComposerUploads(ownerTransport, []);
-        }
+        copyNewSessionDraft(conversationKey, nextTransport, clearProject && !discardDraft);
         setView("chat"); closeSplitPane(); setTerminalOpen(false); setTerminalTarget(undefined);
         updateConnected(false); setDefinedAgents(undefined); capturedSession.discardPendingUpdates();
         setActiveCwd(cwd); setActiveHostId(hostId); activateTransport(nextTransport); activateConversationKey(conversationKey);
       });
       activated = true;
+      if (discardDraft) discardNewSessionDraft(ownerTransport, ownerKey);
     } catch (reason) {
       if (isCurrent()) {
         addNotice({ title: "Could not start a new conversation", message: reason instanceof Error ? reason.message : String(reason) });
@@ -401,12 +406,25 @@ export default function App() {
       }
     }
   };
-  const newSession = () => startNewSession();
+  const newSession = async () => {
+    if (!canStartNewSession()) return;
+    const empty = !chatSession().state.isStreaming && chatSession().state.messageCount === 0 && chatSession().messages.length === 0;
+    const repeat = view() === "chat" && empty && lastNewSessionSelection.current === activeConversationKey();
+    if (repeat) await startNewSession(true, undefined, true);
+    else if (empty) { setView("chat"); closeSplitPane(); }
+    else {
+      const draft = liveSessions().filter(session => session.isDraft).sort((a, b) => b.lastMessageAt - a.lastMessageAt)[0];
+      if (draft) selectSession(draft);
+      else await startNewSession();
+    }
+    lastNewSessionSelection.current = activeConversationKey(); setMainComposerFocusRequest(request => request + 1);
+  };
   const clearChatProject = () => startNewSession(true);
   const isSplitSession = (session: SessionSummary) => splitPane()?.session.id === session.id && ((splitPane())!.session.hostId ?? "local") === (session.hostId ?? "local");
   const isSelectedSession = (session: SessionSummary) => session.id === chatSession().state.sessionId && (session.hostId ?? "local") === activeHostId();
   const selectSession = (session: SessionSummary) => {
     if (!canLeaveSettings()) return undefined;
+    lastNewSessionSelection.current = undefined;
     if (window.matchMedia("(max-width: 700px)").matches) setPanelOpen(false);
     const selectedKey = `${session.hostId ?? "local"}:${session.id}`; if (archivePending.current.has(selectedKey)) return undefined;
     const hostId = session.hostId ?? "local"; if (isSelectedSession(session)) { if (!connected()) reconnectMain(); return transport(); }

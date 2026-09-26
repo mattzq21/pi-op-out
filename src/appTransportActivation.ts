@@ -41,10 +41,11 @@ export function createTransportActivation(context: ActivationContext) {
       void runtimePool().release(previousTransport).finally(() => transportConversationKeys.current.delete(previousTransport));
   };
   const shouldDiscard = (previous: NativeTransport, next: NativeTransport, hasUnsentWork: boolean) => previous !== next && !runtimePool().isRetained(previous) && !chatSession().state.isStreaming && emptyConversation() && !hasUnsentWork;
+  const hasDraftWork = (owner: NativeTransport, key: string | undefined) => transportHasDraft(owner, key) || Boolean(owner.currentCwd() && !owner.isTemporaryChat()) || owner.hasTerminalActivity() || Boolean(key && conversationTerminalIds(key).length);
   return (nextTransport: NativeTransport) => {
     const previousTransport = transport();
     const previousKey = transportConversationKeys.current.get(previousTransport);
-    const hasUnsentWork = transportHasDraft(previousTransport, previousKey) || previousTransport.hasTerminalActivity() || Boolean(previousKey && conversationTerminalIds(previousKey).length);
+    const hasUnsentWork = hasDraftWork(previousTransport, previousKey);
     if (previousTransport !== nextTransport && previousKey && hasUnsentWork && !runtimePool().isRetained(previousTransport) && emptyConversation()) retainDraft(previousTransport, previousKey);
     const discardPrevious = shouldDiscard(previousTransport, nextTransport, hasUnsentWork);
     activeTransportRef.current = nextTransport; runtimePool().activate(nextTransport); setTransport(nextTransport);

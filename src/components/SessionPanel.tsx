@@ -103,7 +103,7 @@ function groupLabel(project: string, hostId: string, hostName: string | undefine
 }
 
 export function SessionPanel(props: Props) {
-  const visibleSessions = createMemo(() => props.sessions.filter(session => !session.subagentParentId));
+  const visibleSessions = createMemo(() => props.sessions.filter(session => !session.subagentParentId && !session.isDraft));
   const panelFields = createMemoFields(() => sessionPanelDefaults({ ...props, sessions: visibleSessions() }));
   const panel = () => panelFields;
   const [menu, setMenu] = createSignal<{ session: SessionSummary; x: number; y: number; returnFocus?: HTMLElement }>();
