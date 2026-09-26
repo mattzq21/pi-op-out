@@ -46,10 +46,15 @@ export function createPiFastModeExtension(
     let currentModel: ModelRef | undefined;
     let agentEnabled: boolean | undefined;
     const effectiveConfig = () => ({ ...config, enabled: agentEnabled ?? config.enabled });
-    pi.events.on("piop:fast-mode", (request: { models?: string[]; apply?: boolean; enabled?: boolean; ctx?: ExtensionContext }) => {
+    pi.events.on("piop:fast-mode", (request: { models?: string[]; apply?: boolean; enabled?: boolean; restore?: boolean; ctx?: ExtensionContext }) => {
       request.models = cloneConfig().targets.map((target) => `${target.provider}/${target.model}`);
       if (request.apply) {
-        agentEnabled = request.enabled;
+        const states = request.ctx?.sessionManager.getBranch().filter(entry => entry.type === "custom" && entry.customType === STATE_ENTRY) ?? [];
+        const saved = states.at(-1)?.data as { enabled?: boolean; manual?: boolean } | undefined;
+        const manual = saved?.manual ?? states.length > 1;
+        agentEnabled = request.restore && manual ? undefined : request.enabled;
+        if (request.restore && manual && typeof saved?.enabled === "boolean") config.enabled = saved.enabled;
+        if (!request.restore) pi.appendEntry(STATE_ENTRY, { enabled: effectiveConfig().enabled, manual: false });
         if (request.ctx) updateFastStatus(request.ctx, effectiveConfig(), toModelRef(request.ctx.model) ?? currentModel);
       }
     });
@@ -105,7 +110,7 @@ export function createPiFastModeExtension(
           await ensureLoaded(ctx);
           refreshCurrentModel(ctx);
           const enabled = parseFastCommand(args, effectiveConfig().enabled);
-          pi.appendEntry(STATE_ENTRY, { enabled });
+          pi.appendEntry(STATE_ENTRY, { enabled, manual: true });
           config.enabled = enabled;
           agentEnabled = undefined;
           updateFastStatus(ctx, effectiveConfig(), currentModel);

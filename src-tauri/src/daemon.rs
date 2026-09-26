@@ -238,7 +238,10 @@ fn handle_session_state(app: &AppHandle, connection: &Arc<Daemon>, host_id: &str
 
 fn handle_session_closed(app: &AppHandle, connection: &Arc<Daemon>, packet: &Value) {
                     let runtime = app.state::<PiRuntime>();
-                    if let Some(key) = packet["sessionKey"].as_str() { if let Ok(captures) = connection.captures.lock() { if let Some(sender) = captures.get(key) { let _ = sender.send(CaptureWork::Packet(json!({"phase":"closed"}))); } } }
+                    if let Some(key) = packet["sessionKey"].as_str() {
+                        if let Err(error) = connection.drain_captures(Some(key)) { let _ = app.emit("pi://daemon-error", json!({"line":error})); }
+                        if let Ok(mut captures) = connection.captures.lock() { if let Some(sender) = captures.remove(key) { let _ = sender.send(CaptureWork::Packet(json!({"phase":"closed"}))); } }
+                    }
                     if let Ok(mut agents) = runtime.active_agents.lock() { agents.remove(&format!("{}{}", connection.agent_prefix, packet["sessionKey"].as_str().unwrap_or_default())); };
                     let _ = app.emit("pi://sessions-changed", ());
 }

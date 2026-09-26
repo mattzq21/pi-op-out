@@ -13,6 +13,30 @@ pub(super) trait Execution: Send + Sync {
     fn publish(&self, event: Value);
 }
 
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+    struct Unresponsive { forced: std::sync::atomic::AtomicBool }
+    impl Execution for Unresponsive {
+        fn execute(&self, command: Value) -> BoxFuture<'_, Result<Value>> {
+            Box::pin(async move {
+                if kind(&command) == "force_stop" { self.forced.store(true, std::sync::atomic::Ordering::SeqCst); return Ok(Value::Null); }
+                std::future::pending().await
+            })
+        }
+        fn publish(&self, _: Value) {}
+    }
+    #[tokio::test]
+    async fn abort_forces_stop_when_preparation_never_answers() {
+        let executor = Arc::new(Unresponsive { forced: std::sync::atomic::AtomicBool::new(false) });
+        let queue = SessionQueue::new(executor.clone(), vec![]);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(6), queue.command(json!({"type":"abort"}))).await;
+        assert!(result.is_ok(), "abort never reached force stop");
+        result.unwrap().unwrap();
+        assert!(executor.forced.load(std::sync::atomic::Ordering::SeqCst));
+    }
+}
+
 #[derive(Default)]
 struct QueueState {
     pending: Vec<Value>,
@@ -390,10 +414,16 @@ impl SessionQueue {
     pub async fn command(&self, command: Value) -> Result<Value> {
         let name = kind(&command).to_owned();
         if name == "abort" {
-            let (cancelled, _gate) = tokio::join!(self.execute(json!({"type":"cancel_preparation"})), self.gate.lock());
-            cancelled?;
-            self.hold().await?;
-            return self.stop(command).await;
+            let prepared = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                let (cancelled, gate) = tokio::join!(self.execute(json!({"type":"cancel_preparation"})), self.gate.lock());
+                cancelled?;
+                self.hold().await?;
+                Ok::<_, String>(gate)
+            }).await;
+            return match prepared {
+                Ok(Ok(_gate)) => self.stop(command).await,
+                _ => self.force_stop().await,
+            };
         }
         if name == "compact" || name.starts_with("get_") {
             return self.execute(command).await;
@@ -467,6 +497,13 @@ impl SessionQueue {
     async fn stop(&self, command: Value) -> Result<Value> {
         match self.execute(command).await {
             Err(error) if error == "Pi command timed out" => {
+                self.force_stop().await
+            }
+            result => result,
+        }
+    }
+
+    async fn force_stop(&self) -> Result<Value> {
                 self.execute(json!({"type":"force_stop"})).await?;
                 {
                     let mut state = self.state();
@@ -481,9 +518,6 @@ impl SessionQueue {
                 self.publish();
                 self.executor.publish(json!({"type":"disconnected"}));
                 Ok(Value::Null)
-            }
-            result => result,
-        }
     }
 
     pub async fn change_pending(&self, id: &str, action: Value) -> Result<Value> {

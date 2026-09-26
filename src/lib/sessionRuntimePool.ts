@@ -147,7 +147,7 @@ export class SessionRuntimePool {
 
   private updateActivity(transport: NativeTransport, event: RpcEvent) {
     if (event.type === "runtime_presence") { if (event.isStreaming) this.runningTransports.add(transport); else this.runningTransports.delete(transport); }
-    if (event.type === "agent_start" || event.type === "message_start") { this.runningTransports.add(transport); this.unseenTransports.delete(transport); }
+    if (event.type === "agent_start" || event.type === "message_start" && (event.message as { role?: string })?.role === "user") { this.runningTransports.add(transport); this.unseenTransports.delete(transport); }
     if (event.type === "agent_settled") { this.runningTransports.delete(transport); if (transport !== this.activeTransport && !this.interactiveTransports.has(transport)) this.unseenTransports.add(transport); }
     if (event.type === "disconnected") { this.runningTransports.delete(transport); }
   }

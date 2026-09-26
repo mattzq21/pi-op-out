@@ -197,7 +197,7 @@ export default function App() {
     if (!capturedSettings || capturedSession.models.length === 0 || settingsSavePending.current) return;
     const next = recordSeenModels((capturedSettings)!, capturedSession.models.map((model) => `${model.provider}/${model.id}`));
     if (!next) return;
-    void capturedTransport.saveSettings(next, false).then((change) => { if (change?.settings) setSettings(change.settings); }).catch(() => undefined);
+    void capturedTransport.saveSettings(next, false, undefined, "client").then((change) => { if (change?.settings) setSettings(change.settings); }).catch(() => undefined);
   }, () => [chatSession().models, settings(), transport()]);
   const syncSessionIndex = () => {
     if (!sessionIndexRequest.current) sessionIndexRequest.current = transport().listSessions().then((nextSessions) => {
@@ -626,7 +626,7 @@ export default function App() {
   const toggleDebugMode = () => {
     if (!settings() || debugModePending.current || settingsSavePending.current) return; debugModePending.current = true; setDebugModeSaving(true);
     const next = { ...(settings())!, debugMode: !(settings())!.debugMode };
-    void transport().saveSettings(next, false).then(() => { applyRuntimeSettings(next); setSettings(next); }).catch((reason) => addNotice({ title: "Could not change debug mode", message: reason instanceof Error ? reason.message : String(reason) })).finally(() => { debugModePending.current = false; setDebugModeSaving(false); });
+    void transport().saveSettings(next, false, undefined, "client").then((change) => { applyRuntimeSettings(change.settings); setSettings(change.settings); }).catch((reason) => addNotice({ title: "Could not change debug mode", message: reason instanceof Error ? reason.message : String(reason) })).finally(() => { debugModePending.current = false; setDebugModeSaving(false); });
   };
   const reconnectMain = () => {
     const ownerTransport = transport(); const ownerKey = activeConversationKeyRef.current;

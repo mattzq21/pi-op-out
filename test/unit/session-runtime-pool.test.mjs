@@ -32,6 +32,16 @@ describe('session runtime pool', () => {
   const patch = 'diff --git a/a b/a\n@@ -1 +1 @@\n-old\n+new';
   const session = { id: 'session', cwd: '/repo', path: '/session', hostId: 'local' };
 
+  test('informational extension messages do not mark an idle conversation running', async () => {
+    const client = pool.forSession(session);
+    const id = await connect(client);
+    const message = { role: 'custom', customType: 'pi-desktop-mcp-status', content: 'No MCP servers loaded' };
+    await send(id, { type: 'message_start', message });
+    await send(id, { type: 'message_end', message });
+    assert.equal(pool.isRunning(client), false);
+    assert.equal(pool.runningSessions().size, 0);
+  });
+
   test('sessions reuse transports by host and track running, unseen and active state', async () => {
     const client = pool.forSession(session);
     assert.equal(pool.forSession(session), client);

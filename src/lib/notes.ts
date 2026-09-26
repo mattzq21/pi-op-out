@@ -1,5 +1,5 @@
 import { batch, createMemo, createSignal, onCleanup } from "solid-js";
-import { invoke } from "./platform";
+import { invoke, isMobile } from "./platform";
 
 export type NoteDocument = { path: string; content: string; version: string };
 type Vault = { root: string; paths: string[] };
@@ -52,8 +52,9 @@ export function resolveNoteLink(target: string, currentPath: string, paths: stri
   return matches.length === 1 ? matches[0] : undefined;
 }
 
-export function useNotes() {
+export function useNotes(host = isMobile ? localStorage.getItem("piop-mobile-host") ?? "unconnected" : "local") {
   const [root, setRoot] = createSignal("");
+  const cacheRoot = () => host === "local" ? root() : JSON.stringify([host, root()]);
   const [paths, setPaths] = createSignal<string[]>([]);
   const [document, setDocument] = createSignal<NoteDocument>();
   const [content, setContent] = createSignal("");
@@ -70,9 +71,9 @@ export function useNotes() {
   const updatePaths = (next: string[]) => setPaths([...new Set(next)].sort((a, b) => a.localeCompare(b)));
 
   const selectDocument = (next: NoteDocument, recover = true) => {
-    const cached = recover ? readDraft(root(), next.path) : undefined;
+    const cached = recover ? readDraft(cacheRoot(), next.path) : undefined;
     const draft = cached?.content !== next.content ? cached : undefined;
-    if (cached && !draft) clearDraft(root(), next.path);
+    if (cached && !draft) clearDraft(cacheRoot(), next.path);
     batch(() => {
       setDocument(draft ? { ...next, version: draft.version } : next);
       setContent(draft?.content ?? next.content);
@@ -89,8 +90,8 @@ export function useNotes() {
         const body = content();
         const saved = await request<NoteDocument>("save", { path: current.path, content: body, version: current.version });
         setDocument(saved);
-        if (content() === body) clearDraft(root(), current.path);
-        else cacheDraft(root(), saved, content());
+        if (content() === body) clearDraft(cacheRoot(), current.path);
+        else cacheDraft(cacheRoot(), saved, content());
       }
       setError("");
       return true;
@@ -108,7 +109,7 @@ export function useNotes() {
     setContent(body);
     const current = document();
     if (!current) return;
-    cacheDraft(root(), current, body);
+    cacheDraft(cacheRoot(), current, body);
     clearTimeout(timer);
     timer = setTimeout(() => void save(), 650);
   };
@@ -145,7 +146,7 @@ export function useNotes() {
     const previous = document();
     const body = copy ? content() : "";
     const next = await request<NoteDocument>("create", { path, content: body });
-    if (copy && previous) clearDraft(root(), previous.path);
+    if (copy && previous) clearDraft(cacheRoot(), previous.path);
     updatePaths([...paths(), next.path]);
     selectDocument(next, false);
   }, !copy);
@@ -153,7 +154,7 @@ export function useNotes() {
     const current = document();
     if (!current) return;
     const next = await request<NoteDocument>("rename", { path: current.path, version: current.version, destination: markdownPath(name) });
-    clearDraft(root(), current.path);
+    clearDraft(cacheRoot(), current.path);
     updatePaths(paths().map(path => path === current.path ? next.path : path));
     selectDocument(next, false);
   });
@@ -161,7 +162,7 @@ export function useNotes() {
     const current = document();
     if (!current) return;
     await request("trash", { path: current.path, version: current.version });
-    clearDraft(root(), current.path);
+    clearDraft(cacheRoot(), current.path);
     setPaths(paths().filter(path => path !== current.path));
     setDocument(undefined);
     setContent("");
@@ -171,7 +172,7 @@ export function useNotes() {
     const current = document();
     if (!current) return;
     const next = await request<NoteDocument>("read", { path: current.path });
-    clearDraft(root(), current.path);
+    clearDraft(cacheRoot(), current.path);
     selectDocument(next, false);
   }, false);
 
