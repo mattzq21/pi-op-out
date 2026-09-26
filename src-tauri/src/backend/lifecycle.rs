@@ -1,5 +1,6 @@
 #[cfg(not(feature = "desktop"))]
 pub fn run_daemon() -> Result<(), String> {
+    if let Some(action @ ("start" | "stop")) = std::env::args().nth(1).as_deref() { return daemon_stdio::control(action); }
     if std::env::args().nth(1).as_deref() == Some("--stdio-client") { return daemon_stdio::run(); }
     let _instance = daemon_endpoint::claim()?;
     daemon_endpoint::identity()?;

@@ -49,18 +49,39 @@ fn authenticated(value: &Value, expected: &str) -> bool {
     difference == 0 && value.get("type").and_then(Value::as_str) == Some("authenticate")
 }
 
-async fn authenticate_socket(stream: tokio::net::TcpStream, token: &str) -> Result<(tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>, bool), String> {
+async fn authenticate_socket(stream: tokio::net::TcpStream, token: &str) -> Result<(tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>, bool, bool), String> {
     let config = WebSocketConfig::default().max_message_size(Some(MAX_MESSAGE)).max_frame_size(Some(MAX_MESSAGE));
     let mut socket = tokio::time::timeout(Duration::from_secs(10), tokio_tungstenite::accept_async_with_config(stream, Some(config))).await.map_err(|_| "Handshake timeout")?.map_err(|error| error.to_string())?;
     let first = tokio::time::timeout(Duration::from_secs(10), socket.next()).await.map_err(|_| "Authentication timeout")?.ok_or("Connection closed")?.map_err(|error| error.to_string())?;
     let value: Value = serde_json::from_str(first.to_text().map_err(|_| "Expected authentication")?).map_err(|_| "Invalid authentication")?;
     if !authenticated(&value, token) { let _ = socket.close(None).await; return Err("Unauthorized".into()); }
-    Ok((socket, value["scope"] == "peer"))
+    Ok((socket, value["scope"] == "peer", value["scope"] == "control"))
 }
 
 async fn connection(app: AppHandle, stream: tokio::net::TcpStream, token: String, events: broadcast::Sender<Value>, jobs: Arc<Semaphore>) -> Result<(), String> {
-    let (socket, peer) = authenticate_socket(stream, &token).await?;
+    let local = stream.peer_addr().map_err(|error| error.to_string())?.ip().is_loopback();
+    let (socket, peer, control) = authenticate_socket(stream, &token).await?;
+    if control {
+        if !local { return Err("Daemon control requires a local connection".into()); }
+        return control_connection(app, socket).await;
+    }
     serve_connection_mode(app, socket, events, jobs, peer).await
+}
+
+async fn control_connection(app: AppHandle, mut socket: tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>) -> Result<(), String> {
+    send_ready(&mut socket).await?;
+    let request = read_control(&mut socket).await?;
+    let clients = app.state::<daemon_clients::DaemonClients>();
+    let action = request["action"].as_str().ok_or("Missing control action")?;
+    match action { "start" => clients.persist()?, "stop" => {}, _ => return Err("Unknown control action".into()) }
+    let result = socket.send(Message::Text(json!({"type":"controlled","action":action}).to_string().into())).await;
+    if action == "stop" { clients.stop(); }
+    result.map_err(|error| error.to_string())
+}
+
+async fn read_control(socket: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>) -> Result<Value, String> {
+    let message = tokio::time::timeout(Duration::from_secs(10), socket.next()).await.map_err(|_| "Control timeout")?.ok_or("Connection closed")?.map_err(|error| error.to_string())?;
+    serde_json::from_str(message.to_text().map_err(|error| error.to_string())?).map_err(|error| error.to_string())
 }
 
 async fn serve_connection<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(app: AppHandle, socket: tokio_tungstenite::WebSocketStream<S>, events: broadcast::Sender<Value>, jobs: Arc<Semaphore>) -> Result<(), String> {

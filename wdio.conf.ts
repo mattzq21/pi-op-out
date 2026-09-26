@@ -77,7 +77,7 @@ const stopFixtureDaemon = async () => {
 const startFixtureDaemon = async () => {
   const binary = path.join(path.dirname(defaultBinary), process.platform === "win32" ? "piopd.exe" : "piopd");
   let failure: Error | undefined;
-  fixtureDaemon = spawn(binary, [], { env: { ...process.env, ...fixtureEnvironment, PIOP_MOBILE_BIND: "127.0.0.1:0" }, detached: process.platform !== "win32", stdio: "ignore" });
+  fixtureDaemon = spawn(binary, ["--serve"], { env: { ...process.env, ...fixtureEnvironment, PIOP_MOBILE_BIND: "127.0.0.1:0" }, detached: process.platform !== "win32", stdio: "ignore" });
   fixtureDaemon.on("error", error => { failure = error; });
   for (let attempt = 0; attempt < 150; attempt++) {
     if (failure) throw failure;
