@@ -98,20 +98,20 @@ fn project(id: &str, name: &str, cwd: Option<&str>) -> SessionGroup {
 }
 
 #[test]
-fn removed_projects_stay_hidden_until_explicitly_restored() {
+fn removing_projects_ungroups_existing_sessions_but_allows_new_discovery() {
     let directory = TestDirectory::new(); let path = directory.0.join("groups.json");
     load_at(&path, vec![], SessionGroups::default()).unwrap();
     let make_project = || project("local:/repo", "Repository", Some("/repo"));
     change_at(&path, GroupChange::Project { project: make_project(), key: Some("local:first".into()) }).unwrap();
     let removed = change_at(&path, GroupChange::Remove { id: "local:/repo".into() }).unwrap();
-    assert!(removed.groups.is_empty()); assert!(removed.removed_projects.contains("local:/repo"));
+    assert!(removed.groups.is_empty()); assert!(removed.removed_projects.is_empty());
     assert_eq!(removed.assignments["local:first"], None);
     let discovered = load_at(&path, vec![SessionSeed { session_key: "local:second".into(), project: make_project() }], SessionGroups::default()).unwrap();
-    assert!(discovered.groups.is_empty()); assert_eq!(discovered.assignments["local:second"], None);
+    assert_eq!(discovered.groups.len(), 1); assert_eq!(discovered.assignments["local:second"].as_deref(), Some("local:/repo"));
     let restored = change_at(&path, GroupChange::Project { project: make_project(), key: Some("local:first".into()) }).unwrap();
     assert_eq!(restored.groups.len(), 1); assert!(restored.removed_projects.is_empty());
     assert_eq!(restored.assignments["local:first"].as_deref(), Some("local:/repo"));
-    assert_eq!(restored.assignments["local:second"], None);
+    assert_eq!(restored.assignments["local:second"].as_deref(), Some("local:/repo"));
     change_at(&path, GroupChange::Assign { key: "local:first".into(), group: None }).unwrap();
     let reloaded = load_at(&path, vec![SessionSeed { session_key: "local:first".into(), project: make_project() }], SessionGroups::default()).unwrap();
     assert_eq!(reloaded.assignments["local:first"], None, "discovery must preserve explicit ungrouping");
@@ -152,9 +152,11 @@ fn loading_migrates_legacy_groups_and_preserves_explicit_assignments() {
         SessionSeed { session_key: "local:forgotten".into(), project: project("local:/forgotten", "Forgotten", Some("/forgotten")) },
     ];
     let state = load_at(&path, seeds, legacy).unwrap();
-    assert_eq!(state.groups.len(), 2); assert_eq!(state.groups[0].name, "New"); assert_eq!(state.groups[1].name, "repo");
+    assert_eq!(state.groups.len(), 3); assert_eq!(state.groups[0].name, "Forgotten"); assert_eq!(state.groups[1].name, "New"); assert_eq!(state.groups[2].name, "repo");
     assert_eq!(state.assignments["local:new"].as_deref(), Some("local:/new"));
-    for key in ["local:ungrouped", "local:stale", "local:forgotten"] { assert_eq!(state.assignments[key], None); }
+    for key in ["local:ungrouped", "local:stale"] { assert_eq!(state.assignments[key], None); }
+    assert_eq!(state.assignments["local:forgotten"].as_deref(), Some("local:/forgotten"));
+    assert!(state.removed_projects.is_empty());
     let reloaded = load_at(&path, vec![], SessionGroups::default()).unwrap();
     assert_eq!(serde_json::to_value(reloaded).unwrap(), serde_json::to_value(state).unwrap());
 }

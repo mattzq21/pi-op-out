@@ -31,6 +31,8 @@ test('agent MCP options validate enabled flags, timeout boundaries and stdio arg
   for (const startupTimeoutSec of [1, 600]) assert.equal(mcpServers([{ ...stdio, startupTimeoutSec }])[0].startupTimeoutSec, startupTimeoutSec);
   for (const startupTimeoutSec of [0, 601, 1.5, '10', null, NaN, Infinity]) assert.throws(() => mcpServers([{ ...stdio, startupTimeoutSec }]), /startup timeout/);
   for (const enabled of [null, 1, 'true']) assert.throws(() => mcpServers([{ ...stdio, enabled }]), /enabled must be a boolean/);
+  for (const injectAgentId of [null, 1, 'true', {}]) assert.throws(() => mcpServers([{ ...stdio, injectAgentId }]), /injectAgentId must be a boolean/);
+  for (const injectAgentId of [false, true]) assert.equal(mcpServers([{ ...stdio, injectAgentId }])[0].injectAgentId, injectAgentId);
   for (const command of ['', ' ', 1, undefined]) assert.throws(() => mcpServers([{ ...stdio, command }]), /command is required/);
   for (const args of [null, [], 7]) assert.throws(() => mcpServers([{ ...stdio, args }]), /arguments must be a string/);
   assert.throws(() => mcpServers([{ ...stdio, transport: 'websocket' }]), /unsupported MCP transport/);

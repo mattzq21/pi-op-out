@@ -41,7 +41,7 @@ async function fixture(t) {
 const unexpectedWorktree = async () => { throw Error('Git must not be required'); };
 const readEntries = async path => (await readFile(path, 'utf8')).trim().split('\n').map(JSON.parse);
 
-test('archived child checkpoints survive deletion of parent snapshot refs', async t => {
+test('archived child-owned checkpoints recover missing refs from retained commits', async t => {
   const f = await fixture(t);
   const git = async (...args) => (await exec('git', ['-C', f.dir, ...args])).stdout.trim();
   await git('init');
@@ -56,7 +56,7 @@ test('archived child checkpoints survive deletion of parent snapshot refs', asyn
   const file = join(archive, 'child.jsonl');
   await writeFile(file, [
     { type: 'session', id: 'child', cwd: f.dir },
-    { type: 'custom', id: 'old', customType: 'pi-project-files-watch-snapshot', data: { repositoryRoot: f.dir, ref: 'refs/pi-session-snapshots/chats/parent/deleted', commit: inheritedCommit } },
+    { type: 'custom', id: 'old', customType: 'pi-project-files-watch-snapshot', data: { repositoryRoot: f.dir, ref: 'refs/pi-session-snapshots/chats/child/deleted', commit: inheritedCommit } },
     { type: 'message', id: 'response', parentId: 'old', message: { role: 'assistant' } },
     { type: 'custom', id: 'last', parentId: 'response', customType: 'pi-project-files-watch-snapshot', data: { repositoryRoot: f.dir, ref: current, commit, responseEntryIds: ['response'] } },
   ].map(JSON.stringify).join('\n') + '\n');

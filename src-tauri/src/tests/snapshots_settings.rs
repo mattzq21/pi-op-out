@@ -572,7 +572,7 @@ fn project_inspection_preserves_all_sessions_when_a_later_batch_is_incomplete() 
         let error = inspect_session_projects_with(&mut sessions, |_, batch| {
             calls += 1;
             let mut command = Command::new("sh");
-            if calls == 1 { command.args(["-c", "for path do printf 'missing\\000\\000'; done", "sh"]).args(batch); }
+            if calls == 1 { command.args(["-c", "for path do printf 'missing\\000\\000\\000'; done", "sh"]).args(batch); }
             else { command.args(["-c", failure]); }
             command
         }).unwrap_err();
