@@ -1,5 +1,5 @@
 import { Key } from "@solid-primitives/keyed";
-import { createComputed, createMemo, createSignal } from "solid-js";
+import { createComputed, createMemo, createSignal, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect, createMemoFields, createRef, cssPixels, type KeyboardEvent, type MouseEvent } from "../lib/solid";
 
@@ -508,7 +508,7 @@ export function SessionPanel(props: Props) {
   const renderSessionScroll = () => {
     const renderGroupError = () => ((storedGroups.error || groupActionError()) && <p class="group-error" role="alert">{storedGroups.error || groupActionError()}</p>);
     const renderGroupLoading = () => (!storedGroups.state && !storedGroups.error && <p class="empty-small">Loading groups…</p>);
-    const renderNewGroup = () => (newGroupName() !== undefined && !editingGroupId() && <section class="project custom-group-draft"><div class="project-label"><input ref={element => { groupNameRef.current = element; }} disabled={groupSaving()} aria-label="New session group name" aria-invalid={Boolean(groupDraftError())} aria-describedby={groupDraftError() ? "new-group-error" : undefined} placeholder="Group name" value={(newGroupName())!} onInput={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} /></div>{groupDraftError() && <small id="new-group-error" class="group-error">{(groupDraftError())!}</small>}</section>);
+    const renderNewGroup = () => (<Show when={newGroupName() !== undefined && !editingGroupId()}><section class="project custom-group-draft"><div class="project-label"><input ref={element => { groupNameRef.current = element; }} disabled={groupSaving()} aria-label="New session group name" aria-invalid={Boolean(groupDraftError())} aria-describedby={groupDraftError() ? "new-group-error" : undefined} placeholder="Group name" value={(newGroupName())!} onInput={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} /></div>{groupDraftError() && <small id="new-group-error" class="group-error">{(groupDraftError())!}</small>}</section></Show>);
     const renderEmptyConversations = () => (storedGroups.state && !filtered().length && <div class="empty-small">{normalizedQuery() ? `No conversations match “${panel().query.trim()}”.` : "No conversations yet."}</div>);
     return (<div ref={element => { sessionScrollRef.current = element; }} class="session-scroll">
       {renderGroupError()}
