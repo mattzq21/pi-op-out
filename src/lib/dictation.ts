@@ -1,11 +1,9 @@
 import { createSignal, onCleanup, onMount } from "solid-js";
 import { invoke, listen } from "./platform";
+import type { DictationVad } from "./dictationVad";
 
 type Configuration = { enabled: boolean; loading: boolean };
 const MAX_SECONDS = 120;
-const SILENCE_SECONDS = 3;
-const SPEECH_CONFIRMATION_SECONDS = 0.1;
-const SPEECH_RMS_THRESHOLD = 0.005;
 let recordingOwner: symbol | undefined;
 
 export function useDictationEnabled() {
@@ -76,6 +74,8 @@ export class DictationRecording {
   private chunks: Float32Array[] = [];
   private timer?: ReturnType<typeof setTimeout>;
   private stopped = false;
+  private vad?: DictationVad;
+  private detectionError?: Error;
 
   async start(onComplete: () => void) {
     if (recordingOwner) throw new Error("Dictation is already recording in another chat.");
@@ -88,13 +88,15 @@ export class DictationRecording {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }, video: false });
       if (this.stopped) { stream.getTracks().forEach((track) => track.stop()); return; }
       this.stream = stream;
+      const { DictationVad } = await import("./dictationVad");
+      if (this.stopped) return;
+      const vad = await DictationVad.create(context.sampleRate);
+      if (this.stopped) { vad.close(); return; }
+      this.vad = vad;
       this.source = context.createMediaStreamSource(stream);
       this.processor = context.createScriptProcessor(4096, 1, 1);
       this.gain = context.createGain(); this.gain.gain.value = 0;
       let samples = 0;
-      let heardSpeech = false;
-      let voiceSamples = 0;
-      let silentSamples = 0;
       let completionRequested = false;
       const complete = () => {
         if (this.stopped || completionRequested) return;
@@ -107,22 +109,10 @@ export class DictationRecording {
         if (remaining <= 0) { complete(); return; }
         const chunk = event.inputBuffer.getChannelData(0).slice(0, remaining);
         this.chunks.push(chunk); samples += chunk.length;
-        const frameSize = Math.max(1, Math.round(context.sampleRate * 0.02));
-        for (let offset = 0; offset < chunk.length; offset += frameSize) {
-          const end = Math.min(chunk.length, offset + frameSize);
-          let energy = 0;
-          for (let index = offset; index < end; index++) energy += chunk[index] * chunk[index];
-          const length = end - offset;
-          if (Math.sqrt(energy / length) >= SPEECH_RMS_THRESHOLD) {
-            voiceSamples += length;
-            if (voiceSamples >= SPEECH_CONFIRMATION_SECONDS * context.sampleRate) heardSpeech = true;
-            silentSamples = 0;
-          } else {
-            voiceSamples = 0;
-            if (heardSpeech) silentSamples += length;
-          }
-          if (silentSamples >= SILENCE_SECONDS * context.sampleRate) { complete(); break; }
-        }
+        vad.push(chunk, complete, (error) => {
+          this.detectionError = new Error(`Speech detection failed: ${error instanceof Error ? error.message : String(error)}`);
+          complete();
+        });
       };
       this.source.connect(this.processor); this.processor.connect(this.gain); this.gain.connect(context.destination);
       this.timer = setTimeout(complete, MAX_SECONDS * 1000);
@@ -133,6 +123,7 @@ export class DictationRecording {
     const sampleRate = this.context?.sampleRate;
     this.release();
     const chunks = this.chunks; this.chunks = [];
+    if (this.detectionError) throw this.detectionError;
     if (!sampleRate) throw new Error("The microphone was not ready.");
     return wavAudio(chunks, sampleRate);
   }
@@ -141,6 +132,7 @@ export class DictationRecording {
 
   private release() {
     this.stopped = true; clearTimeout(this.timer);
+    this.vad?.close(); this.vad = undefined;
     if (recordingOwner === this.owner) recordingOwner = undefined;
     if (this.processor) { this.processor.onaudioprocess = null; this.processor.disconnect(); }
     this.source?.disconnect(); this.gain?.disconnect();
