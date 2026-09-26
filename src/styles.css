@@ -529,3 +529,4 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .agent-mcp-settings h3 { font-size: 13px; font-weight: 500; }
 .agent-mcp-settings .mcp-card-head { grid-template-columns: 24px minmax(0, 1fr) auto auto; }
 .agent-mcp-settings > .secondary-button { margin-top: 10px; }
+.model-bulk-actions { display: flex; flex-wrap: wrap; gap: 7px; padding: 12px 0; }

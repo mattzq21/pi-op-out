@@ -318,6 +318,10 @@ export function SettingsView(props: SettingsViewProps) {
         </div>
       </SettingsSection>);
       const renderModels = () => (formValidation().visibleSection === "models" && <SettingsSection title="Models" description="Choose which models appear in chat pickers. Existing conversations and default models are unchanged. Newly arrived models start hidden." headerAction={<label class="section-filter"><Search size={14} /><input aria-label="Filter models" placeholder="Filter by name or provider" value={modelFilter()} onInput={(event) => setModelFilter(event.target.value)} /></label>}>
+        <div class="model-bulk-actions" role="group" aria-label="All model visibility">
+          <button type="button" class="section-toggle-all" disabled={saving() || !agentValidation().hiddenModels.size} onClick={() => patch({ hiddenModels: [] })}>Enable all models</button>
+          <button type="button" class="section-toggle-all" disabled={saving() || !agentValidation().modelChoices.some(model => !agentValidation().hiddenModels.has(model.id))} onClick={() => patch({ hiddenModels: agentValidation().modelChoices.map(model => model.id) })}>Disable all models</button>
+        </div>
         <div class="config-list">{<Key each={agentValidation().filteredModelChoices} by={(model) => model.id}>{(model, _index) => <div class="config-row model-row" ><span class="config-icon"><Cpu size={16} /></span><span><strong>{model().name}</strong><small>{model().id}{!agentValidation().availableModelIds.has(model().id) ? " · Currently unavailable" : ""}</small></span><Toggle label={`Show ${model().id}`} checked={!agentValidation().hiddenModels.has(model().id)} onChange={(visible) => setDraft((current) => ({ ...current, hiddenModels: visible ? current.hiddenModels.filter((id) => id !== model().id) : [...current.hiddenModels, model().id] }))} /></div>}</Key>}</div>
         {!agentValidation().filteredModelChoices.length && <div class="empty-small">{agentValidation().modelChoices.length ? "No models match your search." : "No models discovered. Connect to a session to manage model visibility."}</div>}
       </SettingsSection>);
