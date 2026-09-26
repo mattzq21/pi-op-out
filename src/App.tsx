@@ -28,6 +28,7 @@ import { hasVisibleText } from "./lib/content";
 import { branchMessages, type PiEntry } from "./lib/messages";
 import { recordSeenModels } from "./lib/modelVisibility";
 import { initialWindowTarget, NativeTransport, openSessionWindow } from "./lib/nativeTransport";
+import { useSessionResume } from "./lib/sessionResume";
 import { isMobile, listen } from "./lib/platform";
 import { updateSessionGroups, type SessionGroup } from "./lib/sessionGroups";
 import { SessionRuntimePool, useTurnDiffs } from "./lib/sessionRuntimePool";
@@ -133,6 +134,7 @@ export default function App() {
   const terminalPanelRevision = createRef(0);
   const controlQueues = createRef(new WeakMap<NativeTransport, Promise<void>>());
   const reconnectPending = createRef(new Set<NativeTransport>());
+  useSessionResume(() => ({ ready: connected(), saved: chatSession().state.messageCount > 0, ephemeral: transport().isEphemeral(), target: { sessionId: chatSession().state.sessionId, sessionPath: chatSession().state.sessionFile, cwd: activeCwd(), hostId: activeHostId() } }));
   const queuedTerminalOutput = createRef(new Map<string, QueuedTerminalOutput>()); const terminalOutputFrame = createRef<number | undefined>(undefined);
   const terminalLocation = () => {
     const terminalCwd = terminalTarget()?.cwd ?? activeCwd() ?? sessions().find((session) => session.id === chatSession().state.sessionId && (session.hostId ?? "local") === activeHostId())?.cwd;
@@ -470,8 +472,7 @@ export default function App() {
   };
   const applySettings = async (value: AppSettings, nextConfig?: AgentConfig, previousConfig?: AgentConfig) => { const capturedSettings = settings(); const capturedTransport = transport();
     if (!capturedSettings) throw new Error("Settings are still loading");
-    const next = value;
-    const agentHostId = nextConfig ? "local" : undefined;
+    const next = value; const agentHostId = nextConfig ? "local" : undefined;
     const writeAgents = async (configuration: AgentConfig) => {
       const writer = new NativeTransport({ cwd: "~", hostId: "local" });
       try {

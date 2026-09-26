@@ -3,6 +3,7 @@ import { preserveDaemonPreferences, saveClientSettings, withClientSettings } fro
 import { keybindingsError } from "./keybindings";
 import { invoke, listen, type UnlistenFn } from "./platform";
 import { open } from "@tauri-apps/plugin-dialog";
+import { restoredSessionTarget } from "./sessionResume";
 import { emit as emitNativeEvent } from "@tauri-apps/api/event";
 import type { GroupChange, SessionGroups, SessionGroupSeed } from "./sessionGroups";
 import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, OpencodeGoUsage, RpcCommand, RpcEvent, SessionSummary, SettingsChange, StorageReport } from "../types";
@@ -36,7 +37,7 @@ const call = <T>(command: string, args?: Record<string, unknown>) => {
 
 export const openSessionWindow = (target: NativeConnectionTarget & { sessionId: string }) => call<string>("new_window", { target });
 export function initialWindowTarget(): NativeConnectionTarget {
-  try { const value = JSON.parse(new URLSearchParams(window.location.search).get("target") || "{}"); return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
+  try { const target = new URLSearchParams(window.location.search).get("target"); const value = target ? JSON.parse(target) : restoredSessionTarget(); return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
   catch { return {}; }
 }
 export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; sessionId?: string; hostId?: string; readOnly?: boolean; }
