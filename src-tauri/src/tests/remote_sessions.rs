@@ -26,7 +26,7 @@ fn remote_ephemeral_fork_preserves_history_and_quotes_paths() {
     let body = format!("{{\"type\":\"message\",\"text\":\"{}\"}}\n", "history 🌍".repeat(10_000));
     let original = format!("{{\"type\":\"session\",\"id\":\"original\",\"cwd\":\"/project\",\"timestamp\":\"old\"}}\n{body}");
     fs::write(&source, &original).unwrap();
-    let path = create_remote_ephemeral_fork(source.to_str().unwrap(), destination.to_str().unwrap(), "fixture", |script| {
+    let path = create_remote_ephemeral_fork(source.to_str().unwrap(), destination.to_str().unwrap(), "fixture", None, |script| {
         let mut command = Command::new("sh"); command.args(["-c", &script]).current_dir(&root.0); command
     }).unwrap();
     assert_eq!(Path::new(&path), destination);
@@ -48,14 +48,14 @@ fn remote_ephemeral_fork_reports_failures_without_leaving_partial_files() {
     let shell = |script: String| { let mut command = Command::new("sh"); command.args(["-c", &script]); command };
     for content in ["", "bad JSON\n", "{\"type\":\"message\"}\n", "{\"type\":\"session\"}"] {
         fs::write(&source, content).unwrap();
-        assert!(create_remote_ephemeral_fork(source.to_str().unwrap(), destination.to_str().unwrap(), "fixture", shell).is_err());
+        assert!(create_remote_ephemeral_fork(source.to_str().unwrap(), destination.to_str().unwrap(), "fixture", None, shell).is_err());
         assert!(!destination.exists()); assert_eq!(fs::read_to_string(&source).unwrap(), content);
     }
     fs::write(&source, "{\"type\":\"session\"}\n").unwrap(); fs::write(&destination, "existing").unwrap();
-    assert!(create_remote_ephemeral_fork(source.to_str().unwrap(), destination.to_str().unwrap(), "fixture", shell).unwrap_err().contains("EEXIST"));
+    assert!(create_remote_ephemeral_fork(source.to_str().unwrap(), destination.to_str().unwrap(), "fixture", None, shell).unwrap_err().contains("EEXIST"));
     assert_eq!(fs::read_to_string(&destination).unwrap(), "existing");
-    assert!(create_remote_ephemeral_fork("unused", "unused", "fixture", |_| Command::new("/missing/piop-test")).unwrap_err().contains("Could not create temporary side conversation on fixture"));
-    let error = create_remote_ephemeral_fork("unused", "unused", "fixture", |_| {
+    assert!(create_remote_ephemeral_fork("unused", "unused", "fixture", None, |_| Command::new("/missing/piop-test")).unwrap_err().contains("Could not create temporary side conversation on fixture"));
+    let error = create_remote_ephemeral_fork("unused", "unused", "fixture", None, |_| {
         let mut command = Command::new("sh"); command.args(["-c", "printf '  '"]); command
     }).unwrap_err();
     assert_eq!(error, "Temporary side conversation path was unavailable");

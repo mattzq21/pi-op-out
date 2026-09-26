@@ -419,17 +419,7 @@ fn handle_opencode_go_usage(_app: AppHandle, _owner: String, _args: Value) -> Co
 }
 
 fn start_pi_options(args: &Value) -> Result<StartPiOptions, String> {
-    Ok(StartPiOptions {
-        runtime_id: argument(args, "runtimeId")?,
-        cwd: argument(args, "cwd")?,
-        session_path: argument(args, "sessionPath")?,
-        session_id: argument(args, "sessionId")?,
-        fork_path: argument(args, "forkPath")?,
-        no_session: argument(args, "noSession")?,
-        host_id: argument(args, "hostId")?,
-        presence: argument(args, "presence")?,
-        client_id: argument(args, "clientId")?
-    })
+    serde_json::from_value(args.clone()).map_err(|error| error.to_string())
 }
 
 fn start_terminal_options(args: &Value) -> Result<StartTerminalOptions, String> {

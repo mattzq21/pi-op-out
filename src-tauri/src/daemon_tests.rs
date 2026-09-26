@@ -1,5 +1,23 @@
 use super::*;
 
+#[cfg(not(feature = "desktop"))]
+#[test]
+fn closed_conversations_release_capture_writers_after_draining() {
+    let (daemon, _) = TestDaemon::new();
+    let (sender, receiver) = mpsc::channel();
+    daemon.0.captures.lock().unwrap().insert("closed".into(), sender);
+    let reader = thread::spawn(move || loop {
+        match receiver.recv_timeout(Duration::from_secs(2)) {
+            Ok(CaptureWork::Drain(reply)) => reply.send(()).unwrap(),
+            Ok(CaptureWork::Packet(_)) => {},
+            Err(mpsc::RecvTimeoutError::Disconnected) => return true,
+            Err(mpsc::RecvTimeoutError::Timeout) => return false,
+        }
+    });
+    handle_session_closed(&AppHandle::new(), &daemon.0, &json!({"sessionKey":"closed"}));
+    assert!(reader.join().unwrap(), "closed writer still has a sender");
+}
+
 struct TestDaemon(Arc<Daemon>);
 
 impl TestDaemon {

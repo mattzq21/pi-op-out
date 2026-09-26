@@ -8,6 +8,7 @@ import { forgetSession, retainSessionResource } from "./sessionMemory";
 
 const sessionKey = (hostId: string, sessionId: string) => `${hostId}:${sessionId}`;
 const EMPTY_DIFFS: GitDiffSnapshots = {};
+const startsUserMessage = (event: RpcEvent) => event.type === "message_start" && (event.message as { role?: string })?.role === "user";
 type DiffState = { snapshots: GitDiffSnapshots; path?: string; load?: { key: string; promise: Promise<GitDiffSnapshots> }; persistence: "session" | "memory" };
 
 function retainedName(state: AgentState, prompt: string | undefined, previous: SessionSummary | undefined) {
@@ -147,7 +148,7 @@ export class SessionRuntimePool {
 
   private updateActivity(transport: NativeTransport, event: RpcEvent) {
     if (event.type === "runtime_presence") { if (event.isStreaming) this.runningTransports.add(transport); else this.runningTransports.delete(transport); }
-    if (event.type === "agent_start" || event.type === "message_start") { this.runningTransports.add(transport); this.unseenTransports.delete(transport); }
+    if (event.type === "agent_start" || startsUserMessage(event)) { this.runningTransports.add(transport); this.unseenTransports.delete(transport); }
     if (event.type === "agent_settled") { this.runningTransports.delete(transport); if (transport !== this.activeTransport && !this.interactiveTransports.has(transport)) this.unseenTransports.add(transport); }
     if (event.type === "disconnected") { this.runningTransports.delete(transport); }
   }
@@ -251,7 +252,10 @@ export class SessionRuntimePool {
   unseenSessions() { return this.unseenSessionKeys; }
   gitDiffs(transport: NativeTransport) { return this.diffStates.get(transport)?.snapshots ?? EMPTY_DIFFS; }
 
-  async disconnectAll() { await Promise.allSettled([...this.transports].map((transport) => transport.dispose())); }
+  async disconnectAll(strict = false) {
+    const results = await Promise.allSettled([...this.transports].map((transport) => transport.dispose()));
+    if (strict) { const failed = results.find(result => result.status === "rejected"); if (failed?.status === "rejected") throw failed.reason; }
+  }
 }
 
 export function useTurnDiffs(pool: Accessor<SessionRuntimePool>, transport: Accessor<NativeTransport>) { return createSubscription(() => (listener) => pool().subscribe(listener), () => () => pool().gitDiffs(transport())); }

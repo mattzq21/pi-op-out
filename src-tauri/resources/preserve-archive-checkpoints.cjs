@@ -14,14 +14,17 @@ const verifyRef = (ref, commit) => {
   if (typeof ref !== 'string' || !ref.startsWith('refs/pi-session-snapshots/') || !/^[a-f0-9]{40,64}$/.test(commit ?? '') || git(common, ['rev-parse', '--verify', ref]) !== commit) throw new Error('Could not preserve archived conversation checkpoints before deleting the worktree');
 };
 
-function archiveOwnedRef(sessionId, snapshot) {
+function archiveOwnedRef(sessionId, snapshot, recover = false) {
   const id = sessionId.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session';
   const prefix = `refs/pi-session-snapshots/chats/${id}/`;
   if (!/^[a-f0-9]{40,64}$/.test(snapshot.commit ?? '')) throw new Error('Invalid archived response checkpoint');
   const retained = git(common, ['for-each-ref', '--format=%(refname) %(objectname)', prefix])
     .split('\n').map((line) => line.split(' ')).find(([ref, commit]) => ref.startsWith(prefix) && commit === snapshot.commit);
   if (retained) return retained[0];
-  verifyRef(snapshot.ref, snapshot.commit);
+  if (recover) {
+    if (typeof snapshot.ref !== 'string' || !snapshot.ref.startsWith('refs/pi-session-snapshots/')) throw new Error('Invalid archived checkpoint ref');
+    git(common, ['cat-file', '-e', `${snapshot.commit}^{commit}`]);
+  } else verifyRef(snapshot.ref, snapshot.commit);
   const ref = `${prefix}archive/${snapshot.commit}`;
   git(common, ['update-ref', ref, snapshot.commit, '0'.repeat(snapshot.commit.length)]);
   return ref;
@@ -70,13 +73,15 @@ function preservePrompts(header, entries) {
   return false;
 }
 
-function preserveSnapshotRoots(entries) {
+function preserveSnapshotRoots(header, entries) {
   let changed = false;
   for (const entry of entries) {
     if (entry.type !== 'custom' || entry.customType !== 'pi-project-files-watch-snapshot' || entry.data?.unavailable) continue;
     const data = entry.data;
-    if (data?.repositoryRoot === common || !sameRepository(data?.repositoryRoot)) continue;
-    verifyRef(data.ref, data.commit);
+    if (!sameRepository(data?.repositoryRoot)) continue;
+    const ref = archiveOwnedRef(header.id, data, true);
+    if (data.repositoryRoot === common && data.ref === ref) continue;
+    data.ref = ref;
     data.repositoryRoot = common;
     changed = true;
   }
@@ -109,7 +114,7 @@ function preserve(file) {
   if (header?.type !== 'session' || typeof header.id !== 'string') return;
   const responseChanged = preserveResponse(header, entries);
   const promptsChanged = preservePrompts(header, entries);
-  const rootsChanged = preserveSnapshotRoots(entries);
+  const rootsChanged = preserveSnapshotRoots(header, entries);
   if (responseChanged || promptsChanged || rootsChanged) writePreservedArchive(file, entries, stat);
 }
 

@@ -13,6 +13,7 @@ function responseKey(command: string, args?: Record<string, unknown>) {
 
 const terminalWrites = new Map<string, Promise<void>>();
 const terminalStarts = new Map<string, Promise<void>>();
+const daemonPreferences = (settings: AppSettings, previous: AppSettings, scope: "all" | "client") => scope === "client" ? previous : preserveDaemonPreferences(settings, previous);
 
 function mockResponse<T>(command: string, response: { error?: string; events?: RpcEvent[] }, args?: Record<string, unknown>) {
   if (response?.error) return Promise.reject(new Error(response.error));
@@ -106,6 +107,7 @@ export class NativeTransport {
   private settingsApplyFailed = false;
   private activeCommands = 0;
   private disposed = false;
+  private disposal?: Promise<void>;
   hasPendingSettings() { return Boolean(this.daemonSettingsPending || this.pendingSettings || this.applyingSettings); }
   queueSettings(settings: AppSettings, changes: { reconnect: boolean }) {
     if (this.disposed || (!this.pendingSettings && !changes.reconnect)) return;
@@ -219,14 +221,14 @@ export class NativeTransport {
     this.retainedStatuses.clear(); this.retainedRequests.clear();
     this.presenceCleanup?.(); this.presenceCleanup = undefined;
   }
-  async connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string, ephemeral = false) {
+  async connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string, ephemeral = false, forkLeafId?: string) {
     if (this.disposed) throw new Error("This conversation view has been closed");
     this.ephemeral ||= ephemeral;
     if (cwd !== undefined) this.cwd = cwd; if (sessionPath !== undefined) { this.sessionPath = sessionPath; this.sessionId = undefined; } if (hostId !== undefined) this.hostId = hostId;
     if (this.running) return;
     if (this.connectPromise) return this.connectPromise;
     this.connectionAttempted = true;
-    const pending = this.establishConnection(forkPath, ephemeral); this.connectPromise = pending;
+    const pending = this.establishConnection(forkPath, ephemeral, forkLeafId); this.connectPromise = pending;
     try { await pending; } finally { if (this.connectPromise === pending) this.connectPromise = undefined; }
   }
   private async resolveHomeDirectory(version: number) {
@@ -239,7 +241,7 @@ export class NativeTransport {
   private clearConnectionListeners() {
     this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.stderrLines = [];
   }
-  private async establishConnection(forkPath?: string, _ephemeral = false) {
+  private async establishConnection(forkPath?: string, _ephemeral = false, forkLeafId?: string) {
     const version = ++this.connectionVersion;
     await this.resolveHomeDirectory(version);
     if (version !== this.connectionVersion) return;
@@ -263,7 +265,7 @@ export class NativeTransport {
     });
     if (version !== this.connectionVersion) { unlisten(); stderrUnlisten(); return; }
     this.unlisten = unlisten; this.stderrUnlisten = stderrUnlisten;
-    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call<{ attached: boolean; owned?: boolean; daemonId?: string }>("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: !this.readOnly && this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }));
+    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call<{ attached: boolean; owned?: boolean; daemonId?: string }>("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: !this.readOnly && this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, forkLeafId, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }));
     if (version !== this.connectionVersion || !attached) throw new Error("The conversation disconnected while starting. Reconnect to try again.");
     this.daemonId = attached.daemonId;
     this.connectedOwnership(attached);
@@ -280,14 +282,26 @@ export class NativeTransport {
     this.owns = !this.readOnly && attached?.owned !== false;
     this.emit({ type: this.owns ? "ownership_acquired" : "ownership_lost" });
   }
-  async disconnect(discardBlank = false) { ++this.connectionVersion; this.presenceCleanup?.(); this.presenceCleanup = undefined; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; const stopped = await this.runProcessCommand(() => call<boolean>("stop_pi", { runtimeId: this.runtimeId, discardBlank })); this.running = false; this.retainedStatuses.clear(); this.retainedRequests.clear(); return stopped; }
+  async disconnect(discardBlank = false) { ++this.connectionVersion; this.running = false; this.presenceCleanup?.(); this.presenceCleanup = undefined; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.retainedStatuses.clear(); this.retainedRequests.clear(); return this.runProcessCommand(() => call<boolean>("stop_pi", { runtimeId: this.runtimeId, discardBlank })); }
   async reconnectForSettings(settings: AppSettings) {
     await this.disconnect();
     if (this.hostId !== "local" && !settings.hosts.some((host) => host.id === this.hostId)) { this.hostId = "local"; this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined; this.temporaryChat = false; this.temporaryChatUsed = false; this.fresh = true; }
     try { await this.connect(); }
     catch (reason) { this.emit({ type: "disconnected" }); throw reason; }
   }
-  async dispose() { this.disposed = true; this.pendingSettings = undefined; await this.applyingSettings; const temporaryPath = this.temporaryChat && !this.temporaryChatUsed ? this.cwd : undefined; const temporaryHost = this.hostId; const stopped = await this.disconnect(true); if (temporaryPath && (stopped || !this.connectionAttempted)) await call<void>("remove_temporary_chat", { path: temporaryPath, hostId: temporaryHost }); this.temporaryChat = false; this.temporaryChatUsed = false; }
+  dispose() {
+    if (this.disposal) return this.disposal;
+    this.disposed = true; this.pendingSettings = undefined;
+    this.disposal = (async () => {
+      await this.applyingSettings;
+      const temporaryPath = this.temporaryChat && !this.temporaryChatUsed ? this.cwd : undefined;
+      const temporaryHost = this.hostId;
+      const stopped = await this.disconnect(true);
+      if (temporaryPath && (stopped || !this.connectionAttempted)) await call<void>("remove_temporary_chat", { path: temporaryPath, hostId: temporaryHost });
+      this.temporaryChat = false; this.temporaryChatUsed = false;
+    })().catch(reason => { this.disposal = undefined; this.disposed = false; throw reason; });
+    return this.disposal;
+  }
   private async refreshFastStatus(reload: boolean) {
     if (!this.fastStatusCommand) return;
     try {
@@ -377,12 +391,12 @@ export class NativeTransport {
   }
   loadCodexUsage() { return call<CodexUsage>("codex_usage"); }
   loadOpencodeGoUsage() { return call<OpencodeGoUsage>("opencode_go_usage"); }
-  saveSettings(settings: AppSettings, reconnect = true, agentHostId?: string) {
+  saveSettings(settings: AppSettings, reconnect = true, agentHostId?: string, scope: "all" | "client" = "all") {
     const save = async () => {
       const shortcutError = keybindingsError(settings.keybindings);
       if (shortcutError) throw new Error(shortcutError);
       const previous = await call<AppSettings>("load_app_settings"); const connection = { cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId };
-      const daemonSettings = preserveDaemonPreferences(settings, previous);
+      const daemonSettings = daemonPreferences(settings, previous, scope);
       const daemonChanged = JSON.stringify(daemonSettings) !== JSON.stringify(previous) || Boolean(agentHostId);
       const change = daemonChanged ? await call<SettingsChange>("save_app_settings", { settings: daemonSettings, agentHostId }) : { settings: previous };
       await saveClientSettings(settings);

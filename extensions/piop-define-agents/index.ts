@@ -226,7 +226,7 @@ function migrateTerminalAgent(config: Config, pi: ExtensionAPI) {
 function migrateQuestionSnapshot(stored: AgentSnapshot | undefined) {
   if (stored?.version !== 1) return undefined;
   const snapshot = structuredClone(stored);
-  snapshot.definition.tools = [...new Set(snapshot.definition.tools.flatMap((tool) => tool === "request_user_input" || tool === "request_user_input_async" ? snapshot.definition.name === "general" ? [] : ["request_user_input"] : [tool]))];
+  snapshot.definition.tools = [...new Set(snapshot.definition.tools.map((tool) => tool === "request_user_input_async" ? "request_user_input" : tool))];
   return snapshot;
 }
 async function migrateDiagramist(config: Config, pi: ExtensionAPI) {
@@ -393,21 +393,21 @@ export default async function defineAgents(pi: ExtensionAPI) {
     }
 
   };
-  const activate = async (agent: Agent, ctx: ExtensionContext, connectMcp: boolean, persistSnapshot: boolean, applyFastMode: boolean) => {
+  const activate = async (agent: Agent, ctx: ExtensionContext, connectMcp: boolean, persistSnapshot: boolean, applyFastMode: boolean | "restore") => {
     const promptError = await prepareAgentPrompts(agent, persistSnapshot); if (promptError) return promptError;
     try { await extensions.activate(await extensions.prepare(extensionPaths(agent.extensions)), ctx); }
     catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" could not load its piop extensions:\n${error instanceof Error ? error.message : String(error)}`; }
     const toolError = agentToolError(pi, agent, extensions.tools()); if (toolError) { pi.setActiveTools([]); return toolError; }
     const modelError = await configureAgentModel(agent, ctx); if (modelError) return modelError;
     configureAgentEffort(agent);
-    if (applyFastMode) pi.events.emit("piop:fast-mode", { apply: true, enabled: agent.fastMode, ctx });
+    if (applyFastMode) pi.events.emit("piop:fast-mode", { apply: true, enabled: agent.fastMode, restore: applyFastMode === "restore", ctx });
     pi.setActiveTools([]);
     const tools = new Set([...agent.tools, ...extensions.tools()]);
     const mcpError = await connectAgentMcp(agent, ctx, connectMcp, tools); if (mcpError) return mcpError;
     if (agent.name !== "terminal-agent") tools.delete("lookup_terminals");
     pi.setActiveTools([...tools]); return undefined;
   };
-  const useAgent = async (name: string, ctx: ExtensionContext, connectMcp: boolean, persistSnapshot = true, applyFastMode = true) => {
+  const useAgent = async (name: string, ctx: ExtensionContext, connectMcp: boolean, persistSnapshot = true, applyFastMode: boolean | "restore" = true) => {
     restore(ctx);
     const agent = currentAgent();
     activeToolError = agent ? await activate(agent, ctx, connectMcp, persistSnapshot, applyFastMode) : `Agent unavailable: "${name}". Select a replacement or general to continue.`;
@@ -441,7 +441,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     modelOverride = stored?.modelOverride;
     effortOverride = stored?.effortOverride;
     publish(ctx);
-    const error = await useAgent(active, ctx, false);
+    const error = await useAgent(active, ctx, false, true, "restore");
     if (error) ctx.ui.notify(error, "warning");
     publish(ctx);
   };

@@ -196,6 +196,7 @@ async fn fork(host: &Arc<Host>, session: &Arc<Session>, runtime: &str, command: 
         worker: None,
         next: None,
         pending: None,
+        destination: None,
         guard: None,
         committed: false,
     };
@@ -214,6 +215,7 @@ struct Branch<'a> {
     worker: Option<Arc<Session>>,
     next: Option<Arc<Session>>,
     pending: Option<PathBuf>,
+    destination: Option<PathBuf>,
     guard: Option<Guard>,
     committed: bool,
 }
@@ -274,6 +276,7 @@ impl Branch<'_> {
             .map_err(|error| error.to_string())?;
         drop(file);
         std::fs::hard_link(&pending_path, &destination).map_err(|error| error.to_string())?;
+        self.destination = Some(destination.clone());
         Ok(destination)
     }
 
@@ -329,20 +332,23 @@ impl Branch<'_> {
     }
 
     async fn cleanup(&mut self) -> Result<()> {
-        let release = self
-            .guard
-            .take()
-            .map(|guard| guard.release(self.host.ownership(), false))
-            .transpose();
         let workers: Vec<_> = self.worker.iter().chain(self.next.iter().filter(|_| !self.committed)).collect();
         for worker in &workers {
             worker.stop().await;
         }
+        let destination = if !self.committed {
+            self.destination.take().map(|path| std::fs::remove_file(path).map_err(|error| error.to_string())).transpose()
+        } else {
+            Ok(None)
+        };
         let cleanup = cleanup_paths(self.pending.as_deref(), &self.directory);
         for worker in workers {
             self.host.forget_worker(worker);
         }
-        release?;
+        if let Some(guard) = self.guard.take() {
+            guard.release(self.host.ownership(), !self.committed)?;
+        }
+        destination?;
         cleanup
     }
 }

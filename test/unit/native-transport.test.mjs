@@ -33,6 +33,39 @@ const transport = (target = { cwd: '/repo' }) => { const value = new native.Nati
 const commands = name => calls.filter(call => call.command === name);
 const rpc = type => commands('pi_command').filter(call => call.args.command.type === type);
 
+test('explicit disconnect and unmount share one completed disposal', async () => {
+  const client = transport();
+  await client.connect();
+  await Promise.all([client.dispose(), client.dispose()]);
+  await client.dispose();
+  assert.equal(commands('stop_pi').length, 1);
+});
+
+test('client preference updates preserve newer daemon settings', async () => {
+  const current = { hosts: [], keybindings: {}, defaultModel: 'new/model', knownModels: ['old/model'] };
+  responses.set('load_app_settings', current);
+  responses.set('save_app_settings', ({ settings }) => ({ settings }));
+  responses.set('load_client_settings', null);
+  const result = await transport().saveSettings({ ...current, defaultModel: 'old/model', knownModels: ['old/model', 'new/model'] }, false, undefined, 'client');
+  assert.equal(commands('save_app_settings').length, 0);
+  assert.equal(result.settings.defaultModel, 'new/model');
+  assert.deepEqual(commands('save_client_settings')[0].args.settings.knownModels, ['old/model', 'new/model']);
+});
+
+test('a rejected stop can reconnect and receive conversation events', async () => {
+  const client = transport();
+  await client.connect();
+  responses.set('stop_pi', new Error('Host is busy; try again'));
+  await assert.rejects(client.disconnect(), /Host is busy/);
+  responses.set('stop_pi', true);
+  await client.connect();
+  assert.equal(commands('start_pi').length, 2);
+  const events = [];
+  client.subscribe(event => events.push(event));
+  await emit('pi://event', { runtimeId: commands('start_pi').at(-1).args.runtimeId, event: { type: 'agent_start' } });
+  assert.ok(events.some(event => event.type === 'agent_start'));
+});
+
 test('transport shares concurrent connects, publishes presence and cleans up listeners', async () => {
   const client = transport();
   assert.equal(client.needsDefaults(), true);

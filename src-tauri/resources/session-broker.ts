@@ -587,9 +587,23 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   const sessionId = randomUUID();
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
+  let created = false;
   try {
     await writeFork(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: ctx.sessionManager.getSessionFile() }, ...retained]);
+    created = true;
+    try {
+      const source = ctx.sessionManager.getSessionFile()!;
+      const diffs = JSON.parse(await readFile(source.replace(/\.jsonl$/, ".diffs.json"), "utf8"));
+      const ids = new Set(retained.map(entry => entry.id));
+      const file = await open(sessionPath.replace(/\.jsonl$/, ".diffs.json"), "wx", 0o600);
+      try { await file.writeFile(JSON.stringify(Object.fromEntries(Object.entries(diffs).filter(([id]) => ids.has(id))))); }
+      finally { await file.close(); }
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   } catch (error) {
+    if (created) {
+      await rm(sessionPath, { force: true });
+      await rm(sessionPath.replace(/\.jsonl$/, ".diffs.json"), { force: true });
+    }
     if (worktree) throw new Error(`Worktree kept at ${cwd}, but conversation fork failed: ${String(error)}`);
     throw error;
   }

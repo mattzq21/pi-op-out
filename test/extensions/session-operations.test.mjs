@@ -41,6 +41,50 @@ async function fixture(t) {
 const unexpectedWorktree = async () => { throw Error('Git must not be required'); };
 const readEntries = async path => (await readFile(path, 'utf8')).trim().split('\n').map(JSON.parse);
 
+test('archived child checkpoints survive deletion of parent snapshot refs', async t => {
+  const f = await fixture(t);
+  const git = async (...args) => (await exec('git', ['-C', f.dir, ...args])).stdout.trim();
+  await git('init');
+  await git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'initial');
+  const inheritedCommit = await git('rev-parse', 'HEAD');
+  await git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'child response');
+  const commit = await git('rev-parse', 'HEAD');
+  const current = 'refs/pi-session-snapshots/chats/child/current';
+  await git('update-ref', current, commit);
+  const archive = join(f.dir, '.piop', 'archived');
+  await mkdir(archive, { recursive: true });
+  const file = join(archive, 'child.jsonl');
+  await writeFile(file, [
+    { type: 'session', id: 'child', cwd: f.dir },
+    { type: 'custom', id: 'old', customType: 'pi-project-files-watch-snapshot', data: { repositoryRoot: f.dir, ref: 'refs/pi-session-snapshots/chats/parent/deleted', commit: inheritedCommit } },
+    { type: 'message', id: 'response', parentId: 'old', message: { role: 'assistant' } },
+    { type: 'custom', id: 'last', parentId: 'response', customType: 'pi-project-files-watch-snapshot', data: { repositoryRoot: f.dir, ref: current, commit, responseEntryIds: ['response'] } },
+  ].map(JSON.stringify).join('\n') + '\n');
+  const script = await readFile(new URL('../../src-tauri/resources/preserve-archive-checkpoints.cjs', import.meta.url), 'utf8');
+  await exec(process.execPath, ['-e', `require('node:os').homedir = () => ${JSON.stringify(f.dir)};\n${script}`, f.dir], { env: { ...process.env, PIOP_STORAGE_DIRECTORY: '.piop' } });
+  const entries = await readEntries(file);
+  assert.match(entries[1].data.ref, /^refs\/pi-session-snapshots\/chats\/child\//);
+  assert.equal(await git('rev-parse', entries[1].data.ref), inheritedCommit);
+});
+
+test('fork copies only retained response diffs without changing its parent', async t => {
+  const f = await fixture(t);
+  const diffs = { a1: { files: [] }, tool: { files: [{ path: 'later' }] } };
+  await writeFile(f.sourcePath.replace(/\.jsonl$/, '.diffs.json'), JSON.stringify(diffs));
+  const fork = await f.forkConversation(f.ctx, {}, unexpectedWorktree);
+  assert.deepEqual(JSON.parse(await readFile(fork.sessionPath.replace(/\.jsonl$/, '.diffs.json'), 'utf8')), { a1: diffs.a1 });
+  assert.deepEqual(JSON.parse(await readFile(f.sourcePath.replace(/\.jsonl$/, '.diffs.json'), 'utf8')), diffs);
+});
+
+test('temporary fork stops at the leaf captured when BTW was requested', async t => {
+  const f = await fixture(t);
+  const script = await readFile(new URL('../../src-tauri/resources/fork-session.cjs', import.meta.url), 'utf8');
+  const destination = join(f.dir, 'btw.jsonl');
+  await exec(process.execPath, ['-e', script, f.sourcePath, destination, 'btw', 'a1']);
+  assert.deepEqual((await readEntries(destination)).slice(1), f.entries.slice(0, 2));
+  await assert.rejects(exec(process.execPath, ['-e', script, f.sourcePath, join(f.dir, 'missing.jsonl'), 'btw', 'missing']));
+});
+
 test('non-Git fork retains completed history, unique identity, permissions, and untouched parent', async t => {
   const f = await fixture(t);
   const result = await f.forkConversation(f.ctx, {}, unexpectedWorktree);

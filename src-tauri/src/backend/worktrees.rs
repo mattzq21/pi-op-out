@@ -235,6 +235,23 @@ fn new_local_worktree_target(root: &Path, branch: &str) -> Result<PathBuf, Strin
     Ok(target)
 }
 
+fn write_worktree_patch(path: &Path, patch: &[u8]) -> std::io::Result<()> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    if let Err(error) = file.write_all(patch) {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(error);
+    }
+    Ok(())
+}
+
 fn local_worktree_patch(root: &Path, has_head: bool) -> Result<Vec<u8>, String> {
     if has_head {
         let output = run_limited(Command::new("git").arg("-C").arg(root).args(["diff", "--binary", "--no-textconv", "--no-ext-diff", "HEAD", "--"]), MAX_GIT_PATCH_BYTES, "Git changes are too large to copy")?;
@@ -279,7 +296,7 @@ fn create_local_git_worktree(cwd: &str, name: &str) -> Result<GitWorktree, Strin
     let copy_result = (|| {
         if !patch.is_empty() {
             let patch_path = std::env::temp_dir().join(format!("pi-desktop-worktree-{}.patch", Uuid::new_v4()));
-            fs::write(&patch_path, &patch).map_err(|error| format!("Could not prepare Git changes for copying: {error}"))?;
+            write_worktree_patch(&patch_path, &patch).map_err(|error| format!("Could not prepare Git changes for copying: {error}"))?;
             let applied = run_limited(Command::new("git").arg("-C").arg(&target).args(["apply", "--whitespace=nowarn"]).arg(&patch_path), 64 * 1024, "Could not copy Git changes");
             let _ = fs::remove_file(&patch_path);
             let applied = applied?;

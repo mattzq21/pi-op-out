@@ -398,6 +398,7 @@ impl Host {
     }
 
     async fn session_command(self: &Arc<Self>, session: Arc<Session>, runtime: &str, command: Value) -> Result<Value> {
+        if kind(&command) == "abort" { return queue_command(&session, command).await; }
         if kind(&command) == "extension_ui_response" {
             return self.answer_dialog(&session, runtime, command).await;
         }

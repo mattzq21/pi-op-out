@@ -29,9 +29,17 @@ export function MobileApp() {
     retry.current = setTimeout(() => { void connectRef.current(last); }, retryDelay.current);
     retryDelay.current = Math.min(retryDelay.current * 2, 30000);
   };
-  const disconnect = () => {
+  const [disconnecting, setDisconnecting] = createSignal(false);
+  const disconnect = async () => {
+    if (disconnecting()) return;
+    const tasks: Promise<unknown>[] = [];
+    if (!window.dispatchEvent(new CustomEvent("piop-mobile-before-disconnect", { cancelable: true, detail: { waitUntil: (task: Promise<unknown>) => tasks.push(task) } }))) return;
+    setDisconnecting(true);
+    try { await Promise.all(tasks); }
+    catch (reason) { setError(String(reason)); setDisconnecting(false); return; }
     intentionalDisconnect.current = true; generation.current++; clearTimeout(retry.current);
     setWorkspaceOpen(false); remoteClient.close(); setConnected(false); setConnecting(false); setError("");
+    setDisconnecting(false);
   };
   const connect = async (address: string, label = "") => {
     const attempt = ++generation.current;
@@ -73,8 +81,10 @@ export function MobileApp() {
   };
 
   const saveDisabled = () => connecting() || !url().trim();
+  const showConnectionNotice = () => !connected() || Boolean(error());
+  const renderConnectionNotice = () => showConnectionNotice() && <div class="mobile-reconnect-banner" role="status">{error() || "Reconnecting…"}<button disabled={connecting() || disconnecting()} onClick={() => { if (connected()) void disconnect(); else void connect(url()); }}>{connected() ? "Retry disconnect" : connecting() ? "Connecting…" : "Reconnect"}</button></div>;
   const savedHostValue = () => hosts().some((host) => host.url === url()) ? url() : "";
-  return <>{workspaceOpen() ? (<><App />{!connected() && <div class="mobile-reconnect-banner" role="status">{error() || "Reconnecting…"}<button disabled={connecting()} onClick={() => void connect(url())}>{connecting() ? "Connecting…" : "Reconnect"}</button></div>}<button class="mobile-host-button" aria-label="Disconnect from host" onClick={disconnect}>Host</button></>) : (<main class="mobile-connect dark"><form onSubmit={(event) => { event.preventDefault(); intentionalDisconnect.current = false; retryDelay.current = 2000; void connect(url(), name()); }}>
+  return <>{workspaceOpen() ? (<><App />{renderConnectionNotice()}<button class="mobile-host-button" aria-label="Disconnect from host" disabled={disconnecting()} onClick={() => void disconnect()}>Host</button></>) : (<main class="mobile-connect dark"><form onSubmit={(event) => { event.preventDefault(); intentionalDisconnect.current = false; retryDelay.current = 2000; void connect(url(), name()); }}>
     <p class="eyebrow">piop · Android</p><h1>Your workspace,<br />wherever you are.</h1>
     <p>Connect to your Piop daemon. Your projects, agents, and tools stay on that host, even when the desktop app is closed.</p>
     {hosts().length > 0 && <label>Saved hosts<select disabled={connecting()} value={savedHostValue()} onChange={(event) => { disconnect(); const host = hosts().find((item) => item.url === event.target.value); setUrl(host?.url ?? ""); setName(host?.name ?? ""); }}><option value="">New host</option>{<Key each={hosts()} by={(host) => host.url}>{(host, _index) => <option  value={host().url}>{host().name}</option>}</Key>}</select></label>}

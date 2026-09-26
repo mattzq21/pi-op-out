@@ -7,6 +7,14 @@ import { agentFixture, profile, configured, encoded } from '../defined-agent-fix
 
 const remoteMcp = { id: 'remote', name: 'Remote', transport: 'stdio', command: 'mcp-server', args: '', enabled: true };
 
+test('restoring general preserves explicitly enabled question tools', async t => {
+  const f = await agentFixture(t, { tools: ['read', 'request_user_input'], config: configured([profile('general', { tools: ['read', 'request_user_input'] })]) });
+  await f.load(); await f.start();
+  assert.ok(f.pi.getActiveTools().includes('request_user_input'));
+  await f.start();
+  assert.ok(f.pi.getActiveTools().includes('request_user_input'));
+});
+
 test('successful selections persist one complete snapshot and preserve immutable prompt history', async t => {
   const f = await agentFixture(t, { config: configured([profile(), profile('reviewer', { model: 'test/review/model', effort: 'low', path_agentprompt: 'agent.md' })]), files: { 'agent.md': 'Review instructions' } });
   await f.load(); await f.start();

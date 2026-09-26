@@ -84,9 +84,9 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         if (capturedOptions.transport !== capturedOptions.activeTransportRef.current) return;
         const notifyExtension = () => { if (!event.inputRejected) capturedOptions.addNotice({ title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "piop extension", message: request.message || "Notification" }); };
         const btwPayload = () => {
-          const payload = JSON.parse(request.placeholder || "{}") as { task?: unknown; sessionFile?: unknown; cwd?: unknown };
+          const payload = JSON.parse(request.placeholder || "{}") as { task?: unknown; sessionFile?: unknown; leafId?: unknown; cwd?: unknown };
           if (typeof payload.task !== "string" || !payload.task.trim() || typeof payload.sessionFile !== "string" || !payload.sessionFile) throw new Error("Invalid /btw branch request");
-          return { task: payload.task, sessionFile: payload.sessionFile, cwd: payload.cwd };
+          return { task: payload.task, sessionFile: payload.sessionFile, leafId: payload.leafId, cwd: payload.cwd };
         };
         const openBtw = () => {
           try {
@@ -98,7 +98,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
             capturedOptions.setSplitPane({
               key: crypto.randomUUID(),
               session: { id: `btw-${request.id}`, path: "", name: "BTW", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task, messageCount: 0, lastMessageAt: Date.now(), apiCost: 0, hostId: capturedOptions.activeHostIdRef.current },
-              btw: { task: payload.task, forkFrom: payload.sessionFile, requestId: request.id, images: capturedOptions.btwImages.get(capturedOptions.transport) },
+              btw: { task: payload.task, forkFrom: payload.sessionFile, leafId: typeof payload.leafId === "string" ? payload.leafId : payload.leafId === null ? "" : undefined, requestId: request.id, images: capturedOptions.btwImages.get(capturedOptions.transport) },
             });
             capturedOptions.btwImages.delete(capturedOptions.transport);
           } catch (reason) {

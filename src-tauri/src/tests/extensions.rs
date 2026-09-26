@@ -456,7 +456,7 @@ fn temporary_startup_creates_one_fork_and_reuses_its_saved_identity() {
     let source = sessions.join("original.jsonl"); let original = "{\"type\":\"session\",\"id\":\"source\"}\n{\"type\":\"message\",\"text\":\"history\"}\n";
     fs::write(&source, original).unwrap();
     let path = prepare_ephemeral_path(&runtime, "view", true, None, source.to_str(), |actual| {
-        assert_eq!(actual, source.to_str().unwrap()); create_local_ephemeral_fork(&home.0, &temporary.0, actual)
+        assert_eq!(actual, source.to_str().unwrap()); create_local_ephemeral_fork(&home.0, &temporary.0, actual, None)
     }).unwrap().unwrap();
     let copied = fs::read_to_string(&path).unwrap();
     let saved = runtime.ephemeral_sessions.lock().unwrap().get("view").cloned();

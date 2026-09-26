@@ -45,6 +45,15 @@ describe('composer interactions', () => {
     assert.match(document.querySelector('.stream-status').textContent, /2 queued/);
   });
 
+  test('a streaming draft has a clickable follow-up send action', async () => {
+    await render({ streaming: true });
+    await enterText(editor(), 'After this turn');
+    assert.ok(control('Send message'));
+    await click(control('Send message'));
+    assert.deepEqual(sent, [['After this turn', 'followUp', []]]);
+    assert.ok(control('Pause piop'));
+  });
+
   test('in-flight submission is deduplicated and failed sends preserve newer typing', async () => {
     const pending = Promise.withResolvers();
     await render({ onSend: (...args) => { sent.push(args); return pending.promise; } });

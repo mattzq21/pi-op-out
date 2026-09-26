@@ -594,7 +594,7 @@ fn ephemeral_forks_copy_history_with_new_identity_and_private_permissions() {
     let original = format!("{header}\n{body}"); fs::write(&source, &original).unwrap();
     let mut ids = HashSet::new();
     for _ in 0..2 {
-        let (path, ephemeral) = create_local_ephemeral_fork(&home.0, &temporary.0, source.to_str().unwrap()).unwrap();
+        let (path, ephemeral) = create_local_ephemeral_fork(&home.0, &temporary.0, source.to_str().unwrap(), None).unwrap();
         assert!(Path::new(&path).starts_with(&temporary.0));
         let content = fs::read_to_string(&path).unwrap(); let (first, rest) = content.split_once('\n').unwrap();
         let fork: Value = serde_json::from_str(first).unwrap();
@@ -619,12 +619,12 @@ fn failed_ephemeral_forks_leave_no_partial_files_and_preserve_the_source() {
     let source = sessions.join("source.jsonl");
     for content in ["", "invalid\n", "{\"type\":\"message\"}\n", "{\"type\":\"session\"}"] {
         fs::write(&source, content).unwrap();
-        assert!(create_local_ephemeral_fork(&home.0, &temporary.0, source.to_str().unwrap()).is_err());
+        assert!(create_local_ephemeral_fork(&home.0, &temporary.0, source.to_str().unwrap(), None).is_err());
         assert_eq!(fs::read_to_string(&source).unwrap(), content);
         assert_eq!(fs::read_dir(&temporary.0).unwrap().count(), 0);
     }
     let outside = home.0.join("outside.jsonl"); fs::write(&outside, "{\"type\":\"session\"}\n").unwrap();
-    assert!(create_local_ephemeral_fork(&home.0, &temporary.0, outside.to_str().unwrap()).is_err());
+    assert!(create_local_ephemeral_fork(&home.0, &temporary.0, outside.to_str().unwrap(), None).is_err());
     assert_eq!(fs::read_dir(&temporary.0).unwrap().count(), 0);
 }
 

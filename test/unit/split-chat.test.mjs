@@ -24,7 +24,7 @@ describe('split conversation lifecycle', () => {
 
   test('connects an existing session, applies settings and releases its transport on unmount', async () => {
     let closed = 0; await render({ onClose: () => closed++ });
-    assert.deepEqual(connected, [['/repo', '/session.jsonl', undefined, undefined, false]]); assert.equal(control('Message piop').disabled, false);
+    assert.deepEqual(connected, [['/repo', '/session.jsonl', undefined, undefined, false, undefined]]); assert.equal(control('Message piop').disabled, false);
     assert.ok(calls.some(command => command.type === 'set_auto_compaction' && command.enabled));
     await render({ settings: { ...props.settings, autoRetry: false } }); assert.ok(calls.some(command => command.type === 'set_auto_retry' && command.enabled === false));
     await click(control('Close split pane')); assert.equal(closed, 1);
@@ -33,8 +33,8 @@ describe('split conversation lifecycle', () => {
 
   test('fork startup sends its initial prompt only after refresh and reports connection failure', async () => {
     let ready = 0;
-    await render({ forkFrom: 'entry', initialPrompt: 'Explore this', onReady: () => ready++ });
-    assert.deepEqual(connected[0], ['/repo', undefined, undefined, 'entry', true]); assert.equal(ready, 1);
+    await render({ forkFrom: 'entry', forkLeafId: 'captured-leaf', initialPrompt: 'Explore this', onReady: () => ready++ });
+    assert.deepEqual(connected[0], ['/repo', undefined, undefined, 'entry', true, 'captured-leaf']); assert.equal(ready, 1);
     const promptIndex = calls.findIndex(command => command.type === 'prompt');
     assert.deepEqual(calls[promptIndex], { type: 'prompt', message: 'Explore this', images: undefined }); assert.ok(promptIndex > calls.findIndex(command => command.type === 'get_snapshot'));
     await view.unmount(); view = undefined;
