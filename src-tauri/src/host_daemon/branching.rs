@@ -225,7 +225,7 @@ impl Branch<'_> {
         let preparing = self.spawn_preparing()?;
         self.worker = Some(preparing.clone());
         let initial = preparing.execute(json!({"type":"get_state"})).await?;
-        let result = preparing.raw(command).await?;
+        let mut result = preparing.raw(command).await?;
         if result["cancelled"] == true {
             return Ok(result);
         }
@@ -234,6 +234,8 @@ impl Branch<'_> {
         let destination = self.persist(&branch, &initial)?;
         let opened = self.open(&branch, &destination).await?;
         self.commit(&opened).await?;
+        result["state"] = branch;
+        result["state"]["sessionFile"] = json!(destination);
         Ok(result)
     }
 

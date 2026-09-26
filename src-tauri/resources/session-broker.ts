@@ -577,8 +577,32 @@ export function registerSubagents(pi: ExtensionAPI) {
   });
 }
 
+type PinnedPrompt = { cwd: string; ref: string; commit: string };
+function forkPromptRepository(root: string | undefined, header: { cwd: string; checkpointRepositoryRoot?: string }) { return root ?? header.checkpointRepositoryRoot ?? header.cwd; }
+function validForkPrompt(data: { key?: string; commit?: string } | undefined) {
+  return /^[a-zA-Z0-9-]+$/.test(data?.key ?? "") && /^[a-f0-9]{40,64}$/.test(data?.commit ?? "");
+}
+async function pinForkPrompts(header: NonNullable<ReturnType<ExtensionContext["sessionManager"]["getHeader"]>>, retained: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>, sessionId: string, pinned: PinnedPrompt[]) {
+  const sourceId = header.id.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^\.+|\.+$/g, "") || "session";
+  for (const entry of retained) {
+    if (entry.type !== "custom" || entry.customType !== "pi-project-prompt-checkpoint") continue;
+    const data = entry.data as { key?: string; commit?: string; repositoryRoot?: string; unavailable?: boolean };
+    if (data?.unavailable) continue;
+    if (!validForkPrompt(data)) throw new Error("Invalid prompt checkpoint");
+    const repository = forkPromptRepository(data.repositoryRoot, header);
+    const source = `refs/pi-session-snapshots/chats/${sourceId}/prompts/${data.key}`;
+    const ref = `refs/pi-session-snapshots/chats/${sessionId}/prompts/${data.key}`;
+    const commit = data.commit!;
+    const existing = await runFile("git", ["-C", repository, "rev-parse", "--verify", source], { timeout: 10000 });
+    if (existing.stdout.trim() !== commit) throw new Error("Prompt checkpoint changed while forking");
+    await runFile("git", ["-C", repository, "update-ref", ref, commit, "0".repeat(commit.length)], { timeout: 10000 });
+    pinned.push({ cwd: repository, ref, commit });
+    entry.data = { ...data, repositoryRoot: repository };
+  }
+}
+
 export async function forkConversation(ctx: ExtensionContext, options: ForkOptions, createWorktree: (name: string) => Promise<CreatedWorktree>) {
-  const retained = forkHistory(ctx, options.entryId);
+  const retained = structuredClone(forkHistory(ctx, options.entryId));
   const header = ctx.sessionManager.getHeader();
   if (!header || !ctx.sessionManager.getSessionFile()) throw new Error("Save this conversation before forking it");
   let cwd = await forkDirectory(ctx.cwd, options);
@@ -588,7 +612,9 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   let created = false;
+  const pinned: PinnedPrompt[] = [];
   try {
+    await pinForkPrompts(header, retained, sessionId, pinned);
     await writeFork(sessionPath, [{ ...header, id: sessionId, timestamp, cwd, parentSession: ctx.sessionManager.getSessionFile() }, ...retained]);
     created = true;
     try {
@@ -604,6 +630,7 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
       await rm(sessionPath, { force: true });
       await rm(sessionPath.replace(/\.jsonl$/, ".diffs.json"), { force: true });
     }
+    await Promise.all(pinned.map(item => runFile("git", ["-C", item.cwd, "update-ref", "-d", item.ref, item.commit], { timeout: 10000 })));
     if (worktree) throw new Error(`Worktree kept at ${cwd}, but conversation fork failed: ${String(error)}`);
     throw error;
   }

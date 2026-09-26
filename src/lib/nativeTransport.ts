@@ -93,6 +93,7 @@ export class NativeTransport {
   private publishPresence = () => { if (this.running) void call("pi_presence", { runtimeId: this.runtimeId, presence: this.presence() }).catch(() => undefined); };
   private listeners = new Set<(event: RpcEvent) => void>();
   private retainedStatuses = new Map<string, RpcEvent>();
+  private retainedWidgets = new Map<string, RpcEvent>();
   private retainedRequests = new Map<string, RpcEvent>();
   private unlisten?: UnlistenFn;
   private stderrUnlisten?: UnlistenFn;
@@ -161,7 +162,13 @@ export class NativeTransport {
     if (event.type === "disconnected") this.daemonSettingsPending = false;
     if (event.type === "agent_start" || (event.type === "message_start" && (event.message as { role?: string })?.role === "user")) this.temporaryChatUsed = true;
   }
+  private retainWidget(event: RpcEvent) {
+    if (event.type === "extension_ui_request" && event.method === "setWidget" && typeof event.widgetKey === "string") {
+      if (Array.isArray(event.widgetLines)) this.retainedWidgets.set(event.widgetKey, event); else this.retainedWidgets.delete(event.widgetKey);
+    }
+  }
   private retainExtensionState(event: RpcEvent) {
+    this.retainWidget(event);
     if (event.type === "extension_ui_resolved" && typeof event.id === "string") this.retainedRequests.delete(event.id);
     if (event.type === "extension_ui_request" && event.method === "setStatus" && typeof event.statusKey === "string") {
       if (event.statusText) this.retainedStatuses.set(event.statusKey, event); else this.retainedStatuses.delete(event.statusKey);
@@ -202,9 +209,9 @@ export class NativeTransport {
     this.retainExtensionState(event);
     if (event.type === "queue_update") this.queueSnapshot = event;
     if (["queue_update", "extension_ui_request", "extension_ui_resolved"].includes(event.type)) {
-      retainSessionResource(this, "transport", [this.queueSnapshot, ...this.retainedStatuses.values(), ...this.retainedRequests.values()], () => {
+      retainSessionResource(this, "transport", [this.queueSnapshot, ...this.retainedStatuses.values(), ...this.retainedWidgets.values(), ...this.retainedRequests.values()], () => {
         this.queueSnapshot = { type: "queue_update", steering: [], followUp: [], pendingMessages: [] };
-        this.retainedStatuses.clear(); this.retainedRequests.clear();
+        this.retainedStatuses.clear(); this.retainedWidgets.clear(); this.retainedRequests.clear();
       });
     }
     for (const listener of [...this.listeners]) {
@@ -218,7 +225,7 @@ export class NativeTransport {
   }
   private connectionLost() {
     ++this.connectionVersion; this.connectPromise = undefined; this.running = false; this.owns = false;
-    this.retainedStatuses.clear(); this.retainedRequests.clear();
+    this.retainedStatuses.clear(); this.retainedWidgets.clear(); this.retainedRequests.clear();
     this.presenceCleanup?.(); this.presenceCleanup = undefined;
   }
   async connect(cwd?: string, sessionPath?: string, hostId?: string, forkPath?: string, ephemeral = false, forkLeafId?: string) {
@@ -282,7 +289,7 @@ export class NativeTransport {
     this.owns = !this.readOnly && attached?.owned !== false;
     this.emit({ type: this.owns ? "ownership_acquired" : "ownership_lost" });
   }
-  async disconnect(discardBlank = false) { ++this.connectionVersion; this.running = false; this.presenceCleanup?.(); this.presenceCleanup = undefined; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.retainedStatuses.clear(); this.retainedRequests.clear(); return this.runProcessCommand(() => call<boolean>("stop_pi", { runtimeId: this.runtimeId, discardBlank })); }
+  async disconnect(discardBlank = false) { ++this.connectionVersion; this.running = false; this.presenceCleanup?.(); this.presenceCleanup = undefined; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.retainedStatuses.clear(); this.retainedWidgets.clear(); this.retainedRequests.clear(); return this.runProcessCommand(() => call<boolean>("stop_pi", { runtimeId: this.runtimeId, discardBlank })); }
   async reconnectForSettings(settings: AppSettings) {
     await this.disconnect();
     if (this.hostId !== "local" && !settings.hosts.some((host) => host.id === this.hostId)) { this.hostId = "local"; this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined; this.temporaryChat = false; this.temporaryChatUsed = false; this.fresh = true; }
@@ -351,7 +358,7 @@ export class NativeTransport {
   private resetChangedSession(command: RpcCommand, result: unknown) {
     if (["new_session", "switch_session", "fork", "fork_after", "clone"].includes(command.type) && !(result as { cancelled?: boolean })?.cancelled) { forgetSession(this); this.sessionId = undefined; }
   }
-  subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); listener(this.queueView()); this.retainedStatuses.forEach((event) => listener(event)); this.retainedRequests.forEach((event) => listener(event)); return () => this.listeners.delete(listener); }
+  subscribe(listener: (event: RpcEvent) => void) { this.listeners.add(listener); listener(this.queueView()); this.retainedStatuses.forEach((event) => listener(event)); this.retainedWidgets.forEach((event) => listener(event)); this.retainedRequests.forEach((event) => listener(event)); return () => this.listeners.delete(listener); }
   listSessions() { return call<SessionSummary[]>("list_sessions"); }
   captureGitTree(cwd: string, hostId = "local") { return call<string | null>("capture_git_tree", { cwd, hostId }); }
   discardGitTree(snapshot: string, hostId = "local") { return call<void>("discard_git_tree", { snapshot, hostId }); }

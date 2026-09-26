@@ -19,6 +19,7 @@ struct PreparedPiSession {
     fork_path: Option<String>,
     ephemeral_path: Option<String>,
     ephemeral: bool,
+    created_ephemeral: bool,
 }
 
 impl PreparedPiSession {
@@ -56,9 +57,11 @@ fn prepare_pi_session(runtime: &PiRuntime, settings: &AppSettings, host_id: Stri
     let ephemeral = options.no_session.unwrap_or(false) || saved_ephemeral.is_some();
     let session_path = if ephemeral { None } else { options.session_path.as_deref().map(|path| desktop_session_file(settings, &host_id, path)).transpose()? };
     let fork_path = options.fork_path.as_deref().map(|path| desktop_session_file(settings, &host_id, path)).transpose()?;
+    let reused_ephemeral = saved_ephemeral.is_some();
     let ephemeral_path = prepare_ephemeral_path(runtime, &ephemeral_key, ephemeral, saved_ephemeral, fork_path.as_deref(), |source_path| create_ephemeral_fork(settings, &host_id, source_path, options.fork_leaf_id.as_deref()))?;
+    let created_ephemeral = !reused_ephemeral && ephemeral_path.is_some();
     if ephemeral_path.is_some() { runtime.ephemeral_keys.lock().map_err(|_| "Side conversation lock was poisoned")?.insert(options.runtime_id.clone(), ephemeral_key); }
-    Ok(PreparedPiSession { host_id, session_id, session_path, fork_path, ephemeral_path, ephemeral })
+    Ok(PreparedPiSession { host_id, session_id, session_path, fork_path, ephemeral_path, ephemeral, created_ephemeral })
 }
 
 fn ensure_runtime_owner(runtime: &PiRuntime, runtime_id: &str, owner: &str) -> Result<(), String> {
@@ -79,9 +82,15 @@ fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, 
     let host_id = options.host_id.clone().unwrap_or_else(|| "local".into());
     if runtime_is_attached(&runtime, &options.runtime_id, &settings, &host_id)? { return Ok(json!({"attached":true})); }
     let session = prepare_pi_session(&runtime, &settings, host_id, &options)?;
-    let claim_id = session.claim_id(&settings)?;
-    let _agent_claim = session.claim(&broker, claim_id.as_deref(), options.presence.as_ref())?;
-    attach_pi_session(&app, owner, &runtime, &broker, &settings, options, (session, claim_id))
+    let created_ephemeral = session.created_ephemeral;
+    let runtime_id = options.runtime_id.clone();
+    let result = (|| {
+        let claim_id = session.claim_id(&settings)?;
+        let _agent_claim = session.claim(&broker, claim_id.as_deref(), options.presence.as_ref())?;
+        attach_pi_session(&app, owner, &runtime, &broker, &settings, options, (session, claim_id))
+    })();
+    if result.is_err() && created_ephemeral { cleanup_runtime_ephemeral(&runtime, &runtime_id)?; }
+    result
 }
 
 fn attach_pi_session(app: &AppHandle, owner: String, runtime: &PiRuntime, broker: &BrokerRuntime, settings: &AppSettings, options: StartPiOptions, prepared: (PreparedPiSession, Option<String>)) -> Result<Value, String> {
@@ -110,9 +119,10 @@ fn detach_pi_with(runtime: &PiRuntime, runtime_id: &str, discard_blank: bool, pr
             stopped = true;
             process.blank_cleanup.submitted |= result["submitted"].as_bool().unwrap_or(false);
             if discard_blank { cleanup_blank_session(process.blank_cleanup); }
-            let key = runtime.ephemeral_keys.lock().map_err(|_| "Side conversation lock was poisoned")?.remove(runtime_id).unwrap_or_else(|| runtime_id.to_string());
-            if let Some(session) = runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.remove(&key) { remove_ephemeral_session(session); }
+            cleanup_runtime_ephemeral(runtime, runtime_id)?;
         }
+    } else {
+        cleanup_runtime_ephemeral(runtime, runtime_id)?;
     }
     runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.remove(runtime_id);
     Ok(stopped)
@@ -153,7 +163,7 @@ fn pi_command(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRun
 }
 
 fn command_snapshot<'a>(command_type: &str, result: &'a Value) -> Option<&'a Value> {
-    match command_type { "get_snapshot" => Some(&result["state"]), "get_state" => Some(result), _ => None }
+    match command_type { "get_snapshot" | "fork" | "fork_after" => result.get("state"), "get_state" => Some(result), _ => None }
 }
 
 #[cfg(feature = "desktop")]
@@ -405,7 +415,23 @@ fn update_command_ownership(runtime: &PiRuntime, runtime_id: &str, command_type:
     Ok(())
 }
 
+fn update_ephemeral_snapshot(runtime: &PiRuntime, runtime_id: &str, state: &Value) -> Result<(), String> {
+        let key = runtime.ephemeral_keys.lock().map_err(|_| "Side conversation lock was poisoned")?.get(runtime_id).cloned();
+        if let (Some(key), Some(path)) = (key, state["sessionFile"].as_str()) {
+            let mut sessions = runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?;
+            if let Some(session) = sessions.get_mut(&key) {
+                if session.path() != path && Path::new(&session.path()).parent() == Path::new(path).parent() {
+                    let previous = session.clone();
+                    match session { EphemeralSession::Local(current) => *current = path.into(), EphemeralSession::Remote { path: current, .. } => *current = path.into() }
+                    runtime.ephemeral_previous.lock().map_err(|_| "Side conversation lock was poisoned")?.entry(key).or_default().push(previous);
+                }
+            }
+        }
+    Ok(())
+}
+
 fn update_runtime_snapshot(runtime: &PiRuntime, runtime_id: &str, state: &Value) -> Result<(), String> {
+        update_ephemeral_snapshot(runtime, runtime_id, state)?;
         if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(runtime_id) {
             if let Some(path) = state["sessionFile"].as_str() { process.blank_cleanup.path = Some(path.into()); }
             if let Some(id) = state["sessionId"].as_str() { process.blank_cleanup.id = Some(id.into()); }

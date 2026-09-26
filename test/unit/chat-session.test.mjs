@@ -149,4 +149,15 @@ describe('chat session hook', () => {
     await act(async () => hook.current.discardPendingUpdates()); await dom.flushFrames();
     assert.equal(hook.current.messages[0].content, 'second');
   });
+
+  test('replayed live tool output loads once until a newer update arrives', async () => {
+    responses.set('get_snapshot', snapshot({ liveTools: [{ type: 'tool_execution_start', toolCallId: 'call', toolName: 'read', partialResult: { content: 'live output' } }] }));
+    await act(() => hook.current.refresh()); await dom.flushFrames();
+    await act(() => hook.current.messages[0].loadToolPayload());
+    await act(() => hook.current.messages[0].loadToolPayload());
+    assert.equal(calls.filter(type => type === 'get_tool_payload').length, 1);
+    await send({ type: 'tool_execution_update', toolCallId: 'call', sequence: 11 }); await dom.flushFrames();
+    await act(() => hook.current.messages[0].loadToolPayload());
+    assert.equal(calls.filter(type => type === 'get_tool_payload').length, 2);
+  });
 });

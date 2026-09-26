@@ -205,7 +205,7 @@ export function SettingsView(props: SettingsViewProps) {
     const availableModelIds = new Set(settingsProps().models.map((model) => `${model.provider}/${model.id}`));
     const hiddenModels = new Set(draft().hiddenModels);
     const modelChoices = [...settingsProps().models.map((model) => ({ id: `${model.provider}/${model.id}`, name: accountModelName(model, settingsProps().models) }))];
-    for (const id of hiddenModels) if (!availableModelIds.has(id)) modelChoices.push({ id, name: id });
+    for (const id of new Set([...(draft().knownModels ?? []), ...settingsProps().settings.hiddenModels, ...hiddenModels])) if (!availableModelIds.has(id)) modelChoices.push({ id, name: id });
     const filteredModelChoices = modelChoices.filter((model) => `${model.name} ${model.id}`.toLocaleLowerCase().includes(modelFilter().trim().toLocaleLowerCase()));
     const modelDiscoveryUnavailable = settingsProps().models.length === 0;
     const thinkingDiscoveryUnavailable = modelDiscoveryUnavailable;

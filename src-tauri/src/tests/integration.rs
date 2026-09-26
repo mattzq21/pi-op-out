@@ -123,3 +123,19 @@ fn worktree_setup_registration_and_cancellation_are_isolated_and_repeatable() {
     signal_worktree_setup_cancellation(&runtime, &first).unwrap();
     assert_eq!(runtime.worktree_setups.lock().unwrap().len(), 1);
 }
+
+#[cfg(not(feature = "desktop"))]
+#[test]
+fn disconnect_cancels_only_its_worktree_setups_and_rejects_late_registration() {
+    let app = AppHandle::new();
+    let prepare = |owner: &str| crate::platform::async_runtime::block_on(mobile_commands::dispatch_peer(app.clone(), owner.into(), "prepare_worktree_setup".into(), json!({})));
+    let first = prepare("first").unwrap().as_str().unwrap().to_owned();
+    let second = prepare("second").unwrap().as_str().unwrap().to_owned();
+    let runtime = app.state::<PiRuntime>();
+    let first_signal = runtime.worktree_setups.lock().unwrap()[&first].clone();
+    let second_signal = runtime.worktree_setups.lock().unwrap()[&second].clone();
+    detach_owner(&app, "first", false);
+    assert!(first_signal.load(Ordering::SeqCst));
+    assert!(!second_signal.load(Ordering::SeqCst));
+    assert!(prepare("first").is_err());
+}

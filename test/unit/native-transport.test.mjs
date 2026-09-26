@@ -163,6 +163,18 @@ test('subscriptions replay queue, statuses and unresolved dialogs, and filter ot
   assert.equal(client.hasPendingSettings(), false);
 });
 
+test('returning subscribers recover widgets and removed widgets stay removed', async () => {
+  const client = transport(); await client.connect();
+  const runtimeId = commands('start_pi')[0].args.runtimeId;
+  const widget = { type: 'extension_ui_request', method: 'setWidget', widgetKey: 'progress', widgetLines: ['Working'] };
+  await emit('pi://event', { runtimeId, event: widget });
+  const replay = []; const unsubscribe = client.subscribe(event => replay.push(event)); unsubscribe();
+  assert.ok(replay.some(event => event.method === 'setWidget' && event.widgetLines[0] === 'Working'));
+  await emit('pi://event', { runtimeId, event: { ...widget, widgetLines: undefined } });
+  const cleared = []; client.subscribe(event => cleared.push(event));
+  assert.equal(cleared.some(event => event.method === 'setWidget'), false);
+});
+
 test('history refresh uses daemon entries without retaining a second live assistant copy', async () => {
   const client = transport();
   await client.connect();

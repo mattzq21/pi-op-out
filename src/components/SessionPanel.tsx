@@ -103,7 +103,10 @@ function groupLabel(project: string, hostId: string, hostName: string | undefine
 }
 
 export function SessionPanel(props: Props) {
-  const visibleSessions = createMemo(() => props.sessions.filter(session => !session.subagentParentId && !session.isDraft));
+  const visibleSessions = createMemo(() => {
+    const parents = new Set(props.sessions.map(session => `${session.hostId ?? "local"}:${session.id}`));
+    return props.sessions.filter(session => !session.isDraft && (!session.subagentParentId || !parents.has(`${session.hostId ?? "local"}:${session.subagentParentId}`)));
+  });
   const panelFields = createMemoFields(() => sessionPanelDefaults({ ...props, sessions: visibleSessions() }));
   const panel = () => panelFields;
   const [menu, setMenu] = createSignal<{ session: SessionSummary; x: number; y: number; returnFocus?: HTMLElement }>();

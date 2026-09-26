@@ -170,6 +170,20 @@ test('Git sessions fork in place and into an independent real worktree', async t
   assert.deepEqual((await readEntries(fork.sessionPath)).slice(1), f.entries.slice(0, 2));
 });
 
+test('an unopened fork owns inherited prompt checkpoints before its parent is deleted', async t => {
+  const f = await fixture(t);
+  const git = (...args) => exec('git', ['-C', f.dir, ...args]);
+  await git('init');
+  await git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '--allow-empty', '-m', 'initial');
+  const commit = (await git('rev-parse', 'HEAD')).stdout.trim();
+  const sourceRef = 'refs/pi-session-snapshots/chats/source/prompts/before';
+  await git('update-ref', sourceRef, commit);
+  f.entries.splice(1, 0, { type: 'custom', id: 'checkpoint', parentId: 'u1', customType: 'pi-project-prompt-checkpoint', data: { key: 'before', owner: 'source', commit, base: commit } });
+  const child = await f.forkConversation(f.ctx, {}, unexpectedWorktree);
+  await git('update-ref', '-d', sourceRef, commit);
+  assert.equal((await git('rev-parse', '--verify', `refs/pi-session-snapshots/chats/${child.sessionId}/prompts/before`)).stdout.trim(), commit);
+});
+
 test('cancelled tools do not create sessions or contact the worktree broker', async t => {
   const f = await fixture(t);
   t.mock.method(globalThis, 'fetch', async () => { assert.fail('Cancelled operation contacted broker'); });

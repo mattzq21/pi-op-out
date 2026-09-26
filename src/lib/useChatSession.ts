@@ -84,7 +84,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       }
     };
     const replaySnapshotEvents = (snapshot: SessionSnapshot) => {
-      for (const event of snapshot.liveTools) { eventHandler.current(event); if (event.partialResult) eventHandler.current({ ...event, type: "tool_execution_update" }); }
+      for (const event of snapshot.liveTools) { eventHandler.current(event); if (event.partialResult) eventHandler.current({ ...event, sequence: snapshot.sequence, type: "tool_execution_update" }); }
       for (const event of buffer) if (typeof event.sequence !== "number" || (event.epoch === snapshot.epoch && event.sequence > snapshot.sequence)) eventHandler.current(event);
     };
     const finishRefresh = () => {

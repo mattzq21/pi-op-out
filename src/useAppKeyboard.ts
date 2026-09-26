@@ -31,7 +31,7 @@ export function useAppKeyboard(context: KeyboardContext) {
       if (event.repeat || document.querySelector("dialog[open]")) return true;
       const target = event.target instanceof HTMLElement ? event.target : undefined;
       if (target?.closest(".keybind-input")) return true;
-      return target?.closest("input, textarea, select, [contenteditable='true'], .keybind-input") && !event.ctrlKey && !event.metaKey;
+      return target?.closest("input, textarea, select, [contenteditable='true'], .keybind-input") && !event.ctrlKey && !event.metaKey && !event.altKey;
     };
     const isConversationSearchShortcut = (event: KeyboardEvent) => (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "g";
     const handleKeybind = (event: KeyboardEvent) => {

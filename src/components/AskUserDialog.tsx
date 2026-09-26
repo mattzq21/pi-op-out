@@ -24,10 +24,13 @@ function validQuestion(value: Question) {
     && value.options.every((option) => option && typeof option.label === "string" && typeof option.description === "string");
 }
 
-export function AskUserDialog(props: { request: ExtensionUiRequest; owner?: string; onRespond: (response: Record<string, unknown>) => void | Promise<void> }) {
+export function createQuestionDraft(request: ExtensionUiRequest) {
+  return { index: createSignal(0), answers: createSignal<Answer[]>(readQuestions(request).map(() => ({ selected: -1, notes: "" }))) };
+}
+
+export function AskUserDialog(props: { request: ExtensionUiRequest; owner?: string; draft?: ReturnType<typeof createQuestionDraft>; onRespond: (response: Record<string, unknown>) => void | Promise<void> }) {
   const questions = readQuestions(props.request);
-  const [index, setIndex] = createSignal(0);
-  const [answers, setAnswers] = createSignal<Answer[]>(questions.map(() => ({ selected: -1, notes: "" })));
+  const { index: [index, setIndex], answers: [answers, setAnswers] } = props.draft ?? createQuestionDraft(props.request);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal(questions.length ? "" : "The question request is invalid. Cancel to let the agent retry.");
   const titleId = createUniqueId();

@@ -7,6 +7,7 @@ const { execFile } = require("node:child_process");
 
 const piopRoot = path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop");
 const sessionRoots = [path.join(piopRoot, "sessions"), path.join(piopRoot, "archived")];
+function promptRepository(entry, header) { return entry.data?.repositoryRoot ?? header.checkpointRepositoryRoot ?? header.cwd; }
 
 async function regularFileSize(file) {
   try {
@@ -97,7 +98,7 @@ async function inspectSession(file, includeArchiveDetails) {
   };
   const recordPromptCheckpoint = (entry) => {
     if (entry.type === "custom" && entry.customType === "pi-project-prompt-checkpoint") {
-      const cwd = header.checkpointRepositoryRoot ?? header.cwd;
+      const cwd = promptRepository(entry, header);
       if (promptCheckpoint(entry.data) && typeof cwd === "string" && path.isAbsolute(cwd) && typeof header.id === "string") {
         const repository = checkpointRepositoryRecord(checkpointRepositories, cwd);
         repository.commits.add(entry.data.commit);

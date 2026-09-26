@@ -316,20 +316,29 @@ fn handle_remove_git_worktree(app: AppHandle, _owner: String, args: Value) -> Co
     })
 }
 
-fn handle_prepare_worktree_setup(app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
+fn handle_prepare_worktree_setup(app: AppHandle, owner: String, _args: Value) -> CommandFuture {
     Box::pin(async move {
-        tokio::task::spawn_blocking(move || serde_json::to_value(prepare_worktree_setup(app.state())?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+        tokio::task::spawn_blocking(move || {
+            let runtime = app.state::<PiRuntime>();
+            let mut owners = runtime.worktree_setup_owners.lock().map_err(|_| "Setup lock was poisoned")?;
+            if owners.detached.contains(&owner) { return Err("Connection has ended".into()); }
+            let id = prepare_worktree_setup(app.state())?;
+            owners.setups.insert(id.clone(), owner);
+            Ok(json!(id))
+        }).await.map_err(|error| error.to_string())?
     })
 }
 
-fn handle_cancel_worktree_setup(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+fn handle_cancel_worktree_setup(app: AppHandle, owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
+        verify_setup_owner(&app.state::<PiRuntime>(), &argument::<String>(&args, "setupId")?, &owner)?;
         tokio::task::spawn_blocking(move || serde_json::to_value(cancel_worktree_setup(app.state(), argument(&args, "setupId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
     })
 }
 
-fn handle_run_worktree_setup(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+fn handle_run_worktree_setup(app: AppHandle, owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
+        verify_setup_owner(&app.state::<PiRuntime>(), &argument::<String>(&args, "setupId")?, &owner)?;
         serde_json::to_value(run_worktree_setup(app.clone(), argument(&args, "setupId")?, argument(&args, "cwd")?, argument(&args, "worktreePath")?, argument(&args, "hostId")?).await?).map_err(|error| error.to_string())
     })
 }

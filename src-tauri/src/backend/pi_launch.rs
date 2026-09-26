@@ -44,10 +44,20 @@ fn remote_directory_path(path: Option<&str>) -> String {
 }
 
 fn remove_ephemeral_session(session: EphemeralSession) {
-    match session {
-        EphemeralSession::Local(path) => { let _ = fs::remove_file(format!("{}.loop-detection.json", path.display())); let _ = fs::remove_file(path); }
-        EphemeralSession::Remote { host, path } => { let _ = ssh(&host).arg(format!("rm -f -- {} {}", shell_quote(&path), shell_quote(&format!("{path}.loop-detection.json")))).status(); }
-    }
+    let script = include_str!("../../resources/cleanup-ephemeral-session.cjs");
+    let result = match session {
+        EphemeralSession::Local(path) => node_command().args(["-e", script]).arg(path).output(),
+        EphemeralSession::Remote { host, path } => ssh(&host).arg(remote_login_command(&format!("node -e {} {}", shell_quote(script), shell_quote(&path)))).output(),
+    };
+    match result { Ok(output) if output.status.success() => {}, Ok(output) => eprintln!("Could not clean up side conversation: {}", String::from_utf8_lossy(&output.stderr)), Err(error) => eprintln!("Could not clean up side conversation: {error}") }
+}
+
+fn cleanup_runtime_ephemeral(runtime: &PiRuntime, runtime_id: &str) -> Result<(), String> {
+    let key = runtime.ephemeral_keys.lock().map_err(|_| "Side conversation lock was poisoned")?.remove(runtime_id).unwrap_or_else(|| runtime_id.to_string());
+    let current = runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.remove(&key);
+    let previous = runtime.ephemeral_previous.lock().map_err(|_| "Side conversation lock was poisoned")?.remove(&key).unwrap_or_default();
+    for session in previous.into_iter().chain(current) { remove_ephemeral_session(session); }
+    Ok(())
 }
 
 fn create_ephemeral_fork(settings: &AppSettings, host_id: &str, source_path: &str, leaf_id: Option<&str>) -> Result<(String, EphemeralSession), String> {
@@ -297,6 +307,9 @@ fn remote_session_arguments<'a>(launch: PiLaunch<'a>, arguments: &mut Vec<String
 
 fn configure_local_extensions(command: &mut Command, settings: &AppSettings, host_id: &str, broker: (u16, &str), session_dir: &Path) -> Result<(), String> {
     let (broker_port, broker_token) = broker;
+    command.env("PIOP_AGENT_CONFIG_PATH", home_dir()?.join(STORAGE_DIRECTORY).join("piop-define-agents/config.json"))
+        .env("PIOP_RUNTIME_SETTINGS_PATH", generated_extension_root()?.join("runtime-settings.json"))
+        .env("PIOP_GENERATED_EXTENSION_ROOT", generated_extension_root()?);
     let LocalPiExtensions { mcp_extension, context_window_cap_extension, session_cost_limit_extension, diff_watch_extension, trace_reader_extension, openai_cache_fork_extension, codex_web_search_extension, defined_agents_extension } = local_pi_extensions(settings)?;
         command.arg("--extension").arg(prepare_loop_detection_extension()?);
         command.arg("--extension").arg(prepare_rtk_extension()?);

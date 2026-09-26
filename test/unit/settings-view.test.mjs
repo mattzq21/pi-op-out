@@ -52,6 +52,19 @@ describe('settings editor', () => {
   });
 
 
+  test('remote-only models remain available to hide again after being enabled', async () => {
+    props.settings.hiddenModels = ['remote/model'];
+    props.settings.knownModels = ['remote/model'];
+    await render({ scope: 'client', models: [{ provider: 'p', id: 'model', name: 'Local' }] });
+    await section('Models');
+    await click(control('Show remote/model'));
+    assert.ok(control('Show remote/model'));
+    assert.equal(control('Show remote/model').getAttribute('aria-checked'), 'true');
+    await click(control('Show remote/model'));
+    await click(save());
+    assert.equal(control('Show remote/model').getAttribute('aria-checked'), 'false');
+  });
+
   test('MCP HTTP validation rejects bad URLs, headers and timeouts before saving', async () => {
     await render({ agentConfig: { agents: [profile('general')] } }); await section('Agents'); await click(button('Add MCP server')); await enterText(control('Server name'), 'Search');
     await click(button('HTTP')); const fields = () => document.querySelectorAll('.http-fields input');

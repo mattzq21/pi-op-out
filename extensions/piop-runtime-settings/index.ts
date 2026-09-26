@@ -40,7 +40,7 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
     for (const [id, provider] of accountProviders) if (existing.get(id) !== provider) pi.registerProvider(provider);
   };
   await refreshAccounts();
-  processState[key] ??= validate(JSON.parse(await readFile(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "runtime-settings.json"), "utf8")));
+  processState[key] ??= validate(JSON.parse(await readFile(process.env.PIOP_RUNTIME_SETTINGS_PATH || join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "runtime-settings.json"), "utf8")));
   const current = () => processState[key]!;
   const unsubscribe = pi.events.on("piop:runtime-settings", (value) => { (value as { settings?: Settings }).settings = structuredClone(current()); });
   pi.registerFlag("piop-runtime-settings", { description: "Inherited Piop runtime settings", type: "string" });

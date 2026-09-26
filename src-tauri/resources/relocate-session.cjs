@@ -12,6 +12,17 @@ const git = (args) => execFileSync('git', ['-C', replacement, ...args], { encodi
 let root;
 try { root = fs.realpathSync(git(['rev-parse', '--show-toplevel'])); } catch { }
 const verified = new Map();
+for (let index = 1; index < lines.length; index++) {
+  if (!lines[index].trim()) continue;
+  const entry = JSON.parse(lines[index]);
+  if (entry.type !== 'custom' || entry.customType !== 'pi-project-prompt-checkpoint' || entry.data?.unavailable || !entry.data) continue;
+  const id = header.id.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session';
+  const ref = `refs/pi-session-snapshots/chats/${id}/prompts/${entry.data.key}`;
+  let relocated = false;
+  try { relocated = Boolean(root) && git(['rev-parse', '--verify', ref]) === entry.data.commit; } catch { }
+  entry.data.repositoryRoot = relocated ? root : entry.data.repositoryRoot ?? header.checkpointRepositoryRoot ?? header.cwd;
+  lines[index] = JSON.stringify(entry);
+}
 if (root) {
   for (let index = 1; index < lines.length; index++) {
     if (!lines[index].trim()) continue;

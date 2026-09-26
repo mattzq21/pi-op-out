@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
+
 pub(super) fn client_payload(mut value: Value) -> Value {
     if value["entries"].is_array() && value.get("leafId").is_some() {
         return client_history(value);
@@ -106,6 +107,7 @@ fn client_history(mut history: Value) -> Value {
     let branch = branch(&history);
     let mut entries = Vec::new();
     let mut size = 0;
+    let mut wire_size = 0;
     for mut entry in branch.iter().rev().cloned() {
         if entry["message"]["role"] == "toolResult" {
             let message = &entry["message"];
@@ -127,11 +129,13 @@ fn client_history(mut history: Value) -> Value {
             }
         }
         let entry = client_payload(entry);
-        let cost = entry.to_string().encode_utf16().count() * 4 + 256;
-        if size + cost > 256 * 1024 * 1024 {
+        let serialized = entry.to_string();
+        let cost = serialized.encode_utf16().count() * 4 + 256;
+        if size + cost > 256 * 1024 * 1024 || wire_size + serialized.len() + 1 > 120 * 1024 * 1024 {
             break;
         }
         size += cost;
+        wire_size += serialized.len() + 1;
         entries.push(entry);
     }
     history["omittedEntries"] = json!(branch.len() - entries.len());
@@ -296,4 +300,17 @@ fn text_delta(current: &Value, event: &Value) -> Option<Value> {
         _ => return None,
     }
     Some(next)
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+    #[test]
+    fn non_ascii_history_fits_the_client_wire_limit() {
+        let content = "界".repeat(1024 * 1024);
+        let entries: Vec<_> = (0..48).map(|i| json!({"id":i.to_string(),"parentId":if i == 0 { Value::Null } else { json!((i-1).to_string()) },"type":"message","message":{"role":"assistant","content":content}})).collect();
+        let history = client_payload(json!({"entries":entries,"leafId":"47"}));
+        assert!(history.to_string().len() < 128 * 1024 * 1024);
+        assert!(history["omittedEntries"].as_u64().unwrap() > 0);
+    }
 }
