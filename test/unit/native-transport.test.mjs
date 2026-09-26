@@ -33,6 +33,19 @@ const transport = (target = { cwd: '/repo' }) => { const value = new native.Nati
 const commands = name => calls.filter(call => call.command === name);
 const rpc = type => commands('pi_command').filter(call => call.args.command.type === type);
 
+test('a failed stop still permits reconnecting and receiving events', async () => {
+  const client = transport();
+  await client.connect();
+  responses.set('stop_pi', new Error('connection lost'));
+  await assert.rejects(client.disconnect(), /connection lost/);
+  responses.set('stop_pi', true);
+  await client.connect();
+  assert.equal(commands('start_pi').length, 2);
+  const events = []; client.subscribe(event => events.push(event.type));
+  await emit('pi://event', { runtimeId: commands('start_pi').at(-1).args.runtimeId, event: { type: 'agent_start' } });
+  assert.ok(events.includes('agent_start'));
+});
+
 test('transport shares concurrent connects, publishes presence and cleans up listeners', async () => {
   const client = transport();
   assert.equal(client.needsDefaults(), true);
@@ -128,6 +141,18 @@ test('subscriptions replay queue, statuses and unresolved dialogs, and filter ot
   assert.equal(client.hasPendingSettings(), true);
   await send({ type: 'disconnected' });
   assert.equal(client.hasPendingSettings(), false);
+});
+
+test('returning subscribers recover widgets and removed widgets stay removed', async () => {
+  const client = transport(); await client.connect();
+  const runtimeId = commands('start_pi')[0].args.runtimeId;
+  const widget = { type: 'extension_ui_request', method: 'setWidget', widgetKey: 'progress', widgetLines: ['Working'] };
+  await emit('pi://event', { runtimeId, event: widget });
+  const replay = []; const unsubscribe = client.subscribe(event => replay.push(event)); unsubscribe();
+  assert.ok(replay.some(event => event.method === 'setWidget' && event.widgetLines[0] === 'Working'));
+  await emit('pi://event', { runtimeId, event: { ...widget, widgetLines: undefined } });
+  const cleared = []; client.subscribe(event => cleared.push(event));
+  assert.equal(cleared.some(event => event.method === 'setWidget'), false);
 });
 
 test('history refresh uses daemon entries without retaining a second live assistant copy', async () => {

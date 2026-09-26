@@ -55,25 +55,36 @@ function preserveResponse(header, entries) {
   return false;
 }
 
+function promptRepository(entry, header) { return entry.data?.repositoryRoot ?? header.checkpointRepositoryRoot ?? header.cwd; }
+
 function preservePrompts(header, entries) {
-  const promptRoot = header.checkpointRepositoryRoot ?? header.cwd;
   const prompts = entries.filter((entry) => entry.type === 'custom' && entry.customType === 'pi-project-prompt-checkpoint' && !entry.data?.unavailable);
-  if (prompts.length && promptRoot !== common && sameRepository(promptRoot)) {
-    const id = header.id.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session';
-    for (const entry of prompts) {
+  let changed = false;
+  const id = header.id.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session';
+  for (const entry of prompts) {
+    const promptRoot = promptRepository(entry, header);
+    if (promptRoot !== common && sameRepository(promptRoot)) {
       if (!/^[a-zA-Z0-9-]+$/.test(entry.data?.key ?? '')) throw new Error('Invalid archived prompt checkpoint');
       verifyRef(`refs/pi-session-snapshots/chats/${id}/prompts/${entry.data.key}`, entry.data.commit);
+      entry.data.repositoryRoot = common;
+      changed = true;
     }
-    header.checkpointRepositoryRoot = common;
-    return true;
   }
-  return false;
+  return changed;
 }
 
-function preserveSnapshotRoots(entries) {
+function ownedSnapshot(entry, prefix, id) {
+  if (entry.type !== 'custom' || entry.customType !== 'pi-project-files-watch-snapshot' || entry.data?.unavailable) return false;
+  const ref = entry.data?.ref;
+  return typeof ref === 'string' && (ref.startsWith(prefix) || ref === `refs/pi-session-snapshots/${id}`);
+}
+
+function preserveSnapshotRoots(header, entries) {
   let changed = false;
+  const id = header.id.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session';
+  const prefix = `refs/pi-session-snapshots/chats/${id}/`;
   for (const entry of entries) {
-    if (entry.type !== 'custom' || entry.customType !== 'pi-project-files-watch-snapshot' || entry.data?.unavailable) continue;
+    if (!ownedSnapshot(entry, prefix, id)) continue;
     const data = entry.data;
     if (data?.repositoryRoot === common || !sameRepository(data?.repositoryRoot)) continue;
     verifyRef(data.ref, data.commit);
@@ -109,7 +120,7 @@ function preserve(file) {
   if (header?.type !== 'session' || typeof header.id !== 'string') return;
   const responseChanged = preserveResponse(header, entries);
   const promptsChanged = preservePrompts(header, entries);
-  const rootsChanged = preserveSnapshotRoots(entries);
+  const rootsChanged = preserveSnapshotRoots(header, entries);
   if (responseChanged || promptsChanged || rootsChanged) writePreservedArchive(file, entries, stat);
 }
 

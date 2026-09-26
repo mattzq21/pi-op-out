@@ -98,6 +98,14 @@ test('fast mode validates configured and override models and applies supported s
   assert.deepEqual(await f.input('hello'), { action: 'handled' }); assert.match(f.notices.at(-1).message, /model test\/review\/model does not support fast mode/);
 });
 
+for (const enabled of [false, true]) test(`restoring an agent preserves the saved fast-mode choice ${enabled}`, async t => {
+  const f = await agentFixture(t, { config: configured([profile('general', { fastMode: !enabled })]), fastModels: ['test/default'] });
+  await f.load(); await f.start();
+  f.entries.push({ type: 'custom', customType: 'piop-fast-mode-state', data: { enabled } });
+  await f.start();
+  assert.equal(f.fastSelections.at(-1).enabled, enabled);
+});
+
 test('MCP selections wait for readiness, deduplicate tools, and report unavailable or rejected bridges', async t => {
   const f = await agentFixture(t, { config: configured([profile('general', { mcpServers: [remoteMcp] })]) });
   await f.load(); await f.start();

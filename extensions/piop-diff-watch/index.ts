@@ -233,6 +233,7 @@ async function saveSnapshot(root: string, sessionId: string) {
 }
 
 interface PromptCheckpoint {
+  repositoryRoot?: string;
   key: string;
   owner: string;
   commit: string;
@@ -279,18 +280,19 @@ async function capturePrompt(root: string, ctx: ExtensionContext): Promise<Promp
     "start", `create ${promptRef(sessionId, key)} ${commit}`,
     "prepare", "commit", "",
   ].join("\n"));
-  return { key, owner: sessionId, commit, base, capturedAt };
+  return { key, owner: sessionId, commit, base, capturedAt, repositoryRoot: root };
 }
 
 async function pinPromptHistory(root: string, sessionId: string, entries: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>, sourceOwner?: string) {
   const checkpoints = entries.flatMap((entry) => entry.type === "custom" && entry.customType === PROMPT_ENTRY
     ? [checkpointData(entry.data)].filter((value): value is PromptCheckpoint => Boolean(value)) : []);
   for (const checkpoint of checkpoints) {
+    const repository = checkpoint.repositoryRoot ?? root;
     const target = promptRef(sessionId, checkpoint.key);
-    if (await resolveRef(root, target)) continue;
+    if (await resolveRef(repository, target)) continue;
     const source = promptRef(sourceOwner ?? checkpoint.owner, checkpoint.key);
-    if (await resolveRef(root, source) !== checkpoint.commit) continue;
-    await runGit(root, ["update-ref", "--stdin"], {}, ["start", `verify ${source} ${checkpoint.commit}`, `create ${target} ${checkpoint.commit}`, "prepare", "commit", ""].join("\n"));
+    if (await resolveRef(repository, source) !== checkpoint.commit) continue;
+    await runGit(repository, ["update-ref", "--stdin"], {}, ["start", `verify ${source} ${checkpoint.commit}`, `create ${target} ${checkpoint.commit}`, "prepare", "commit", ""].join("\n"));
   }
 }
 

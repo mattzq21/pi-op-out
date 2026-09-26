@@ -2,6 +2,7 @@
 .mobile-navigation span { flex: 1; font: 24px Georgia, serif; }
 .mobile-navigation { display: none; align-items: center; position: absolute; z-index: 20; top: env(safe-area-inset-top); left: 8px; min-height: 52px; color: #eee; }
 html[data-mobile] .mobile-navigation { display: flex; }
+html[data-mobile] body { min-width: 0; }
 html[data-mobile] .app { padding-top: calc(52px + env(safe-area-inset-top)); }
 .mobile-sidebar-backdrop { display: none; }
 .mobile-connect { height: var(--mobile-height, 100dvh); overflow-y: auto; display: grid; align-items: safe center; justify-items: center; padding: max(28px, env(safe-area-inset-top)) 24px; background: #181817; color: #e8e5dd; }

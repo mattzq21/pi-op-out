@@ -196,6 +196,7 @@ async fn fork(host: &Arc<Host>, session: &Arc<Session>, runtime: &str, command: 
         worker: None,
         next: None,
         pending: None,
+        published: None,
         guard: None,
         committed: false,
     };
@@ -214,6 +215,7 @@ struct Branch<'a> {
     worker: Option<Arc<Session>>,
     next: Option<Arc<Session>>,
     pending: Option<PathBuf>,
+    published: Option<PathBuf>,
     guard: Option<Guard>,
     committed: bool,
 }
@@ -223,7 +225,7 @@ impl Branch<'_> {
         let preparing = self.spawn_preparing()?;
         self.worker = Some(preparing.clone());
         let initial = preparing.execute(json!({"type":"get_state"})).await?;
-        let result = preparing.raw(command).await?;
+        let mut result = preparing.raw(command).await?;
         if result["cancelled"] == true {
             return Ok(result);
         }
@@ -232,6 +234,8 @@ impl Branch<'_> {
         let destination = self.persist(&branch, &initial)?;
         let opened = self.open(&branch, &destination).await?;
         self.commit(&opened).await?;
+        result["state"] = branch;
+        result["state"]["sessionFile"] = json!(destination);
         Ok(result)
     }
 
@@ -274,6 +278,7 @@ impl Branch<'_> {
             .map_err(|error| error.to_string())?;
         drop(file);
         std::fs::hard_link(&pending_path, &destination).map_err(|error| error.to_string())?;
+        self.published = Some(destination.clone());
         Ok(destination)
     }
 
@@ -338,11 +343,13 @@ impl Branch<'_> {
         for worker in &workers {
             worker.stop().await;
         }
+        let rollback = if !self.committed { self.published.as_ref().map(std::fs::remove_file).transpose().map_err(|error| error.to_string()) } else { Ok(None) };
         let cleanup = cleanup_paths(self.pending.as_deref(), &self.directory);
         for worker in workers {
             self.host.forget_worker(worker);
         }
         release?;
+        rollback?;
         cleanup
     }
 }

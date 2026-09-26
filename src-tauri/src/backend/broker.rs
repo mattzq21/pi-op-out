@@ -198,11 +198,10 @@ fn respond_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStre
 
 fn message_context(app: &AppHandle, broker: &BrokerRuntime, session: &SessionSummary, client_id: &str) -> Result<(AppSettings, BusyAgent, conversation_ownership::MutationGuard), String> {
     let runtime = app.state::<PiRuntime>();
+    let claim = claim_agent(broker, &session.host_id, &session.id)?;
+    let ownership = conversation_ownership::MutationGuard::acquire(app, &session.host_id, &session.path, client_id, false, "message")?;
     let context = {
-        let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
-        let ownership = conversation_ownership::MutationGuard::acquire(app, &session.host_id, &session.path, client_id, false, "message")?;
         let settings = load_app_settings(app.clone())?;
-        let claim = claim_agent(broker, &session.host_id, &session.id)?;
         let daemon = runtime.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?.get(&session.host_id).cloned();
         if let Some(daemon) = daemon.filter(|daemon| daemon.alive.load(Ordering::SeqCst)) {
             daemon.request(json!({"type":"retire","sessionKey":session.id,"sessionPath":session.path}))?;

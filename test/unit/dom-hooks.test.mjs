@@ -6,6 +6,25 @@ import { usePendingMessageDrag } from '../../src/lib/usePendingMessageDrag.ts';
 import { useSessionGroups, isTemporaryChatCwd } from '../../src/lib/sessionGroups.ts';
 import { mockIPC, clearMocks } from '../mock-ipc.mjs';
 import { emit } from '@tauri-apps/api/event';
+import { useAppKeyboard } from '../../src/useAppKeyboard.ts';
+import { defaultKeybindings } from '../../src/lib/keybindings.ts';
+
+test('configured Alt shortcuts work while editing a message', async () => {
+  const dom = installDom();
+  let toggles = 0;
+  const hook = await renderHook(() => useAppKeyboard({
+    settings: () => ({ keybindings: { ...defaultKeybindings, toggleTerminal: 'Alt+J' } }),
+    activePane: () => 'main', splitPane: () => undefined, canLeaveSettings: () => true,
+    toggleTerminal: () => toggles++, toggleDebugMode() {}, newSession() {},
+    setView() {}, setPanelOpen() {}, setSplitComposerFocusRequest() {}, setMainComposerFocusRequest() {},
+    settingsDirty: () => false, view: () => 'chat', terminalOpen: () => false, setTerminalOpen() {},
+  }));
+  try {
+    const input = document.createElement('textarea'); document.body.append(input); input.focus();
+    await act(() => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', altKey: true, bubbles: true, cancelable: true })));
+    assert.equal(toggles, 1);
+  } finally { await hook.unmount(); dom.restore(); }
+});
 
 describe('native text editing shortcuts', () => {
   let dom, remove, commands;

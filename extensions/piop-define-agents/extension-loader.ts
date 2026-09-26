@@ -24,6 +24,10 @@ export function extensionPaths(value: unknown): string[] {
   return [...new Set(value.map(path => path.trim()))];
 }
 
+function bundledPath(path: string, parent: string, base: string) {
+  return path === "../piop-diagrams.ts" && parent === base && process.env.PIOP_GENERATED_EXTENSION_ROOT ? join(process.env.PIOP_GENERATED_EXTENSION_ROOT, "piop-diagrams.ts") : path;
+}
+
 async function directoryEntry(directory: string): Promise<string> {
   for (const name of ["index.ts", "index.js", "index.mjs", "index.cjs"]) {
     try {
@@ -93,6 +97,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
       }
     });
     async function load(path: string, parent: string) {
+      path = bundledPath(path, parent, baseDirectory);
       const absolute = path.startsWith("~/") ? join(homedir(), path.slice(2)) : resolve(parent, path);
       try {
         let entry = await realpath(absolute);

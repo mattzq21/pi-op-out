@@ -325,7 +325,7 @@ fn bundled_extension_installers_refresh_private_files_at_the_expected_paths() {
     for (install, relative, expected) in installers {
         let home = TestDirectory::new();
         let _home = HomeOverride::take(&home.0);
-        let target = home.0.join(STORAGE_DIRECTORY).join(relative);
+        let target = generated_extension_root().unwrap().join(relative);
         let path = install().unwrap();
         assert_eq!(path, target);
         assert_eq!(fs::read_to_string(&target).unwrap(), expected);
@@ -351,12 +351,23 @@ fn bundled_extension_installers_refresh_private_files_at_the_expected_paths() {
     }
 }
 
+#[test]
+fn development_extensions_are_scoped_to_the_daemon_worktree() {
+    if !DEVELOPMENT { return; }
+    let home = TestDirectory::new(); let _home = HomeOverride::take(&home.0);
+    let path = prepare_mcp_bridge().unwrap();
+    assert!(path.starts_with(daemon_endpoint::directory().unwrap()));
+    let expected = fs::read(&path).unwrap();
+    fs::write(home.0.join(STORAGE_DIRECTORY).join("piop-mcp-bridge.ts"), "other worktree build").unwrap();
+    assert_eq!(fs::read(path).unwrap(), expected);
+}
+
 
 #[test]
 fn side_conversation_preparation_removes_only_the_legacy_extension_after_installing() {
     let home = TestDirectory::new();
     let _home = HomeOverride::take(&home.0);
-    let entry = home.0.join(STORAGE_DIRECTORY).join("piop-btw.ts");
+    let entry = generated_extension_root().unwrap().join("piop-btw.ts");
     let legacy = home.0.join(".pi/agent/extensions/pi-desktop-btw.ts");
     fs::create_dir_all(legacy.parent().unwrap()).unwrap();
     fs::write(&legacy, "old btw").unwrap();
@@ -383,7 +394,7 @@ fn diff_watch_preparation_replaces_legacy_assets_and_refreshes_all_bundled_files
     fs::write(legacy.join("nested/stale.ts"), "stale").unwrap();
     let entry = prepare_diff_watch_extension().unwrap();
     assert!(!legacy.exists());
-    assert_eq!(entry, home.0.join(STORAGE_DIRECTORY).join("piop-diff-watch/index.ts"));
+    assert_eq!(entry, generated_extension_root().unwrap().join("piop-diff-watch/index.ts"));
     for _ in 0..2 {
         assert_eq!(fs::read_to_string(&entry).unwrap(), include_str!("../../../extensions/piop-diff-watch/index.ts"));
         prepare_diff_watch_extension().unwrap();
@@ -427,7 +438,7 @@ fn defined_agent_preparation_migrates_configuration_once_and_preserves_user_chan
     fs::write(legacy.join("index.ts"), "old extension").unwrap();
     fs::write(legacy.join("notes.txt"), "keep").unwrap();
     let entry = prepare_defined_agents_extension().unwrap();
-    assert_eq!(entry, home.0.join(STORAGE_DIRECTORY).join("piop-define-agents/index.ts"));
+    assert_eq!(entry, generated_extension_root().unwrap().join("piop-define-agents/index.ts"));
     assert_eq!(fs::read_to_string(&entry).unwrap(), include_str!("../../../extensions/piop-define-agents/index.ts"));
     let config = entry.with_file_name("config.json");
     assert!(!config.exists(), "legacy configuration migration is disabled in development builds");
@@ -466,6 +477,37 @@ fn temporary_startup_creates_one_fork_and_reuses_its_saved_identity() {
     assert_eq!(fs::read_dir(&temporary.0).unwrap().count(), 1);
     let session = runtime.ephemeral_sessions.lock().unwrap().remove("view").unwrap(); remove_ephemeral_session(session);
     assert!(!Path::new(&path).exists());
+}
+
+#[test]
+fn temporary_snapshot_reconnects_to_the_latest_branch_and_cleans_every_owned_file() {
+    let directory = TestDirectory::new(); let runtime = PiRuntime::default();
+    let first = directory.0.join("first.jsonl"); let second = directory.0.join("second.jsonl");
+    fs::write(&first, "{}").unwrap(); fs::write(&second, "{}").unwrap();
+    runtime.ephemeral_sessions.lock().unwrap().insert("stable".into(), EphemeralSession::Local(first.clone()));
+    runtime.ephemeral_keys.lock().unwrap().insert("view".into(), "stable".into());
+    update_runtime_snapshot(&runtime, "view", &json!({"sessionFile":second,"sessionId":"branch"})).unwrap();
+    assert_eq!(runtime.ephemeral_sessions.lock().unwrap()["stable"].path(), second.to_string_lossy());
+    detach_pi(&runtime, "view", false).unwrap();
+    assert!(!first.exists()); assert!(!second.exists());
+    assert!(runtime.ephemeral_sessions.lock().unwrap().is_empty());
+}
+
+#[cfg(not(feature = "desktop"))]
+#[test]
+fn rejected_temporary_startup_rolls_back_the_prepared_fork() {
+    let home = TestDirectory::new(); let _home = HomeOverride::take(&home.0);
+    let sessions = home.0.join(STORAGE_DIRECTORY).join("sessions"); fs::create_dir_all(&sessions).unwrap();
+    let source = sessions.join("source.jsonl");
+    fs::write(&source, format!("{}\n", json!({"type":"session","id":"source","cwd":home.0}))).unwrap();
+    let app = AppHandle::new();
+    let options = StartPiOptions { runtime_id: "view".into(), cwd: None, session_path: None, session_id: None, fork_path: Some(source.to_string_lossy().into_owned()), no_session: Some(true), host_id: None, presence: Some(json!({"readOnly":true})), client_id: "client".into() };
+    let error = start_pi_for_owner(app.clone(), "owner".into(), app.state(), app.state(), options).unwrap_err();
+    assert!(error.contains("read-only view requires"));
+    let runtime = app.state::<PiRuntime>();
+    assert!(runtime.ephemeral_sessions.lock().unwrap().is_empty());
+    assert!(runtime.ephemeral_keys.lock().unwrap().is_empty());
+    assert!(source.exists());
 }
 
 #[test]
@@ -529,7 +571,7 @@ fn configuration_preparation_reports_failed_writes_and_cleans_temporary_files() 
     for (relative, kind) in [("piop-mcp-bridge.ts", 0), ("runtime-settings.json", 1), ("piop-context-window-cap/config.json", 2)] {
         let home = TestDirectory::new();
         let _home = HomeOverride::take(&home.0);
-        let obstruction = home.0.join(STORAGE_DIRECTORY).join(relative);
+        let obstruction = generated_extension_root().unwrap().join(relative);
         fs::create_dir_all(&obstruction).unwrap();
         fs::write(obstruction.join("keep"), "original").unwrap();
         let result = match kind {

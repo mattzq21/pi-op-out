@@ -117,7 +117,7 @@ fn update_seed_metadata(state: &mut SessionGroups, seed: &SessionSeed) -> bool {
 
 fn assign_seed(state: &mut SessionGroups, seed: SessionSeed) -> bool {
     if state.assignments.contains_key(&seed.session_key) { return false; }
-    state.removed_projects.remove(&seed.project.id);
+    if state.removed_projects.contains(&seed.project.id) { state.assignments.insert(seed.session_key, None); return true; }
     if !state.groups.iter().any(|group| group.id == seed.project.id) {
         state.groups.insert(0, seed.project.clone());
     }

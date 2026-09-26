@@ -8,6 +8,7 @@ use std::{
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
+
 pub(super) trait Execution: Send + Sync {
     fn execute(&self, command: Value) -> BoxFuture<'_, Result<Value>>;
     fn publish(&self, event: Value);
@@ -46,6 +47,12 @@ impl QueueState {
                 follow_up.push(item["message"].clone());
             }
         }
+        let pending: Vec<_> = pending.iter().cloned().map(|mut item| {
+            if let Some(images) = item["images"].as_array_mut() {
+                for image in images { if let Some(fields) = image.as_object_mut() { fields.remove("data"); } }
+            }
+            item
+        }).collect();
         json!({"type":"queue_update","steering":steering,"followUp":follow_up,"pendingMessages":pending})
     }
 
@@ -390,10 +397,14 @@ impl SessionQueue {
     pub async fn command(&self, command: Value) -> Result<Value> {
         let name = kind(&command).to_owned();
         if name == "abort" {
-            let (cancelled, _gate) = tokio::join!(self.execute(json!({"type":"cancel_preparation"})), self.gate.lock());
-            cancelled?;
-            self.hold().await?;
-            return self.stop(command).await;
+            let abort = async {
+                let (cancelled, _gate) = tokio::join!(self.execute(json!({"type":"cancel_preparation"})), self.gate.lock());
+                cancelled?;
+                self.hold().await?;
+                self.execute(command).await
+            };
+            let result = tokio::time::timeout(std::time::Duration::from_secs(5), abort).await.unwrap_or_else(|_| Err("Pi command timed out".into()));
+            return self.stop(result).await;
         }
         if name == "compact" || name.starts_with("get_") {
             return self.execute(command).await;
@@ -464,8 +475,8 @@ impl SessionQueue {
         result
     }
 
-    async fn stop(&self, command: Value) -> Result<Value> {
-        match self.execute(command).await {
+    async fn stop(&self, result: Result<Value>) -> Result<Value> {
+        match result {
             Err(error) if error == "Pi command timed out" => {
                 self.execute(json!({"type":"force_stop"})).await?;
                 {
@@ -474,6 +485,8 @@ impl SessionQueue {
                         item["retry"] = json!(true);
                     }
                     state.held = None;
+                    state.changing = false;
+                    state.clearing = false;
                     state.steering.clear();
                     state.follow_up.clear();
                     state.awaiting_steering.clear();
@@ -678,5 +691,36 @@ fn move_item(items: &mut Vec<Value>, id: &str, neighbor: &str, action: &Value) {
         }
     } else {
         items.swap(from, to);
+    }
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+    #[test]
+    fn queue_updates_keep_attachment_metadata_without_image_data() {
+        let item = json!({"id":"queued","message":"inspect","behavior":"followUp","images":[{"type":"image","mimeType":"image/png","data":"private-image"}]});
+        let view = QueueState::default().view(&[item]);
+        assert_eq!(view["pendingMessages"][0]["id"], "queued");
+        assert_eq!(view["pendingMessages"][0]["images"][0]["mimeType"], "image/png");
+        assert!(view["pendingMessages"][0]["images"][0].get("data").is_none());
+    }
+
+    struct StuckPreparation;
+    impl Execution for StuckPreparation {
+        fn execute(&self, command: Value) -> BoxFuture<'_, Result<Value>> {
+            Box::pin(async move {
+                if kind(&command) == "force_stop" { Ok(Value::Null) } else { std::future::pending().await }
+            })
+        }
+        fn publish(&self, _event: Value) {}
+    }
+    #[tokio::test]
+    async fn abort_escalates_even_when_preparation_and_gate_are_stuck() {
+        let queue = SessionQueue::new(Arc::new(StuckPreparation), Vec::new());
+        let _gate = queue.gate.lock().await;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(6), queue.command(json!({"type":"abort"}))).await;
+        assert!(result.is_ok(), "abort never reached force_stop");
+        assert!(result.unwrap().is_ok());
     }
 }

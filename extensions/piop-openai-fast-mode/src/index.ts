@@ -50,6 +50,10 @@ export function createPiFastModeExtension(
       request.models = cloneConfig().targets.map((target) => `${target.provider}/${target.model}`);
       if (request.apply) {
         agentEnabled = request.enabled;
+        if (request.ctx && typeof request.enabled === "boolean") {
+          const saved = request.ctx.sessionManager.getBranch().findLast(entry => entry.type === "custom" && entry.customType === STATE_ENTRY);
+          if (saved?.type !== "custom" || (saved.data as { enabled?: unknown })?.enabled !== request.enabled) pi.appendEntry(STATE_ENTRY, { enabled: request.enabled });
+        }
         if (request.ctx) updateFastStatus(request.ctx, effectiveConfig(), toModelRef(request.ctx.model) ?? currentModel);
       }
     });

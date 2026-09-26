@@ -13,10 +13,15 @@ type RuntimeDefaults = { model: string; effort: string };
 type AgentSnapshot = { version: 1; definition: Agent; systemPrompt: string; agentPrompt: string };
 type SessionAgentState = { snapshot?: AgentSnapshot; active?: string; locked?: boolean; modelOverride?: string; effortOverride?: string };
 
+function restoredFastMode(branch: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>, fallback?: boolean) {
+  const saved = branch.findLast(entry => entry.type === "custom" && entry.customType === "piop-fast-mode-state" && typeof (entry.data as { enabled?: unknown })?.enabled === "boolean");
+  return saved?.type === "custom" ? (saved.data as { enabled: boolean }).enabled : fallback;
+}
+
 const STATUS_KEY = "pi-define-agents";
 const STATE_ENTRY = "pi-define-agents-state";
 const DEFAULTS_ENV = "PI_DEFINE_AGENTS_RUNTIME_DEFAULTS";
-const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
+const configPath = process.env.PIOP_AGENT_CONFIG_PATH || join(dirname(fileURLToPath(import.meta.url)), "config.json");
 const DEFAULT_PROMPT_PATH = "sysprompt/default.md";
 const DEFAULT_AGENT_PROMPT_PATH = `~/${process.env.PIOP_STORAGE_DIRECTORY || ".piop"}/agents/default.md`;
 const DEFAULT_SYSTEM_PROMPT = `You are an expert coding assistant operating inside a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
@@ -429,6 +434,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   pi.on("session_shutdown", () => { stopSubagentProfiles(); stopRefresh(); extensions.stop(); });
   pi.on("model_select", (event) => { const model = `${event.model.provider}/${event.model.id}`; if (applyingAgentModel === model) { applyingAgentModel = undefined; return; } modelOverride = model; saveState(); saveRuntimeDefaults({ model, effort: runtimeDefaults?.effort || pi.getThinkingLevel() }); });
   pi.on("thinking_level_select", (event) => { if (applyingAgentEffort === event.level) { applyingAgentEffort = undefined; return; } effortOverride = event.level; saveState(); saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); });
+  const restoreFastMode = (ctx: ExtensionContext) => pi.events.emit("piop:fast-mode", { apply: true, enabled: restoredFastMode(ctx.sessionManager.getBranch(), currentAgent()?.fastMode), ctx });
   const restoreSession = async (_event: unknown, ctx: ExtensionContext) => {
     restore(ctx);
     const branch = ctx.sessionManager.getBranch();
@@ -441,7 +447,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
     modelOverride = stored?.modelOverride;
     effortOverride = stored?.effortOverride;
     publish(ctx);
-    const error = await useAgent(active, ctx, false);
+    const error = await useAgent(active, ctx, false, true, false);
+    if (!error) restoreFastMode(ctx);
     if (error) ctx.ui.notify(error, "warning");
     publish(ctx);
   };

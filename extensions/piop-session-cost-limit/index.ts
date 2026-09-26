@@ -21,9 +21,15 @@ function parseAmount(raw: string): number {
   return amount;
 }
 
+function entryUsage(entry: unknown) {
+  if (!entry || typeof entry !== "object") return 0;
+  const value = entry as { type?: string; message?: { usage?: { cost?: { total?: unknown } } }; usage?: { cost?: { total?: unknown } } };
+  return value.type === "message" ? value.message?.usage : ["compaction", "usage", "branch_summary"].includes(value.type ?? "") ? value.usage : undefined;
+}
+
 function entryCost(entry: unknown): number {
-  if (!entry || typeof entry !== "object" || (entry as { type?: unknown }).type !== "message") return 0;
-  const amount = (entry as { message?: { usage?: { cost?: { total?: unknown } } } }).message?.usage?.cost?.total;
+  const usage = entryUsage(entry);
+  const amount = typeof usage === "object" ? usage?.cost?.total : undefined;
   return typeof amount === "number" && Number.isFinite(amount) && amount > 0 ? amount : 0;
 }
 

@@ -75,6 +75,15 @@ describe('session runtime pool', () => {
     assert.equal(commands('pi_presence').at(-1).args.presence.visible, false);
   });
 
+  test('standalone status messages do not mark a conversation as running', async () => {
+    const client = pool.forSession(session);
+    const id = await connect(client);
+    await send(id, { type: 'message_start', message: { role: 'custom', customType: 'pi-desktop-mcp-status', content: 'Connected' } });
+    await send(id, { type: 'message_end', message: { role: 'custom', customType: 'pi-desktop-mcp-status', content: 'Connected' } });
+    assert.equal(pool.isRunning(client), false);
+    assert.equal(pool.runningSessions().size, 0);
+  });
+
   test('MCP startup retains a runtime immediately before session state resolves', async () => {
     const pending = Promise.withResolvers();
     responses.set('pi_command:get_state', () => pending.promise);
@@ -208,5 +217,33 @@ describe('session runtime pool', () => {
     assert.equal(pool.isRetained(client), false);
     assert.equal(commands('save_git_diffs').length, 0);
     assert.deepEqual(pool.liveSessionSummaries(), []);
+  });
+
+  test('branching an ephemeral conversation retains inherited and subsequent diffs in memory', async () => {
+    responses.set('load_git_diffs', { previous: patch, removed: patch });
+    const client = pool.createEphemeralFork({ cwd: '/repo' }, '/source'); const id = await connect(client);
+    await settled();
+    responses.set('save_git_diffs', new Error('Only piop session files can be accessed'));
+    await pool.copySavedDiffs(client, '/source', '/tmp/branch.jsonl', new Set(['previous']));
+    responses.set('pi_command:get_state', { sessionId: 'branch', sessionFile: '/tmp/branch.jsonl' });
+    await client.command({ type: 'get_state' });
+    const snapshot = { patch, repositoryRoot: '/repo' };
+    await send(id, { type: 'turn_diff', hostId: 'local', sessionPath: '/tmp/branch.jsonl', messageId: 'next', snapshot });
+    await settled();
+    assert.deepEqual(pool.gitDiffs(client), { previous: patch, next: snapshot });
+    assert.equal(commands('save_git_diffs').length, 0);
+  });
+
+  test('delayed pane cleanup cannot release a transport reused by a visible pane', async () => {
+    const client = pool.forSession(session); await connect(client);
+    pool.setInteractive(client, true);
+    pool.setInteractive(client, false);
+    pool.setInteractive(client, true);
+    await pool.release(client);
+    assert.equal(pool.forSession(session), client);
+    assert.equal(commands('stop_pi').length, 0);
+    pool.setInteractive(client, false);
+    await pool.release(client);
+    assert.equal(commands('stop_pi').length, 1);
   });
 });

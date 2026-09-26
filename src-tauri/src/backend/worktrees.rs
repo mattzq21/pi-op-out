@@ -279,7 +279,12 @@ fn create_local_git_worktree(cwd: &str, name: &str) -> Result<GitWorktree, Strin
     let copy_result = (|| {
         if !patch.is_empty() {
             let patch_path = std::env::temp_dir().join(format!("pi-desktop-worktree-{}.patch", Uuid::new_v4()));
-            fs::write(&patch_path, &patch).map_err(|error| format!("Could not prepare Git changes for copying: {error}"))?;
+            let mut options = OpenOptions::new(); options.write(true).create_new(true);
+            #[cfg(unix)]
+            { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
+            let mut file = options.open(&patch_path).map_err(|error| format!("Could not prepare Git changes for copying: {error}"))?;
+            if let Err(error) = file.write_all(&patch) { let _ = fs::remove_file(&patch_path); return Err(format!("Could not prepare Git changes for copying: {error}")); }
+            drop(file);
             let applied = run_limited(Command::new("git").arg("-C").arg(&target).args(["apply", "--whitespace=nowarn"]).arg(&patch_path), 64 * 1024, "Could not copy Git changes");
             let _ = fs::remove_file(&patch_path);
             let applied = applied?;

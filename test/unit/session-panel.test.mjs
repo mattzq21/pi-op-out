@@ -39,6 +39,17 @@ describe('conversation sidebar', () => {
   function hit(element, top = 40) { document.elementFromPoint = () => element; if (element) element.getBoundingClientRect = () => ({ top, bottom: top + 40, height: 40, left: 0, right: 200, width: 200 }); }
   const menuAction = text => [...document.querySelectorAll('[role=menuitem]')].find(item => item.textContent === text);
 
+  test('child conversations remain manageable after their parent is archived', async () => {
+    const child = session('child', 'Delegated task', { subagentParentId: 'parent' });
+    const actions = [];
+    await render({ sessions: [session('parent', 'Parent'), child], onAction: (...args) => actions.push(args) });
+    assert.equal(row('child'), null);
+    await render({ sessions: [child] });
+    assert.ok(row('child'));
+    await click(control('Archive Delegated task'));
+    assert.deepEqual(actions, [[child, 'archive']]);
+  });
+
   test('sorts conversations naturally and selects or archives the exact session', async () => {
     const selected = [], actions = [];
     await render({ activeId: 'a', runningSessions: new Set(['local:b']), onSelect: value => selected.push(value), onAction: (...args) => actions.push(args) });

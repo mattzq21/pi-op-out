@@ -23,7 +23,7 @@ import { SubagentNavigationContext, type SubagentTarget } from "./lib/subagentNa
 import { TerminalView } from "./components/TerminalView";
 import { WorktreeDialog } from "./components/WorktreeDialog";
 import { encodeAgentValue } from "./lib/agentProtocol";
-import { withClientSettings } from "./lib/clientSettings";
+import { saveClientSettings, withClientSettings } from "./lib/clientSettings";
 import { hasVisibleText } from "./lib/content";
 import { branchMessages, type PiEntry } from "./lib/messages";
 import { recordSeenModels } from "./lib/modelVisibility";
@@ -92,7 +92,7 @@ export default function App() {
     return Boolean(key && composerDrafts()[key]) || runtimePool().liveSessionSummaries().some(session => session.isDraft && `${session.hostId ?? "local"}:${session.id}` === key);
   };
   const releaseSplitTransport = async (ownerTransport: NativeTransport) => { const capturedRuntimePool = runtimePool();
-    if (activeTransportRef.current === ownerTransport) return;
+    if (activeTransportRef.current === ownerTransport || capturedRuntimePool.isInteractive(ownerTransport)) return;
     await closeTransportDialogs(ownerTransport);
     if (!ownerTransport.isEphemeral() && hasRetainedDraft(ownerTransport)) return;
     if (ownerTransport.currentSessionPath() && (uploadsByTransport().get(ownerTransport)?.length ?? 0) > 0) return;
@@ -174,11 +174,8 @@ export default function App() {
   createDependencyEffect(() => { const capturedSession = { ...chatSession() }; const capturedActiveHostId = activeHostId(); const capturedTransport = transport();
     const previousKey = activeConversationKeyRef.current;
     if (!capturedSession.state.sessionId || !previousKey.includes(":draft-")) return;
-    const canonicalKey = `${capturedActiveHostId}:${capturedSession.state.sessionId}`;
-    if (previousKey === canonicalKey) return;
-    setComposerDrafts((current) => { if (!(previousKey in current)) return current; const next = { ...current, [canonicalKey]: current[previousKey] }; delete next[previousKey]; return next; });
-    setTerminalsBySession((current) => { if (!(previousKey in current)) return current; const next = { ...current, [canonicalKey]: current[previousKey] }; delete next[previousKey]; return next; });
-    transportConversationKeys.current.set(capturedTransport, canonicalKey); activateConversationKey(canonicalKey);
+    const canonicalKey = `${capturedActiveHostId}:${capturedSession.state.sessionId}`; if (previousKey === canonicalKey) return;
+    rekeyConversationUi(previousKey, canonicalKey, capturedTransport);
   }, () => [activeHostId(), chatSession().state.sessionId, transport()]);
   createDependencyEffect(() => { const capturedTransport = transport();
     let cancelled = false;
@@ -187,11 +184,11 @@ export default function App() {
     return () => { cancelled = true; };
   }, () => [transport(), sessions().find((session) => session.id === chatSession().state.sessionId && (session.hostId ?? "local") === activeHostId())?.projectKind]);
   useUsageClock(() => (codexUsage()), () => (opencodeGoUsage()), () => (setUsageClock));
-  createDependencyEffect(() => { const capturedSettings = settings(); const capturedSession = { ...chatSession() }; const capturedTransport = transport();
+  createDependencyEffect(() => { const capturedSettings = settings(); const capturedSession = { ...chatSession() };
     if (!capturedSettings || capturedSession.models.length === 0 || settingsSavePending.current) return;
     const next = recordSeenModels((capturedSettings)!, capturedSession.models.map((model) => `${model.provider}/${model.id}`));
     if (!next) return;
-    void capturedTransport.saveSettings(next, false).then((change) => { if (change?.settings) setSettings(change.settings); }).catch(() => undefined);
+    void saveClientSettings(next).then(() => setSettings(current => current ? { ...current, knownModels: next.knownModels, hiddenModels: next.hiddenModels } : current)).catch(() => undefined);
   }, () => [chatSession().models, settings(), transport()]);
   const syncSessionIndex = () => {
     if (!sessionIndexRequest.current) sessionIndexRequest.current = transport().listSessions().then((nextSessions) => {
@@ -216,18 +213,18 @@ export default function App() {
     return () => { for (const pending of unsubscribes) void pending.then((unlisten) => unlisten()); };
   }, () => [addNotice, syncSessionIndex]);
   createDependencyEffect(() => {
-    let revision = 0;
+    let revision = 0; let pendingSettings: AppSettings | undefined;
     const update = (value: AppSettings) => {
-      const current = ++revision;
+      pendingSettings = value; const current = ++revision;
       void withClientSettings(value).then(next => {
         if (current !== revision) return;
-        applyRuntimeSettings(next); setSettings(next);
+        pendingSettings = undefined; applyRuntimeSettings(next); setSettings(next);
       }).catch(reason => addNotice({ title: "Could not load client preferences", message: String(reason) }));
     };
     const pending = listen<SettingsChange>("pi://settings-changed", ({ payload }) => {
       update(payload.settings);
     });
-    const clientPending = listen("pi://client-settings-changed", () => { const current = settings(); if (current) update(current); });
+    const clientPending = listen("pi://client-settings-changed", () => { const current = pendingSettings ?? settings(); if (current) update(current); });
     return () => { revision++; void pending.then((unlisten) => unlisten()); void clientPending.then((unlisten) => unlisten()); };
   }, () => [applyRuntimeSettings]);
   const refresh = async (hostId?: string) => { const capturedTransport = transport(); const capturedSession = { ...chatSession() }; const capturedRuntimePool = runtimePool();
@@ -365,7 +362,10 @@ export default function App() {
   const assignNewSessionGroup = (owner: NativeTransport, group?: SessionGroup) => { if (group) pendingSessionGroups.current.set(owner, group.id); };
   const discardNewSessionDraft = (owner: NativeTransport, key: string) => {
     setComposerDraft(key, ""); setComposerUploads(owner, []); pendingSessionGroups.current.delete(owner);
-    void runtimePool().release(owner).catch(reason => addNotice({ title: "Could not clean up the draft", message: String(reason) })).finally(() => transportConversationKeys.current.delete(owner));
+    void Promise.all(conversationTerminalIds(key).map(id => owner.closeTerminal(id))).then(async () => {
+      setTerminalsBySession(current => { const next = { ...current }; delete next[key]; return next; }); setTerminalTarget(current => current?.sessionKey === key ? undefined : current);
+      await runtimePool().release(owner); transportConversationKeys.current.delete(owner);
+    }).catch(reason => addNotice({ title: "Could not clean up the draft", message: String(reason) }));
   };
   const copyNewSessionDraft = (key: string, owner: NativeTransport, copy: boolean) => {
     if (!copy) return;
@@ -626,7 +626,7 @@ export default function App() {
   const toggleDebugMode = () => {
     if (!settings() || debugModePending.current || settingsSavePending.current) return; debugModePending.current = true; setDebugModeSaving(true);
     const next = { ...(settings())!, debugMode: !(settings())!.debugMode };
-    void transport().saveSettings(next, false).then(() => { applyRuntimeSettings(next); setSettings(next); }).catch((reason) => addNotice({ title: "Could not change debug mode", message: reason instanceof Error ? reason.message : String(reason) })).finally(() => { debugModePending.current = false; setDebugModeSaving(false); });
+    void saveClientSettings(next).then(() => { setSettings(current => current ? { ...current, debugMode: next.debugMode } : current); }).catch((reason) => addNotice({ title: "Could not change debug mode", message: reason instanceof Error ? reason.message : String(reason) })).finally(() => { debugModePending.current = false; setDebugModeSaving(false); });
   };
   const reconnectMain = () => {
     const ownerTransport = transport(); const ownerKey = activeConversationKeyRef.current;

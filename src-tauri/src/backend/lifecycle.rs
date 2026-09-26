@@ -25,7 +25,6 @@ pub fn run_daemon() -> Result<(), String> {
             result = tokio::signal::ctrl_c() => result.map_err(|error| error.to_string())?,
             _ = clients.wait_for_shutdown() => {},
         }
-        drop(clients);
         tokio::task::spawn_blocking(move || shutdown_backend(&app)).await.map_err(|error| error.to_string())?;
         Ok(())
     })
@@ -36,6 +35,7 @@ fn detach_owner(app: &AppHandle, owner: &str, discard_blank: bool) {
     peers::detach_owner(app, owner);
     let runtime = app.state::<PiRuntime>();
     provider_auth::cancel_owner(&runtime, owner);
+    detach_worktree_setups(&runtime, owner);
     let ids = runtime.processes.lock().map(|processes| processes.iter().filter(|(_, process)| process.window_label == owner).map(|(id, _)| id.clone()).collect::<Vec<_>>()).unwrap_or_default();
     for id in ids { let _ = detach_pi_with(&runtime, &id, discard_blank, !discard_blank); }
     let terminals = app.state::<TerminalRuntime>();
@@ -61,4 +61,6 @@ fn shutdown_backend(app: &AppHandle) {
     for daemon in daemons { daemon.wait_shutdown(); let _ = daemon.drain_captures(None); }
     let ephemeral = runtime.ephemeral_sessions.lock().map(|mut sessions| sessions.drain().map(|(_, session)| session).collect::<Vec<_>>()).unwrap_or_default();
     for session in ephemeral { remove_ephemeral_session(session); }
+    let previous = runtime.ephemeral_previous.lock().map(|mut sessions| sessions.drain().flat_map(|(_, sessions)| sessions).collect::<Vec<_>>()).unwrap_or_default();
+    for session in previous { remove_ephemeral_session(session); }
 }

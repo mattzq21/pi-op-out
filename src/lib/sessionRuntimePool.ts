@@ -147,7 +147,7 @@ export class SessionRuntimePool {
 
   private updateActivity(transport: NativeTransport, event: RpcEvent) {
     if (event.type === "runtime_presence") { if (event.isStreaming) this.runningTransports.add(transport); else this.runningTransports.delete(transport); }
-    if (event.type === "agent_start" || event.type === "message_start") { this.runningTransports.add(transport); this.unseenTransports.delete(transport); }
+    if (event.type === "agent_start") { this.runningTransports.add(transport); this.unseenTransports.delete(transport); }
     if (event.type === "agent_settled") { this.runningTransports.delete(transport); if (transport !== this.activeTransport && !this.interactiveTransports.has(transport)) this.unseenTransports.add(transport); }
     if (event.type === "disconnected") { this.runningTransports.delete(transport); }
   }
@@ -225,7 +225,7 @@ export class SessionRuntimePool {
     const source = sourceSnapshots ? Promise.resolve(sourceSnapshots) : state.persistence === "memory" ? this.captureMemoryDiffs(transport).then((snapshots) => snapshots ?? EMPTY_DIFFS) : transport.loadGitDiffs(sourcePath, hostId);
     const operation = source.then(async (source) => {
       const snapshots = retainedMessageIds ? Object.fromEntries(Object.entries(source).filter(([id]) => retainedMessageIds.has(id))) : source;
-      await transport.saveGitDiffs(destinationPath, snapshots, hostId);
+      if (state.persistence === "session") await transport.saveGitDiffs(destinationPath, snapshots, hostId);
       return snapshots;
     });
     const promise = operation.then((snapshots) => {
@@ -235,7 +235,7 @@ export class SessionRuntimePool {
       if (state.load?.promise === promise) { state.load = undefined; this.notify(); }
       return EMPTY_DIFFS;
     });
-    state.persistence = "session"; state.path = key; state.snapshots = EMPTY_DIFFS; state.load = { key, promise }; this.notify();
+    state.path = key; state.snapshots = EMPTY_DIFFS; state.load = { key, promise }; this.notify();
     await operation; await promise;
   }
 
@@ -244,7 +244,9 @@ export class SessionRuntimePool {
     if (transport) await this.release(transport);
   }
 
-  async release(transport: NativeTransport) { if (!this.transports.has(transport)) return; forgetSession(transport); for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key); this.transports.delete(transport); this.retainedTransports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport); this.interactiveTransports.delete(transport); this.diffStates.delete(transport); if (this.liveSessions.delete(transport)) { this.liveRevision += 1; this.notify(); } this.publishSessionStates(); await transport.dispose(); }
+  isInteractive(transport: NativeTransport) { return this.interactiveTransports.has(transport); }
+
+  async release(transport: NativeTransport) { if (!this.transports.has(transport) || this.isInteractive(transport)) return; forgetSession(transport); for (const [key, candidate] of this.sessions) if (candidate === transport) this.sessions.delete(key); this.transports.delete(transport); this.retainedTransports.delete(transport); this.runningTransports.delete(transport); this.unseenTransports.delete(transport); this.interactiveTransports.delete(transport); this.diffStates.delete(transport); if (this.liveSessions.delete(transport)) { this.liveRevision += 1; this.notify(); } this.publishSessionStates(); await transport.dispose(); }
 
   subscribe(listener: () => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   runningSessions() { return this.runningSessionKeys; }

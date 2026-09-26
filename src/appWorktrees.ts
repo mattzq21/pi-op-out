@@ -56,7 +56,8 @@ export function createWorktreeActions(context: WorktreeContext) {
     const owner = target.transport;
     const beforePrompt = sourceMessage.role === "user";
     const history = await owner.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" });
-    const message = branchMessages(history.entries, history.leafId).find((message) => message.role === sourceMessage.role && (sourceMessage.entryId ? message.entryId === sourceMessage.entryId : message.timestamp === sourceMessage.timestamp && textOf(message.content) === textOf(sourceMessage.content)));
+    const messages = branchMessages(history.entries, history.leafId);
+    const message = messages.find((message) => message.role === sourceMessage.role && (sourceMessage.entryId ? message.entryId === sourceMessage.entryId : message.timestamp === sourceMessage.timestamp && textOf(message.content) === textOf(sourceMessage.content)));
     if (!message?.entryId) throw new Error("Could not find the message in the saved conversation");
     const result = await owner.command<{ branch: string; path: string; sessionPath: string; sessionId: string }>({ type: "branch_checkpoint", entryId: message.entryId, name, afterResponse: !beforePrompt });
     await addWorktreeGroup(result);
@@ -66,6 +67,9 @@ export function createWorktreeActions(context: WorktreeContext) {
     setSessions((current) => [...current, session]);
     setComposerDraft(`${target.hostId}:${result.sessionId}`, beforePrompt ? textOf(sourceMessage.content) : "");
     const branchTransport = capturedRuntimePool.forSession(session);
+    const retainedIds = new Set(messages.slice(0, messages.indexOf(message) + (beforePrompt ? 0 : 1)).map(message => message.id));
+    try { await capturedRuntimePool.copySavedDiffs(branchTransport, owner.currentSessionPath(), result.sessionPath, retainedIds); }
+    catch (reason) { addNotice({ title: "Worktree created, but could not copy saved changes", message: String(reason) }); }
     setComposerUploads(branchTransport, beforePrompt && Array.isArray(sourceMessage.content) ? sourceMessage.content.flatMap((part) => part.type === "image" && part.data && part.mimeType ? [{ id: crypto.randomUUID(), name: "Attached image", kind: "image" as const, byteSize: Math.ceil(part.data.length * 3 / 4), image: { type: "image" as const, data: part.data, mimeType: part.mimeType } }] : []) : []);
     selectSession(session);
     void syncSessionIndex();

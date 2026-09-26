@@ -132,9 +132,14 @@ const MAX_SESSION_INDEX_BATCH_BYTES: usize = 64 * 1024 * 1024;
 const WORKTREE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Default)]
+struct WorktreeSetupOwners { setups: HashMap<String, String>, detached: HashSet<String> }
+
+#[derive(Default)]
 struct PiRuntime {
     worktree_setups: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    worktree_setup_owners: Mutex<WorktreeSetupOwners>,
     ephemeral_sessions: Mutex<HashMap<String, EphemeralSession>>,
+    ephemeral_previous: Mutex<HashMap<String, Vec<EphemeralSession>>>,
     ephemeral_keys: Mutex<HashMap<String, String>>,
     processes: Arc<Mutex<HashMap<String, PiProcess>>>,
     daemons: Mutex<HashMap<String, Arc<daemon::Daemon>>>,
