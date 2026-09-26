@@ -230,7 +230,7 @@ impl ConversationOwnership {
         let record = self.read(id)?;
         let previous = record.clone().unwrap_or(Value::Null);
         let saved = self.saved_for_claim(id, &previous, options)?;
-        if owned_by_other(&previous, client) && !flag(options, "take") && !(flag(options, "archived") && flag(&previous, "deleted")) {
+        if claim_blocked(&previous, client, options) {
             return Ok(Guard {
                 owned: false,
                 ..Guard::ephemeral()
@@ -368,40 +368,14 @@ fn optional_path(path: &Path) -> Result<Option<PathBuf>> {
     }
 }
 
+fn claim_blocked(previous: &Value, client: &str, options: &Value) -> bool {
+    owned_by_other(previous, client) && !flag(options, "take") && !(flag(options, "archived") && flag(previous, "deleted"))
+}
+
 fn owned_by_other(previous: &Value, client: &str) -> bool {
     previous["client"]
         .as_str()
         .is_some_and(|owner| !owner.is_empty() && owner != client)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    include!("../test_directory.rs");
-    struct Idle;
-    impl Revocation for Idle {
-        fn revoke<'a>(&'a self, _: &'a str, _: &'a str) -> BoxFuture<'a, Result<()>> { Box::pin(async { Ok(()) }) }
-    }
-    #[tokio::test]
-    async fn archived_mutations_can_move_between_clients() {
-        let home = TestDirectory::new();
-        let ownership = ConversationOwnership::new(&home.0, ".piop", Arc::new(Idle)).await.unwrap();
-        let id = Uuid::new_v4().to_string();
-        let live = home.0.join(".piop/sessions/chat.jsonl");
-        let archive = home.0.join(".piop/archived/chat.jsonl");
-        fs::create_dir_all(live.parent().unwrap()).unwrap();
-        fs::create_dir_all(archive.parent().unwrap()).unwrap();
-        fs::write(&live, format!("{}\n", json!({"type":"session","id":id}))).unwrap();
-        let guard = ownership.begin(&id, "first", &json!({"path":live,"mutation":true,"archive":true})).await.unwrap();
-        fs::rename(&live, &archive).unwrap();
-        guard.release(&ownership, true).unwrap();
-        for client in ["second", "third"] {
-            let guard = ownership.begin(&id, client, &json!({"path":archive,"archived":true,"mutation":true})).await.unwrap();
-            assert!(guard.owned, "archive remained owned by another client");
-            guard.release(&ownership, false).unwrap();
-        }
-    }
 }
 
 fn claim_intent(options: &Value) -> &str {
@@ -547,4 +521,34 @@ fn request_length(header: &str, token: &str) -> Result<Option<usize>> {
         return Err("Request is too large".into());
     }
     Ok(Some(length))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    include!("../test_directory.rs");
+    struct Idle;
+    impl Revocation for Idle {
+        fn revoke<'a>(&'a self, _: &'a str, _: &'a str) -> BoxFuture<'a, Result<()>> { Box::pin(async { Ok(()) }) }
+    }
+    #[tokio::test]
+    async fn archived_mutations_can_move_between_clients() {
+        let home = TestDirectory::new();
+        let ownership = ConversationOwnership::new(&home.0, ".piop", Arc::new(Idle)).await.unwrap();
+        let id = Uuid::new_v4().to_string();
+        let live = home.0.join(".piop/sessions/chat.jsonl");
+        let archive = home.0.join(".piop/archived/chat.jsonl");
+        fs::create_dir_all(live.parent().unwrap()).unwrap();
+        fs::create_dir_all(archive.parent().unwrap()).unwrap();
+        fs::write(&live, format!("{}\n", json!({"type":"session","id":id}))).unwrap();
+        let guard = ownership.begin(&id, "first", &json!({"path":live,"mutation":true,"archive":true})).await.unwrap();
+        fs::rename(&live, &archive).unwrap();
+        guard.release(&ownership, true).unwrap();
+        for client in ["second", "third"] {
+            let guard = ownership.begin(&id, client, &json!({"path":archive,"archived":true,"mutation":true})).await.unwrap();
+            assert!(guard.owned, "archive remained owned by another client");
+            guard.release(&ownership, false).unwrap();
+        }
+    }
 }

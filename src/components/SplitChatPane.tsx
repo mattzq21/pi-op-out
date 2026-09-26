@@ -13,7 +13,7 @@ import type { AgentState, AppSettings, ChatMessage, ComposerUpload, DefinedAgent
 import { branchMessages, type PiEntry } from "../lib/messages";
 import { ChatView } from "./ChatView";
 
-interface Props { uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; forkFrom?: string; initialPrompt?: string; initialImages?: ImageAttachment[]; onReady?: () => void; onFailed?: (reason: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
+interface Props { uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; forkFrom?: string; forkLeafId?: string; initialPrompt?: string; initialImages?: ImageAttachment[]; onReady?: () => void; onFailed?: (reason: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
 const initialState = (session: SessionSummary): AgentState => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, pendingMessageCount: 0 });
 
 export function SplitChatPane(componentProps: Props) {
@@ -55,7 +55,7 @@ export function SplitChatPane(componentProps: Props) {
       if (reconnecting || closing) return;
       reconnecting = true;
       try {
-        if (initial) await capturedTransport.connect(capturedSession5.cwd, capturedForkFrom6 ? undefined : capturedSession5.path, capturedSession5.hostId, capturedForkFrom6, Boolean(capturedForkFrom6));
+        if (initial) await capturedTransport.connect(capturedSession5.cwd, capturedForkFrom6 ? undefined : capturedSession5.path, capturedSession5.hostId, capturedForkFrom6, Boolean(capturedForkFrom6), componentProps.forkLeafId);
         else await capturedTransport.connect();
         await capturedSession.refresh(); if (capturedTransport.ownsConversation()) await configure();
         if (closing) return;

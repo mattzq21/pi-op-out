@@ -50,18 +50,18 @@ fn remove_ephemeral_session(session: EphemeralSession) {
     }
 }
 
-fn create_ephemeral_fork(settings: &AppSettings, host_id: &str, source_path: &str) -> Result<(String, EphemeralSession), String> {
+fn create_ephemeral_fork(settings: &AppSettings, host_id: &str, source_path: &str, leaf_id: Option<&str>) -> Result<(String, EphemeralSession), String> {
     if host_id == "local" {
-        return create_local_ephemeral_fork(&home_dir()?, &std::env::temp_dir(), source_path);
+        return create_local_ephemeral_fork(&home_dir()?, &std::env::temp_dir(), source_path, leaf_id);
     }
     let host = remote_host(settings, host_id)?.clone();
     let destination = format!("/tmp/pi-desktop-btw-{}.jsonl", Uuid::new_v4());
-    let path = create_remote_ephemeral_fork(source_path, &destination, &host.name, |script| { let mut command = ssh(&host); command.arg(remote_login_command(&script)); command })?;
+    let path = create_remote_ephemeral_fork(source_path, &destination, &host.name, leaf_id, |script| { let mut command = ssh(&host); command.arg(remote_login_command(&script)); command })?;
     Ok((path.clone(), EphemeralSession::Remote { host, path }))
 }
 
-fn create_remote_ephemeral_fork(source_path: &str, destination: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<String, String> {
-    let remote = format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {} {} {} && printf %s {}", shell_quote(include_str!("../../resources/fork-session.cjs")), shell_quote(source_path), shell_quote(destination), shell_quote(&Uuid::new_v4().to_string()), shell_quote(destination));
+fn create_remote_ephemeral_fork(source_path: &str, destination: &str, host_name: &str, leaf_id: Option<&str>, command: impl FnOnce(String) -> Command) -> Result<String, String> {
+    let remote = format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {} {} {} {} && printf %s {}", shell_quote(include_str!("../../resources/fork-session.cjs")), shell_quote(source_path), shell_quote(destination), shell_quote(&Uuid::new_v4().to_string()), leaf_id.map(shell_quote).unwrap_or_default(), shell_quote(destination));
     let output = command(remote).output().map_err(|error| format!("Could not create temporary side conversation on {host_name}: {error}"))?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -69,10 +69,10 @@ fn create_remote_ephemeral_fork(source_path: &str, destination: &str, host_name:
     Ok(path)
 }
 
-fn create_local_ephemeral_fork(home: &Path, temporary_dir: &Path, source_path: &str) -> Result<(String, EphemeralSession), String> {
+fn create_local_ephemeral_fork(home: &Path, temporary_dir: &Path, source_path: &str, leaf_id: Option<&str>) -> Result<(String, EphemeralSession), String> {
     let source = local_desktop_session_file_at(home, source_path)?;
     let path = temporary_dir.join(format!("pi-desktop-btw-{}.jsonl", Uuid::new_v4()));
-    let output = node_command().args(["-e", include_str!("../../resources/fork-session.cjs")]).arg(source).arg(&path).arg(Uuid::new_v4().to_string()).output().map_err(|e| e.to_string())?;
+    let output = node_command().args(["-e", include_str!("../../resources/fork-session.cjs")]).arg(source).arg(&path).arg(Uuid::new_v4().to_string()).args(leaf_id).output().map_err(|e| e.to_string())?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).into_owned()); }
     Ok((path.to_string_lossy().into_owned(), EphemeralSession::Local(path)))
 }

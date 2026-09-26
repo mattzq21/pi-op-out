@@ -2,12 +2,14 @@ struct TerminalLaunch { terminal_id: String, session_key: String, cwd: String, c
 
 struct StartTerminalOptions { terminal_id: String, session_key: String, cwd: String, cols: u16, rows: u16, host_id: Option<String> }
 
-struct StartPiOptions { runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, no_session: Option<bool>, host_id: Option<String>, presence: Option<Value>, client_id: String }
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartPiOptions { runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, fork_leaf_id: Option<String>, no_session: Option<bool>, host_id: Option<String>, presence: Option<Value>, client_id: String }
 
 #[cfg(feature = "desktop")]
 #[tauri::command(async)]
-fn start_pi(app: AppHandle, window: tauri::WebviewWindow, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, no_session: Option<bool>, host_id: Option<String>, presence: Option<Value>, client_id: String) -> Result<Value, String> {
-    start_pi_for_owner(app, window.label().into(), runtime, broker, StartPiOptions { runtime_id, cwd, session_path, session_id, fork_path, no_session, host_id, presence, client_id })
+fn start_pi(app: AppHandle, window: tauri::WebviewWindow, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, fork_leaf_id: Option<String>, no_session: Option<bool>, host_id: Option<String>, presence: Option<Value>, client_id: String) -> Result<Value, String> {
+    start_pi_for_owner(app, window.label().into(), runtime, broker, StartPiOptions { runtime_id, cwd, session_path, session_id, fork_path, fork_leaf_id, no_session, host_id, presence, client_id })
 }
 
 struct PreparedPiSession {
@@ -54,7 +56,7 @@ fn prepare_pi_session(runtime: &PiRuntime, settings: &AppSettings, host_id: Stri
     let ephemeral = options.no_session.unwrap_or(false) || saved_ephemeral.is_some();
     let session_path = if ephemeral { None } else { options.session_path.as_deref().map(|path| desktop_session_file(settings, &host_id, path)).transpose()? };
     let fork_path = options.fork_path.as_deref().map(|path| desktop_session_file(settings, &host_id, path)).transpose()?;
-    let ephemeral_path = prepare_ephemeral_path(runtime, &ephemeral_key, ephemeral, saved_ephemeral, fork_path.as_deref(), |source_path| create_ephemeral_fork(settings, &host_id, source_path))?;
+    let ephemeral_path = prepare_ephemeral_path(runtime, &ephemeral_key, ephemeral, saved_ephemeral, fork_path.as_deref(), |source_path| create_ephemeral_fork(settings, &host_id, source_path, options.fork_leaf_id.as_deref()))?;
     if ephemeral_path.is_some() { runtime.ephemeral_keys.lock().map_err(|_| "Side conversation lock was poisoned")?.insert(options.runtime_id.clone(), ephemeral_key); }
     Ok(PreparedPiSession { host_id, session_id, session_path, fork_path, ephemeral_path, ephemeral })
 }

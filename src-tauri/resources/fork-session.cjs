@@ -1,8 +1,32 @@
 const fs = require('node:fs');
+const { createInterface } = require('node:readline');
 (async () => {
-  const [source, destination, id] = process.argv.slice(1);
+  const [source, destination, id, leafId] = process.argv.slice(1);
   const output = await fs.promises.open(destination, 'wx', 0o600); let header = Buffer.alloc(0), copiedHeader = false;
   try {
+    if (leafId !== undefined) {
+      const input = fs.createReadStream(source);
+      const lines = createInterface({ input, crlfDelay: Infinity });
+      let found = false;
+      try {
+        for await (const line of lines) {
+          if (!line.trim()) continue;
+          const value = JSON.parse(line);
+          if (!copiedHeader) {
+            if (value.type !== 'session') throw Error('Invalid session header');
+            await output.writeFile(JSON.stringify({ ...value, id, parentSession: source, timestamp: new Date().toISOString() }) + '\n');
+            copiedHeader = true;
+            if (leafId === '') { found = true; break; }
+          } else {
+            await output.writeFile(line + '\n');
+            if (value.id === leafId) { found = true; break; }
+          }
+        }
+      } finally { lines.close(); input.destroy(); }
+      if (!found) throw Error('The requested conversation leaf is unavailable');
+      await output.close();
+      return;
+    }
     for await (const chunk of fs.createReadStream(source)) {
       if (copiedHeader) { await output.writeFile(chunk); continue; }
       header = Buffer.concat([header, chunk]); const newline = header.indexOf(10); if (newline < 0) continue;

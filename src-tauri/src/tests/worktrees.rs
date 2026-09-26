@@ -441,3 +441,14 @@ fn saved_diff_schema_preserves_tool_path_mappings_and_rejects_incomplete_records
 fn setup_script(name: &str, path: &Path, code: &str, cleanup: &str) -> WorktreeSetupScript {
     WorktreeSetupScript { id: name.into(), name: name.into(), script: code.into(), enabled: true, cleanup_script: Some(cleanup.into()), project_path: Some(path.to_string_lossy().into_owned()), host_id: None }
 }
+#[test]
+#[cfg(unix)]
+fn worktree_patch_is_private_and_never_overwrites_an_existing_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = TestDirectory::new();
+    let path = root.0.join("changes.patch");
+    write_worktree_patch(&path, b"private changes").unwrap();
+    assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o077, 0);
+    assert!(write_worktree_patch(&path, b"replacement").is_err());
+    assert_eq!(fs::read(&path).unwrap(), b"private changes");
+}

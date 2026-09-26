@@ -24,6 +24,13 @@ export type FastModeExtensionOptions = {
 const DEFAULT_EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const STATE_ENTRY = "piop-fast-mode-state";
 
+function manualSessionValue(ctx?: ExtensionContext): boolean | undefined {
+  const states = ctx?.sessionManager.getBranch().filter(entry => entry.type === "custom" && entry.customType === STATE_ENTRY) ?? [];
+  const saved = states.at(-1)?.data as { enabled?: boolean; manual?: boolean } | undefined;
+  const manual = saved?.manual ?? states.length > 1;
+  return manual && typeof saved?.enabled === "boolean" ? saved.enabled : undefined;
+}
+
 function notifyError(
   ctx: Pick<ExtensionContext, "hasUI" | "ui">,
   error: unknown,
@@ -49,11 +56,9 @@ export function createPiFastModeExtension(
     pi.events.on("piop:fast-mode", (request: { models?: string[]; apply?: boolean; enabled?: boolean; restore?: boolean; ctx?: ExtensionContext }) => {
       request.models = cloneConfig().targets.map((target) => `${target.provider}/${target.model}`);
       if (request.apply) {
-        const states = request.ctx?.sessionManager.getBranch().filter(entry => entry.type === "custom" && entry.customType === STATE_ENTRY) ?? [];
-        const saved = states.at(-1)?.data as { enabled?: boolean; manual?: boolean } | undefined;
-        const manual = saved?.manual ?? states.length > 1;
-        agentEnabled = request.restore && manual ? undefined : request.enabled;
-        if (request.restore && manual && typeof saved?.enabled === "boolean") config.enabled = saved.enabled;
+        const manual = request.restore ? manualSessionValue(request.ctx) : undefined;
+        agentEnabled = manual === undefined ? request.enabled : undefined;
+        config.enabled = manual ?? config.enabled;
         if (!request.restore) pi.appendEntry(STATE_ENTRY, { enabled: effectiveConfig().enabled, manual: false });
         if (request.ctx) updateFastStatus(request.ctx, effectiveConfig(), toModelRef(request.ctx.model) ?? currentModel);
       }

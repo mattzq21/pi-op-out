@@ -4,7 +4,7 @@ import { listProjectFiles, readProjectFile, saveProjectFile, type FileProject, t
 import { CodeEditor } from "./CodeEditor";
 import type { FilePaneRequest } from "./FileWorkspace";
 
-export function FilePane(props: { request: FilePaneRequest; hidden?: boolean; onClose: () => void }) {
+export function FilePane(props: { request: FilePaneRequest; hidden?: boolean; onClose: () => void; onDirtyChange?: (dirty: boolean) => void }) {
   const [width, setWidth] = createSignal<number | undefined>((() => {
     try {
       const saved = Number(localStorage.getItem("piop.files.width"));
@@ -43,6 +43,8 @@ export function FilePane(props: { request: FilePaneRequest; hidden?: boolean; on
   const [pending, setPending] = createSignal<() => void>();
   const [editorVersion, setEditorVersion] = createSignal(0);
   const dirty = createMemo(() => Boolean(file() && draft() !== file()!.content));
+  createEffect(() => props.onDirtyChange?.(dirty()));
+  onCleanup(() => props.onDirtyChange?.(false));
   const entries = createMemo(() => (directory()?.entries ?? []).filter(entry => entry.name.toLowerCase().includes(filter().toLowerCase())));
   let fileVersion = 0;
   let directoryVersion = 0;

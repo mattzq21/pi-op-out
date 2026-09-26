@@ -1,4 +1,4 @@
-import type { Accessor, Setter } from "solid-js";
+import { onCleanup, type Accessor, type Setter } from "solid-js";
 import type { SessionTerminals } from "./appSupport";
 import { hasVisibleText } from "./lib/content";
 import type { NativeTransport } from "./lib/nativeTransport";
@@ -6,6 +6,25 @@ import type { SessionRuntimePool } from "./lib/sessionRuntimePool";
 import type { RefObject } from "./lib/solid";
 import type { useChatSession } from "./lib/useChatSession";
 import type { ComposerUpload } from "./types";
+
+export function useWorkspaceDisconnect(hasDrafts: () => boolean, pool: () => SessionRuntimePool, terminalIds: () => string[], owner: () => NativeTransport) {
+  const dirtyFiles = new Set<string>();
+  const beforeDisconnect = (event: Event) => {
+    if ((dirtyFiles.size > 0 || hasDrafts()) && !window.confirm("Discard unsaved settings, messages, attachments, and file edits and disconnect?")) { event.preventDefault(); return; }
+    const close = async () => {
+      await Promise.all(terminalIds().map(id => owner().closeTerminal(id)));
+      await pool().disconnectAll(true);
+    };
+    (event as CustomEvent<{ waitUntil: (task: Promise<unknown>) => void }>).detail.waitUntil(close());
+  };
+  window.addEventListener("piop-mobile-before-disconnect", beforeDisconnect);
+  onCleanup(() => {
+    window.removeEventListener("piop-mobile-before-disconnect", beforeDisconnect);
+    for (const id of terminalIds()) void owner().closeTerminal(id).catch(() => undefined);
+    void pool().disconnectAll();
+  });
+  return dirtyFiles;
+}
 
 type ActivationContext = {
   transport: Accessor<NativeTransport>;

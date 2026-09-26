@@ -33,6 +33,14 @@ const transport = (target = { cwd: '/repo' }) => { const value = new native.Nati
 const commands = name => calls.filter(call => call.command === name);
 const rpc = type => commands('pi_command').filter(call => call.args.command.type === type);
 
+test('explicit disconnect and unmount share one completed disposal', async () => {
+  const client = transport();
+  await client.connect();
+  await Promise.all([client.dispose(), client.dispose()]);
+  await client.dispose();
+  assert.equal(commands('stop_pi').length, 1);
+});
+
 test('client preference updates preserve newer daemon settings', async () => {
   const current = { hosts: [], keybindings: {}, defaultModel: 'new/model', knownModels: ['old/model'] };
   responses.set('load_app_settings', current);

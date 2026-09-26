@@ -58,6 +58,8 @@ export function createWorktreeActions(context: WorktreeContext) {
     const history = await owner.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" });
     const message = branchMessages(history.entries, history.leafId).find((message) => message.role === sourceMessage.role && (sourceMessage.entryId ? message.entryId === sourceMessage.entryId : message.timestamp === sourceMessage.timestamp && textOf(message.content) === textOf(sourceMessage.content)));
     if (!message?.entryId) throw new Error("Could not find the message in the saved conversation");
+    const sourcePath = owner.currentSessionPath();
+    const sourceDiffs = await capturedRuntimePool.captureMemoryDiffs(owner);
     const result = await owner.command<{ branch: string; path: string; sessionPath: string; sessionId: string }>({ type: "branch_checkpoint", entryId: message.entryId, name, afterResponse: !beforePrompt });
     await addWorktreeGroup(result);
     await setup(result.path);
@@ -66,6 +68,10 @@ export function createWorktreeActions(context: WorktreeContext) {
     setSessions((current) => [...current, session]);
     setComposerDraft(`${target.hostId}:${result.sessionId}`, beforePrompt ? textOf(sourceMessage.content) : "");
     const branchTransport = capturedRuntimePool.forSession(session);
+    const messages = branchMessages(history.entries, history.leafId);
+    const cutoff = messages.findIndex(entry => entry.entryId === message.entryId);
+    try { await capturedRuntimePool.copySavedDiffs(branchTransport, sourcePath, result.sessionPath, new Set(messages.slice(0, cutoff + (beforePrompt ? 0 : 1)).map(entry => entry.id)), sourceDiffs); }
+    catch (reason) { addNotice({ title: "Worktree created, but project changes could not be copied", message: String(reason) }); }
     setComposerUploads(branchTransport, beforePrompt && Array.isArray(sourceMessage.content) ? sourceMessage.content.flatMap((part) => part.type === "image" && part.data && part.mimeType ? [{ id: crypto.randomUUID(), name: "Attached image", kind: "image" as const, byteSize: Math.ceil(part.data.length * 3 / 4), image: { type: "image" as const, data: part.data, mimeType: part.mimeType } }] : []) : []);
     selectSession(session);
     void syncSessionIndex();

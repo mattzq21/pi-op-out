@@ -13,30 +13,6 @@ pub(super) trait Execution: Send + Sync {
     fn publish(&self, event: Value);
 }
 
-#[cfg(test)]
-mod regression_tests {
-    use super::*;
-    struct Unresponsive { forced: std::sync::atomic::AtomicBool }
-    impl Execution for Unresponsive {
-        fn execute(&self, command: Value) -> BoxFuture<'_, Result<Value>> {
-            Box::pin(async move {
-                if kind(&command) == "force_stop" { self.forced.store(true, std::sync::atomic::Ordering::SeqCst); return Ok(Value::Null); }
-                std::future::pending().await
-            })
-        }
-        fn publish(&self, _: Value) {}
-    }
-    #[tokio::test]
-    async fn abort_forces_stop_when_preparation_never_answers() {
-        let executor = Arc::new(Unresponsive { forced: std::sync::atomic::AtomicBool::new(false) });
-        let queue = SessionQueue::new(executor.clone(), vec![]);
-        let result = tokio::time::timeout(std::time::Duration::from_secs(6), queue.command(json!({"type":"abort"}))).await;
-        assert!(result.is_ok(), "abort never reached force stop");
-        result.unwrap().unwrap();
-        assert!(executor.forced.load(std::sync::atomic::Ordering::SeqCst));
-    }
-}
-
 #[derive(Default)]
 struct QueueState {
     pending: Vec<Value>,
@@ -504,20 +480,20 @@ impl SessionQueue {
     }
 
     async fn force_stop(&self) -> Result<Value> {
-                self.execute(json!({"type":"force_stop"})).await?;
-                {
-                    let mut state = self.state();
-                    for item in &mut state.pending {
-                        item["retry"] = json!(true);
-                    }
-                    state.held = None;
-                    state.steering.clear();
-                    state.follow_up.clear();
-                    state.awaiting_steering.clear();
-                }
-                self.publish();
-                self.executor.publish(json!({"type":"disconnected"}));
-                Ok(Value::Null)
+        self.execute(json!({"type":"force_stop"})).await?;
+        {
+            let mut state = self.state();
+            for item in &mut state.pending {
+                item["retry"] = json!(true);
+            }
+            state.held = None;
+            state.steering.clear();
+            state.follow_up.clear();
+            state.awaiting_steering.clear();
+        }
+        self.publish();
+        self.executor.publish(json!({"type":"disconnected"}));
+        Ok(Value::Null)
     }
 
     pub async fn change_pending(&self, id: &str, action: Value) -> Result<Value> {
@@ -712,5 +688,29 @@ fn move_item(items: &mut Vec<Value>, id: &str, neighbor: &str, action: &Value) {
         }
     } else {
         items.swap(from, to);
+    }
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+    struct Unresponsive { forced: std::sync::atomic::AtomicBool }
+    impl Execution for Unresponsive {
+        fn execute(&self, command: Value) -> BoxFuture<'_, Result<Value>> {
+            Box::pin(async move {
+                if kind(&command) == "force_stop" { self.forced.store(true, std::sync::atomic::Ordering::SeqCst); return Ok(Value::Null); }
+                std::future::pending().await
+            })
+        }
+        fn publish(&self, _: Value) {}
+    }
+    #[tokio::test]
+    async fn abort_forces_stop_when_preparation_never_answers() {
+        let executor = Arc::new(Unresponsive { forced: std::sync::atomic::AtomicBool::new(false) });
+        let queue = SessionQueue::new(executor.clone(), vec![]);
+        let result = tokio::time::timeout(std::time::Duration::from_secs(6), queue.command(json!({"type":"abort"}))).await;
+        assert!(result.is_ok(), "abort never reached force stop");
+        result.unwrap().unwrap();
+        assert!(executor.forced.load(std::sync::atomic::Ordering::SeqCst));
     }
 }

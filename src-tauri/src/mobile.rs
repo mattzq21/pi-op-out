@@ -68,6 +68,7 @@ async fn serve_connection<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpi
 }
 
 async fn serve_connection_mode<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(app: AppHandle, mut socket: tokio_tungstenite::WebSocketStream<S>, events: broadcast::Sender<Value>, jobs: Arc<Semaphore>, peer: bool) -> Result<(), String> {
+    let controls = Arc::new(Semaphore::new(2));
     let mut events = events.subscribe();
     send_ready(&mut socket).await?;
     let (responses, mut receiver) = tokio::sync::mpsc::channel::<Value>(32);
@@ -92,7 +93,7 @@ async fn serve_connection_mode<S: tokio::io::AsyncRead + tokio::io::AsyncWrite +
                         let Some(id) = request.get("id").and_then(Value::as_u64) else { break; };
                         let Some(command) = request.get("command").and_then(Value::as_str) else { break; };
                         let args = request.get("args").cloned().unwrap_or(json!({}));
-                        match jobs.clone().try_acquire_owned() {
+                        match request_permit(&jobs, &controls, command, &args) {
                             Ok(permit) => {
                                 let app = app.clone(); let responses = responses.clone(); let command = command.to_owned(); let owner = owner.clone();
                                 pending.spawn(async move {
@@ -127,6 +128,11 @@ async fn serve_connection_mode<S: tokio::io::AsyncRead + tokio::io::AsyncWrite +
     detach_connection(app, owner, pending).await
 }
 
+fn request_permit(jobs: &Arc<Semaphore>, controls: &Arc<Semaphore>, command: &str, args: &Value) -> Result<tokio::sync::OwnedSemaphorePermit, tokio::sync::TryAcquireError> {
+    let control = matches!(command, "cancel_worktree_setup" | "stop_pi") || command == "pi_command" && args["command"]["type"] == "abort";
+    jobs.clone().try_acquire_owned().or_else(|error| if control { controls.clone().try_acquire_owned() } else { Err(error) })
+}
+
 async fn detach_connection(app: AppHandle, owner: String, mut pending: tokio::task::JoinSet<()>) -> Result<(), String> {
     let cleanup_app = app.clone(); let cleanup_owner = owner.clone();
     tokio::task::spawn_blocking(move || detach_owner(&cleanup_app, &cleanup_owner, false)).await.map_err(|error| error.to_string())?;
@@ -152,6 +158,16 @@ async fn send_outgoing<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cancellation_remains_available_when_work_capacity_is_full() {
+        let jobs = Arc::new(Semaphore::new(1));
+        let controls = Arc::new(Semaphore::new(2));
+        let _work = request_permit(&jobs, &controls, "create_worktree", &json!({})).unwrap();
+        assert!(request_permit(&jobs, &controls, "create_worktree", &json!({})).is_err());
+        let _cancel = request_permit(&jobs, &controls, "cancel_worktree_setup", &json!({})).expect("cancellation must reach the running job");
+        let _stop = request_permit(&jobs, &controls, "pi_command", &json!({"command":{"type":"abort"}})).unwrap();
+        assert!(request_permit(&jobs, &controls, "stop_pi", &json!({})).is_err(), "control capacity is bounded too");
+    }
     #[test]
     fn authentication_requires_exact_secret_and_message_type() {
         let token = "a-private-secret-with-at-least-32-characters";
