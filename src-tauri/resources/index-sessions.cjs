@@ -33,16 +33,15 @@ class SessionIndex {
   }
 
   message(entry) {
-    const voice = entry.type === 'custom' && entry.customType === 'piop-voice' ? entry.data : undefined;
-    if (entry.type !== 'message' && !voice) return;
-    const message = voice ? { role: voice.role, content: voice.text } : entry.message || {};
-    const content = text(message).replace(/^\[Voice request [a-f0-9-]{36}; answer concisely\]\n/, '');
+    if (entry.type !== 'message') return;
+    const message = entry.message || {};
+    const content = text(message);
     if (message.role === 'user' && this.resumes.has(content)) return;
-    this.recordMessage(message, content, voice, entry);
+    this.recordMessage(message, content, entry);
   }
 
-  recordMessage(message, content, voice, entry) {
-    if (message.role === 'user') this.lastMessageAt = Math.max(this.lastMessageAt, timestamp(voice?.startMs ?? message.timestamp ?? entry.timestamp));
+  recordMessage(message, content, entry) {
+    if (message.role === 'user') this.lastMessageAt = Math.max(this.lastMessageAt, timestamp(message.timestamp ?? entry.timestamp));
     this.count++;
     if (content) {
       if (!this.first && message.role === 'user') this.first = content.slice(0, 2000);

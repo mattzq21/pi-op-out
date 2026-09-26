@@ -5,9 +5,7 @@ import { createDependencyEffect, createRef } from "../lib/solid";
 import { App as AndroidApp } from "@capacitor/app";
 import App from "../App";
 import { readMobileHosts, removeMobileHost, saveMobileHost } from "../lib/mobileHosts";
-import { closeMobileVoice } from "../lib/mobileVoice";
 import { remoteClient, validateHost } from "../lib/remoteClient";
-import { voiceSession } from "../lib/voiceSession";
 
 export function MobileApp() {
   const [url, setUrl] = createSignal((() => localStorage.getItem("piop-mobile-host") ?? "")());
@@ -33,7 +31,7 @@ export function MobileApp() {
   };
   const disconnect = () => {
     intentionalDisconnect.current = true; generation.current++; clearTimeout(retry.current);
-    setWorkspaceOpen(false); closeMobileVoice(); remoteClient.close(); voiceSession.connectionLost(); setConnected(false); setConnecting(false); setError("");
+    setWorkspaceOpen(false); remoteClient.close(); setConnected(false); setConnecting(false); setError("");
   };
   const connect = async (address: string, label = "") => {
     const attempt = ++generation.current;
@@ -52,7 +50,7 @@ export function MobileApp() {
   };
   createComputed(() => { connectRef.current = connect; });
   createDependencyEffect(() => {
-    remoteClient.onDisconnect = (reason) => { closeMobileVoice(); voiceSession.connectionLost(); setConnected(false); setError(reason); scheduleReconnect(); };
+    remoteClient.onDisconnect = (reason) => { setConnected(false); setError(reason); scheduleReconnect(); };
     const last = localStorage.getItem("piop-mobile-host");
     if (reconnectEnabled.current && last) retry.current = setTimeout(() => { void connectRef.current(last); }, 0);
     window.addEventListener("piop-mobile-disconnect", disconnect);

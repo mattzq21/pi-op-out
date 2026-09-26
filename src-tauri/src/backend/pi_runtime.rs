@@ -386,7 +386,6 @@ fn open_project_directory_with(cwd: &str, host: Option<&RemoteHost>, open: impl 
     open(path.as_os_str())
 }
 
-
 fn prepare_session_switch(app: AppHandle, runtime: &PiRuntime, broker: &BrokerRuntime, runtime_id: &str, command: &mut Value) -> Result<BusyAgent, String> {
         let path = command["sessionPath"].as_str().ok_or("Session path is required")?;
         let host_id = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.get(runtime_id).map(|agent| agent.host_id.clone()).ok_or("Unknown Pi runtime")?;
@@ -400,9 +399,6 @@ fn prepare_session_switch(app: AppHandle, runtime: &PiRuntime, broker: &BrokerRu
 fn update_command_ownership(runtime: &PiRuntime, runtime_id: &str, command_type: &str) -> Result<(), String> {
     if command_type == "take_ownership" {
         if let Some(agent) = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.get_mut(runtime_id) { agent.messageable = false; }
-    }
-    if command_type == "voice_history" {
-        if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(runtime_id) { process.blank_cleanup.submitted = true; }
     }
     Ok(())
 }

@@ -126,7 +126,6 @@ fn control_extension(command: &str) -> Option<&'static str> {
         "branch_checkpoint" => Some("pi-desktop-branch-checkpoint"),
         "fork_and_forget" => Some("pi-desktop-fork-and-forget"),
         "fork_after" => Some("pi-desktop-fork-after"),
-        "voice_history" => Some("pi-desktop-voice-history"),
         _ => None,
     }
 }

@@ -15,13 +15,10 @@ mod conversation_ownership;
 mod session_groups;
 mod terminal_lookup;
 #[cfg(not(feature = "desktop"))]
-mod notes;
 mod daemon;
-mod voice;
 mod dictation;
 mod project_files;
 #[cfg(not(feature = "desktop"))]
-use voice::{voice_configuration, voice_stop, voice_mute, voice_suppress};
 #[cfg(not(feature = "desktop"))]
 use session_groups::load_session_groups;
 use session_groups::change_session_groups;

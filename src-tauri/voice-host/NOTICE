@@ -1,9 +1,0 @@
-OpenAI Codex
-Copyright 2025 OpenAI
-
-This project includes code derived from [Ratatui](https://github.com/ratatui/ratatui), licensed under the MIT license.
-Copyright (c) 2016-2022 Florian Dehau
-Copyright (c) 2023-2025 The Ratatui Developers
-
-Extracted from openai/codex commit 7efa9d96fb34c3cafe108a3c870bfc33e5635772.
-Modified for Piop: independent build, system media runtime, and Piop control protocol.

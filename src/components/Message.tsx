@@ -6,7 +6,6 @@ import { Check, ChevronRight, CircleAlert, Copy, FolderGit2, GitBranch, Pause, U
 import { textOf, thinkingOf } from "../lib/content";
 import { cacheHitStats } from "../lib/messages";
 import type { turnDiff } from "../lib/turnDiff";
-import { VOICE_MESSAGE } from "../lib/voiceMessages";
 import type { ChatMessage } from "../types";
 import { DiffViewer } from "./DiffViewer";
 import { IconButton } from "./IconButton";
@@ -145,7 +144,6 @@ export function Message(componentProps: Props) {
   const output = createMemo(() => (textOf(componentProps.message.content)));
   const thinking = createMemo(() => (thinkingOf(componentProps.message.content)));
   const metadata = createMemo(() => (responseMetadata(componentProps.message, componentProps.turnCacheUsage)));
-  const voiceResponse = createMemo(() => (componentProps.message.customType === VOICE_MESSAGE));
   const failureState = createMemo(() => (responseFailure(componentProps.message, (componentProps.paused === undefined ? false : componentProps.paused))));
   const branch = async () => { const capturedOnBranch0 = componentProps.onBranch; const capturedMessage1 = componentProps.message;
     if (!capturedOnBranch0 || branchingRef.current || forgettingRef.current) return;
@@ -158,9 +156,9 @@ export function Message(componentProps: Props) {
     try { await (capturedOnForkAndForget0)!(capturedMessage1); } finally { forgettingRef.current = false; setForgetting(false); }
   };
   const renderMessageBody = () => {
-    const renderVoiceResponseBubble = () => (voiceResponse() ? <div class="voice-response-bubble"><Markdown streaming={componentProps.message.streaming}>{output()}</Markdown>{componentProps.message.streaming && <span class="stream-caret" />}</div> : <Markdown onOpenFile={componentProps.onOpenFile} streaming={componentProps.message.streaming}>{output()}</Markdown>);
+    const renderResponse = () => <Markdown onOpenFile={componentProps.onOpenFile} streaming={componentProps.message.streaming}>{output()}</Markdown>;
     const renderMessageFailure = () => (failureState().failure && <div class="message-failure" role="status"><CircleAlert size={14} /><span>{(failureState().failure)!}</span>{componentProps.onRetry && <button disabled={(componentProps.retrying === undefined ? false : componentProps.retrying)} onClick={(componentProps.onRetry)!}>{(componentProps.retrying === undefined ? false : componentProps.retrying) ? "Retrying…" : "Retry"}</button>}</div>);
-    const renderStreamCaret = () => (componentProps.message.streaming && !voiceResponse() && <span class="stream-caret" />);
+    const renderStreamCaret = () => (componentProps.message.streaming && <span class="stream-caret" />);
     const renderMessageActions = () => {
       const renderCopyResponse = () => (<IconButton title="Copy" label={copyState() === "copied" ? `${metadata().responseLabel} copied` : copyState() === "error" ? `Copy failed for ${metadata().responseLabel.toLowerCase()}` : `Copy ${metadata().responseLabel.toLowerCase()}`} onClick={copy}>{copyState() === "copied" ? <Check size={14} /> : copyState() === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>);
       const renderBranchAction = () => (componentProps.onBranch && <button class="branch-button" aria-label={`Branch from ${metadata().responseLabel.toLowerCase()}`} title="Branch from here" disabled={branching() || forgetting()} onClick={() => void branch()}><GitBranch size={14} /></button>);
@@ -178,7 +176,7 @@ export function Message(componentProps: Props) {
     };
     return (<div class="message-body">
       {thinking() && <div class="reasoning-text"><Markdown streaming={componentProps.message.streaming}>{thinking()}</Markdown></div>}
-      {renderVoiceResponseBubble()}
+      {renderResponse()}
       {renderMessageFailure()}
       {failureState().pausedResponse && <div class="message-paused" role="status"><Pause size={14} /><span>Response paused</span></div>}
       {renderStreamCaret()}

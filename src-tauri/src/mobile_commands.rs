@@ -38,7 +38,6 @@ type CommandFuture = std::pin::Pin<Box<dyn std::future::Future<Output = Result<V
 type CommandHandler = fn(AppHandle, String, Value) -> CommandFuture;
 const COMMANDS: &[(&str, CommandHandler)] = &[
     ("reassign_terminal", handle_reassign_terminal),
-    ("notes", handle_notes),
     ("dictation_configuration", handle_dictation_configuration),
     ("dictation_transcribe", handle_dictation_transcribe),
     ("broker_request", handle_broker_request),
@@ -47,11 +46,6 @@ const COMMANDS: &[(&str, CommandHandler)] = &[
     ("host_storage_report", handle_host_storage_report),
     ("provider_auth", handle_provider_auth),
     ("open_project_directory", handle_open_project_directory),
-    ("voice_configuration", handle_voice_configuration),
-    ("mobile_voice_start", handle_mobile_voice_start),
-    ("voice_stop", handle_voice_stop),
-    ("voice_mute", handle_voice_mute),
-    ("voice_suppress", handle_voice_suppress),
     ("start_pi", handle_start_pi),
     ("stop_pi", handle_stop_pi),
     ("pi_command", handle_pi_command),
@@ -65,7 +59,6 @@ const COMMANDS: &[(&str, CommandHandler)] = &[
     ("load_session_groups", handle_load_session_groups),
     ("change_session_groups", handle_change_session_groups),
     ("home_directory", handle_home_directory),
-    ("orchestrator_chat", handle_orchestrator_chat),
     ("create_temporary_chat", handle_create_temporary_chat),
     ("remove_temporary_chat", handle_remove_temporary_chat),
     ("validate_project_directory", handle_validate_project_directory),
@@ -98,12 +91,6 @@ const COMMANDS: &[(&str, CommandHandler)] = &[
     ("codex_usage", handle_codex_usage),
     ("opencode_go_usage", handle_opencode_go_usage),
 ];
-
-fn handle_notes(_app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || notes::dispatch(args)).await.map_err(|error| error.to_string())?
-    })
-}
 
 fn handle_dictation_configuration(app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
     Box::pin(async move {
@@ -159,36 +146,6 @@ fn handle_provider_auth(app: AppHandle, owner: String, args: Value) -> CommandFu
 fn handle_open_project_directory(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
         tokio::task::spawn_blocking(move || open_project_directory(app.clone(), argument(&args, "cwd")?, argument(&args, "hostId")?).map(|_| Value::Null)).await.map_err(|error| error.to_string())?
-    })
-}
-
-fn handle_voice_configuration(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        voice_configuration(app, argument(&args, "runtimeId")?).await
-    })
-}
-
-fn handle_mobile_voice_start(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        voice::host_request(app, argument(&args, "runtimeId")?, "start".into(), argument(&args, "callId")?, argument(&args, "offer")?).await
-    })
-}
-
-fn handle_voice_stop(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        voice_stop(app, argument(&args, "runtimeId")?, argument(&args, "callId")?).await.map(|_| Value::Null)
-    })
-}
-
-fn handle_voice_mute(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        voice_mute(app, argument(&args, "callId")?, argument(&args, "muted")?).map(|_| Value::Null)
-    })
-}
-
-fn handle_voice_suppress(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
-    Box::pin(async move {
-        voice_suppress(app, argument(&args, "callId")?, argument(&args, "suppressed")?).map(|_| Value::Null)
     })
 }
 
@@ -272,12 +229,6 @@ fn handle_change_session_groups(app: AppHandle, _owner: String, args: Value) -> 
 fn handle_home_directory(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
         tokio::task::spawn_blocking(move || serde_json::to_value(home_directory(app.clone(), argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
-    })
-}
-
-fn handle_orchestrator_chat(app: AppHandle, _owner: String, _args: Value) -> CommandFuture {
-    Box::pin(async move {
-        tokio::task::spawn_blocking(move || orchestrator_chat(app)).await.map_err(|error| error.to_string())?
     })
 }
 

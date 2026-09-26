@@ -1,10 +1,8 @@
 import { encodeAgentValue } from "./lib/agentProtocol";
 import type { NativeTransport } from "./lib/nativeTransport";
-import { VOICE_ORCHESTRATOR_AGENT } from "./lib/orchestrator";
 import type { AppSettings, Model } from "./types";
 
 export type ProjectControls = { agent?: string; model: Model | null; thinking: string };
-const selectableAgent = (agent: string) => agent === VOICE_ORCHESTRATOR_AGENT ? "general" : agent;
 
 export function reassignTerminals(transport: NativeTransport, terminals: readonly { id: string; started: boolean }[], sessionKey: string, onError: (reason: unknown) => void) {
   for (const terminal of terminals) {
@@ -13,7 +11,7 @@ export function reassignTerminals(transport: NativeTransport, terminals: readonl
 }
 
 async function applyInherited(transport: NativeTransport, inherited: ProjectControls, models: Model[]) {
-  if (inherited.agent) await transport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(selectableAgent(inherited.agent))}` });
+  if (inherited.agent) await transport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(inherited.agent)}` });
   if (inherited.model && models.some((model) => model.provider === inherited.model!.provider && model.id === inherited.model!.id)) {
     await transport.command({ type: "set_model", provider: inherited.model.provider, modelId: inherited.model.id });
   }
@@ -31,7 +29,7 @@ async function applyDefaults(transport: NativeTransport, value: AppSettings, mod
   if (!current()) return;
   await transport.setFastMode(value.defaultFastMode);
   if (!current()) return;
-  await transport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(selectableAgent(value.defaultAgent ?? "general"))}` });
+  await transport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(value.defaultAgent ?? "general")}` });
   transport.defaultsApplied();
 }
 

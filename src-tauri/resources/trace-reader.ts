@@ -77,10 +77,6 @@ function rememberResume(entry: Entry, resumeMessages: Set<string>) {
   if (entry.type === "custom" && entry.customType === "pi-desktop-resume" && typeof entry.data?.message === "string") resumeMessages.add(entry.data.message);
 }
 
-function spokenTraceMessage(entry: Entry): CleanMessage[] | undefined {
-  if (entry.type === "custom" && entry.customType === "piop-voice" && entry.data?.completed === true && (entry.data.role === "user" || entry.data.role === "assistant") && typeof entry.data.text === "string" && entry.data.text.trim()) return [{ role: entry.data.role, text: entry.data.text.trim() }];
-}
-
 function originalUserText(text: string, resumeMessages: Set<string>) {
   return !syntheticUserMessage(text) && !resumeMessages.has(text);
 }
@@ -103,8 +99,6 @@ export function cleanTrace(content: string): CleanMessage[] {
   const resumeMessages = new Set<string>();
   return branch.flatMap((entry): CleanMessage[] => {
     rememberResume(entry, resumeMessages);
-    const spoken = spokenTraceMessage(entry);
-    if (spoken) return spoken;
     if (entry.type !== "message" || !entry.message) return [];
     let text = textContent(entry.message.content);
     if (entry.message.role === "user") text = text.replace(/^<skill(?:\s[^>]*|)>[\s\S]*?<\/skill>\s*/, "").trim();

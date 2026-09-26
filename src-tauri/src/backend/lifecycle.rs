@@ -67,7 +67,6 @@ fn detach_owner(app: &AppHandle, owner: &str, discard_blank: bool) {
 fn shutdown_backend(app: &AppHandle) {
     #[cfg(not(feature = "desktop"))]
     peers::shutdown(app);
-    app.state::<voice::VoiceRuntime>().shutdown();
     let broker = app.state::<BrokerRuntime>();
     broker.closing.store(true, Ordering::SeqCst);
     let jobs = broker.jobs.lock().map(|mut jobs| jobs.drain().map(|(_, child)| child).collect::<Vec<_>>()).unwrap_or_default();

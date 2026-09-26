@@ -16,5 +16,5 @@ export default {
   jsonReporter: { fileName: 'reports/mutation/remaining-typescript.json' },
   incremental: true,
   incrementalFile: 'reports/mutation/remaining-typescript-incremental.json',
-  ignorePatterns: ['src-tauri/target/**', 'src-tauri/voice-host/target/**', 'dist/**', 'dist-mobile/**', 'reports/**'],
+  ignorePatterns: ['src-tauri/target/**', 'dist/**', 'dist-mobile/**', 'reports/**'],
 };

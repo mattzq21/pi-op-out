@@ -11,16 +11,13 @@ import { diagramFenceClosed } from "../lib/diagrams";
 import { markdownDiagrams } from "./markdownDiagrams";
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
-const parserOptions = (noteLinks: boolean) => new Marked({
+const parser = new Marked({
   gfm: true,
   renderer: {
     html: ({ text }) => escapeHtml(text),
     image: ({ text }) => `<span class="message-image-placeholder" role="img" aria-label="${escapeHtml(text || "Blocked remote image")}">[Image: ${escapeHtml(text || "blocked")}]</span>`,
     link({ href, tokens }) {
       const text = this.parser.parseInline(tokens);
-      if (noteLinks && /^(?![a-z][a-z\d+.-]*:|\/\/)[^#?]+\.md(?:#.*)?$/i.test(href)) {
-        return `<a href="#note" data-note="${escapeHtml(href)}">${text}</a>`;
-      }
       const url = webUrl(href);
       return url ? `<a class="message-link" href="${escapeHtml(url)}" title="Click to open in browser&#10;${escapeHtml(url)}">${text}</a>` : `<span class="message-link"${fileReference(href) ? ` data-file-reference="${escapeHtml(href)}"` : ""} title="${escapeHtml(href)}">${text}</span>`;
     },
@@ -31,27 +28,12 @@ const parserOptions = (noteLinks: boolean) => new Marked({
     },
   },
 });
-const parser = parserOptions(false);
-const notesParser = parserOptions(true);
-notesParser.use({ extensions: [{
-  name: "wikiLink",
-  level: "inline",
-  start: source => source.indexOf("[["),
-  tokenizer(source) {
-    const match = /^\[\[([^\]\n]+)\]\]/.exec(source);
-    if (match) return { type: "wikiLink", raw: match[0], text: match[1] };
-  },
-  renderer(token) {
-    const [target, alias] = String(token.text).split("|");
-    return `<a href="#note" data-note="${escapeHtml(target.trim())}">${escapeHtml(alias?.trim() || target.trim())}</a>`;
-  },
-}] });
 
 let purifier: ReturnType<typeof DOMPurify> | undefined;
 let purifierWindow: Window | undefined;
-export function markdownHtml(source: string, noteLinks = false, streaming = false, detectFiles = false) {
+export function markdownHtml(source: string, streaming = false, detectFiles = false) {
   if (!purifier || purifierWindow !== window) { purifier = DOMPurify(window); purifierWindow = window; }
-  const html = (noteLinks ? notesParser : parser).parse(source, { async: false });
+  const html = parser.parse(source, { async: false });
   const sanitized = purifier.sanitize(streaming ? html : html.replaceAll('data-complete="false"', 'data-complete="true"'), {
     USE_PROFILES: { html: true },
     FORBID_TAGS: ["img", "video", "audio", "source", "iframe", "form", "style"],
@@ -61,8 +43,8 @@ export function markdownHtml(source: string, noteLinks = false, streaming = fals
 }
 
 type LinkMenu = { href: string; x: number; y: number; returnFocus?: HTMLElement };
-export function Markdown(props: { children: string; onNoteLink?: (target: string) => void; streaming?: boolean; onOpenFile?: (file: FileReference) => void }) {
-  const html = createMemo(() => markdownHtml(props.children, !!props.onNoteLink, props.streaming, Boolean(props.onOpenFile)));
+export function Markdown(props: { children: string; streaming?: boolean; onOpenFile?: (file: FileReference) => void }) {
+  const html = createMemo(() => markdownHtml(props.children, props.streaming, Boolean(props.onOpenFile)));
   const [error, setError] = createSignal<string>();
   const [menu, setMenu] = createSignal<LinkMenu>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -131,7 +113,6 @@ export function Markdown(props: { children: string; onNoteLink?: (target: string
     const link = event.target.closest<HTMLAnchorElement>("a");
     if (link) {
       event.preventDefault();
-      if (link.dataset.note && props.onNoteLink) { props.onNoteLink(link.dataset.note); return; }
       const url = webUrl(link.href);
       if (event.button === 0 && url) { setError(undefined); void openExternalUrl(url).catch(reason => setError(`Could not open link: ${reason instanceof Error ? reason.message : String(reason)}`)); }
     }
@@ -140,7 +121,7 @@ export function Markdown(props: { children: string; onNoteLink?: (target: string
   };
   const contextMenu = (event: MouseEvent) => {
     const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a") : null;
-    if (!link || link.dataset.note) return;
+    if (!link) return;
     const href = webUrl(link.href); if (!href) return;
     event.preventDefault();
     const bounds = link.getBoundingClientRect();

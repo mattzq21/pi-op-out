@@ -1,6 +1,5 @@
 import { type Accessor, createComputed, createMemo, onCleanup, untrack } from "solid-js";
 import { createDependencyEffect, createRef } from "../lib/solid";
-import { mergeSpokenMessages, voiceEntry } from "./voiceMessages";
 
 import type { AgentState, ChatMessage, Model, PromptContextInfo, RpcEvent, SlashCommand } from "../types";
 import { contextUsageAfterCompaction } from "./contextUsage";
@@ -80,7 +79,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       if (modelResult) session.setModels(modelResult.models);
       if (thinkingResult) session.setThinkingLevels(thinkingResult.levels);
       if (commandResult) {
-        const visible = commandResult.commands.filter((command) => command.sourceInfo?.source !== "inline" && !command.name.startsWith("pi-orchestration-") && !["pi-desktop-control", "pi-desktop-fast-status", "pi-desktop-fork-and-forget", "pi-desktop-voice-history"].includes(command.name));
+        const visible = commandResult.commands.filter((command) => command.sourceInfo?.source !== "inline" && !command.name.startsWith("pi-orchestration-") && !["pi-desktop-control", "pi-desktop-fast-status", "pi-desktop-fork-and-forget"].includes(command.name));
         session.setCommands(visible.some((command) => command.name === "compact") ? visible : [{ name: "compact", description: "Compact conversation context", source: "builtin" }, ...visible]);
       }
     };
@@ -169,13 +168,13 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
           const context = JSON.parse(event.statusText.slice(5)) as PromptContextInfo;
           if (typeof context.userTimestamp === "number") {
             liveRevision.current += 1;
-            session.setMessages((current) => current.map((message) => message.role === "user" && (message.promptTimestamp ?? message.timestamp) === context.userTimestamp && !message.promptContext ? { ...message, promptContext: context } : message));
+            session.setMessages((current) => current.map((message) => message.role === "user" && message.timestamp === context.userTimestamp && !message.promptContext ? { ...message, promptContext: context } : message));
           }
         } catch { }
       }
     };
     const handleEntryAppended = () => {
-      if (event.type === "entry_appended" && event.entry) { const entry = event.entry as PiEntry; const voice = voiceEntry(entry); if (voice) { liveRevision.current += 1; session.setMessages((current) => mergeSpokenMessages(current, [voice])); } const marker = resumeMarker(entry); if (marker) { resumeMarkers.current.add(marker); session.setMessages(checkpointLatestUser); } if (entry.customType === "piop-file-changes") { liveRevision.current += 1; session.setMessages((current) => appendFileChanges(current, entry)); } }
+      if (event.type === "entry_appended" && event.entry) { const entry = event.entry as PiEntry; const marker = resumeMarker(entry); if (marker) { resumeMarkers.current.add(marker); session.setMessages(checkpointLatestUser); } if (entry.customType === "piop-file-changes") { liveRevision.current += 1; session.setMessages((current) => appendFileChanges(current, entry)); } }
     };
     const handleAgentStart = () => {
       session.setState((current) => ({ ...current, isStreaming: true, isPaused: false }));

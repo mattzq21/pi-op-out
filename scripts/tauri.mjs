@@ -22,14 +22,14 @@ if (args[0] === "dev") {
   });
   Object.assign(configOverrides, {
     build: {
-      beforeDevCommand: `node scripts/build-daemon.mjs --debug && npm run build:voice && npm run dev -- --host 127.0.0.1 --port ${port} --strictPort`,
+      beforeDevCommand: `node scripts/build-daemon.mjs --debug && npm run dev -- --host 127.0.0.1 --port ${port} --strictPort`,
       devUrl: `http://127.0.0.1:${port}`,
     },
     app: { windows: config.app.windows.map((window) => ({ ...window, focus: false })) },
   });
 }
 
-if (args[0] === "build" && development) configOverrides.build = { beforeBuildCommand: "npm run build && npm run build:voice && node scripts/build-daemon.mjs --debug" };
+if (args[0] === "build" && development) configOverrides.build = { beforeBuildCommand: "npm run build && node scripts/build-daemon.mjs --debug" };
 if (development) args.splice(1, 0, "--config", JSON.stringify(configOverrides));
 
 const tauri = fileURLToPath(new URL("../node_modules/.bin/tauri", import.meta.url));

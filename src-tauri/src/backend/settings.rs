@@ -178,6 +178,7 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
 fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
     let mut settings = if !path.exists() { default_settings() } else { serde_json::from_slice(&fs::read(path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())? };
     migrate_question_tool(&mut settings);
+    if settings.default_agent == "voice-orchestrator" { settings.default_agent = default_agent(); }
     for (legacy, replacements) in [
         ("exec_command", &["read", "bash", "grep", "find", "ls"][..]),
         ("apply_patch", &["edit", "write"][..]),

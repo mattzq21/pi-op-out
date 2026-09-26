@@ -105,7 +105,6 @@ async fn attach_readonly(host: &Host, session: &Session, runtime: &str, destinat
     session.publish(json!({"type":"ownership_lost"}), Some(runtime));
     host.registry().subscriptions.remove(runtime);
     session.detach_view(runtime);
-    host.services.detach_voice(runtime).await;
     session.finish_detach(false, false).await;
     host.release_unused(session).await?;
     Ok(json!({}))
@@ -167,7 +166,6 @@ async fn transfer(host: &Arc<Host>, session: &Arc<Session>, next: &Arc<Session>,
             .unwrap_or(json!({}));
         session.detach_view(runtime);
         host.attach_view(runtime, next.clone(), presence);
-        host.services.detach_voice(runtime).await;
         finish_transfer(host, session).await?;
     }
     host.reconcile(next.clone());
@@ -322,7 +320,6 @@ impl Branch<'_> {
         self.host.attach_view(self.runtime, opened.clone(), presence);
         self.committed = true;
         self.host.remember(self.runtime, opened);
-        self.host.services.detach_voice(self.runtime).await;
         finish_transfer(self.host, self.session).await?;
         self.host.reconcile(opened.clone());
         if self.host.current(self.runtime, opened) {

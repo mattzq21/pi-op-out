@@ -60,21 +60,10 @@ impl Connection {
         result
     }
 
-    pub(crate) fn request(&self, packet: Value) -> Result<Value, String> {
-        let command = match packet["action"].as_str() {
-            Some("configuration") => "voice_configuration",
-            Some("start") => "mobile_voice_start",
-            Some("stop") => "voice_stop",
-            _ => return Err("Unknown voice operation".into()),
-        };
-        self.invoke(command, packet)
-    }
-
     fn receive_event(&self, app: &AppHandle, event: &str, payload: &Value) {
             if event == "pi://event" && payload["type"] == "terminal_exit" {
                 if let (Some(id), Ok(mut terminals)) = (payload["terminalId"].as_str(), self.terminals.lock()) { terminals.remove(id); }
             }
-            if event == "pi://voice" && payload["event"]["type"] == "ended" { app.state::<voice::VoiceRuntime>().ended(payload["callId"].as_str().unwrap_or_default()); }
             let _ = app.emit_to(&self.window, event, payload);
     }
 
@@ -97,7 +86,6 @@ impl Connection {
         let state = app.state::<DesktopDaemon>();
         if let Ok(runtimes) = state.runtimes.lock() {
             for (id, connection) in runtimes.iter().filter(|(_, connection)| std::ptr::eq(Arc::as_ptr(connection), self)) {
-                app.state::<voice::VoiceRuntime>().disconnect_runtime(id);
                 let _ = app.emit_to(&connection.window, "pi://event", json!({"runtimeId":id,"event":{"type":"disconnected"}}));
             }
         };
@@ -122,15 +110,11 @@ impl DesktopDaemon {
         Ok(connection)
     }
 
-    pub(crate) async fn close_window(&self, app: &AppHandle, window: &str) {
+    pub(crate) async fn close_window(&self, _app: &AppHandle, window: &str) {
         if let Some(connection) = self.connections.lock().await.remove(window) { connection.alive.store(false, Ordering::SeqCst); let _ = connection.outgoing.send(Message::Close(None)); }
         if let Ok(mut runtimes) = self.runtimes.lock() {
-            for (id, _) in runtimes.iter().filter(|(_, connection)| connection.window == window) { app.state::<voice::VoiceRuntime>().disconnect_runtime(id); }
             runtimes.retain(|_, connection| connection.window != window);
         }
-    }
-    pub(crate) fn for_runtime(&self, runtime_id: &str) -> Result<Arc<Connection>, String> {
-        self.runtimes.lock().map_err(|_| "Daemon runtime registry unavailable")?.get(runtime_id).cloned().ok_or("Connect to the conversation before starting voice".into())
     }
 }
 

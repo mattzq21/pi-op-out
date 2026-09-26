@@ -38,3 +38,4 @@
 .message-body button.file-link { display: inline; border: 0; border-radius: 0; padding: 0; background: transparent; font: inherit; color: var(--accent); text-align: inherit; text-decoration: underline dotted; overflow-wrap: anywhere; }
 .message-body button.file-link:hover { text-decoration-style: solid; }
 @media (max-width: 700px) { .files-open > .chat-panes { display: none; } .file-pane { width: 100%; min-width: 0; max-width: none; border-left: 0; } .files-resizer { display: none; } }
+.file-text-editor { flex: 1; min-height: 0; width: 100%; resize: none; border: 0; border-radius: 0; padding: 12px; background: var(--paper); color: var(--ink); font: 13px/1.6 monospace; tab-size: 2; }

@@ -90,7 +90,6 @@ impl Connection {
         let state = app.state::<PeerRuntime>();
         let mut payload = packet["payload"].clone();
         if !payload.is_object() { payload = json!({}); }
-        if event == "pi://voice" && !state.routes.lock().is_ok_and(|routes| payload["callId"].as_str().is_some_and(|id| routes.get(&("callId".into(), id.into())).is_some_and(|route| std::ptr::eq(Arc::as_ptr(&route.connection), self)))) { return; }
         let Ok(host_id) = self.map_resources(&state, &mut payload) else { return; };
         payload["_peer"] = json!(true);
         if let Some(host_id) = host_id { payload["hostId"] = json!(host_id); let _ = app.emit(event, payload); return; }
@@ -191,7 +190,7 @@ pub(crate) fn detach_owner(app: &AppHandle, owner: &str) {
     }).unwrap_or_default();
     for ((kind, id), route) in routes {
         if kind == "flowId" { let _ = route.connection.invoke("provider_auth", json!({"hostId":"local","request":{"action":"cancel","flowId":id}})); continue; }
-        let command = match kind.as_str() { "runtimeId" => "stop_pi", "terminalId" => "close_terminal", "setupId" => "cancel_worktree_setup", "callId" => "voice_stop", _ => continue };
+        let command = match kind.as_str() { "runtimeId" => "stop_pi", "terminalId" => "close_terminal", "setupId" => "cancel_worktree_setup", _ => continue };
         let id = if matches!(kind.as_str(), "runtimeId" | "terminalId") { format!("{}{id}", route.connection.prefix) } else { id };
         let mut args = json!({"discardBlank":false,"preserveRunning":true}); args[&kind] = json!(id);
         let _ = route.connection.invoke(command, args);
@@ -289,7 +288,7 @@ fn route_list_sessions(app: &AppHandle) -> Result<Option<Value>, String> {
 fn existing_route(state: &PeerRuntime, owner: &str, args: &Value) -> Result<Option<Route>, String> {
         let routes = state.routes.lock().map_err(|_| "Peer routes unavailable")?;
         let mut existing: Option<Route> = None;
-        for kind in ["runtimeId", "terminalId", "setupId", "callId", "flowId"] {
+        for kind in ["runtimeId", "terminalId", "setupId", "flowId"] {
             if let Some(route) = args[kind].as_str().and_then(|id| routes.get(&(kind.into(), id.into()))) {
                 if route.owner != owner { return Err("Resource belongs to another connection".into()); }
                 if existing.as_ref().is_some_and(|previous| !Arc::ptr_eq(&previous.connection, &route.connection)) { return Err("Resources belong to different daemons".into()); }
@@ -313,8 +312,8 @@ fn check_route_resources(state: &PeerRuntime, owner: &str, command: &str, args: 
     let stale_terminals;
     {
         let routes = state.routes.lock().map_err(|_| "Peer routes unavailable")?;
-        for kind in ["runtimeId", "terminalId", "setupId", "callId"] {
-            let creating = matches!((command, kind), ("start_pi", "runtimeId") | ("start_terminal", "terminalId") | ("mobile_voice_start", "callId"));
+        for kind in ["runtimeId", "terminalId", "setupId"] {
+            let creating = matches!((command, kind), ("start_pi", "runtimeId") | ("start_terminal", "terminalId"));
             if let Some(id) = args[kind].as_str() {
                 if !creating && !routes.get(&(kind.into(), id.into())).is_some_and(|saved| saved.owner == owner && Arc::ptr_eq(&saved.connection, &route.connection)) { return Err("Reconnect to the resource on its owning daemon".into()); }
             }
@@ -338,7 +337,6 @@ fn check_local_collisions(app: &AppHandle, args: &Value) -> Result<(), String> {
 fn register_started_resource(state: &PeerRuntime, command: &str, args: &Value, route: &Route) -> Result<(), String> {
     if command == "start_pi" { register(state, "runtimeId", args["runtimeId"].as_str().ok_or("Missing runtimeId")?, route.clone())?; }
     if command == "start_terminal" { register(state, "terminalId", args["terminalId"].as_str().ok_or("Missing terminalId")?, route.clone())?; }
-    if command == "mobile_voice_start" { register(state, "callId", args["callId"].as_str().ok_or("Missing callId")?, route.clone())?; }
     Ok(())
 }
 
@@ -359,7 +357,7 @@ fn invoke_route(state: &PeerRuntime, command: &str, args: &Value, route: Route, 
 }
 
 fn remove_closed_route(state: &PeerRuntime, command: &str, args: &Value, result: &Result<Value, String>) -> Result<(), String> {
-    let closing = match command { "stop_pi" => Some("runtimeId"), "close_terminal" => Some("terminalId"), "cancel_worktree_setup" | "run_worktree_setup" => Some("setupId"), "voice_stop" => Some("callId"), _ => None };
+    let closing = match command { "stop_pi" => Some("runtimeId"), "close_terminal" => Some("terminalId"), "cancel_worktree_setup" | "run_worktree_setup" => Some("setupId"), _ => None };
     if result.is_ok() { if let Some(kind) = closing { if let Some(id) = args[kind].as_str() { state.routes.lock().map_err(|_| "Peer routes unavailable")?.remove(&(kind.into(), id.into())); } } }
     Ok(())
 }

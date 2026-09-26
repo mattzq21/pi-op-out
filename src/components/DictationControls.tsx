@@ -1,12 +1,9 @@
 import { Mic, Square, X } from "lucide-solid";
 import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { DictationRecording, transcribeDictation, useDictationEnabled } from "../lib/dictation";
-import { createSubscription } from "../lib/solid";
-import { voiceSession } from "../lib/voiceSession";
 
 export function DictationControls(props: { disabled: boolean; compact?: boolean; onText: (text: string) => void }) {
   const enabled = useDictationEnabled();
-  const voice = createSubscription(() => voiceSession.subscribe, () => voiceSession.getSnapshot);
   const [phase, setPhase] = createSignal<"idle" | "starting" | "recording" | "transcribing">("idle");
   const [error, setError] = createSignal<string>();
   let recording: DictationRecording | undefined;
@@ -14,7 +11,7 @@ export function DictationControls(props: { disabled: boolean; compact?: boolean;
   let transcriptionPending = false;
   const cancel = () => { generation++; recording?.cancel(); recording = undefined; if (!transcriptionPending) setPhase("idle"); };
   onCleanup(cancel);
-  createEffect(() => { if (props.disabled || voice().phase !== "idle") cancel(); });
+  createEffect(() => { if (props.disabled) cancel(); });
   createEffect(() => { if (!enabled() && (phase() === "starting" || phase() === "recording")) cancel(); });
   const finish = async () => {
     if (phase() !== "recording" || !recording) return;
@@ -29,7 +26,7 @@ export function DictationControls(props: { disabled: boolean; compact?: boolean;
     finally { transcriptionPending = false; setPhase("idle"); }
   };
   const start = async () => {
-    if (!enabled() || props.disabled || phase() !== "idle" || voice().phase !== "idle") return;
+    if (!enabled() || props.disabled || phase() !== "idle") return;
     const current = ++generation;
     const capture = new DictationRecording(); recording = capture;
     setError(undefined); setPhase("starting");
@@ -41,7 +38,7 @@ export function DictationControls(props: { disabled: boolean; compact?: boolean;
   const showLabel = () => !props.compact || phase() !== "idle";
   return <span class="dictation-controls">
     <Show when={enabled()}>
-      <button type="button" class={phase() === "recording" ? "dictation-recording" : ""} aria-label={phase() === "recording" ? "Stop dictation" : "Dictate"} aria-pressed={phase() === "recording"} disabled={props.disabled || voice().phase !== "idle" || phase() === "starting" || phase() === "transcribing"} onClick={() => void (phase() === "recording" ? finish() : start())}>
+      <button type="button" class={phase() === "recording" ? "dictation-recording" : ""} aria-label={phase() === "recording" ? "Stop dictation" : "Dictate"} aria-pressed={phase() === "recording"} disabled={props.disabled || phase() === "starting" || phase() === "transcribing"} onClick={() => void (phase() === "recording" ? finish() : start())}>
         {phase() === "recording" ? <Square size={14} /> : <Mic size={14} />}
         <Show when={showLabel()}>{phase() === "recording" ? "Stop dictation" : phase() === "transcribing" ? "Transcribing…" : phase() === "starting" ? "Microphone…" : "Dictate"}</Show>
       </button>

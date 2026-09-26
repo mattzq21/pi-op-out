@@ -1,7 +1,5 @@
 import type { ChatMessage, FileChangeSnapshot, PromptContextInfo } from "../types";
 
-import { mergeSpokenMessages, parseVoicePrompt, voiceEntry } from "./voiceMessages";
-
 const visibleUserContent = (content: unknown) => content;
 const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "pi-desktop-catch-up"]);
 
@@ -78,8 +76,7 @@ export function normalizeMessage(message: Record<string, unknown> | null | undef
   const source = (message && typeof message === "object" ? message : {}) as Record<string, unknown>;
   const stamp = messageTimestamp(source);
   const completionStamp = completedAt ? Date.parse(completedAt) : NaN;
-  const voicePrompt = parseVoicePrompt(source);
-  return { ...(source as unknown as ChatMessage), ...(source.role === "user" ? { content: visibleUserContent(source.content) as ChatMessage["content"] } : {}), id: messageIdentity(source, stamp, entryId, fallbackId), entryId, role: messageRole(source), toolStatus: source.role === "toolResult" ? ((source as { isError?: unknown }).isError ? "error" : "done") : undefined, timestamp: stamp, ...(Number.isFinite(completionStamp) ? { completedAt: completionStamp } : {}), ...voicePrompt, ...(voicePrompt ? { promptTimestamp: stamp } : {}) };
+  return { ...(source as unknown as ChatMessage), ...(source.role === "user" ? { content: visibleUserContent(source.content) as ChatMessage["content"] } : {}), id: messageIdentity(source, stamp, entryId, fallbackId), entryId, role: messageRole(source), toolStatus: source.role === "toolResult" ? ((source as { isError?: unknown }).isError ? "error" : "done") : undefined, timestamp: stamp, ...(Number.isFinite(completionStamp) ? { completedAt: completionStamp } : {}) };
 }
 
 export { applyAssistantMessageEvent } from "./messageEvents";
@@ -121,12 +118,10 @@ function visibleEntryMessage(entry: PiEntry, resumeMarkers: Set<string>): ChatMe
 
 export function branchMessages(entries: PiEntry[], leafId: string | null): ChatMessage[] {
   let messages: ChatMessage[] = []; const resumeMarkers = new Set<string>();
-  const spoken: ChatMessage[] = [];
   for (const entry of entryBranch(entries, leafId)) {
-    const voice = voiceEntry(entry); if (voice) { spoken.push(voice); continue; }
     if (entry.type === "custom") { messages = applyCustomEntry(messages, entry, resumeMarkers); continue; }
     const message = visibleEntryMessage(entry, resumeMarkers);
     if (message) messages.push(message);
   }
-  return mergeSpokenMessages(messages, spoken);
+  return messages;
 }

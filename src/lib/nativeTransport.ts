@@ -2,7 +2,6 @@ import { forgetSession, retainSessionResource } from "./sessionMemory";
 import { preserveDaemonPreferences, saveClientSettings, withClientSettings } from "./clientSettings";
 import { keybindingsError } from "./keybindings";
 import { invoke, listen, type UnlistenFn } from "./platform";
-import { ORCHESTRATOR_SESSION_ID } from "./orchestrator";
 import { open } from "@tauri-apps/plugin-dialog";
 import { emit as emitNativeEvent } from "@tauri-apps/api/event";
 import type { GroupChange, SessionGroups, SessionGroupSeed } from "./sessionGroups";
@@ -35,7 +34,6 @@ const call = <T>(command: string, args?: Record<string, unknown>) => {
 };
 
 export const openSessionWindow = (target: NativeConnectionTarget & { sessionId: string }) => call<string>("new_window", { target });
-export const openOrchestratorChat = () => call<SessionSummary>("orchestrator_chat");
 export function initialWindowTarget(): NativeConnectionTarget {
   try { const value = JSON.parse(new URLSearchParams(window.location.search).get("target") || "{}"); return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
   catch { return {}; }
@@ -86,7 +84,6 @@ export class NativeTransport {
   connectionTarget(): NativeConnectionTarget { return { cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId, ...(this.readOnly ? { readOnly: true } : {}) }; }
   async restoreConnection(target: NativeConnectionTarget) { await this.disconnect(); this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId || "local"; this.daemonId = undefined; await this.connect(); }
   private readonly runtimeId = globalThis.crypto?.randomUUID?.() ?? `runtime-${Date.now()}-${Math.random()}`;
-  voiceRuntimeId() { return this.runtimeId; }
   private queueSnapshot: RpcEvent = { type: "queue_update", steering: [], followUp: [], pendingMessages: [] };
   private visible = false;
   private presenceCleanup?: () => void;
@@ -266,7 +263,7 @@ export class NativeTransport {
     });
     if (version !== this.connectionVersion) { unlisten(); stderrUnlisten(); return; }
     this.unlisten = unlisten; this.stderrUnlisten = stderrUnlisten;
-    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call<{ attached: boolean; owned?: boolean; daemonId?: string }>("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: !this.readOnly && this.sessionId && this.sessionId !== ORCHESTRATOR_SESSION_ID ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }));
+    const attached = await this.runProcessCommand(() => version !== this.connectionVersion ? Promise.resolve(undefined) : call<{ attached: boolean; owned?: boolean; daemonId?: string }>("start_pi", { runtimeId: this.runtimeId, cwd: this.cwd, sessionPath: !this.readOnly && this.sessionId ? undefined : this.sessionPath, sessionId: this.sessionId, forkPath, noSession: this.ephemeral, hostId: this.hostId, presence: this.presence() }));
     if (version !== this.connectionVersion || !attached) throw new Error("The conversation disconnected while starting. Reconnect to try again.");
     this.daemonId = attached.daemonId;
     this.connectedOwnership(attached);

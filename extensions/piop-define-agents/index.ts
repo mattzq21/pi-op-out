@@ -19,10 +19,6 @@ const DEFAULTS_ENV = "PI_DEFINE_AGENTS_RUNTIME_DEFAULTS";
 const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
 const DEFAULT_PROMPT_PATH = "sysprompt/default.md";
 const DEFAULT_AGENT_PROMPT_PATH = `~/${process.env.PIOP_STORAGE_DIRECTORY || ".piop"}/agents/default.md`;
-const VOICE_ORCHESTRATOR_SESSION_ID = "00000000-0000-4000-8000-000000000001";
-const VOICE_ORCHESTRATOR_NAME = "voice-orchestrator";
-const VOICE_ORCHESTRATOR_PROMPT_PATH = "sysprompt/voice-orchestrator.md";
-const VOICE_ORCHESTRATOR_PROMPT = `Talk to me (and the voice agent) and to other agent sessions. Only use available tools for it. You are the messenger between us.`;
 const DEFAULT_SYSTEM_PROMPT = `You are an expert coding assistant operating inside a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
 
 Available tools:
@@ -47,7 +43,7 @@ Guidelines:
 - Show file paths clearly when working with files`;
 
 const sessionTools = ["fork_session", "create_worktree", "remove_worktree", "subagent"];
-type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; orchestratorDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean; askerAgentDefaultApplied?: boolean; terminalAgentDefaultApplied?: boolean };
+type Config = { agents: Agent[]; webSearchDefaultApplied?: boolean; sessionToolsDefaultApplied?: boolean; subagentsDefaultApplied?: boolean; diagramistDefaultApplied?: boolean; askerAgentDefaultApplied?: boolean; terminalAgentDefaultApplied?: boolean };
 const development = process.env.PIOP_STORAGE_DIRECTORY === ".piop-dev";
 const fallbackConfig: Config = { agents: [{ name: "general", model: "", effort: development ? "medium" : "high", fastMode: development ? false : undefined, path_systemprompt: DEFAULT_PROMPT_PATH, path_agentprompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["read", "bash", "edit", "write", "grep", "find", "ls"], skills: [], mcpServers: [] }] };
 function defaultAgent(pi: ExtensionAPI): Agent {
@@ -166,7 +162,7 @@ function normalize(value: Partial<Config>, pi: ExtensionAPI): Config {
   }
   const unique = supplied.filter((agent, index) => supplied.findIndex((candidate) => candidate.name === agent.name) === index);
   const agents = unique.some((agent) => agent.name === "general") ? unique : [defaultAgent(pi), ...unique];
-  return { agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, orchestratorDefaultApplied: value.orchestratorDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, diagramistDefaultApplied: value.diagramistDefaultApplied === true, askerAgentDefaultApplied: value.askerAgentDefaultApplied === true, terminalAgentDefaultApplied: value.terminalAgentDefaultApplied === true };
+  return { agents, webSearchDefaultApplied: value.webSearchDefaultApplied === true, sessionToolsDefaultApplied: value.sessionToolsDefaultApplied === true, subagentsDefaultApplied: value.subagentsDefaultApplied === true, diagramistDefaultApplied: value.diagramistDefaultApplied === true, askerAgentDefaultApplied: value.askerAgentDefaultApplied === true, terminalAgentDefaultApplied: value.terminalAgentDefaultApplied === true };
 }
 
 async function readConfig(pi: ExtensionAPI): Promise<Config> {
@@ -259,11 +255,8 @@ async function loadConfig(pi: ExtensionAPI): Promise<Config> {
     config.webSearchDefaultApplied = true;
     changed = true;
   }
-  await ensurePromptFile(VOICE_ORCHESTRATOR_PROMPT_PATH, VOICE_ORCHESTRATOR_PROMPT);
-  if (!config.agents.some((agent) => agent.name === VOICE_ORCHESTRATOR_NAME)) {
-    config.agents.push({ name: VOICE_ORCHESTRATOR_NAME, model: "", effort: "high", path_systemprompt: VOICE_ORCHESTRATOR_PROMPT_PATH, path_agentprompt: DEFAULT_AGENT_PROMPT_PATH, tools: ["list_agents", "send_message", "fork_session"], skills: [], mcpServers: [] });
-    changed = true;
-  }
+  const retainedAgents = config.agents.filter(agent => agent.name !== "voice-orchestrator");
+  if (retainedAgents.length !== config.agents.length) { config.agents = retainedAgents; changed = true; }
   if (changed) await writeConfig(config);
   return config;
 }
@@ -314,7 +307,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const stopSubagentProfiles = pi.events.on("piop:agents:subagent", (value) => {
     const request = value as { agent?: string; state?: SessionAgentState; error?: string };
     const agent = request.agent ? findAgent(request.agent) : currentAgent();
-    if (!agent || agent.name === VOICE_ORCHESTRATOR_NAME) { request.error = "Choose a configured agent profile other than voice-orchestrator"; return; }
+    if (!agent) { request.error = "Choose a configured agent profile"; return; }
     request.state = request.agent
       ? { active: agent.name, locked: false }
       : { active: agent.name, locked: false, snapshot: { version: 1, definition: structuredClone(agent), systemPrompt: activeSystemPrompt, agentPrompt: activeAgentPrompt }, modelOverride: modelOverride || agent.model || runtimeDefaults?.model, effortOverride: pi.getThinkingLevel() };
@@ -436,13 +429,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
   pi.on("session_shutdown", () => { stopSubagentProfiles(); stopRefresh(); extensions.stop(); });
   pi.on("model_select", (event) => { const model = `${event.model.provider}/${event.model.id}`; if (applyingAgentModel === model) { applyingAgentModel = undefined; return; } modelOverride = model; saveState(); saveRuntimeDefaults({ model, effort: runtimeDefaults?.effort || pi.getThinkingLevel() }); });
   pi.on("thinking_level_select", (event) => { if (applyingAgentEffort === event.level) { applyingAgentEffort = undefined; return; } effortOverride = event.level; saveState(); saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); });
-  const restoreOrchestratorAgent = (ctx: ExtensionContext) => {
-    const voiceOrchestrator = ctx.sessionManager.getSessionId() === VOICE_ORCHESTRATOR_SESSION_ID;
-    if (voiceOrchestrator && active !== VOICE_ORCHESTRATOR_NAME || !voiceOrchestrator && active === VOICE_ORCHESTRATOR_NAME) {
-      active = voiceOrchestrator ? VOICE_ORCHESTRATOR_NAME : "general";
-      snapshot = undefined;
-    }
-  };
   const restoreSession = async (_event: unknown, ctx: ExtensionContext) => {
     restore(ctx);
     const branch = ctx.sessionManager.getBranch();
@@ -450,7 +436,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const stored = states.at(-1);
     snapshot = migrateQuestionSnapshot(stored?.snapshot);
     active = snapshot?.definition.name ?? restoredAgentName(stored?.active);
-    restoreOrchestratorAgent(ctx);
+    if (active === "voice-orchestrator") { active = "general"; snapshot = undefined; }
     locked = sessionIsLocked(states, branch);
     modelOverride = stored?.modelOverride;
     effortOverride = stored?.effortOverride;
@@ -483,8 +469,6 @@ export default async function defineAgents(pi: ExtensionAPI) {
     }
 });
   const selectAgent = async (name: string, ctx: ExtensionCommandContext) => {
-    const voiceOrchestrator = ctx.sessionManager.getSessionId() === VOICE_ORCHESTRATOR_SESSION_ID;
-    if (voiceOrchestrator !== (name === VOICE_ORCHESTRATOR_NAME)) throw new Error("Voice orchestration belongs to the Orchestrator chat. Open it from the navigation bar.");
     if (!findAgent(name)) throw new Error(`Unknown defined agent: ${name}`);
     restore(ctx);
     const agent = findAgent(name)!;
@@ -509,8 +493,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
   pi.registerCommand("pi-define-agents-config", {
     description: "Update agent definitions", handler: async (args, ctx) => {
-      const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied, orchestratorDefaultApplied: config.orchestratorDefaultApplied, subagentsDefaultApplied: config.subagentsDefaultApplied, diagramistDefaultApplied: config.diagramistDefaultApplied, askerAgentDefaultApplied: config.askerAgentDefaultApplied, terminalAgentDefaultApplied: config.terminalAgentDefaultApplied }, pi);
-      if (!next.agents.some((agent) => agent.name === VOICE_ORCHESTRATOR_NAME)) next.agents.push(structuredClone(config.agents.find((agent) => agent.name === VOICE_ORCHESTRATOR_NAME)!));
+      const next = normalize({ ...decode<Config>(args.trim()), webSearchDefaultApplied: config.webSearchDefaultApplied, sessionToolsDefaultApplied: config.sessionToolsDefaultApplied, subagentsDefaultApplied: config.subagentsDefaultApplied, diagramistDefaultApplied: config.diagramistDefaultApplied, askerAgentDefaultApplied: config.askerAgentDefaultApplied, terminalAgentDefaultApplied: config.terminalAgentDefaultApplied }, pi);
       await writeConfig(next);
       config = next;
       publish(ctx);

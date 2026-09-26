@@ -9,7 +9,6 @@ mod providers;
 mod queue;
 mod services;
 mod session;
-mod voice;
 mod worker;
 
 use futures_util::FutureExt;

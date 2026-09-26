@@ -96,7 +96,7 @@ export function ProviderSettings(componentProps: { hosts: RemoteHost[]; initialH
     {auth.flow && <LoginPanel flow={auth.flow} auth={auth} />}
     {loadingProviders() && <div class="empty-small" role="status">Loading providers on {hostName()}…</div>}
     <ProviderList providers={providers()} auth={auth} disabled={disabled()} />
-    <p class="provider-login-help">Removing a saved login leaves credentials from environment variables or other host configuration in place. Voice uses the host’s separate Codex login.</p>
+    <p class="provider-login-help">Removing a saved login leaves credentials from environment variables or other host configuration in place.</p>
   </div>;
 }
 

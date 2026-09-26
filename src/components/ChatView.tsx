@@ -2,10 +2,6 @@ import { Key } from "@solid-primitives/keyed";
 import { createComputed, createMemo, createSignal, Index, Show } from "solid-js";
 import type { NativeTransport } from "../lib/nativeTransport";
 import { createDependencyEffect, createRef, cssPixels, type StateUpdate } from "../lib/solid";
-import { useVoiceMessages } from "../lib/useVoiceMessages";
-import { VOICE_MESSAGE } from "../lib/voiceMessages";
-import { VoiceControls } from "./VoiceControls";
-import { ORCHESTRATOR_SESSION_ID } from "../lib/orchestrator";
 
 import { ChevronRight, Folder, FolderGit2, LoaderCircle, X } from "lucide-solid";
 import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
@@ -19,12 +15,11 @@ import { DeferredTurn } from "./DeferredTurn";
 import { DiffViewer } from "./DiffViewer";
 import { Message } from "./Message";
 import { PromptContextBar } from "./PromptContextBar";
-import { VoiceContextBar } from "./VoiceContextBar";
 import { ConversationHostContext } from "../lib/subagentNavigation";
 import { useFilePane } from "../lib/filePaneContext";
 import type { FileReference } from "../lib/projectFiles";
 
-interface Props { voiceTransport?: NativeTransport; state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; debug?: boolean; agents?: AgentProfile[]; activeAgent?: string; agentLocked?: boolean; agentSaved?: boolean; agentUnavailable?: boolean; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; filesCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; selectionBtw?: boolean; draft?: string; onDraftChange?: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onPause: () => void | Promise<void>; onResume: () => void | Promise<void>; onOpenTerminal?: () => void; onOpenProject: () => void; onClearProject?: () => void; onBranch: (message: ChatMessage) => void; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
+interface Props { transport?: NativeTransport; state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; debug?: boolean; agents?: AgentProfile[]; activeAgent?: string; agentLocked?: boolean; agentSaved?: boolean; agentUnavailable?: boolean; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; filesCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; selectionBtw?: boolean; draft?: string; onDraftChange?: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onPause: () => void | Promise<void>; onResume: () => void | Promise<void>; onOpenTerminal?: () => void; onOpenProject: () => void; onClearProject?: () => void; onBranch: (message: ChatMessage) => void; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
 
 type SelectionBtwTip = { text: string; left: number; top: number; below: boolean };
 
@@ -42,23 +37,23 @@ export function ChatView(props: Props) {
   const files = useFilePane();
   const filesCwd = () => props.filesCwd ?? props.projectCwd;
   const openFiles = (file?: FileReference) => {
-    if (filesCwd()) files?.open({ cwd: filesCwd()!, hostId: props.voiceTransport?.currentHostId() ?? "local" }, file);
+    if (filesCwd()) files?.open({ cwd: filesCwd()!, hostId: props.transport?.currentHostId() ?? "local" }, file);
   };
-  const [ownsConversation, setOwnsConversation] = createSignal((() => props.voiceTransport?.ownsConversation() !== false)());
+  const [ownsConversation, setOwnsConversation] = createSignal((() => props.transport?.ownsConversation() !== false)());
   const [takingOwnership, setTakingOwnership] = createSignal(false);
   const [ownershipError, setOwnershipError] = createSignal<string>();
-  createDependencyEffect(() => { const capturedVoiceTransport0 = props.voiceTransport;
-    setOwnsConversation(capturedVoiceTransport0?.ownsConversation() !== false);
+  createDependencyEffect(() => { const capturedTransport0 = props.transport;
+    setOwnsConversation(capturedTransport0?.ownsConversation() !== false);
     setOwnershipError(undefined);
-    const unsubscribe = capturedVoiceTransport0?.subscribe((event) => {
+    const unsubscribe = capturedTransport0?.subscribe((event) => {
       if (event.type === "ownership_lost") setOwnsConversation(false);
       if (event.type === "ownership_acquired") { setOwnsConversation(true); setOwnershipError(undefined); }
     });
     return () => { unsubscribe?.(); };
-  }, () => [props.voiceTransport]);
-  const takeOwnership = async () => { const capturedVoiceTransport0 = props.voiceTransport;
+  }, () => [props.transport]);
+  const takeOwnership = async () => { const capturedTransport0 = props.transport;
     setTakingOwnership(true); setOwnershipError(undefined);
-    try { await capturedVoiceTransport0?.takeOwnership(); }
+    try { await capturedTransport0?.takeOwnership(); }
     catch (reason) { setOwnershipError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setTakingOwnership(false); }
   };
@@ -70,7 +65,7 @@ export function ChatView(props: Props) {
   const [selectionBtwTip, setSelectionBtwTip] = createSignal<SelectionBtwTip>();
   const [askingSelection, setAskingSelection] = createSignal(false);
   const [selectionBtwError, setSelectionBtwError] = createSignal(false);
-  const messages = useVoiceMessages(() => (props.messages), () => (props.voiceTransport), () => (props.state.sessionId));
+  const messages = () => props.messages;
   const turns = createMemo<ConversationGroup[]>(previous => groupTurns(messages(), previous), []);
   const sessionUsage = createMemo(() => props.messages.reduce((total, message) => ({ input: total.input + (message.usage?.input ?? 0), cacheRead: total.cacheRead + (message.usage?.cacheRead ?? 0), cacheWrite: total.cacheWrite + (message.usage?.cacheWrite ?? 0) }), { input: 0, cacheRead: 0, cacheWrite: 0 }));
   const sessionCache = createMemo(() => (cacheHitStats(sessionUsage())));
@@ -207,7 +202,7 @@ export function ChatView(props: Props) {
       const renderNewChatProject = () => (!messages().length && props.state.messageCount === 0 && <div class="new-chat-project"><div class="project-picker"><button type="button" class={projectName() ? "selected" : undefined} aria-label={projectName() ? `Selected project: ${(projectName())!}` : "Choose project"} title={props.projectCwd} onClick={props.onOpenProject}><FolderGit2 size={14} />{projectName() ?? "Choose project"}</button>{projectName() && props.onClearProject && <button type="button" class="clear-project" aria-label="Clear project" title="Clear project" disabled={props.controlsDisabled || !ownsConversation()} onClick={props.onClearProject}><X size={14} /></button>}</div></div>);
       const renderConversationOwnershipBanner = () => (!ownsConversation() && <div class="conversation-ownership-banner"><div role="status"><p>This conversation is read-only on this client.</p><button type="button" disabled={takingOwnership()} onClick={() => void takeOwnership()}>{takingOwnership() ? "Taking ownership…" : "Take ownership"}</button>{ownershipError() && <p role="alert">{(ownershipError())!}</p>}</div></div>);
       const ComposerInteraction = () => (<div class="composer-interaction" inert={!ownsConversation()}><Composer toolbar={<>{renderNewChatProject()}<div class="chat-files-toolbar"><button type="button" disabled={!filesCwd() || !files} title={filesCwd() || "Session directory is not available yet"} onClick={() => openFiles()}><Folder size={14} />Files</button></div></>} streaming={props.state.isStreaming} compacting={props.state.isCompacting} paused={props.state.isPaused} pausing={props.state.isPausing} queued={props.state.pendingMessageCount} pendingMessages={props.state.pendingMessages} onChangePending={props.onChangePending} commands={props.commands} agents={props.agents ?? []} activeAgent={props.activeAgent} agentLocked={props.agentLocked} agentSaved={props.agentSaved} agentUnavailable={props.agentUnavailable} models={props.models} model={props.state.model} fastModeStatus={fastModeStatus()} thinkingLevel={props.state.thinkingLevel} thinkingLevels={props.thinkingLevels} sessionCache={props.debug ? sessionCache() : undefined} contextUsage={props.state.contextUsage} controlsDisabled={props.controlsDisabled || !ownsConversation()} draft={props.draft} onDraftChange={props.onDraftChange} focusRequest={props.focusRequest} uploads={props.uploads} onUploadsChange={props.onUploadsChange} restoredDraft={abortedTurn() ? { id: `${(abortedTurn())!.assistant.timestamp ?? (abortedTurn())!.assistant.id}:${(abortedTurn())!.prompt}`, value: (abortedTurn())!.prompt } : undefined} onSend={send} onAbort={props.onAbort} onPause={props.onPause} onResume={props.onResume} onOpenTerminal={props.onOpenTerminal} onAgent={props.onAgent ?? (() => undefined)} onModel={props.onModel} onToggleFastMode={props.onToggleFastMode} onThinking={props.onThinking} /></div>);
-      return (<Show when={!props.readOnly}><div ref={element => { composerStack.current = element; }} class="composer-stack">{props.widgets.length > 0 && <div class="extension-widget">{<Index each={props.widgets.filter((line) => typeof line === "string")}>{(line, _index) => <div >{line()}</div>}</Index>}</div>} {activity() && <div class="runtime-activity" role="status">{(activity())!}</div>}{renderConversationOwnershipBanner()}{props.voiceTransport && <VoiceControls transport={props.voiceTransport} state={props.state} messages={messages()} canStart={props.voiceTransport.currentHostId() === "local" && props.state.sessionId === ORCHESTRATOR_SESSION_ID} disabled={props.controlsDisabled || !ownsConversation()} />}<Show when={ownsConversation()}><div class="composer-questions"><ConversationQuestions transport={props.voiceTransport} /></div></Show><ComposerInteraction /></div></Show>);
+      return (<Show when={!props.readOnly}><div ref={element => { composerStack.current = element; }} class="composer-stack">{props.widgets.length > 0 && <div class="extension-widget">{<Index each={props.widgets.filter((line) => typeof line === "string")}>{(line, _index) => <div >{line()}</div>}</Index>}</div>} {activity() && <div class="runtime-activity" role="status">{(activity())!}</div>}{renderConversationOwnershipBanner()}<Show when={ownsConversation()}><div class="composer-questions"><ConversationQuestions transport={props.transport} /></div></Show><ComposerInteraction /></div></Show>);
     };
     return (<div class="conversation-content">
       {renderConcurrentViewStatus()}
@@ -219,13 +214,13 @@ export function ChatView(props: Props) {
   const ConversationShell = () => <main class={`chat-shell${ownsConversation() ? "" : " conversation-unowned"}`} oncapture:focus={() => props.onActivate?.()} oncapture:pointerdown={() => props.onActivate?.()}>
     <ConversationContent />
   </main>;
-  return <ConversationHostContext.Provider value={() => props.voiceTransport?.currentHostId() ?? "local"}><ConversationShell /></ConversationHostContext.Provider>;
+  return <ConversationHostContext.Provider value={() => props.transport?.currentHostId() ?? "local"}><ConversationShell /></ConversationHostContext.Provider>;
 }
 
 type ConversationGroup = { messages: ChatMessage[]; promptContexts: PromptContextInfo[] };
 function groupTurns(messages: ChatMessage[], previous: ConversationGroup[] = []) {
   const groups = messages.reduce<ChatMessage[][]>((turns, message) => {
-    if (message.role === "user" || message.customType === VOICE_MESSAGE || turns.at(-1)?.at(-1)?.customType === VOICE_MESSAGE || message.customType === "pi-desktop-btw" || turns.length === 0) turns.push([]);
+    if (message.role === "user" || message.customType === "pi-desktop-btw" || turns.length === 0) turns.push([]);
     turns[turns.length - 1].push(message);
     return turns;
   }, []);
@@ -233,16 +228,7 @@ function groupTurns(messages: ChatMessage[], previous: ConversationGroup[] = [])
   for (const [index, group] of groups.entries()) {
     for (const prompt of group) {
       if (prompt.role !== "user" || !prompt.promptContext) continue;
-      if (prompt.customType !== VOICE_MESSAGE) {
-        turns[index].promptContexts.push(prompt.promptContext);
-        continue;
-      }
-      const promptedAt = prompt.promptTimestamp ?? prompt.promptContext.userTimestamp ?? prompt.timestamp;
-      const target = turns.slice(index + 1).find(turn => turn.messages.some(message =>
-        message.customType !== VOICE_MESSAGE && (message.role === "assistant" || message.role === "tool") &&
-        (promptedAt === undefined || message.timestamp === undefined || message.timestamp >= promptedAt)
-      ));
-      target?.promptContexts.push(prompt.promptContext);
+      turns[index].promptContexts.push(prompt.promptContext);
     }
   }
   const prior = new Map(previous.map(turn => [turn.messages[0]?.id, turn]));
@@ -364,10 +350,10 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     <div class="active-work-content"><MessageList messages={componentProps.messages.filter(message => message.role !== "user")} expanded compact={false} debug={componentProps.debug} paused={componentProps.paused} /></div>
   </Show>);
   const renderDiffViewer = () => (<Show when={componentProps.active || componentProps.paused || !finalMessage()}><DiffViewer {...changes()} /></Show>);
-  return <>{componentProps.messages.length === 1 && componentProps.messages[0].customType === VOICE_MESSAGE ? (<section class="conversation-turn">{componentProps.debug && componentProps.messages[0].role === "assistant" && <VoiceContextBar context={componentProps.messages[0].voiceContext} />}<Message message={componentProps.messages[0]} debug={componentProps.debug} /></section>) : (<section class="conversation-turn">
+  return <section class="conversation-turn">
     {<Key each={userMessages()} by={(message) => message.id}>{(message, _index) => <Message  message={message()} debug={componentProps.debug} />}</Key>}
     {renderPromptContextBar()}
     {renderActiveWorkContent()}
     {renderDiffViewer()}
-  </section>)}</>;
+  </section>;
 }

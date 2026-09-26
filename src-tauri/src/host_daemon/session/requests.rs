@@ -60,7 +60,7 @@ impl Session {
 
     fn prepare_worker_command(&self, command: &Value) -> (Option<Value>, Option<Value>) {
         let mut state = self.state();
-        if kind(command) == "voice_history" || kind(command) == "prompt" && !text(command, "message").starts_with('/') {
+        if kind(command) == "prompt" && !text(command, "message").starts_with('/') {
             state.submitted = true;
         }
         let key = (kind(command) == "runtime_settings").then(

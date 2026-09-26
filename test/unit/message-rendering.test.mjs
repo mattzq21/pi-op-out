@@ -5,7 +5,6 @@ import { mockIPC, clearMocks } from '../mock-ipc.mjs';
 import { Message } from '../../src/components/Message.tsx';
 import { DiffViewer } from '../../src/components/DiffViewer.tsx';
 import { parseDiff } from '../../src/lib/diff.ts';
-import { VOICE_MESSAGE } from '../../src/lib/voiceMessages.ts';
 
 describe('message rendering', () => {
   let dom, view, copied, opened, openError;
@@ -20,20 +19,6 @@ describe('message rendering', () => {
   const control = label => document.querySelector(`[aria-label="${label}"]`);
   const contextMenu = async link => act(async () => link.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 100, clientY: 100 })));
 
-  test('voice responses keep a single streaming caret inside the transcript bubble', async () => {
-    const message = { id: 'voice', role: 'assistant', customType: VOICE_MESSAGE, content: 'Spoken answer', streaming: true };
-    await render(message);
-    assert.match(document.querySelector('.voice-response-bubble').textContent, /Spoken answer/);
-    assert.equal(document.querySelectorAll('.stream-caret').length, 1);
-    assert.ok(document.querySelector('.voice-response-bubble .stream-caret'));
-    assert.equal(document.querySelector('.message-actions'), null);
-    await view.rerender({ message: { ...message, streaming: false } });
-    assert.equal(document.querySelector('.stream-caret'), null);
-    assert.ok(document.querySelector('.message-actions'));
-    await view.rerender({ message: { ...message, customType: undefined } });
-    assert.equal(document.querySelector('.voice-response-bubble'), null);
-    assert.equal(document.querySelectorAll('.stream-caret').length, 1);
-  });
 
   test('system messages and compact tool status hide raw payloads until debug mode is enabled', async () => {
     await render({ role: 'system', content: 'status message' }); assert.equal(document.querySelector('[role=status]').textContent, 'status message');

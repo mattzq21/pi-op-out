@@ -27,7 +27,6 @@ pub(super) trait SessionHost: Send + Sync {
     fn rekey(&self, old: &str, new: &str, epoch: &str);
     fn finished(&self, key: &str, epoch: &str, pending: Vec<Value>, transient: bool);
     fn maintenance(&self, key: &str);
-    fn agent_event(&self, identity: &str, event: &Value);
     fn refresh_providers(&self) -> BoxFuture<'_, Result<u64>>;
 }
 
@@ -324,9 +323,6 @@ impl Session {
 
     pub fn publish(&self, mut event: Value, target: Option<&str>) {
         let _publication = self.publication.lock().unwrap_or_else(|error| error.into_inner());
-        if target.is_none() {
-            self.host.agent_event(&self.identity, &event);
-        }
         let name = kind(&event).to_owned();
         let Some((key, mut targets)) = self.stamp_event(&mut event, &name, target) else {
             return;

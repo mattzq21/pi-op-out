@@ -4,7 +4,6 @@ dist/
 vite.config.js
 vite.config.d.ts
 src-tauri/target/
-src-tauri/voice-host/target/
 src-tauri/binaries/
 src-tauri/gen/
 logs/

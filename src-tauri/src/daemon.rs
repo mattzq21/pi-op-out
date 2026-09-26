@@ -245,10 +245,6 @@ fn handle_session_closed(app: &AppHandle, connection: &Arc<Daemon>, packet: &Val
 
 fn handle_notice(app: &AppHandle, host_id: &str, packet: &Value) {
     match packet["type"].as_str() {
-                Some("voice_event") => {
-                    if packet["event"]["type"] == "ended" { app.state::<voice::VoiceRuntime>().ended(packet["callId"].as_str().unwrap_or_default()); }
-                    let _ = app.emit("pi://voice", json!({"callId":packet["callId"],"event":packet["event"]}));
-                },
                 Some("stderr") => { let _ = app.emit("pi://stderr", packet.clone()); },
                 Some("provider_auth_changed") => { let _ = app.emit("pi://provider-auth-changed", json!({"hostId":host_id})); },
                 Some("diagnostic") => { let _ = app.emit("pi://daemon-error", json!({"hostId":host_id,"line":packet["line"]})); },

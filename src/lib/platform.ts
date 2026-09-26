@@ -2,7 +2,6 @@ import { invoke as nativeInvoke } from "@tauri-apps/api/core";
 import { listen as nativeListen, type EventCallback, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Browser } from "@capacitor/browser";
-import { mobileVoice } from "./mobileVoice";
 import { remoteClient } from "./remoteClient";
 export type { UnlistenFn };
 export const isMobile = import.meta.env.MODE === "mobile";
@@ -17,7 +16,7 @@ export const listen = <T>(event: string, handler: EventCallback<T>): Promise<Unl
 export function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   args = { ...args, clientId: conversationClientId };
   if (!isMobile) {
-    const local = ["new_window", "open_external_url", "open_project_directory", "read_dropped_file", "voice_configuration", "voice_start", "voice_stop", "voice_mute", "voice_suppress"];
+    const local = ["new_window", "open_external_url", "open_project_directory", "read_dropped_file"];
     return local.includes(command) ? nativeInvoke<T>(command, args) : nativeInvoke<T>("daemon_invoke", { command, args });
   }
   if (command === "open_external_url") {
@@ -25,6 +24,5 @@ export function invoke<T>(command: string, args?: Record<string, unknown>): Prom
     if (!/^https?:\/\//i.test(url)) return Promise.reject(new Error("Only HTTP and HTTPS links can be opened."));
     return Browser.open({ url }).then(() => undefined as T);
   }
-  if (command.startsWith("voice_")) return mobileVoice(command, args) as Promise<T>;
   return remoteClient.invoke<T>(command, args);
 }

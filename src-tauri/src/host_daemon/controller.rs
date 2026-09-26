@@ -22,9 +22,6 @@ pub(super) trait Services: Send + Sync {
     fn bind(&self, host: Weak<Host>);
     fn handle(&self, packet: Value) -> BoxFuture<'_, Result<Value>>;
     fn refresh_providers(&self) -> BoxFuture<'_, Result<u64>>;
-    fn detach_voice<'a>(&'a self, runtime: &'a str) -> BoxFuture<'a, ()>;
-    fn release_voice<'a>(&'a self, identity: &'a str) -> BoxFuture<'a, ()>;
-    fn agent_event(&self, identity: &str, event: &Value);
     fn shutdown(&self) -> BoxFuture<'_, ()>;
 }
 
@@ -112,11 +109,6 @@ impl SessionHost for Callbacks {
     fn maintenance(&self, key: &str) {
         if let Some(host) = self.0.upgrade() {
             host.maintain(key);
-        }
-    }
-    fn agent_event(&self, identity: &str, event: &Value) {
-        if let Some(host) = self.0.upgrade() {
-            host.services.agent_event(identity, event);
         }
     }
     fn refresh_providers(&self) -> BoxFuture<'_, Result<u64>> {
@@ -305,7 +297,6 @@ impl Host {
             if matches!(intent, "message" | "archive") {
                 session.retire().await?;
             }
-            self.services.release_voice(&session.identity).await;
             let saved = session.saved_state();
             for (runtime, _) in session.views() {
                 self.registry().readonly.insert(

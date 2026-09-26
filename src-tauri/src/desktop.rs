@@ -1,9 +1,7 @@
 mod platform;
 mod daemon_endpoint;
 mod desktop_daemon;
-mod voice;
 use desktop_daemon::daemon_invoke;
-use voice::{voice_configuration, voice_start, voice_stop, voice_mute, voice_suppress};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::HashMap, fs::{self, OpenOptions}, io::Read, path::{Path, PathBuf}, process::{Command, Stdio}, sync::{mpsc, Arc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering}}, thread, time::Duration};
@@ -130,7 +128,6 @@ fn open_external_url_with(url: &str, open: impl FnOnce(&std::ffi::OsStr) -> Resu
     open(std::ffi::OsStr::new(parsed.as_str()))
 }
 
-
 #[tauri::command(async)]
 fn open_project_directory(cwd: String, host_id: Option<String>) -> Result<(), String> {
     if std::env::var_os("PIOP_DAEMON_URL").is_some() || host_id.as_deref().unwrap_or("local") != "local" { return Err("Opening remote project directories is not supported by the local file manager".into()); }
@@ -199,7 +196,7 @@ pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(feature = "webdriver")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
-    builder.plugin(tauri_plugin_dialog::init()).manage(voice::VoiceRuntime::default()).manage(desktop_daemon::DesktopDaemon::default()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
+    builder.plugin(tauri_plugin_dialog::init()).manage(desktop_daemon::DesktopDaemon::default()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
         for window in app.webview_windows().values() { configure_dictation_microphone(window)?; }
         #[cfg(target_os = "linux")]
         if let Some((label, focus)) = start_window.as_ref() {
@@ -216,13 +213,12 @@ pub fn run() {
             window.show()?;
         }
         Ok(())
-    }).invoke_handler(tauri::generate_handler![daemon_invoke, voice_configuration, voice_start, voice_stop, voice_mute, voice_suppress, new_window, open_project_directory, open_external_url, read_dropped_file]).build(context).expect("error while building piop").run(|app, event| {
+    }).invoke_handler(tauri::generate_handler![daemon_invoke, new_window, open_project_directory, open_external_url, read_dropped_file]).build(context).expect("error while building piop").run(|app, event| {
         if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } = &event {
             let app = app.clone(); let label = label.clone();
             tauri::async_runtime::spawn(async move { app.state::<desktop_daemon::DesktopDaemon>().close_window(&app, &label).await; });
         }
         if matches!(event, tauri::RunEvent::Exit) {
-            app.state::<voice::VoiceRuntime>().shutdown();
         }
     });
 }

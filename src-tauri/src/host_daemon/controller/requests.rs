@@ -8,7 +8,7 @@ impl Host {
             self.registry().attachments.remove(&runtime);
         }
         match name {
-            "voice" | "provider_auth" | "provider_auth_cancel_owner" => return self.services.handle(packet).await,
+            "provider_auth" | "provider_auth_cancel_owner" => return self.services.handle(packet).await,
             "ownership_drained" => return Ok(self.ownership_drained(&packet)),
             "conversation_mutation" => return self.begin_mutation(&packet).await,
             "conversation_mutation_end" => return self.end_mutation(&packet),
@@ -138,7 +138,6 @@ impl Host {
     async fn detach(&self, packet: &Value, runtime: &str, session: &Session) -> Result<Value> {
         self.registry().subscriptions.remove(runtime);
         session.detach_view(runtime);
-        self.services.detach_voice(runtime).await;
         let result = session
             .finish_detach(flag(packet, "discardBlank"), flag(packet, "preserveRunning"))
             .await;
