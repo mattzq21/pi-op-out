@@ -99,6 +99,10 @@ async fn authenticate_mode(socket: &mut tokio_tungstenite::WebSocketStream<tokio
 #[cfg(target_os = "linux")]
 struct TailscaleIdentity { login: String }
 
+#[cfg(all(test, target_os = "linux"))]
+#[path = "tailscale_auth_tests.rs"]
+mod tests;
+
 #[cfg(target_os = "linux")]
 impl tokio_tungstenite::tungstenite::handshake::server::Callback for TailscaleIdentity {
     fn on_request(self, request: &tokio_tungstenite::tungstenite::handshake::server::Request, response: tokio_tungstenite::tungstenite::handshake::server::Response) -> Result<tokio_tungstenite::tungstenite::handshake::server::Response, tokio_tungstenite::tungstenite::handshake::server::ErrorResponse> {
