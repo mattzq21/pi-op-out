@@ -24,7 +24,8 @@ test('agent MCP limits accept 32 unique definitions and reject invalid identitie
   assert.equal(mcpServers(full).length, 32);
   for (const value of [null, {}, 'server', [...full, { ...stdio, id: 'extra' }]]) assert.throws(() => mcpServers(value), /at most 32/);
   for (const item of [null, 'legacy-id', {}, { ...stdio, id: '' }, { ...stdio, id: ' ' }, { ...stdio, id: 1 }]) assert.throws(() => mcpServers([item]), /unique id/);
-  assert.throws(() => mcpServers([Object.assign(() => {}, stdio)]), /unique id/);
+  const callable = Object.assign(function Search() {}, { id: stdio.id, command: stdio.command });
+  assert.throws(() => mcpServers([callable]), /unique id/);
   assert.throws(() => mcpServers([stdio, { ...stdio }]), /unique id/);
   for (const name of ['', ' ', 42, undefined]) assert.throws(() => mcpServers([{ ...stdio, name }]), /name is required/);
 });

@@ -533,6 +533,23 @@ mod tests {
         fn revoke<'a>(&'a self, _: &'a str, _: &'a str) -> BoxFuture<'a, Result<()>> { Box::pin(async { Ok(()) }) }
     }
     #[tokio::test]
+    async fn another_client_cannot_claim_a_live_conversation_without_takeover() {
+        let home = TestDirectory::new();
+        let ownership = ConversationOwnership::new(&home.0, ".piop", Arc::new(Idle)).await.unwrap();
+        let id = Uuid::new_v4().to_string();
+        let path = home.0.join(".piop/sessions/chat.jsonl");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, format!("{}\n", json!({"type":"session","id":id}))).unwrap();
+        let first = ownership.begin(&id, "first", &json!({"path":path})).await.unwrap();
+        assert!(first.owned);
+        first.release(&ownership, false).unwrap();
+        let previous = ownership.read(&id).unwrap();
+        let blocked = ownership.begin(&id, "second", &json!({})).await.unwrap();
+        assert!(!blocked.owned);
+        blocked.release(&ownership, false).unwrap();
+        assert_eq!(ownership.read(&id).unwrap(), previous);
+    }
+    #[tokio::test]
     async fn archived_mutations_can_move_between_clients() {
         let home = TestDirectory::new();
         let ownership = ConversationOwnership::new(&home.0, ".piop", Arc::new(Idle)).await.unwrap();

@@ -42,6 +42,7 @@ try {
       ...process.env,
       CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR || join(root, 'src-tauri', 'target'),
       CARGO_BUILD_JOBS: process.env.CARGO_BUILD_JOBS || '1',
+      RUST_MIN_STACK: process.env.RUST_MIN_STACK || '16777216',
       RUST_TEST_THREADS: process.env.RUST_TEST_THREADS || '1',
       TAURI_CONFIG: JSON.stringify(tauriConfig),
     },
