@@ -16,6 +16,7 @@ test('agent MCP definitions normalize defaults without modifying the input', () 
   result[0].command = 'changed';
   assert.equal(input[0].command, 'search-server');
   assert.deepEqual(input[1].headers, { Authorization: 'token' });
+  for (const headers of [null, '{"Authorization":"token"}']) assert.equal(mcpServers([{ ...stdio, headers }])[0].headers, headers);
 });
 
 test('agent MCP limits accept 32 unique definitions and reject invalid identities', () => {
@@ -23,6 +24,7 @@ test('agent MCP limits accept 32 unique definitions and reject invalid identitie
   assert.equal(mcpServers(full).length, 32);
   for (const value of [null, {}, 'server', [...full, { ...stdio, id: 'extra' }]]) assert.throws(() => mcpServers(value), /at most 32/);
   for (const item of [null, 'legacy-id', {}, { ...stdio, id: '' }, { ...stdio, id: ' ' }, { ...stdio, id: 1 }]) assert.throws(() => mcpServers([item]), /unique id/);
+  assert.throws(() => mcpServers([Object.assign(() => {}, stdio)]), /unique id/);
   assert.throws(() => mcpServers([stdio, { ...stdio }]), /unique id/);
   for (const name of ['', ' ', 42, undefined]) assert.throws(() => mcpServers([{ ...stdio, name }]), /name is required/);
 });
@@ -40,7 +42,9 @@ test('agent MCP options validate enabled flags, timeout boundaries and stdio arg
 
 test('agent HTTP MCP definitions validate protocols and both header encodings', () => {
   for (const url of ['http://example.com/mcp', 'https://example.com/mcp']) assert.equal(mcpServers([{ ...http, url }])[0].url, url);
-  for (const url of ['', 'not a url', 'file:///tmp/mcp', 'ftp://example.com']) assert.throws(() => mcpServers([{ ...http, url }]));
+  for (const url of ['', 'not a url']) assert.throws(() => mcpServers([{ ...http, url }]));
+  for (const url of ['file:///tmp/mcp', 'ftp://example.com']) assert.throws(() => mcpServers([{ ...http, url }]), { message: 'Web: URL must use HTTP or HTTPS' });
   for (const headers of [undefined, '', '{}', { Authorization: 'secret' }]) assert.equal(mcpServers([{ ...http, headers }]).length, 1);
-  for (const headers of ['{bad', 'null', '[]', '{"x":3}', [], 1, { x: false }]) assert.throws(() => mcpServers([{ ...http, headers }]));
+  assert.throws(() => mcpServers([{ ...http, headers: '{bad' }]), SyntaxError);
+  for (const headers of ['null', '[]', '{"x":3}', [], 1, { x: false }]) assert.throws(() => mcpServers([{ ...http, headers }]), { message: 'Web: headers must contain string values' });
 });
