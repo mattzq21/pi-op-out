@@ -18,7 +18,7 @@ function registerParentMessaging(pi: ExtensionAPI) {
       signal?.throwIfAborted();
       if (!isSideConversation(ctx)) throw new Error("This tool is only available in /btw conversations");
       if (!params.message.trim()) throw new Error("A message is required");
-      const response = await ctx.ui.input(MESSAGE_TITLE, params.message, { signal });
+      const response = await ctx.ui.input(MESSAGE_TITLE, JSON.stringify({ message: params.message, parentSession: ctx.sessionManager.getHeader()?.parentSession }), { signal });
       if (response !== "delivered") throw new Error(response || "Message delivery cancelled");
       return { content: [{ type: "text", text: "Message delivered to the main chat." }], details: {} };
     },

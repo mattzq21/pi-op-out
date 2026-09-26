@@ -28,6 +28,7 @@ pub(super) trait SessionHost: Send + Sync {
     fn finished(&self, key: &str, epoch: &str, pending: Vec<Value>, transient: bool);
     fn maintenance(&self, key: &str);
     fn refresh_providers(&self) -> BoxFuture<'_, Result<u64>>;
+    fn message_parent(&self, source: String, payload: Value) -> BoxFuture<'_, Result<Value>>;
 }
 
 #[derive(Clone)]
