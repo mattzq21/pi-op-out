@@ -130,6 +130,7 @@ fn load_at(path: &Path, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Resul
     let stored = read(path)?;
     let mut dirty = stored.is_none();
     let mut state = stored.unwrap_or(legacy);
+    dirty |= restore_suppressed_projects(&mut state, &seeds);
     dirty |= migrate_group_names(&mut state);
     for seed in seeds {
         dirty |= update_seed_metadata(&mut state, &seed);
@@ -141,6 +142,18 @@ fn load_at(path: &Path, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Resul
     }
     if dirty { write(path, &state)?; }
     Ok(state)
+}
+
+fn restore_suppressed_projects(state: &mut SessionGroups, seeds: &[SessionSeed]) -> bool {
+    if state.removed_projects.is_empty() { return false; }
+    for seed in seeds {
+        if state.removed_projects.contains(&seed.project.id) && state.assignments.get(&seed.session_key) == Some(&None) {
+            state.assignments.remove(&seed.session_key);
+        }
+    }
+    let previous_count = state.removed_projects.len();
+    for seed in seeds { state.removed_projects.remove(&seed.project.id); }
+    state.removed_projects.len() != previous_count
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
@@ -188,7 +201,6 @@ fn relocate_group(state: &mut SessionGroups, project: SessionGroup, key: String)
         if let Some(old_id) = old_id {
             if !state.assignments.values().any(|id| id.as_ref() == Some(&old_id)) {
                 state.groups.retain(|group| group.id != old_id);
-                state.removed_projects.insert(old_id);
             }
         }
     }
@@ -229,8 +241,7 @@ fn rename_group(state: &mut SessionGroups, id: String, name: String) -> Result<(
 }
 
 fn remove_group(state: &mut SessionGroups, id: String) -> Result<(), String> {
-    let group = state.groups.iter().find(|group| group.id == id).ok_or("Group no longer exists")?;
-    if group.cwd.is_some() { state.removed_projects.insert(id.clone()); }
+    if !state.groups.iter().any(|group| group.id == id) { return Err("Group no longer exists".into()); }
     state.groups.retain(|group| group.id != id);
     for destination in state.assignments.values_mut() {
         if destination.as_ref() == Some(&id) { *destination = None; }

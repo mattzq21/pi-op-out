@@ -41,7 +41,7 @@ declare const __PIOP_DEVELOPMENT_BRANCH__: string;
 export default function App() {
   const runtimePool = createMemo(() => new SessionRuntimePool()); const [transport, setTransport] = createSignal((() => { const initial = runtimePool().create(initialWindowTarget()); runtimePool().activate(initial); return initial; })()); const [view, setView] = createSignal<"chat" | "settings">("chat");
   const activeTransportRef = createRef(transport()); createComputed(() => { activeTransportRef.current = transport(); });
-  const pendingSessionGroups = createRef(new WeakMap<NativeTransport, string>());
+  const pendingSessionGroups = createRef(new WeakMap<NativeTransport, SessionGroup>());
   const initialConversationKey = createRef(`local:draft-${crypto.randomUUID()}`);
   const [activeConversationKey, setActiveConversationKey] = createSignal(initialConversationKey.current);
   const activeConversationKeyRef = createRef(activeConversationKey()); createComputed(() => { activeConversationKeyRef.current = activeConversationKey(); });
@@ -237,7 +237,7 @@ export default function App() {
     const group = pendingSessionGroups.current.get(capturedTransport);
     if (group && nextState.sessionId) {
       try {
-        await updateSessionGroups({ type: "assign", key: `${hostId ?? capturedTransport.currentHostId()}:${nextState.sessionId}`, group });
+        const key = `${hostId ?? capturedTransport.currentHostId()}:${nextState.sessionId}`; await updateSessionGroups(group.cwd ? { type: "project", key, project: group } : { type: "assign", key, group: group.id });
         pendingSessionGroups.current.delete(capturedTransport);
       } catch (reason) { addNotice({ title: "Could not add chat to group", message: String(reason) }); }
     }
@@ -362,7 +362,7 @@ export default function App() {
   const newSessionTarget = (clearProject: boolean, group?: SessionGroup) => ({ hostId: group ? group.hostId ?? "local" : activeHostIdRef.current, projectCwd: group ? group.cwd ?? undefined : clearProject ? undefined : selectedProjectCwd(activeCwd(), transport().isTemporaryChat()) });
   const createSessionTransport = (cwd: string | undefined, hostId: string) => runtimePool().create(cwd ? { cwd, hostId } : { hostId });
   const prepareNewSession = (owner: NativeTransport, hostId: string, cwd?: string) => cwd ? owner.validateProjectDirectory(cwd, hostId) : owner.prepareTemporaryChat(hostId);
-  const assignNewSessionGroup = (owner: NativeTransport, group?: SessionGroup) => { if (group) pendingSessionGroups.current.set(owner, group.id); };
+  const assignNewSessionGroup = (owner: NativeTransport, group?: SessionGroup) => { if (group) pendingSessionGroups.current.set(owner, group); };
   const discardNewSessionDraft = (owner: NativeTransport, key: string) => {
     setComposerDraft(key, ""); setComposerUploads(owner, []); pendingSessionGroups.current.delete(owner);
     void runtimePool().release(owner).catch(reason => addNotice({ title: "Could not clean up the draft", message: String(reason) })).finally(() => transportConversationKeys.current.delete(owner));
@@ -385,7 +385,7 @@ export default function App() {
       const cwd = await prepareNewSession(nextTransport, hostId, projectCwd);
       if (!isCurrent()) return;
       transportConversationKeys.current.set(nextTransport, conversationKey);
-      assignNewSessionGroup(nextTransport, group);
+      assignNewSessionGroup(nextTransport, group ?? (projectCwd ? { id: `${hostId}:${cwd}`, name: cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? cwd, cwd, hostId } : undefined));
       batch(() => {
         copyNewSessionDraft(conversationKey, nextTransport, clearProject && !discardDraft);
         setView("chat"); closeSplitPane(); setTerminalOpen(false); setTerminalTarget(undefined);
@@ -502,7 +502,7 @@ export default function App() {
  try { await capturedTransport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(name)}` }); } catch (reason) { addNotice({ title: "Could not change agent", message: reason instanceof Error ? reason.message : String(reason) }); } };
   const openProject = async (cwd: string, hostId: string) => {
     const capturedTransport = transport(); const capturedSession = { ...chatSession() }; const capturedRuntimePool = runtimePool(); const capturedComposerState = { ...composerState() };
- if (!canLeaveSettings()) return; const controls = { agent: definedAgents()?.active, model: capturedSession.state.model, thinking: capturedSession.state.thinkingLevel }; const request = projectOpenRequest.current; const validatedCwd = await capturedTransport.validateProjectDirectory(cwd, hostId); if (!projectOpenRef.current || request !== projectOpenRequest.current) return; const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setTerminalOpen(false); updateConnected(false); setDefinedAgents(undefined); capturedSession.discardPendingUpdates(); activateConversationKey(conversationKey); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); const nextTransport = capturedRuntimePool.create({ cwd: validatedCwd, hostId }); projectControls.set(nextTransport, controls); transportConversationKeys.current.set(nextTransport, conversationKey); setComposerDraft(conversationKey, capturedComposerState.composerDraft); setComposerUploads(nextTransport, capturedComposerState.composerUploads); activateTransport(nextTransport); };
+ if (!canLeaveSettings()) return; const controls = { agent: definedAgents()?.active, model: capturedSession.state.model, thinking: capturedSession.state.thinkingLevel }; const request = projectOpenRequest.current; const validatedCwd = await capturedTransport.validateProjectDirectory(cwd, hostId); if (!projectOpenRef.current || request !== projectOpenRequest.current) return; const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setTerminalOpen(false); updateConnected(false); setDefinedAgents(undefined); capturedSession.discardPendingUpdates(); activateConversationKey(conversationKey); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); const nextTransport = capturedRuntimePool.create({ cwd: validatedCwd, hostId }); assignNewSessionGroup(nextTransport, { id: `${hostId}:${validatedCwd}`, name: validatedCwd.split(/[\\/]/).filter(Boolean).at(-1) ?? validatedCwd, cwd: validatedCwd, hostId }); projectControls.set(nextTransport, controls); transportConversationKeys.current.set(nextTransport, conversationKey); setComposerDraft(conversationKey, capturedComposerState.composerDraft); setComposerUploads(nextTransport, capturedComposerState.composerUploads); activateTransport(nextTransport); };
   const chooseChatProject = () => { projectOpenRequest.current += 1; setProjectOpen(true); };
   const openSplitPane = (session: SessionSummary) => { closeSplitPane(); setSplitPane({ key: crypto.randomUUID(), session }); };
   const openSessionDirectory = async (session: SessionSummary) => { const capturedTransport = transport();
