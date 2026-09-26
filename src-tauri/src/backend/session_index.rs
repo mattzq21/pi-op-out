@@ -22,28 +22,30 @@ fn project_kind_from_flag(flag: &[u8]) -> Option<ProjectKind> {
 fn inspect_session_projects_with(sessions: &mut [SessionSummary], mut command: impl FnMut(&str, &[String]) -> Command) -> Result<(), String> {
     let directories = sessions.iter().map(|session| session.cwd.clone()).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>();
     let script = r#"for path do
-        if [ ! -d "$path" ]; then printf 'missing\000\000'; continue; fi
-        git_dir=$(git -C "$path" rev-parse --absolute-git-dir 2>/dev/null) || { printf 'no-repo\000\000'; continue; }
-        common_dir=$(git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || { printf 'unknown\000\000'; continue; }
+        if [ ! -d "$path" ]; then printf 'missing\000\000\000'; continue; fi
+        git_dir=$(git -C "$path" rev-parse --absolute-git-dir 2>/dev/null) || { printf 'no-repo\000\000\000'; continue; }
+        common_dir=$(git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || { printf 'unknown\000\000\000'; continue; }
         if [ "$git_dir" = "$common_dir" ]; then printf 'main\000'; else printf 'worktree\000'; fi
         project_root=$(git -C "$path" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
-        printf '%s\000' "$project_root"
+        branch=$(git -C "$path" symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=$(git -C "$path" rev-parse --short HEAD 2>/dev/null | sed 's/^/Detached at /')
+        printf '%s\000%s\000' "$project_root" "$branch"
     done"#;
     let mut projects = HashMap::new();
     for batch in directories.chunks(128) {
         let output = run_limited(&mut command(script, batch), MAX_GIT_PATH_LIST_BYTES, "Could not inspect session projects")?;
         if !output.status.success() { return Err(format!("Could not inspect session projects: {}", String::from_utf8_lossy(&output.stderr).trim())); }
         let fields = output.stdout.strip_suffix(&[0]).ok_or("Incomplete session project details")?.split(|byte| *byte == 0).collect::<Vec<_>>();
-        if fields.len() != batch.len() * 2 { return Err("Could not inspect every session project".into()); }
-        for (path, details) in batch.iter().zip(fields.chunks_exact(2)) {
+        if fields.len() != batch.len() * 3 { return Err("Could not inspect every session project".into()); }
+        for (path, details) in batch.iter().zip(fields.chunks_exact(3)) {
             let flag = details[0];
             let project_root = (!details[1].is_empty()).then(|| String::from_utf8_lossy(details[1]).into_owned());
+            let branch = (!details[2].is_empty()).then(|| String::from_utf8_lossy(details[2]).into_owned());
             let kind = project_kind_from_flag(flag);
-            projects.insert(path.as_str(), (flag != b"missing", kind, project_root));
+            projects.insert(path.as_str(), (flag != b"missing", kind, project_root, branch));
         }
     }
     for session in sessions {
-        if let Some((exists, kind, project_root)) = projects.get(session.cwd.as_str()) { session.cwd_exists = *exists; session.project_kind = *kind; session.project_root = project_root.clone(); }
+        if let Some((exists, kind, project_root, branch)) = projects.get(session.cwd.as_str()) { session.cwd_exists = *exists; session.project_kind = *kind; session.project_root = project_root.clone(); session.branch = branch.clone(); }
     }
     Ok(())
 }
@@ -77,7 +79,7 @@ fn read_session_summaries_with(candidates: &[(String, String, u64, u64)], host: 
             let Some((_, fingerprint, modified_at, _)) = batch.iter().find(|item| item.0 == path) else { continue };
             let string = |key| value.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
             let cwd = string("cwd"); let project = Path::new(&cwd).file_name().and_then(|name| name.to_str()).unwrap_or("Workspace").to_owned();
-            let summary = SessionSummary { group_id: None, subagent_parent_id: value.get("subagentParentId").and_then(Value::as_str).map(str::to_owned), id: string("id"), path: path.to_owned(), name: string("name"), project, cwd, cwd_exists: true, project_kind: None, project_root: None, modified_at: *modified_at, preview: string("preview"), message_count: value.get("messageCount").and_then(Value::as_u64).unwrap_or(0) as usize, last_message_at: value.get("lastMessageAt").and_then(Value::as_u64).unwrap_or(0), api_cost: value.get("apiCost").and_then(Value::as_f64).unwrap_or(0.0), host_id: host.map(|host| host.id.clone()).unwrap_or_else(|| "local".into()), host_name: host.map(|host| host.name.clone()).unwrap_or_else(|| "Local".into()) };
+            let summary = SessionSummary { group_id: None, subagent_parent_id: value.get("subagentParentId").and_then(Value::as_str).map(str::to_owned), id: string("id"), path: path.to_owned(), name: string("name"), project, cwd, cwd_exists: true, project_kind: None, project_root: None, branch: None, modified_at: *modified_at, preview: string("preview"), message_count: value.get("messageCount").and_then(Value::as_u64).unwrap_or(0) as usize, last_message_at: value.get("lastMessageAt").and_then(Value::as_u64).unwrap_or(0), api_cost: value.get("apiCost").and_then(Value::as_f64).unwrap_or(0.0), host_id: host.map(|host| host.id.clone()).unwrap_or_else(|| "local".into()), host_name: host.map(|host| host.name.clone()).unwrap_or_else(|| "Local".into()) };
             result.insert(path.to_owned(), CachedSession { fingerprint: fingerprint.clone(), summary });
         }
         cursor = end;

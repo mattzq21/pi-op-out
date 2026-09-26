@@ -104,7 +104,7 @@ export class SessionRuntimePool {
   }
 
   private retainedProjectDetails(previous: SessionSummary | undefined, cwd: string, hostId: string) {
-    return previous?.cwd === cwd && previous.hostId === hostId ? { projectKind: previous.projectKind, projectRoot: previous.projectRoot, cwdExists: previous.cwdExists } : {};
+    return previous?.cwd === cwd && previous.hostId === hostId ? { projectKind: previous.projectKind, projectRoot: previous.projectRoot, branch: previous.branch, cwdExists: previous.cwdExists } : {};
   }
 
   private retainMcpSession(transport: NativeTransport, event: RpcEvent) {

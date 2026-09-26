@@ -276,6 +276,8 @@ struct SessionSummary {
     cwd_exists: bool,
     project_kind: Option<ProjectKind>,
     project_root: Option<String>,
+    #[serde(default)]
+    branch: Option<String>,
     #[serde(skip)]
     modified_at: u64,
     preview: String,
