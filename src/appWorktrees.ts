@@ -4,6 +4,7 @@ import { textOf } from "./lib/content";
 import { branchMessages, type PiEntry } from "./lib/messages";
 import type { NativeTransport } from "./lib/nativeTransport";
 import type { SessionRuntimePool } from "./lib/sessionRuntimePool";
+import { inheritSessionGroup } from "./lib/sessionGroups";
 import type { StateUpdate } from "./lib/solid";
 import type { AppSettings, ComposerUpload, SessionSummary } from "./types";
 
@@ -20,10 +21,12 @@ type WorktreeContext = {
   syncSessionIndex: () => unknown;
 };
 
-async function sourceProjectRoot(target: WorktreeTarget) {
+async function sourceSession(target: WorktreeTarget) {
   const sourcePath = target.transport.currentSessionPath();
-  const source = (await target.transport.listSessions()).find((session) => session.path === sourcePath && (session.hostId ?? "local") === target.hostId);
-  return source?.projectRoot ?? source?.cwd ?? target.cwd;
+  const parent = (await target.transport.listSessions()).find((session) => session.path === sourcePath && (session.hostId ?? "local") === target.hostId);
+  const parentId = parent?.id ?? (await target.transport.command<{ sessionId: string }>({ type: "get_state" })).sessionId;
+  const projectRoot = parent?.projectRoot ?? parent?.cwd ?? target.cwd;
+  return { parent, parentId, projectRoot };
 }
 
 function projectName(root: string) { return root.split(/[\\/]/).filter(Boolean).at(-1) ?? root; }
@@ -53,9 +56,10 @@ export function createWorktreeActions(context: WorktreeContext) {
     const message = messages.find((message) => message.role === sourceMessage.role && (sourceMessage.entryId ? message.entryId === sourceMessage.entryId : message.timestamp === sourceMessage.timestamp && textOf(message.content) === textOf(sourceMessage.content)));
     if (!message?.entryId) throw new Error("Could not find the message in the saved conversation");
     const sourcePath = owner.currentSessionPath();
-    const projectRoot = await sourceProjectRoot(target);
+    const { parent, parentId, projectRoot } = await sourceSession(target);
     const sourceDiffs = await capturedRuntimePool.captureMemoryDiffs(owner);
     const result = await owner.command<{ branch: string; path: string; sessionPath: string; sessionId: string }>({ type: "branch_checkpoint", entryId: message.entryId, name, afterResponse: !beforePrompt });
+    await inheritSessionGroup(`${target.hostId}:${parentId}`, `${target.hostId}:${result.sessionId}`, parent);
     await setup(result.path);
     setWorktreeTarget(undefined);
     const session: SessionSummary = { id: result.sessionId, path: result.sessionPath, cwd: result.path, cwdExists: true, projectKind: "worktree", projectRoot, worktreeRoot: result.path, branch: result.branch, project: projectName(projectRoot), name: result.branch, preview: "", messageCount: 0, lastMessageAt: 0, apiCost: 0, hostId: target.hostId };
