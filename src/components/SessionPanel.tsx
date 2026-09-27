@@ -111,7 +111,7 @@ export function SessionPanel(props: Props) {
   const savedGroups = createMemo(() => (storedGroups.state?.groups ?? []));
   const customGroups = createMemo(() => (savedGroups().filter((group) => !group.cwd)));
   const [removingGroup, setRemovingGroup] = createSignal<{ id: string; name: string }>();
-  const [removingWorktree, setRemovingWorktree] = createSignal<{ id: string; name: string; cwd: string; hostId: string; conversationCount: number }>();
+  const [removingWorktree, setRemovingWorktree] = createSignal<{ id: string; name: string; cwd: string; hostId: string }>();
   const [groupSaving, setGroupSaving] = createSignal(false);
   const groupSavePending = createRef(false);
   const [groupActionError, setGroupActionError] = createSignal<string>();
@@ -497,14 +497,13 @@ export function SessionPanel(props: Props) {
       <button class="session-archive" aria-label={`Archive ${session().name}`} title={!isSavedSession(session()) ? "Send a message before archiving this draft" : `Archive ${session().name}`} disabled={!isSavedSession(session())} onClick={() => panel().onAction(session(), "archive")}><Archive size={14} /></button>
     </div>;
   };
-  const prepareWorktreeRemoval = async (id: string, name: string, group: SessionGroup) => { const capturedPanel = panel();
+  const prepareWorktreeRemoval = async (id: string, name: string, group: SessionGroup) => {
     const cwd = group.cwd!; const hostId = group.hostId ?? "local";
-    const hostSessions = capturedPanel.sessions.filter((session) => (session.hostId ?? "local") === hostId);
     setGroupActionError(undefined);
     try {
-      const [targetRoot, ...conversationRoots] = await gitWorktreeRoots([cwd, ...hostSessions.map((session) => session.cwd)], hostId);
+      const [targetRoot] = await gitWorktreeRoots([cwd], hostId);
       if (!targetRoot) throw new Error("Could not resolve the worktree directory");
-      setRemovingWorktree({ id, name, cwd, hostId, conversationCount: conversationRoots.filter((root) => root === targetRoot).length });
+      setRemovingWorktree({ id, name, cwd: targetRoot, hostId });
     } catch (reason) { setGroupActionError(reason instanceof Error ? reason.message : String(reason)); }
   };
   const groupsByToken = createMemo(() => (new Map(groups().map((group) => [groupLayoutToken(group[0]), group] as const))));
@@ -585,7 +584,7 @@ export function SessionPanel(props: Props) {
     {removingGroup() && <RemoveGroupDialog name={(removingGroup())!.name} onCancel={() => setRemovingGroup(undefined)} onRemove={async () => {
     const capturedRemovingGroup = removingGroup();
  await removeGroup((capturedRemovingGroup)!.id); setRemovingGroup(undefined); }} />}
-    {removingWorktree() && <RemoveWorktreeDialog name={(removingWorktree())!.name} path={(removingWorktree())!.cwd} conversationCount={(removingWorktree())!.conversationCount} onCancel={() => setRemovingWorktree(undefined)} onRemove={async (deleteBranch) => { const capturedPanel = panel(); const capturedRemovingWorktree = removingWorktree();
+    {removingWorktree() && <RemoveWorktreeDialog name={(removingWorktree())!.name} path={(removingWorktree())!.cwd} onCancel={() => setRemovingWorktree(undefined)} onRemove={async (deleteBranch) => { const capturedPanel = panel(); const capturedRemovingWorktree = removingWorktree();
       await capturedPanel.onDeleteWorktree((capturedRemovingWorktree)!.cwd, (capturedRemovingWorktree)!.hostId, deleteBranch);
       try { await removeGroup((capturedRemovingWorktree)!.id); }
       catch (reason) { setGroupActionError(`Worktree deleted, but its sidebar group could not be forgotten: ${String(reason)}`); }
