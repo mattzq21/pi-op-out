@@ -55,7 +55,7 @@ function removeBranch(metadata) {
 
 try {
   const metadata = eligible();
-  if (metadata && action === 'inspect') process.stdout.write('eligible');
+  if (metadata && action === 'check') process.stdout.write('eligible');
   else if (metadata && action === 'remove') {
     git(source, ['worktree', 'remove', '--', target]);
     removeBranch(metadata);

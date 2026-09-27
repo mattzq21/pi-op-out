@@ -8,10 +8,10 @@ fn archive_worktree_command(settings: &AppSettings, host_id: &str, target: &Work
     let script = include_str!("../../resources/archive-worktree.cjs");
     let mut command = if host_id == "local" {
         let mut command = node_command();
-        command.args(["-e", script, action, &target.path, &target.source, STORAGE_DIRECTORY]); command
+        command.args(["-e", script, "--", action, &target.path, &target.source, STORAGE_DIRECTORY]); command
     } else {
         let mut command = ssh(remote_host(settings, host_id)?);
-        command.arg(remote_login_command(&format!("node -e {} {} {} {} {}", shell_quote(script), shell_quote(action), shell_quote(&target.path), shell_quote(&target.source), shell_quote(STORAGE_DIRECTORY)))); command
+        command.arg(remote_login_command(&format!("node -e {} -- {} {} {} {}", shell_quote(script), shell_quote(action), shell_quote(&target.path), shell_quote(&target.source), shell_quote(STORAGE_DIRECTORY)))); command
     };
     run_limited(&mut command, 64 * 1024, "Could not clean up archived worktree")
 }
@@ -19,7 +19,7 @@ fn archive_worktree_command(settings: &AppSettings, host_id: &str, target: &Work
 fn cleanup_archived_worktree(app: &AppHandle, host_id: &str, cwd: &str) -> Result<(), String> {
     let settings = load_app_settings(app.clone())?;
     let Ok(target) = validated_removal_target(app, &settings, cwd, host_id) else { return Ok(()); };
-    let eligible = archive_worktree_command(&settings, host_id, &target, "inspect")?;
+    let eligible = archive_worktree_command(&settings, host_id, &target, "check")?;
     if eligible.stdout != b"eligible" { return Ok(()); }
     preserve_worktree_checkpoints(&settings, host_id, &target)?;
     let removed = archive_worktree_command(&settings, host_id, &target, "remove")?;
