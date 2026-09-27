@@ -214,9 +214,9 @@ fn handle_storage_report(app: AppHandle, _owner: String, _args: Value) -> Comman
     })
 }
 
-fn handle_load_session_groups(_app: AppHandle, _owner: String, args: Value) -> CommandFuture {
+fn handle_load_session_groups(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
-        tokio::task::spawn_blocking(move || serde_json::to_value(load_session_groups(argument(&args, "seeds")?, argument(&args, "legacy")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+        tokio::task::spawn_blocking(move || serde_json::to_value(load_session_groups(app, argument(&args, "seeds")?, argument(&args, "legacy")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
     })
 }
 

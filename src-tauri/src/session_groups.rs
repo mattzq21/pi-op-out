@@ -2,7 +2,7 @@ use std::{collections::{HashMap, HashSet}, fs, path::{Path, PathBuf}, sync::Mute
 use serde::{Deserialize, Serialize};
 use crate::platform::AppHandle;
 #[cfg(feature = "desktop")]
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 static STORAGE_LOCK: Mutex<()> = Mutex::new(());
 
@@ -91,10 +91,56 @@ fn attach_assignments_at(sessions: &mut [super::SessionSummary], path: &Path) ->
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-pub fn load_session_groups(seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Result<SessionGroups, String> {
+pub fn load_session_groups(app: AppHandle, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Result<SessionGroups, String> {
     let _lock = STORAGE_LOCK.lock().map_err(|_| "Session groups lock was poisoned")?;
     let path = storage_path()?;
-    load_at(&path, seeds, legacy)
+    let mut state = load_at(&path, seeds, legacy)?;
+    prune_missing_branch_groups(&app, &path, &mut state)?;
+    Ok(state)
+}
+
+fn prune_missing_branch_groups(app: &AppHandle, path: &Path, state: &mut SessionGroups) -> Result<(), String> {
+    let _file_lock = lock_storage(path)?;
+    if let Some(latest) = read(path)? { *state = latest; }
+    let settings = super::load_app_settings(app.clone())?;
+    let index = app.state::<super::SessionIndexRuntime>();
+    let mut sessions = HashMap::new();
+    let mut removed = HashSet::new();
+    for group in &state.groups {
+        let Some(branch) = group.branch.as_deref() else { continue; };
+        let host = group.host_id.as_deref().unwrap_or("local");
+        let listed = sessions.entry(host.to_owned()).or_insert_with(|| super::sessions_on_host(&settings, &index, host));
+        let Ok(listed) = listed else { continue; };
+        if group_has_sessions(state, group, listed) { continue; }
+        if branch_is_missing(&settings, group, branch) { removed.insert(group.id.clone()); }
+    }
+    if removed.is_empty() { return Ok(()); }
+    state.groups.retain(|group| !removed.contains(&group.id));
+    state.assignments.retain(|_, group| !group.as_ref().is_some_and(|id| removed.contains(id)));
+    write(path, state)?;
+    let _ = app.emit("pi://groups-changed", &*state);
+    Ok(())
+}
+
+fn group_has_sessions(state: &SessionGroups, group: &SessionGroup, sessions: &[super::SessionSummary]) -> bool {
+    sessions.iter().any(|session| {
+        let key = format!("{}:{}", session.host_id, session.id);
+        state.assignments.get(&key).and_then(|id| id.as_deref()) == Some(group.id.as_str())
+    })
+}
+
+fn branch_is_missing(settings: &super::AppSettings, group: &SessionGroup, branch: &str) -> bool {
+    let Some(cwd) = group.cwd.as_deref() else { return false; };
+    let reference = format!("refs/heads/{branch}");
+    let script = format!("git -C {} rev-parse --git-dir >/dev/null 2>&1 || exit 2; git -C {} show-ref --verify --quiet {} && exit 0; [ $? -eq 1 ] || exit 2; printf branch-missing", super::shell_quote(cwd), super::shell_quote(cwd), super::shell_quote(&reference));
+    let host_id = group.host_id.as_deref().unwrap_or("local");
+    let mut command = if host_id == "local" {
+        let mut command = std::process::Command::new("sh"); command.args(["-c", &script]); command
+    } else {
+        let Ok(host) = super::remote_host(settings, host_id) else { return false; };
+        let mut command = super::ssh(host); command.arg(super::remote_login_command(&script)); command
+    };
+    super::run_limited(&mut command, 64 * 1024, "Could not check group branch").is_ok_and(|output| output.status.success() && output.stdout == b"branch-missing")
 }
 
 fn migrate_group_names(state: &mut SessionGroups) -> bool {
