@@ -28,6 +28,16 @@ export function updateSessionGroups(update: GroupChange) {
 }
 
 let queue: Promise<unknown> = Promise.resolve();
+export function inheritSessionGroup(parentKey: string, childKey: string, parent?: SessionSummary) {
+  return enqueue(async () => {
+    const seeds = parent && !isTemporaryChatCwd(parent.cwd) ? [sessionGroupSeed(parent)] : [];
+    const state = await loadSessionGroups(seeds, legacyGroups(seeds));
+    const revision = eventRevision;
+    const next = await changeSessionGroups({ type: "assign", key: childKey, group: state.assignments[parentKey] ?? null });
+    return revision === eventRevision ? publish(next) : next;
+  });
+}
+
 function enqueue<T>(work: () => Promise<T>): Promise<T> {
   const result = queue.then(work, work);
   queue = result.catch(() => undefined);

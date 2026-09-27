@@ -4,6 +4,7 @@ import { type Dispatch, type RefObject, type StateUpdate } from "./lib/solid";
 import { branchMessages, type PiEntry } from "./lib/messages";
 import { NativeTransport } from "./lib/nativeTransport";
 import { SessionRuntimePool } from "./lib/sessionRuntimePool";
+import { inheritSessionGroup } from "./lib/sessionGroups";
 import type { AgentState, AppSettings, ChatMessage, SessionSummary } from "./types";
 
 type Context = {
@@ -105,6 +106,7 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
         ({ nextState, history } = await relocateBranch(nextState, destinationCwd));
       }
       const nextKey = `${sourceHostId}:${nextState.sessionId}`;
+      await inheritSessionGroup(`${sourceHostId}:${state.sessionId}`, nextKey, parentSession);
       runtimePool.bind(sourceHostId, nextState.sessionId, ownerTransport);
       publishBranch(nextState, history, nextKey);
       if (destinationCwd) void syncSessionIndex();
