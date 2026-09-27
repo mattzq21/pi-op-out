@@ -283,6 +283,8 @@ struct SessionSummary {
     project_root: Option<String>,
     #[serde(default)]
     branch: Option<String>,
+    #[serde(default)]
+    branch_appearance: Option<Value>,
     #[serde(skip)]
     modified_at: u64,
     preview: String,

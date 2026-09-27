@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "branches": {
+    "main": { "shape": "circle", "color": "#22c55e" },
+    "dev": { "shape": "diamond", "color": "#3b82f6" },
+    "experimental": { "shape": "triangle", "color": "#f59e0b" }
+  }
+}
