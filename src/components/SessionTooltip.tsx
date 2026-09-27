@@ -1,4 +1,4 @@
-import { Folder, GitBranch } from "lucide-solid";
+import { GitBranch } from "lucide-solid";
 import { createSignal, onCleanup, onMount } from "solid-js";
 import { Portal } from "solid-js/web";
 import type { SessionSummary } from "../types";
@@ -6,10 +6,6 @@ import type { SessionSummary } from "../types";
 export function SessionTooltip(props: { session: SessionSummary; anchor: HTMLElement; onClose: () => void }) {
   let element!: HTMLDivElement;
   const [position, setPosition] = createSignal({ left: "0px", top: "0px" });
-  const worktree = () => {
-    const root = props.session.worktreeRoot ?? props.session.cwd;
-    return root.split(/[\\/]/).filter(Boolean).at(-1) || root;
-  };
   onMount(() => {
     const anchor = props.anchor.getBoundingClientRect();
     const bounds = element.getBoundingClientRect();
@@ -27,6 +23,5 @@ export function SessionTooltip(props: { session: SessionSummary; anchor: HTMLEle
   });
   return <Portal><div ref={element} class="session-tooltip" role="tooltip" style={position()}>
     <span><GitBranch size={14} aria-label="Branch" /><span>{props.session.branch}</span></span>
-    <span><Folder size={14} aria-label="Worktree" /><span>{worktree()}</span></span>
   </div></Portal>;
 }
