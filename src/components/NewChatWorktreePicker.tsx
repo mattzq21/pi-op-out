@@ -2,7 +2,7 @@ import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { Check, FolderGit2, Plus } from "lucide-solid";
 import type { NativeTransport, ProjectBranches } from "../lib/nativeTransport";
-import { registerWorktreePreparation } from "../lib/newChatWorktree";
+import { registerWorktreePreparation, updateChatPreparation } from "../lib/newChatWorktree";
 
 function WorktreeOptions(props: { local: boolean; pending: boolean; error?: string; onLocal: () => void; onCreate: () => void; onClose: () => void }) {
   let dialog!: HTMLDialogElement;
@@ -34,11 +34,14 @@ export function NewChatWorktreePicker(props: { transport: NativeTransport; listi
   void defaults.catch(() => undefined);
   let createdPath: string | undefined;
   const unregister = registerWorktreePreparation(props.transport, async () => {
+    updateChatPreparation(props.transport, "Checking worktree…");
     await defaults;
     if (disposed) throw new Error("Conversation changed");
     if (!createNew()) return props.listing.path === props.listing.mainPath ? undefined : props.listing.mainPath;
     const owner = props.transport; const cwd = props.listing.path; const host = owner.currentHostId();
+    updateChatPreparation(owner, "Creating worktree…");
     if (!createdPath) createdPath = (await owner.createProjectWorktree(cwd, `chat-${crypto.randomUUID().slice(0, 8)}`, host)).path;
+    updateChatPreparation(owner, "Running worktree setup…");
     await owner.runWorktreeSetup(cwd, createdPath, host);
     if (disposed) throw new Error("Conversation changed");
     return createdPath;
