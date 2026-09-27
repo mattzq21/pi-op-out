@@ -1,8 +1,32 @@
 import { encodeAgentValue } from "./lib/agentProtocol";
+import { createMemo, type Accessor } from "solid-js";
 import type { NativeTransport } from "./lib/nativeTransport";
 import type { AgentState, AppSettings, DefinedAgentsCapability, Model } from "./types";
 
 export type ProjectControls = { agent?: string; model: Model | null; thinking: string; fastMode?: boolean };
+
+export function createComposerControls(transport: Accessor<NativeTransport>, connected: Accessor<boolean>, controls: WeakMap<NativeTransport, ProjectControls>) {
+  const snapshot = createMemo<{ owner: NativeTransport; controls?: ProjectControls }>((previous) => {
+    const owner = transport();
+    const inherited = previous?.owner === owner ? previous.controls : controls.get(owner);
+    return { owner, controls: connected() ? undefined : inherited };
+  });
+  return {
+    state: (state: AgentState) => {
+      const inherited = snapshot().controls;
+      return inherited ? { ...state, model: inherited.model, thinkingLevel: inherited.thinking } : state;
+    },
+    statuses: (statuses: Record<string, string>) => {
+      const inherited = snapshot().controls;
+      return inherited?.fastMode === undefined ? statuses : { ...statuses, "pi-desktop-fast-mode": inherited.fastMode ? "Fast mode on" : "Fast mode off" };
+    },
+    thinkingLevels: (levels: string[]) => {
+      const thinking = snapshot().controls?.thinking;
+      return thinking && !levels.includes(thinking) ? [...levels, thinking] : levels;
+    },
+    agent: (agent?: string) => snapshot().controls?.agent ?? agent,
+  };
+}
 
 export function inheritGroupControls(controls: WeakMap<NativeTransport, ProjectControls>, target: NativeTransport, grouped: boolean, state: AgentState, agents: DefinedAgentsCapability | undefined, statuses: Record<string, string>) {
   if (grouped) controls.set(target, { agent: agents?.active, model: state.model, thinking: state.thinkingLevel, fastMode: statuses["pi-desktop-fast-mode"] === "Fast mode on" });

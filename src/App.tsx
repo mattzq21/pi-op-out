@@ -1,7 +1,7 @@
 import { useAppKeyboard } from "./useAppKeyboard";
 import { createConversationViewKey, createTransportActivation, useWorkspaceDisconnect } from "./appTransportActivation";
 import { createWorktreeActions } from "./appWorktrees";
-import { configureConversationRuntime, inheritGroupControls, reassignTerminals, type ProjectControls } from "./appRuntime";
+import { configureConversationRuntime, createComposerControls, inheritGroupControls, reassignTerminals, type ProjectControls } from "./appRuntime";
 import { Key, Rerun } from "@solid-primitives/keyed";
 import { ArrowLeft, Bug, FolderPlus, GitBranch, MessageSquare, Server, Settings } from "lucide-solid";
 import { batch, createComputed, createMemo, createSignal, Show } from "solid-js";
@@ -242,7 +242,7 @@ export default function App() {
     }
     return nextSettings;
   };
-  const projectControls = new WeakMap<NativeTransport, ProjectControls>();
+  const projectControls = new WeakMap<NativeTransport, ProjectControls>(); const composerControls = createComposerControls(transport, connected, projectControls);
   const configureRuntime = (value: AppSettings) => configureConversationRuntime(value, transport(), () => activeTransportRef.current, projectControls);
   const btwImages = new WeakMap<NativeTransport, ImageAttachment[]>();
   const resolveHomeDirectory = (hostId: string) => transport().homeDirectory(hostId);
@@ -377,7 +377,7 @@ export default function App() {
     const capturedSession = { ...chatSession() }; const pool = runtimePool();
     const { hostId, projectCwd } = newSessionTarget(clearProject, group);
     const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`;
-    const nextTransport = createSessionTransport(projectCwd, hostId); inheritGroupControls(projectControls, nextTransport, Boolean(group), capturedSession.state, definedAgents(), statuses());
+    const nextTransport = createSessionTransport(projectCwd, hostId); inheritGroupControls(projectControls, nextTransport, true, composerControls.state(capturedSession.state), definedAgents(), composerControls.statuses(statuses()));
     let activated = false;
     newSessionPending.current = true;
     try {
@@ -647,13 +647,13 @@ export default function App() {
     const renderUsageBadges = () => (<div class="rail-bottom">{opencodeGoBadge() && <LimitBadge clock={usageClock()} label="OpenCode Go" prefix="Go " go detail={(opencodeGoBadge())!.detail} remainingPercent={(opencodeGoBadge())!.window.remainingPercent} resetAt={(opencodeGoBadge())!.window.resetAt} />}{codexUsage() !== undefined && <LimitBadge clock={usageClock()} label="Codex" remainingPercent={(codexUsage())!.remainingPercent} resetAt={(codexUsage())!.resetAt} />}</div>);
     return (<ResizableSidebar compact={view() === "settings" || !panelOpen()}><div class="rail-branch" title={`piop development branch: ${__PIOP_DEVELOPMENT_BRANCH__}`}><GitBranch size={13} /><span>{__PIOP_DEVELOPMENT_BRANCH__}</span></div>{renderNavigation()}{renderSessionPanel()}{renderUsageBadges()}</ResizableSidebar>);
   };
-  const chatAgentProps = () => { if (!extensionStateIsCurrent()) return { agents: [], activeAgent: undefined, agentLocked: false, agentSaved: false, agentUnavailable: false }; return { agents: (definedAgents()?.config.agents ?? []), activeAgent: definedAgents()?.active, agentLocked: definedAgents()?.locked, agentSaved: definedAgents()?.saved, agentUnavailable: definedAgents()?.unavailable }; };
+  const chatAgentProps = () => { if (!extensionStateIsCurrent()) return { agents: [], activeAgent: composerControls.agent(), agentLocked: false, agentSaved: false, agentUnavailable: false }; return { agents: (definedAgents()?.config.agents ?? []), activeAgent: composerControls.agent(definedAgents()?.active), agentLocked: definedAgents()?.locked, agentSaved: definedAgents()?.saved, agentUnavailable: definedAgents()?.unavailable }; };
   const chatModels = createMemo(() => chatSession().models.filter(model => !settings()?.hiddenModels.includes(`${model.provider}/${model.id}`)));
   const chatCommands = createMemo<SlashCommand[]>(() => [{ name: "branch-off", description: "Branch conversation [number back, default 0]", source: "builtin" }, { name: "worktree", description: "Create worktree [number back, default 0] [name]", source: "builtin" }, ...chatSession().commands.filter(command => !["branch-off", "worktree"].includes(command.name))]);
   const chatWidgets = createMemo(() => extensionStateIsCurrent() ? Object.values(widgets()).flat() : []);
   const renderChatWorkspace = () => {
     const renderChatPanes = () => {
-      const renderChatView = () => (<Rerun on={chatViewKey}>{(_key) => <ChatView transport={transport()}  state={chatSession().state} messages={chatSession().messages} gitDiffs={gitDiffs()} debug={(settings())!.debugMode} {...chatAgentProps()} models={chatModels()} commands={chatCommands()} thinkingLevels={chatSession().thinkingLevels} widgets={chatWidgets()} statuses={extensionStateIsCurrent() ? statuses() : {}} projectCwd={projectCwd()} controlsDisabled={!connected()} selectionBtw draft={composerState().composerDraft} onDraftChange={draftChangeFor(activeConversationKey(), transport())} focusRequest={mainComposerFocusRequest()} onActivate={() => setActivePane("main")} uploads={composerState().composerUploads} onUploadsChange={uploadsChangeFor(transport())} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abortInteraction} onPause={pauseInteraction} onResume={resumeInteraction} onOpenTerminal={() => { terminalPanelRevision.current += 1; setActivePane("main"); setTerminalTarget({ sessionKey: activeConversationKey(), cwd: projectCwd(), hostId: activeHostId() }); setTerminalOpen(true); }} onOpenProject={chooseChatProject} onClearProject={clearChatProject} onProjectBranch={(cwd) => openProject(cwd, activeHostId(), true)} onBranch={branch} onForkAndForget={isGitRepository() === false && projectCwd() ? forkAndForget : undefined} onCreateWorktree={isGitRepository() && projectCwd() ? (message) => setWorktreeTarget({ cwd: (projectCwd())!, hostId: activeHostId(), message, transport: transport() }) : undefined} onAgent={setAgent} onModel={setModel} onToggleFastMode={() => { const owner = transport(); return enqueueControl(owner, () => owner.toggleFastMode()); }} onThinking={setThinking} />}</Rerun>);
+      const renderChatView = () => (<Rerun on={chatViewKey}>{(_key) => <ChatView transport={transport()}  state={composerControls.state(chatSession().state)} messages={chatSession().messages} gitDiffs={gitDiffs()} debug={(settings())!.debugMode} {...chatAgentProps()} models={chatModels()} commands={chatCommands()} thinkingLevels={composerControls.thinkingLevels(chatSession().thinkingLevels)} widgets={chatWidgets()} statuses={composerControls.statuses(extensionStateIsCurrent() ? statuses() : {})} projectCwd={projectCwd()} controlsDisabled={!connected()} selectionBtw draft={composerState().composerDraft} onDraftChange={draftChangeFor(activeConversationKey(), transport())} focusRequest={mainComposerFocusRequest()} onActivate={() => setActivePane("main")} uploads={composerState().composerUploads} onUploadsChange={uploadsChangeFor(transport())} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abortInteraction} onPause={pauseInteraction} onResume={resumeInteraction} onOpenTerminal={() => { terminalPanelRevision.current += 1; setActivePane("main"); setTerminalTarget({ sessionKey: activeConversationKey(), cwd: projectCwd(), hostId: activeHostId() }); setTerminalOpen(true); }} onOpenProject={chooseChatProject} onClearProject={clearChatProject} onProjectBranch={(cwd) => openProject(cwd, activeHostId(), true)} onBranch={branch} onForkAndForget={isGitRepository() === false && projectCwd() ? forkAndForget : undefined} onCreateWorktree={isGitRepository() && projectCwd() ? (message) => setWorktreeTarget({ cwd: (projectCwd())!, hostId: activeHostId(), message, transport: transport() }) : undefined} onAgent={setAgent} onModel={setModel} onToggleFastMode={() => { const owner = transport(); return enqueueControl(owner, () => owner.toggleFastMode()); }} onThinking={setThinking} />}</Rerun>);
       const renderSplitChatPane = () => (<Show when={splitPane()}><Rerun on={() => splitPane()?.key}>{(_key) => {
         const pane = splitPane()!;
         const currentPane = () => splitPane()?.key === pane.key ? splitPane() : undefined;
