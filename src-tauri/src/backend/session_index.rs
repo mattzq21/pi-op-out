@@ -35,8 +35,8 @@ fn inspect_session_projects_with(sessions: &mut [SessionSummary], mut command: i
         project_root=$(git -C "$path" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
         branch=$(git -C "$path" symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=$(git -C "$path" rev-parse --short HEAD 2>/dev/null | sed 's/^/Detached at /')
         printf '%s\000%s\000' "$project_root" "$branch"
-        if [ -n "$project_root" ] && [ -f "$project_root/piop/branches.json" ]; then
-            head -c 32768 "$project_root/piop/branches.json" 2>/dev/null | tr -d '\000'
+        if [ -n "$project_root" ] && [ -f "$project_root/.piop/branches.json" ]; then
+            head -c 32768 "$project_root/.piop/branches.json" 2>/dev/null | tr -d '\000'
         fi
         printf '\000'
     done"#;
