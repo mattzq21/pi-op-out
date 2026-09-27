@@ -2,6 +2,7 @@ fn default_agent() -> String { "general".into() }
 
 fn default_settings() -> AppSettings {
     AppSettings {
+        local_enabled: true,
         worktree_setup_scripts: vec![],
         default_agent: default_agent(),
         default_fast_mode: false,

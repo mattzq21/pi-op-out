@@ -128,6 +128,11 @@ pub(crate) fn connect(app: &AppHandle, host_id: &str) -> Result<Arc<Connection>,
 }
 
 pub(crate) fn local_sessions(app: &AppHandle) -> Result<Value, String> {
+    if !load_app_settings(app.clone())?.local_enabled { return Ok(json!([])); }
+    enabled_local_sessions(app)
+}
+
+fn enabled_local_sessions(app: &AppHandle) -> Result<Value, String> {
     let root = ensure_desktop_sessions_dir(&home_dir()?)?;
     let mut sessions = list_local_sessions(&app.state::<SessionIndexRuntime>(), &root)?;
     session_groups::attach_assignments(&mut sessions)?;
@@ -139,8 +144,9 @@ pub(crate) fn local_sessions(app: &AppHandle) -> Result<Value, String> {
 }
 
 pub(crate) fn all_summaries(app: &AppHandle, index: &SessionIndexRuntime) -> Result<Vec<SessionSummary>, String> {
-    let sessions = list_local_sessions(index, &ensure_desktop_sessions_dir(&home_dir()?)?)?;
-    let hosts = load_app_settings(app.clone())?.hosts;
+    let settings = load_app_settings(app.clone())?;
+    let sessions = if settings.local_enabled { list_local_sessions(index, &ensure_desktop_sessions_dir(&home_dir()?)?)? } else { Vec::new() };
+    let hosts = settings.hosts;
     let successful = Mutex::new(HashMap::new());
     let mut result = collect_host_sessions(sessions, hosts.clone(), |host| {
         let result = connect(app, &host.id).and_then(|connection| connection.invoke("list_sessions", json!({})).map(|value| (connection, value)));

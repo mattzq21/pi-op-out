@@ -426,6 +426,8 @@ type GitDiffSnapshots = HashMap<String, GitDiffSnapshot>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AppSettings {
+    #[serde(default = "default_true")]
+    local_enabled: bool,
     #[serde(default)]
     worktree_setup_scripts: Vec<WorktreeSetupScript>,
     #[serde(default = "default_agent")]

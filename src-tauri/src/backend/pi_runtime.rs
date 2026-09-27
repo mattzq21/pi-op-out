@@ -75,11 +75,17 @@ fn runtime_is_attached(runtime: &PiRuntime, runtime_id: &str, settings: &AppSett
     Ok(runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(runtime_id).is_some_and(|process| process.daemon.alive.load(Ordering::SeqCst) && process.daemon.matches_connection(settings, host_id)))
 }
 
+fn enabled_machine_settings(app: AppHandle, host_id: &str) -> Result<AppSettings, String> {
+    let settings = load_app_settings(app)?;
+    if host_id == "local" && !settings.local_enabled { return Err("Local machine is disabled. Enable it in Settings → Machines.".into()); }
+    Ok(settings)
+}
+
 fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, options: StartPiOptions) -> Result<Value, String> {
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
     ensure_runtime_owner(&runtime, &options.runtime_id, &owner)?;
-    let settings = load_app_settings(app.clone())?;
     let host_id = options.host_id.clone().unwrap_or_else(|| "local".into());
+    let settings = enabled_machine_settings(app.clone(), &host_id)?;
     if runtime_is_attached(&runtime, &options.runtime_id, &settings, &host_id)? { return Ok(json!({"attached":true})); }
     let session = prepare_pi_session(&runtime, &settings, host_id, &options)?;
     let created_ephemeral = session.created_ephemeral;

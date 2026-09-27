@@ -321,8 +321,9 @@ fn collect_sessions(app: &AppHandle, index: &SessionIndexRuntime) -> Result<Vec<
 #[cfg(feature = "desktop")]
 fn collect_sessions(app: &AppHandle, index: &SessionIndexRuntime) -> Result<Vec<SessionSummary>, String> {
     let home = home_dir()?; let root = ensure_desktop_sessions_dir(&home)?;
-    let sessions = list_local_sessions(index, &root)?;
-    let hosts = load_app_settings(app.clone())?.hosts;
+    let settings = load_app_settings(app.clone())?;
+    let sessions = if settings.local_enabled { list_local_sessions(index, &root)? } else { Vec::new() };
+    let hosts = settings.hosts;
     collect_host_sessions(sessions, hosts, |host| list_remote_sessions(index, host), session_groups::attach_assignments)
 }
 
