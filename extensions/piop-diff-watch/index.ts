@@ -1,6 +1,6 @@
-import { lstat, mkdir, mkdtemp, open, realpath, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, realpath, rm, rmdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -296,6 +296,25 @@ async function pinPromptHistory(root: string, sessionId: string, entries: Return
   }
 }
 
+async function checkpointWorktreeTarget(root: string) {
+  const listed = await runGit(root, ["worktree", "list", "--porcelain", "-z"]);
+  const worktrees = listed.split("\0").filter((entry) => entry.startsWith("worktree ")).map((entry) => entry.slice(9));
+  if (!worktrees.length) throw new Error("Could not locate the main checkout");
+  const project = basename(worktrees[0]);
+  if (!project) throw new Error("Git repository directory has no name");
+  const storage = join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "worktrees");
+  await mkdir(storage, { recursive: true, mode: 0o700 });
+  for (let attempt = 0; attempt < 256; attempt++) {
+    const container = join(storage, randomUUID().slice(0, 4));
+    const target = join(container, project);
+    if (worktrees.includes(target)) continue;
+    try { await mkdir(container, { mode: 0o700 }); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") continue; throw error; }
+    return target;
+  }
+  throw new Error("Could not allocate a unique worktree directory");
+}
+
 async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: string, afterResponse = false) {
   const root = await repositoryRoot(ctx.cwd);
   if (!root) throw new Error("Project is not a Git repository");
@@ -308,14 +327,14 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
     throw new Error("Project snapshot unavailable. This prompt's checkpoint is missing or was removed.");
   }
   const branch = await checkpointBranchName(root, name);
-  const target = join(dirname(root), branch);
+  const target = await checkpointWorktreeTarget(root);
   const id = randomUUID();
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${id}.jsonl`);
-  await assertWorktreeAvailable(root, branch, target);
   let created = false;
   let sessionWritten = false;
   try {
+    await assertWorktreeAvailable(root, branch, target);
     await runGit(root, ["worktree", "add", "-b", branch, target, checkpoint.commit]);
     created = true;
     const entries = await branchSessionEntries(ctx, root, id, history, owner, checkpoint, timestamp, target, afterResponse, entryId);
@@ -332,7 +351,7 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
         .then(() => runGit(root, ["branch", "-D", branch])).catch(() => undefined);
     }
     throw error;
-  }
+  } finally { await rmdir(dirname(target)).catch(() => undefined); }
 }
 
 async function checkpointRefValid(root: string, owner: string, checkpoint: PromptCheckpoint, afterResponse: boolean) {
