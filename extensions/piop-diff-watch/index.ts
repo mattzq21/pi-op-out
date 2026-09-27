@@ -201,6 +201,18 @@ async function worktreeTree(root: string, isolated = false) {
   } catch (error) { await rm(temporary, { recursive: true, force: true }); throw error; }
 }
 
+async function assertSnapshotCommitSafe(root: string) {
+  const gitDirectory = (await runGit(root, ["rev-parse", "--absolute-git-dir"])).trim();
+  for (const name of ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer", "BISECT_START"]) {
+    try { await lstat(join(gitDirectory, name)); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
+    throw new Error("Finish or abort the in-progress Git operation before saving an agent-settled commit");
+  }
+  if (await runGit(root, ["ls-files", "--unmerged", "-z"])) {
+    throw new Error("Resolve Git conflicts before saving an agent-settled commit");
+  }
+}
+
 async function saveSnapshot(root: string, sessionId: string) {
   const branch = (await runGit(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch((error) => {
     if (error instanceof GitError && error.exitCode === 1) throw new Error("Check out a branch before saving an agent-settled commit");
@@ -216,6 +228,7 @@ async function saveSnapshot(root: string, sessionId: string) {
     GIT_AUTHOR_DATE: timestamp,
     GIT_COMMITTER_DATE: timestamp,
   };
+  await assertSnapshotCommitSafe(root);
   await runGit(root, ["add", "--all", "--", "."]);
   await runGit(root, ["commit", "--allow-empty", "-m", `Pi agent settled ${sessionId} ${timestamp}`], identity);
   const commit = await resolveRef(root, "HEAD");
@@ -287,12 +300,15 @@ async function pinPromptHistory(root: string, sessionId: string, entries: Return
   const checkpoints = entries.flatMap((entry) => entry.type === "custom" && entry.customType === PROMPT_ENTRY
     ? [checkpointData(entry.data)].filter((value): value is PromptCheckpoint => Boolean(value)) : []);
   for (const checkpoint of checkpoints) {
-    const repository = checkpoint.repositoryRoot ?? root;
     const target = promptRef(sessionId, checkpoint.key);
-    if (await resolveRef(repository, target)) continue;
     const source = promptRef(sourceOwner ?? checkpoint.owner, checkpoint.key);
-    if (await resolveRef(repository, source) !== checkpoint.commit) continue;
-    await runGit(repository, ["update-ref", "--stdin"], {}, ["start", `verify ${source} ${checkpoint.commit}`, `create ${target} ${checkpoint.commit}`, "prepare", "commit", ""].join("\n"));
+    const repositories = new Set([root, checkpoint.repositoryRoot ?? root]);
+    for (const repository of repositories) {
+      if (await resolveRef(repository, target) === checkpoint.commit) break;
+      if (await resolveRef(repository, source) !== checkpoint.commit) continue;
+      await runGit(repository, ["update-ref", "--stdin"], {}, ["start", `verify ${source} ${checkpoint.commit}`, `create ${target} ${checkpoint.commit}`, "prepare", "commit", ""].join("\n"));
+      break;
+    }
   }
 }
 
