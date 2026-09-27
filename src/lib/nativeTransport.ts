@@ -5,7 +5,7 @@ import { invoke, listen, type UnlistenFn } from "./platform";
 import { open } from "@tauri-apps/plugin-dialog";
 import { restoredSessionTarget } from "./sessionResume";
 import { emit as emitNativeEvent } from "@tauri-apps/api/event";
-import type { GroupChange, SessionGroups, SessionGroupSeed } from "./sessionGroups";
+import type { GroupChange, SessionGroup, SessionGroups, SessionGroupSeed } from "./sessionGroups";
 import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, OpencodeGoUsage, RpcCommand, RpcEvent, SessionSummary, SettingsChange, StorageReport } from "../types";
 
 function responseKey(command: string, args?: Record<string, unknown>) {
@@ -45,6 +45,14 @@ export const loadSessionGroups = (seeds: SessionGroupSeed[], legacy: SessionGrou
 export const changeSessionGroups = (change: GroupChange) => call<SessionGroups>("change_session_groups", { change });
 export const openGroupDirectory = (cwd: string, hostId: string) => call<void>("open_project_directory", { cwd, hostId });
 export const gitProjectKind = (cwd: string, hostId: string) => call<"no-repo" | "main" | "worktree">("git_project_kind", { cwd, hostId });
+export interface ProjectBranches { branches: string[]; current: string | null; path: string; }
+export const projectBranches = (cwd: string, hostId: string, branch?: string) => call<ProjectBranches | null>("project_branches", { cwd, hostId, branch });
+export async function resolveBranchGroup(group: SessionGroup) {
+  if (!group.branch || !group.cwd) return group;
+  const selected = await projectBranches(group.cwd, group.hostId ?? "local", group.branch);
+  if (!selected) throw new Error("Project is not a Git repository");
+  return { ...group, cwd: selected.path };
+}
 export const gitWorktreeRoots = (paths: string[], hostId: string) => call<Array<string | null>>("git_worktree_roots", { paths, hostId });
 export interface GitWorktree { branch: string; path: string; }
 export interface GitWorktreeRemoval { branch?: string; branchDeleted: boolean; warning?: string; }

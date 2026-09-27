@@ -64,6 +64,11 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .session-branch-icon { display: inline-flex; flex: 0 0 14px; align-self: baseline; justify-content: center; font: 700 14px/1 monospace; transform: scaleX(1.15); }
 .project-label .group-branch-badge { display: inline-flex; flex: 0 0 16px; justify-content: center; overflow: visible; }
 .project-label .session-branch-icon { overflow: visible; text-transform: none; letter-spacing: normal; }
+.project-disclosure { display: grid; place-items: center; flex: 0 0 20px; height: 27px; padding: 0; border: 0; background: transparent; color: var(--muted); }
+.project-disclosure svg.collapsed { transform: rotate(-90deg); }
+.new-chat-project { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.new-chat-branch-picker { display: inline-flex; align-items: center; gap: 5px; min-width: 0; color: var(--muted); }
+.new-chat-branch-picker select { max-width: 220px; height: 29px; border: 1px solid var(--line); border-radius: 6px; background: var(--dark-subtle); color: var(--ink); font: inherit; font-size: 12px; }
 .session-tooltip { position: fixed; z-index: 10000; pointer-events: none; display: grid; gap: 6px; max-width: min(360px, calc(100vw - 16px)); padding: 9px 12px; border: 1px solid #454540; border-radius: 7px; background: #242422; color: #eee9df; box-shadow: 0 4px 16px #0004; font: 12px/1.4 sans-serif; }
 .session-tooltip > span { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .session-tooltip svg { flex-shrink: 0; color: #aaa69d; }

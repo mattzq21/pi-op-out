@@ -478,6 +478,7 @@ include!("backend/settings.rs");
 include!("backend/worktree_setup.rs");
 include!("backend/snapshot_capture.rs");
 include!("backend/worktrees.rs");
+include!("backend/project_branches.rs");
 include!("backend/archive_worktrees.rs");
 include!("backend/git_diffs.rs");
 include!("backend/pi_launch.rs");

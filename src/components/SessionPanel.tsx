@@ -273,7 +273,7 @@ export function SessionPanel(props: Props) {
   const groupDestination = (id: string) => {
     const group = storedGroups.state?.groups.find((item) => item.id === id);
     const session = branchGroupDetails().get(id);
-    return group && session ? { ...group, cwd: session.worktreeRoot ?? session.cwd, projectKind: session.projectKind } : group;
+    return group && session && !group.branch ? { ...group, cwd: session.worktreeRoot ?? session.cwd, projectKind: session.projectKind } : group;
   };
   const projectDetails = createMemo(() => {
     const details = new Map<string, SessionSummary>();
@@ -464,7 +464,8 @@ export function SessionPanel(props: Props) {
     onMouseDown: (event: MouseEvent<HTMLElement>) => startMouseDrag(event, { projectKey }),
     onClick: (event: MouseEvent<HTMLElement>) => {
       if (suppressClickRef.current === groupLayoutToken(projectKey)) { suppressClickRef.current = undefined; event.preventDefault(); return; }
-      toggleProject(projectKey);
+      const destination = groupDestination(projectKey);
+      if (destination) { expandProject(projectKey); panel().onNewChat(destination); } else toggleProject(projectKey);
     },
     onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
       if (normalizedQuery() || !event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
@@ -538,10 +539,11 @@ export function SessionPanel(props: Props) {
       {renderNewGroup()}
       {<Key each={sidebarEntries().filter((token) => groupsByToken().has(token))} by={(token) => token}>{(token) => {
         const group = () => groupsByToken().get(token())!; const projectKey = group()[0]; const label = () => groupLabel(group()[1], group()[2], group()[3]); const collapsed = () => !normalizedQuery() && collapsedProjects().has(projectKey); const groupId = disclosureId(projectKey); const renderProjectHeading = () => {
+          const disclosureLabel = () => `${collapsed() ? "Expand" : "Collapse"} ${label()}`;
           const renderProjectLabel = () => {
             const renderGroupNameInput = () => (<input ref={element => { groupNameRef.current = element; }} disabled={groupSaving()} aria-label="Rename session group" aria-invalid={Boolean(groupDraftError())} aria-describedby={groupDraftError() ? "rename-group-error" : undefined} value={newGroupName() ?? ""} onInput={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} />);
             return (isEditingGroup(projectKey) ? <div class="project-label">{renderGroupNameInput()}{groupDraftError() && <small id="rename-group-error" class="group-error">{(groupDraftError())!}</small>}</div> : <>
-              <button class="project-label" disabled={Boolean(normalizedQuery())} aria-expanded={!collapsed()} aria-controls={groupId} {...projectDragProps(projectKey)}><ChevronDown class={collapsed() ? "collapsed" : ""} size={13} /><Show when={groupBranchBadge(projectKey)}>{(badge) => <span class="group-branch-badge" title={badge().branch}><BranchIcon branch={badge().branch} appearance={badge().appearance} /></span>}</Show>{projectDetails().get(projectKey)?.projectKind === "no-repo" && <Folder size={14} aria-hidden="true" />}<span class={projectKey === activeProjectKey() ? "active" : undefined}>{label()}</span></button>
+              <button class="project-disclosure" aria-label={disclosureLabel()} aria-expanded={!collapsed()} aria-controls={groupId} onClick={() => toggleProject(projectKey)}><ChevronDown class={collapsed() ? "collapsed" : ""} size={13} /></button><button class="project-label" disabled={Boolean(normalizedQuery())} {...projectDragProps(projectKey)}><Show when={groupBranchBadge(projectKey)}>{(badge) => <span class="group-branch-badge" title={badge().branch}><BranchIcon branch={badge().branch} appearance={badge().appearance} /></span>}</Show>{projectDetails().get(projectKey)?.projectKind === "no-repo" && <Folder size={14} aria-hidden="true" />}<span class={projectKey === activeProjectKey() ? "active" : undefined}>{label()}</span></button>
               {projectKey !== RECENT_KEY && <div class="project-actions">
                 {customGroupsByKey().has(projectKey) && <button aria-label={`Rename group ${label()}`} title="Rename group" onClick={() => editGroup(customGroupsByKey().get(projectKey)!)}><Pencil size={12} /></button>}
                 <button aria-label={`New chat in ${label()}`} title="New chat in group" onClick={() => {
