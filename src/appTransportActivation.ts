@@ -1,4 +1,4 @@
-import { onCleanup, type Accessor, type Setter } from "solid-js";
+import { createMemo, onCleanup, type Accessor, type Setter } from "solid-js";
 import type { SessionTerminals } from "./appSupport";
 import { hasVisibleText } from "./lib/content";
 import type { NativeTransport } from "./lib/nativeTransport";
@@ -6,6 +6,19 @@ import type { SessionRuntimePool } from "./lib/sessionRuntimePool";
 import type { RefObject } from "./lib/solid";
 import type { useChatSession } from "./lib/useChatSession";
 import type { ComposerUpload } from "./types";
+
+export function createConversationViewKey<T>(transport: Accessor<T>, conversationKey: Accessor<string>) {
+  let previous: { owner: T; key: string; identity: object } | undefined;
+  return createMemo(() => {
+    const owner = transport();
+    const key = conversationKey();
+    const canonicalizingDraft = previous?.key.includes(":draft-") && !key.includes(":draft-");
+    const reuse = previous?.owner === owner && (previous.key === key || canonicalizingDraft);
+    const identity = reuse ? previous!.identity : {};
+    previous = { owner, key, identity };
+    return identity;
+  });
+}
 
 export function useWorkspaceDisconnect(hasDrafts: () => boolean, pool: () => SessionRuntimePool, terminalIds: () => string[], owner: () => NativeTransport) {
   const beforeDisconnect = (event: Event) => {
