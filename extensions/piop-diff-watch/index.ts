@@ -391,7 +391,7 @@ async function checkpointBranchName(root: string, name: string) {
   name = name.trim();
   if (!name || !/^[a-zA-Z0-9._-]+$/.test(name)) throw new Error("Name may only contain letters, numbers, dots, hyphens, and underscores");
   const project = basename(root).replace(/[^a-zA-Z0-9_]+/g, "-").replace(/^-|-$/g, "") || "project";
-  const branch = `${project}-${name}`;
+  const branch = `${project}/${name}`;
   await runGit(root, ["check-ref-format", "--branch", branch]);
   return branch;
 }

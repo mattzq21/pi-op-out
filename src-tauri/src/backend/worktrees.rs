@@ -78,7 +78,7 @@ fn worktree_branch_name(project: &str, name: &str) -> String {
         } else { separator = true; }
     }
     if prefix.is_empty() { prefix.push_str("project"); }
-    format!("{prefix}-{name}")
+    format!("{prefix}/{name}")
 }
 
 fn parse_worktree_output(output: LimitedOutput, context: &str) -> Result<GitWorktree, String> {
