@@ -34,7 +34,7 @@ export function WorktreeDialog(componentProps: Props) {
   const create = async () => { const capturedName = name(); const capturedOnCreate0 = componentProps.onCreate;
     if (creatingRef.current) return;
     const suffix = capturedName.trim();
-    if (!suffix) { setError("Name can't be empty"); return; }
+    if (!suffix) { setError("Branch name can't be empty"); return; }
     creatingRef.current = true; setCreating(true); setError(undefined); cancellingRef.current = false; setCancelling(false);
     try { await capturedOnCreate0(suffix, (cancel) => setCancelSetup(() => cancel)); }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); creatingRef.current = false; setCreating(false); cancellingRef.current = false; setCancelling(false); setCancelSetup(undefined); }
@@ -45,7 +45,7 @@ export function WorktreeDialog(componentProps: Props) {
   const renderDialogActions = () => (<div class="dialog-actions"><button disabled={cancelling() || (creating() && !cancelSetup())} onClick={() => void cancel()}>{cancelSetup() ? "Cancel setup" : "Cancel"}</button><button class="primary-button" disabled={creating()} onClick={() => void create()}>{creating() ? "Creating…" : "Create worktree"}</button></div>);
   return <dialog ref={element => { dialogRef.current = element; }} class="extension-dialog" aria-labelledby="worktree-dialog-title" onCancel={(event) => { event.preventDefault(); void cancel(); }} onMouseDown={(event) => { const bounds = event.currentTarget.getBoundingClientRect(); if (!creatingRef.current && (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)) componentProps.onCancel(); }}>
     <p class="eyebrow">Git</p><h2 id="worktree-dialog-title">Create worktree</h2>{renderDescription()}
-    <input autofocus aria-label="Worktree name" value={name()} placeholder="Worktree name" disabled={creating()} onInput={(event) => { setName(event.target.value); setError(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) void create(); }} />
+    <input autofocus aria-label="Branch name" value={name()} placeholder="Branch name" disabled={creating()} onInput={(event) => { setName(event.target.value); setError(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) void create(); }} />
     {name().trim() && <p class="worktree-preview" title={componentProps.projectPath}>Branch: <code>parent|{name().trim()}</code>. The current branch is the parent.</p>}
     {error() && <p class="dialog-error" role="alert">{(error())!}</p>}
     {renderCancelSetup()}
