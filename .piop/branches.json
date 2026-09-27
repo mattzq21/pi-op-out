@@ -3,9 +3,6 @@
   "branches": {
     "main": { "letter": "X", "color": "#ef4444" },
     "dev": { "letter": "D", "color": "#22c55e" },
-    "experimental": { "letter": "E", "color": "#eab308" },
-    "migration": { "letter": "M", "color": "#a78bfa" },
-    "codex/piop-async-jobs": { "letter": "J", "color": "#2dd4bf" },
-    "codex/piop-tool-discovery": { "letter": "T", "color": "#f472b6" }
+    "experimental": { "letter": "E", "color": "#eab308" }
   }
 }
