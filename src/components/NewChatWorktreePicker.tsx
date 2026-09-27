@@ -37,7 +37,7 @@ export function NewChatWorktreePicker(props: { transport: NativeTransport; listi
     updateChatPreparation(props.transport, "Checking worktree…");
     await defaults;
     if (disposed) throw new Error("Conversation changed");
-    if (!createNew()) return props.listing.path === props.listing.mainPath ? undefined : props.listing.mainPath;
+    if (!createNew()) return undefined;
     const owner = props.transport; const cwd = props.listing.path; const host = owner.currentHostId();
     updateChatPreparation(owner, "Creating worktree…");
     if (!createdPath) createdPath = (await owner.createProjectWorktree(cwd, `chat-${crypto.randomUUID().slice(0, 8)}`, host)).path;
