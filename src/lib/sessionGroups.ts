@@ -101,7 +101,7 @@ export function useSessionGroups(sessions: Accessor<SessionSummary[]>) {
     const stop = listen<SessionGroups>("pi://groups-changed", ({ payload }) => { eventRevision++; publish(payload); });
     return () => { mounted.current = false; listeners.delete(listener); void stop.then((unlisten) => unlisten()); };
   }, () => []);
-  const seedsJson = createMemo(() => JSON.stringify(sessions().filter((session) => !isTemporaryChatCwd(session.cwd)).map(sessionGroupSeed).sort((a, b) => a.sessionKey.localeCompare(b.sessionKey))));
+  const seedsJson = createMemo(() => JSON.stringify(sessions().filter((session) => !session.isDraft && session.messageCount > 0 && !isTemporaryChatCwd(session.cwd)).map(sessionGroupSeed).sort((a, b) => a.sessionKey.localeCompare(b.sessionKey))));
   createDependencyEffect(() => { const capturedSeedsJson = seedsJson();
     const seeds: SessionGroupSeed[] = JSON.parse(capturedSeedsJson);
     void enqueue(async () => { const revision = eventRevision; const state = await loadSessionGroups(seeds, legacyGroups(seeds)); if (revision === eventRevision) publish(state); }).catch((reason) => { if (mounted.current) setError(String(reason)); });
