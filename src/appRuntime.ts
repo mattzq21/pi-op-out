@@ -47,8 +47,13 @@ export function createComposerControls(transport: Accessor<NativeTransport>, con
   };
 }
 
-export function inheritGroupControls(controls: WeakMap<NativeTransport, ProjectControls>, target: NativeTransport, grouped: boolean, state: AgentState, agents: DefinedAgentsCapability | undefined, statuses: Record<string, string>) {
-  if (grouped) controls.set(target, { agent: agents?.active, model: state.model, thinking: state.thinkingLevel, fastMode: statuses["pi-desktop-fast-mode"] === "Fast mode on", contextWindow: state.contextUsage?.contextWindow ?? state.model?.contextWindow });
+export function newChatAgent(agents: DefinedAgentsCapability | undefined, defaultAgent?: string) {
+  const available = agents?.config.agents ?? [];
+  return [agents?.active, defaultAgent, "general"].find((name) => available.some((agent) => agent.name === name)) ?? available[0]?.name;
+}
+
+export function inheritGroupControls(controls: WeakMap<NativeTransport, ProjectControls>, target: NativeTransport, grouped: boolean, state: AgentState, agents: DefinedAgentsCapability | undefined, statuses: Record<string, string>, settings?: AppSettings) {
+  if (grouped) controls.set(target, { agent: newChatAgent(agents, settings?.defaultAgent), model: state.model, thinking: state.thinkingLevel, fastMode: statuses["pi-desktop-fast-mode"] === "Fast mode on", contextWindow: state.contextUsage?.contextWindow ?? state.model?.contextWindow });
 }
 
 export function reassignTerminals(transport: NativeTransport, terminals: readonly { id: string; started: boolean }[], sessionKey: string, onError: (reason: unknown) => void) {
