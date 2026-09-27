@@ -479,6 +479,10 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .new-chat-project .project-picker .clear-project { position: absolute; inset: 0 0 0 auto; padding: 0 7px; background: var(--dark-control, var(--panel)); opacity: 0; pointer-events: none; }
 .new-chat-project .project-picker:hover .clear-project, .new-chat-project .project-picker:focus-within .clear-project { opacity: 1; pointer-events: auto; }
 .new-chat-project .project-picker button:focus-visible { outline-offset: -2px; }
+.worktree-picker-dialog > button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px; margin: 6px 0; border: 1px solid var(--line); border-radius: 6px; background: var(--dark-subtle); color: var(--ink); text-align: left; }
+.worktree-picker-dialog > button:hover { background: var(--dark-control); }
+.worktree-picker-dialog > button span { flex: 1; }
+.worktree-picker-dialog small { display: block; margin-top: 3px; color: var(--muted); }
 
 .sidebar-resizer { position: absolute; z-index: 5; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; touch-action: none; user-select: none; }
 .sidebar-resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: transparent; }

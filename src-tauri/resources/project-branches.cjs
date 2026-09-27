@@ -41,6 +41,7 @@ try {
   let current = null;
   try { current = git(['symbolic-ref', '--quiet', '--short', 'HEAD']).trim(); } catch { }
   if (selected && !branches.includes(selected)) throw new Error('Branch no longer exists');
-  const directory = selected ? checkout(selected, worktrees()) : root;
-  process.stdout.write(JSON.stringify({ branches, current: selected || current, path: directory }));
+  const trees = worktrees();
+  const directory = selected ? checkout(selected, trees) : root;
+  process.stdout.write(JSON.stringify({ branches, current: selected || current, path: directory, mainPath: trees[0].path }));
 } catch (error) { console.error(error.message); process.exitCode = 1; }
