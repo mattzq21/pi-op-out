@@ -3,7 +3,7 @@ import { createComputed, createMemo, createSignal, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect, createMemoFields, createRef, cssPixels, type KeyboardEvent, type MouseEvent } from "../lib/solid";
 
-import { AppWindow, Archive, ChevronDown, Columns2, CopyPlus, Ellipsis, Folder, FolderGit2, FolderOpen, GitBranch, MessageSquarePlus, Pencil, Search, Trash2 } from "lucide-solid";
+import { AppWindow, Archive, ChevronDown, Columns2, CopyPlus, Ellipsis, Folder, FolderOpen, GitBranch, MessageSquarePlus, Pencil, Search, Trash2 } from "lucide-solid";
 import { hasVisibleText } from "../lib/content";
 import { gitProjectKind, gitWorktreeRoots, openGroupDirectory } from "../lib/nativeTransport";
 import { isTemporaryChatCwd, useSessionGroups, type SessionGroup } from "../lib/sessionGroups";
@@ -33,12 +33,6 @@ const sidebarCollator = new Intl.Collator(undefined, { numeric: true, sensitivit
 function projectKindLabel(session: SessionSummary) {
   const kind = session.projectKind;
   return kind === "main" ? "Main checkout" : kind === "worktree" ? "Git worktree" : kind === "no-repo" ? "No Git repository" : session.cwdExists === false ? "Directory unavailable" : "Project directory";
-}
-
-function SessionProjectIcon(componentProps: { session: SessionSummary }) {
-  const kind = createMemo(() => (componentProps.session.projectKind));
-  const Icon = createMemo(() => (kind() === "main" ? FolderGit2 : kind() === "worktree" ? GitBranch : Folder));
-  return <span class="session-project-icon" title={projectKindLabel(componentProps.session)}><Dynamic component={Icon()} size={14} aria-hidden="true" /></span>;
 }
 
 function stableSessionOrder(left: SessionSummary, right: SessionSummary) {
@@ -472,7 +466,7 @@ export function SessionPanel(props: Props) {
     const accessibleActivity = () => running() ? "Running" : activity();
     const target = createMemo(() => dropTarget()?.projectKey === projectKey && dropTarget()?.sessionKey === key() ? dropTarget()?.edge : undefined);
     const drag = () => ({ projectKey, sessionKey: key(), session: session() });
-    const renderSessionMain = () => (<button class="session-main" aria-label={`${session().name}, ${projectKindLabel(session())}${session().branch ? `, ${session().branch}` : ""}, ${formatApiCost(session().apiCost)}${accessibleActivity() ? `, ${accessibleActivity()}` : ""}`} aria-current={isActiveSession(session()) ? "page" : undefined} aria-description={!normalizedQuery() ? "Press Alt plus Up or Down to reorder. Add Shift to move between groups." : undefined} aria-keyshortcuts={!normalizedQuery() ? "Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown" : undefined} onMouseDown={(event) => startMouseDrag(event, drag())} onKeyDown={(event) => { if (!normalizedQuery() && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); moveSessionByKeyboard(drag(), event.key === "ArrowUp" ? -1 : 1, event.shiftKey); } }} onClick={(event) => { if (suppressClickRef.current === sessionLayoutToken(key())) { suppressClickRef.current = undefined; event.preventDefault(); return; } panel().onSelect(session()); }}><span class="session-copy"><span class="session-title-row">{session().projectKind !== "no-repo" && <SessionProjectIcon session={session()} />}{session().branch && <BranchIcon branch={session().branch!} appearance={session().branchAppearance} />}<strong>{session().name}</strong><span class="session-api-cost" title="Would-be API cost">{formatApiCost(session().apiCost)}</span></span></span></button>);
+    const renderSessionMain = () => (<button class="session-main" aria-label={`${session().name}, ${projectKindLabel(session())}${session().branch ? `, ${session().branch}` : ""}, ${formatApiCost(session().apiCost)}${accessibleActivity() ? `, ${accessibleActivity()}` : ""}`} aria-current={isActiveSession(session()) ? "page" : undefined} aria-description={!normalizedQuery() ? "Press Alt plus Up or Down to reorder. Add Shift to move between groups." : undefined} aria-keyshortcuts={!normalizedQuery() ? "Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown" : undefined} onMouseDown={(event) => startMouseDrag(event, drag())} onKeyDown={(event) => { if (!normalizedQuery() && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); moveSessionByKeyboard(drag(), event.key === "ArrowUp" ? -1 : 1, event.shiftKey); } }} onClick={(event) => { if (suppressClickRef.current === sessionLayoutToken(key())) { suppressClickRef.current = undefined; event.preventDefault(); return; } panel().onSelect(session()); }}><span class="session-copy"><span class="session-title-row">{session().branch && <BranchIcon branch={session().branch!} appearance={session().branchAppearance} />}<strong>{session().name}</strong><span class="session-api-cost" title="Would-be API cost">{formatApiCost(session().apiCost)}</span></span></span></button>);
     return <div  data-session-key={key()} data-project-key={projectKey} class={`session-item ${!normalizedQuery() ? "reorderable" : ""} ${isActiveSession(session()) ? "active" : ""} ${running() ? "running" : activity() ? "unseen" : ""} ${draggedSession()?.sessionKey === key() ? "dragging" : ""} ${target() ? `drop-${target()}` : ""}`} onContextMenu={(event) => { event.preventDefault(); const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget.querySelector<HTMLElement>(".session-main") ?? undefined; setGroupMenu(undefined); setMenu({ session: session(), x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190), returnFocus }); }}>
       {renderSessionMain()}
       <button class="session-archive" aria-label={`Archive ${session().name}`} title={!isSavedSession(session()) ? "Send a message before archiving this draft" : `Archive ${session().name}`} disabled={!isSavedSession(session())} onClick={() => panel().onAction(session(), "archive")}><Archive size={14} /></button>
