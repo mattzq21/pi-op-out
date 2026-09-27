@@ -56,6 +56,10 @@ function instructionsFromPrompt(prompt: string) {
   return { block, instructions: projectInstructions(block) };
 }
 
+function workingDirectoryFromPrompt(prompt: string, projectContext: string) {
+  return projectContext.match(/\nCurrent working directory: ([^\n]*)/)?.[1] ?? prompt.match(/\nCurrent working directory: ([^\n]*)\n?$/)?.[1];
+}
+
 function textContent(content: unknown) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -82,8 +86,7 @@ function movableProjectContext(prompt: string, cwd: string) {
   const { block } = instructionsFromPrompt(prompt);
   const withoutInstructions = block ? prompt.replace(block, "\n") : prompt;
   const stablePrompt = withoutInstructions.replace(/\nCurrent working directory: [^\n]*\n?$/, "");
-  const inner = block.trim().replace(/^<project_context>\n?/, "").replace(/\n?<\/project_context>$/, "").trim();
-  const content = `<project_context>\nCurrent working directory: ${cwd}${inner ? `\n\n${inner}` : ""}\n</project_context>`;
+  const content = `<project_context>\nCurrent working directory: ${cwd}\n</project_context>`;
   return { stablePrompt, content };
 }
 
@@ -172,7 +175,7 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
     const { block: skillPrompt, skills } = skillsFromPrompt(systemPrompt);
     const { block: instructionPrompt, instructions } = instructionsFromPrompt(systemPrompt);
     const messageProjectContext = projectContextFromMessages(messages);
-    const systemCwd = systemPrompt.match(/\nCurrent working directory: ([^\n]*)\n?$/)?.[1];
+    const systemCwd = workingDirectoryFromPrompt(systemPrompt, instructionPrompt);
     if (!messageProjectContext.block && systemCwd) instructions.unshift({ path: "Working directory", content: displayPath(systemCwd) });
     else instructions.push(...messageProjectContext.instructions);
     const changeInstruction = changeInstructionFromMessages(messages);

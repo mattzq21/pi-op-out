@@ -275,10 +275,6 @@ function agentToolError(pi: ExtensionAPI, agent: Agent, extensionTools: string[]
 function buildAgentSystemPrompt(prompt: string, options: BuildSystemPromptOptions, explicitOnlySkills: string[] = []): string {
   const sections = [prompt];
   if (options.appendSystemPrompt) sections.push(options.appendSystemPrompt);
-  if (options.contextFiles?.length) {
-    const escape = (value: string) => value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    sections.push(`<project_context>\n${options.contextFiles.map((file) => `<project_instructions path="${escape(file.path)}">\n${file.content}\n</project_instructions>`).join("\n\n")}\n</project_context>`);
-  }
   const readTool = (["read", "bash"] as const).find((tool) => (options.selectedTools ?? ["read", "bash", "edit", "write"]).includes(tool));
   const explicit = new Set(explicitOnlySkills.map(normalizedPath));
   if (readTool && options.skills?.length) sections.push(formatSkillsForPrompt(options.skills.map((skill) => explicit.has(normalizedPath(skill.filePath)) || explicit.has(normalizedPath(skill.baseDir)) ? { ...skill, disableModelInvocation: true } : skill), readTool));
@@ -462,7 +458,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const agent = currentAgent(); if (!agent) return;
     const base = buildAgentSystemPrompt(activeSystemPrompt, event.systemPromptOptions, desktopList(pi, "explicitOnlySkills"));
     const systemPrompt = activeAgentPrompt.trim() ? `${base}\n\n${activeAgentPrompt}` : base;
-    return { systemPrompt: `${systemPrompt}\n\nCurrent working directory ${ctx.cwd.replace(/\\/g, "/")}` };
+    return { systemPrompt: `${systemPrompt}\n\n<project_context>\nCurrent working directory: ${ctx.cwd.replace(/\\/g, "/")}\n</project_context>` };
   });
   pi.registerCommand("pi-define-agents-use", {
     description: "Select a defined agent", handler: async (args, ctx) => {
