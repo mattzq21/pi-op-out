@@ -1,4 +1,5 @@
 import { isConversationChanged } from "./lib/conversationChanged";
+import { initializeSession } from "./lib/sessionInitialization";
 import { type Accessor } from "solid-js";
 import { createDependencyEffect, type Dispatch, type RefObject, type StateUpdate } from "./lib/solid";
 
@@ -51,14 +52,13 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
     capturedOptions.setError(undefined);
     document.title = "piop"; capturedOptions.setStatuses({}); capturedOptions.setWidgets({});
     const loadSelectedSession = async () => {
-      await capturedOptions.transport.connect();
-      if (!current()) return;
-      const settings = await capturedOptions.refresh();
-      if (!current()) return;
-      await capturedOptions.configureRuntime(settings);
-      if (!current()) return;
-      await capturedOptions.refreshSession();
-      if (!current()) return;
+      const ready = await initializeSession(current, {
+        connect: () => capturedOptions.transport.connect(),
+        refresh: () => options().refresh(),
+        configure: (settings) => options().configureRuntime(settings),
+        restore: () => options().refreshSession(),
+      });
+      if (!ready) return;
       capturedOptions.setError(undefined);
       capturedOptions.updateConnected(true);
     };
