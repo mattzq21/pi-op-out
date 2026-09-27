@@ -1,7 +1,7 @@
 import { useAppKeyboard } from "./useAppKeyboard";
 import { createConversationViewKey, createTransportActivation, useWorkspaceDisconnect } from "./appTransportActivation";
 import { createWorktreeActions } from "./appWorktrees";
-import { configureConversationRuntime, reassignTerminals } from "./appRuntime";
+import { configureConversationRuntime, inheritGroupControls, reassignTerminals, type ProjectControls } from "./appRuntime";
 import { Key, Rerun } from "@solid-primitives/keyed";
 import { ArrowLeft, Bug, FolderPlus, GitBranch, MessageSquare, Server, Settings } from "lucide-solid";
 import { batch, createComputed, createMemo, createSignal, Show } from "solid-js";
@@ -242,7 +242,7 @@ export default function App() {
     }
     return nextSettings;
   };
-  const projectControls = new WeakMap<NativeTransport, { agent?: string; model: Model | null; thinking: string }>();
+  const projectControls = new WeakMap<NativeTransport, ProjectControls>();
   const configureRuntime = (value: AppSettings) => configureConversationRuntime(value, transport(), () => activeTransportRef.current, projectControls);
   const btwImages = new WeakMap<NativeTransport, ImageAttachment[]>();
   const resolveHomeDirectory = (hostId: string) => transport().homeDirectory(hostId);
@@ -377,7 +377,7 @@ export default function App() {
     const capturedSession = { ...chatSession() }; const pool = runtimePool();
     const { hostId, projectCwd } = newSessionTarget(clearProject, group);
     const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`;
-    const nextTransport = createSessionTransport(projectCwd, hostId);
+    const nextTransport = createSessionTransport(projectCwd, hostId); inheritGroupControls(projectControls, nextTransport, Boolean(group), capturedSession.state, definedAgents(), statuses());
     let activated = false;
     newSessionPending.current = true;
     try {
@@ -500,7 +500,7 @@ export default function App() {
  try { await capturedTransport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(name)}` }); } catch (reason) { addNotice({ title: "Could not change agent", message: reason instanceof Error ? reason.message : String(reason) }); } };
   const openProject = async (cwd: string, hostId: string, fromBranch = false) => {
     const capturedTransport = transport(); const capturedSession = { ...chatSession() }; const capturedRuntimePool = runtimePool(); const capturedComposerState = { ...composerState() };
- if (!canLeaveSettings()) return; const controls = { agent: definedAgents()?.active, model: capturedSession.state.model, thinking: capturedSession.state.thinkingLevel }; const request = projectOpenRequest.current; const validatedCwd = await capturedTransport.validateProjectDirectory(cwd, hostId); if (capturedTransport !== activeTransportRef.current || (!fromBranch && (!projectOpenRef.current || request !== projectOpenRequest.current))) return; batch(() => { const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setTerminalOpen(false); updateConnected(false); setDefinedAgents(undefined); capturedSession.discardPendingUpdates(); activateConversationKey(conversationKey); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); const nextTransport = capturedRuntimePool.create({ cwd: validatedCwd, hostId }); assignNewSessionGroup(nextTransport, undefined, validatedCwd, hostId); projectControls.set(nextTransport, controls); transportConversationKeys.current.set(nextTransport, conversationKey); setComposerDraft(conversationKey, capturedComposerState.composerDraft); setComposerUploads(nextTransport, capturedComposerState.composerUploads); activateTransport(nextTransport); }); };
+ if (!canLeaveSettings()) return; const controls = { agent: definedAgents()?.active, model: capturedSession.state.model, thinking: capturedSession.state.thinkingLevel, fastMode: statuses()["pi-desktop-fast-mode"] === "Fast mode on" }; const request = projectOpenRequest.current; const validatedCwd = await capturedTransport.validateProjectDirectory(cwd, hostId); if (capturedTransport !== activeTransportRef.current || (!fromBranch && (!projectOpenRef.current || request !== projectOpenRequest.current))) return; batch(() => { const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setTerminalOpen(false); updateConnected(false); setDefinedAgents(undefined); capturedSession.discardPendingUpdates(); activateConversationKey(conversationKey); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); const nextTransport = capturedRuntimePool.create({ cwd: validatedCwd, hostId }); assignNewSessionGroup(nextTransport, undefined, validatedCwd, hostId); projectControls.set(nextTransport, controls); transportConversationKeys.current.set(nextTransport, conversationKey); setComposerDraft(conversationKey, capturedComposerState.composerDraft); setComposerUploads(nextTransport, capturedComposerState.composerUploads); activateTransport(nextTransport); }); };
   const chooseChatProject = () => { projectOpenRequest.current += 1; setProjectOpen(true); };
   const openSplitPane = (session: SessionSummary) => { closeSplitPane(); setSplitPane({ key: crypto.randomUUID(), session }); };
   const openSessionDirectory = async (session: SessionSummary) => { const capturedTransport = transport();

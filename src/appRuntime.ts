@@ -1,8 +1,12 @@
 import { encodeAgentValue } from "./lib/agentProtocol";
 import type { NativeTransport } from "./lib/nativeTransport";
-import type { AppSettings, Model } from "./types";
+import type { AgentState, AppSettings, DefinedAgentsCapability, Model } from "./types";
 
-export type ProjectControls = { agent?: string; model: Model | null; thinking: string };
+export type ProjectControls = { agent?: string; model: Model | null; thinking: string; fastMode?: boolean };
+
+export function inheritGroupControls(controls: WeakMap<NativeTransport, ProjectControls>, target: NativeTransport, grouped: boolean, state: AgentState, agents: DefinedAgentsCapability | undefined, statuses: Record<string, string>) {
+  if (grouped) controls.set(target, { agent: agents?.active, model: state.model, thinking: state.thinkingLevel, fastMode: statuses["pi-desktop-fast-mode"] === "Fast mode on" });
+}
 
 export function reassignTerminals(transport: NativeTransport, terminals: readonly { id: string; started: boolean }[], sessionKey: string, onError: (reason: unknown) => void) {
   for (const terminal of terminals) {
@@ -17,6 +21,7 @@ async function applyInherited(transport: NativeTransport, inherited: ProjectCont
   }
   const { levels } = await transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" });
   if (levels.includes(inherited.thinking)) await transport.command({ type: "set_thinking_level", level: inherited.thinking });
+  if (inherited.fastMode !== undefined) await transport.setFastMode(inherited.fastMode);
 }
 
 async function applyDefaults(transport: NativeTransport, value: AppSettings, models: Model[], current: () => boolean) {
