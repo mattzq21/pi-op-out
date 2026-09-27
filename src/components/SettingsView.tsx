@@ -13,6 +13,7 @@ import { IconButton } from "./IconButton";
 import { ProviderSettings } from "./ProviderSettings";
 import { StorageSettings } from "./StorageSettings";
 import { Toggle } from "./Toggle";
+import { RemoveMachineDialog } from "./RemoveMachineDialog";
 
 export type Section = "providers" | "general" | "models" | "storage" | "environment" | "agents" | "machines" | "keybinds" | "connections";
 export const sections = [
@@ -181,10 +182,11 @@ export function SettingsView(props: SettingsViewProps) {
   const removeMcp = (id: string) => { if (agent()) updateAgent({ mcpServers: agent().mcpServers.filter((server) => server.id !== id) }); };
   const addHost = () => setDraft((current) => ({ ...current, hosts: [...current.hosts, { id: uid("host"), enabled: true, name: "New machine", target: "", piPath: "piopd" }] }));
   const updateHost = (id: string, value: Partial<RemoteHost>) => setDraft((current) => ({ ...current, hosts: current.hosts.map((host) => host.id === id ? { ...host, ...value } : host) }));
-  const removeHost = (host: RemoteHost) => {
-    const count = settingsProps().sessions.filter((session) => session.hostId === host.id).length;
-    if (settingsProps().settings.hosts.some((item) => item.id === host.id) && !window.confirm(`Remove ${host.name}? ${count ? `${count} indexed conversation${count === 1 ? "" : "s"} depend${count === 1 ? "s" : ""}` : "Conversations may depend"} on this machine and will become unavailable.`)) return;
+  const [machineToRemove, setMachineToRemove] = createSignal<RemoteHost>();
+  const removeHost = (host: RemoteHost) => setMachineToRemove(host);
+  const confirmRemoveHost = (host: RemoteHost) => {
     setDraft((current) => ({ ...current, hosts: current.hosts.filter((item) => item.id !== host.id) }));
+    setMachineToRemove(undefined);
   };
   const agent = createMemo(() => (agentDrafts()[agentIndex()]));
   const agentFastModeEnabled = createMemo(() => (agent()?.fastMode ?? draft().defaultFastMode));
@@ -373,6 +375,7 @@ export function SettingsView(props: SettingsViewProps) {
   return <main class={dirty() ? "settings-shell has-unsaved" : "settings-shell"}>{renderSettingsHeader()}
     {renderSettingsLayout()}
     {renderSettingsSaveFab()}
+    <Show when={machineToRemove()}>{(host) => <RemoveMachineDialog name={host().name} onCancel={() => setMachineToRemove(undefined)} onRemove={() => confirmRemoveHost(host())} />}</Show>
   </main>;
 }
 
