@@ -5,7 +5,7 @@ import type { SessionSummary } from "../types";
 import { changeSessionGroups, loadSessionGroups } from "./nativeTransport";
 import { listen } from "./platform";
 
-export interface SessionGroup { id: string; name: string; cwd?: string | null; hostId?: string | null; hostName?: string | null; projectKind?: "no-repo" | "main" | "worktree" | null; }
+export interface SessionGroup { id: string; name: string; cwd?: string | null; hostId?: string | null; hostName?: string | null; projectKind?: "no-repo" | "main" | "worktree" | null; branch?: string; branchAppearance?: SessionSummary["branchAppearance"]; }
 export interface SessionGroups { groups: SessionGroup[]; assignments: Record<string, string | null>; removedProjects: string[]; }
 export interface SessionGroupSeed { sessionKey: string; project: SessionGroup; }
 export type GroupChange = { type: "relocate"; project: SessionGroup; key: string } | { type: "create"; name: string } | { type: "project"; project: SessionGroup; key?: string } | { type: "inspectProject"; id: string; projectKind: "no-repo" | "main" | "worktree" } | { type: "rename"; id: string; name: string } | { type: "remove"; id: string } | { type: "assign"; key: string; group: string | null };
@@ -86,7 +86,7 @@ function sessionGroupSeed(session: SessionSummary): SessionGroupSeed {
   const projectKind = session.projectRoot && session.projectRoot !== session.cwd && session.projectKind === "worktree" ? "main" : session.projectKind;
   return {
     sessionKey: `${hostId}:${session.id}`,
-    project: { id: branchGroupId(session), name: session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project, cwd, hostId, hostName: session.hostName ?? session.hostId ?? "Local", projectKind },
+    project: { id: branchGroupId(session), name: session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project, cwd, hostId, hostName: session.hostName ?? session.hostId ?? "Local", projectKind, branch: firstOrderBranch(session), branchAppearance: session.branchAppearance },
   };
 }
 

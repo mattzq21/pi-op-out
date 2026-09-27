@@ -264,6 +264,12 @@ export function SessionPanel(props: Props) {
     }
     return details;
   });
+  const groupBranchBadge = (id: string) => {
+    const group = storedGroups.state?.groups.find((item) => item.id === id);
+    const session = branchGroupDetails().get(id);
+    const branch = group?.branch ?? (session && firstOrderBranch(session));
+    return branch ? { branch, appearance: session?.branchAppearance ?? group?.branchAppearance } : undefined;
+  };
   const groupDestination = (id: string) => {
     const group = storedGroups.state?.groups.find((item) => item.id === id);
     const session = branchGroupDetails().get(id);
@@ -535,7 +541,7 @@ export function SessionPanel(props: Props) {
           const renderProjectLabel = () => {
             const renderGroupNameInput = () => (<input ref={element => { groupNameRef.current = element; }} disabled={groupSaving()} aria-label="Rename session group" aria-invalid={Boolean(groupDraftError())} aria-describedby={groupDraftError() ? "rename-group-error" : undefined} value={newGroupName() ?? ""} onInput={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} />);
             return (isEditingGroup(projectKey) ? <div class="project-label">{renderGroupNameInput()}{groupDraftError() && <small id="rename-group-error" class="group-error">{(groupDraftError())!}</small>}</div> : <>
-              <button class="project-label" disabled={Boolean(normalizedQuery())} aria-expanded={!collapsed()} aria-controls={groupId} {...projectDragProps(projectKey)}><ChevronDown class={collapsed() ? "collapsed" : ""} size={13} /><Show when={branchGroupDetails().get(projectKey)}>{(session) => <span class="group-branch-badge" title={firstOrderBranch(session())}><BranchIcon branch={firstOrderBranch(session())!} appearance={session().branchAppearance} /></span>}</Show>{projectDetails().get(projectKey)?.projectKind === "no-repo" && <Folder size={14} aria-hidden="true" />}<span class={projectKey === activeProjectKey() ? "active" : undefined}>{label()}</span></button>
+              <button class="project-label" disabled={Boolean(normalizedQuery())} aria-expanded={!collapsed()} aria-controls={groupId} {...projectDragProps(projectKey)}><ChevronDown class={collapsed() ? "collapsed" : ""} size={13} /><Show when={groupBranchBadge(projectKey)}>{(badge) => <span class="group-branch-badge" title={badge().branch}><BranchIcon branch={badge().branch} appearance={badge().appearance} /></span>}</Show>{projectDetails().get(projectKey)?.projectKind === "no-repo" && <Folder size={14} aria-hidden="true" />}<span class={projectKey === activeProjectKey() ? "active" : undefined}>{label()}</span></button>
               {projectKey !== RECENT_KEY && <div class="project-actions">
                 {customGroupsByKey().has(projectKey) && <button aria-label={`Rename group ${label()}`} title="Rename group" onClick={() => editGroup(customGroupsByKey().get(projectKey)!)}><Pencil size={12} /></button>}
                 <button aria-label={`New chat in ${label()}`} title="New chat in group" onClick={() => {

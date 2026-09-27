@@ -20,6 +20,10 @@ pub struct SessionGroup {
     pub host_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_kind: Option<super::ProjectKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch_appearance: Option<serde_json::Value>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -111,6 +115,8 @@ fn update_seed_metadata(state: &mut SessionGroups, seed: &SessionSeed) -> bool {
     for group in state.groups.iter_mut().filter(|group| group.host_id == seed.project.host_id) {
         if group.host_name != seed.project.host_name { group.host_name = seed.project.host_name.clone(); dirty = true; }
         if group.id == seed.project.id && seed.project.project_kind.is_some() && group.project_kind != seed.project.project_kind { group.project_kind = seed.project.project_kind; dirty = true; }
+        if group.id == seed.project.id && group.branch != seed.project.branch { group.branch = seed.project.branch.clone(); dirty = true; }
+        if group.id == seed.project.id && group.branch_appearance != seed.project.branch_appearance { group.branch_appearance = seed.project.branch_appearance.clone(); dirty = true; }
     }
     dirty
 }
@@ -146,12 +152,51 @@ fn load_at(path: &Path, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Resul
         dirty |= update_seed_metadata(&mut state, &seed);
         dirty |= assign_seed(&mut state, seed);
     }
+    dirty |= refresh_group_branches(&mut state);
     let ids: HashSet<_> = state.groups.iter().map(|group| group.id.clone()).collect();
     for destination in state.assignments.values_mut() {
         if destination.as_ref().is_some_and(|id| !ids.contains(id)) { *destination = None; dirty = true; }
     }
     if dirty { write(path, &state)?; }
     Ok(state)
+}
+
+fn branch_from_group_id(id: &str) -> Option<String> {
+    let (_, encoded) = id.rsplit_once("#branch=")?;
+    let mut bytes = Vec::new();
+    let mut input = encoded.bytes();
+    while let Some(byte) = input.next() {
+        if byte == b'%' {
+            let high = (input.next()? as char).to_digit(16)?;
+            let low = (input.next()? as char).to_digit(16)?;
+            bytes.push((high * 16 + low) as u8);
+        } else { bytes.push(byte); }
+    }
+    String::from_utf8(bytes).ok()
+}
+
+fn refresh_group_branches(state: &mut SessionGroups) -> bool {
+    let mut dirty = false;
+    for group in &mut state.groups {
+        let Some(branch) = branch_from_group_id(&group.id) else { continue; };
+        if group.branch.as_ref() != Some(&branch) { group.branch = Some(branch.clone()); dirty = true; }
+        if group.host_id.as_deref().unwrap_or("local") != "local" { continue; }
+        if let Some(appearance) = local_group_appearance(group, &branch) {
+            if group.branch_appearance != appearance { group.branch_appearance = appearance; dirty = true; }
+        }
+    }
+    dirty
+}
+
+fn local_group_appearance(group: &SessionGroup, branch: &str) -> Option<Option<serde_json::Value>> {
+    use std::io::Read;
+    let path = Path::new(group.cwd.as_deref()?).join(".piop/branches.json");
+    let mut bytes = Vec::new();
+    fs::File::open(path).ok()?.take(32769).read_to_end(&mut bytes).ok()?;
+    if bytes.len() > 32768 { return None; }
+    let config: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    if config["version"] != 1 { return None; }
+    Some(config.get("branches").and_then(|branches| branches.get(branch)).filter(|value| value.is_object()).cloned())
 }
 
 fn restore_suppressed_projects(state: &mut SessionGroups, seeds: &[SessionSeed]) -> bool {
@@ -238,7 +283,7 @@ fn create_group(state: &mut SessionGroups, name: String) -> Result<(), String> {
     let name = name.trim();
     if name.is_empty() { return Err("Enter a group name".into()); }
     if state.groups.iter().any(|group| group.name.to_lowercase() == name.to_lowercase()) { return Err("A group already uses that name".into()); }
-    state.groups.insert(0, SessionGroup { id: format!("__pi-desktop-custom-group__:{}", uuid::Uuid::new_v4()), name: name.into(), cwd: None, host_id: None, host_name: None, project_kind: None });
+    state.groups.insert(0, SessionGroup { id: format!("__pi-desktop-custom-group__:{}", uuid::Uuid::new_v4()), name: name.into(), cwd: None, host_id: None, host_name: None, project_kind: None, branch: None, branch_appearance: None });
     Ok(())
 }
 
