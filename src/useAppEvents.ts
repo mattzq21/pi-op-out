@@ -46,8 +46,9 @@ type AppEventsContext = {
 export function useAppEvents(options: Accessor<AppEventsContext>) {
   createDependencyEffect(() => { const capturedOptions = options();
     let cancelled = false; let reconnecting = false; const refreshTimers = new Set<number>();
+    let loading: Promise<void> | undefined;
     document.title = "piop"; capturedOptions.setStatuses({}); capturedOptions.setWidgets({});
-    const loadSelectedSession = async () => {
+    const loadSelectedSessionOnce = async () => {
       const current = () => !cancelled && capturedOptions.activeTransportRef.current === capturedOptions.transport;
       await capturedOptions.transport.connect();
       if (!current()) return;
@@ -59,6 +60,21 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
       if (!current()) return;
       capturedOptions.setError(undefined);
       capturedOptions.updateConnected(true);
+    };
+    const retrySelectedSession = async () => {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (cancelled) return;
+        try { await loadSelectedSessionOnce(); return; }
+        catch (reason) {
+          const message = reason instanceof Error ? reason.message : String(reason);
+          if (attempt === 2 || !/Pi disconnected before responding|Pi is not running/.test(message)) throw reason;
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 500 * (attempt + 1)));
+        }
+      }
+    };
+    const loadSelectedSession = () => {
+      loading ??= retrySelectedSession().finally(() => { loading = undefined; });
+      return loading;
     };
     const unsubscribe = capturedOptions.transport.subscribe((event: RpcEvent) => {
       capturedOptions.handleEvent(event);
