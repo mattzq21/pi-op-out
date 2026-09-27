@@ -3,7 +3,18 @@ import { createMemo, type Accessor } from "solid-js";
 import type { NativeTransport } from "./lib/nativeTransport";
 import type { AgentState, AppSettings, DefinedAgentsCapability, Model } from "./types";
 
-export type ProjectControls = { agent?: string; model: Model | null; thinking: string; fastMode?: boolean };
+export type ProjectControls = { agent?: string; model: Model | null; thinking: string; fastMode?: boolean; contextWindow?: number };
+
+function initialContextUsage(state: AgentState, inherited?: ProjectControls) {
+  if (state.messageCount > 0 || state.isStreaming || state.pendingMessageCount > 0) return state.contextUsage;
+  if (!inherited && state.contextUsage) return state.contextUsage;
+  return emptyContextUsage(state, inherited);
+}
+
+function emptyContextUsage(state: AgentState, inherited?: ProjectControls) {
+  const contextWindow = inherited?.contextWindow ?? inherited?.model?.contextWindow ?? state.model?.contextWindow;
+  return contextWindow && contextWindow > 0 ? { tokens: 0, percent: 0, contextWindow } : state.contextUsage;
+}
 
 export function createComposerControls(transport: Accessor<NativeTransport>, connected: Accessor<boolean>, controls: WeakMap<NativeTransport, ProjectControls>) {
   const snapshot = createMemo<{ owner: NativeTransport; controls?: ProjectControls }>((previous) => {
@@ -14,7 +25,8 @@ export function createComposerControls(transport: Accessor<NativeTransport>, con
   return {
     state: (state: AgentState) => {
       const inherited = snapshot().controls;
-      return inherited ? { ...state, model: inherited.model, thinkingLevel: inherited.thinking } : state;
+      const contextUsage = initialContextUsage(state, inherited);
+      return inherited ? { ...state, model: inherited.model, thinkingLevel: inherited.thinking, contextUsage } : { ...state, contextUsage };
     },
     statuses: (statuses: Record<string, string>) => {
       const inherited = snapshot().controls;
@@ -29,7 +41,7 @@ export function createComposerControls(transport: Accessor<NativeTransport>, con
 }
 
 export function inheritGroupControls(controls: WeakMap<NativeTransport, ProjectControls>, target: NativeTransport, grouped: boolean, state: AgentState, agents: DefinedAgentsCapability | undefined, statuses: Record<string, string>) {
-  if (grouped) controls.set(target, { agent: agents?.active, model: state.model, thinking: state.thinkingLevel, fastMode: statuses["pi-desktop-fast-mode"] === "Fast mode on" });
+  if (grouped) controls.set(target, { agent: agents?.active, model: state.model, thinking: state.thinkingLevel, fastMode: statuses["pi-desktop-fast-mode"] === "Fast mode on", contextWindow: state.contextUsage?.contextWindow ?? state.model?.contextWindow });
 }
 
 export function reassignTerminals(transport: NativeTransport, terminals: readonly { id: string; started: boolean }[], sessionKey: string, onError: (reason: unknown) => void) {
