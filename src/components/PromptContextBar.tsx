@@ -1,10 +1,26 @@
 import { Key } from "@solid-primitives/keyed";
-import { createMemo, createSignal } from "solid-js";
+import { createMemo, createSignal, onCleanup } from "solid-js";
+import { Check, CircleAlert, Copy } from "lucide-solid";
+import { IconButton } from "./IconButton";
 import { type CSSProperties } from "../lib/solid";
 
 import type { PromptContextInfo } from "../types";
 
 type Section = "system" | "instructions" | "tools" | "skills";
+
+function ContextCopyButton(props: { content: () => string }) {
+  const [state, setState] = createSignal<"idle" | "copied" | "error">("idle");
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
+  onCleanup(() => { disposed = true; clearTimeout(timer); });
+  const copy = async () => {
+    clearTimeout(timer);
+    try { await navigator.clipboard.writeText(props.content()); if (!disposed) setState("copied"); }
+    catch { if (!disposed) setState("error"); }
+    if (!disposed) timer = setTimeout(() => setState("idle"), 1800);
+  };
+  return <IconButton class="prompt-context-copy" label={state() === "copied" ? "Copied" : state() === "error" ? "Copy failed" : "Copy tab content"} onClick={copy}>{state() === "copied" ? <Check size={14} /> : state() === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>;
+}
 
 function shares(values: { system: number; instructions: number; tools: number; skills: number }) {
   const keys = ["system", "instructions", "tools", "skills"] as const;
@@ -40,6 +56,16 @@ export const PromptContextBar = function PromptContextBar(componentProps: { cont
   const wheelStyle = createMemo(() => ({ "--prompt-system": `${percent().system}%`, "--prompt-instructions": `${percent().system + percent().instructions}%`, "--prompt-tools": `${percent().system + percent().instructions + percent().tools}%` } as CSSProperties));
   const toggle = (section: Section) => setActive((current) => current === section ? undefined : section);
   const renderPromptContextContent = () => (active() && <div class={`prompt-context-content ${(active())!}`}>
+    <ContextCopyButton content={() => {
+      const section = sections();
+      switch (active()) {
+        case "system": return section.systemPrompt || "No system prompt";
+        case "instructions": return section.instructions.map((item) => `${item.path}\n${item.content ?? ""}`).join("\n\n") || "No project instructions";
+        case "tools": return section.tools.map((item) => [item.name, item.description, JSON.stringify(item.parameters, null, 2)].filter(Boolean).join("\n")).join("\n\n") || "No active tools";
+        case "skills": return section.skills.map((item) => [item.name ?? item.filePath, item.description, item.filePath].filter(Boolean).join("\n")).join("\n\n") || "No model-invoked skills";
+        default: return "";
+      }
+    }} />
     {(active())! === "system" && <pre>{sections().systemPrompt || "No system prompt"}</pre>}
     {(active())! === "instructions" && (sections().instructions.length ? <Key each={sections().instructions} by={(instruction) => instruction.path}>{(instruction, _index) => <div ><strong>{instruction().path}</strong><pre>{typeof instruction().content === "string" ? instruction().content : ""}</pre></div>}</Key> : <p>No project instructions</p>)}
     {(active())! === "tools" && (sections().tools.length ? <Key each={sections().tools} by={(tool) => tool.name}>{(tool, _index) => <div ><strong>{tool().name}</strong>{typeof tool().description === "string" && tool().description && <p>{tool().description}</p>}<pre>{JSON.stringify(tool().parameters, null, 2)}</pre></div>}</Key> : <p>No active tools</p>)}
