@@ -1,3 +1,4 @@
+import { ConversationChangedError } from "./conversationChanged";
 import { type Accessor, createComputed, createMemo, onCleanup, untrack } from "solid-js";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
@@ -31,9 +32,9 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   const loading = new AbortController();
   onCleanup(() => { owner.current = undefined; loading.abort(); });
   const load = <T,>(command: Parameters<ReturnType<typeof transport>["command"]>[0]): Promise<T> => {
-    if (loading.signal.aborted) return Promise.reject(new Error("Conversation changed"));
+    if (loading.signal.aborted) return Promise.reject(new ConversationChangedError());
     return new Promise<T>((resolve, reject) => {
-      const cancel = () => reject(new Error("Conversation changed"));
+      const cancel = () => reject(new ConversationChangedError());
       loading.signal.addEventListener("abort", cancel, { once: true });
       transport().command<T>(command).then(resolve, reject).finally(() => loading.signal.removeEventListener("abort", cancel));
     });
@@ -59,7 +60,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   createDependencyEffect(() => { liveRevision.current += 1; activeAssistantId.current = undefined; activeMessageIds.current.clear(); resumeMarkers.current.clear(); bufferedEvents.current = undefined; discardPendingUpdates(); }, () => [discardPendingUpdates, transport()]);
 
   const refresh = (): Promise<AgentState> => {
-    if (owner.current !== transport()) return Promise.reject(new Error("Conversation changed"));
+    if (owner.current !== transport()) return Promise.reject(new ConversationChangedError());
     if (refreshOperation.current?.transport === transport()) return refreshOperation.current.promise;
     const buffer: RpcEvent[] = []; bufferedEvents.current = buffer;
     const restoreHistory = (snapshot: SessionSnapshot) => {
@@ -94,7 +95,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     const promise = (async () => { const capturedTransport = transport();
       try {
         const { revision } = await load<{ revision: string }>({ type: "get_session_revision" });
-        if (owner.current !== capturedTransport) throw new Error("Conversation changed");
+        if (owner.current !== capturedTransport) throw new ConversationChangedError();
         if (session.memory.revision === revision) {
           for (const message of session.memory.getSnapshot().messages.filter((message) => message.streaming)) trackLiveId(message.role, message.id);
           activeAssistantId.current = [...session.memory.getSnapshot().messages].reverse().find((message) => message.role === "assistant" && message.streaming)?.id;
@@ -109,7 +110,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
           load<{ contextUsage?: AgentState["contextUsage"] }>({ type: "get_session_stats" }).catch(() => undefined),
         ]);
         const snapshot = await snapshotRequest;
-        if (owner.current !== capturedTransport || bufferedEvents.current !== buffer) throw new Error("Conversation changed");
+        if (owner.current !== capturedTransport || bufferedEvents.current !== buffer) throw new ConversationChangedError();
         if (buffer.some((event) => (event.type === "session_switched" && event.epoch !== snapshot.epoch) || (event.type === "session_info_changed" && Number(event.sequence) > snapshot.sequence))) {
           refreshOperation.current = undefined; bufferedEvents.current = undefined;
           return refresh();

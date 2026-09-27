@@ -1,4 +1,4 @@
-import { useAppKeyboard } from "./useAppKeyboard";
+import { ConversationChangedError, isConversationChanged } from "./lib/conversationChanged"; import { useAppKeyboard } from "./useAppKeyboard";
 import { createConversationViewKey, createTransportActivation, useWorkspaceDisconnect } from "./appTransportActivation";
 import { createWorktreeActions } from "./appWorktrees";
 import { configureConversationRuntime, createComposerControls, inheritGroupControls, openDraftSession, reassignTerminals, type ProjectControls } from "./appRuntime";
@@ -231,7 +231,7 @@ export default function App() {
   }, () => [applyRuntimeSettings]);
   const refresh = async (hostId?: string) => { const capturedTransport = transport(); const capturedSession = { ...chatSession() }; const capturedRuntimePool = runtimePool();
     void syncSessionIndex();
-    const settingsRequest = capturedTransport.loadSettings().then((nextSettings) => { if (activeTransportRef.current !== capturedTransport) throw new Error("Conversation changed"); applyRuntimeSettings(nextSettings); setSettings(nextSettings); return nextSettings; });
+    const settingsRequest = capturedTransport.loadSettings().then((nextSettings) => { if (activeTransportRef.current !== capturedTransport) throw new ConversationChangedError(); applyRuntimeSettings(nextSettings); setSettings(nextSettings); return nextSettings; });
     const [nextState, nextSettings] = await Promise.all([capturedSession.refresh(), settingsRequest]); capturedRuntimePool.bind(hostId ?? capturedTransport.currentHostId(), nextState.sessionId, capturedTransport);
     const group = pendingSessionGroups.current.get(capturedTransport);
     if (group && nextState.sessionId) {
@@ -631,7 +631,7 @@ export default function App() {
     if (reconnectPending.current.has(ownerTransport)) return; reconnectPending.current.add(ownerTransport); setError(undefined); updateConnected(false);
     void ownerTransport.connect().then(() => ownerTransport.loadSettings()).then((value) => activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey ? configureRuntime(value) : undefined).then(async () => {
     const capturedSession = { ...chatSession() };
- if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) await capturedSession.refresh(); }).then(() => { if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) { setError(undefined); updateConnected(true); void syncSessionIndex(); } }).catch((reason) => { if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) setError(reason instanceof Error ? reason.message : String(reason)); }).finally(() => { reconnectPending.current.delete(ownerTransport); });
+ if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) await capturedSession.refresh(); }).then(() => { if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) { setError(undefined); updateConnected(true); void syncSessionIndex(); } }).catch((reason) => { if (!isConversationChanged(reason) && activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) setError(reason instanceof Error ? reason.message : String(reason)); }).finally(() => { reconnectPending.current.delete(ownerTransport); });
   };
   useAppKeyboard({ settings, activePane, splitPane, canLeaveSettings, setView, setPanelOpen, newSession, toggleTerminal, toggleDebugMode, setSplitComposerFocusRequest, setMainComposerFocusRequest, settingsDirty, view, terminalOpen, setTerminalOpen });
   const extensionStateIsCurrent = createMemo(() => (extensionOwner() === transport()));

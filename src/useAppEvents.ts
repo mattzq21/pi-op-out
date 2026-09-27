@@ -1,3 +1,4 @@
+import { isConversationChanged } from "./lib/conversationChanged";
 import { type Accessor } from "solid-js";
 import { createDependencyEffect, type Dispatch, type RefObject, type StateUpdate } from "./lib/solid";
 
@@ -46,9 +47,10 @@ type AppEventsContext = {
 export function useAppEvents(options: Accessor<AppEventsContext>) {
   createDependencyEffect(() => { const capturedOptions = options();
     let cancelled = false; let reconnecting = false; const refreshTimers = new Set<number>();
+    const current = () => !cancelled && capturedOptions.activeTransportRef.current === capturedOptions.transport;
+    capturedOptions.setError(undefined);
     document.title = "piop"; capturedOptions.setStatuses({}); capturedOptions.setWidgets({});
     const loadSelectedSession = async () => {
-      const current = () => !cancelled && capturedOptions.activeTransportRef.current === capturedOptions.transport;
       await capturedOptions.transport.connect();
       if (!current()) return;
       const settings = await capturedOptions.refresh();
@@ -149,7 +151,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
           capturedOptions.transportConversationKeys.current.set(capturedOptions.transport, conversationKey); capturedOptions.activateConversationKey(conversationKey);
           capturedOptions.setTerminalOpen(false); capturedOptions.setTerminalTarget(undefined);
         }
-        void capturedOptions.refresh().then((value) => current() ? capturedOptions.configureRuntime(value) : undefined).then(() => { if (current()) { capturedOptions.setError(undefined); capturedOptions.updateConnected(true); } }).catch((reason) => { if (current()) capturedOptions.setError(String(reason)); });
+        void capturedOptions.refresh().then((value) => current() ? capturedOptions.configureRuntime(value) : undefined).then(() => { if (current()) { capturedOptions.setError(undefined); capturedOptions.updateConnected(true); } }).catch((reason) => { if (current() && !isConversationChanged(reason)) capturedOptions.setError(String(reason)); });
       };
       const handleSessionInfoChanged = () => {
         void capturedOptions.refresh().catch(() => undefined);
@@ -172,7 +174,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         reconnecting = true;
         window.setTimeout(() => {
           if (cancelled) return; const diagnostic = capturedOptions.transport.lastDiagnostic();
-          void loadSelectedSession().catch((reason: unknown) => { if (!cancelled) { const message = reason instanceof Error ? reason.message : String(reason); capturedOptions.setError(diagnostic && !message.includes(diagnostic) ? `${message}\n${diagnostic}` : message); } }).finally(() => { reconnecting = false; });
+          void loadSelectedSession().catch((reason: unknown) => { if (current() && !isConversationChanged(reason)) { const message = reason instanceof Error ? reason.message : String(reason); capturedOptions.setError(diagnostic && !message.includes(diagnostic) ? `${message}\n${diagnostic}` : message); } }).finally(() => { reconnecting = false; });
         }, 50);
       };
       const handlers: Record<string, () => void> = {
@@ -192,7 +194,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
       };
       if (Object.hasOwn(handlers, event.type)) handlers[event.type]();
     });
-    loadSelectedSession().catch((reason: unknown) => { if (!cancelled) capturedOptions.setError(reason instanceof Error ? reason.message : String(reason)); });
+    loadSelectedSession().catch((reason: unknown) => { if (current() && !isConversationChanged(reason)) capturedOptions.setError(reason instanceof Error ? reason.message : String(reason)); });
     return () => { cancelled = true; refreshTimers.forEach(window.clearTimeout); unsubscribe(); if (capturedOptions.terminalOutputFrame.current !== undefined) window.clearTimeout(capturedOptions.terminalOutputFrame.current); capturedOptions.flushTerminalOutput(); };
   }, () => [options().addNotice, options().configureRuntime, options().handleEvent, options().queueExtensionDialog, options().queueTerminalOutput, options().refresh, options().refreshSession, options().transport]);
 }
