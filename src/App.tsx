@@ -284,7 +284,7 @@ export default function App() {
     await createWorktree(target, args.join(" "));
     return true;
   };
-  const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => trackChatSubmission(transport(), text, images, async () => { const capturedTransport = await prepareChatWorktree(transport(), (cwd, host) => openProject(cwd, host, true), transport, connected, error);
+  const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => trackChatSubmission(transport(), text, images, async () => { const capturedTransport = await prepareChatWorktree(transport(), async (cwd, host) => { const group = pendingSessionGroups.current.get(transport()); await openProject(cwd, host, true); if (group) pendingSessionGroups.current.set(transport(), group); }, transport, connected, error);
     if (!connectionReadyRef.current) throw new Error("piop is still connecting");
     const ownerTransport = capturedTransport;
     const imagePayload = images.length ? { images } : {};
