@@ -329,7 +329,7 @@ export function SessionPanel(props: Props) {
   const groups = createMemo(() => ([
     ...customVisualGroups().filter(([, , , , projectSessions]) => !normalizedQuery() || projectSessions.length > 0),
     ...physicalGroups().filter(([, , , , projectSessions]) => !normalizedQuery() || projectSessions.length > 0),
-    ...(recentSessions().length ? [[RECENT_KEY, RECENT_LABEL, "", undefined, recentSessions()] as const] : []),
+    [RECENT_KEY, RECENT_LABEL, "", undefined, recentSessions()] as const,
   ]));
   createComputed(() => { groupedSessionsRef.current = new Map([[RECENT_KEY, recentSessions()], ...groups().map(([key, , , , projectSessions]) => [key, projectSessions] as const)]); });
   const defaultSidebarEntries = createMemo(() => (groups().map(([key]) => groupLayoutToken(key))));
@@ -340,7 +340,7 @@ export function SessionPanel(props: Props) {
     return [...addedEntries.filter((entry) => entry !== recentToken()), ...sidebarOrder().filter((entry) => entry !== recentToken() && availableEntries.has(entry)), ...(availableEntries.has(recentToken()) ? [recentToken()] : [])];
   };
   const sidebarEntries = createMemo(() => (orderedSidebarEntries(defaultSidebarEntries())));
-  const keyboardSidebarEntries = createMemo(() => (defaultSidebarEntries().includes(recentToken()) ? sidebarEntries() : orderedSidebarEntries([...defaultSidebarEntries(), recentToken()])));
+  const keyboardSidebarEntries = sidebarEntries;
   createComputed(() => { sidebarEntriesRef.current = sidebarEntries(); });
   const selectedProjectKey = () => {
     const activeSession = panel().sessions.find((session) => session.id === panel().activeId && (session.hostId ?? "local") === panel().activeHostId);
