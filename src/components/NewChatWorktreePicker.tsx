@@ -8,12 +8,12 @@ function WorktreeOptions(props: { local: boolean; pending: boolean; error?: stri
   let dialog!: HTMLDialogElement;
   onMount(() => {
     const focus = document.activeElement;
-    dialog.showModal();
+    dialog.showModal(); dialog.focus();
     onCleanup(() => { dialog.close(); if (focus instanceof HTMLElement && focus.isConnected) focus.focus(); });
   });
-  return <Portal mount={document.querySelector(".app") ?? document.body}><dialog ref={dialog} class="extension-dialog worktree-picker-dialog" aria-label="Choose a worktree" onCancel={(event) => { event.preventDefault(); if (!props.pending) props.onClose(); }}>
+  return <Portal mount={document.querySelector(".app") ?? document.body}><dialog ref={dialog} tabIndex={-1} class="extension-dialog worktree-picker-dialog" aria-label="Choose a worktree" onCancel={(event) => { event.preventDefault(); if (!props.pending) props.onClose(); }}>
     <h2>Choose a worktree</h2>
-    <button type="button" disabled={props.pending} onClick={props.onLocal}><FolderGit2 size={16} /><span>Local<small>Main project checkout</small></span><Show when={props.local}><Check size={16} /></Show></button>
+    <button type="button" disabled={props.pending} onClick={props.onLocal}><FolderGit2 size={16} /><span>Local</span><Show when={props.local}><Check size={16} /></Show></button>
     <button type="button" disabled={props.pending} onClick={props.onCreate}><Plus size={16} /><span>Create new worktree</span><Show when={!props.local}><Check size={16} /></Show></button>
     <Show when={props.error}><p class="dialog-error" role="alert">{props.error}</p></Show>
     <div class="dialog-actions"><button type="button" disabled={props.pending} onClick={props.onClose}>Cancel</button></div>
