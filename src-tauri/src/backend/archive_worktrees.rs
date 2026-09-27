@@ -21,6 +21,8 @@ fn cleanup_archived_worktree(app: &AppHandle, host_id: &str, cwd: &str) -> Resul
     let Ok(target) = validated_removal_target(app, &settings, cwd, host_id) else { return Ok(()); };
     let eligible = archive_worktree_command(&settings, host_id, &target, "check")?;
     if eligible.stdout != b"eligible" { return Ok(()); }
+    run_worktree_scripts(&settings, &target.source, &target.path, host_id, &AtomicBool::new(false), WorktreeScriptPhase::Cleanup)?;
+    let target = validated_removal_target(app, &settings, cwd, host_id)?;
     preserve_worktree_checkpoints(&settings, host_id, &target)?;
     let removed = archive_worktree_command(&settings, host_id, &target, "remove")?;
     if !removed.status.success() { return Err(String::from_utf8_lossy(&removed.stderr).into_owned()); }
