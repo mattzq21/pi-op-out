@@ -1,4 +1,4 @@
-import { ConversationChangedError, isConversationChanged } from "./lib/conversationChanged"; import { useAppKeyboard } from "./useAppKeyboard";
+import { ConversationChangedError, isConversationChanged } from "./lib/conversationChanged"; import { prepareChatWorktree } from "./lib/newChatWorktree"; import { useAppKeyboard } from "./useAppKeyboard";
 import { createConversationViewKey, createTransportActivation, useWorkspaceDisconnect } from "./appTransportActivation";
 import { createWorktreeActions } from "./appWorktrees";
 import { configureConversationRuntime, createComposerControls, inheritGroupControls, openDraftSession, reassignTerminals, type ProjectControls } from "./appRuntime";
@@ -284,7 +284,7 @@ export default function App() {
     await createWorktree(target, args.join(" "));
     return true;
   };
-  const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => { const capturedTransport = transport();
+  const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => { const capturedTransport = await prepareChatWorktree(transport(), (cwd, host) => openProject(cwd, host, true), transport, connected);
     if (!connectionReadyRef.current) throw new Error("piop is still connecting");
     const ownerTransport = capturedTransport;
     const imagePayload = images.length ? { images } : {};

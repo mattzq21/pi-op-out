@@ -4,6 +4,7 @@ import { createDependencyEffect } from "../lib/solid";
 import { projectBranches, type ProjectBranches, type NativeTransport } from "../lib/nativeTransport";
 import { NewChatWorktreePicker } from "./NewChatWorktreePicker";
 import { BranchPickerDialog } from "./BranchPickerDialog";
+import { registeredWorktreePreparation, registerWorktreePreparation } from "../lib/newChatWorktree";
 
 export function NewChatBranchPicker(props: { transport?: NativeTransport; cwd: string; hostId: string; disabled?: boolean; onSelect: (path: string) => Promise<void> }) {
   let disposed = false;
@@ -12,10 +13,14 @@ export function NewChatBranchPicker(props: { transport?: NativeTransport; cwd: s
   const [pending, setPending] = createSignal(false);
   const [error, setError] = createSignal<string>();
   const [open, setOpen] = createSignal(false);
+  let listingRequest: Promise<unknown> = Promise.resolve();
+  const waitForListing = async (): Promise<string | undefined> => { await listingRequest; return props.transport ? registeredWorktreePreparation(props.transport, waitForListing) : undefined; };
+  if (props.transport) onCleanup(registerWorktreePreparation(props.transport, waitForListing));
   createDependencyEffect(() => {
     let cancelled = false;
     setListing(undefined); setError(undefined);
-    void projectBranches(props.cwd, props.hostId).then((value) => { if (!cancelled) setListing(value); }).catch((reason) => { if (!cancelled) setError(String(reason)); });
+    listingRequest = projectBranches(props.cwd, props.hostId).then((value) => { if (!cancelled) setListing(value); }).catch((reason) => { if (!cancelled) setError(String(reason)); throw reason; });
+    void listingRequest.catch(() => undefined);
     return () => { cancelled = true; };
   }, () => [props.cwd, props.hostId]);
   const select = async (branch: string) => {
