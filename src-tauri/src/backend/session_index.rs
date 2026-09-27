@@ -333,7 +333,7 @@ fn collect_host_sessions(
 ) -> Result<Vec<SessionSummary>, String> {
     thread::scope(|scope| {
         let list = &list;
-        let queue = Arc::new(Mutex::new(hosts));
+        let queue = Arc::new(Mutex::new(hosts.into_iter().filter(|host| host.enabled).collect::<Vec<_>>()));
         let (sender, receiver) = mpsc::channel();
         for _ in 0..MAX_REMOTE_HOSTS.min(4).min(queue.lock().map(|items| items.len()).unwrap_or(0)) {
             let queue = queue.clone(); let sender = sender.clone();

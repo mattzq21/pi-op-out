@@ -300,6 +300,8 @@ struct SessionSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RemoteHost {
+    #[serde(default = "default_true")]
+    enabled: bool,
     id: String,
     name: String,
     target: String,

@@ -293,7 +293,7 @@ export class NativeTransport {
   async disconnect(discardBlank = false) { ++this.connectionVersion; this.running = false; this.presenceCleanup?.(); this.presenceCleanup = undefined; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.retainedStatuses.clear(); this.retainedWidgets.clear(); this.retainedRequests.clear(); return this.runProcessCommand(() => call<boolean>("stop_pi", { runtimeId: this.runtimeId, discardBlank })); }
   async reconnectForSettings(settings: AppSettings) {
     await this.disconnect();
-    if (this.hostId !== "local" && !settings.hosts.some((host) => host.id === this.hostId)) { this.hostId = "local"; this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined; this.temporaryChat = false; this.temporaryChatUsed = false; this.fresh = true; }
+    if (this.hostId !== "local" && !settings.hosts.some((host) => host.enabled !== false && host.id === this.hostId)) { this.hostId = "local"; this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined; this.temporaryChat = false; this.temporaryChatUsed = false; this.fresh = true; }
     try { await this.connect(); }
     catch (reason) { this.emit({ type: "disconnected" }); throw reason; }
   }
@@ -410,7 +410,7 @@ export class NativeTransport {
       await saveClientSettings(settings);
       change.settings = await withClientSettings(change.settings);
       if (!reconnect || !daemonChanged) return change;
-      try { if (this.hostId !== "local" && !settings.hosts.some((host) => host.id === this.hostId)) { this.hostId = "local"; this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined; this.temporaryChat = false; this.temporaryChatUsed = false; } await this.disconnect(); await this.connect(); }
+      try { if (this.hostId !== "local" && !settings.hosts.some((host) => host.enabled !== false && host.id === this.hostId)) { this.hostId = "local"; this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined; this.temporaryChat = false; this.temporaryChatUsed = false; } await this.disconnect(); await this.connect(); }
       catch (reason) {
         await call<void>("save_app_settings", { settings: previous }); this.cwd = connection.cwd; this.sessionPath = connection.sessionPath; this.sessionId = connection.sessionId; this.hostId = connection.hostId;
         try { await this.disconnect(); await this.connect(); } catch { }

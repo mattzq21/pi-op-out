@@ -203,7 +203,7 @@ pub(crate) fn invalidate(app: &AppHandle) {
     if let Ok(mut connections) = state.connections.lock() {
         let mut removed = Vec::new();
         connections.retain(|id, (previous, connection)| {
-            let keep = settings.hosts.iter().any(|host| &host.id == id && host.target == previous.target && host.pi_path == previous.pi_path);
+            let keep = settings.hosts.iter().any(|host| host.enabled && &host.id == id && host.target == previous.target && host.pi_path == previous.pi_path);
             if !keep { removed.push(connection.clone()); } keep
         });
         removed.retain(|connection| !connections.values().any(|(_, retained)| Arc::ptr_eq(connection, retained)));
@@ -256,7 +256,7 @@ pub(crate) fn local_broker_request(app: &AppHandle, path: &str, body: &Value) ->
 fn route_storage_report(app: &AppHandle) -> Result<Option<Value>, String> {
         let mut hosts = vec![serde_json::to_value(inspect_storage(None).unwrap_or_else(|error| failed_storage("local".into(), "Local".into(), error))).map_err(|error| error.to_string())?];
         let mut seen = HashSet::from([daemon_endpoint::identity()?]);
-        for host in load_app_settings(app.clone())?.hosts {
+        for host in load_app_settings(app.clone())?.hosts.into_iter().filter(|host| host.enabled) {
             let result = (|| {
                 let connection = connect(app, &host.id)?;
                 if !seen.insert(connection.daemon_id.clone()) { return Ok(None); }

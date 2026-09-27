@@ -7,7 +7,7 @@ fn shell_quoting_preserves_empty_strings_quotes_and_shell_metacharacters() {
 
 #[test]
 fn remote_hosts_accept_plain_connection_details_and_reject_shell_syntax() {
-    let mut host = RemoteHost { id: "remote".into(), name: "Server".into(), target: "user@example.com".into(), pi_path: "pi".into() };
+    let mut host = RemoteHost { enabled: true, id: "remote".into(), name: "Server".into(), target: "user@example.com".into(), pi_path: "pi".into() };
     for target in ["example.com", "user@server-1", "user@[2001:db8::1]", "local_alias"] {
         host.target = target.into();
         for executable in ["pi", "~/bin/pi", "/opt/pi/bin/pi", "./node_modules/.bin/pi"] {
@@ -122,7 +122,7 @@ fn remote_session_metadata_skips_bad_records_without_losing_later_valid_records(
 #[test]
 fn remote_session_index_reuses_unchanged_entries_refreshes_changed_files_and_prunes_deleted_files() {
     let index = SessionIndexRuntime::default();
-    let host = RemoteHost { id:"remote".into(), name:"Renamed server".into(), target:"unused.invalid".into(), pi_path:"pi".into() };
+    let host = RemoteHost { enabled: true, id:"remote".into(), name:"Renamed server".into(), target:"unused.invalid".into(), pi_path:"pi".into() };
     let old = |path: &str| CachedSession { fingerprint:"1.0:10".into(), summary:test_session("remote", path, path) };
     index.remote.lock().unwrap().insert("remote".into(), HashMap::from([
         ("/same".into(), old("/same")), ("/changed".into(), old("/changed")), ("/deleted".into(), old("/deleted")),
@@ -153,7 +153,7 @@ fn remote_session_index_reuses_unchanged_entries_refreshes_changed_files_and_pru
 fn remote_session_index_preserves_previous_cache_when_reading_or_inspection_fails() {
     for failure in ["read", "inspect"] {
         let index = SessionIndexRuntime::default();
-        let host = RemoteHost { id:"remote".into(), name:"Server".into(), target:"unused.invalid".into(), pi_path:"pi".into() };
+        let host = RemoteHost { enabled: true, id:"remote".into(), name:"Server".into(), target:"unused.invalid".into(), pi_path:"pi".into() };
         index.remote.lock().unwrap().insert("remote".into(), HashMap::from([("/old".into(), CachedSession {
             fingerprint:"1:10".into(), summary:test_session("remote", "old", "/old"),
         })]));

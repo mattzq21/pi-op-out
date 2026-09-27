@@ -50,7 +50,7 @@ fn collect_storage_report(local: Result<HostStorage, String>, remote_hosts: Vec<
     let mut hosts = vec![local.unwrap_or_else(|error| failed_storage("local".into(), "Local".into(), error))];
     thread::scope(|scope| {
         let inspect = &inspect;
-        let queue = Arc::new(Mutex::new(remote_hosts));
+        let queue = Arc::new(Mutex::new(remote_hosts.into_iter().filter(|host| host.enabled).collect::<Vec<_>>()));
         let (sender, receiver) = mpsc::channel();
         for _ in 0..MAX_REMOTE_HOSTS.min(4).min(queue.lock().map(|items| items.len()).unwrap_or(0)) {
             let queue = queue.clone(); let sender = sender.clone();

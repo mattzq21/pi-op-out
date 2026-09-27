@@ -223,14 +223,14 @@ fn settings_loading_defaults_only_when_absent_and_rejects_corrupt_or_excessive_c
     assert!(!path.exists());
     fs::write(&path, "broken json").unwrap(); assert!(read_settings_at(&path).is_err());
     let mut settings = default_settings();
-    settings.hosts = vec![RemoteHost { id: "remote".into(), name: "Remote".into(), target: "host".into(), pi_path: "pi".into() }; MAX_REMOTE_HOSTS + 1];
+    settings.hosts = vec![RemoteHost { enabled: true, id: "remote".into(), name: "Remote".into(), target: "host".into(), pi_path: "pi".into() }; MAX_REMOTE_HOSTS + 1];
     fs::write(&path, serde_json::to_vec(&settings).unwrap()).unwrap();
     assert!(read_settings_at(&path).err().unwrap().contains("remote machines"));
 }
 #[test]
 fn summary_ingestion_ignores_unrequested_paths_and_preserves_trusted_file_metadata() {
     let candidates = vec![("/requested.jsonl".into(), "trusted-fingerprint".into(), 123, 456), ("/defaults.jsonl".into(), "defaults".into(), 789, 12)];
-    let host = RemoteHost { id: "remote".into(), name: "Server".into(), target: "unused.invalid".into(), pi_path: "pi".into() };
+    let host = RemoteHost { enabled: true, id: "remote".into(), name: "Server".into(), target: "unused.invalid".into(), pi_path: "pi".into() };
     let lines = [
         "invalid JSON".to_string(), "null".into(), "{}".into(), json!({"path":17}).to_string(),
         json!({"path":"/injected.jsonl","id":"injected"}).to_string(),
@@ -277,7 +277,7 @@ fn summary_ingestion_obeys_count_and_quoted_argument_limits_and_propagates_scann
 #[test]
 fn session_aggregation_keeps_healthy_hosts_and_assigns_groups_before_sorting_by_recency() {
     let mut local = test_session("local", "shared", "/local"); local.modified_at = 20;
-    let hosts = ["remote", "offline", "empty"].into_iter().map(|id| RemoteHost {
+    let hosts = ["remote", "offline", "empty"].into_iter().map(|id| RemoteHost { enabled: true,
         id:id.into(), name:id.into(), target:"unused.invalid".into(), pi_path:"pi".into(),
     }).collect();
     let visited = Mutex::new(Vec::new());
@@ -319,7 +319,7 @@ fn session_aggregation_handles_no_hosts_and_propagates_assignment_failures() {
 
 #[test]
 fn storage_reports_keep_local_first_sort_remotes_and_retain_partial_failures() {
-    let remotes = [("z", "Zulu"), ("a", "alpha"), ("b", "Bravo")].into_iter().map(|(id, name)| RemoteHost {
+    let remotes = [("z", "Zulu"), ("a", "alpha"), ("b", "Bravo")].into_iter().map(|(id, name)| RemoteHost { enabled: true,
         id:id.into(), name:name.into(), target:format!("{id}.invalid"), pi_path:"pi".into(),
     }).collect();
     let report = collect_storage_report(Err("local disk unavailable".into()), remotes, |host| {
@@ -343,7 +343,7 @@ fn storage_reports_keep_local_first_sort_remotes_and_retain_partial_failures() {
 
 #[test]
 fn storage_report_limits_parallel_inspections_and_processes_every_host_once() {
-    let remotes = (0..9).map(|id| RemoteHost { id:id.to_string(), name:format!("Host {id}"), target:"unused.invalid".into(), pi_path:"pi".into() }).collect();
+    let remotes = (0..9).map(|id| RemoteHost { enabled: true, id:id.to_string(), name:format!("Host {id}"), target:"unused.invalid".into(), pi_path:"pi".into() }).collect();
     let (started, starts) = mpsc::channel();
     let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
     let gate = release.clone();

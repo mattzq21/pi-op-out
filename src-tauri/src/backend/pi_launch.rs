@@ -12,6 +12,7 @@ fn validate_remote_host(host: &RemoteHost) -> Result<(), String> {
 
 fn remote_host<'a>(settings: &'a AppSettings, host_id: &str) -> Result<&'a RemoteHost, String> {
     let host = settings.hosts.iter().find(|host| host.id == host_id).ok_or_else(|| format!("Unknown machine: {host_id}"))?;
+    if !host.enabled { return Err(format!("Machine {} is disabled", host.name)); }
     validate_remote_host(host)?;
     Ok(host)
 }

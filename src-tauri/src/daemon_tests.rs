@@ -50,7 +50,7 @@ fn daemon_connections_match_transport_configuration_and_reject_missing_hosts() {
     let mut settings = default_settings();
     assert_eq!(connection_config(&settings, "local").unwrap(), None);
     assert!(connection_config(&settings, "missing").unwrap_err().contains("Unknown machine"));
-    settings.hosts.push(RemoteHost { id: "remote".into(), name: "Server".into(), target: "user@example.com".into(), pi_path: "/opt/pi".into() });
+    settings.hosts.push(RemoteHost { enabled: true, id: "remote".into(), name: "Server".into(), target: "user@example.com".into(), pi_path: "/opt/pi".into() });
     assert_eq!(connection_config(&settings, "remote").unwrap(), Some(("user@example.com".into(), "/opt/pi".into())));
     let (daemon, _) = TestDaemon::new();
     assert!(daemon.0.matches_connection(&settings, "local"));

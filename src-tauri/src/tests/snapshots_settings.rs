@@ -109,7 +109,7 @@ fn settings_save_validation_preserves_existing_file_and_never_resolves_storage_f
         match invalid {
             "cap" => settings.context_window_cap = 999,
             "shortcut" => { settings.keybindings.insert("focusComposer".into(), "Ctrl+G".into()); },
-            _ => settings.hosts.push(RemoteHost { id:"remote".into(), name:"Local".into(), target:"unused.invalid".into(), pi_path:"pi".into() }),
+            _ => settings.hosts.push(RemoteHost { enabled: true, id:"remote".into(), name:"Local".into(), target:"unused.invalid".into(), pi_path:"pi".into() }),
         }
         let result = save_settings_with(&runtime, settings, Some("remote".into()),
             || panic!("invalid settings must not access storage"),
@@ -188,7 +188,7 @@ fn settings_save_failures_stop_later_stages_and_preserve_revision_order() {
 
 #[test]
 fn settings_save_validation_enforces_machine_identity_names_and_connection_syntax() {
-    let host = RemoteHost { id: "remote".into(), name: "Server".into(), target: "user@host".into(), pi_path: "pi".into() };
+    let host = RemoteHost { enabled: true, id: "remote".into(), name: "Server".into(), target: "user@host".into(), pi_path: "pi".into() };
     let mut settings = default_settings(); settings.hosts = vec![host.clone()];
     assert!(validate_settings_for_save(&settings).is_ok());
     for (id, name, target, executable, expected) in [
@@ -198,12 +198,12 @@ fn settings_save_validation_enforces_machine_identity_names_and_connection_synta
         ("remote", "Server", "host;id", "pi", "SSH target"),
         ("remote", "Server", "host", "pi --flag", "Pi executable"),
     ] {
-        settings.hosts = vec![RemoteHost { id: id.into(), name: name.into(), target: target.into(), pi_path: executable.into() }];
+        settings.hosts = vec![RemoteHost { enabled: true, id: id.into(), name: name.into(), target: target.into(), pi_path: executable.into() }];
         assert!(validate_settings_for_save(&settings).unwrap_err().contains(expected));
     }
-    settings.hosts = vec![host.clone(), RemoteHost { name: "Other".into(), ..host.clone() }];
+    settings.hosts = vec![host.clone(), RemoteHost { enabled: true, name: "Other".into(), ..host.clone() }];
     assert!(validate_settings_for_save(&settings).unwrap_err().contains("unique id"));
-    settings.hosts = vec![host.clone(), RemoteHost { id: "other".into(), name: " SERVER ".into(), ..host.clone() }];
+    settings.hosts = vec![host.clone(), RemoteHost { enabled: true, id: "other".into(), name: " SERVER ".into(), ..host.clone() }];
     assert!(validate_settings_for_save(&settings).unwrap_err().contains("already in use"));
     settings.hosts = vec![host; MAX_REMOTE_HOSTS + 1];
     assert!(validate_settings_for_save(&settings).unwrap_err().contains("At most"));

@@ -58,7 +58,7 @@ fn worktree_agent_lookup_reports_invalid_requests_and_unidentified_callers() {
 
 #[test]
 fn remote_snapshot_operations_reject_invalid_tokens_before_starting_ssh() {
-    let host = RemoteHost { id: "remote".into(), name: "Remote".into(), target: "unused.invalid".into(), pi_path: "pi".into() };
+    let host = RemoteHost { enabled: true, id: "remote".into(), name: "Remote".into(), target: "unused.invalid".into(), pi_path: "pi".into() };
     let valid = json!({"root":"/home/user/.piop/git-snapshots/pi-desktop-diff-one","tree":"a".repeat(40),"repositoryRoot":"/project"});
     assert!(valid_remote_snapshot(&serde_json::from_value(valid.clone()).unwrap()));
     let mut invalid_tokens = vec!["invalid json".to_string(), "{}".into()];
@@ -513,7 +513,7 @@ fn rejected_temporary_startup_rolls_back_the_prepared_fork() {
 #[test]
 fn temporary_startup_preserves_remote_cleanup_metadata_and_isolates_failures() {
     let runtime = PiRuntime::default();
-    let host = RemoteHost { id: "remote".into(), name: "Server".into(), target: "user@example.com".into(), pi_path: "pi".into() };
+    let host = RemoteHost { enabled: true, id: "remote".into(), name: "Server".into(), target: "user@example.com".into(), pi_path: "pi".into() };
     let saved = EphemeralSession::Remote { host, path: "/tmp/existing-fork.jsonl".into() };
     assert_eq!(prepare_ephemeral_path(&runtime, "remote-view", true, Some(saved), None, |_| panic!("saved remote fork recreated")).unwrap().as_deref(), Some("/tmp/existing-fork.jsonl"));
     for (ephemeral, source) in [(false, None), (false, Some("/source")), (true, None)] {

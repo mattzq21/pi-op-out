@@ -33,7 +33,7 @@ fn storage_inventory_query_counts_real_files_and_marks_malformed_archives_undele
 
 #[test]
 fn storage_inventory_query_propagates_scanner_failure_and_invalid_response() {
-    let host = RemoteHost { id:"remote".into(), name:"Server".into(), target:"unused.invalid".into(), pi_path:"pi".into() };
+    let host = RemoteHost { enabled: true, id:"remote".into(), name:"Server".into(), target:"unused.invalid".into(), pi_path:"pi".into() };
     for (script, expected) in [
         ("process.exitCode=3", "Could not inspect storage on Server"),
         ("process.stderr.write('disk failed');process.exitCode=4", "disk failed"),
@@ -48,7 +48,7 @@ fn storage_inventory_query_propagates_scanner_failure_and_invalid_response() {
 #[test]
 fn storage_inventory_preserves_categories_archives_warnings_and_host_identity() {
     use std::os::unix::process::ExitStatusExt;
-    let host = RemoteHost { id: "remote".into(), name: "Remote server".into(), target: "unused".into(), pi_path: "pi".into() };
+    let host = RemoteHost { enabled: true, id: "remote".into(), name: "Remote server".into(), target: "unused".into(), pi_path: "pi".into() };
     let value = json!({"categories":[{"id":"sessions","byteSize":123,"itemCount":2}],"archives":[{"id":"archived","path":"/archive.jsonl","name":"Old chat","cwd":"/repo","modifiedAt":100,"byteSize":42,"deletable":false,"deleteError":"In use"}],"warnings":["Partial scan"]});
     for remote in [None, Some(&host)] {
         let output = LimitedOutput { status: ExitStatus::from_raw(0), stdout: serde_json::to_vec(&value).unwrap(), stderr: vec![] };

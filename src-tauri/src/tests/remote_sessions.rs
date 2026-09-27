@@ -532,7 +532,7 @@ fn saving_diffs_requires_an_existing_desktop_session_and_reports_sidecar_failure
 #[test]
 fn oversized_diff_histories_are_rejected_before_accessing_local_or_remote_storage() {
     let root = TestDirectory::new(); let session = root.0.join("untouched.jsonl"); fs::write(&session, "retain").unwrap();
-    let remote = RemoteHost { id: "remote".into(), name: "Remote".into(), target: "unused.invalid".into(), pi_path: "pi".into() };
+    let remote = RemoteHost { enabled: true, id: "remote".into(), name: "Remote".into(), target: "unused.invalid".into(), pi_path: "pi".into() };
     for host in [None, Some(&remote)] {
         let snapshots = HashMap::from([("message".into(), GitDiffSnapshot::Legacy("x".repeat(MAX_GIT_DIFFS_BYTES)))]);
         assert_eq!(save_git_diffs_at_host(session.to_str().unwrap(), snapshots, host).unwrap_err(), "Diff history exceeds the 16 MiB limit");

@@ -202,7 +202,7 @@ export class SessionRuntimePool {
     const changed = (before: unknown, after: unknown) => JSON.stringify(before) !== JSON.stringify(after);
     const hostConnection = (value: AppSettings, hostId: string) => {
       const host = value.hosts.find((host) => host.id === hostId);
-      return host ? { target: host.target, piPath: host.piPath } : undefined;
+      return host ? { target: host.target, piPath: host.piPath, enabled: host.enabled !== false } : undefined;
     };
     for (const transport of this.transports) {
       const hostId = transport.currentHostId();

@@ -37,7 +37,7 @@ fn project_directory_opening_rejects_files_missing_directories_and_remote_hosts(
         let error = open_project_directory_with(path.to_str().unwrap(), None, |_| panic!("invalid directory opened")).unwrap_err();
         assert_eq!(error, format!("Project directory does not exist: {}", path.display()));
     }
-    let host = RemoteHost { id:"remote".into(), name:"Build server".into(), target:"unused.invalid".into(), pi_path:"pi".into() };
+    let host = RemoteHost { enabled: true, id:"remote".into(), name:"Build server".into(), target:"unused.invalid".into(), pi_path:"pi".into() };
     assert_eq!(open_project_directory_with(temporary.0.to_str().unwrap(), Some(&host), |_| panic!("remote directory opened locally")).unwrap_err(),
         "Opening project directories on Build server is not supported by the local file manager");
 }
