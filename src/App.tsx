@@ -1,7 +1,7 @@
 import { useAppKeyboard } from "./useAppKeyboard";
 import { createConversationViewKey, createTransportActivation, useWorkspaceDisconnect } from "./appTransportActivation";
 import { createWorktreeActions } from "./appWorktrees";
-import { configureConversationRuntime, createComposerControls, inheritGroupControls, reassignTerminals, type ProjectControls } from "./appRuntime";
+import { configureConversationRuntime, createComposerControls, inheritGroupControls, openDraftSession, reassignTerminals, type ProjectControls } from "./appRuntime";
 import { Key, Rerun } from "@solid-primitives/keyed";
 import { ArrowLeft, Bug, FolderPlus, GitBranch, MessageSquare, Server, Settings } from "lucide-solid";
 import { batch, createComputed, createMemo, createSignal, Show } from "solid-js";
@@ -357,7 +357,7 @@ export default function App() {
   const canStartNewSession = () => !newSessionPending.current && canLeaveSettings();
   const newSessionTarget = (clearProject: boolean, group?: SessionGroup) => ({ hostId: group ? group.hostId ?? "local" : activeHostIdRef.current, projectCwd: group ? group.cwd ?? undefined : clearProject ? undefined : selectedProjectCwd(activeCwd(), transport().isTemporaryChat()) });
   const createSessionTransport = (cwd: string | undefined, hostId: string) => runtimePool().create(cwd ? { cwd, hostId } : { hostId });
-  const prepareNewSession = (owner: NativeTransport, hostId: string, cwd?: string) => cwd ? owner.validateProjectDirectory(cwd, hostId) : owner.prepareTemporaryChat(hostId);
+  const prepareNewSession = (owner: NativeTransport, hostId: string, cwd?: string) => cwd ? owner.validateProjectDirectory(cwd, hostId, true) : owner.prepareTemporaryChat(hostId);
   const assignNewSessionGroup = (owner: NativeTransport, group?: SessionGroup, cwd?: string, hostId = "local") => { const destination = group ?? (cwd ? { id: `${hostId}:${cwd}`, name: cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? cwd, cwd, hostId } : undefined); if (destination) pendingSessionGroups.current.set(owner, destination); };
   const discardNewSessionDraft = (owner: NativeTransport, key: string) => {
     setComposerDraft(key, ""); setComposerUploads(owner, []); pendingSessionGroups.current.delete(owner);
@@ -410,10 +410,10 @@ export default function App() {
     const empty = !chatSession().state.isStreaming && chatSession().state.messageCount === 0 && chatSession().messages.length === 0;
     const repeat = view() === "chat" && empty && lastNewSessionSelection.current === activeConversationKey();
     if (repeat) await startNewSession(true, undefined, true);
-    else if (empty) { setView("chat"); closeSplitPane(); }
+    else if (empty) await openDraftSession(transport(), { cwd: transport().currentCwd(), hostId: activeHostId() }, transport, () => { setView("chat"); closeSplitPane(); }, reason => addNotice({ title: "Project unavailable", message: String(reason) }));
     else {
       const draft = liveSessions().filter(session => session.isDraft).sort((a, b) => b.lastMessageAt - a.lastMessageAt)[0];
-      if (draft) selectSession(draft);
+      if (draft) await openDraftSession(transport(), draft, transport, () => { selectSession(draft); }, reason => addNotice({ title: "Project unavailable", message: String(reason) }));
       else await startNewSession();
     }
     lastNewSessionSelection.current = activeConversationKey(); setMainComposerFocusRequest(request => request + 1);
@@ -500,7 +500,7 @@ export default function App() {
  try { await capturedTransport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(name)}` }); } catch (reason) { addNotice({ title: "Could not change agent", message: reason instanceof Error ? reason.message : String(reason) }); } };
   const openProject = async (cwd: string, hostId: string, fromBranch = false) => {
     const capturedTransport = transport(); const capturedSession = { ...chatSession() }; const capturedRuntimePool = runtimePool(); const capturedComposerState = { ...composerState() };
- if (!canLeaveSettings()) return; const controls = { agent: definedAgents()?.active, model: capturedSession.state.model, thinking: capturedSession.state.thinkingLevel, fastMode: statuses()["pi-desktop-fast-mode"] === "Fast mode on", contextWindow: capturedSession.state.contextUsage?.contextWindow }; const request = projectOpenRequest.current; const validatedCwd = await capturedTransport.validateProjectDirectory(cwd, hostId); if (capturedTransport !== activeTransportRef.current || (!fromBranch && (!projectOpenRef.current || request !== projectOpenRequest.current))) return; batch(() => { const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setTerminalOpen(false); updateConnected(false); setDefinedAgents(undefined); capturedSession.discardPendingUpdates(); activateConversationKey(conversationKey); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); const nextTransport = capturedRuntimePool.create({ cwd: validatedCwd, hostId }); assignNewSessionGroup(nextTransport, undefined, validatedCwd, hostId); projectControls.set(nextTransport, controls); transportConversationKeys.current.set(nextTransport, conversationKey); setComposerDraft(conversationKey, capturedComposerState.composerDraft); setComposerUploads(nextTransport, capturedComposerState.composerUploads); activateTransport(nextTransport); }); };
+ if (!canLeaveSettings()) return; const controls = { agent: definedAgents()?.active, model: capturedSession.state.model, thinking: capturedSession.state.thinkingLevel, fastMode: statuses()["pi-desktop-fast-mode"] === "Fast mode on", contextWindow: capturedSession.state.contextUsage?.contextWindow }; const request = projectOpenRequest.current; const validatedCwd = await capturedTransport.validateProjectDirectory(cwd, hostId, fromBranch); if (capturedTransport !== activeTransportRef.current || (!fromBranch && (!projectOpenRef.current || request !== projectOpenRequest.current))) return; batch(() => { const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`; projectOpenRef.current = false; setProjectOpen(false); closeSplitPane(); setTerminalOpen(false); updateConnected(false); setDefinedAgents(undefined); capturedSession.discardPendingUpdates(); activateConversationKey(conversationKey); setActiveHostId(hostId); setActiveCwd(validatedCwd); setView("chat"); const nextTransport = capturedRuntimePool.create({ cwd: validatedCwd, hostId }); assignNewSessionGroup(nextTransport, undefined, validatedCwd, hostId); projectControls.set(nextTransport, controls); transportConversationKeys.current.set(nextTransport, conversationKey); setComposerDraft(conversationKey, capturedComposerState.composerDraft); setComposerUploads(nextTransport, capturedComposerState.composerUploads); activateTransport(nextTransport); }); };
   const chooseChatProject = () => { projectOpenRequest.current += 1; setProjectOpen(true); };
   const openSplitPane = (session: SessionSummary) => { closeSplitPane(); setSplitPane({ key: crypto.randomUUID(), session }); };
   const openSessionDirectory = async (session: SessionSummary) => { const capturedTransport = transport();

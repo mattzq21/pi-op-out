@@ -5,6 +5,13 @@ import type { AgentState, AppSettings, DefinedAgentsCapability, Model } from "./
 
 export type ProjectControls = { agent?: string; model: Model | null; thinking: string; fastMode?: boolean; contextWindow?: number };
 
+export async function openDraftSession(owner: NativeTransport, target: { cwd?: string; hostId?: string }, current: () => NativeTransport, select: () => void, onError: (reason: unknown) => void) {
+  try {
+    if (target.cwd) await owner.validateProjectDirectory(target.cwd, target.hostId ?? "local", true);
+    if (current() === owner) select();
+  } catch (reason) { if (current() === owner) onError(reason); }
+}
+
 function initialContextUsage(state: AgentState, inherited?: ProjectControls) {
   if (state.messageCount > 0 || state.isStreaming || state.pendingMessageCount > 0) return state.contextUsage;
   if (!inherited && state.contextUsage) return state.contextUsage;

@@ -221,13 +221,31 @@ fn remove_local_temporary_chat(home: &Path, path: &str) -> Result<(), String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn validate_project_directory(app: AppHandle, path: String, host_id: String) -> Result<String, String> {
+fn validate_project_directory(app: AppHandle, path: String, host_id: String, allow_storage: Option<bool>) -> Result<String, String> {
     if path.trim().is_empty() { return Err("Path can't be empty".into()); }
+    if allow_storage == Some(true) {
+        validate_session_working_directory(&load_app_settings(app)?, &host_id, Some(&path))?;
+        return Ok(path);
+    }
     if host_id == "local" {
         return validate_local_project_directory(path);
     }
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
     validate_remote_project_directory(path, &host.name, |script| { let mut command = ssh(host); command.arg(script); command })
+}
+
+fn validate_session_working_directory(settings: &AppSettings, host_id: &str, cwd: Option<&str>) -> Result<(), String> {
+    if host_id == "local" {
+        let path = local_launch_directory(cwd)?;
+        let metadata = fs::metadata(&path).map_err(|error| format!("Cannot start conversation: project directory {} is unavailable: {error}", path.display()))?;
+        if !metadata.is_dir() { return Err(format!("Cannot start conversation: {} is not a directory", path.display())); }
+        return Ok(());
+    }
+    let host = remote_host(settings, host_id)?;
+    let script = format!("cd {} && test -d .", remote_directory_path(cwd));
+    let output = run_limited(ssh(host).arg(script), 64 * 1024, "Could not check conversation directory")?;
+    if !output.status.success() { return Err(format!("Cannot start conversation: project directory {} is unavailable on {}", cwd.unwrap_or("~"), host.name)); }
+    Ok(())
 }
 
 fn validate_local_project_directory(path: String) -> Result<String, String> {

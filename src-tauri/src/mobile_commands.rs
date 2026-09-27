@@ -247,7 +247,7 @@ fn handle_remove_temporary_chat(app: AppHandle, _owner: String, args: Value) -> 
 
 fn handle_validate_project_directory(app: AppHandle, _owner: String, args: Value) -> CommandFuture {
     Box::pin(async move {
-        tokio::task::spawn_blocking(move || serde_json::to_value(validate_project_directory(app.clone(), argument(&args, "path")?, argument(&args, "hostId")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
+        tokio::task::spawn_blocking(move || serde_json::to_value(validate_project_directory(app.clone(), argument(&args, "path")?, argument(&args, "hostId")?, argument(&args, "allowStorage")?)?).map_err(|error| error.to_string())).await.map_err(|error| error.to_string())?
     })
 }
 
