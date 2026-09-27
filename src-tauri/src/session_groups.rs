@@ -116,6 +116,7 @@ fn update_seed_metadata(state: &mut SessionGroups, seed: &SessionSeed) -> bool {
 }
 
 fn assign_seed(state: &mut SessionGroups, seed: SessionSeed) -> bool {
+    migrate_branch_assignment(state, &seed);
     if state.assignments.contains_key(&seed.session_key) { return false; }
     if state.removed_projects.contains(&seed.project.id) { state.assignments.insert(seed.session_key, None); return true; }
     if !state.groups.iter().any(|group| group.id == seed.project.id) {
@@ -123,6 +124,15 @@ fn assign_seed(state: &mut SessionGroups, seed: SessionSeed) -> bool {
     }
     state.assignments.insert(seed.session_key, Some(seed.project.id));
     true
+}
+
+fn migrate_branch_assignment(state: &mut SessionGroups, seed: &SessionSeed) {
+    let Some((project_id, _)) = seed.project.id.rsplit_once("#branch=") else { return; };
+    if state.assignments.get(&seed.session_key).and_then(|id| id.as_deref()) != Some(project_id) { return; }
+    state.assignments.remove(&seed.session_key);
+    if !state.assignments.values().any(|id| id.as_deref() == Some(project_id)) {
+        state.groups.retain(|group| group.id != project_id);
+    }
 }
 
 fn load_at(path: &Path, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Result<SessionGroups, String> {

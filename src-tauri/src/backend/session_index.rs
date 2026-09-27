@@ -51,7 +51,7 @@ fn inspect_session_projects_with(sessions: &mut [SessionSummary], mut command: i
             let flag = details[0];
             let project_root = (!details[1].is_empty()).then(|| String::from_utf8_lossy(details[1]).into_owned());
             let branch = (!details[2].is_empty()).then(|| String::from_utf8_lossy(details[2]).into_owned());
-            let appearance = branch_appearance(details[3], branch.as_deref());
+            let appearance = branch_appearance(details[3], branch.as_deref().and_then(|name| name.split('|').next()));
             let worktree_root = (!details[4].is_empty()).then(|| String::from_utf8_lossy(details[4]).into_owned());
             let kind = project_kind_from_flag(flag);
             projects.insert(path.as_str(), (flag != b"missing", kind, project_root, branch, appearance, worktree_root));

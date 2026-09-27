@@ -6,7 +6,7 @@ import { createDependencyEffect, createMemoFields, createRef, cssPixels, type Ke
 import { AppWindow, Archive, ChevronDown, Columns2, CopyPlus, Ellipsis, Folder, FolderOpen, GitBranch, MessageSquarePlus, Pencil, Search, Trash2 } from "lucide-solid";
 import { hasVisibleText } from "../lib/content";
 import { gitProjectKind, gitWorktreeRoots, openGroupDirectory } from "../lib/nativeTransport";
-import { isTemporaryChatCwd, useSessionGroups, type SessionGroup } from "../lib/sessionGroups";
+import { branchGroupId, firstOrderBranch, isTemporaryChatCwd, useSessionGroups, type SessionGroup } from "../lib/sessionGroups";
 import type { SessionSummary } from "../types";
 import { SessionTooltip } from "./SessionTooltip";
 import { BranchIcon } from "./BranchIcon";
@@ -63,7 +63,6 @@ function savedSidebarOrder() {
 }
 
 function sessionKey(session: SessionSummary) { return `${session.hostId ?? "local"}:${session.id}`; }
-function physicalProjectKey(session: SessionSummary) { return `${session.hostId ?? "local"}:${session.projectRoot ?? session.cwd}`; }
 function projectName(session: SessionSummary) { return session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project; }
 function sessionLayoutToken(key: string) { return `session:${key}`; }
 function groupLayoutToken(key: string) { return `group:${key}`; }
@@ -256,9 +255,23 @@ export function SessionPanel(props: Props) {
     setSidebarOrder(next);
     try { localStorage.setItem(SIDEBAR_ORDER_KEY, JSON.stringify(next)); } catch { }
   };
+  const branchGroupDetails = createMemo(() => {
+    const details = new Map<string, SessionSummary>();
+    for (const session of panel().sessions) {
+      if (!firstOrderBranch(session)) continue;
+      const key = branchGroupId(session);
+      if (!details.has(key) || session.branch === firstOrderBranch(session)) details.set(key, session);
+    }
+    return details;
+  });
+  const groupDestination = (id: string) => {
+    const group = storedGroups.state?.groups.find((item) => item.id === id);
+    const session = branchGroupDetails().get(id);
+    return group && session ? { ...group, cwd: session.worktreeRoot ?? session.cwd, projectKind: session.projectKind } : group;
+  };
   const projectDetails = createMemo(() => {
     const details = new Map<string, SessionSummary>();
-    panel().sessions.forEach(session => { const key = physicalProjectKey(session); if (!details.has(key)) details.set(key, session); });
+    panel().sessions.forEach(session => { const key = branchGroupId(session); if (!details.has(key)) details.set(key, session); });
     return details;
   });
   const normalizedQuery = createMemo(() => (panel().query.trim().toLowerCase()));
@@ -470,7 +483,7 @@ export function SessionPanel(props: Props) {
     const accessibleActivity = () => running() ? "Running" : activity();
     const target = createMemo(() => dropTarget()?.projectKey === projectKey && dropTarget()?.sessionKey === key() ? dropTarget()?.edge : undefined);
     const drag = () => ({ projectKey, sessionKey: key(), session: session() });
-    const renderSessionMain = () => (<button class="session-main" aria-label={`${session().name}, ${projectKindLabel(session())}${session().branch ? `, ${session().branch}` : ""}, ${formatApiCost(session().apiCost)}${accessibleActivity() ? `, ${accessibleActivity()}` : ""}`} aria-current={isActiveSession(session()) ? "page" : undefined} aria-description={!normalizedQuery() ? "Press Alt plus Up or Down to reorder. Add Shift to move between groups." : undefined} aria-keyshortcuts={!normalizedQuery() ? "Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown" : undefined} onMouseDown={(event) => startMouseDrag(event, drag())} onKeyDown={(event) => { if (!normalizedQuery() && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); moveSessionByKeyboard(drag(), event.key === "ArrowUp" ? -1 : 1, event.shiftKey); } }} onClick={(event) => { if (suppressClickRef.current === sessionLayoutToken(key())) { suppressClickRef.current = undefined; event.preventDefault(); return; } panel().onSelect(session()); }}><span class="session-copy"><span class="session-title-row">{session().branch && <BranchIcon branch={session().branch!} appearance={session().branchAppearance} />}<strong>{session().name}</strong><span class="session-api-cost" title="Would-be API cost">{formatApiCost(session().apiCost)}</span></span></span></button>);
+    const renderSessionMain = () => (<button class="session-main" aria-label={`${session().name}, ${projectKindLabel(session())}${session().branch ? `, ${session().branch}` : ""}, ${formatApiCost(session().apiCost)}${accessibleActivity() ? `, ${accessibleActivity()}` : ""}`} aria-current={isActiveSession(session()) ? "page" : undefined} aria-description={!normalizedQuery() ? "Press Alt plus Up or Down to reorder. Add Shift to move between groups." : undefined} aria-keyshortcuts={!normalizedQuery() ? "Alt+ArrowUp Alt+ArrowDown Alt+Shift+ArrowUp Alt+Shift+ArrowDown" : undefined} onMouseDown={(event) => startMouseDrag(event, drag())} onKeyDown={(event) => { if (!normalizedQuery() && event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) { event.preventDefault(); moveSessionByKeyboard(drag(), event.key === "ArrowUp" ? -1 : 1, event.shiftKey); } }} onClick={(event) => { if (suppressClickRef.current === sessionLayoutToken(key())) { suppressClickRef.current = undefined; event.preventDefault(); return; } panel().onSelect(session()); }}><span class="session-copy"><span class="session-title-row"><strong>{session().name}</strong><span class="session-api-cost" title="Would-be API cost">{formatApiCost(session().apiCost)}</span></span></span></button>);
     return <div onMouseEnter={(event) => setTooltipAnchor(event.currentTarget)} onMouseLeave={() => setTooltipAnchor(undefined)} onFocusIn={(event) => setTooltipAnchor(event.currentTarget)} onFocusOut={() => setTooltipAnchor(undefined)} data-session-key={key()} data-project-key={projectKey} class={`session-item ${!normalizedQuery() ? "reorderable" : ""} ${isActiveSession(session()) ? "active" : ""} ${running() ? "running" : activity() ? "unseen" : ""} ${draggedSession()?.sessionKey === key() ? "dragging" : ""} ${target() ? `drop-${target()}` : ""}`} onContextMenu={(event) => { event.preventDefault(); const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : event.currentTarget.querySelector<HTMLElement>(".session-main") ?? undefined; setGroupMenu(undefined); setMenu({ session: session(), x: Math.min(event.clientX, window.innerWidth - 190), y: Math.min(event.clientY, window.innerHeight - 190), returnFocus }); }}>
       {renderSessionMain()}
       <Show when={session().branch ? tooltipAnchor() : undefined}>{(anchor) => <SessionTooltip session={session()} anchor={anchor()} onClose={() => setTooltipAnchor(undefined)} />}</Show>
@@ -489,7 +502,7 @@ export function SessionPanel(props: Props) {
   };
   const groupsByToken = createMemo(() => (new Map(groups().map((group) => [groupLayoutToken(group[0]), group] as const))));
   const groupMenuDetails = () => {
-    const groupDirectory = groupMenu() ? storedGroups.state?.groups.find((group) => group.id === (groupMenu())!.projectKey && group.cwd) : undefined;
+    const groupDirectory = groupMenu() ? groupDestination(groupMenu()!.projectKey) : undefined;
     const groupDirectorySession = groupDirectory && panel().sessions.find((session) => (session.hostId ?? "local") === (groupDirectory.hostId ?? "local") && session.cwd === groupDirectory.cwd);
     const isWorktreeGroup = groupDirectory?.projectKind === "worktree" || groupDirectorySession?.projectKind === "worktree";
     return { groupDirectory, isWorktreeGroup };
@@ -522,11 +535,11 @@ export function SessionPanel(props: Props) {
           const renderProjectLabel = () => {
             const renderGroupNameInput = () => (<input ref={element => { groupNameRef.current = element; }} disabled={groupSaving()} aria-label="Rename session group" aria-invalid={Boolean(groupDraftError())} aria-describedby={groupDraftError() ? "rename-group-error" : undefined} value={newGroupName() ?? ""} onInput={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} />);
             return (isEditingGroup(projectKey) ? <div class="project-label">{renderGroupNameInput()}{groupDraftError() && <small id="rename-group-error" class="group-error">{(groupDraftError())!}</small>}</div> : <>
-              <button class="project-label" disabled={Boolean(normalizedQuery())} aria-expanded={!collapsed()} aria-controls={groupId} {...projectDragProps(projectKey)}><ChevronDown class={collapsed() ? "collapsed" : ""} size={13} />{projectDetails().get(projectKey)?.projectKind === "no-repo" && <Folder size={14} aria-hidden="true" />}<span class={projectKey === activeProjectKey() ? "active" : undefined}>{label()}</span></button>
+              <button class="project-label" disabled={Boolean(normalizedQuery())} aria-expanded={!collapsed()} aria-controls={groupId} {...projectDragProps(projectKey)}><ChevronDown class={collapsed() ? "collapsed" : ""} size={13} /><Show when={branchGroupDetails().get(projectKey)}>{(session) => <span class="group-branch-badge" title={firstOrderBranch(session())}><BranchIcon branch={firstOrderBranch(session())!} appearance={session().branchAppearance} /></span>}</Show>{projectDetails().get(projectKey)?.projectKind === "no-repo" && <Folder size={14} aria-hidden="true" />}<span class={projectKey === activeProjectKey() ? "active" : undefined}>{label()}</span></button>
               {projectKey !== RECENT_KEY && <div class="project-actions">
                 {customGroupsByKey().has(projectKey) && <button aria-label={`Rename group ${label()}`} title="Rename group" onClick={() => editGroup(customGroupsByKey().get(projectKey)!)}><Pencil size={12} /></button>}
                 <button aria-label={`New chat in ${label()}`} title="New chat in group" onClick={() => {
-                  const destination = storedGroups.state?.groups.find((item) => item.id === projectKey);
+                  const destination = groupDestination(projectKey);
                   if (!destination) return;
                   expandProject(projectKey);
                   panel().onNewChat(destination);

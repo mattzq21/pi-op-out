@@ -72,13 +72,21 @@ function legacyAssignments(groups: Map<string, SessionGroup>, locations: unknown
   return assignments;
 }
 
+export function firstOrderBranch(session: SessionSummary) { return session.branch?.startsWith("Detached at ") ? undefined : session.branch?.split("|")[0]; }
+
+export function branchGroupId(session: SessionSummary) {
+  const project = `${session.hostId ?? "local"}:${session.projectRoot ?? session.cwd}`;
+  const branch = firstOrderBranch(session);
+  return branch ? `${project}#branch=${encodeURIComponent(branch)}` : project;
+}
+
 function sessionGroupSeed(session: SessionSummary): SessionGroupSeed {
   const hostId = session.hostId ?? "local";
   const cwd = session.projectRoot ?? session.cwd;
   const projectKind = session.projectRoot && session.projectRoot !== session.cwd && session.projectKind === "worktree" ? "main" : session.projectKind;
   return {
     sessionKey: `${hostId}:${session.id}`,
-    project: { id: `${hostId}:${cwd}`, name: session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project, cwd, hostId, hostName: session.hostName ?? session.hostId ?? "Local", projectKind },
+    project: { id: branchGroupId(session), name: session.projectRoot?.split(/[\\/]/).filter(Boolean).pop() ?? session.project, cwd, hostId, hostName: session.hostName ?? session.hostId ?? "Local", projectKind },
   };
 }
 
