@@ -1,4 +1,4 @@
-import { createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { Check, FolderGit2, Plus } from "lucide-solid";
 import type { NativeTransport, ProjectBranches } from "../lib/nativeTransport";
@@ -20,11 +20,12 @@ function WorktreeOptions(props: { local: boolean; pending: boolean; error?: stri
   </dialog></Portal>;
 }
 
-export function NewChatWorktreePicker(props: { transport: NativeTransport; listing: ProjectBranches; disabled?: boolean; onSelect: (path: string) => Promise<void> }) {
+export function NewChatWorktreePicker(props: { transport: NativeTransport; listing: ProjectBranches; disabled?: boolean; onSelect: (path: string) => Promise<void>; onBranchPickingChange: (enabled: boolean) => void }) {
   const [open, setOpen] = createSignal(false);
   const [createNew, setCreateNew] = createSignal(false);
   const [pending, setPending] = createSignal(true);
   const [error, setError] = createSignal<string>();
+  createEffect(() => props.onBranchPickingChange(createNew() && !pending()));
   let disposed = false;
   onCleanup(() => { disposed = true; });
   const normalize = (path: string) => path.replace(/[\\/]+$/, "");
