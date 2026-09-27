@@ -82,7 +82,12 @@ function legacyAssignments(groups: Map<string, SessionGroup>, locations: unknown
   return assignments;
 }
 
-export function firstOrderBranch(session: SessionSummary) { return session.branch?.startsWith("Detached at ") ? undefined : session.branch?.split("|")[0]; }
+export function firstOrderBranch(session: SessionSummary) {
+  const branch = session.branch;
+  if (!branch || branch.startsWith("Detached at ")) return undefined;
+  const separator = branch.indexOf("|");
+  return separator === -1 ? branch : branch.slice(0, separator);
+}
 
 export function branchGroupId(session: SessionSummary) {
   const project = `${session.hostId ?? "local"}:${session.projectRoot ?? session.cwd}`;
