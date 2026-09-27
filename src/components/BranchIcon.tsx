@@ -9,7 +9,7 @@ const shapes = {
   hexagon: "M7 3H17L23 12L17 21H7L1 12Z",
   star: "M12 1L15.4 8L23 9L17.5 14.5L19 22L12 18.5L5 22L6.5 14.5L1 9L8.6 8Z",
 };
-const cross = "M9 2H15V9H22V15H15V22H9V15H2V9H9Z";
+const cross = "M5 2L12 9L19 2L22 5L15 12L22 19L19 22L12 15L5 22L2 19L9 12L2 5Z";
 
 export function BranchIcon(props: { branch: string; appearance?: SessionSummary["branchAppearance"] }) {
   const shape = createMemo(() => {
