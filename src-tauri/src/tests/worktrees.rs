@@ -377,7 +377,7 @@ pub(super) fn test_session(host: &str, id: &str, path: &str) -> SessionSummary {
     SessionSummary {
         id: id.into(), group_id: None, subagent_parent_id: None, path: path.into(), name: "Conversation".into(),
         project: "Project".into(), cwd: "/project".into(), cwd_exists: true,
-        project_kind: None, project_root: None, branch: None, branch_appearance: None, modified_at: 0, preview: String::new(),
+        project_kind: None, project_root: None, branch: None, branch_appearance: None, worktree_root: None, modified_at: 0, preview: String::new(),
         message_count: 0, last_message_at: 0, api_cost: 0.0, host_id: host.into(), host_name: host.into(),
     }
 }

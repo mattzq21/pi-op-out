@@ -28,5 +28,5 @@ export function BranchIcon(props: { branch: string; appearance?: SessionSummary[
     const configured = props.appearance?.color;
     return typeof configured === "string" && /^#[\da-f]{6}$/i.test(configured) ? configured : colors[Math.floor(hash() / names.length) % colors.length];
   });
-  return <svg width="12" height="12" viewBox="0 0 24 24" fill={color()} aria-hidden="true"><path d={shapes[shape()]} /></svg>;
+  return <span class="session-branch-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill={color()} aria-hidden="true"><path d={shapes[shape()]} /></svg></span>;
 }
