@@ -521,7 +521,7 @@ export function SessionPanel(props: Props) {
       { label: "Create worktree", Icon: GitBranch, disabled: !groupDirectory, run: () => { if (groupDirectory?.cwd) panel().onCreateWorktree(groupDirectory.cwd, groupDirectory.hostId ?? "local"); } },
       ...(isWorktreeGroup && groupDirectory?.cwd ? [{ label: "Delete worktree…", Icon: Trash2, disabled: false, run: () => void prepareWorktreeRemoval((groupMenu())!.projectKey, (groupMenu())!.label, groupDirectory) }] : []),
       { label: "Forget group", Icon: Trash2, disabled: false, run: () => setRemovingGroup({ id: (groupMenu())!.projectKey, name: (groupMenu())!.label }) },
-    ] : menu() ? actions.filter(([action]) => action !== "split" || (menu())!.session.id !== panel().activeId || ((menu())!.session.hostId ?? "local") !== panel().activeHostId).map(([action, Icon, label]) => ({ label, Icon, disabled: action === "clone" && Boolean(menu()!.session.isDraft || !menu()!.session.path), run: () => panel().onAction((menu())!.session, action) })) : [];
+    ] : menu() ? actions.filter(([action]) => action !== "split" || (menu())!.session.id !== panel().activeId || ((menu())!.session.hostId ?? "local") !== panel().activeHostId).map(([action, Icon, label]) => ({ label, Icon, disabled: false, run: () => panel().onAction((menu())!.session, action) })) : [];
     return { activeMenu, menuItems };
   };
   const menuActions = createMemo(() => (contextMenu()));
