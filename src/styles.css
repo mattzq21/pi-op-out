@@ -63,7 +63,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .session-copy { flex: 1; min-width: 0; display: grid; gap: 4px; }
 .session-branch-icon { display: inline-flex; flex: 0 0 14px; align-self: baseline; justify-content: center; font: 700 14px/1 monospace; transform: scaleX(1.15); }
 .project-label .group-branch-badge { display: inline-flex; flex: 0 0 16px; justify-content: center; overflow: visible; }
-.project-label .session-branch-icon { overflow: visible; text-transform: none; letter-spacing: normal; }
+.project-label .session-branch-icon { overflow: visible; font: inherit; font-weight: 700; text-transform: none; letter-spacing: normal; }
 .project-disclosure { display: grid; place-items: center; flex: 0 0 20px; height: 27px; padding: 0; border: 0; background: transparent; color: var(--muted); }
 .project-disclosure svg.collapsed { transform: rotate(-90deg); }
 .new-chat-project { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
