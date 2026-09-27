@@ -95,9 +95,8 @@ function terminalConversationKey(target: TerminalTarget | undefined, fallback: s
 function AppLoading(componentProps: { error?: string }) {
   return <main class="app app-loading dark" role={componentProps.error ? "alert" : "status"}>
     <p class="eyebrow">piop</p>
-    <h1>{componentProps.error ? "Could not connect to Piop" : "Loading settings…"}</h1>
+    <h1>{componentProps.error ? "Could not load settings" : "Loading settings…"}</h1>
     {componentProps.error && <p>{(componentProps.error)!}</p>}
-    {componentProps.error && <button class="secondary-button" onClick={() => window.location.reload()}>Retry</button>}
   </main>;
 }
 

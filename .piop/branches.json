@@ -1,11 +1,11 @@
 {
   "version": 1,
   "branches": {
-    "main": { "shape": "circle", "color": "#22c55e" },
-    "dev": { "shape": "diamond", "color": "#3b82f6" },
-    "experimental": { "shape": "triangle", "color": "#f59e0b" },
-    "migration": { "shape": "hexagon", "color": "#a78bfa" },
-    "codex/piop-async-jobs": { "shape": "square", "color": "#2dd4bf" },
-    "codex/piop-tool-discovery": { "shape": "star", "color": "#f472b6" }
+    "main": { "letter": "M", "color": "#22c55e" },
+    "dev": { "letter": "D", "color": "#3b82f6" },
+    "experimental": { "letter": "E", "color": "#f59e0b" },
+    "migration": { "letter": "M", "color": "#a78bfa" },
+    "codex/piop-async-jobs": { "letter": "J", "color": "#2dd4bf" },
+    "codex/piop-tool-discovery": { "letter": "T", "color": "#f472b6" }
   }
 }
