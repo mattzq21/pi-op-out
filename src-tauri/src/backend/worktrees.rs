@@ -67,18 +67,20 @@ fn worktree_suffix(name: &str) -> Result<&str, String> {
     Ok(name)
 }
 
-fn worktree_branch_name(project: &str, name: &str) -> String {
-    let mut prefix = String::new();
-    let mut separator = false;
-    for character in project.chars() {
-        if character.is_ascii_alphanumeric() || character == '_' {
-            if separator && !prefix.is_empty() { prefix.push('-'); }
-            prefix.push(character);
-            separator = false;
-        } else { separator = true; }
-    }
-    if prefix.is_empty() { prefix.push_str("project"); }
-    format!("{prefix}/{name}")
+fn worktree_branch_name(parent: &str, name: &str) -> String {
+    format!("{parent}|{name}")
+}
+
+fn child_worktree_branch(root: &Path, name: &str, host: Option<&RemoteHost>) -> Result<String, String> {
+    let output = if let Some(host) = host {
+        run_limited(ssh(host).arg(format!("git -C {} symbolic-ref --quiet HEAD", shell_quote(&root.to_string_lossy()))), 64 * 1024, "Could not read parent branch")?
+    } else {
+        run_limited(Command::new("git").arg("-C").arg(root).args(["symbolic-ref", "--quiet", "HEAD"]), 64 * 1024, "Could not read parent branch")?
+    };
+    if !output.status.success() { return Err("Switch to a branch before creating a child worktree".into()); }
+    let reference = String::from_utf8_lossy(&output.stdout);
+    let parent = reference.trim().strip_prefix("refs/heads/").ok_or("Could not identify parent branch")?;
+    Ok(worktree_branch_name(parent, name))
 }
 
 fn parse_worktree_output(output: LimitedOutput, context: &str) -> Result<GitWorktree, String> {
@@ -207,8 +209,7 @@ fn managed_worktree_target(root: &Path, host: Option<&RemoteHost>, branch: &str)
 fn create_project_worktree_at(cwd: &str, name: &str, host: Option<&RemoteHost>) -> Result<GitWorktree, String> {
     let name = worktree_suffix(name)?;
     let root = project_worktree_root(cwd, host)?;
-    let project = root.file_name().ok_or("Git repository directory has no name")?.to_string_lossy();
-    let branch = worktree_branch_name(&project, name);
+    let branch = child_worktree_branch(&root, name, host)?;
     let reservation = managed_worktree_target(&root, host, &branch)?;
     let target = &reservation.path;
     let output = if let Some(host) = host {
@@ -242,8 +243,7 @@ fn create_git_worktree(app: AppHandle, cwd: String, name: String, host_id: Optio
     if host_id != "local" {
         let settings = load_app_settings(app)?; let host = remote_host(&settings, host_id)?;
         let root = remote_worktree_root(&cwd, host)?;
-        let project = Path::new(&root).file_name().ok_or("Git repository directory has no name")?.to_string_lossy();
-        let branch = worktree_branch_name(&project, name);
+        let branch = child_worktree_branch(Path::new(&root), name, Some(host))?;
         let reservation = managed_worktree_target(Path::new(&root), Some(host), &branch)?;
         let script = format!(r#"root={root}; branch={branch}; git check-ref-format --branch "$branch" >/dev/null || {{ printf 'Invalid Git branch name: %s' "$branch" >&2; exit 1; }}; git -C "$root" show-ref --verify --quiet "refs/heads/$branch" && {{ printf 'Git branch already exists: %s' "$branch" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git branches' >&2; exit 1; }}; target={target}; if [ -e "$target" ] || [ -L "$target" ]; then printf 'Worktree directory already exists: %s' "$target" >&2; exit 1; fi; worktrees=$(git -C "$root" worktree list --porcelain) || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; printf '%s\n' "$worktrees" | grep -Fqx "worktree $target" && {{ printf 'Git worktree is already registered: %s' "$target" >&2; exit 1; }}; [ $? -eq 1 ] || {{ printf 'Could not inspect Git worktrees' >&2; exit 1; }}; temporary=$(mktemp -d "${{TMPDIR:-/tmp}}/pi-desktop-worktree.XXXXXX") || exit 1; created=0; cleanup() {{ status=$?; rm -rf -- "$temporary"; if [ "$status" -ne 0 ] && [ "$created" -eq 1 ]; then git -C "$root" worktree remove --force "$target" >/dev/null 2>&1; git -C "$root" branch -D "$branch" >/dev/null 2>&1; fi; exit "$status"; }}; trap cleanup EXIT; has_head=0; if git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then has_head=1; fi; : > "$temporary/changes.patch"; if [ "$has_head" -eq 1 ]; then mkfifo "$temporary/patch.pipe" || exit 1; git -C "$root" diff --binary --no-textconv --no-ext-diff HEAD -- > "$temporary/patch.pipe" 2> "$temporary/diff-error" & diff_pid=$!; head -c {patch_plus_one} < "$temporary/patch.pipe" > "$temporary/changes.patch"; wait "$diff_pid"; diff_status=$?; rm -f -- "$temporary/patch.pipe"; patch_bytes=$(wc -c < "$temporary/changes.patch"); [ "$patch_bytes" -le {max_patch} ] || {{ printf 'Git changes are too large to copy' >&2; exit 1; }}; [ "$diff_status" -eq 0 ] || {{ cat "$temporary/diff-error" >&2; printf 'Could not capture Git changes' >&2; exit 1; }}; fi; git -C "$root" ls-files -z --others --exclude-standard $(test "$has_head" -eq 0 && printf %s --cached) -- > "$temporary/untracked" || exit 1; if [ "$has_head" -eq 1 ]; then git -C "$root" worktree add -b "$branch" "$target" >/dev/null || exit 1; else git -C "$root" worktree add --orphan -b "$branch" "$target" >/dev/null || exit 1; fi; created=1; if [ -s "$temporary/changes.patch" ]; then git -C "$target" apply --whitespace=nowarn "$temporary/changes.patch" || exit 1; fi; if [ -s "$temporary/untracked" ]; then tar -C "$root" --exclude=.git --null -T "$temporary/untracked" -cf "$temporary/untracked.tar" || exit 1; tar -C "$target" -xf "$temporary/untracked.tar" || exit 1; fi; printf '%s\n%s\n' "$branch" "$target""#,
             root = shell_quote(&root), branch = shell_quote(&branch), target = shell_quote(&reservation.path.to_string_lossy()),
@@ -317,8 +317,7 @@ fn canonical_worktree_root(cwd: &str) -> Result<PathBuf, String> {
 fn create_local_git_worktree(cwd: &str, name: &str) -> Result<GitWorktree, String> {
     let name = worktree_suffix(name)?;
     let root = canonical_worktree_root(cwd)?;
-    let project = root.file_name().ok_or("Git repository directory has no name")?.to_string_lossy();
-    let branch = worktree_branch_name(&project, name);
+    let branch = child_worktree_branch(&root, name, None)?;
     let reservation = new_local_worktree_target(&root, &branch)?;
     let target = &reservation.path;
     let has_head = Command::new("git").arg("-C").arg(&root).args(["rev-parse", "--verify", "HEAD"]).stdout(Stdio::null()).stderr(Stdio::null()).status().map_err(|error| format!("Could not inspect Git HEAD: {error}"))?.success();

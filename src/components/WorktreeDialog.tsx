@@ -46,7 +46,7 @@ export function WorktreeDialog(componentProps: Props) {
   return <dialog ref={element => { dialogRef.current = element; }} class="extension-dialog" aria-labelledby="worktree-dialog-title" onCancel={(event) => { event.preventDefault(); void cancel(); }} onMouseDown={(event) => { const bounds = event.currentTarget.getBoundingClientRect(); if (!creatingRef.current && (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)) componentProps.onCancel(); }}>
     <p class="eyebrow">Git</p><h2 id="worktree-dialog-title">Create worktree</h2>{renderDescription()}
     <input autofocus aria-label="Worktree name" value={name()} placeholder="Worktree name" disabled={creating()} onInput={(event) => { setName(event.target.value); setError(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) void create(); }} />
-    {name().trim() && <p class="worktree-preview" title={componentProps.projectPath}>Name: <code>{name().trim()}</code>. The repository root determines the branch and directory prefix.</p>}
+    {name().trim() && <p class="worktree-preview" title={componentProps.projectPath}>Branch: <code>parent|{name().trim()}</code>. The current branch is the parent.</p>}
     {error() && <p class="dialog-error" role="alert">{(error())!}</p>}
     {renderCancelSetup()}
     {renderDialogActions()}
