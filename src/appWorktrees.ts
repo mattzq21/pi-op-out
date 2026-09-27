@@ -3,7 +3,6 @@ import type { WorktreeTarget } from "./appSupport";
 import { textOf } from "./lib/content";
 import { branchMessages, type PiEntry } from "./lib/messages";
 import type { NativeTransport } from "./lib/nativeTransport";
-import { updateSessionGroups } from "./lib/sessionGroups";
 import type { SessionRuntimePool } from "./lib/sessionRuntimePool";
 import type { StateUpdate } from "./lib/solid";
 import type { AppSettings, ComposerUpload, SessionSummary } from "./types";
@@ -21,22 +20,17 @@ type WorktreeContext = {
   syncSessionIndex: () => unknown;
 };
 
+async function sourceProjectRoot(target: WorktreeTarget) {
+  const sourcePath = target.transport.currentSessionPath();
+  const source = (await target.transport.listSessions()).find((session) => session.path === sourcePath && (session.hostId ?? "local") === target.hostId);
+  return source?.projectRoot ?? source?.cwd ?? target.cwd;
+}
+
+function projectName(root: string) { return root.split(/[\\/]/).filter(Boolean).at(-1) ?? root; }
+
 export function createWorktreeActions(context: WorktreeContext) {
-  const { settings, runtimePool, transport, addNotice, setWorktreeTarget, setSessions, setComposerDraft, setComposerUploads, selectSession, syncSessionIndex } = context;
-  const createWorktree = async (target: WorktreeTarget, name: string, onSetup?: (cancel: (() => Promise<void>) | undefined) => void) => { const capturedSettings = settings(); const capturedRuntimePool = runtimePool();
-    const addWorktreeGroup = async (result: { path: string; branch: string; sessionId?: string }) => {
-      try {
-        await updateSessionGroups({
-          type: "project", project: {
-            id: `${target.hostId}:${result.path}`, name: result.branch, cwd: result.path,
-            hostId: target.hostId, hostName: capturedSettings?.hosts.find((host) => host.id === target.hostId)?.name ?? (target.hostId === "local" ? "Local" : target.hostId),
-            projectKind: "worktree",
-          }, key: result.sessionId ? `${target.hostId}:${result.sessionId}` : undefined
-        });
-      } catch (reason) {
-        addNotice({ title: "Worktree created, but could not add its group", message: `${result.path}\n${String(reason)}` });
-      }
-    };
+  const { runtimePool, transport, addNotice, setWorktreeTarget, setSessions, setComposerDraft, setComposerUploads, selectSession, syncSessionIndex } = context;
+  const createWorktree = async (target: WorktreeTarget, name: string, onSetup?: (cancel: (() => Promise<void>) | undefined) => void) => { const capturedRuntimePool = runtimePool();
     const setup = async (path: string) => {
       try { await target.transport.runWorktreeSetup(target.cwd, path, target.hostId, onSetup); return true; }
       catch (reason) {
@@ -47,7 +41,6 @@ export function createWorktreeActions(context: WorktreeContext) {
     };
     if (!target.message) {
       const result = await target.transport.createProjectWorktree(target.cwd, name, target.hostId);
-      await addWorktreeGroup(result);
       await setup(result.path);
       setWorktreeTarget(undefined);
       return result;
@@ -60,12 +53,12 @@ export function createWorktreeActions(context: WorktreeContext) {
     const message = messages.find((message) => message.role === sourceMessage.role && (sourceMessage.entryId ? message.entryId === sourceMessage.entryId : message.timestamp === sourceMessage.timestamp && textOf(message.content) === textOf(sourceMessage.content)));
     if (!message?.entryId) throw new Error("Could not find the message in the saved conversation");
     const sourcePath = owner.currentSessionPath();
+    const projectRoot = await sourceProjectRoot(target);
     const sourceDiffs = await capturedRuntimePool.captureMemoryDiffs(owner);
     const result = await owner.command<{ branch: string; path: string; sessionPath: string; sessionId: string }>({ type: "branch_checkpoint", entryId: message.entryId, name, afterResponse: !beforePrompt });
-    await addWorktreeGroup(result);
     await setup(result.path);
     setWorktreeTarget(undefined);
-    const session: SessionSummary = { id: result.sessionId, path: result.sessionPath, cwd: result.path, cwdExists: true, projectKind: "worktree", project: result.branch, name: result.branch, preview: "", messageCount: 0, lastMessageAt: 0, apiCost: 0, hostId: target.hostId };
+    const session: SessionSummary = { id: result.sessionId, path: result.sessionPath, cwd: result.path, cwdExists: true, projectKind: "worktree", projectRoot, worktreeRoot: result.path, branch: result.branch, project: projectName(projectRoot), name: result.branch, preview: "", messageCount: 0, lastMessageAt: 0, apiCost: 0, hostId: target.hostId };
     setSessions((current) => [...current, session]);
     setComposerDraft(`${target.hostId}:${result.sessionId}`, beforePrompt ? textOf(sourceMessage.content) : "");
     const branchTransport = capturedRuntimePool.forSession(session);
