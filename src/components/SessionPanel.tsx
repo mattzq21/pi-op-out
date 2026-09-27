@@ -247,10 +247,11 @@ export function SessionPanel(props: Props) {
     return storedGroups.change({ type: "assign", key: drag.sessionKey, group: destinationKey === RECENT_KEY ? null : destinationKey }).catch(() => undefined);
   };
   const placeSidebarEntry = (token: string, beforeToken: string | null) => {
+    if (token === groupLayoutToken(RECENT_KEY)) return;
     const currentEntries = sidebarEntriesRef.current;
     if (beforeToken === token) return;
     const next = currentEntries.filter((entry) => entry !== token);
-    const targetIndex = beforeToken === null ? -1 : next.indexOf(beforeToken);
+    const targetIndex = next.indexOf(beforeToken ?? groupLayoutToken(RECENT_KEY));
     next.splice(targetIndex < 0 ? next.length : targetIndex, 0, token);
     setSidebarOrder(next);
     try { localStorage.setItem(SIDEBAR_ORDER_KEY, JSON.stringify(next)); } catch { }
@@ -317,7 +318,7 @@ export function SessionPanel(props: Props) {
   const orderedSidebarEntries = (entries: string[]) => {
     const availableEntries = new Set(entries);
     const addedEntries = entries.filter((entry) => !sidebarOrder().includes(entry));
-    return [...addedEntries.filter((entry) => entry !== recentToken()), ...sidebarOrder().filter((entry) => availableEntries.has(entry)), ...addedEntries.filter((entry) => entry === recentToken())];
+    return [...addedEntries.filter((entry) => entry !== recentToken()), ...sidebarOrder().filter((entry) => entry !== recentToken() && availableEntries.has(entry)), ...(availableEntries.has(recentToken()) ? [recentToken()] : [])];
   };
   const sidebarEntries = createMemo(() => (orderedSidebarEntries(defaultSidebarEntries())));
   const keyboardSidebarEntries = createMemo(() => (defaultSidebarEntries().includes(recentToken()) ? sidebarEntries() : orderedSidebarEntries([...defaultSidebarEntries(), recentToken()])));
@@ -346,6 +347,7 @@ export function SessionPanel(props: Props) {
     void moveSession(drag, drag.projectKey, sourceSessions, sessionKey(target), direction < 0 ? "before" : "after")?.then(restoreFocus);
   };
   const startMouseDrag = (event: MouseEvent<HTMLElement>, drag: DraggedItem) => {
+    if (!("sessionKey" in drag) && drag.projectKey === RECENT_KEY) return;
     if (normalizedQuery() || event.button !== 0) return;
     removeMouseListenersRef.current();
     const mouseDrag: MouseDrag = { ...drag, startX: event.clientX, startY: event.clientY, active: false };
@@ -453,8 +455,8 @@ export function SessionPanel(props: Props) {
       if (index + direction < 0 || index + direction >= entries.length) return;
       placeSidebarEntry(token, direction < 0 ? entries[index - 1] : entries[index + 2] ?? null);
     },
-    "aria-description": !normalizedQuery() ? "Drag to reorder. Press Alt plus Up or Down to reorder." : undefined,
-    "aria-keyshortcuts": !normalizedQuery() ? "Alt+ArrowUp Alt+ArrowDown" : undefined,
+    "aria-description": projectKey === RECENT_KEY ? "Always shown below other groups." : !normalizedQuery() ? "Drag to reorder. Press Alt plus Up or Down to reorder." : undefined,
+    "aria-keyshortcuts": projectKey !== RECENT_KEY && !normalizedQuery() ? "Alt+ArrowUp Alt+ArrowDown" : undefined,
   });
   const isActiveSession = (session: SessionSummary) => panel().activeId === session.id && (session.hostId ?? "local") === panel().activeHostId;
   const isSavedSession = (session: SessionSummary) => !session.isDraft && Boolean(session.path);
