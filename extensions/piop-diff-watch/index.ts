@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, open, realpath, rm, rmdir } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, realpath, rm, rmdir, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -296,7 +296,8 @@ async function pinPromptHistory(root: string, sessionId: string, entries: Return
   }
 }
 
-async function checkpointWorktreeTarget(root: string) {
+async function checkpointWorktreeTarget(root: string, branch: string) {
+  const parentBranch = await runGit(root, ["symbolic-ref", "--quiet", "HEAD"]).then((value) => value.trim()).catch(() => null);
   const listed = await runGit(root, ["worktree", "list", "--porcelain", "-z"]);
   const worktrees = listed.split("\0").filter((entry) => entry.startsWith("worktree ")).map((entry) => entry.slice(9));
   if (!worktrees.length) throw new Error("Could not locate the main checkout");
@@ -310,6 +311,8 @@ async function checkpointWorktreeTarget(root: string) {
     if (worktrees.includes(target)) continue;
     try { await mkdir(container, { mode: 0o700 }); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") continue; throw error; }
+    try { await writeFile(join(container, "parent.json"), JSON.stringify({ branch, parentBranch }), { flag: "wx", mode: 0o600 }); }
+    catch (error) { await rmdir(container).catch(() => undefined); throw error; }
     return target;
   }
   throw new Error("Could not allocate a unique worktree directory");
@@ -327,7 +330,7 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
     throw new Error("Project snapshot unavailable. This prompt's checkpoint is missing or was removed.");
   }
   const branch = await checkpointBranchName(root, name);
-  const target = await checkpointWorktreeTarget(root);
+  const target = await checkpointWorktreeTarget(root, branch);
   const id = randomUUID();
   const timestamp = new Date().toISOString();
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${id}.jsonl`);
@@ -351,7 +354,13 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
         .then(() => runGit(root, ["branch", "-D", branch])).catch(() => undefined);
     }
     throw error;
-  } finally { await rmdir(dirname(target)).catch(() => undefined); }
+  } finally { await cleanupCheckpointContainer(target); }
+}
+
+async function cleanupCheckpointContainer(target: string) {
+  try { await lstat(target); return; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return; }
+  await rm(join(dirname(target), "parent.json"), { force: true });
+  await rmdir(dirname(target)).catch(() => undefined);
 }
 
 async function checkpointRefValid(root: string, owner: string, checkpoint: PromptCheckpoint, afterResponse: boolean) {

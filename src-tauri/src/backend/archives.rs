@@ -142,9 +142,13 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
     let _lifecycle = client.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
     let mutation = conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, false, "archive")?;
     retire_archived_session(&app, &client, &host_id, &session_path)?;
+    let worktree_cwd = archived_worktree_cwd(&app, &host_id, &session_path);
     archive_session_on_host(&app, &host_id, &session_path)?;
     let _ = stop_terminals(&runtime, &terminal_ids);
     mutation.finish()?;
+    if let Some(cwd) = worktree_cwd {
+        if let Err(error) = cleanup_archived_worktree(&app, &host_id, &cwd) { eprintln!("Archive cleanup skipped or incomplete: {error}"); }
+    }
     let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":session_path}));
     Ok(())
 }

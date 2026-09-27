@@ -553,7 +553,7 @@ export default function App() {
           transportConversationKeys.current.delete(nextTransport); void capturedRuntimePool.release(nextTransport);
           addNotice({ title: "Conversation archived, but a new conversation could not start", message: reason instanceof Error ? reason.message : String(reason) }); void syncSessionIndex();
         }
-      } else try { const replacement = capturedRuntimePool.create({ cwd: ownerTransport.currentCwd(), hostId }); transportConversationKeys.current.set(replacement, conversationKey); activateTransport(replacement); await capturedRuntimePool.release(ownerTransport); }
+      } else try { const replacement = capturedRuntimePool.create({ cwd: session.projectRoot || ownerTransport.currentCwd(), hostId }); transportConversationKeys.current.set(replacement, conversationKey); activateTransport(replacement); await capturedRuntimePool.release(ownerTransport); }
       catch (reason) { addNotice({ title: "Conversation archived, but a new conversation could not start", message: reason instanceof Error ? reason.message : String(reason) }); void syncSessionIndex(); }
     };
     const replaceArchivedConversation = async () => {
