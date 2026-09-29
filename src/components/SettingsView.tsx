@@ -158,6 +158,15 @@ export function SettingsView(props: SettingsViewProps) {
     const capturedDirty = dirty();
  if (capturedDirty) setSaved(false); }, () => [dirty()]);
   createDependencyEffect(() => { setSaveError(undefined); }, () => [currentSnapshot()]);
+  const applyIncomingAgents = (config?: AgentConfig) => {
+    const next = config ? structuredClone(config) : undefined;
+    const selectedName = agentDrafts()[agentIndex()]?.name;
+    const selectedIndex = next?.agents.findIndex(item => item.name === selectedName) ?? -1;
+    setHasAgentConfigDraft(next !== undefined);
+    setAgentDrafts(next?.agents ?? []);
+    setAgentIndex(selectedIndex >= 0 ? selectedIndex : firstEditableAgent(next?.agents ?? []));
+    setBaselineAgentConfig(agentEditsSnapshot(next));
+  };
   createDependencyEffect(() => { const capturedAgentConfigSnapshot = agentConfigSnapshot(); const capturedAgentConfigDirty = agentConfigDirty(); const capturedAgentConfig = agentConfig();
     if (saving() || incomingAgentConfigRef.current === capturedAgentConfigSnapshot) return;
     if (capturedAgentConfigDirty) {
@@ -165,11 +174,8 @@ export function SettingsView(props: SettingsViewProps) {
       return;
     }
     incomingAgentConfigRef.current = capturedAgentConfigSnapshot;
-    const next = capturedAgentConfig ? structuredClone((capturedAgentConfig)!) : undefined;
-    setHasAgentConfigDraft(next !== undefined);
-    setAgentDrafts(next?.agents ?? []);
-    setAgentIndex(firstEditableAgent(next?.agents ?? []));
-    setBaselineAgentConfig(agentEditsSnapshot(next));
+    if (agentEditsSnapshot(currentAgentConfig()) === capturedAgentConfigSnapshot) return;
+    applyIncomingAgents(capturedAgentConfig);
   }, () => [agentConfigDirty(), agentConfig(), agentConfigSnapshot(), saving()]);
   const patch = (value: Partial<AppSettings>) => setDraft((current) => ({ ...current, ...value }));
   const save = async () => {
