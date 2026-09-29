@@ -4,6 +4,10 @@ function text(message) {
   return typeof message.content === 'string' ? message.content : Array.isArray(message.content) ? message.content.filter(p => p.type === 'text').map(p => p.text || '').join('\n') : '';
 }
 
+function userPrompt(content) {
+  return content.replace(/^(?:\s*<skill\b[^>]*>\s*[\s\S]*?<\/skill>\s*)+/, '').trim();
+}
+
 function timestamp(value) {
   const numeric = Number(value);
   if (Number.isFinite(numeric) && numeric > 0) return numeric;
@@ -16,6 +20,7 @@ class SessionIndex {
   name;
   subagentParentId;
   first = '';
+  hasUserMessage = false;
   preview = '';
   count = 0;
   cost = 0;
@@ -41,7 +46,11 @@ class SessionIndex {
   }
 
   recordMessage(message, content, entry) {
-    if (message.role === 'user') this.lastMessageAt = Math.max(this.lastMessageAt, timestamp(message.timestamp ?? entry.timestamp));
+    if (message.role === 'user') {
+      this.hasUserMessage = true;
+      this.lastMessageAt = Math.max(this.lastMessageAt, timestamp(message.timestamp ?? entry.timestamp));
+      content = userPrompt(content);
+    }
     this.count++;
     if (content) {
       if (!this.first && message.role === 'user') this.first = content.slice(0, 2000);
@@ -70,7 +79,7 @@ class SessionIndex {
 
   print(path) {
     if (!this.header) return;
-    console.log(JSON.stringify({ path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: this.name || this.first || 'Untitled session', preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: !!this.first, bytes: this.bytes, subagentParentId: this.subagentParentId }));
+    console.log(JSON.stringify({ path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: this.name || this.first || 'Untitled session', preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: this.hasUserMessage, bytes: this.bytes, subagentParentId: this.subagentParentId }));
   }
 }
 
