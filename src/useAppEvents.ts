@@ -3,7 +3,7 @@ import { initializeSession } from "./lib/sessionInitialization";
 import { type Accessor } from "solid-js";
 import { createDependencyEffect, type Dispatch, type RefObject, type StateUpdate } from "./lib/solid";
 
-import { BTW_REQUEST_TITLE, MCP_STATUS_KEY, PROMPT_CONTEXT_STATUS_KEY, staleExtensionContext, type OwnedExtensionDialog, type SessionTerminals, type SplitPaneState, type TerminalTarget } from "./appSupport";
+import { BTW_REQUEST_TITLE, MCP_STATUS_KEY, PROMPT_CONTEXT_STATUS_KEY, staleExtensionContext, type OwnedExtensionDialog, type SplitPaneState, type TerminalTarget } from "./appSupport";
 import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "./lib/agentProtocol";
 import { NativeTransport } from "./lib/nativeTransport";
 import type { AgentState, AppSettings, DefinedAgentsCapability, ExtensionUiRequest, RpcEvent } from "./types";
@@ -15,7 +15,7 @@ type AppEventsContext = {
   loadSettings: () => Promise<AppSettings>;
   refresh: (hostId?: string, settings?: AppSettings) => Promise<AppSettings>;
   queueTerminalOutput: (terminalId: string, data: string) => void;
-  setTerminalsBySession: Dispatch<StateUpdate<Record<string, SessionTerminals>>>;
+  terminalExited: (terminalId: unknown) => void;
   addNotice: (notice: { title: string; message: string; }) => void;
   activeTransportRef: RefObject<NativeTransport>;
   pendingBtwRequest: RefObject<{ id: string; transport: NativeTransport; } | undefined>;
@@ -27,9 +27,9 @@ type AppEventsContext = {
   refreshSession: () => Promise<AgentState>;
   setStatuses: Dispatch<StateUpdate<Record<string, string>>>;
   setWidgets: Dispatch<StateUpdate<Record<string, string[]>>>;
-  setComposerDrafts: Dispatch<StateUpdate<Record<string, string>>>;
+  setComposerDraft: (key: string, text: string) => void;
   transportConversationKeys: RefObject<Map<NativeTransport, string>>;
-  terminalSessionIdRef: RefObject<string>;
+  terminalSessionId: Accessor<string>;
   setActivePane: Dispatch<StateUpdate<"main" | "split">>;
   setMainComposerFocusRequest: Dispatch<StateUpdate<number>>;
   queueExtensionDialog: (request: ExtensionUiRequest, ownerTransport: NativeTransport, owner: string) => void;
@@ -42,7 +42,6 @@ type AppEventsContext = {
   configureRuntime: (value: AppSettings) => Promise<void>;
   setError: Dispatch<StateUpdate<string | undefined>>;
   updateConnected: (value: boolean) => void;
-  terminalOutputFrame: RefObject<number | undefined>;
   flushTerminalOutput: () => void;
 };
 
@@ -77,7 +76,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         capturedOptions.queueTerminalOutput(String(event.terminalId ?? ""), String(event.data ?? ""));
       };
       const handleTerminalExit = () => {
-        capturedOptions.setTerminalsBySession((current) => Object.fromEntries(Object.entries(current).map(([sessionId, session]) => [sessionId, { ...session, tabs: session.tabs.map((terminal) => terminal.id === event.terminalId ? { ...terminal, exited: true } : terminal) }])));
+        capturedOptions.terminalExited(event.terminalId);
       };
       const handleExtensionError = () => {
         const message = String(event.error ?? "An extension failed");
@@ -128,7 +127,8 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         };
         const setExtensionTitle = () => { document.title = request.title || "piop"; };
         const setEditorText = () => {
-          capturedOptions.setComposerDrafts((current) => { const key = capturedOptions.transportConversationKeys.current.get(capturedOptions.transport) ?? capturedOptions.terminalSessionIdRef.current; const next = { ...current }; if (typeof request.text === "string") next[key] = request.text; return next; });
+          const key = capturedOptions.transportConversationKeys.current.get(capturedOptions.transport) ?? capturedOptions.terminalSessionId();
+          if (typeof request.text === "string") capturedOptions.setComposerDraft(key, request.text);
           capturedOptions.setActivePane("main");
           capturedOptions.setMainComposerFocusRequest((value) => value + 1);
         };
@@ -197,6 +197,6 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
       if (Object.hasOwn(handlers, event.type)) handlers[event.type]();
     });
     loadSelectedSession().catch((reason: unknown) => { if (current() && !isConversationChanged(reason)) capturedOptions.setError(reason instanceof Error ? reason.message : String(reason)); });
-    return () => { cancelled = true; refreshTimers.forEach(window.clearTimeout); unsubscribe(); if (capturedOptions.terminalOutputFrame.current !== undefined) window.clearTimeout(capturedOptions.terminalOutputFrame.current); capturedOptions.flushTerminalOutput(); };
+    return () => { cancelled = true; refreshTimers.forEach(window.clearTimeout); unsubscribe(); capturedOptions.flushTerminalOutput(); };
   }, () => [options().addNotice, options().configureRuntime, options().handleEvent, options().loadSettings, options().queueExtensionDialog, options().queueTerminalOutput, options().refresh, options().refreshSession, options().transport]);
 }

@@ -1,11 +1,10 @@
 import { createMemo, onCleanup, type Accessor, type Setter } from "solid-js";
-import type { SessionTerminals } from "./appSupport";
 import { hasVisibleText } from "./lib/content";
 import type { NativeTransport } from "./lib/nativeTransport";
 import type { SessionRuntimePool } from "./lib/sessionRuntimePool";
 import type { RefObject } from "./lib/solid";
 import type { useChatSession } from "./lib/useChatSession";
-import type { ComposerUpload, SessionSummary } from "./types";
+import type { SessionSummary } from "./types";
 
 export function createConversationViewKey<T>(transport: Accessor<T>, conversationKey: Accessor<string>, submission: Accessor<object | undefined> = () => undefined) {
   let previous: { owner: T; key: string; identity: object; submission?: object } | undefined;
@@ -50,13 +49,12 @@ type ActivationContext = {
   composerDrafts: Accessor<Record<string, string>>;
   activeTransportRef: RefObject<NativeTransport>;
   setTransport: Setter<NativeTransport>;
-  setUploadsByTransport: Setter<Map<NativeTransport, ComposerUpload[]>>;
-  setComposerDrafts: Setter<Record<string, string>>;
-  setTerminalsBySession: Setter<Record<string, SessionTerminals>>;
+  discardDraft: (owner: NativeTransport, key?: string) => void;
+  forgetTerminals: (key: string) => void;
 };
 
 export function createTransportActivation(context: ActivationContext) {
-  const { transport, transportConversationKeys, transportHasDraft, conversationTerminalIds, runtimePool, chatSession, composerDrafts, activeTransportRef, setTransport, setUploadsByTransport, setComposerDrafts, setTerminalsBySession } = context;
+  const { transport, transportConversationKeys, transportHasDraft, conversationTerminalIds, runtimePool, chatSession, composerDrafts, activeTransportRef, setTransport, discardDraft, forgetTerminals } = context;
   const savedConversation = () => context.savedSessions().some(session => !session.isDraft && session.messageCount > 0 && (session.hostId ?? "local") === transport().currentHostId() && session.path === transport().currentSessionPath());
   const emptyConversation = () => !savedConversation() && chatSession().state.messageCount === 0 && chatSession().messages.length === 0;
   const retainDraft = (previousTransport: NativeTransport, previousKey: string) => {
@@ -65,12 +63,11 @@ export function createTransportActivation(context: ActivationContext) {
       runtimePool().setLiveSession(previousTransport, { id, hostId, isDraft: true, path: previousTransport.currentSessionPath() ?? "", cwd, project: cwd.split("/").filter(Boolean).at(-1) ?? "Workspace", name: hasVisibleText(draft) ? draft.slice(0, 60) : "Unsent draft", preview: draft, messageCount: 0, lastMessageAt: Date.now(), apiCost: 0 });
   };
   const discardTransport = (previousTransport: NativeTransport, previousKey: string | undefined) => {
-      setUploadsByTransport((current) => { const next = new Map(current); next.delete(previousTransport); return next; });
+      discardDraft(previousTransport, previousKey);
       if (previousKey) {
-        setComposerDrafts((current) => { if (!(previousKey in current)) return current; const next = { ...current }; delete next[previousKey]; return next; });
         const terminalIds = conversationTerminalIds(previousKey);
         if (terminalIds.length) void Promise.allSettled(terminalIds.map((id) => previousTransport.closeTerminal(id)));
-        setTerminalsBySession((current) => { if (!(previousKey in current)) return current; const next = { ...current }; delete next[previousKey]; return next; });
+        forgetTerminals(previousKey);
       }
       void runtimePool().release(previousTransport).finally(() => transportConversationKeys.current.delete(previousTransport));
   };
