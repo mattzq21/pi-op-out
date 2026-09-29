@@ -21,6 +21,14 @@ function persistedAgentIdentity(state: SessionAgentState) {
 const STATUS_KEY = "pi-define-agents";
 const STATE_ENTRY = "pi-define-agents-state";
 const DEFAULTS_ENV = "PI_DEFINE_AGENTS_RUNTIME_DEFAULTS";
+const DRAFT_STATE_ENV = "PIOP_AGENT_DRAFT_STATE";
+
+function draftAgentState(session: string): SessionAgentState | undefined {
+  try {
+    const draft = JSON.parse(process.env[DRAFT_STATE_ENV] || "null");
+    return draft?.session === session ? draft.state : undefined;
+  } catch { return undefined; }
+}
 const configPath = process.env.PIOP_AGENT_CONFIG_PATH || join(dirname(fileURLToPath(import.meta.url)), "config.json");
 const DEFAULT_PROMPT_PATH = "sysprompt/default.md";
 const DEFAULT_AGENT_PROMPT_PATH = `~/${process.env.PIOP_STORAGE_DIRECTORY || ".piop"}/agents/default.md`;
@@ -170,6 +178,13 @@ function restoredFastMode(branch: ReturnType<ExtensionContext["sessionManager"][
       return legacy.manual === false ? undefined : legacy.enabled;
     }
   }
+}
+
+function readAgentState(branch: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>, session: string) {
+  const states = branch.flatMap(entry => entry.type === "custom" && entry.customType === STATE_ENTRY ? [entry.data as SessionAgentState] : []);
+  const persisted = states.at(-1);
+  const stored = persisted ?? draftAgentState(session);
+  return { states, stored, identity: persisted ? persistedAgentIdentity(persisted) : undefined, fastMode: stored?.fastModeOverride ?? restoredFastMode(branch) };
 }
 
 function promptPath(agent: Agent): string {
@@ -349,10 +364,15 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const publish = (ctx: ExtensionContext) => ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: currentAgent()?.name ?? active, locked, saved: !!snapshot, unavailable: !currentAgent(), config: { ...config, fastModeModels: fastModeModels() } })}`);
   const saveState = () => {
     const state = { active, modelOverride, effortOverride, fastModeOverride: fastModeOverride ?? null, snapshot };
+    if (!locked && savedState === undefined) {
+      process.env[DRAFT_STATE_ENV] = JSON.stringify({ session: runtimeSession, state });
+      return;
+    }
     const serialized = persistedAgentIdentity(state);
     if (serialized === savedState) return;
     pi.appendEntry(STATE_ENTRY, state);
     savedState = serialized;
+    delete process.env[DRAFT_STATE_ENV];
   };
   const reload = async (ctx: ExtensionCommandContext) => {
     publish(ctx);
@@ -481,15 +501,14 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const restoreSession = async (_event: unknown, ctx: ExtensionContext) => {
     restore(ctx);
     const branch = ctx.sessionManager.getBranch();
-    const states = branch.flatMap((entry) => entry.type === "custom" && entry.customType === STATE_ENTRY ? [entry.data as SessionAgentState] : []);
-    const stored = states.at(-1);
-    savedState = stored ? persistedAgentIdentity(stored) : undefined;
+    const { states, stored, identity, fastMode } = readAgentState(branch, runtimeSession);
+    savedState = identity;
     snapshot = migrateQuestionSnapshot(stored?.snapshot);
     active = snapshot?.definition.name ?? restoredAgentName(stored?.active);
     if (active === "voice-orchestrator") { active = "general"; snapshot = undefined; }
     locked = sessionIsLocked(states, branch);
     modelOverride = stored?.modelOverride;
-    fastModeOverride = restoredFastMode(branch);
+    fastModeOverride = fastMode;
     effortOverride = stored?.effortOverride;
     publish(ctx);
     const error = await useAgent(active, ctx, false, true, "restore");
