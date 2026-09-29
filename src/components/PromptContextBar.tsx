@@ -44,12 +44,16 @@ function validSkills<T extends { filePath: string }>(skills: T[] | undefined): T
   return Array.isArray(skills) ? skills.filter(item => Boolean(item) && typeof item.filePath === "string") : [];
 }
 
+function skillTax(context: PromptContextInfo) {
+  return context.systemPrompt.match(/(?:<skills>\s*)?The following skills provide specialized instructions[\s\S]*?(?=<available_skills>)/)?.[0].trim() ?? "";
+}
+
 function skillPercentages(context: PromptContextInfo) {
   const invoked = context.skillTokens?.invoked ?? (context.userInvokedSkills ?? []).reduce((sum, skill) => sum + Math.ceil((skill.content ?? "").length / 4), 0);
   const defined = context.skillTokens?.defined ?? Math.max(0, contextTokens(context).skills - invoked);
-  const total = Object.values(contextTokens(context)).reduce((sum, value) => sum + value, 0);
-  const definedPercent = total ? Math.round(defined / total * 100) : 0;
-  return { defined: definedPercent, invoked: total ? Math.round(invoked / total * 100) : 0 };
+  const tax = Math.min(defined, Math.ceil(skillTax(context).length / 4));
+  const total = Math.max(1, Object.values(contextTokens(context)).reduce((sum, value) => sum + value, 0));
+  return { tax: Math.round(tax / total * 100), defined: Math.round((defined - tax) / total * 100), invoked: Math.round(invoked / total * 100) };
 }
 
 function contextSections(context: PromptContextInfo) {
@@ -67,16 +71,21 @@ function contextSections(context: PromptContextInfo) {
 export const PromptContextBar = function PromptContextBar(componentProps: { context: PromptContextInfo }) {
   const context = createMemo(() => separatePromptInstructions(componentProps.context));
   const [active, setActive] = createSignal<Section>();
-  const [skillTab, setSkillTab] = createSignal<"model" | "user">("model");
+  const [skillTab, setSkillTab] = createSignal<"tax" | "model" | "user">("tax");
+  const taxText = () => skillTax(context()) || "No skills tax in this context";
   const sections = createMemo(() => (contextSections(context())));
   const visibleSkills = (): NonNullable<PromptContextInfo["userInvokedSkills"]> => skillTab() === "model" ? sections().skills : sections().userInvokedSkills;
   const emptySkills = () => skillTab() === "model" ? "No defined skills" : "No skills invoked in this context";
+  const copySkills = () => skillTab() === "tax" ? taxText() : visibleSkills().map((item) => [item.name ?? item.filePath, item.description, item.filePath, item.content].filter(Boolean).join("\n")).join("\n\n") || emptySkills();
   const skillPercent = createMemo(() => skillPercentages(context()));
   const tokens = createMemo(() => contextTokens(context()));
   const totalTokens = createMemo(() => Object.values(tokens()).reduce((sum, value) => sum + value, 0));
   const percent = createMemo(() => shares(tokens()));
   const wheelStyle = createMemo(() => ({ "--prompt-system": `${percent().system}%`, "--prompt-instructions": `${percent().system + percent().instructions}%`, "--prompt-tools": `${percent().system + percent().instructions + percent().tools}%` } as CSSProperties));
   const toggle = (section: Section) => setActive((current) => current === section ? undefined : section);
+  const renderSkillContents = () => (skillTab() === "tax" ? <pre>{taxText()}</pre> : visibleSkills().length ? <Key each={visibleSkills()} by={(skill) => skill.id ?? skill.filePath}>{(skill, _index) => skillTab() === "user"
+        ? <details class="prompt-skill-invocation"><summary>{skill().name}</summary><small>{skill().filePath}</small><pre>{skill().content ?? "Skill body was not recorded in this snapshot."}</pre></details>
+        : <div><strong>{typeof skill().name === "string" ? skill().name : skill().filePath}</strong>{typeof skill().description === "string" && skill().description && <p>{skill().description}</p>}<small>{skill().filePath}</small></div>}</Key> : <p>{emptySkills()}</p>);
   const renderPromptContextContent = () => (active() && <div class={`prompt-context-content ${(active())!}`}>
     <ContextCopyButton content={() => {
       const section = sections();
@@ -84,7 +93,7 @@ export const PromptContextBar = function PromptContextBar(componentProps: { cont
         case "system": return section.systemPrompt || "No system prompt";
         case "instructions": return section.instructions.map((item) => `${item.path}\n${item.content ?? ""}`).join("\n\n") || "No project instructions";
         case "tools": return section.tools.map((item) => [item.name, item.description, JSON.stringify(item.parameters, null, 2)].filter(Boolean).join("\n")).join("\n\n") || "No active tools";
-        case "skills": return visibleSkills().map((item) => [item.name ?? item.filePath, item.description, item.filePath, item.content].filter(Boolean).join("\n")).join("\n\n") || emptySkills();
+        case "skills": return copySkills();
         default: return "";
       }
     }} />
@@ -93,12 +102,11 @@ export const PromptContextBar = function PromptContextBar(componentProps: { cont
     {(active())! === "tools" && (sections().tools.length ? <Key each={sections().tools} by={(tool) => tool.name}>{(tool, _index) => <div ><strong>{tool().name}</strong>{typeof tool().description === "string" && tool().description && <p>{tool().description}</p>}<details class="prompt-context-tool-json"><summary>JSON</summary><pre>{JSON.stringify(tool().parameters, null, 2)}</pre></details></div>}</Key> : <p>No active tools</p>)}
     {(active())! === "skills" && <>
       <nav class="prompt-skills-tabs" aria-label="Skill categories">
+        <button type="button" aria-pressed={skillTab() === "tax"} title="Share of total estimated context used by shared skill instructions" onClick={() => setSkillTab("tax")}>Tax <small>{skillPercent().tax}%</small></button>
         <button type="button" aria-pressed={skillTab() === "model"} title="Share of total estimated context used by skill definitions" onClick={() => setSkillTab("model")}>Defined <small>{skillPercent().defined}%</small></button>
         <button type="button" aria-pressed={skillTab() === "user"} title="Share of total estimated context used by invoked skills" onClick={() => setSkillTab("user")}>Invoked <small>{skillPercent().invoked}%</small></button>
       </nav>
-      {visibleSkills().length ? <Key each={visibleSkills()} by={(skill) => skill.id ?? skill.filePath}>{(skill, _index) => skillTab() === "user"
-        ? <details class="prompt-skill-invocation"><summary>{skill().name}</summary><small>{skill().filePath}</small><pre>{skill().content ?? "Skill body was not recorded in this snapshot."}</pre></details>
-        : <div><strong>{typeof skill().name === "string" ? skill().name : skill().filePath}</strong>{typeof skill().description === "string" && skill().description && <p>{skill().description}</p>}<small>{skill().filePath}</small></div>}</Key> : <p>{emptySkills()}</p>}
+      {renderSkillContents()}
     </>}
   </div>);
   return <section class={`prompt-context${active() ? " open" : ""}`}>
