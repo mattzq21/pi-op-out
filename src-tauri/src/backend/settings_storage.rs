@@ -1,8 +1,19 @@
-fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
+use std::collections::HashSet;
+use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::Path;
+use std::path::PathBuf;
+use crate::platform::AppHandle;
+use uuid::Uuid;
+use crate::{AppSettings, DEVELOPMENT, STORAGE_DIRECTORY};
+use crate::defaults_usage::{default_keybindings, home_dir};
+
+pub(super) fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
     settings_path_at(&home_dir()?, DEVELOPMENT, || app.path().app_config_dir().map_err(|error| error.to_string()).map(|dir| dir.join("settings.json")))
 }
 
-fn settings_path_at(home: &Path, development: bool, legacy_path: impl FnOnce() -> Result<PathBuf, String>) -> Result<PathBuf, String> {
+pub(super) fn settings_path_at(home: &Path, development: bool, legacy_path: impl FnOnce() -> Result<PathBuf, String>) -> Result<PathBuf, String> {
     let dir = home.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let path = dir.join("settings.json");
@@ -26,7 +37,7 @@ fn migrate_legacy_settings(legacy: &Path, path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn set_private_file_permissions(path: &Path) -> Result<(), String> {
+pub(super) fn set_private_file_permissions(path: &Path) -> Result<(), String> {
     if !path.exists() { return Ok(()); }
     if path.is_dir() { return Err(format!("Configuration path is a directory: {}", path.display())); }
     #[cfg(unix)]
@@ -40,7 +51,7 @@ fn set_private_file_permissions(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn ensure_private_dir(path: &Path) -> Result<(), String> {
+pub(super) fn ensure_private_dir(path: &Path) -> Result<(), String> {
     fs::create_dir_all(path).map_err(|error| error.to_string())?;
     #[cfg(unix)]
     {
@@ -67,7 +78,7 @@ fn private_file_matches(path: &Path, body: &[u8]) -> Result<bool, String> {
     Ok(false)
 }
 
-fn atomic_write_private(path: &Path, body: &[u8]) -> Result<(), String> {
+pub(super) fn atomic_write_private(path: &Path, body: &[u8]) -> Result<(), String> {
     let parent = path.parent().ok_or("Configuration file has no parent directory")?;
     ensure_private_dir(parent)?;
     if private_file_matches(path, body)? { return Ok(()); }
@@ -94,7 +105,7 @@ fn atomic_write_private(path: &Path, body: &[u8]) -> Result<(), String> {
     result
 }
 
-fn canonical_shortcut(shortcut: &str) -> Result<Option<String>, String> {
+pub(super) fn canonical_shortcut(shortcut: &str) -> Result<Option<String>, String> {
     let mut raw: Vec<&str> = shortcut.split('+').collect();
     let mut plus_key = false;
     if raw.len() > 1 && raw[raw.len() - 1].trim().is_empty() { plus_key = true; raw.pop(); }
@@ -111,7 +122,7 @@ fn canonical_shortcut(shortcut: &str) -> Result<Option<String>, String> {
     let mut canonical: Vec<&str> = modifiers.iter().copied().filter(|modifier| parts.iter().any(|part| part == modifier)).collect(); canonical.push(key); Ok(Some(canonical.join("+")))
 }
 
-fn migrate_keybindings(settings: &mut AppSettings) {
+pub(super) fn migrate_keybindings(settings: &mut AppSettings) {
     let supported = default_keybindings();
     settings.keybindings.retain(|action, _| supported.contains_key(action));
     for (action, shortcut) in supported {
@@ -122,7 +133,7 @@ fn migrate_keybindings(settings: &mut AppSettings) {
     }
 }
 
-fn validate_keybindings(settings: &AppSettings) -> Result<(), String> {
+pub(super) fn validate_keybindings(settings: &AppSettings) -> Result<(), String> {
     let mut shortcuts = HashSet::new();
     for shortcut in settings.keybindings.values() {
         if let Some(canonical) = canonical_shortcut(shortcut)? {

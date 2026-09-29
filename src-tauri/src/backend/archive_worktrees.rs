@@ -1,4 +1,12 @@
-fn archived_worktree_cwd(app: &AppHandle, host_id: &str, session_path: &str) -> Option<String> {
+use std::sync::atomic::AtomicBool;
+use crate::platform::AppHandle;
+use crate::{AppSettings, STORAGE_DIRECTORY, SessionIndexRuntime, node_command};
+use crate::worktrees::{WorktreeRemovalTarget, preserve_worktree_checkpoints, sessions_on_host, validated_removal_target};
+use crate::worktree_setup::{LimitedOutput, WorktreeScriptPhase, run_limited, run_worktree_scripts, shell_quote};
+use crate::pi_launch::{remote_host, remote_login_command, ssh};
+use crate::settings::{load_app_settings};
+
+pub(super) fn archived_worktree_cwd(app: &AppHandle, host_id: &str, session_path: &str) -> Option<String> {
     let settings = load_app_settings(app.clone()).ok()?;
     let sessions = sessions_on_host(&settings, &app.state::<SessionIndexRuntime>(), host_id).ok()?;
     sessions.into_iter().find(|session| session.path == session_path).map(|session| session.cwd)
@@ -16,7 +24,7 @@ fn archive_worktree_command(settings: &AppSettings, host_id: &str, target: &Work
     run_limited(&mut command, 64 * 1024, "Could not clean up archived worktree")
 }
 
-fn cleanup_archived_worktree(app: &AppHandle, host_id: &str, cwd: &str) -> Result<(), String> {
+pub(super) fn cleanup_archived_worktree(app: &AppHandle, host_id: &str, cwd: &str) -> Result<(), String> {
     let settings = load_app_settings(app.clone())?;
     let Ok(target) = validated_removal_target(app, &settings, cwd, host_id) else { return Ok(()); };
     let eligible = archive_worktree_command(&settings, host_id, &target, "check")?;

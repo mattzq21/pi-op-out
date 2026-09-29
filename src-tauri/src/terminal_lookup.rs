@@ -1,9 +1,10 @@
 use super::*;
+use std::time::SystemTime;
 
 const RETAINED_BYTES: usize = 256 * 1024;
 const EXITED_LIMIT: usize = 64;
 
-pub(super) struct Transcript {
+pub(crate) struct Transcript {
     session_id: String,
     host_id: String,
     owner: String,
@@ -12,11 +13,11 @@ pub(super) struct Transcript {
     output: String,
     end: u64,
     updated: SystemTime,
-    pub(super) running: bool,
+    pub(crate) running: bool,
 }
 
 impl Transcript {
-    pub(super) fn append(&mut self, data: &str) {
+    pub(crate) fn append(&mut self, data: &str) {
         self.output.push_str(data);
         self.end += data.len() as u64;
         self.updated = SystemTime::now();
@@ -32,7 +33,7 @@ impl Transcript {
     }
 }
 
-pub(super) fn start(runtime: &TerminalRuntime, id: &str, session_key: &str, cwd: &str, host_id: &str, owner: &str, generation: Uuid) -> Result<(), String> {
+pub(crate) fn start(runtime: &TerminalRuntime, id: &str, session_key: &str, cwd: &str, host_id: &str, owner: &str, generation: Uuid) -> Result<(), String> {
     let mut history = runtime.history.lock().map_err(|_| "Terminal history lock was poisoned")?;
     let session_id = session_key.rsplit_once(':').map_or(session_key, |(_, id)| id);
     history.insert(id.into(), Transcript { session_id: session_id.into(), host_id: host_id.into(), owner: owner.into(), cwd: cwd.into(), generation,
@@ -40,13 +41,13 @@ pub(super) fn start(runtime: &TerminalRuntime, id: &str, session_key: &str, cwd:
     Ok(())
 }
 
-pub(super) fn record(history: &Mutex<HashMap<String, Transcript>>, id: &str, data: &str) {
+pub(crate) fn record(history: &Mutex<HashMap<String, Transcript>>, id: &str, data: &str) {
     if let Ok(mut history) = history.lock() {
         if let Some(item) = history.get_mut(id) { item.append(data); }
     }
 }
 
-pub(super) fn finish(history: &Mutex<HashMap<String, Transcript>>, id: &str) {
+pub(crate) fn finish(history: &Mutex<HashMap<String, Transcript>>, id: &str) {
     if let Ok(mut history) = history.lock() {
         if let Some(item) = history.get_mut(id) { item.running = false; }
         let mut exited: Vec<_> = history.iter().filter(|(_, item)| !item.running).map(|(id, item)| (id.clone(), item.updated)).collect();
@@ -56,7 +57,7 @@ pub(super) fn finish(history: &Mutex<HashMap<String, Transcript>>, id: &str) {
     }
 }
 
-pub(super) fn reassign(runtime: &TerminalRuntime, owner: &str, id: &str, session_key: &str) -> Result<(), String> {
+pub(crate) fn reassign(runtime: &TerminalRuntime, owner: &str, id: &str, session_key: &str) -> Result<(), String> {
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
     let mut history = runtime.history.lock().map_err(|_| "Terminal history lock was poisoned")?;
     let item = history.get_mut(id).ok_or("Terminal history is unavailable")?;
@@ -66,11 +67,11 @@ pub(super) fn reassign(runtime: &TerminalRuntime, owner: &str, id: &str, session
     Ok(())
 }
 
-pub(super) fn detach(runtime: &TerminalRuntime, owner: &str) {
+pub(crate) fn detach(runtime: &TerminalRuntime, owner: &str) {
     if let Ok(mut history) = runtime.history.lock() { history.retain(|_, item| item.owner != owner); }
 }
 
-pub(super) fn lookup(runtime: &TerminalRuntime, request: &Value, host_id: &str) -> Result<Value, String> {
+pub(crate) fn lookup(runtime: &TerminalRuntime, request: &Value, host_id: &str) -> Result<Value, String> {
     let session_id = request["sessionId"].as_str().filter(|id| !id.is_empty()).ok_or("sessionId is required")?;
     let history = runtime.history.lock().map_err(|_| "Terminal history lock was poisoned")?;
     let belongs = |item: &&Transcript| item.session_id == session_id && item.host_id == host_id;

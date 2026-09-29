@@ -187,7 +187,7 @@ fn terminal_lifecycle_delivers_queued_input_and_resized_dimensions_to_the_shell(
         output.push_str(packet["data"].as_str().unwrap());
     }
     {
-        let processes = runtime.0.processes.lock().unwrap();
+        let processes = runtime.0.test_processes().lock().unwrap();
         let process = &processes["interactive"];
         let size = process.master.get_size().unwrap();
         assert_eq!((size.cols, size.rows), (1, 1));
@@ -202,7 +202,7 @@ fn terminal_lifecycle_delivers_queued_input_and_resized_dimensions_to_the_shell(
     }
     assert!(output.contains("received:hello λ"), "{output}");
     assert!(output.contains("40 100"), "{output}");
-    assert!(runtime.0.processes.lock().unwrap().is_empty());
+    assert!(runtime.0.test_processes().lock().unwrap().is_empty());
 }
 
 #[cfg(unix)]
@@ -218,7 +218,7 @@ fn stopping_a_started_terminal_suppresses_stale_events_and_preserves_other_proce
     assert_eq!(packet["type"], "terminal_output");
     stop_terminals(&runtime.0, &["stop-me".into()]).unwrap();
     assert_eq!(events.recv_timeout(Duration::from_secs(3)).unwrap_err(), mpsc::RecvTimeoutError::Disconnected);
-    let processes = runtime.0.processes.lock().unwrap();
+    let processes = runtime.0.test_processes().lock().unwrap();
     assert_eq!(processes.len(), 1); assert!(processes.contains_key("other"));
 }
 
@@ -239,7 +239,7 @@ fn terminal_startup_streams_shell_output_and_removes_finished_process() {
         output.push_str(packet["data"].as_str().unwrap());
     }
     assert_eq!(output, "hello λ");
-    assert!(runtime.0.processes.lock().unwrap().is_empty());
+    assert!(runtime.0.test_processes().lock().unwrap().is_empty());
 }
 
 #[cfg(unix)]
@@ -258,9 +258,9 @@ fn terminal_startup_rejects_limits_and_launch_failures_without_registering_new_p
             || if failure == "build" { Err("invalid directory".into()) } else { Ok(CommandBuilder::new(temporary.0.join("missing"))) },
             |_| panic!("failed launch emitted")).unwrap_err();
         assert!(error.contains(if failure == "build" { "invalid directory" } else { "Could not start terminal shell" }));
-        assert!(!runtime.0.processes.lock().unwrap().contains_key("other"));
+        assert!(!runtime.0.test_processes().lock().unwrap().contains_key("other"));
     }
-    assert_eq!(runtime.0.processes.lock().unwrap().len(), MAX_TERMINALS);
+    assert_eq!(runtime.0.test_processes().lock().unwrap().len(), MAX_TERMINALS);
 }
 #[cfg(unix)]
 struct TestTerminals(TerminalRuntime);
@@ -273,7 +273,7 @@ impl TestTerminals {
         command.args(["-c", "exec sleep 60"]);
         let child = pair.slave.spawn_command(command).unwrap();
         let (writer, receiver) = mpsc::sync_channel(1);
-        self.0.processes.lock().unwrap().insert(id.into(), TerminalProcess {
+        self.0.test_processes().lock().unwrap().insert(id.into(), TerminalProcess {
             generation: Uuid::new_v4(),
             session_key: "session".into(), cwd: "/tmp".into(), host_id: "local".into(), window_label: "main".into(),
             master: pair.master, child, writer,
@@ -285,7 +285,7 @@ impl TestTerminals {
 #[cfg(unix)]
 impl Drop for TestTerminals {
     fn drop(&mut self) {
-        let ids = self.0.processes.lock().unwrap().keys().cloned().collect::<Vec<_>>();
+        let ids = self.0.test_processes().lock().unwrap().keys().cloned().collect::<Vec<_>>();
         let _ = stop_terminals(&self.0, &ids);
     }
 }
@@ -315,7 +315,7 @@ fn terminal_resize_clamps_dimensions_and_cleanup_targets_only_requested_processe
     let second = terminals.add("second");
     for (cols, rows, expected_cols, expected_rows) in [(0, 0, 1, 1), (132, 43, 132, 43)] {
         resize_terminal_pty(&terminals.0, "first", cols, rows).unwrap();
-        let processes = terminals.0.processes.lock().unwrap();
+        let processes = terminals.0.test_processes().lock().unwrap();
         let size = processes["first"].master.get_size().unwrap();
         assert_eq!((size.cols, size.rows), (expected_cols, expected_rows));
         assert_eq!(processes["second"].master.get_size().unwrap().cols, 80);
@@ -323,11 +323,11 @@ fn terminal_resize_clamps_dimensions_and_cleanup_targets_only_requested_processe
     assert_eq!(resize_terminal_pty(&terminals.0, "missing", 80, 24).unwrap_err(), "Terminal is not running");
     stop_terminals(&terminals.0, &["missing".into(), "first".into(), "first".into()]).unwrap();
     assert!(matches!(first.try_recv(), Err(mpsc::TryRecvError::Disconnected)));
-    assert_eq!(terminals.0.processes.lock().unwrap().len(), 1);
+    assert_eq!(terminals.0.test_processes().lock().unwrap().len(), 1);
     write_terminal_input(&terminals.0, "second", "still available".into()).unwrap();
     assert_eq!(second.recv_timeout(Duration::from_secs(2)).unwrap(), "still available");
     stop_terminals(&terminals.0, &["second".into()]).unwrap();
-    assert!(terminals.0.processes.lock().unwrap().is_empty());
+    assert!(terminals.0.test_processes().lock().unwrap().is_empty());
 }
 #[test]
 fn terminal_output_stream_preserves_split_unicode_and_flushes_incomplete_bytes_on_eof_or_error() {

@@ -14,17 +14,16 @@ mod desktop_daemon;
 mod provider_auth;
 mod conversation_ownership;
 mod session_groups;
-mod terminal_lookup;
+use terminals::terminal_lookup;
 #[cfg(not(feature = "desktop"))]
 mod daemon;
 mod dictation;
 mod project_files;
 #[cfg(not(feature = "desktop"))]
-#[cfg(not(feature = "desktop"))]
 use session_groups::load_session_groups;
 use session_groups::change_session_groups;
 
-use serde::{de, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
@@ -32,17 +31,22 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, Command, ExitStatus, Stdio},
+    process::{Child, ChildStdin, Command, Stdio},
     sync::{mpsc, Arc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering}},
     thread,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
-use portable_pty::{native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtySize};
-use crate::platform::{AppHandle, State};
+use crate::platform::AppHandle;
 #[cfg(feature = "desktop")]
 use tauri::{Emitter, Manager};
 use uuid::Uuid;
 use walkdir::WalkDir;
+#[cfg(test)]
+use std::time::SystemTime;
+#[cfg(test)]
+use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+#[cfg(test)]
+use std::process::ExitStatus;
 
 const STORAGE_DIRECTORY: &str = if cfg!(debug_assertions) { ".piop-dev" } else { ".piop" };
 const DEVELOPMENT: bool = cfg!(debug_assertions);
@@ -53,12 +57,6 @@ fn node_command() -> Command {
     let mut command = Command::new("node");
     command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY);
     command
-}
-
-struct PiProcess {
-    daemon: Arc<daemon::Daemon>,
-    window_label: String,
-    blank_cleanup: BlankSessionCleanup,
 }
 
 struct BlankSessionCleanup { path: Option<String>, id: Option<String>, host: Option<RemoteHost>, submitted: bool }
@@ -83,28 +81,8 @@ fn cleanup_blank_session_at(target: BlankSessionCleanup, root: Option<&Path>) {
     }
 }
 
-#[derive(Clone)]
-enum EphemeralSession {
-    Local(PathBuf),
-    Remote { host: RemoteHost, path: String },
-}
-
-struct TerminalProcess {
-    generation: Uuid,
-    session_key: String,
-    cwd: String,
-    host_id: String,
-    window_label: String,
-    master: Box<dyn MasterPty + Send>,
-    child: Box<dyn PtyChild + Send + Sync>,
-    writer: mpsc::SyncSender<String>,
-}
-
-#[derive(Default)]
-struct TerminalRuntime {
-    processes: Arc<Mutex<HashMap<String, TerminalProcess>>>,
-    history: Arc<Mutex<HashMap<String, terminal_lookup::Transcript>>>,
-}
+#[cfg(test)]
+use pi_launch::EphemeralSession;
 
 #[derive(Clone)]
 struct CachedSession { fingerprint: String, summary: SessionSummary }
@@ -131,58 +109,11 @@ const MAX_AGENT_OUTPUT_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_SESSION_INDEX_BATCH_BYTES: usize = 64 * 1024 * 1024;
 const WORKTREE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-#[derive(Default)]
-struct WorktreeSetupOwners { setups: HashMap<String, String>, detached: HashSet<String> }
 
-#[derive(Default)]
-struct PiRuntime {
-    worktree_setups: Mutex<HashMap<String, Arc<AtomicBool>>>,
-    worktree_setup_owners: Mutex<WorktreeSetupOwners>,
-    ephemeral_sessions: Mutex<HashMap<String, EphemeralSession>>,
-    ephemeral_previous: Mutex<HashMap<String, Vec<EphemeralSession>>>,
-    ephemeral_keys: Mutex<HashMap<String, String>>,
-    processes: Arc<Mutex<HashMap<String, PiProcess>>>,
-    daemons: Mutex<HashMap<String, Arc<daemon::Daemon>>>,
-    lifecycle: Mutex<()>,
-    agent_config_revision: AtomicU64,
-    agent_config_revisions: Mutex<HashMap<String, u64>>,
-    active_agents: Arc<Mutex<HashMap<String, AgentAddress>>>,
-}
+use pi_runtime::PiRuntime;
 
 #[derive(Clone)]
 struct AgentAddress { host_id: String, session_id: Option<String>, session_path: Option<String>, worktree: Option<String>, presence_id: Option<String>, working: bool, messageable: bool }
-
-#[derive(Clone)]
-struct BrokerRuntime {
-    closing: Arc<AtomicBool>,
-    message_count: Arc<Mutex<usize>>,
-    port: Arc<Mutex<u16>>,
-    token: String,
-    busy: Arc<Mutex<HashSet<String>>>,
-    jobs: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
-    cancelled: Arc<Mutex<HashSet<String>>>,
-    operations: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
-}
-
-impl Default for BrokerRuntime {
-    fn default() -> Self {
-        Self {
-            closing: Arc::new(AtomicBool::new(false)), message_count: Arc::new(Mutex::new(0)),
-            port: Arc::new(Mutex::new(0)),
-            token: Uuid::new_v4().to_string(),
-            busy: Arc::new(Mutex::new(HashSet::new())),
-            jobs: Arc::new(Mutex::new(HashMap::new())),
-            cancelled: Arc::new(Mutex::new(HashSet::new())),
-            operations: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-}
-
-struct BusyAgent { key: String, busy: Arc<Mutex<HashSet<String>>> }
-
-impl Drop for BusyAgent {
-    fn drop(&mut self) { if let Ok(mut busy) = self.busy.lock() { busy.remove(&self.key); } }
-}
 
 fn claims_dir() -> Result<PathBuf, String> {
     let dir = home_dir()?.join(STORAGE_DIRECTORY).join("session-claims");
@@ -253,15 +184,6 @@ fn hash_claim_key(bytes: &[u8]) -> String {
 
 mod process_cleanup;
 use process_cleanup::stop_message_worker;
-
-struct BrokerWriter { child: Arc<Mutex<Child>>, _claim: BusyAgent }
-
-impl Drop for BrokerWriter {
-    fn drop(&mut self) {
-        let mut child = self.child.lock().unwrap_or_else(|error| error.into_inner());
-        stop_message_worker(&mut child);
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -471,19 +393,90 @@ struct WorktreeSetupScript {
 #[cfg(test)]
 mod tests;
 
-include!("backend/defaults_usage.rs");
-include!("backend/settings_storage.rs");
-include!("backend/extensions.rs");
-include!("backend/settings.rs");
-include!("backend/worktree_setup.rs");
-include!("backend/snapshot_capture.rs");
-include!("backend/worktrees.rs");
-include!("backend/project_branches.rs");
-include!("backend/archive_worktrees.rs");
-include!("backend/git_diffs.rs");
-include!("backend/pi_launch.rs");
-include!("backend/pi_runtime.rs");
-include!("backend/session_index.rs");
-include!("backend/archives.rs");
-include!("backend/broker.rs");
-include!("backend/lifecycle.rs");
+#[path = "backend/defaults_usage.rs"]
+mod defaults_usage;
+#[path = "backend/settings_storage.rs"]
+mod settings_storage;
+#[path = "backend/extensions.rs"]
+mod extensions;
+#[path = "backend/settings.rs"]
+mod settings;
+#[path = "backend/worktree_setup.rs"]
+mod worktree_setup;
+#[path = "backend/snapshot_capture.rs"]
+mod snapshot_capture;
+#[path = "backend/worktrees.rs"]
+mod worktrees;
+#[path = "backend/project_branches.rs"]
+mod project_branches;
+#[path = "backend/archive_worktrees.rs"]
+mod archive_worktrees;
+#[path = "backend/git_diffs.rs"]
+mod git_diffs;
+#[path = "backend/pi_launch.rs"]
+mod pi_launch;
+#[path = "backend/pi_runtime.rs"]
+mod pi_runtime;
+#[path = "backend/session_index.rs"]
+mod session_index;
+#[path = "backend/archives.rs"]
+mod archives;
+#[path = "backend/broker.rs"]
+mod broker;
+#[path = "backend/lifecycle.rs"]
+mod lifecycle;
+
+pub use lifecycle::run_daemon;
+use lifecycle::{detach_owner};
+use pi_runtime::{StartPiOptions, detach_pi_with, open_project_directory, pi_command, pi_presence, start_pi_for_owner, stop_pi};
+use terminals::{StartTerminalOptions, close_terminal, resize_terminal, start_terminal_for_owner, write_terminal};
+use defaults_usage::default_context_window_cap;
+#[cfg(test)]
+use pi_runtime::{detach_pi, open_external_url_with, open_project_directory_with, read_dropped_file, update_runtime_snapshot};
+#[cfg(test)]
+use terminals::{TerminalLaunch, decode_terminal_bytes, resize_terminal_pty, start_terminal_with, stop_terminals, stream_terminal_output, write_terminal_input, write_terminal_queue};
+use archives::{archive_session, archived_session_file, delete_archived_session, delete_session, desktop_session_file, failed_storage, inspect_storage, relocate_session, restore_archived_worktree, storage_report};
+#[cfg(test)]
+use archives::{archive_local_session, archive_remote_session, collect_storage_report, delete_session_files, local_archived_session_file_at, local_desktop_session_file_at, parse_storage_inventory, query_storage_inventory, relocate_local_session, relocate_remote_session, remote_session_file, run_session_deletion};
+use git_diffs::{capture_git_tree, discard_git_tree, discard_git_tree_at_host, load_git_diff, load_git_diff_between_at_host, load_git_diffs, load_git_diffs_at_host, save_git_diffs, save_git_diffs_at_host};
+#[cfg(test)]
+use git_diffs::{discard_remote_git_tree, load_git_diff_at_host, load_local_git_diffs, load_remote_git_diff_between, load_remote_git_diff_with, query_remote_git_diffs, query_remote_git_tree, remote_save_git_diffs_script, remote_session_sidecar_script, save_local_git_diffs, valid_remote_snapshot, write_remote_git_diffs};
+use worktrees::{create_git_worktree, create_project_worktree, git_branch, git_project_kind, git_worktree_roots, is_git_repository, remove_git_worktree, sessions_on_host};
+#[cfg(test)]
+use worktrees::{canonical_worktree_roots, copy_untracked_file, create_local_git_worktree, create_project_worktree_at, git_branch_at, git_relative_path, inspect_git_project_kind, inspect_worktree_removal, local_branch_exists, local_worktree_is_registered, parse_worktree_output, remove_created_worktree, remove_worktree_target, validate_worktree_unused, worktree_branch_name, worktree_suffix, write_worktree_patch};
+use worktree_setup::{cancel_worktree_setup, ensure_desktop_sessions_dir, run_limited, run_worktree_setup, shell_quote, verify_setup_owner};
+#[cfg(test)]
+use worktree_setup::{GitSnapshotToken, LimitedOutput, WorktreeScriptPhase, execute_worktree_setup, register_worktree_setup, run_setup_process, run_worktree_scripts, signal_worktree_setup_cancellation};
+use pi_launch::{ remote_host, remote_login_command, session_identity, ssh, ssh_base};
+#[cfg(test)]
+use pi_launch::{ create_local_ephemeral_fork, create_remote_ephemeral_fork, prepare_ephemeral_path, read_remote_session_header, remote_directory_path, remote_pi_path, remove_ephemeral_session, stage_extension_script, validate_remote_host};
+#[cfg(test)]
+use broker::{agent_is_active, broker_response, read_broker_line, resolve_agent, worktree_agents};
+use session_index::{collect_host_sessions, create_temporary_chat, home_directory, list_directories, list_local_sessions, list_sessions, remove_temporary_chat, validate_project_directory};
+#[cfg(test)]
+use session_index::{create_local_temporary_chat, create_remote_temporary_chat, inspect_session_projects_with, list_local_directories, parse_remote_directories, parse_remote_session_metadata, query_remote_directories, query_remote_session_metadata, read_session_summaries, read_session_summaries_with, remote_directory_listing_script, remove_local_temporary_chat, remove_remote_temporary_chat, temporary_chat_id, update_remote_session_index, validate_local_project_directory, validate_remote_project_directory};
+use defaults_usage::{codex_usage, default_context_window_cap_enabled, default_keybindings, default_pi_path, default_true, deserialize_context_window_cap, home_dir, opencode_go_usage, pi_executable};
+#[cfg(test)]
+use defaults_usage::{codex_response, codex_usage_values, pi_executable_in, query_codex_usage};
+use settings::{default_agent, load_app_settings, save_app_settings};
+#[cfg(test)]
+use settings::{codex_disables_implicit_invocation, default_settings, discover_skills_in, expand_skill_path, frontmatter_value, merge_discovered_skills_at, read_settings_at, save_settings_with, skill_path_is_within, validate_settings_for_save};
+use extensions::{runtime_settings};
+#[cfg(test)]
+use extensions::{generated_extension_root, prepare_btw_extension, prepare_codex_web_search_extension, prepare_context_window_cap_extension, prepare_defined_agents_extension, prepare_diff_watch_extension, prepare_mcp_bridge, prepare_openai_cache_fork_extension, prepare_runtime_settings, prepare_session_broker, prepare_trace_reader};
+use settings_storage::{atomic_write_private, ensure_private_dir, set_private_file_permissions};
+#[cfg(test)]
+use settings_storage::{canonical_shortcut, migrate_keybindings, settings_path_at, validate_keybindings};
+use project_branches::{project_branches};
+#[cfg(test)]
+use snapshot_capture::{capture_local_git_tree, git_root_and_objects, local_git_diff_between, local_git_diff_with, local_git_input_is_bounded, local_git_tree_with, parse_local_snapshot, parse_local_snapshot_with, validate_snapshot_location};
+
+use broker::{BrokerRuntime, BusyAgent, broker_environment};
+#[cfg(test)]
+use broker::claim_agent;
+
+#[path = "backend/terminals.rs"]
+mod terminals;
+use terminals::TerminalRuntime;
+#[cfg(test)]
+use terminals::TerminalProcess;

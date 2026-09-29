@@ -24,10 +24,10 @@ pub(super) async fn dispatch_peer(app: AppHandle, owner: String, command: String
 
 async fn dispatch_local(app: AppHandle, owner: String, command: String, args: Value) -> Result<Value, String> {
     if let Some(id) = args.get("runtimeId").and_then(Value::as_str) {
-        if app.state::<PiRuntime>().processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(id).is_some_and(|process| process.window_label != owner) { return Err("Runtime belongs to another connection".into()); }
+        crate::pi_runtime::ensure_runtime_owner(&app.state::<PiRuntime>(), id, &owner)?;
     }
     if let Some(id) = args.get("terminalId").and_then(Value::as_str) {
-        if app.state::<TerminalRuntime>().processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.get(id).is_some_and(|process| process.window_label != owner) { return Err("Terminal belongs to another connection".into()); }
+        app.state::<TerminalRuntime>().ensure_owner(id, &owner)?;
     }
     let handler = COMMANDS.iter().find(|(name, _)| *name == command).map(|(_, handler)| handler)
         .ok_or_else(|| format!("Command is not available on the daemon: {command}"))?;
@@ -327,11 +327,7 @@ fn handle_prepare_worktree_setup(app: AppHandle, owner: String, _args: Value) ->
     Box::pin(async move {
         tokio::task::spawn_blocking(move || {
             let runtime = app.state::<PiRuntime>();
-            let mut owners = runtime.worktree_setup_owners.lock().map_err(|_| "Setup lock was poisoned")?;
-            if owners.detached.contains(&owner) { return Err("Connection has ended".into()); }
-            let id = prepare_worktree_setup(app.state())?;
-            owners.setups.insert(id.clone(), owner);
-            Ok(json!(id))
+            Ok(json!(crate::worktree_setup::prepare_for_owner(&runtime, owner)?))
         }).await.map_err(|error| error.to_string())?
     })
 }

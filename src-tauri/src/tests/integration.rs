@@ -78,7 +78,7 @@ fn worktree_setup_execution_removes_finished_failed_and_panicked_jobs_only() {
             "failure" => assert_eq!(result.unwrap_err(), "setup failed"),
             _ => assert!(result.unwrap_err().contains("panicked")),
         }
-        let pending = runtime.worktree_setups.lock().unwrap();
+        let pending = runtime.setups.test_pending().lock().unwrap();
         assert!(!pending.contains_key(&id)); assert!(pending.contains_key(&other)); assert_eq!(pending.len(), 1);
     }
 }
@@ -101,7 +101,7 @@ fn worktree_setup_execution_observes_cancellation_and_rejects_unknown_jobs() {
     signal_worktree_setup_cancellation(&runtime, &id).unwrap();
     release.send(()).unwrap();
     assert_eq!(worker.join().unwrap().unwrap_err(), "Environment setup cancelled");
-    assert!(runtime.worktree_setups.lock().unwrap().is_empty());
+    assert!(runtime.setups.test_pending().lock().unwrap().is_empty());
 }
 
 #[test]
@@ -111,17 +111,17 @@ fn worktree_setup_registration_and_cancellation_are_isolated_and_repeatable() {
     let second = register_worktree_setup(&runtime).unwrap();
     assert_ne!(first, second); assert!(Uuid::parse_str(&first).is_ok()); assert!(Uuid::parse_str(&second).is_ok());
     let (first_signal, second_signal) = {
-        let setups = runtime.worktree_setups.lock().unwrap();
+        let setups = runtime.setups.test_pending().lock().unwrap();
         (setups[&first].clone(), setups[&second].clone())
     };
     assert!(!first_signal.load(Ordering::SeqCst)); assert!(!second_signal.load(Ordering::SeqCst));
     signal_worktree_setup_cancellation(&runtime, "missing").unwrap();
     for _ in 0..2 { signal_worktree_setup_cancellation(&runtime, &first).unwrap(); }
     assert!(first_signal.load(Ordering::SeqCst)); assert!(!second_signal.load(Ordering::SeqCst));
-    assert_eq!(runtime.worktree_setups.lock().unwrap().len(), 2, "running setup owns registry removal");
-    runtime.worktree_setups.lock().unwrap().remove(&first);
+    assert_eq!(runtime.setups.test_pending().lock().unwrap().len(), 2, "running setup owns registry removal");
+    runtime.setups.test_pending().lock().unwrap().remove(&first);
     signal_worktree_setup_cancellation(&runtime, &first).unwrap();
-    assert_eq!(runtime.worktree_setups.lock().unwrap().len(), 1);
+    assert_eq!(runtime.setups.test_pending().lock().unwrap().len(), 1);
 }
 
 #[cfg(not(feature = "desktop"))]
@@ -132,8 +132,8 @@ fn disconnect_cancels_only_its_worktree_setups_and_rejects_late_registration() {
     let first = prepare("first").unwrap().as_str().unwrap().to_owned();
     let second = prepare("second").unwrap().as_str().unwrap().to_owned();
     let runtime = app.state::<PiRuntime>();
-    let first_signal = runtime.worktree_setups.lock().unwrap()[&first].clone();
-    let second_signal = runtime.worktree_setups.lock().unwrap()[&second].clone();
+    let first_signal = runtime.setups.test_pending().lock().unwrap()[&first].clone();
+    let second_signal = runtime.setups.test_pending().lock().unwrap()[&second].clone();
     detach_owner(&app, "first", false);
     assert!(first_signal.load(Ordering::SeqCst));
     assert!(!second_signal.load(Ordering::SeqCst));

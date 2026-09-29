@@ -1,4 +1,11 @@
-fn project_branches(app: AppHandle, cwd: String, host_id: Option<String>, branch: Option<String>) -> Result<Value, String> {
+use serde_json::Value;
+use crate::platform::AppHandle;
+use crate::{STORAGE_DIRECTORY, node_command};
+use crate::worktree_setup::{run_limited, shell_quote};
+use crate::pi_launch::{remote_host, remote_login_command, ssh};
+use crate::settings::{load_app_settings};
+
+pub(super) fn project_branches(app: AppHandle, cwd: String, host_id: Option<String>, branch: Option<String>) -> Result<Value, String> {
     let settings = load_app_settings(app)?;
     let host_id = host_id.as_deref().unwrap_or("local");
     let script = include_str!("../../resources/project-branches.cjs");

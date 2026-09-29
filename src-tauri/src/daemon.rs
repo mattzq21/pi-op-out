@@ -45,10 +45,7 @@ impl Daemon {
             for sender in captures.values() { let _ = sender.send(CaptureWork::Packet(json!({"phase":"closed"}))); }
         }
         if let Ok(mut pending) = self.pending.lock() { for (_, sender) in pending.drain() { let _ = sender.send(Err("Host daemon disconnected".into())); } }
-        let ids = runtime.processes.lock().map(|mut processes| {
-            let ids: Vec<_> = processes.iter().filter(|(_, process)| Arc::ptr_eq(&process.daemon, self)).map(|(id, _)| id.clone()).collect();
-            for id in &ids { processes.remove(id); } ids
-        }).unwrap_or_default();
+        let ids = runtime.disconnect_daemon(self);
         if let Ok(mut agents) = runtime.active_agents.lock() { agents.retain(|key, _| !key.starts_with(&self.agent_prefix) && !ids.contains(key)); }
         for id in ids { let _ = app.emit("pi://event", json!({"runtimeId":id,"event":{"type":"disconnected"}})); }
     }
@@ -109,7 +106,7 @@ fn connection_config(settings: &AppSettings, host_id: &str) -> Result<Option<(St
 }
 
 pub(crate) fn invalidate_changed(app: &AppHandle, runtime: &PiRuntime, settings: &AppSettings) -> Result<(), String> {
-    let mut daemons = runtime.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?;
+    let mut daemons = runtime.connections.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?;
     let changed: Vec<_> = daemons.iter().filter(|(host_id, daemon)| !daemon.matches_connection(settings, host_id)).map(|(host_id, _)| host_id.clone()).collect();
     for host_id in changed {
         if let Some(daemon) = daemons.get(&host_id) { daemon.disconnect(app, runtime); daemon.shutdown(); daemon.wait_shutdown(); daemon.drain_captures(None)?; }
@@ -119,7 +116,7 @@ pub(crate) fn invalidate_changed(app: &AppHandle, runtime: &PiRuntime, settings:
 }
 
 pub(crate) fn update_settings(app: &AppHandle, runtime: &PiRuntime, settings: &AppSettings) -> Result<(), String> {
-    let daemons = runtime.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?.iter().map(|(host, daemon)| (host.clone(), daemon.clone())).collect::<Vec<_>>();
+    let daemons = runtime.connections.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?.iter().map(|(host, daemon)| (host.clone(), daemon.clone())).collect::<Vec<_>>();
     for (host_id, daemon) in daemons {
         if let Err(error) = daemon.configure(runtime, settings, &host_id) {
             daemon.disconnect(app, runtime); daemon.shutdown();
@@ -131,7 +128,7 @@ pub(crate) fn update_settings(app: &AppHandle, runtime: &PiRuntime, settings: &A
 
 pub(crate) fn connect(app: &AppHandle, runtime: &PiRuntime, _broker: &BrokerRuntime, settings: &AppSettings, host_id: &str) -> Result<Arc<Daemon>, String> {
     if host_id != "local" { return Err("Remote workers must be managed through their Piop daemon".into()); }
-    let mut daemons = runtime.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?;
+    let mut daemons = runtime.connections.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?;
     let connection_config = connection_config(settings, host_id)?;
     let host = if host_id == "local" { None } else { Some(remote_host(settings, host_id)?.clone()) };
     if let Some(daemon) = reuse_connection(&mut daemons, app, runtime, settings, host_id, &connection_config)? { return Ok(daemon); }
@@ -209,10 +206,7 @@ fn handle_event(app: &AppHandle, connection: &Arc<Daemon>, packet: &Value) {
                     if packet["event"]["type"].as_str() == Some("disconnected") {
                         if let Some(id) = packet["runtimeId"].as_str() {
                             let runtime = app.state::<PiRuntime>();
-                            let owned = runtime.processes.lock().map(|mut processes| {
-                                if !processes.get(id).is_some_and(|process| Arc::ptr_eq(&process.daemon, connection)) { return false; }
-                                processes.remove(id); true
-                            }).unwrap_or(false);
+                            let owned = runtime.disconnect_process(id, connection);
                             if !owned { return; }
                             if let Ok(mut agents) = runtime.active_agents.lock() { agents.remove(id); };
                         }
@@ -326,4 +320,15 @@ fn update_capture_baseline(baselines: &mut HashMap<String, String>, packet: &Val
                     return true;
                 }
     false
+}
+
+#[derive(Default)]
+pub(super) struct DaemonRegistry { daemons: Mutex<HashMap<String, Arc<Daemon>>> }
+impl DaemonRegistry {
+    pub(super) fn get(&self, host_id: &str) -> Result<Option<Arc<Daemon>>, String> {
+        Ok(self.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?.get(host_id).cloned())
+    }
+    pub(super) fn snapshot(&self) -> Vec<Arc<Daemon>> {
+        self.daemons.lock().map(|daemons| daemons.values().cloned().collect()).unwrap_or_default()
+    }
 }
