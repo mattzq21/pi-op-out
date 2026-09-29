@@ -3,7 +3,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { createMemo, createSignal, Show, splitProps } from "solid-js";
 import { readDroppedFile } from "../lib/nativeTransport";
-import { pastedFiles, readClipboardImages } from "../lib/clipboardImages";
+import { clipboardImageFile, pastedFiles, readClipboardImages } from "../lib/clipboardImages";
 import { DictationControls } from "./DictationControls";
 import { isMobile } from "../lib/platform";
 import { accountModelName, providerAccountLabel } from "../lib/providerAccounts";
@@ -121,6 +121,10 @@ function pendingMessageClass(id: string, expanded: string | undefined, drop: Ret
 
 function canPickCommand(event: KeyboardEvent) {
   return (event.key === "Tab" || event.key === "Enter") && !event.shiftKey && !event.ctrlKey;
+}
+
+function pasteShortcut(event: KeyboardEvent) {
+  return (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v" && !event.altKey;
 }
 
 function imageFile(file: File) {
@@ -411,7 +415,29 @@ export function Composer(props: Props) {
     if (canPickCommand(event) && matches()[selectedMatch()]) { event.preventDefault(); chooseCommand(matches()[selectedMatch()]); return true; }
     return false;
   };
+  let pasteRevision = 0;
+  const pasteWithoutEvent = () => {
+    if (controls().inputDisabled || props.ownershipRequired) return;
+    const revision = pasteRevision;
+    const editor = ref.current;
+    const commit = composer().onUploadsChange ?? setLocalUploads;
+    setTimeout(() => {
+      if (revision !== pasteRevision || !editor?.isConnected || document.activeElement !== editor) return;
+      void readClipboardImages().then(files => addFiles(files, [], commit)).catch(reason => setUploadError(String(reason)));
+    }, 0);
+  };
+  createDependencyEffect(() => {
+    const handle = (event: Event) => {
+      if (event.target !== ref.current || controls().inputDisabled || props.ownershipRequired) return;
+      const detail = (event as CustomEvent<{ data?: string; mimeType?: string; error?: string }>).detail;
+      if (detail.error) { setUploadError(detail.error); return; }
+      if (detail.data) void addFiles([clipboardImageFile(detail.data, detail.mimeType)]).catch(reason => setUploadError(String(reason)));
+    };
+    document.addEventListener("piop-native-image-paste", handle);
+    return () => document.removeEventListener("piop-native-image-paste", handle);
+  }, () => []);
   const handleEditorKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (pasteShortcut(event)) pasteWithoutEvent();
     if (props.ownershipRequired) return;
     if (event.isComposing || handlePaletteKey(event)) return;
     if (event.key === "Enter" && !event.shiftKey && (!isMobile || event.ctrlKey)) { event.preventDefault(); event.stopPropagation(); void submit(event.ctrlKey ? "steer" : "followUp"); }
@@ -459,6 +485,7 @@ export function Composer(props: Props) {
     };
     return (<div ref={element => { composerRef.current = element; }} class={`composer${draggingFiles() && !controls().inputDisabled ? " dragging-files" : ""}`}
       onPaste={(event) => {
+        pasteRevision += 1;
         if (!event.clipboardData || controls().inputDisabled) return;
         const files = pastedFiles(event.clipboardData);
         if (!files.length && event.clipboardData.getData("text/plain")) return;

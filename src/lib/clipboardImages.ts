@@ -1,3 +1,5 @@
+import { isTauri, invoke } from "@tauri-apps/api/core";
+
 export function pastedFiles(data: DataTransfer): File[] {
   const files = Array.from(data.files);
   if (files.length) return files;
@@ -8,6 +10,10 @@ export function pastedFiles(data: DataTransfer): File[] {
 }
 
 export async function readClipboardImages(): Promise<File[]> {
+  if (isTauri()) {
+    const image = await invoke<string | null>("read_clipboard_image");
+    if (image) return [clipboardImageFile(image)];
+  }
   if (!navigator.clipboard?.read) return [];
   const items = await navigator.clipboard.read();
   const files: File[] = [];
@@ -18,4 +24,7 @@ export async function readClipboardImages(): Promise<File[]> {
     files.push(new File([blob], `Pasted image.${type.slice(6)}`, { type }));
   }
   return files;
+}
+export function clipboardImageFile(data: string, mimeType = "image/png") {
+  return new File([Uint8Array.from(atob(data), char => char.charCodeAt(0))], `Pasted image.${mimeType.slice(6)}`, { type: mimeType });
 }
