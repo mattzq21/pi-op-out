@@ -40,7 +40,7 @@ export function DictationControls(props: { disabled: boolean; compact?: boolean;
     <Show when={enabled()}>
       <button type="button" class={phase() === "recording" ? "dictation-recording" : ""} aria-label={phase() === "recording" ? "Stop dictation" : "Dictate"} aria-pressed={phase() === "recording"} disabled={props.disabled || phase() === "starting" || phase() === "transcribing"} onClick={() => void (phase() === "recording" ? finish() : start())}>
         {phase() === "recording" ? <Square size={14} /> : <Mic size={14} />}
-        <Show when={showLabel()}>{phase() === "recording" ? "Stop dictation" : phase() === "transcribing" ? "Transcribing…" : phase() === "starting" ? "Microphone…" : "Dictate"}</Show>
+        <Show when={showLabel()}><span class="dictation-label">{phase() === "recording" ? "Stop dictation" : phase() === "transcribing" ? "Transcribing…" : phase() === "starting" ? "Microphone…" : "Dictate"}</span></Show>
       </button>
       <Show when={phase() !== "idle"}><button type="button" aria-label="Cancel dictation" onClick={cancel}><X size={14} /></button></Show>
     </Show>

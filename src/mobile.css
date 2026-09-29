@@ -62,8 +62,9 @@ html[data-mobile] .app:has(.icon-rail:not(.compact)) ~ .mobile-reconnect-banner 
   .composer-bar { flex-wrap: wrap; gap: 4px; }
   .composer-bar .icon-button { width: 28px; height: 28px; min-width: 28px; min-height: 28px; }
   .composer-bar .icon-button svg { width: 15px; height: 15px; }
-  .composer-bar .dictation-controls button { min-height: 24px; padding: 2px 5px; gap: 3px; font-size: 11px; }
-  .composer-bar .dictation-controls svg { width: 12px; height: 12px; }
+  .composer-bar .dictation-controls button { width: 28px; height: 28px; min-height: 28px; padding: 4px; justify-content: center; }
+  .composer-bar .dictation-controls svg { width: 16px; height: 16px; }
+  .composer-bar .dictation-label { display: none; }
   .composer-bar .select-control { height: 24px; padding-inline: 2px; font-size: 11px; }
   .composer-bar .fast-mode-indicator { height: 24px; }
   .composer-bar .context-wheel { width: 22px; height: 24px; margin-left: 1px; }
