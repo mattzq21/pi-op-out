@@ -407,6 +407,7 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .app.dark .composer { border-color: #393732; box-shadow: 0 9px 30px #0005; }
 .app.dark .composer-bar .select-control { border-color: transparent; background: transparent; }
 .app.dark .composer-bar .select-control:hover { border-color: var(--line); background: var(--dark-control-hover); }
+.app .composer-bar .composer-picker-trigger[aria-label="Agent"]:disabled { pointer-events: none; cursor: default; border-color: transparent; background: transparent; }
 .app.dark .context-wheel-track { stroke: #45423c; }
 .app.dark .composer:focus-within { border-color: #68645c; box-shadow: 0 10px 35px #0004, 0 0 0 2px var(--accent-14); }
 .app.dark .composer-bar .send:disabled { background: #4b4943; color: #8f8b82; }
