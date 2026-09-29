@@ -80,7 +80,7 @@ function changeInstructionFromMessages(messages: unknown[]) {
 }
 
 function userInvokedSkills(messages: unknown[], options: BuildSystemPromptOptions | undefined) {
-  const available = new Map((options?.skills ?? []).filter(skill => skill.disableModelInvocation).map(skill => [skill.filePath, skill]));
+  const available = new Map((options?.skills ?? []).map(skill => [skill.filePath, skill]));
   const invoked = new Map<string, { name: string; description: string; filePath: string; content: string }>();
   for (const value of messages) {
     const message = value as { role?: string; content?: unknown } | null;
@@ -118,6 +118,7 @@ export default function contextBar(pi: ExtensionAPI) {
     const activeTools = new Set(pi.getActiveTools());
     const tools = pi.getAllTools().filter((tool) => activeTools.has(tool.name)).map(({ name, description, parameters }) => ({ name, description, parameters }));
     const estimate = (value: unknown) => Math.ceil((typeof value === "string" ? value : JSON.stringify(value)).length / 4);
+    const skillTokens = { defined: estimate(skillPrompt), invoked: invokedSkills.reduce((sum, skill) => sum + estimate(skill.content), 0) };
     const snapshot = {
       userTimestamp: user.message.timestamp,
       systemPrompt,
@@ -125,7 +126,8 @@ export default function contextBar(pi: ExtensionAPI) {
       tools,
       skills,
       userInvokedSkills: invokedSkills,
-      tokens: { system: estimate(systemPrompt.replace(skillPrompt, "").replace(instructionPrompt, "")), instructions: estimate(instructionPrompt) + estimate(messageProjectContext.block) + estimate(changeInstruction?.block ?? ""), tools: estimate(tools), skills: estimate(skillPrompt) + invokedSkills.reduce((sum, skill) => sum + estimate(skill.content), 0) },
+      skillTokens,
+      tokens: { system: estimate(systemPrompt.replace(skillPrompt, "").replace(instructionPrompt, "")), instructions: estimate(instructionPrompt) + estimate(messageProjectContext.block) + estimate(changeInstruction?.block ?? ""), tools: estimate(tools), skills: skillTokens.defined + skillTokens.invoked },
     };
     pi.appendEntry(STATUS_KEY, snapshot);
     ctx.ui.setStatus(STATUS_KEY, `json:${JSON.stringify(snapshot)}`);

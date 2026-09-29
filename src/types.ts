@@ -15,6 +15,7 @@ export interface PromptContextInfo {
   tools: Array<{ name: string; description: string; parameters?: unknown }>;
   skills: Array<{ name: string; description: string; filePath: string }>;
   userInvokedSkills?: Array<{ name: string; description: string; filePath: string; content?: string }>;
+  skillTokens?: { defined: number; invoked: number };
   tokens: { system: number; instructions: number; tools: number; skills: number };
 }
 export interface PendingMessage { id: string; message: string; behavior: "steer" | "followUp"; images?: ImageAttachment[]; retry?: boolean; }

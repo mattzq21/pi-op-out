@@ -43,6 +43,14 @@ function validSkills<T extends { filePath: string }>(skills: T[] | undefined): T
   return Array.isArray(skills) ? skills.filter(item => Boolean(item) && typeof item.filePath === "string") : [];
 }
 
+function skillPercentages(context: PromptContextInfo) {
+  const invoked = context.skillTokens?.invoked ?? (context.userInvokedSkills ?? []).reduce((sum, skill) => sum + Math.ceil((skill.content ?? "").length / 4), 0);
+  const defined = context.skillTokens?.defined ?? Math.max(0, contextTokens(context).skills - invoked);
+  const total = defined + invoked;
+  const definedPercent = total ? Math.round(defined / total * 100) : 0;
+  return { defined: definedPercent, invoked: total ? 100 - definedPercent : 0 };
+}
+
 function contextSections(context: PromptContextInfo) {
   const systemPrompt = typeof context?.systemPrompt === "string" ? context.systemPrompt : "";
   const instructions = Array.isArray(context?.instructions) ? context.instructions.filter((item): item is NonNullable<typeof item> => Boolean(item) && typeof (item as { path?: unknown }).path === "string") : [];
@@ -57,7 +65,8 @@ export const PromptContextBar = function PromptContextBar(componentProps: { cont
   const [skillTab, setSkillTab] = createSignal<"model" | "user">("model");
   const sections = createMemo(() => (contextSections(componentProps.context)));
   const visibleSkills = () => skillTab() === "model" ? sections().skills : sections().userInvokedSkills;
-  const emptySkills = () => skillTab() === "model" ? "No model-invokable skills" : "No user-only skills invoked in this context";
+  const emptySkills = () => skillTab() === "model" ? "No defined skills" : "No skills invoked in this context";
+  const skillPercent = createMemo(() => skillPercentages(componentProps.context));
   const tokens = createMemo(() => contextTokens(componentProps.context));
   const totalTokens = createMemo(() => Object.values(tokens()).reduce((sum, value) => sum + value, 0));
   const percent = createMemo(() => shares(tokens()));
@@ -79,8 +88,8 @@ export const PromptContextBar = function PromptContextBar(componentProps: { cont
     {(active())! === "tools" && (sections().tools.length ? <Key each={sections().tools} by={(tool) => tool.name}>{(tool, _index) => <div ><strong>{tool().name}</strong>{typeof tool().description === "string" && tool().description && <p>{tool().description}</p>}<pre>{JSON.stringify(tool().parameters, null, 2)}</pre></div>}</Key> : <p>No active tools</p>)}
     {(active())! === "skills" && <>
       <nav class="prompt-skills-tabs" aria-label="Skill categories">
-        <button type="button" aria-pressed={skillTab() === "model"} onClick={() => setSkillTab("model")}>Model-invokable <small>{sections().skills.length}</small></button>
-        <button type="button" aria-pressed={skillTab() === "user"} onClick={() => setSkillTab("user")}>User-invoked <small>{sections().userInvokedSkills.length}</small></button>
+        <button type="button" aria-pressed={skillTab() === "model"} title="Share of estimated skills tokens used by definitions" onClick={() => setSkillTab("model")}>Defined <small>{skillPercent().defined}%</small></button>
+        <button type="button" aria-pressed={skillTab() === "user"} title="Share of estimated skills tokens used by invoked content" onClick={() => setSkillTab("user")}>Invoked <small>{skillPercent().invoked}%</small></button>
       </nav>
       {visibleSkills().length ? <Key each={visibleSkills()} by={(skill) => skill.filePath}>{(skill, _index) => <div><strong>{typeof skill().name === "string" ? skill().name : skill().filePath}</strong>{typeof skill().description === "string" && skill().description && <p>{skill().description}</p>}<small>{skill().filePath}</small></div>}</Key> : <p>{emptySkills()}</p>}
     </>}
