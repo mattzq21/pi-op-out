@@ -20,11 +20,11 @@ type KeyboardContext = {
   settingsDirty: Accessor<boolean>;
   view: Accessor<"chat" | "settings">;
   terminalOpen: Accessor<boolean>;
-  setTerminalOpen: Setter<boolean>;
+  closeTerminal: () => void;
 };
 
 export function useAppKeyboard(context: KeyboardContext) {
-  const { settings, activePane, splitPane, canLeaveSettings, setView, setPanelOpen, newSession, toggleTerminal, toggleDebugMode, setSplitComposerFocusRequest, setMainComposerFocusRequest, settingsDirty, view, terminalOpen, setTerminalOpen } = context;
+  const { settings, activePane, splitPane, canLeaveSettings, setView, setPanelOpen, newSession, toggleTerminal, toggleDebugMode, setSplitComposerFocusRequest, setMainComposerFocusRequest, settingsDirty, view, terminalOpen, closeTerminal } = context;
   createDependencyEffect(() => { const capturedSettings = settings(); const capturedActivePane = activePane(); const capturedSplitPane = splitPane();
     if (!capturedSettings) return;
     const ignoreAppShortcut = (event: KeyboardEvent) => {
@@ -57,7 +57,7 @@ export function useAppKeyboard(context: KeyboardContext) {
   }, () => [settings(), toggleDebugMode, settingsDirty(), view(), activePane(), splitPane()]);
   createDependencyEffect(() => { const capturedView = view(); const capturedTerminalOpen = terminalOpen();
     if (!isMobile) return;
-    const back = () => { if (capturedView === "settings") { if (canLeaveSettings()) setView("chat"); } else if (capturedTerminalOpen) setTerminalOpen(false); else setPanelOpen((value) => !value); };
+    const back = () => { if (capturedView === "settings") { if (canLeaveSettings()) setView("chat"); } else if (capturedTerminalOpen) closeTerminal(); else setPanelOpen((value) => !value); };
     window.addEventListener("piop-mobile-back", back);
     return () => window.removeEventListener("piop-mobile-back", back);
   });

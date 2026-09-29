@@ -1,5 +1,4 @@
 import type { Accessor, Setter } from "solid-js";
-import type { SessionTerminals } from "./appSupport";
 import { hasVisibleText } from "./lib/content";
 import type { NativeTransport } from "./lib/nativeTransport";
 import type { SessionRuntimePool } from "./lib/sessionRuntimePool";
@@ -19,11 +18,11 @@ type ActivationContext = {
   setTransport: Setter<NativeTransport>;
   setUploadsByTransport: Setter<Map<NativeTransport, ComposerUpload[]>>;
   setComposerDrafts: Setter<Record<string, string>>;
-  setTerminalsBySession: Setter<Record<string, SessionTerminals>>;
+  forgetTerminals: (key: string) => void;
 };
 
 export function createTransportActivation(context: ActivationContext) {
-  const { transport, transportConversationKeys, transportHasDraft, conversationTerminalIds, runtimePool, chatSession, composerDrafts, activeTransportRef, setTransport, setUploadsByTransport, setComposerDrafts, setTerminalsBySession } = context;
+  const { transport, transportConversationKeys, transportHasDraft, conversationTerminalIds, runtimePool, chatSession, composerDrafts, activeTransportRef, setTransport, setUploadsByTransport, setComposerDrafts, forgetTerminals } = context;
   const emptyConversation = () => chatSession().state.messageCount === 0 && chatSession().messages.length === 0;
   const retainDraft = (previousTransport: NativeTransport, previousKey: string) => {
       const hostId = previousTransport.currentHostId(); const id = previousKey.slice(hostId.length + 1); const draft = composerDrafts()[previousKey] ?? ""; const cwd = previousTransport.currentCwd() ?? "";
@@ -36,7 +35,7 @@ export function createTransportActivation(context: ActivationContext) {
         setComposerDrafts((current) => { if (!(previousKey in current)) return current; const next = { ...current }; delete next[previousKey]; return next; });
         const terminalIds = conversationTerminalIds(previousKey);
         if (terminalIds.length) void Promise.allSettled(terminalIds.map((id) => previousTransport.closeTerminal(id)));
-        setTerminalsBySession((current) => { if (!(previousKey in current)) return current; const next = { ...current }; delete next[previousKey]; return next; });
+        forgetTerminals(previousKey);
       }
       void runtimePool().release(previousTransport).finally(() => transportConversationKeys.current.delete(previousTransport));
   };

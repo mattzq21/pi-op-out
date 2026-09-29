@@ -1,4 +1,3 @@
-import type { TerminalTarget } from "./appSupport";
 import { type Dispatch, type RefObject, type StateUpdate } from "./lib/solid";
 
 import { branchMessages, type PiEntry } from "./lib/messages";
@@ -17,8 +16,7 @@ type Context = {
   rekeyConversationUi: (previousKey: string, nextKey: string, ownerTransport: NativeTransport, moveTerminals?: boolean, copyDraft?: boolean) => void;
   activeTransportRef: RefObject<NativeTransport>;
   setActiveCwd: Dispatch<StateUpdate<string | undefined>>;
-  setTerminalOpen: Dispatch<StateUpdate<boolean>>;
-  setTerminalTarget: Dispatch<StateUpdate<TerminalTarget | undefined>>;
+  resetTerminal: () => void;
   setState: Dispatch<StateUpdate<AgentState>>;
   setMessages: Dispatch<StateUpdate<ChatMessage[]>>;
   updateConnected: (value: boolean) => void;
@@ -29,7 +27,7 @@ type Context = {
   syncSessionIndex: () => Promise<void>;
 };
 
-export function createBranchConversation({ transport, activeConversationKeyRef, branchPending, state, sessions, runtimePool, rekeyConversationUi, activeTransportRef, setActiveCwd, setTerminalOpen, setTerminalTarget, setState, setMessages, updateConnected, configureRuntime, transportConversationKeys, activateConversationKey, addNotice, syncSessionIndex }: Context) {
+export function createBranchConversation({ transport, activeConversationKeyRef, branchPending, state, sessions, runtimePool, rekeyConversationUi, activeTransportRef, setActiveCwd, resetTerminal, setState, setMessages, updateConnected, configureRuntime, transportConversationKeys, activateConversationKey, addNotice, syncSessionIndex }: Context) {
   return async (message: ChatMessage, destinationCwd?: string) => {
     const entryId = message.entryId; if (!entryId) throw new Error("Could not find the response to branch from");
     const ownerTransport = transport; const previousKey = activeConversationKeyRef.current;
@@ -52,7 +50,7 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
       }
       rekeyConversationUi(previousKey, nextKey, ownerTransport, !destinationCwd);
       if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === nextKey) {
-        if (destinationCwd) { setActiveCwd(destinationCwd); setTerminalOpen(false); setTerminalTarget(undefined); }
+        if (destinationCwd) { setActiveCwd(destinationCwd); resetTerminal(); }
         setState(nextState); setMessages(branchMessages(history.entries, history.leafId)); updateConnected(true);
       }
 
