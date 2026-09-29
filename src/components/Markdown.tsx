@@ -1,14 +1,15 @@
 import DOMPurify from "dompurify";
 import { Copy } from "lucide-solid";
 import { Marked } from "marked";
-import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { openExternalUrl } from "../lib/nativeTransport";
 import { fileReference, type FileReference } from "../lib/projectFiles";
 import { detectFileLinks } from "../lib/fileLinks";
 import { webUrl } from "../lib/webLinks";
 import { diagramFenceClosed } from "../lib/diagrams";
-import { markdownDiagrams } from "./markdownDiagrams";
+import { markdownBlocks } from "./markdownBlocks";
+import { streamingMarkdown } from "./streamingMarkdown";
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
 const parser = new Marked({
@@ -32,8 +33,11 @@ const parser = new Marked({
 let purifier: ReturnType<typeof DOMPurify> | undefined;
 let purifierWindow: Window | undefined;
 export function markdownHtml(source: string, streaming = false, detectFiles = false) {
+  return sanitizeMarkdown(parser.parse(source, { async: false }), streaming, detectFiles);
+}
+
+function sanitizeMarkdown(html: string, streaming: boolean, detectFiles: boolean) {
   if (!purifier || purifierWindow !== window) { purifier = DOMPurify(window); purifierWindow = window; }
-  const html = parser.parse(source, { async: false });
   const sanitized = purifier.sanitize(streaming ? html : html.replaceAll('data-complete="false"', 'data-complete="true"'), {
     USE_PROFILES: { html: true },
     FORBID_TAGS: ["img", "video", "audio", "source", "iframe", "form", "style"],
@@ -44,14 +48,17 @@ export function markdownHtml(source: string, streaming = false, detectFiles = fa
 
 type LinkMenu = { href: string; x: number; y: number; returnFocus?: HTMLElement };
 export function Markdown(props: { children: string; streaming?: boolean; onOpenFile?: (file: FileReference) => void }) {
-  const html = createMemo(() => markdownHtml(props.children, props.streaming, Boolean(props.onOpenFile)));
+  const renderMarkdown = streamingMarkdown(parser, sanitizeMarkdown);
   const [error, setError] = createSignal<string>();
   const [menu, setMenu] = createSignal<LinkMenu>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   let root: HTMLDivElement | undefined;
-  const diagrams = markdownDiagrams();
-  createEffect(() => { html(); if (root) diagrams.update(root); });
-  onCleanup(() => diagrams.dispose());
+  const blocks = markdownBlocks();
+  createEffect(() => {
+    const html = renderMarkdown(props.children, Boolean(props.streaming), Boolean(props.onOpenFile));
+    if (root) blocks.update(root, html);
+  });
+  onCleanup(() => blocks.dispose());
   const [menuElement, setMenuElement] = createSignal<HTMLDivElement>();
   onCleanup(() => timers.forEach(clearTimeout));
   const close = (restoreFocus = false) => { if (restoreFocus) menu()?.returnFocus?.focus({ preventScroll: true }); setMenu(undefined); };
@@ -134,7 +141,7 @@ export function Markdown(props: { children: string; streaming?: boolean; onOpenF
     close(true);
   };
   return <>
-    <div ref={root} class="markdown-content" innerHTML={html()} onClick={click} onContextMenu={contextMenu} onAuxClick={event => event.preventDefault()} />
+    <div ref={root} class="markdown-content" onClick={click} onContextMenu={contextMenu} onAuxClick={event => event.preventDefault()} />
     <Show when={menu()}>{current => <Portal mount={root?.closest(".app") ?? document.body}>
       <div ref={setMenuElement} class="conversation-menu link-context-menu" role="menu" aria-label="Link actions" style={{ left: `${current().x}px`, top: `${current().y}px` }} onContextMenu={event => event.preventDefault()}>
         <button type="button" role="menuitem" onClick={() => void copyLink()}><Copy size={14} />Copy link</button>
