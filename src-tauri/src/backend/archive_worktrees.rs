@@ -25,6 +25,7 @@ fn archive_worktree_command(settings: &AppSettings, host_id: &str, target: &Work
 }
 
 pub(super) fn cleanup_archived_worktree(app: &AppHandle, host_id: &str, cwd: &str) -> Result<(), String> {
+    let _invalidate = app.state::<SessionIndexRuntime>().projects.invalidate_after(host_id);
     let settings = load_app_settings(app.clone())?;
     let Ok(target) = validated_removal_target(app, &settings, cwd, host_id) else { return Ok(()); };
     let eligible = archive_worktree_command(&settings, host_id, &target, "check")?;

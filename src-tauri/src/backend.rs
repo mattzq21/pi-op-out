@@ -91,6 +91,7 @@ struct CachedSession { fingerprint: String, summary: SessionSummary }
 struct SessionIndexRuntime {
     local: Mutex<HashMap<PathBuf, CachedSession>>,
     remote: Mutex<HashMap<String, HashMap<String, CachedSession>>>,
+    projects: project_metadata::ProjectMetadataCache,
 }
 
 const MAX_TERMINALS: usize = 8;
@@ -419,6 +420,8 @@ mod pi_launch;
 mod pi_runtime;
 #[path = "backend/session_index.rs"]
 mod session_index;
+#[path = "backend/project_metadata.rs"]
+mod project_metadata;
 #[path = "backend/archives.rs"]
 mod archives;
 #[path = "backend/broker.rs"]

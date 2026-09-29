@@ -28,8 +28,8 @@ pub(super) fn branch_appearance(bytes: &[u8], branch: Option<&str>) -> Option<Va
 
 fn unix_timestamp(time: SystemTime) -> u64 { time.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs() }
 
-fn inspect_session_projects(sessions: &mut [SessionSummary], host: Option<&RemoteHost>) -> Result<(), String> {
-    inspect_session_projects_with(sessions, |script, batch| {
+fn inspect_session_projects(index: &SessionIndexRuntime, sessions: &mut [SessionSummary], host: Option<&RemoteHost>) -> Result<(), String> {
+    index.projects.inspect(sessions, host, |pending| inspect_session_projects_with(pending, |script, batch| {
         if let Some(host) = host {
             let arguments = batch.iter().map(|path| shell_quote(path)).collect::<Vec<_>>().join(" ");
             let mut command = ssh(host);
@@ -40,11 +40,26 @@ fn inspect_session_projects(sessions: &mut [SessionSummary], host: Option<&Remot
             command.args(["-c", script, "sh"]).args(batch);
             command
         }
-    })
+    }))
 }
 
 fn project_kind_from_flag(flag: &[u8]) -> Option<ProjectKind> {
     match flag { b"no-repo" => Some(ProjectKind::NoRepo), b"main" => Some(ProjectKind::Main), b"worktree" => Some(ProjectKind::Worktree), _ => None }
+}
+
+fn inspect_project_batches(directories: &[String], script: &str, command: &mut impl FnMut(&str, &[String]) -> Command) -> Result<Vec<(Vec<String>, crate::worktree_setup::LimitedOutput)>, String> {
+    let mut outputs = Vec::new();
+    for group in directories.chunks(64) {
+        let commands = group.chunks(16).map(|batch| (batch.to_vec(), command(script, batch))).collect::<Vec<_>>();
+        let completed = thread::scope(|scope| {
+            let workers = commands.into_iter().map(|(batch, mut command)| scope.spawn(move || {
+                run_limited(&mut command, MAX_GIT_PATH_LIST_BYTES, "Could not inspect session projects").map(|output| (batch, output))
+            })).collect::<Vec<_>>();
+            workers.into_iter().map(|worker| worker.join().map_err(|_| "Project inspection worker panicked".to_string())?).collect::<Result<Vec<_>, String>>()
+        })?;
+        outputs.extend(completed);
+    }
+    Ok(outputs)
 }
 
 pub(super) fn inspect_session_projects_with(sessions: &mut [SessionSummary], mut command: impl FnMut(&str, &[String]) -> Command) -> Result<(), String> {
@@ -64,8 +79,7 @@ pub(super) fn inspect_session_projects_with(sessions: &mut [SessionSummary], mut
         printf '\000%s\000' "$worktree_root"
     done"#;
     let mut projects = HashMap::new();
-    for batch in directories.chunks(16) {
-        let output = run_limited(&mut command(script, batch), MAX_GIT_PATH_LIST_BYTES, "Could not inspect session projects")?;
+    for (batch, output) in inspect_project_batches(&directories, script, &mut command)? {
         if !output.status.success() { return Err(format!("Could not inspect session projects: {}", String::from_utf8_lossy(&output.stderr).trim())); }
         let fields = output.stdout.strip_suffix(&[0]).ok_or("Incomplete session project details")?.split(|byte| *byte == 0).collect::<Vec<_>>();
         if fields.len() != batch.len() * 5 { return Err("Could not inspect every session project".into()); }
@@ -76,7 +90,7 @@ pub(super) fn inspect_session_projects_with(sessions: &mut [SessionSummary], mut
             let appearance = branch_appearance(details[3], branch.as_deref().and_then(|name| name.split('|').next()));
             let worktree_root = (!details[4].is_empty()).then(|| String::from_utf8_lossy(details[4]).into_owned());
             let kind = project_kind_from_flag(flag);
-            projects.insert(path.as_str(), (flag != b"missing", kind, project_root, branch, appearance, worktree_root));
+            projects.insert(path.clone(), (flag != b"missing", kind, project_root, branch, appearance, worktree_root));
         }
     }
     for session in sessions {
@@ -134,14 +148,14 @@ pub(super) fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> R
     }
     for (path, summary) in read_session_summaries(&changed, None)? { cache.insert(PathBuf::from(path), summary); }
     cache.retain(|path, _| seen.contains(path)); let mut sessions = cache.values().map(|cached| cached.summary.clone()).collect::<Vec<_>>(); drop(cache);
-    inspect_session_projects(&mut sessions, None)?; Ok(sessions)
+    inspect_session_projects(index, &mut sessions, None)?; Ok(sessions)
 }
 
 pub(super) fn list_remote_sessions(index: &SessionIndexRuntime, host: &RemoteHost) -> Result<Vec<SessionSummary>, String> {
     let metadata = query_remote_session_metadata(|script| { let mut command = ssh(host); command.arg(script); command })?;
     update_remote_session_index(index, host, &metadata,
         |changed| read_session_summaries(changed, Some(host)),
-        |sessions| inspect_session_projects(sessions, Some(host)))
+        |sessions| inspect_session_projects(index, sessions, Some(host)))
 }
 
 pub(super) fn query_remote_session_metadata(command: impl FnOnce(&str) -> Command) -> Result<Vec<u8>, String> {

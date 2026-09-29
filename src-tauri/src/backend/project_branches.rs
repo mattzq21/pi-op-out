@@ -6,6 +6,7 @@ use crate::pi_launch::{remote_host, remote_login_command, ssh};
 use crate::settings::{load_app_settings};
 
 pub(super) fn project_branches(app: AppHandle, cwd: String, host_id: Option<String>, branch: Option<String>) -> Result<Value, String> {
+    let _invalidate = branch.as_deref().filter(|branch| !branch.is_empty()).map(|_| app.state::<crate::SessionIndexRuntime>().projects.invalidate_after(host_id.as_deref().unwrap_or("local")));
     let settings = load_app_settings(app)?;
     let host_id = host_id.as_deref().unwrap_or("local");
     let script = include_str!("../../resources/project-branches.cjs");
