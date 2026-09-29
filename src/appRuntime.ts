@@ -13,9 +13,14 @@ export async function openDraftSession(owner: NativeTransport, target: { cwd?: s
 }
 
 function initialContextUsage(state: AgentState, inherited?: ProjectControls) {
-  if (state.messageCount > 0 || state.isStreaming || state.pendingMessageCount > 0) return state.contextUsage;
+  if (state.messageCount > 0 || state.isStreaming || state.pendingMessageCount > 0) return state.contextUsage ?? pendingContextUsage(state, inherited);
   if (!inherited && state.contextUsage) return state.contextUsage;
   return emptyContextUsage(state, inherited);
+}
+
+function pendingContextUsage(state: AgentState, inherited?: ProjectControls) {
+  const usage = emptyContextUsage(state, inherited);
+  return usage && { ...usage, tokens: null, percent: null };
 }
 
 function emptyContextUsage(state: AgentState, inherited?: ProjectControls) {
