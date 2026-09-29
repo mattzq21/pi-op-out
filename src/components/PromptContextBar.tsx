@@ -102,7 +102,7 @@ export const PromptContextBar = function PromptContextBar(componentProps: { cont
       <button class="instructions" aria-expanded={active() === "instructions"} onClick={() => toggle("instructions")}>Instructions <small>{percent().instructions}%</small></button>
       <button class="tools" aria-expanded={active() === "tools"} onClick={() => toggle("tools")}>Tools <small>{percent().tools}%</small></button>
       <button class="skills" aria-expanded={active() === "skills"} onClick={() => toggle("skills")}>Skills <small>{percent().skills}%</small></button>
-      <span class="prompt-context-wheel" style={wheelStyle()} title={`Total context: ${totalTokens().toLocaleString()} tokens`} aria-label={`Total context: ${totalTokens().toLocaleString()} tokens`} />
+      <span class="prompt-context-wheel" style={wheelStyle()} title={`${totalTokens().toLocaleString()} tokens`} aria-label={`${totalTokens().toLocaleString()} tokens`} />
     </div>
     {renderPromptContextContent()}
   </section>;
