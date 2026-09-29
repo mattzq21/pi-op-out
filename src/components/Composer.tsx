@@ -15,6 +15,8 @@ import type { AgentProfile, ComposerUpload, ContextUsage, ImageAttachment, Model
 import { IconButton } from "./IconButton";
 
 interface Props {
+  ownershipRequired?: boolean;
+  onTakeOwnership?: () => Promise<void>;
   toolbar?: JSXElement;
   streaming: boolean;
   compacting?: boolean;
@@ -194,6 +196,7 @@ export function Composer(props: Props) {
   const [paletteDismissed, setPaletteDismissed] = createSignal(false);
   const [caretAtEnd, setCaretAtEnd] = createSignal(true);
   const ref = createRef<HTMLTextAreaElement>(null);
+  const focusOwnedEditor = () => { if (!props.ownershipRequired) ref.current?.focus(); };
   const composerRef = createRef<HTMLDivElement>(null);
   const selectedCommandRef = createRef<HTMLButtonElement>(null);
   const [draggingFiles, setDraggingFiles] = createSignal(false);
@@ -253,15 +256,19 @@ export function Composer(props: Props) {
   let handledFocusRequest: number | undefined;
   createDependencyEffect(() => {
     const request = composer().focusRequest ?? 0;
+    if (props.ownershipRequired) { handledFocusRequest = request; return; }
     if (composer().controlsDisabled || handledFocusRequest === request) return;
     const frame = requestAnimationFrame(() => {
       const editor = ref.current;
-      if (!editor?.isConnected || editor.disabled || document.querySelector("dialog[open]")) return;
+      if (!editor?.isConnected || editor.disabled || props.ownershipRequired || document.querySelector("dialog[open]")) return;
       editor.focus({ preventScroll: true });
       if (document.activeElement === editor) handledFocusRequest = request;
     });
     return () => cancelAnimationFrame(frame);
-  }, () => [composer().focusRequest, composer().controlsDisabled]);
+  }, () => [composer().focusRequest, composer().controlsDisabled, props.ownershipRequired]);
+  createDependencyEffect(() => {
+    if (props.ownershipRequired) ref.current?.blur();
+  }, () => [props.ownershipRequired]);
   createDependencyEffect(() => {
     const capturedComposer = { ...composer() }; const capturedValue = value();
  if (capturedComposer.restoredDraft && (capturedComposer.restoredDraft)!.id !== restoredDraftId.current) { restoredDraftId.current = (capturedComposer.restoredDraft)!.id; if (!capturedValue) setValue((capturedComposer.restoredDraft)!.value); } }, () => [composer().restoredDraft]);
@@ -332,7 +339,7 @@ export function Composer(props: Props) {
       setDraggingFiles(payload.type !== "drop" && enabled);
       if (payload.type !== "drop" || !enabled) return;
       void nativeDropRef.current.addPaths(payload.paths, () => disposed).catch((reason) => { if (!disposed) setUploadError(String(reason)); });
-      ref.current?.focus();
+      focusOwnedEditor();
     }).then((cleanup) => { if (disposed) cleanup(); else unlisten = cleanup; })
       .catch((reason) => { if (!disposed) setUploadError(`Could not enable file drops: ${String(reason)}`); });
     return () => { disposed = true; unlisten?.(); };
@@ -394,7 +401,7 @@ export function Composer(props: Props) {
     const name = skillName(command);
     if (skillQuery() !== undefined && name) setValue(value().replace(/\$[a-zA-Z0-9_-]*$/, `$${name} `));
     else setValue(`/${command.name} `);
-    ref.current?.focus();
+    focusOwnedEditor();
   };
   const handlePaletteKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.currentTarget.selectionStart !== value().length || event.currentTarget.selectionEnd !== value().length) return false;
@@ -404,6 +411,7 @@ export function Composer(props: Props) {
     return false;
   };
   const handleEditorKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (props.ownershipRequired) return;
     if (event.isComposing || handlePaletteKey(event)) return;
     if (event.key === "Enter" && !event.shiftKey && (!isMobile || event.ctrlKey)) { event.preventDefault(); event.stopPropagation(); void submit(event.ctrlKey ? "steer" : "followUp"); }
   };
@@ -418,10 +426,10 @@ export function Composer(props: Props) {
     const renderComposerDropHint = () => (draggingFiles() && !controls().inputDisabled && <div class="composer-drop-hint" role="status">Drop files to attach</div>);
     const renderCommandPalette = () => (<Show when={matches().length > 0}><div class="command-palette" role="listbox" aria-label={skillQuery() === undefined ? "piop commands" : "piop skills"}>{<Key each={matches()} by={(command) => `${command.source}:${command.name}`}>{(command, index) => <button ref={element => { if (index() === selectedMatch()) selectedCommandRef.current = element; }} role="option" aria-selected={index() === selectedMatch()}  type="button" onClick={() => chooseCommand(command())}><span><strong>{skillQuery() !== undefined ? `$${skillName(command())}` : `/${command().name}`}</strong>{command().description && <small>{command().description}</small>}</span></button>}</Key>}</div></Show>);
     const renderComposerEditor = () => (<div class="composer-editor">
-        <textarea ref={element => { ref.current = element; }} aria-label="Message piop" disabled={composer().controlsDisabled} placeholder={composer().controlsDisabled ? "Connecting to piop…" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setCaretAtEnd(event.currentTarget.selectionStart === event.currentTarget.value.length && event.currentTarget.selectionEnd === event.currentTarget.value.length)} onInput={(event) => { setCaretAtEnd(event.target.selectionStart === event.target.value.length && event.target.selectionEnd === event.target.value.length); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
+        <textarea ref={element => { ref.current = element; }} aria-label="Message piop" readOnly={props.ownershipRequired} onFocus={() => { if (props.ownershipRequired) void props.onTakeOwnership?.(); }} disabled={composer().controlsDisabled && !props.ownershipRequired} placeholder={props.ownershipRequired ? "Focus to take ownership…" : composer().controlsDisabled ? "Connecting to piop…" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setCaretAtEnd(event.currentTarget.selectionStart === event.currentTarget.value.length && event.currentTarget.selectionEnd === event.currentTarget.value.length)} onInput={(event) => { setCaretAtEnd(event.target.selectionStart === event.target.value.length && event.target.selectionEnd === event.target.value.length); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
       </div>);
     const ComposerBar = () => {
-      const ComposerTools = () => (<div class="composer-tools"><DictationControls disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); ref.current?.focus(); }} />{composer().onOpenTerminal && <IconButton title="" label="Open terminal" disabled={composer().controlsDisabled} onClick={(composer().onOpenTerminal)!}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage}>{usage => <ContextWheel usage={usage()} />}</Show><Show when={composer().sessionCache}>{cache => <span class={`session-cache-hit${cache().low ? " low" : ""}`}>Cache {cache().rate}%</span>}</Show></div>);
+      const ComposerTools = () => (<div class="composer-tools"><DictationControls disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); focusOwnedEditor(); }} />{composer().onOpenTerminal && <IconButton title="" label="Open terminal" disabled={composer().controlsDisabled} onClick={(composer().onOpenTerminal)!}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage}>{usage => <ContextWheel usage={usage()} />}</Show><Show when={composer().sessionCache}>{cache => <span class={`session-cache-hit${cache().low ? " low" : ""}`}>Cache {cache().rate}%</span>}</Show></div>);
       const renderComposerActions = () => {
         const agentSelectionDisabled = () => composer().agentLocked || composer().streaming || controls().inputDisabled;
         const changeAgent = (name: string) => { if (!agentSelectionDisabled()) composer().onAgent(name); };
@@ -483,7 +491,7 @@ export function Composer(props: Props) {
           if (files.length) await addFiles(files);
           else await nativeDropRef.current.addPaths(paths);
         })().catch((reason) => setUploadError(reason instanceof Error ? reason.message : String(reason)));
-        ref.current?.focus();
+        focusOwnedEditor();
       }}>
       {renderComposerDropHint()}
       {renderCommandPalette()}
