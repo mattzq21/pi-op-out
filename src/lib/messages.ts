@@ -103,7 +103,7 @@ function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, resumeMarkers
   const marker = resumeMarker(entry);
   if (marker) { resumeMarkers.add(marker); return checkpointLatestUser(messages); }
   if (entry.customType === "pi-desktop-pause-state" && (entry.data as { isPaused?: boolean } | undefined)?.isPaused) return checkpointLatestUser(messages);
-  if (entry.customType === "pi-desktop-prompt-context") appendPromptContext(messages, entry);
+  if (["piop-context", "pi-desktop-prompt-context"].includes(entry.customType ?? "")) appendPromptContext(messages, entry);
   return messages;
 }
 

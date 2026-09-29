@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import type { BuildSystemPromptOptions, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const STATUS_KEY = "pi-desktop-prompt-context";
+const ENTRY_TYPE = "piop-context";
 const PROJECT_CONTEXT_MESSAGE = "pi-desktop-project-context";
 
 function skillsFromPrompt(prompt: string) {
@@ -113,7 +114,7 @@ export default function contextBar(pi: ExtensionAPI) {
     const userIndex = branch.findLastIndex((entry) => entry.type === "message" && entry.message.role === "user" && !resumeMessages.has(textContent(entry.message.content)));
     const user = branch[userIndex];
     if (!user || user.type !== "message") return;
-    if (branch.slice(userIndex + 1).some((entry) => entry.type === "custom" && entry.customType === STATUS_KEY)) return;
+    if (branch.slice(userIndex + 1).some((entry) => entry.type === "custom" && [ENTRY_TYPE, STATUS_KEY].includes(entry.customType))) return;
     const systemPrompt = ctx.getSystemPrompt();
     const { block: skillPrompt, skills } = skillsFromPrompt(systemPrompt);
     const invokedSkills = userInvokedSkills(messages, promptOptions, invocationWindow(branch));
@@ -138,7 +139,7 @@ export default function contextBar(pi: ExtensionAPI) {
       skillTokens,
       tokens: { system: estimate(instructionBlocks.reduce((prompt, block) => prompt.replace(block, ""), systemPrompt.replace(skillPrompt, ""))), instructions: estimate(instructionPrompt) + estimate(messageProjectContext.block) + estimate(changeInstruction?.block ?? ""), tools: estimate(tools), skills: skillTokens.defined + skillTokens.invoked },
     };
-    pi.appendEntry(STATUS_KEY, snapshot);
+    pi.appendEntry(ENTRY_TYPE, snapshot);
     ctx.ui.setStatus(STATUS_KEY, `json:${JSON.stringify(snapshot)}`);
   };
   pi.on("session_start", (_event, ctx) => { promptOptions = undefined; ctx.ui.setStatus(STATUS_KEY, undefined); });
