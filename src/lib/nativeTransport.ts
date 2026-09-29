@@ -221,6 +221,7 @@ export class NativeTransport {
     if (invocation && this.fastCommands.has(invocation[1]) && ["", "on", "off", "toggle"].includes((invocation[2] ?? "").trim().toLowerCase())) await this.refreshFastStatus(true);
   }
   private emit(event: RpcEvent) {
+    if (event.type === "ownership_lost") this.promptControls.reset();
     this.trackSessionActivity(event);
     this.retainExtensionState(event);
     if (event.type === "queue_update") this.queueSnapshot = event;
