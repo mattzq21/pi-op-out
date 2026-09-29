@@ -83,7 +83,6 @@ html[data-mobile] .app:has(.icon-rail:not(.compact)) ~ .mobile-reconnect-banner 
   .composer-bar .context-wheel { width: 26px; height: 30px; margin-left: 2px; }
   .composer-bar .context-wheel svg { width: 20px; height: 20px; }
   .composer-bar .fast-mode-indicator svg { width: 20px; height: 20px; }
-  .composer-bar .mobile-steer { min-height: 30px; font-size: 11px; }
   .composer-tools { flex-wrap: wrap; }
   .composer-actions { margin-left: auto; }
   .composer textarea, .composer-highlight-layer { font-size: 16px; }
@@ -100,7 +99,6 @@ html[data-mobile] .app:has(.icon-rail:not(.compact)) ~ .mobile-reconnect-banner 
   button { touch-action: manipulation; }
 }
 @media (max-width: 700px) {
-  .mobile-steer { display: inline-flex; min-height: 40px; align-items: center; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--ink); }
   .directory-palette-search { min-width: 0; }
 }
 .mobile-terminal-keys { display: flex; overflow-x: auto; gap: 4px; padding: 3px 8px; }

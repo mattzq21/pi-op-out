@@ -461,7 +461,6 @@ export function Composer(props: Props) {
       const renderComposerActions = () => {
         const agentSelectionDisabled = () => composer().agentLocked || composer().streaming || controls().inputDisabled;
         const changeAgent = (name: string) => { if (!agentSelectionDisabled()) composer().onAgent(name); };
-        const renderMobileSteer = () => (isMobile && composer().streaming && !props.ownershipRequired && <button class="mobile-steer" disabled={controls().inputDisabled || readingUploads() > 0 || !hasVisibleText(value())} onClick={() => void submit("steer")}>Steer</button>);
         const renderAgentPicker = () => (<ContainedPicker label="Agent" selectedLabel={composer().agentUnavailable ? `Agent unavailable: ${composer().activeAgent}` : composer().activeAgent ?? "general"} value={composer().activeAgent ?? "general"} disabled={agentSelectionDisabled()} menuMinWidth={130} centered compact options={agentOptions()} onChange={changeAgent} />);
         const renderFastModeIndicator = () => (fastModeSupported() && <button type="button" class={`fast-mode-indicator${fastModeEnabled() ? " active" : ""}`} aria-label="Fast mode" aria-description={(composer().fastModeStatus)!} aria-pressed={fastModeEnabled()} aria-busy={togglingFastMode()} disabled={controls().inputDisabled || togglingFastMode()} onClick={() => void toggleFastMode()}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled() ? "currentColor" : "none"} aria-hidden="true" /></button>);
         const renderModelPicker = () => (<ContainedPicker label="Model" selectedLabel={composer().model ? displayModelName((composer().model)!, composer().models) : undefined} value={composer().model ? `${(composer().model)!.provider}/${(composer().model)!.id}` : ""} disabled={composer().streaming || controls().inputDisabled} options={modelOptions()} onChange={(value) => { const next = composer().models.find((item) => `${item.provider}/${item.id}` === value); if (next) composer().onModel(next); }} />);
@@ -470,7 +469,7 @@ export function Composer(props: Props) {
         const renderSend = () => <Show when={showPauseResume()} fallback={<IconButton title="" label="Send message" class="send" disabled={controls().inputDisabled || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>}>
           <IconButton title="" label={composer().paused ? "Resume piop" : "Pause piop"} class="send" disabled={controls().inputDisabled} onClick={() => void control(composer().paused ? "resume" : "pause")}>{composer().paused ? <Play size={17} /> : <Pause size={17} />}</IconButton>
         </Show>;
-        return (<div class="composer-actions">{renderMobileSteer()}
+        return (<div class="composer-actions">
           <ComposerSettingsMenu agent={composer().activeAgent ?? "general"}>
             <div class="composer-settings-row"><span>Agent</span>{renderAgentPicker()}</div>
             <Show when={fastModeSupported()}><div class="composer-settings-row"><span>Fast mode</span>{renderFastModeIndicator()}</div></Show>
