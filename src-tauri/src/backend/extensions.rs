@@ -84,6 +84,14 @@ fn prepare_codex_web_search_extension() -> Result<PathBuf, String> {
     Ok(path)
 }
 
+fn prepare_context_bar_extension() -> Result<PathBuf, String> {
+    let dir = generated_extension_root()?;
+    ensure_private_dir(&dir)?;
+    let path = dir.join("piop-context-bar.ts");
+    atomic_write_private(&path, include_str!("../../../extensions/piop-context-bar/index.ts").as_bytes())?;
+    Ok(path)
+}
+
 fn prepare_context_window_cap_extension(settings: &AppSettings) -> Result<PathBuf, String> {
     migrate_extension_directory("pi-context-window-cap", "piop-context-window-cap")?;
     let dir = generated_extension_root()?.join("piop-context-window-cap");

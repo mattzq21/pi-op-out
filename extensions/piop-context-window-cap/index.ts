@@ -1,12 +1,10 @@
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
 
 const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
-const STATUS_KEY = "pi-desktop-prompt-context";
 const PROJECT_CONTEXT_MESSAGE = "pi-desktop-project-context";
 const CAP_ENTRY = "piop-session-context-cap";
 
@@ -29,35 +27,9 @@ async function loadCap(): Promise<number | undefined> {
   return cap;
 }
 
-function skillsFromPrompt(prompt: string) {
-  const block = prompt.match(/\n\nThe following skills provide specialized instructions[\s\S]*?<\/available_skills>/)?.[0] ?? "";
-  const decode = (value: string) => value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"').replaceAll("&apos;", "'").replaceAll("&amp;", "&");
-  const skills = [...block.matchAll(/<skill>[\s\S]*?<name>([\s\S]*?)<\/name>[\s\S]*?<description>([\s\S]*?)<\/description>[\s\S]*?<location>([\s\S]*?)<\/location>[\s\S]*?<\/skill>/g)]
-    .map((match) => ({ name: decode(match[1]), description: decode(match[2]), filePath: decode(match[3]) }));
-  return { block, skills };
-}
-
-function decodeXml(value: string) {
-  return value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"').replaceAll("&apos;", "'").replaceAll("&amp;", "&");
-}
-
-function displayPath(value: string) {
-  const home = homedir();
-  return value === home ? "~" : value.startsWith(`${home}/`) ? `~/${value.slice(home.length + 1)}` : value;
-}
-
-function projectInstructions(block: string) {
-  return [...block.matchAll(/<project_instructions path="([^"]*)">\n?([\s\S]*?)\n?<\/project_instructions>/g)]
-    .map((match) => ({ path: displayPath(decodeXml(match[1])), content: match[2] }));
-}
-
 function instructionsFromPrompt(prompt: string) {
   const block = prompt.match(/\n\n<project_context>[\s\S]*?<\/project_context>\n?/)?.[0] ?? "";
-  return { block, instructions: projectInstructions(block) };
-}
-
-function workingDirectoryFromPrompt(prompt: string, projectContext: string) {
-  return projectContext.match(/\nCurrent working directory: ([^\n]*)/)?.[1] ?? prompt.match(/\nCurrent working directory: ([^\n]*)\n?$/)?.[1];
+  return { block };
 }
 
 function textContent(content: unknown) {
@@ -88,27 +60,6 @@ function movableProjectContext(prompt: string, cwd: string) {
   const stablePrompt = withoutInstructions.replace(/\nCurrent working directory: [^\n]*\n?$/, "");
   const content = `<project_context>\nCurrent working directory: ${cwd}\n</project_context>`;
   return { stablePrompt, content };
-}
-
-function projectContextFromMessages(messages: readonly unknown[]) {
-  const block = latestCustomMessage(messages, PROJECT_CONTEXT_MESSAGE) ?? "";
-  if (!block) return { block, instructions: [] as Array<{ path: string; content: string }> };
-  const cwd = block.match(/^<project_context>\nCurrent working directory: ([^\n]*)/)?.[1];
-  return { block, instructions: [...(cwd ? [{ path: "Working directory", content: displayPath(cwd) }] : []), ...projectInstructions(block)] };
-}
-
-function changeInstructionFromMessages(messages: unknown[]) {
-  let latestUserIndex = -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message && typeof message === "object" && (message as { role?: unknown }).role === "user") { latestUserIndex = index; break; }
-  }
-  if (latestUserIndex < 0) return undefined;
-  const changeMessage = messages.slice(latestUserIndex + 1).find((message) => message && typeof message === "object" && (message as { role?: unknown; customType?: unknown }).role === "custom" && (message as { customType?: unknown }).customType === "pi-project-files-watch") as { content?: unknown } | undefined;
-  if (!changeMessage) return undefined;
-  const text = textContent(changeMessage.content);
-  const match = text.match(/^<project_context>\n([\s\S]*?)\n<\/project_context>$/);
-  return match ? { path: "File changes", content: match[1], block: match[0] } : undefined;
 }
 
 function savedCap(data: unknown) {
@@ -161,43 +112,9 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
   pi.on("session_shutdown", () => { for (const [model, original] of originalWindows) model.contextWindow = original; });
   const unsubscribeModels = pi.events.on("piop:models-refreshed", (value) => { capModel((value as { ctx: ExtensionContext }).ctx.model); });
   pi.on("session_shutdown", () => { unsubscribeModels(); });
-  const publishPromptContext = (ctx: ExtensionContext, messages: unknown[]) => {
-    const branch = ctx.sessionManager.getBranch();
-    const resumeMessages = new Set(branch.flatMap((entry) => {
-      const message = entry.type === "custom" && entry.customType === "pi-desktop-resume" ? (entry.data as { message?: unknown })?.message : undefined;
-      return typeof message === "string" ? [message] : [];
-    }));
-    const userIndex = branch.findLastIndex((entry) => entry.type === "message" && entry.message.role === "user" && !resumeMessages.has(textContent(entry.message.content)));
-    const user = branch[userIndex];
-    if (!user || user.type !== "message") return;
-    if (branch.slice(userIndex + 1).some((entry) => entry.type === "custom" && entry.customType === STATUS_KEY)) return;
-    const systemPrompt = ctx.getSystemPrompt();
-    const { block: skillPrompt, skills } = skillsFromPrompt(systemPrompt);
-    const { block: instructionPrompt, instructions } = instructionsFromPrompt(systemPrompt);
-    const messageProjectContext = projectContextFromMessages(messages);
-    const systemCwd = workingDirectoryFromPrompt(systemPrompt, instructionPrompt);
-    if (!messageProjectContext.block && systemCwd) instructions.unshift({ path: "Working directory", content: displayPath(systemCwd) });
-    else instructions.push(...messageProjectContext.instructions);
-    const changeInstruction = changeInstructionFromMessages(messages);
-    if (changeInstruction) instructions.push({ path: changeInstruction.path, content: changeInstruction.content });
-    const activeTools = new Set(pi.getActiveTools());
-    const tools = pi.getAllTools().filter((tool) => activeTools.has(tool.name)).map(({ name, description, parameters }) => ({ name, description, parameters }));
-    const estimate = (value: unknown) => Math.ceil((typeof value === "string" ? value : JSON.stringify(value)).length / 4);
-    const snapshot = {
-      userTimestamp: user.message.timestamp,
-      systemPrompt,
-      instructions,
-      tools,
-      skills,
-      tokens: { system: estimate(systemPrompt.replace(skillPrompt, "").replace(instructionPrompt, "")), instructions: estimate(instructionPrompt) + estimate(messageProjectContext.block) + estimate(changeInstruction?.block ?? ""), tools: estimate(tools), skills: estimate(skillPrompt) },
-    };
-    pi.appendEntry(STATUS_KEY, snapshot);
-    ctx.ui.setStatus(STATUS_KEY, `json:${JSON.stringify(snapshot)}`);
-  };
 
   pi.on("session_start", (_event, ctx) => {
     restoreCap(ctx);
-    ctx.ui.setStatus(STATUS_KEY, undefined);
   });
   pi.on("session_tree", (_event, ctx) => { restoreCap(ctx); });
 
@@ -216,7 +133,7 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
     };
   });
 
-  pi.on("context", (event, ctx) => {
+  pi.on("context", (event) => {
     let messages = process.env.PI_DEFINE_AGENTS_ACTIVE === "1"
       ? event.messages.filter((message) => customMessageContent(message, PROJECT_CONTEXT_MESSAGE) === undefined)
       : event.messages;
@@ -232,7 +149,6 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
         messages.splice(userIndex, 0, context);
       }
     }
-    publishPromptContext(ctx, messages);
     if (messages !== event.messages) return { messages };
   });
 }
