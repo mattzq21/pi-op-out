@@ -227,9 +227,12 @@ export default function App() {
     const clientPending = listen("pi://client-settings-changed", () => { const current = pendingSettings ?? settings(); if (current) update(current); });
     return () => { revision++; void pending.then((unlisten) => unlisten()); void clientPending.then((unlisten) => unlisten()); };
   }, () => [applyRuntimeSettings]);
-  const refresh = async (hostId?: string) => { const capturedTransport = transport(); const capturedSession = { ...chatSession() }; const capturedRuntimePool = runtimePool();
+  const loadSettings = async () => { const owner = transport(); const nextSettings = await owner.loadSettings();
+    if (activeTransportRef.current !== owner) throw new ConversationChangedError();
+    applyRuntimeSettings(nextSettings); setSettings(nextSettings); return nextSettings; };
+  const refresh = async (hostId?: string, loadedSettings?: AppSettings) => { const capturedTransport = transport(); const capturedSession = { ...chatSession() }; const capturedRuntimePool = runtimePool();
     void syncSessionIndex();
-    const settingsRequest = capturedTransport.loadSettings().then((nextSettings) => { if (activeTransportRef.current !== capturedTransport) throw new ConversationChangedError(); applyRuntimeSettings(nextSettings); setSettings(nextSettings); return nextSettings; });
+    const settingsRequest = loadedSettings ? Promise.resolve(settings() ?? loadedSettings) : loadSettings();
     const [nextState, nextSettings] = await Promise.all([capturedSession.refresh(), settingsRequest]); capturedRuntimePool.bind(hostId ?? capturedTransport.currentHostId(), nextState.sessionId, capturedTransport);
     const group = pendingSessionGroups.current.get(capturedTransport);
     if (group && nextState.sessionId && nextState.messageCount > 0) {
@@ -244,7 +247,7 @@ export default function App() {
   const configureRuntime = (value: AppSettings) => configureConversationRuntime(value, transport(), () => activeTransportRef.current, projectControls);
   const btwImages = new WeakMap<NativeTransport, ImageAttachment[]>();
   const resolveHomeDirectory = (hostId: string) => transport().homeDirectory(hostId);
-  useAppEvents(() => ({ transport: transport(), handleEvent: chatSession().handleEvent, setDialogs, refresh, queueTerminalOutput, setTerminalsBySession, addNotice, activeTransportRef, pendingBtwRequest, btwImages, setSplitPane, activeHostIdRef, setExtensionOwner, setDefinedAgents, refreshSession: chatSession().refresh, setStatuses, setWidgets, setComposerDrafts, transportConversationKeys, terminalSessionIdRef, setActivePane, setMainComposerFocusRequest, queueExtensionDialog, mainDialogOwnerRef, setActiveHostId, setActiveCwd, activateConversationKey, setTerminalOpen, setTerminalTarget, configureRuntime, setError, updateConnected, terminalOutputFrame, flushTerminalOutput }));
+  useAppEvents(() => ({ transport: transport(), handleEvent: chatSession().handleEvent, setDialogs, loadSettings, refresh, queueTerminalOutput, setTerminalsBySession, addNotice, activeTransportRef, pendingBtwRequest, btwImages, setSplitPane, activeHostIdRef, setExtensionOwner, setDefinedAgents, refreshSession: chatSession().refresh, setStatuses, setWidgets, setComposerDrafts, transportConversationKeys, terminalSessionIdRef, setActivePane, setMainComposerFocusRequest, queueExtensionDialog, mainDialogOwnerRef, setActiveHostId, setActiveCwd, activateConversationKey, setTerminalOpen, setTerminalTarget, configureRuntime, setError, updateConnected, terminalOutputFrame, flushTerminalOutput }));
   createDependencyEffect(() => {
     const capturedTransport = transport(); const capturedRuntimePool = runtimePool();
  const shutdown = () => { for (const session of Object.values(terminalsBySessionRef.current)) for (const terminal of session.tabs) void capturedTransport.closeTerminal(terminal.id).catch(() => undefined); void capturedRuntimePool.disconnectAll(); }; window.addEventListener("pagehide", shutdown); return () => window.removeEventListener("pagehide", shutdown); }, () => [runtimePool(), transport()]);

@@ -10,12 +10,15 @@ async function initializationStep<T>(label: string, work: () => Promise<T>): Pro
   } finally { clearTimeout(timer); }
 }
 
-export async function initializeSession<T>(current: () => boolean, steps: { connect: () => Promise<void>; refresh: () => Promise<T>; configure: (settings: T) => Promise<void>; restore: () => Promise<unknown> }) {
+export async function initializeSession<T>(current: () => boolean, steps: { connect: () => Promise<void>; loadSettings: () => Promise<T>; refresh: (settings: T) => Promise<T>; configure: (settings: T) => Promise<void>; restore: () => Promise<unknown> }) {
   for (let attempt = 0; attempt < 3 && current(); attempt++) {
     try {
-      await initializationStep("starting the conversation", steps.connect);
+      const [loadedSettings] = await Promise.all([
+        initializationStep("loading settings", steps.loadSettings),
+        initializationStep("starting the conversation", steps.connect),
+      ]);
       if (!current()) return false;
-      const settings = await initializationStep("loading the conversation", steps.refresh);
+      const settings = await initializationStep("loading the conversation", () => steps.refresh(loadedSettings));
       if (!current()) return false;
       await initializationStep("configuring the agent", () => steps.configure(settings));
       if (!current()) return false;
