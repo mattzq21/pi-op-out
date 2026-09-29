@@ -3,6 +3,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { createMemo, createSignal, Show, splitProps } from "solid-js";
 import { readDroppedFile } from "../lib/nativeTransport";
+import { pastedFiles, readClipboardImages } from "../lib/clipboardImages";
 import { DictationControls } from "./DictationControls";
 import { isMobile } from "../lib/platform";
 import { accountModelName, providerAccountLabel } from "../lib/providerAccounts";
@@ -458,11 +459,13 @@ export function Composer(props: Props) {
     };
     return (<div ref={element => { composerRef.current = element; }} class={`composer${draggingFiles() && !controls().inputDisabled ? " dragging-files" : ""}`}
       onPaste={(event) => {
-        const files = Array.from(event.clipboardData?.files ?? []);
-        if (!files.length) return;
+        if (!event.clipboardData || controls().inputDisabled) return;
+        const files = pastedFiles(event.clipboardData);
+        if (!files.length && event.clipboardData.getData("text/plain")) return;
         event.preventDefault();
-        if (controls().inputDisabled) return;
-        void addFiles(files).catch((reason) => setUploadError(reason instanceof Error ? reason.message : String(reason)));
+        const commitUploads = composer().onUploadsChange ?? setLocalUploads;
+        const source = files.length ? Promise.resolve(files) : readClipboardImages();
+        void source.then(files => addFiles(files, [], commitUploads)).catch((reason) => setUploadError(reason instanceof Error ? reason.message : String(reason)));
       }}
       onDragEnter={(event) => {
         if (!event.dataTransfer || (!event.dataTransfer.types.includes("Files") && !(isTauri() && event.dataTransfer.types.includes("text/uri-list")))) return;
