@@ -53,7 +53,10 @@ export function newChatAgent(agents: DefinedAgentsCapability | undefined, defaul
 }
 
 export function inheritGroupControls(controls: WeakMap<NativeTransport, ProjectControls>, target: NativeTransport, grouped: boolean, state: AgentState, agents: DefinedAgentsCapability | undefined, statuses: Record<string, string>, settings?: AppSettings) {
-  if (grouped) controls.set(target, { agent: newChatAgent(agents, settings?.defaultAgent), model: state.model, thinking: state.thinkingLevel, fastMode: statuses["pi-desktop-fast-mode"] === "Fast mode on", contextWindow: state.contextUsage?.contextWindow ?? state.model?.contextWindow });
+  if (!grouped) return;
+  const agent = newChatAgent(agents, settings?.defaultAgent);
+  const thinking = agents?.config.agents.find(profile => profile.name === agent)?.effort.trim() || state.thinkingLevel;
+  controls.set(target, { agent, model: state.model, thinking, fastMode: statuses["pi-desktop-fast-mode"] === "Fast mode on", contextWindow: state.contextUsage?.contextWindow ?? state.model?.contextWindow });
 }
 
 export function reassignTerminals(transport: NativeTransport, terminals: readonly { id: string; started: boolean }[], sessionKey: string, onError: (reason: unknown) => void) {
@@ -73,10 +76,11 @@ async function applyInherited(transport: NativeTransport, inherited: ProjectCont
 
 async function applyDefaults(transport: NativeTransport, value: AppSettings, models: Model[], current: () => boolean) {
   const model = models.find((model) => `${model.provider}/${model.id}` === value.defaultModel);
-  if (model) transport.promptControls.model(model);
+  if (model) await transport.command({ type: "set_model", provider: model.provider, modelId: model.id });
   if (!current()) return;
-  transport.promptControls.thinking(value.defaultThinking);
-  transport.promptControls.fast(value.defaultFastMode);
+  await transport.command({ type: "set_thinking_level", level: value.defaultThinking });
+  if (!current()) return;
+  await transport.setFastMode(value.defaultFastMode);
   if (!current()) return;
   await transport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(value.defaultAgent ?? "general")}` });
   transport.defaultsApplied();
