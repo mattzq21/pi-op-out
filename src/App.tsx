@@ -4,7 +4,7 @@ import { createWorktreeActions } from "./appWorktrees";
 import { configureConversationRuntime, createComposerControls, inheritGroupControls, newChatAgent, openDraftSession, reassignTerminals, type ProjectControls } from "./appRuntime";
 import { Key, Rerun } from "@solid-primitives/keyed";
 import { ArrowLeft, Bug, FolderPlus, GitBranch, MessageSquare, Server, Settings } from "lucide-solid";
-import { batch, createComputed, createMemo, createSignal, Show } from "solid-js";
+import { batch, createComputed, createMemo, createSignal, lazy, Show } from "solid-js";
 import { appendTerminalOutputs, AppLoading, dialogOwnerName, goUsageBadge, initialTerminals, LimitBadge, MAX_TERMINALS, normalizeCodexUsage, normalizeOpencodeGoUsage, selectedProjectCwd, splitConversationKey, terminalConversationKey, useUsageClock, type OwnedExtensionDialog, type QueuedTerminalOutput, type RenameTarget, type SessionTerminals, type SplitPaneState, type TerminalTarget, type WorktreeTarget } from "./appSupport";
 import { createBranchConversation } from "./branchConversation";
 import { ChatView } from "./components/ChatView";
@@ -13,14 +13,12 @@ import { ConversationQuestionsContext, createConversationQuestions } from "./com
 import { isAskUserRequest } from "./components/AskUserDialog";
 import { FindInPage } from "./components/FindInPage";
 import { IconButton } from "./components/IconButton";
-import { LocalSettingsView } from "./components/LocalSettingsView";
 import { ProjectDialog } from "./components/ProjectDialog";
 import { ResizableSidebar } from "./components/ResizableSidebar";
 import { SessionPanel, type SessionAction } from "./components/SessionPanel";
 import { SplitChatPane } from "./components/SplitChatPane";
 import { SubagentPane } from "./components/SubagentPane";
 import { SubagentNavigationContext, type SubagentTarget } from "./lib/subagentNavigation";
-import { TerminalView } from "./components/TerminalView";
 import { WorktreeDialog } from "./components/WorktreeDialog";
 import { encodeAgentValue } from "./lib/agentProtocol";
 import { saveClientSettings, withClientSettings } from "./lib/clientSettings";
@@ -39,6 +37,8 @@ import type { AgentConfig, AgentState, AppSettings, ChatMessage, CodexUsage, Com
 import { useAppEvents } from "./useAppEvents";
 export { formatCodexReset,normalizeCodexUsage,normalizeOpencodeGoUsage,usageWindowsDescription } from "./appSupport";
 declare const __PIOP_DEVELOPMENT_BRANCH__: string;
+const LocalSettingsView = lazy(() => import("./components/LocalSettingsView").then(module => ({ default: module.LocalSettingsView })));
+const TerminalView = lazy(() => import("./components/TerminalView").then(module => ({ default: module.TerminalView })));
 export default function App() {
   const runtimePool = createMemo(() => new SessionRuntimePool()); const [transport, setTransport] = createSignal((() => { const initial = runtimePool().create(initialWindowTarget()); runtimePool().activate(initial); return initial; })()); const [view, setView] = createSignal<"chat" | "settings">("chat");
   const activeTransportRef = createRef(transport()); createComputed(() => { activeTransportRef.current = transport(); });

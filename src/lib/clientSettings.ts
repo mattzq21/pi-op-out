@@ -8,14 +8,20 @@ function preferences(settings: AppSettings): ClientSettings {
   return { keybindings: settings.keybindings, hiddenModels: settings.hiddenModels, knownModels: settings.knownModels, debugMode: settings.debugMode };
 }
 
-async function storedPreferences(): Promise<Partial<ClientSettings>> {
+async function storedPreferences(): Promise<{ settings: Partial<ClientSettings>; persisted: boolean }> {
   const stored = await invoke<ClientSettings | null>("load_client_settings");
-  if (stored) return stored;
-  try { return JSON.parse(localStorage.getItem(storageKey) ?? "null") ?? {}; } catch { return {}; }
+  if (stored) return { settings: stored, persisted: true };
+  try { return { settings: JSON.parse(localStorage.getItem(storageKey) ?? "null") ?? {}, persisted: false }; } catch { return { settings: {}, persisted: false }; }
 }
 
-export async function withClientSettings(settings: AppSettings): Promise<AppSettings> {
-  const stored = await storedPreferences();
+export async function withClientSettings(source: AppSettings | Promise<AppSettings>, migrate = false): Promise<AppSettings> {
+  const [settings, preferences] = await Promise.all([source, storedPreferences()]);
+  const merged = mergeClientSettings(settings, preferences.settings);
+  if (migrate && !preferences.persisted) await saveClientSettings(merged);
+  return merged;
+}
+
+function mergeClientSettings(settings: AppSettings, stored: Partial<ClientSettings>): AppSettings {
   const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
   return { ...settings,
     keybindings: stored.keybindings && typeof stored.keybindings === "object" && Object.values(stored.keybindings).every((item) => typeof item === "string") ? { ...settings.keybindings, ...stored.keybindings } : settings.keybindings,
