@@ -27,7 +27,7 @@ import { saveClientSettings, withClientSettings } from "./lib/clientSettings";
 import { hasVisibleText } from "./lib/content";
 import { branchMessages, type PiEntry } from "./lib/messages";
 import { recordSeenModels } from "./lib/modelVisibility";
-import { initialWindowTarget, NativeTransport, openSessionWindow, resolveBranchGroup } from "./lib/nativeTransport";
+import { initialWindowTarget, NativeTransport, openSessionWindow, projectBranches, resolveBranchGroup } from "./lib/nativeTransport";
 import { useSessionResume } from "./lib/sessionResume";
 import { isMobile, listen } from "./lib/platform";
 import { DIRLESS_KEY, inheritSessionGroup, updateSessionGroups, type SessionGroup } from "./lib/sessionGroups";
@@ -373,21 +373,36 @@ export default function App() {
     const ownerTransport = transport(); const ownerKey = activeConversationKeyRef.current;
     const isCurrent = () => activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey;
     const capturedSession = { ...chatSession() }; const pool = runtimePool();
-    const { hostId, projectCwd } = newSessionTarget(clearProject, group);
+    const target = newSessionTarget(clearProject, group);
+    const { hostId } = target;
+    let projectCwd = target.projectCwd;
     const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`;
-    const nextTransport = createSessionTransport(projectCwd, hostId); inheritGroupControls(projectControls, nextTransport, true, composerControls.state(capturedSession.state), definedAgents(), composerControls.statuses(statuses()), settings());
+    let nextTransport: NativeTransport | undefined;
     let activated = false;
     newSessionPending.current = true;
     try {
-      const cwd = await prepareNewSession(nextTransport, hostId, projectCwd);
+      if (projectCwd && !group) {
+        const branches = await projectBranches(projectCwd, hostId);
+        if (!isCurrent()) return;
+        if (branches?.current?.includes("|")) {
+          const base = await projectBranches(projectCwd, hostId, branches.current.split("|")[0]);
+          if (!base) throw new Error("Project is not a Git repository");
+          projectCwd = base.path;
+        }
+      }
+      if (!isCurrent()) return;
+      const owner = createSessionTransport(projectCwd, hostId);
+      nextTransport = owner;
+      inheritGroupControls(projectControls, owner, true, composerControls.state(capturedSession.state), definedAgents(), composerControls.statuses(statuses()), settings());
+      const cwd = await prepareNewSession(owner, hostId, projectCwd);
       if (!isCurrent()) return;
       transportConversationKeys.current.set(nextTransport, conversationKey);
       assignNewSessionGroup(nextTransport, group);
       batch(() => {
-        copyNewSessionDraft(conversationKey, nextTransport, (clearProject || Boolean(group && capturedSession.state.messageCount === 0)) && !discardDraft);
+        copyNewSessionDraft(conversationKey, owner, (clearProject || Boolean(group && capturedSession.state.messageCount === 0)) && !discardDraft);
         setView("chat"); closeSplitPane(); setTerminalOpen(false); setTerminalTarget(undefined);
         updateConnected(false); setDefinedAgents(undefined); capturedSession.discardPendingUpdates();
-        setActiveCwd(cwd); setActiveHostId(hostId); activateTransport(nextTransport); activateConversationKey(conversationKey);
+        setActiveCwd(cwd); setActiveHostId(hostId); activateTransport(owner); activateConversationKey(conversationKey);
       });
       activated = true;
       if (discardDraft) discardNewSessionDraft(ownerTransport, ownerKey);
@@ -397,7 +412,7 @@ export default function App() {
       }
     } finally {
       newSessionPending.current = false;
-      if (!activated) {
+      if (!activated && nextTransport) {
         transportConversationKeys.current.delete(nextTransport); pendingSessionGroups.current.delete(nextTransport);
         void pool.release(nextTransport).catch((reason) => addNotice({ title: "Could not clean up the new conversation", message: String(reason) }));
       }
