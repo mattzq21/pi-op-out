@@ -4,6 +4,7 @@ import { createDependencyEffect, createRef } from "../lib/solid";
 import type { SessionSummary } from "../types";
 import { changeSessionGroups, loadSessionGroups } from "./nativeTransport";
 import { listen } from "./platform";
+import { cacheSessionGroups, restoreSessionGroups } from "./sessionGroupsCache";
 
 export interface SessionGroup { id: string; name: string; cwd?: string | null; hostId?: string | null; hostName?: string | null; projectKind?: "no-repo" | "main" | "worktree" | null; branch?: string; branchAppearance?: SessionSummary["branchAppearance"]; }
 export const DIRLESS_KEY = "__pi-desktop-dirless__";
@@ -17,7 +18,7 @@ export function isTemporaryChatCwd(cwd: string) {
 
 const listeners = new Set<(state: SessionGroups) => void>();
 let eventRevision = 0;
-function publish(state: SessionGroups) { listeners.forEach((listener) => listener(state)); return state; }
+function publish(state: SessionGroups) { cacheSessionGroups(state); listeners.forEach((listener) => listener(state)); return state; }
 
 export function updateSessionGroups(update: GroupChange) {
   return enqueue(async () => {
@@ -107,7 +108,7 @@ function sessionGroupSeed(session: SessionSummary): SessionGroupSeed {
 }
 
 export function useSessionGroups(sessions: Accessor<SessionSummary[]>) {
-  const [state, setState] = createSignal<SessionGroups>();
+  const [state, setState] = createSignal<SessionGroups | undefined>(restoreSessionGroups());
   const [error, setError] = createSignal<string>();
   const mounted = createRef(false);
   createDependencyEffect(() => {
