@@ -53,12 +53,10 @@ export async function prepareChatWorktree(owner: NativeTransport, select: (path:
   const path = await registeredWorktreePreparation(owner);
   if (active() !== owner) throw new Error("Conversation changed");
   if (!path) { updateChatPreparation(owner, "Sending message…"); return owner; }
-  updateChatPreparation(owner, "Opening worktree…");
   await select(path, owner.currentHostId(), (destination) => {
-    setSubmission((current) => current?.owner === owner ? { ...current, owner: destination, status: "Connecting to worktree…" } : current);
+    setSubmission((current) => current?.owner === owner ? { ...current, owner: destination } : current);
   });
   const destination = active();
   await waitForConnection(destination, active, ready, error);
-  updateChatPreparation(destination, "Sending message…");
   return destination;
 }
