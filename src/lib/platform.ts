@@ -18,7 +18,7 @@ export const listen = <T>(event: string, handler: EventCallback<T>): Promise<Unl
 export function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   args = { ...args, clientId: conversationClientId };
   if (!isMobile) {
-    const local = ["load_client_settings", "save_client_settings", "new_window", "open_external_url", "open_project_directory", "read_dropped_file"];
+    const local = ["load_client_settings", "save_client_settings", "new_window", "open_external_url", "open_project_directory", "open_rollout_file", "read_dropped_file"];
     return local.includes(command) ? nativeInvoke<T>(command, args) : nativeInvoke<T>("daemon_invoke", { command, args });
   }
   if (command === "load_client_settings") return clientPreferences.load().then(result => result.settings as T);

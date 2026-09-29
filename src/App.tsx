@@ -28,6 +28,7 @@ import { hasVisibleText } from "./lib/content";
 import { branchMessages, type PiEntry } from "./lib/messages";
 import { recordSeenModels } from "./lib/modelVisibility";
 import { initialWindowTarget, NativeTransport, openSessionWindow, resolveBranchGroup } from "./lib/nativeTransport";
+import { sessionDebugAction } from "./lib/sessionDebugAction";
 import { useSessionResume } from "./lib/sessionResume";
 import { isMobile, listen } from "./lib/platform";
 import { DIRLESS_KEY, inheritSessionGroup, updateSessionGroups, type SessionGroup } from "./lib/sessionGroups";
@@ -596,7 +597,7 @@ export default function App() {
   };
   const openSessionInWindow = async (session: SessionSummary) => { if (isMobile) { selectSession(session); return; } try { await openSessionWindow({ cwd: session.cwd, sessionPath: session.path, sessionId: session.id, hostId: session.hostId }); } catch (reason) { addNotice({ title: "Could not open window", message: String(reason) }); } };
   const sessionAction = async (session: SessionSummary, action: SessionAction) => { const capturedRuntimePool = runtimePool();
-    if (action === "copy-id") { await navigator.clipboard.writeText(session.id).catch(reason => addNotice({ title: "Could not copy session ID", message: String(reason) })); return; }
+    if (["copy-id", "open-rollout"].includes(action)) { await sessionDebugAction(session, action, addNotice); return; }
     if (session.cwdExists === false && action !== "archive" && action !== "open-directory") { await openDirlessSession(session, action); return; }
     if (action === "split") { openSplitPane(session); return; }
     if (action === "new-window") return openSessionInWindow(session);

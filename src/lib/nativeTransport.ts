@@ -44,6 +44,7 @@ export interface NativeConnectionTarget { cwd?: string; sessionPath?: string; se
 export const loadSessionGroups = (seeds: SessionGroupSeed[], legacy: SessionGroups) => call<SessionGroups>("load_session_groups", { seeds, legacy });
 export const changeSessionGroups = (change: GroupChange) => call<SessionGroups>("change_session_groups", { change });
 export const openGroupDirectory = (cwd: string, hostId: string) => call<void>("open_project_directory", { cwd, hostId });
+export const openRolloutFile = (path: string, hostId: string) => call<void>("open_rollout_file", { path, hostId });
 export const gitProjectKind = (cwd: string, hostId: string) => call<"no-repo" | "main" | "worktree">("git_project_kind", { cwd, hostId });
 export interface ProjectBranches { branches: string[]; current: string | null; path: string; mainPath: string; }
 export const projectBranches = (cwd: string, hostId: string, branch?: string) => call<ProjectBranches | null>("project_branches", { cwd, hostId, branch });

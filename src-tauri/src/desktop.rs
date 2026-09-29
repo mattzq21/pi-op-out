@@ -138,6 +138,14 @@ fn open_project_directory(cwd: String, host_id: Option<String>) -> Result<(), St
     open_system_resource(path.as_os_str())
 }
 
+#[tauri::command(async)]
+fn open_rollout_file(path: String, host_id: Option<String>) -> Result<(), String> {
+    if std::env::var_os("PIOP_DAEMON_URL").is_some() || host_id.as_deref().unwrap_or("local") != "local" { return Err("Opening remote rollout files is not supported by the local file manager".into()); }
+    let path = PathBuf::from(path);
+    if path.extension().and_then(|value| value.to_str()) != Some("jsonl") || !path.is_file() { return Err("Session rollout file does not exist or is not a JSONL file".into()); }
+    open_system_resource(path.as_os_str())
+}
+
 #[cfg(all(feature = "desktop", target_os = "linux"))]
 const LOAD_ERROR_HTML: &str = r#"<!doctype html>
 <html lang="en">
@@ -215,7 +223,7 @@ pub fn run() {
             window.show()?;
         }
         Ok(())
-    }).invoke_handler(tauri::generate_handler![daemon_invoke, load_client_settings, save_client_settings, new_window, open_project_directory, open_external_url, read_dropped_file]).build(context).expect("error while building piop").run(|app, event| {
+    }).invoke_handler(tauri::generate_handler![daemon_invoke, load_client_settings, save_client_settings, new_window, open_project_directory, open_rollout_file, open_external_url, read_dropped_file]).build(context).expect("error while building piop").run(|app, event| {
         if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } = &event {
             let app = app.clone(); let label = label.clone();
             tauri::async_runtime::spawn(async move { app.state::<desktop_daemon::DesktopDaemon>().close_window(&app, &label).await; });
