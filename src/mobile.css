@@ -72,18 +72,18 @@ html[data-mobile] .app:has(.icon-rail:not(.compact)) ~ .mobile-reconnect-banner 
   .conversation, .composer-wrap, .composer-questions, .extension-widget, .runtime-activity { width: calc(100% - 16px); }
   .composer { margin-inline: 0; }
   .conversation-unowned .composer-interaction { opacity: 1; }
-  .composer-bar { flex-wrap: wrap; gap: 6px; }
-  .composer-bar .icon-button { width: 36px; height: 36px; min-width: 36px; min-height: 36px; }
-  .composer-bar .icon-button svg { width: 24px; height: 24px; }
-  .composer-bar .dictation-controls button { min-width: 36px; height: 36px; min-height: 36px; padding: 6px; justify-content: center; font-size: 13px; }
-  .composer-bar .dictation-controls svg { width: 24px; height: 24px; }
+  .composer-bar { flex-wrap: wrap; gap: 5px; }
+  .composer-bar .icon-button { width: 32px; height: 32px; min-width: 32px; min-height: 32px; }
+  .composer-bar .icon-button svg { width: 22px; height: 22px; }
+  .composer-bar .dictation-controls button { min-width: 32px; height: 32px; min-height: 32px; padding: 5px; justify-content: center; font-size: 12px; }
+  .composer-bar .dictation-controls svg { width: 22px; height: 22px; }
   .composer-bar .dictation-label { display: inline; }
-  .composer-bar .select-control { height: 36px; padding-inline: 5px; font-size: 13px; }
-  .composer-bar .fast-mode-indicator { height: 36px; }
-  .composer-bar .context-wheel { width: 32px; height: 36px; margin-left: 2px; }
-  .composer-bar .context-wheel svg { width: 24px; height: 24px; }
-  .composer-bar .fast-mode-indicator svg { width: 24px; height: 24px; }
-  .composer-bar .mobile-steer { min-height: 36px; font-size: 13px; }
+  .composer-bar .select-control { height: 32px; padding-inline: 4px; font-size: 12px; }
+  .composer-bar .fast-mode-indicator { height: 32px; }
+  .composer-bar .context-wheel { width: 28px; height: 32px; margin-left: 2px; }
+  .composer-bar .context-wheel svg { width: 22px; height: 22px; }
+  .composer-bar .fast-mode-indicator svg { width: 22px; height: 22px; }
+  .composer-bar .mobile-steer { min-height: 32px; font-size: 12px; }
   .composer-tools { flex-wrap: wrap; }
   .composer-actions { margin-left: auto; }
   .composer textarea, .composer-highlight-layer { font-size: 16px; }
