@@ -46,9 +46,9 @@ function validSkills<T extends { filePath: string }>(skills: T[] | undefined): T
 function skillPercentages(context: PromptContextInfo) {
   const invoked = context.skillTokens?.invoked ?? (context.userInvokedSkills ?? []).reduce((sum, skill) => sum + Math.ceil((skill.content ?? "").length / 4), 0);
   const defined = context.skillTokens?.defined ?? Math.max(0, contextTokens(context).skills - invoked);
-  const total = defined + invoked;
+  const total = Object.values(contextTokens(context)).reduce((sum, value) => sum + value, 0);
   const definedPercent = total ? Math.round(defined / total * 100) : 0;
-  return { defined: definedPercent, invoked: total ? 100 - definedPercent : 0 };
+  return { defined: definedPercent, invoked: total ? Math.round(invoked / total * 100) : 0 };
 }
 
 function contextSections(context: PromptContextInfo) {
@@ -88,8 +88,8 @@ export const PromptContextBar = function PromptContextBar(componentProps: { cont
     {(active())! === "tools" && (sections().tools.length ? <Key each={sections().tools} by={(tool) => tool.name}>{(tool, _index) => <div ><strong>{tool().name}</strong>{typeof tool().description === "string" && tool().description && <p>{tool().description}</p>}<pre>{JSON.stringify(tool().parameters, null, 2)}</pre></div>}</Key> : <p>No active tools</p>)}
     {(active())! === "skills" && <>
       <nav class="prompt-skills-tabs" aria-label="Skill categories">
-        <button type="button" aria-pressed={skillTab() === "model"} title="Share of estimated skills tokens used by definitions" onClick={() => setSkillTab("model")}>Defined <small>{skillPercent().defined}%</small></button>
-        <button type="button" aria-pressed={skillTab() === "user"} title="Share of estimated skills tokens used by invoked content" onClick={() => setSkillTab("user")}>Invoked <small>{skillPercent().invoked}%</small></button>
+        <button type="button" aria-pressed={skillTab() === "model"} title="Share of total estimated context used by skill definitions" onClick={() => setSkillTab("model")}>Defined <small>{skillPercent().defined}%</small></button>
+        <button type="button" aria-pressed={skillTab() === "user"} title="Share of total estimated context used by invoked skills" onClick={() => setSkillTab("user")}>Invoked <small>{skillPercent().invoked}%</small></button>
       </nav>
       {visibleSkills().length ? <Key each={visibleSkills()} by={(skill) => skill.id ?? skill.filePath}>{(skill, _index) => skillTab() === "user"
         ? <details class="prompt-skill-invocation"><summary>{skill().name}</summary><small>{skill().filePath}</small><pre>{skill().content ?? "Skill body was not recorded in this snapshot."}</pre></details>
