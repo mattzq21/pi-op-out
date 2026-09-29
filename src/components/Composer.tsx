@@ -405,14 +405,14 @@ export function Composer(props: Props) {
       {renderStreamStatus()}
     </div></Show>);
   };
-  const renderComposer = () => {
+  const ComposerBody = () => {
     const renderComposerDropHint = () => (draggingFiles() && !controls().inputDisabled && <div class="composer-drop-hint" role="status">Drop files to attach</div>);
     const renderCommandPalette = () => (<Show when={matches().length > 0}><div class="command-palette" role="listbox" aria-label={skillQuery() === undefined ? "piop commands" : "piop skills"}>{<Key each={matches()} by={(command) => `${command.source}:${command.name}`}>{(command, index) => <button ref={element => { if (index() === selectedMatch()) selectedCommandRef.current = element; }} role="option" aria-selected={index() === selectedMatch()}  type="button" onClick={() => chooseCommand(command())}><span><strong>{skillQuery() !== undefined ? `$${skillName(command())}` : `/${command().name}`}</strong>{command().description && <small>{command().description}</small>}</span></button>}</Key>}</div></Show>);
     const renderComposerEditor = () => (<div class="composer-editor">
         <textarea ref={element => { ref.current = element; }} aria-label="Message piop" disabled={composer().controlsDisabled} placeholder={composer().controlsDisabled ? "Connecting to piop…" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setCaretAtEnd(event.currentTarget.selectionStart === event.currentTarget.value.length && event.currentTarget.selectionEnd === event.currentTarget.value.length)} onInput={(event) => { setCaretAtEnd(event.target.selectionStart === event.target.value.length && event.target.selectionEnd === event.target.value.length); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
       </div>);
-    const renderComposerBar = () => {
-      const renderComposerTools = () => (<div class="composer-tools"><DictationControls disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); ref.current?.focus(); }} />{composer().onOpenTerminal && <IconButton title="" label="Open terminal" disabled={composer().controlsDisabled} onClick={(composer().onOpenTerminal)!}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage}>{usage => <ContextWheel usage={usage()} />}</Show><Show when={composer().sessionCache}>{cache => <span class={`session-cache-hit${cache().low ? " low" : ""}`}>Cache {cache().rate}%</span>}</Show></div>);
+    const ComposerBar = () => {
+      const ComposerTools = () => (<div class="composer-tools"><DictationControls disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); ref.current?.focus(); }} />{composer().onOpenTerminal && <IconButton title="" label="Open terminal" disabled={composer().controlsDisabled} onClick={(composer().onOpenTerminal)!}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage}>{usage => <ContextWheel usage={usage()} />}</Show><Show when={composer().sessionCache}>{cache => <span class={`session-cache-hit${cache().low ? " low" : ""}`}>Cache {cache().rate}%</span>}</Show></div>);
       const renderComposerActions = () => {
         const renderMobileSteer = () => (isMobile && composer().streaming && <button class="mobile-steer" disabled={composer().controlsDisabled || readingUploads() > 0 || !hasVisibleText(value())} onClick={() => void submit("steer")}>Steer</button>);
         const renderAgentPicker = () => (<ContainedPicker label="Agent" selectedLabel={composer().agentUnavailable ? `Agent unavailable: ${composer().activeAgent}` : composer().activeAgent ?? "general"} value={composer().activeAgent ?? "general"} disabled={composer().agentLocked || composer().streaming || controls().inputDisabled} menuMinWidth={130} centered compact options={agentOptions()} onChange={composer().onAgent} />);
@@ -433,7 +433,7 @@ export function Composer(props: Props) {
           {renderSend()}
         </div>);
       };
-      return (<div class="composer-bar">{renderComposerTools()}
+      return (<div class="composer-bar"><ComposerTools />
         {renderComposerActions()}
       </div>);
     };
@@ -480,7 +480,7 @@ export function Composer(props: Props) {
       {uploadError() && <div class="upload-error" role="alert">{(uploadError())!}</div>}
       {controlError() && <div class="upload-error" role="alert">{(controlError())!}</div>}
       {renderComposerEditor()}
-      {renderComposerBar()}
+      <ComposerBar />
     </div>);
   };
   return <div class="composer-wrap">
@@ -512,7 +512,7 @@ export function Composer(props: Props) {
     }}</Key>}</div>}
     {visualProps.toolbar}
     </div>
-    {renderComposer()}
+    <ComposerBody />
   </div>;
 }
 
