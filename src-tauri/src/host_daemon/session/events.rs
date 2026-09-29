@@ -50,6 +50,7 @@ impl Session {
         let name = kind(event);
         {
             let mut state = self.state();
+            if state_change(name) || name.starts_with("tool_execution_") { state.tool_payload_revision += 1; }
             match name {
                 "agent_start" => {
                     state.working = true;

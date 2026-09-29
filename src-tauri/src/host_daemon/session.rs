@@ -3,7 +3,8 @@ mod events;
 mod requests;
 
 use super::{
-    payload::{assistant_delta, saved_tool_payload, tool_payload_page},
+    payload::{assistant_delta, saved_tool_payload},
+    tool_payload::{ToolPayload, ToolPayloadCache},
     protocol::{array, flag, kind, text, LaunchSpec, Result, SessionLaunch},
     queue::{Execution, SessionQueue},
     worker::{Observer, Request, Worker},
@@ -52,6 +53,7 @@ struct SessionState {
     sequence: u64,
     state_revision: u64,
     content_revision: u64,
+    tool_payload_revision: u64,
     working: bool,
     compacting: bool,
     submitted: bool,
@@ -90,6 +92,7 @@ pub(super) struct Session {
     configuration_gate: AsyncMutex<()>,
     publication: Mutex<()>,
     weak: Weak<Self>,
+    tool_payloads: Arc<ToolPayloadCache>,
 }
 
 struct SessionCallbacks(Weak<Session>);
@@ -149,7 +152,7 @@ impl Observer for SessionCallbacks {
 impl Session {
     pub fn client_id(&self) -> String { self.client_id.lock().unwrap_or_else(|error| error.into_inner()).clone() }
     pub fn set_client_id(&self, client: String) { *self.client_id.lock().unwrap_or_else(|error| error.into_inner()) = client; }
-    pub fn spawn(launch: SessionLaunch, pending: Vec<Value>, host: Arc<dyn SessionHost>, home: &Path) -> Result<Arc<Self>> {
+    pub fn spawn(launch: SessionLaunch, pending: Vec<Value>, host: Arc<dyn SessionHost>, home: &Path, tool_payloads: Arc<ToolPayloadCache>) -> Result<Arc<Self>> {
         let SessionLaunch {
             key,
             mut spec,
@@ -183,6 +186,7 @@ impl Session {
             configuration_gate: AsyncMutex::new(()),
             publication: Mutex::new(()),
             weak: weak.clone(),
+            tool_payloads,
             state: Mutex::new(SessionState {
                 key,
                 state: Value::Null,
@@ -194,6 +198,7 @@ impl Session {
                 sequence: 0,
                 state_revision: 0,
                 content_revision: 0,
+                tool_payload_revision: 0,
                 working: false,
                 compacting: false,
                 submitted: false,
@@ -361,6 +366,7 @@ impl Session {
     fn stamp_event(&self, event: &mut Value, name: &str, target: Option<&str>) -> Option<(String, Vec<String>)> {
         let mut state = self.state();
         let previous = format!("{}:{}", self.epoch, state.content_revision);
+        if name == "session_info_changed" { state.tool_payload_revision += 1; }
         if events::state_change(name) {
             state.state_revision += 1;
         }
