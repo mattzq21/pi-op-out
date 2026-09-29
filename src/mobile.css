@@ -88,6 +88,7 @@ html[data-mobile] .app:has(.icon-rail:not(.compact)) ~ .mobile-reconnect-banner 
   .composer-actions { margin-left: auto; }
   .composer textarea, .composer-highlight-layer { font-size: 16px; }
   .composer-picker-menu.compact button { min-height: 44px; }
+  .prompt-context-bar { gap: 0; }
   .model-row, .setting-row, .host-row { flex-wrap: wrap; }
   .composer-controls { flex-wrap: wrap; gap: 6px; }
   .terminal-panel { max-height: 60%; min-height: 160px; }
