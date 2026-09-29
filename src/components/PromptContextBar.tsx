@@ -5,6 +5,7 @@ import { IconButton } from "./IconButton";
 import { type CSSProperties } from "../lib/solid";
 
 import type { PromptContextInfo } from "../types";
+import { separatePromptInstructions } from "../lib/promptInstructions";
 
 type Section = "system" | "instructions" | "tools" | "skills";
 
@@ -61,13 +62,14 @@ function contextSections(context: PromptContextInfo) {
 }
 
 export const PromptContextBar = function PromptContextBar(componentProps: { context: PromptContextInfo }) {
+  const context = createMemo(() => separatePromptInstructions(componentProps.context));
   const [active, setActive] = createSignal<Section>();
   const [skillTab, setSkillTab] = createSignal<"model" | "user">("model");
-  const sections = createMemo(() => (contextSections(componentProps.context)));
+  const sections = createMemo(() => (contextSections(context())));
   const visibleSkills = (): NonNullable<PromptContextInfo["userInvokedSkills"]> => skillTab() === "model" ? sections().skills : sections().userInvokedSkills;
   const emptySkills = () => skillTab() === "model" ? "No defined skills" : "No skills invoked in this context";
-  const skillPercent = createMemo(() => skillPercentages(componentProps.context));
-  const tokens = createMemo(() => contextTokens(componentProps.context));
+  const skillPercent = createMemo(() => skillPercentages(context()));
+  const tokens = createMemo(() => contextTokens(context()));
   const totalTokens = createMemo(() => Object.values(tokens()).reduce((sum, value) => sum + value, 0));
   const percent = createMemo(() => shares(tokens()));
   const wheelStyle = createMemo(() => ({ "--prompt-system": `${percent().system}%`, "--prompt-instructions": `${percent().system + percent().instructions}%`, "--prompt-tools": `${percent().system + percent().instructions + percent().tools}%` } as CSSProperties));
