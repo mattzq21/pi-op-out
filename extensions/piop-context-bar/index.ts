@@ -5,7 +5,8 @@ const STATUS_KEY = "pi-desktop-prompt-context";
 const PROJECT_CONTEXT_MESSAGE = "pi-desktop-project-context";
 
 function skillsFromPrompt(prompt: string) {
-  const block = prompt.match(/\n\nThe following skills provide specialized instructions[\s\S]*?<\/available_skills>/)?.[0] ?? "";
+  const block = prompt.match(/<skills>\s*[\s\S]*?<\/skills>/)?.[0]
+    ?? prompt.match(/(?:^|\n\n)The following skills provide specialized instructions[\s\S]*?<\/available_skills>/)?.[0] ?? "";
   const decode = (value: string) => value.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", '"').replaceAll("&apos;", "'").replaceAll("&amp;", "&");
   const skills = [...block.matchAll(/<skill>[\s\S]*?<name>([\s\S]*?)<\/name>[\s\S]*?<description>([\s\S]*?)<\/description>[\s\S]*?<location>([\s\S]*?)<\/location>[\s\S]*?<\/skill>/g)]
     .map((match) => ({ name: decode(match[1]), description: decode(match[2]), filePath: decode(match[3]) }));
