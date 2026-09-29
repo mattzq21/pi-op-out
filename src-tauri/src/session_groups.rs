@@ -5,6 +5,7 @@ use crate::platform::AppHandle;
 use tauri::{Emitter, Manager};
 
 static STORAGE_LOCK: Mutex<()> = Mutex::new(());
+const DIRLESS_KEY: &str = "__pi-desktop-dirless__";
 
 #[cfg(test)]
 #[path = "session_groups_tests.rs"]
@@ -191,7 +192,7 @@ fn load_at(path: &Path, seeds: Vec<SessionSeed>, legacy: SessionGroups) -> Resul
     dirty |= refresh_group_branches(&mut state);
     let ids: HashSet<_> = state.groups.iter().map(|group| group.id.clone()).collect();
     for destination in state.assignments.values_mut() {
-        if destination.as_ref().is_some_and(|id| !ids.contains(id)) { *destination = None; dirty = true; }
+        if destination.as_ref().is_some_and(|id| id != DIRLESS_KEY && !ids.contains(id)) { *destination = None; dirty = true; }
     }
     if dirty { write(path, &state)?; }
     Ok(state)
@@ -341,7 +342,7 @@ fn remove_group(state: &mut SessionGroups, id: String) -> Result<(), String> {
 }
 
 fn assign_group(state: &mut SessionGroups, key: String, group: Option<String>) -> Result<(), String> {
-    if group.as_ref().is_some_and(|id| !state.groups.iter().any(|item| &item.id == id)) { return Err("Group no longer exists".into()); }
+    if group.as_ref().is_some_and(|id| id != DIRLESS_KEY && !state.groups.iter().any(|item| &item.id == id)) { return Err("Group no longer exists".into()); }
     state.assignments.insert(key, group);
     Ok(())
 }

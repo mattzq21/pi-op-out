@@ -377,6 +377,10 @@ export class NativeTransport {
   archiveSession(sessionPath: string, hostId = "local", terminalIds: string[] = []) { return call<void>("archive_session", { sessionPath, hostId, terminalIds }); }
   deleteSession(sessionPath: string, hostId = "local") { return call<void>("delete_session", { sessionPath, hostId }); }
   relocateSession(sessionPath: string, cwd: string, hostId = "local") { return call<void>("relocate_session", { sessionPath, cwd, hostId }); }
+  async relocateDirlessSession(sessionPath: string, hostId = "local") {
+    const chat = await call<{ cwd: string }>("create_temporary_chat", { hostId, e2e: import.meta.env.MODE === "e2e" });
+    await this.relocateSession(sessionPath, chat.cwd, hostId);
+  }
   openProjectDirectory(cwd: string, hostId = "local") { return call<void>("open_project_directory", { cwd, hostId }); }
   createProjectWorktree(cwd: string, name: string, hostId = "local") { return call<GitWorktree>("create_project_worktree", { cwd, name, hostId }); }
   createGitWorktree(cwd: string, name: string, hostId = "local") { return call<GitWorktree>("create_git_worktree", { cwd, name, hostId }); }

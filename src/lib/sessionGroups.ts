@@ -6,6 +6,7 @@ import { changeSessionGroups, loadSessionGroups } from "./nativeTransport";
 import { listen } from "./platform";
 
 export interface SessionGroup { id: string; name: string; cwd?: string | null; hostId?: string | null; hostName?: string | null; projectKind?: "no-repo" | "main" | "worktree" | null; branch?: string; branchAppearance?: SessionSummary["branchAppearance"]; }
+export const DIRLESS_KEY = "__pi-desktop-dirless__";
 export interface SessionGroups { groups: SessionGroup[]; assignments: Record<string, string | null>; removedProjects: string[]; }
 export interface SessionGroupSeed { sessionKey: string; project: SessionGroup; }
 export type GroupChange = { type: "relocate"; project: SessionGroup; key: string } | { type: "create"; name: string } | { type: "project"; project: SessionGroup; key?: string } | { type: "inspectProject"; id: string; projectKind: "no-repo" | "main" | "worktree" } | { type: "rename"; id: string; name: string } | { type: "remove"; id: string } | { type: "assign"; key: string; group: string | null };

@@ -30,7 +30,7 @@ import { recordSeenModels } from "./lib/modelVisibility";
 import { initialWindowTarget, NativeTransport, openSessionWindow, resolveBranchGroup } from "./lib/nativeTransport";
 import { useSessionResume } from "./lib/sessionResume";
 import { isMobile, listen } from "./lib/platform";
-import { inheritSessionGroup, updateSessionGroups, type SessionGroup } from "./lib/sessionGroups";
+import { DIRLESS_KEY, inheritSessionGroup, updateSessionGroups, type SessionGroup } from "./lib/sessionGroups";
 import { SessionRuntimePool, useTurnDiffs } from "./lib/sessionRuntimePool";
 import { createDependencyEffect, createMemoFields, createRef, createSubscription, type StateUpdate } from "./lib/solid";
 import { TERMINAL_OUTPUT_LIMIT } from "./lib/terminalOutput";
@@ -106,8 +106,6 @@ export default function App() {
   const [worktreeTarget, setWorktreeTarget] = createSignal<WorktreeTarget>();
   const projectOpenRef = createRef(projectOpen()); createComputed(() => { projectOpenRef.current = projectOpen(); });
   const projectOpenRequest = createRef(0);
-  const [relocatingSession, setRelocatingSession] = createSignal<SessionSummary>(); const [relocationError, setRelocationError] = createSignal<string>();
-  const relocationActionRef = createRef<"select" | "split" | "rename">("select");
   const [terminalOpen, setTerminalOpen] = createSignal(false);
   const [terminalTarget, setTerminalTarget] = createSignal<TerminalTarget>();
   const [composerDrafts, setComposerDrafts] = createSignal<Record<string, string>>({});
@@ -428,7 +426,7 @@ export default function App() {
     const selectedKey = `${session.hostId ?? "local"}:${session.id}`; if (archivePending.current.has(selectedKey)) return undefined;
     const hostId = session.hostId ?? "local"; if (isSelectedSession(session)) { if (!connected()) reconnectMain(); return transport(); }
     if (isSplitSession(session)) closeSplitPane();
-    if (session.cwdExists === false) { relocationActionRef.current = "select"; setRelocationError(undefined); setRelocatingSession(session); return undefined; }
+    if (session.cwdExists === false) { void openDirlessSession(session, "select"); return undefined; }
     const nextTransport = runtimePool().forSession(session);
     const conversationKey = `${hostId}:${session.id}`; transportConversationKeys.current.set(nextTransport, conversationKey); activateConversationKey(conversationKey); chatSession().discardPendingUpdates(); setView("chat"); setTerminalOpen(false); updateConnected(false); setDefinedAgents(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd); activateTransport(nextTransport); return nextTransport;
   };
@@ -589,7 +587,7 @@ export default function App() {
   };
   const openSessionInWindow = async (session: SessionSummary) => { if (isMobile) { selectSession(session); return; } try { await openSessionWindow({ cwd: session.cwd, sessionPath: session.path, sessionId: session.id, hostId: session.hostId }); } catch (reason) { addNotice({ title: "Could not open window", message: String(reason) }); } };
   const sessionAction = async (session: SessionSummary, action: SessionAction) => { const capturedRuntimePool = runtimePool();
-    if (session.cwdExists === false && (action === "split" || action === "rename")) { relocationActionRef.current = action; setRelocationError(undefined); setRelocatingSession(session); return; }
+    if (session.cwdExists === false && action !== "archive" && action !== "open-directory") { await openDirlessSession(session, action); return; }
     if (action === "split") { openSplitPane(session); return; }
     if (action === "new-window") return openSessionInWindow(session);
     if (action === "open-directory") return openSessionDirectory(session);
@@ -694,37 +692,27 @@ export default function App() {
       {error() && <div class="error-toast" role="alert"><strong>piop could not connect</strong><span>{(error())!}</span><button onClick={reconnectMain} disabled={reconnectPending.current.has(transport())}>Retry</button><button aria-label="Dismiss connection error" onClick={() => setError(undefined)}>×</button></div>}
       {<Key each={notices()} by={(notice) => notice.id}>{(notice, _index) => <div class="error-toast" role="alert" ><strong>{notice().title}</strong><span>{notice().message}</span><button aria-label={`Dismiss ${notice().title}`} onClick={() => setNotices((current) => current.filter((item) => item.id !== notice().id))}>×</button></div>}</Key>}
     </div></Show>);
-  const renderExtensionDialog = () => (activeDialog() && !projectOpen() && !renameSession() && !relocatingSession() && !worktreeTarget() && <Rerun on={() => activeDialog()?.queueId}>{(_key) => <ExtensionDialog request={activeDialog()!.request} owner={activeDialog()!.owner} onRespond={async (response) => {
+  const renderExtensionDialog = () => (activeDialog() && !projectOpen() && !renameSession() && !worktreeTarget() && <Rerun on={() => activeDialog()?.queueId}>{(_key) => <ExtensionDialog request={activeDialog()!.request} owner={activeDialog()!.owner} onRespond={async (response) => {
     const capturedActiveDialog = activeDialog()!;
  await capturedActiveDialog.transport.command({ type: "extension_ui_response", id: capturedActiveDialog.request.id, ...response }); setDialogs((current) => current.filter((item) => item !== capturedActiveDialog)); }} />}</Rerun>);
   const renderProjectDialog = () => (projectOpen() && <ProjectDialog localEnabled={settings()?.localEnabled} initialPath={projectCwd() ?? ""} hosts={(settings())!.hosts.filter((host) => host.enabled !== false)} initialHostId={activeHostId()} onHomeDirectory={resolveHomeDirectory} onChooseDirectory={(currentPath, hostId) => transport().listDirectories(hostId, currentPath || undefined)} onOpen={openProject} onCancel={() => { projectOpenRef.current = false; setProjectOpen(false); }} />);
-  const updateRelocatedGroup = async (session: SessionSummary, relocated: SessionSummary, hostId: string) => {
-    const projectPath = relocated.projectRoot ?? relocated.cwd;
-    try { await updateSessionGroups({ type: "relocate", key: `${hostId}:${session.id}`, project: { id: `${hostId}:${projectPath}`, name: projectPath.split("/").filter(Boolean).at(-1) ?? relocated.project, cwd: projectPath, hostId, hostName: relocated.hostName, projectKind: relocated.projectKind } }); }
-    catch (reason) { addNotice({ title: "Project relocated, but its sidebar group could not be updated", message: String(reason) }); }
-  };
-  const renderRelocationDialog = () => (relocatingSession() && <Rerun on={() => relocatingSession()?.id}>{(_key) => <ExtensionDialog request={{ type: "extension_ui_request", id: `relocate-${(relocatingSession())!.id}`, method: "input", title: "Locate conversation project", message: `The original project directory no longer exists: ${(relocatingSession())!.cwd}. Enter its new location to open this conversation.`, error: relocationError(), placeholder: "Replacement project directory", prefill: sessions().find((session) => session.id === chatSession().state.sessionId && (session.hostId ?? "local") === activeHostId() && session.cwdExists !== false)?.cwd || "" }} onRespond={async (response) => {
-    const session = relocatingSession()!; const ownerTransport = transport(); const pool = runtimePool(); const action = relocationActionRef.current;
-    if (response.cancelled) { setRelocationError(undefined); setRelocatingSession(undefined); return; }
-    const cwd = typeof response.value === "string" ? response.value : "";
-    if (!hasVisibleText(cwd)) { setRelocationError("Path can't be empty"); return; }
-    setRelocationError(undefined);
+  const dirlessPending = new Set<string>();
+  const openDirlessSession = async (session: SessionSummary, action: SessionAction | "select") => {
+    const hostId = session.hostId ?? "local"; const key = `${hostId}:${session.id}`;
+    if (dirlessPending.has(key)) return; dirlessPending.add(key);
+    const client = transport(); const pool = runtimePool();
     try {
-      await ownerTransport.relocateSession(session.path, cwd, session.hostId);
-      const relocated = (await ownerTransport.listSessions()).find((item) => item.id === session.id && (item.hostId ?? "local") === (session.hostId ?? "local"));
-      if (!relocated) throw new Error("The relocated conversation could not be found. Refresh the conversation list and retry.");
-      const hostId = session.hostId ?? "local";
-      await updateRelocatedGroup(session, relocated, hostId);
-      setSessions((current) => current.map((item) => item.id === session.id && (item.hostId ?? "local") === hostId ? relocated : item));
-      const owner = pool.forSession(session);
-      pool.setLiveSession(owner, relocated);
+      await updateSessionGroups({ type: "assign", group: DIRLESS_KEY, key });
+      await client.relocateDirlessSession(session.path, hostId);
+      const relocated = (await client.listSessions()).find(item => item.id === session.id && (item.hostId ?? "local") === hostId);
+      if (!relocated) throw new Error("The conversation could not be found after moving it to Dirless.");
+      setSessions(current => current.map(item => item.id === session.id && (item.hostId ?? "local") === hostId ? relocated : item));
+      const owner = pool.forSession(session); pool.setLiveSession(owner, relocated);
       await owner.restoreConnection({ cwd: relocated.cwd, sessionPath: session.path, hostId });
-      setRelocatingSession(undefined);
-      if (action === "split") openSplitPane(relocated);
-      else if (action === "rename") setRenameSession({ session: relocated, transport: owner });
-      else selectSession(relocated);
-    } catch (reason) { setRelocationError(reason instanceof Error ? reason.message : String(reason)); }
-  }} />}</Rerun>);
+      if (action === "select") selectSession(relocated); else await sessionAction(relocated, action);
+    } catch (reason) { addNotice({ title: "Could not open Dirless conversation", message: String(reason) }); }
+    finally { dirlessPending.delete(key); }
+  };
   const renderWorktreeDialog = () => (worktreeTarget() && <WorktreeDialog projectPath={(worktreeTarget())!.cwd} fromProject={!(worktreeTarget())!.message} beforePrompt={(worktreeTarget())!.message?.role === "user"} onCancel={() => setWorktreeTarget(undefined)} onCreate={(name, onSetup) => createWorktree((worktreeTarget())!, name, onSetup)} />);
   const renderSubagentFind = () => subagentPane() && <FindInPage selector=".subagent-pane .chat-shell" scopeKey={`${subagentPane()!.hostId}:${subagentPane()!.sessionId}`} onActivate={() => setActivePane("split")} active={activePane() === "split"} enabled={view() === "chat"} />;
   return <SubagentNavigationContext.Provider value={openSubagent}>{!settings() ? (<AppLoading error={error()} />) : (<div class={`app dark ${panelOpen() && view() === "chat" ? "mobile-panel-open" : ""}`}>
@@ -744,7 +732,6 @@ export default function App() {
     {renameSession() && <Rerun on={() => renameSession()?.session.id}>{(_key) => <ExtensionDialog request={{ type: "extension_ui_request", id: "rename-session", method: "input", title: "Rename conversation", prefill: (renameSession())!.session.name }} onRespond={async (response) => {
     const capturedRenameSession = renameSession(); const capturedSession = { ...chatSession() }; const capturedActiveHostId = activeHostId();
  if (response.cancelled) { setRenameSession(undefined); return; } if (typeof response.value !== "string" || !hasVisibleText(response.value)) throw new Error("Conversation name can't be empty"); const name = response.value.trim(); await (capturedRenameSession)!.transport.connect(); await (capturedRenameSession)!.transport.command({ type: "set_session_name", name }); if ((capturedRenameSession)!.session.id === capturedSession.state.sessionId && ((capturedRenameSession)!.session.hostId ?? "local") === capturedActiveHostId) capturedSession.setState((current) => ({ ...current, sessionName: name })); await syncSessionIndex(); setRenameSession(undefined); }} />}</Rerun>}
-    {renderRelocationDialog()}
     {renderWorktreeDialog()}
   </div>)}</SubagentNavigationContext.Provider>;
 }
