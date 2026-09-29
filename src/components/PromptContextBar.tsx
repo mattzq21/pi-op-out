@@ -53,7 +53,10 @@ function skillPercentages(context: PromptContextInfo) {
 }
 
 function contextSections(context: PromptContextInfo) {
-  const systemPrompt = typeof context?.systemPrompt === "string" ? context.systemPrompt : "";
+  const systemPrompt = typeof context?.systemPrompt === "string" ? context.systemPrompt
+    .replace(/<skills>[\s\S]*?<\/skills>/g, "")
+    .replace(/(?:^|\n\n)The following skills provide specialized instructions[\s\S]*?<\/available_skills>/g, "")
+    .replace(/\n{3,}/g, "\n\n").trim() : "";
   const instructions = Array.isArray(context?.instructions) ? context.instructions.filter((item): item is NonNullable<typeof item> => Boolean(item) && typeof (item as { path?: unknown }).path === "string") : [];
   const tools = Array.isArray(context?.tools) ? context.tools.filter((item): item is NonNullable<typeof item> => Boolean(item) && typeof (item as { name?: unknown }).name === "string") : [];
   const skills = validSkills(context?.skills);
