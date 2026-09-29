@@ -2,7 +2,8 @@ import { Key } from "@solid-primitives/keyed";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { createMemo, createSignal, Show, splitProps } from "solid-js";
-import { readDroppedFile } from "../lib/nativeTransport";
+import { useComposerAttachments } from "../lib/useComposerAttachments";
+import { buildComposerPrompt, skillName, skillReference } from "../lib/composerPrompt";
 import { DictationControls } from "./DictationControls";
 import { isMobile } from "../lib/platform";
 import { accountModelName, providerAccountLabel } from "../lib/providerAccounts";
@@ -54,49 +55,10 @@ interface Props {
   onThinking: (level: string) => void;
 }
 
-const TEXT_LIMIT = 200_000;
-const IMAGE_LIMIT = 10 * 1024 * 1024;
-const TOTAL_UPLOAD_LIMIT = 24 * 1024 * 1024;
-const UPLOAD_COUNT_LIMIT = 12;
-const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-const TEXT_MIME_TYPES = new Set(["application/json", "application/xml", "application/javascript", "application/typescript", "application/x-sh", "application/x-yaml", "application/toml"]);
-const TEXT_EXTENSIONS = /\.(?:txt|md|mdx|json|jsonl|ya?ml|toml|xml|csv|tsv|js|jsx|ts|tsx|css|scss|html?|py|rs|go|java|kt|kts|c|cc|cpp|cxx|h|hpp|sh|bash|zsh|fish|sql|graphql|gql|ini|conf|env|log)$/i;
 const COMPOSER_MAX_HEIGHT = 130;
 const displayModelName = (model: Model, models: Model[]) => accountModelName(model, models).replace(/^gpt-/i, "");
-const skillName = (command: SlashCommand) => command.source === "skill" ? command.name.replace(/^skill:/, "") : undefined;
-const skillReference = (value: string) => value.match(/(?:^|[\s([{])\$([a-zA-Z0-9_-]*)$/)?.[1]?.toLowerCase();
-function expandSkillReference(value: string, commands: SlashCommand[]) {
-  if (value.startsWith("/")) return value;
-  const skills = new Map(commands.flatMap((command) => { const name = skillName(command); return name ? [[name.toLowerCase(), name] as const] : []; }));
-  const reference = /(^|[^a-zA-Z0-9_$])\$([a-zA-Z0-9][a-zA-Z0-9_-]*)\b/g;
-  let primary: string | undefined;
-  let rest = value;
-  const prose = value.replace(/(^|\n)( {0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n\2\3[^\n]*(?=\n|$)|$)|(`+)[^`]*?\4/g, (code) => code.replace(/[^\n]/g, " "));
-  for (const match of [...prose.matchAll(reference)]) {
-    const name = skills.get(match[2].toLowerCase());
-    if (!name || match.index === undefined) continue;
-    if (!primary) primary = name;
-    const token = match[0].slice(match[1].length);
-    const at = match.index + match[1].length;
-    if (at >= 0) rest = rest.slice(0, at) + rest.slice(at + token.length);
-    break;
-  }
-  if (!primary) return value;
-  rest = rest.trim();
-  return `/skill:${primary}${rest ? ` ${rest}` : ""}`;
-}
-const readFile = (file: File, mode: "text" | "dataUrl") => new Promise<string>((resolve, reject) => {
-  const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error);
-  if (mode === "dataUrl") reader.readAsDataURL(file); else reader.readAsText(file);
-});
-const escapeAttribute = (value: string) => value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]!);
-
 function composerDefaults({ streaming, compacting = false, paused = false, pausing = false, queued, pendingMessages = [], onChangePending, commands, agents, activeAgent, agentLocked = false, agentSaved = false, agentUnavailable = false, models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
   return { streaming, compacting, paused, pausing, queued, pendingMessages, onChangePending, commands, agents, activeAgent, agentLocked, agentSaved, agentUnavailable, models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled, draft, onDraftChange, controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking };
-}
-
-function modelSupportsImages(model: Props['model'], models: Model[]) {
-  return Boolean((model?.input ?? models.find((item) => item.provider === model?.provider && item.id === model?.id)?.input)?.includes("image"));
 }
 
 function composerControlState(controlsDisabled: boolean, action: "pause" | "resume" | undefined, pausing: boolean, stopping: boolean) {
@@ -120,31 +82,6 @@ function canPickCommand(event: KeyboardEvent) {
   return (event.key === "Tab" || event.key === "Enter") && !event.shiftKey && !event.ctrlKey;
 }
 
-function imageFile(file: File) {
-  return file.type.toLowerCase().startsWith("image/") || /\.(?:png|jpe?g|gif|webp|svg|bmp|ico|avif|heic|heif|tiff?)$/i.test(file.name);
-}
-
-async function imageUpload(file: File, errors: string[]): Promise<ComposerUpload | undefined> {
-  if (!SUPPORTED_IMAGE_TYPES.has(file.type.toLowerCase())) { errors.push(`${file.name} uses an unsupported image format`); return undefined; }
-  if (file.size > IMAGE_LIMIT) { errors.push(`${file.name} is larger than 10 MB`); return undefined; }
-  const url = await readFile(file, "dataUrl");
-  try { const image = new Image(); image.src = url; await image.decode(); }
-  catch { errors.push(`${file.name} is not a valid image`); return undefined; }
-  return { id: crypto.randomUUID(), name: file.name, kind: "image", byteSize: file.size, image: { type: "image", data: url.slice(url.indexOf(",") + 1), mimeType: file.type || "image/png", name: file.name } };
-
-}
-
-async function textUpload(file: File, errors: string[]): Promise<ComposerUpload | undefined> {
-  if (!(file.type.startsWith("text/") || TEXT_MIME_TYPES.has(file.type.toLowerCase()) || TEXT_EXTENSIONS.test(file.name) || /^(?:Dockerfile|Containerfile|Makefile|README|LICENSE|NOTICE|\.gitignore|\.gitattributes|\.editorconfig)$/i.test(file.name))) { errors.push(`${file.name} is not a supported text file`); return undefined; }
-  if (file.size > TEXT_LIMIT) { errors.push(`${file.name} is larger than 200 KB`); return undefined; }
-  let text: string;
-  try { text = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer()); }
-  catch { errors.push(`${file.name} does not contain valid UTF-8 text`); return undefined; }
-  if (text.includes("\0")) { errors.push(`${file.name} does not contain valid text`); return undefined; }
-  return { id: crypto.randomUUID(), name: file.name, kind: "text", byteSize: file.size, text };
-
-}
-
 export function Composer(props: Props) {
   const [visualProps, controlProps] = splitProps(props, ["toolbar"]);
   const composerFields = createMemoFields(() => composerDefaults(controlProps));
@@ -159,22 +96,8 @@ export function Composer(props: Props) {
   const [togglingFastMode, setTogglingFastMode] = createSignal(false);
   const togglingFastModeRef = createRef(false);
   const setValue = (next: string) => { if (composer().onDraftChange) (composer().onDraftChange)!(next); else setLocalValue(next); };
-  const [localUploads, setLocalUploads] = createSignal<ComposerUpload[]>([]);
-  const uploads = createMemo(() => (composer().controlledUploads ?? localUploads()));
-  const updateUploads = (update: ComposerUpload[] | ((current: ComposerUpload[]) => ComposerUpload[])) => {
-    if (composer().onUploadsChange) (composer().onUploadsChange)!(update); else setLocalUploads(update);
-  };
-  const [uploadError, setUploadError] = createSignal<string>();
-  const [readingUploads, setReadingUploads] = createSignal(0);
-  const [imageInputError, setImageInputError] = createSignal(false);
-  const supportsImages = createMemo(() => (modelSupportsImages(composer().model, composer().models)));
-  const supportsImagesRef = createRef(supportsImages());
-  createDependencyEffect(() => {
-    const capturedSupportsImages = supportsImages();
- supportsImagesRef.current = capturedSupportsImages; }, () => [supportsImages()]);
-  createDependencyEffect(() => {
-    const capturedSupportsImages = supportsImages();
- if (capturedSupportsImages) setImageInputError(false); }, () => [supportsImages()]);
+  const attachments = useComposerAttachments(composer);
+  const { uploads, updateUploads, uploadError, setUploadError, readingUploads, imageInputError, setImageInputError, addFiles, addPaths } = attachments;
   const [sending, setSending] = createSignal(false);
   const sendingRef = createRef(false);
   const [controlAction, setControlAction] = createSignal<"pause" | "resume">();
@@ -257,53 +180,6 @@ export function Composer(props: Props) {
     const capturedComposer = { ...composer() }; const capturedValue = value();
  if (capturedComposer.restoredDraft && (capturedComposer.restoredDraft)!.id !== restoredDraftId.current) { restoredDraftId.current = (capturedComposer.restoredDraft)!.id; if (!capturedValue) setValue((capturedComposer.restoredDraft)!.value); } }, () => [composer().restoredDraft]);
 
-  const readUpload = (file: File, errors: string[]) => file.type.startsWith("image/") ? imageUpload(file, errors) : textUpload(file, errors);
-  const canUploadImage = (file: File) => !imageFile(file) || supportsImagesRef.current;
-  const addFiles = async (files: FileList | File[] | null, initialErrors: string[] = [], commitUploads = composer().onUploadsChange ?? setLocalUploads) => { const capturedUploads = uploads();
-    if (!files) return;
-    setReadingUploads((count) => count + 1);
-    try {
-    setUploadError(undefined);
-    const next: ComposerUpload[] = [];
-    const errors = [...initialErrors];
-    let totalBytes = capturedUploads.reduce((total, upload) => total + upload.byteSize, 0);
-    for (const file of Array.from(files)) {
-      if (!canUploadImage(file)) { setImageInputError(true); continue; }
-      if (capturedUploads.length + next.length >= UPLOAD_COUNT_LIMIT) { errors.push(`Only ${UPLOAD_COUNT_LIMIT} attachments are allowed`); break; }
-      if (file.size + totalBytes > TOTAL_UPLOAD_LIMIT) { errors.push(`${file.name} exceeds the 24 MB attachment limit`); continue; }
-      const upload = await readUpload(file, errors);
-      if (!upload) continue;
-      next.push(upload);
-      totalBytes += file.size;
-    }
-    commitUploads((current) => {
-      const accepted: ComposerUpload[] = [];
-      let currentBytes = current.reduce((total, upload) => total + upload.byteSize, 0);
-      for (const upload of next) {
-        if (upload.kind === "image" && !supportsImagesRef.current) { setImageInputError(true); continue; }
-        if (current.length + accepted.length >= UPLOAD_COUNT_LIMIT) { errors.push(`Only ${UPLOAD_COUNT_LIMIT} attachments are allowed`); break; }
-        if (currentBytes + upload.byteSize > TOTAL_UPLOAD_LIMIT) { errors.push(`${upload.name} exceeds the 24 MB attachment limit`); continue; }
-        accepted.push(upload); currentBytes += upload.byteSize;
-      }
-      if (errors.length) setUploadError([...new Set(errors)].join(". "));
-      return [...current, ...accepted];
-    });
-    } finally { setReadingUploads((count) => count - 1); }
-  };
-  const addPaths = async (paths: string[], cancelled = () => false) => {
-    setReadingUploads((count) => count + 1);
-    try {
-    const commitUploads = composer().onUploadsChange ?? setLocalUploads;
-    const files: File[] = [];
-    const errors = paths.length > UPLOAD_COUNT_LIMIT ? [`Only ${UPLOAD_COUNT_LIMIT} attachments are allowed; extra files were skipped`] : [];
-    for (const path of paths.slice(0, UPLOAD_COUNT_LIMIT)) {
-      if (cancelled()) return;
-      try { files.push(await readDroppedFile(path)); }
-      catch (reason) { errors.push(reason instanceof Error ? reason.message : String(reason)); }
-    }
-    if (!cancelled()) await addFiles(files, errors, commitUploads);
-    } finally { setReadingUploads((count) => count - 1); }
-  };
   const nativeDropRef = createRef({ inputDisabled: controls().inputDisabled, addPaths });
   createDependencyEffect(() => {
     const capturedControls = { ...controls() };
@@ -339,7 +215,7 @@ export function Composer(props: Props) {
   const pendingDrag = usePendingMessageDrag(() => (composer().pendingMessages), () => (pendingControlsDisabled(composer().controlsDisabled, changingPending(), composer().pausing, composer().onChangePending)), () => (changePending));
   const controlsBlocked = () => composer().controlsDisabled || composer().compacting || composer().pausing || controlActionRef.current || stoppingRef.current;
   const canSubmit = (message: string, images: ImageAttachment[]) => {
-    if (images.length && !supportsImagesRef.current) { setImageInputError(true); return false; }
+    if (!attachments.acceptsImages(images.length)) return false;
     return Boolean((hasVisibleText(message) || images.length) && !sendingRef.current && !readingUploads());
   };
   const restoreSubmission = (submittedValue: string, submittedUploads: ComposerUpload[], reason: unknown, changeDraft: (value: StateUpdate<string>) => void, changeUploads: (value: StateUpdate<ComposerUpload[]>) => void) => {
@@ -349,15 +225,12 @@ export function Composer(props: Props) {
   };
   const submit = async (behavior: "steer" | "followUp" = "followUp") => { const capturedUploads = uploads(); const capturedValue = value(); const capturedComposer = { ...composer() };
     if (controlsBlocked()) return;
-    const textFiles = capturedUploads.filter((upload) => upload.kind === "text");
-    const escapeFileContent = (text: string) => text.replace(/<\/file>/gi, "<\\/file>");
-    const message = [expandSkillReference(capturedValue.trim(), capturedComposer.commands), ...textFiles.map((file) => `<file name="${escapeAttribute(file.name)}">\n${escapeFileContent(file.text ?? "")}\n</file>`)].filter(Boolean).join("\n\n");
-    const images = capturedUploads.flatMap((upload) => upload.image ? [upload.image] : []);
+    const { message, images } = buildComposerPrompt(capturedValue, capturedUploads, capturedComposer.commands);
     if (!canSubmit(message, images)) return;
     sendingRef.current = true; setSending(true); setUploadError(undefined);
     const submittedValue = capturedValue; const submittedUploads = capturedUploads;
     const changeDraft = capturedComposer.onDraftChange ?? setLocalValue;
-    const changeUploads = capturedComposer.onUploadsChange ?? setLocalUploads;
+    const changeUploads = attachments.captureUploadWriter();
     setValue(""); updateUploads([]);
     try {
       const accepted = await capturedComposer.onSend(message || "Describe the attached image.", capturedComposer.streaming ? behavior : undefined, images);
