@@ -1,5 +1,22 @@
+use std::fs;
+use std::io::Write;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
+use std::process::Stdio;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use crate::platform::AppHandle;
+use uuid::Uuid;
+use crate::{AppSettings, MAX_GIT_PATCH_BYTES, MAX_GIT_PATH_LIST_BYTES, PiRuntime, ProjectKind, RemoteHost, STORAGE_DIRECTORY, SessionIndexRuntime, SessionSummary, TerminalRuntime, node_command};
+use crate::worktree_setup::{GitWorktree, GitWorktreeRemoval, LimitedOutput, WorktreeScriptPhase, ensure_desktop_sessions_dir, run_limited, run_worktree_scripts, shell_quote};
+use crate::pi_launch::{remote_host, remote_login_command, ssh};
+use crate::session_index::{list_local_sessions, list_remote_sessions};
+use crate::defaults_usage::{home_dir};
+use crate::settings::{load_app_settings};
+
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn is_git_repository(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<bool, String> {
+pub(super) fn is_git_repository(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<bool, String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let output = if host_id == "local" {
         Command::new("git").args(["-C", &cwd, "rev-parse", "--git-dir"]).output().map_err(|error| format!("Could not inspect project Git repository: {error}"))?
@@ -11,13 +28,13 @@ fn is_git_repository(app: AppHandle, cwd: String, host_id: Option<String>) -> Re
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn git_branch(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<Option<String>, String> {
+pub(super) fn git_branch(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<Option<String>, String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let host = if host_id == "local" { None } else { Some(remote_host(&load_app_settings(app)?, &host_id)?.clone()) };
     git_branch_at(&cwd, host.as_ref())
 }
 
-fn git_branch_at(cwd: &str, host: Option<&RemoteHost>) -> Result<Option<String>, String> {
+pub(super) fn git_branch_at(cwd: &str, host: Option<&RemoteHost>) -> Result<Option<String>, String> {
     let output = if let Some(host) = host {
         ssh(host).arg(format!("git -C {} rev-parse --abbrev-ref HEAD", shell_quote(cwd))).output().map_err(|error| format!("Could not read Git branch on {}: {error}", host.name))?
     } else {
@@ -28,7 +45,7 @@ fn git_branch_at(cwd: &str, host: Option<&RemoteHost>) -> Result<Option<String>,
     Ok((!branch.is_empty()).then_some(branch))
 }
 
-fn inspect_git_project_kind(settings: &AppSettings, cwd: &str, host_id: &str) -> Result<ProjectKind, String> {
+pub(super) fn inspect_git_project_kind(settings: &AppSettings, cwd: &str, host_id: &str) -> Result<ProjectKind, String> {
     let script = format!(r#"[ -d {cwd} ] || {{ printf 'Project directory does not exist' >&2; exit 3; }}
 git_dir=$(git -C {cwd} rev-parse --absolute-git-dir 2>/dev/null) || {{ printf 'no-repo'; exit 0; }}
 common_dir=$(git -C {cwd} rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || exit 1
@@ -55,19 +72,19 @@ if [ "$git_dir" = "$common_dir" ]; then printf 'main'; else printf 'worktree'; f
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn git_project_kind(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<ProjectKind, String> {
+pub(super) fn git_project_kind(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<ProjectKind, String> {
     let settings = load_app_settings(app)?;
     inspect_git_project_kind(&settings, &cwd, host_id.as_deref().unwrap_or("local"))
 }
 
-fn worktree_suffix(name: &str) -> Result<&str, String> {
+pub(super) fn worktree_suffix(name: &str) -> Result<&str, String> {
     let name = name.trim();
     if name.is_empty() { return Err("Name can't be empty".into()); }
     if !name.chars().all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')) { return Err("Name may only contain letters, numbers, dots, hyphens, and underscores".into()); }
     Ok(name)
 }
 
-fn worktree_branch_name(parent: &str, name: &str) -> String {
+pub(super) fn worktree_branch_name(parent: &str, name: &str) -> String {
     format!("{parent}|{name}")
 }
 
@@ -83,7 +100,7 @@ fn child_worktree_branch(root: &Path, name: &str, host: Option<&RemoteHost>) -> 
     Ok(worktree_branch_name(parent, name))
 }
 
-fn parse_worktree_output(output: LimitedOutput, context: &str) -> Result<GitWorktree, String> {
+pub(super) fn parse_worktree_output(output: LimitedOutput, context: &str) -> Result<GitWorktree, String> {
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(if error.is_empty() { context.into() } else { error });
@@ -118,7 +135,7 @@ fn copy_untracked_directory(source_root: &Path, target_root: &Path, relative: &P
     Ok(())
 }
 
-fn copy_untracked_file(source_root: &Path, target_root: &Path, relative: &Path) -> Result<(), String> {
+pub(super) fn copy_untracked_file(source_root: &Path, target_root: &Path, relative: &Path) -> Result<(), String> {
     if !relative.components().all(|component| matches!(component, std::path::Component::Normal(_))) { return Err("Git returned an invalid untracked path".into()); }
     let source = source_root.join(relative); let target = target_root.join(relative);
     let metadata = fs::symlink_metadata(&source).map_err(|error| format!("Could not inspect untracked file {}: {error}", relative.display()))?;
@@ -133,26 +150,26 @@ fn copy_untracked_file(source_root: &Path, target_root: &Path, relative: &Path) 
 }
 
 #[cfg(unix)]
-fn git_relative_path(bytes: &[u8]) -> PathBuf {
+pub(super) fn git_relative_path(bytes: &[u8]) -> PathBuf {
     use std::os::unix::ffi::OsStrExt;
     PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
 }
 
 #[cfg(not(unix))]
-fn git_relative_path(bytes: &[u8]) -> PathBuf { PathBuf::from(String::from_utf8_lossy(bytes).into_owned()) }
+pub(super) fn git_relative_path(bytes: &[u8]) -> PathBuf { PathBuf::from(String::from_utf8_lossy(bytes).into_owned()) }
 
-fn remove_created_worktree(root: &Path, target: &Path, branch: &str) {
+pub(super) fn remove_created_worktree(root: &Path, target: &Path, branch: &str) {
     let _ = Command::new("git").arg("-C").arg(root).args(["worktree", "remove", "--force"]).arg(target).stdout(Stdio::null()).stderr(Stdio::null()).status();
     let _ = Command::new("git").arg("-C").arg(root).args(["branch", "-D", branch]).stdout(Stdio::null()).stderr(Stdio::null()).status();
 }
 
-fn local_branch_exists(root: &Path, branch: &str) -> Result<bool, String> {
+pub(super) fn local_branch_exists(root: &Path, branch: &str) -> Result<bool, String> {
     let reference = format!("refs/heads/{branch}");
     let status = Command::new("git").arg("-C").arg(root).args(["show-ref", "--verify", "--quiet", &reference]).status().map_err(|error| format!("Could not inspect Git branches: {error}"))?;
     match status.code() { Some(0) => Ok(true), Some(1) => Ok(false), _ => Err("Could not inspect Git branches".into()) }
 }
 
-fn local_worktree_is_registered(root: &Path, target: &Path) -> Result<bool, String> {
+pub(super) fn local_worktree_is_registered(root: &Path, target: &Path) -> Result<bool, String> {
     let output = run_limited(Command::new("git").arg("-C").arg(root).args(["worktree", "list", "--porcelain", "-z"]), 1024 * 1024, "Could not inspect Git worktrees")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     let prefix = "worktree "; let target = target.to_string_lossy();
@@ -160,7 +177,7 @@ fn local_worktree_is_registered(root: &Path, target: &Path) -> Result<bool, Stri
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn create_project_worktree(app: AppHandle, cwd: String, name: String, host_id: Option<String>) -> Result<GitWorktree, String> {
+pub(super) fn create_project_worktree(app: AppHandle, cwd: String, name: String, host_id: Option<String>) -> Result<GitWorktree, String> {
     let settings = load_app_settings(app)?;
     let host_id = host_id.as_deref().unwrap_or("local");
     let host = if host_id == "local" { None } else { Some(remote_host(&settings, host_id)?) };
@@ -206,7 +223,7 @@ fn managed_worktree_target(root: &Path, host: Option<&RemoteHost>, branch: &str)
     Ok(ManagedWorktreeTarget { path: PathBuf::from(path), host: host.cloned() })
 }
 
-fn create_project_worktree_at(cwd: &str, name: &str, host: Option<&RemoteHost>) -> Result<GitWorktree, String> {
+pub(super) fn create_project_worktree_at(cwd: &str, name: &str, host: Option<&RemoteHost>) -> Result<GitWorktree, String> {
     let name = worktree_suffix(name)?;
     let root = project_worktree_root(cwd, host)?;
     let branch = child_worktree_branch(&root, name, host)?;
@@ -215,7 +232,7 @@ fn create_project_worktree_at(cwd: &str, name: &str, host: Option<&RemoteHost>) 
     let output = if let Some(host) = host {
         run_limited(ssh(host).arg(format!("git -C {} worktree add -b {} {} HEAD", shell_quote(&root.to_string_lossy()), shell_quote(&branch), shell_quote(&target.to_string_lossy()))), 64 * 1024, "Could not create Git worktree")?
     } else {
-        run_limited(Command::new("git").arg("-C").arg(&root).args(["worktree", "add", "-b", &branch]).arg(&target).arg("HEAD"), 64 * 1024, "Could not create Git worktree")?
+        run_limited(Command::new("git").arg("-C").arg(&root).args(["worktree", "add", "-b", &branch]).arg(target).arg("HEAD"), 64 * 1024, "Could not create Git worktree")?
     };
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -237,7 +254,7 @@ fn remote_worktree_root(cwd: &str, host: &RemoteHost) -> Result<String, String> 
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn create_git_worktree(app: AppHandle, cwd: String, name: String, host_id: Option<String>) -> Result<GitWorktree, String> {
+pub(super) fn create_git_worktree(app: AppHandle, cwd: String, name: String, host_id: Option<String>) -> Result<GitWorktree, String> {
     let name = worktree_suffix(&name)?;
     let host_id = host_id.as_deref().unwrap_or("local");
     if host_id != "local" {
@@ -261,12 +278,12 @@ fn new_local_worktree_target(root: &Path, branch: &str) -> Result<ManagedWorktre
     if local_branch_exists(root, branch)? { return Err(format!("Git branch already exists: {branch}")); }
     let reservation = managed_worktree_target(root, None, branch)?;
     let target = &reservation.path;
-    if fs::symlink_metadata(&target).is_ok() { return Err(format!("Worktree directory already exists: {}", target.display())); }
-    if local_worktree_is_registered(root, &target)? { return Err(format!("Git worktree is already registered: {}", target.display())); }
+    if fs::symlink_metadata(target).is_ok() { return Err(format!("Worktree directory already exists: {}", target.display())); }
+    if local_worktree_is_registered(root, target)? { return Err(format!("Git worktree is already registered: {}", target.display())); }
     Ok(reservation)
 }
 
-fn write_worktree_patch(path: &Path, patch: &[u8]) -> std::io::Result<()> {
+pub(super) fn write_worktree_patch(path: &Path, patch: &[u8]) -> std::io::Result<()> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -314,7 +331,7 @@ fn canonical_worktree_root(cwd: &str) -> Result<PathBuf, String> {
     project_worktree_root(cwd, None)?.canonicalize().map_err(|error| format!("Could not resolve Git repository: {error}"))
 }
 
-fn create_local_git_worktree(cwd: &str, name: &str) -> Result<GitWorktree, String> {
+pub(super) fn create_local_git_worktree(cwd: &str, name: &str) -> Result<GitWorktree, String> {
     let name = worktree_suffix(name)?;
     let root = canonical_worktree_root(cwd)?;
     let branch = child_worktree_branch(&root, name, None)?;
@@ -323,28 +340,28 @@ fn create_local_git_worktree(cwd: &str, name: &str) -> Result<GitWorktree, Strin
     let has_head = Command::new("git").arg("-C").arg(&root).args(["rev-parse", "--verify", "HEAD"]).stdout(Stdio::null()).stderr(Stdio::null()).status().map_err(|error| format!("Could not inspect Git HEAD: {error}"))?.success();
     let patch = local_worktree_patch(&root, has_head)?;
     let untracked = local_worktree_untracked(&root, has_head)?;
-    add_local_worktree(&root, &branch, &target, has_head)?;
+    add_local_worktree(&root, &branch, target, has_head)?;
     let copy_result = (|| {
         if !patch.is_empty() {
             let patch_path = std::env::temp_dir().join(format!("pi-desktop-worktree-{}.patch", Uuid::new_v4()));
             write_worktree_patch(&patch_path, &patch).map_err(|error| format!("Could not prepare Git changes for copying: {error}"))?;
-            let applied = run_limited(Command::new("git").arg("-C").arg(&target).args(["apply", "--whitespace=nowarn"]).arg(&patch_path), 64 * 1024, "Could not copy Git changes");
+            let applied = run_limited(Command::new("git").arg("-C").arg(target).args(["apply", "--whitespace=nowarn"]).arg(&patch_path), 64 * 1024, "Could not copy Git changes");
             let _ = fs::remove_file(&patch_path);
             let applied = applied?;
             if !applied.status.success() { return Err(String::from_utf8_lossy(&applied.stderr).trim().to_string()); }
         }
         for raw in untracked.stdout.split(|byte| *byte == 0).filter(|path| !path.is_empty()) {
-            copy_untracked_file(&root, &target, &git_relative_path(raw))?;
+            copy_untracked_file(&root, target, &git_relative_path(raw))?;
         }
         Ok(())
     })();
-    if let Err(error) = copy_result { remove_created_worktree(&root, &target, &branch); return Err(error); }
+    if let Err(error) = copy_result { remove_created_worktree(&root, target, &branch); return Err(error); }
     Ok(GitWorktree { branch, path: target.to_string_lossy().into_owned() })
 }
 
-struct WorktreeRemovalTarget { path: String, source: String, branch: Option<String> }
+pub(super) struct WorktreeRemovalTarget { pub(super) path: String, pub(super) source: String, pub(super) branch: Option<String> }
 
-fn canonical_worktree_roots(settings: &AppSettings, host_id: &str, paths: &[String]) -> Result<Vec<Option<String>>, String> {
+pub(super) fn canonical_worktree_roots(settings: &AppSettings, host_id: &str, paths: &[String]) -> Result<Vec<Option<String>>, String> {
     let script = r#"command -v git >/dev/null 2>&1 || exit 2
 for path do
     if root=$(git -C "$path" rev-parse --show-toplevel 2>/dev/null) && root=$(cd -- "$root" 2>/dev/null && pwd -P); then
@@ -377,14 +394,14 @@ done"#;
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-async fn git_worktree_roots(app: AppHandle, paths: Vec<String>, host_id: Option<String>) -> Result<Vec<Option<String>>, String> {
+pub(super) async fn git_worktree_roots(app: AppHandle, paths: Vec<String>, host_id: Option<String>) -> Result<Vec<Option<String>>, String> {
     crate::platform::async_runtime::spawn_blocking(move || {
         let settings = load_app_settings(app)?;
         canonical_worktree_roots(&settings, host_id.as_deref().unwrap_or("local"), &paths)
     }).await.map_err(|error| error.to_string())?
 }
 
-fn sessions_on_host(settings: &AppSettings, index: &SessionIndexRuntime, host_id: &str) -> Result<Vec<SessionSummary>, String> {
+pub(super) fn sessions_on_host(settings: &AppSettings, index: &SessionIndexRuntime, host_id: &str) -> Result<Vec<SessionSummary>, String> {
     if host_id == "local" {
         let root = ensure_desktop_sessions_dir(&home_dir()?)?;
         return list_local_sessions(index, &root);
@@ -393,7 +410,7 @@ fn sessions_on_host(settings: &AppSettings, index: &SessionIndexRuntime, host_id
     list_remote_sessions(index, host).map_err(|error| format!("Could not verify conversations on {}: {error}", host.name))
 }
 
-fn inspect_worktree_removal(settings: &AppSettings, cwd: &str, host_id: &str) -> Result<WorktreeRemovalTarget, String> {
+pub(super) fn inspect_worktree_removal(settings: &AppSettings, cwd: &str, host_id: &str) -> Result<WorktreeRemovalTarget, String> {
     let script = format!(r#"target=$(git -C {cwd} rev-parse --show-toplevel 2>/dev/null) || {{ printf 'Project is not a Git repository' >&2; exit 1; }}
 target=$(cd -- "$target" && pwd -P) || exit 1
 git_dir=$(git -C "$target" rev-parse --absolute-git-dir) || exit 1
@@ -457,7 +474,7 @@ fn remove_git_worktree_blocking(app: AppHandle, cwd: String, host_id: Option<Str
     remove_git_worktree_cancellable(app, cwd, host_id, delete_branch, &AtomicBool::new(false))
 }
 
-fn validated_removal_target(app: &AppHandle, settings: &AppSettings, cwd: &str, host_id: &str) -> Result<WorktreeRemovalTarget, String> {
+pub(super) fn validated_removal_target(app: &AppHandle, settings: &AppSettings, cwd: &str, host_id: &str) -> Result<WorktreeRemovalTarget, String> {
     let runtime = app.state::<PiRuntime>();
     let terminals = app.state::<TerminalRuntime>();
     let session_index = app.state::<SessionIndexRuntime>();
@@ -467,7 +484,7 @@ fn validated_removal_target(app: &AppHandle, settings: &AppSettings, cwd: &str, 
     Ok(target)
 }
 
-fn remove_git_worktree_cancellable(app: AppHandle, cwd: String, host_id: Option<String>, delete_branch: bool, cancelled: &AtomicBool) -> Result<GitWorktreeRemoval, String> {
+pub(super) fn remove_git_worktree_cancellable(app: AppHandle, cwd: String, host_id: Option<String>, delete_branch: bool, cancelled: &AtomicBool) -> Result<GitWorktreeRemoval, String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let settings = load_app_settings(app.clone())?;
     let runtime = app.state::<PiRuntime>();
@@ -479,7 +496,7 @@ fn remove_git_worktree_cancellable(app: AppHandle, cwd: String, host_id: Option<
     remove_worktree_target(&settings, &host_id, target, delete_branch, cancelled)
 }
 
-fn validate_worktree_unused(settings: &AppSettings, host_id: &str, target: &str, session_paths: &[String], runtime: &PiRuntime, terminals: &TerminalRuntime) -> Result<(), String> {
+pub(super) fn validate_worktree_unused(settings: &AppSettings, host_id: &str, target: &str, session_paths: &[String], runtime: &PiRuntime, terminals: &TerminalRuntime) -> Result<(), String> {
     let conversations = canonical_worktree_roots(settings, host_id, session_paths)?.into_iter().filter(|root| root.as_deref() == Some(target)).count();
     if conversations > 0 {
         return Err(format!("Archive or relocate the {conversations} conversation{} using this worktree before deleting it", if conversations == 1 { "" } else { "s" }));
@@ -495,7 +512,7 @@ fn validate_worktree_unused(settings: &AppSettings, host_id: &str, target: &str,
     Ok(())
 }
 
-fn preserve_worktree_checkpoints(settings: &AppSettings, host_id: &str, target: &WorktreeRemovalTarget) -> Result<(), String> {
+pub(super) fn preserve_worktree_checkpoints(settings: &AppSettings, host_id: &str, target: &WorktreeRemovalTarget) -> Result<(), String> {
     let script = include_str!("../../resources/preserve-archive-checkpoints.cjs");
     let mut preserve = if host_id == "local" {
         let mut command = node_command(); command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", script, &target.path]); command
@@ -516,7 +533,7 @@ fn cleanup_worktree_storage(settings: &AppSettings, host_id: &str, path: &str) {
     let _ = run_limited(&mut worktree_storage_command("cleanup", Path::new(path), host, ""), 64 * 1024, "Could not clean up worktree storage");
 }
 
-fn remove_worktree_target(settings: &AppSettings, host_id: &str, target: WorktreeRemovalTarget, delete_branch: bool, cancelled: &AtomicBool) -> Result<GitWorktreeRemoval, String> {
+pub(super) fn remove_worktree_target(settings: &AppSettings, host_id: &str, target: WorktreeRemovalTarget, delete_branch: bool, cancelled: &AtomicBool) -> Result<GitWorktreeRemoval, String> {
     preserve_worktree_checkpoints(settings, host_id, &target)?;
     if cancelled.load(Ordering::SeqCst) { return Err("Worktree removal cancelled".into()); }
     let removed = if host_id == "local" {
@@ -551,6 +568,6 @@ fn remove_worktree_branch(settings: &AppSettings, host_id: &str, target: Worktre
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-async fn remove_git_worktree(app: AppHandle, cwd: String, host_id: Option<String>, delete_branch: bool) -> Result<GitWorktreeRemoval, String> {
+pub(super) async fn remove_git_worktree(app: AppHandle, cwd: String, host_id: Option<String>, delete_branch: bool) -> Result<GitWorktreeRemoval, String> {
     crate::platform::async_runtime::spawn_blocking(move || remove_git_worktree_blocking(app, cwd, host_id, delete_branch)).await.map_err(|error| error.to_string())?
 }

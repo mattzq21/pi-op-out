@@ -1,4 +1,25 @@
-fn inspect_storage(host: Option<&RemoteHost>) -> Result<HostStorage, String> {
+use serde_json::json;
+use std::fs;
+use std::thread;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::mpsc;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::Ordering;
+use crate::platform::AppHandle;
+use crate::platform::State;
+use uuid::Uuid;
+use crate::{AppSettings, HostStorage, MAX_GIT_PATH_LIST_BYTES, MAX_REMOTE_HOSTS, MAX_SESSION_INDEX_BATCH_BYTES, PiRuntime, RemoteHost, STORAGE_DIRECTORY, StorageInventory, StorageReport, TerminalRuntime, conversation_ownership, node_command};
+use crate::terminals::{stop_terminals};
+use crate::archive_worktrees::{archived_worktree_cwd, cleanup_archived_worktree};
+use crate::worktree_setup::{LimitedOutput, desktop_sessions_dir, run_limited, shell_quote};
+use crate::pi_launch::{remote_host, remote_login_command, session_identity, ssh};
+use crate::defaults_usage::{home_dir};
+use crate::settings::{load_app_settings};
+
+pub(super) fn inspect_storage(host: Option<&RemoteHost>) -> Result<HostStorage, String> {
     let script = include_str!("../../resources/storage-inventory.cjs");
     let mut command = if let Some(host) = host {
         let mut command = ssh(host);
@@ -12,13 +33,13 @@ fn inspect_storage(host: Option<&RemoteHost>) -> Result<HostStorage, String> {
     query_storage_inventory(&mut command, host)
 }
 
-fn query_storage_inventory(command: &mut Command, host: Option<&RemoteHost>) -> Result<HostStorage, String> {
+pub(super) fn query_storage_inventory(command: &mut Command, host: Option<&RemoteHost>) -> Result<HostStorage, String> {
     let label = host.map(|value| value.name.as_str()).unwrap_or("Local");
     let output = run_limited(command, MAX_SESSION_INDEX_BATCH_BYTES, &format!("Could not inspect storage on {label}"))?;
     parse_storage_inventory(output, host)
 }
 
-fn parse_storage_inventory(output: LimitedOutput, host: Option<&RemoteHost>) -> Result<HostStorage, String> {
+pub(super) fn parse_storage_inventory(output: LimitedOutput, host: Option<&RemoteHost>) -> Result<HostStorage, String> {
     let label = host.map(|value| value.name.as_str()).unwrap_or("Local");
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -35,18 +56,18 @@ fn parse_storage_inventory(output: LimitedOutput, host: Option<&RemoteHost>) -> 
     })
 }
 
-fn failed_storage(host_id: String, host_name: String, error: String) -> HostStorage {
+pub(super) fn failed_storage(host_id: String, host_name: String, error: String) -> HostStorage {
     HostStorage { host_id, host_name, categories: Vec::new(), archives: Vec::new(), warnings: Vec::new(), error: Some(error) }
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn storage_report(app: AppHandle) -> Result<StorageReport, String> {
+pub(super) fn storage_report(app: AppHandle) -> Result<StorageReport, String> {
     let local = inspect_storage(None);
     let remote_hosts = load_app_settings(app)?.hosts;
     Ok(collect_storage_report(local, remote_hosts, |host| inspect_storage(Some(host))))
 }
 
-fn collect_storage_report(local: Result<HostStorage, String>, remote_hosts: Vec<RemoteHost>, inspect: impl Fn(&RemoteHost) -> Result<HostStorage, String> + Sync) -> StorageReport {
+pub(super) fn collect_storage_report(local: Result<HostStorage, String>, remote_hosts: Vec<RemoteHost>, inspect: impl Fn(&RemoteHost) -> Result<HostStorage, String> + Sync) -> StorageReport {
     let mut hosts = vec![local.unwrap_or_else(|error| failed_storage("local".into(), "Local".into(), error))];
     thread::scope(|scope| {
         let inspect = &inspect;
@@ -72,7 +93,7 @@ fn local_desktop_session_file(session_path: &str) -> Result<PathBuf, String> {
     local_desktop_session_file_at(&home_dir()?, session_path)
 }
 
-fn local_desktop_session_file_at(home: &Path, session_path: &str) -> Result<PathBuf, String> {
+pub(super) fn local_desktop_session_file_at(home: &Path, session_path: &str) -> Result<PathBuf, String> {
     let root = desktop_sessions_dir(home).canonicalize().map_err(|error| format!("Could not locate piop sessions: {error}"))?;
     let source = PathBuf::from(session_path).canonicalize().map_err(|error| format!("Could not locate session file: {error}"))?;
     if !source.starts_with(&root) || source.extension().and_then(|value| value.to_str()) != Some("jsonl") || !source.is_file() { return Err("Only piop session files can be accessed".into()); }
@@ -83,26 +104,26 @@ fn local_archived_session_file(session_path: &str) -> Result<PathBuf, String> {
     local_archived_session_file_at(&home_dir()?, session_path)
 }
 
-fn local_archived_session_file_at(home: &Path, session_path: &str) -> Result<PathBuf, String> {
+pub(super) fn local_archived_session_file_at(home: &Path, session_path: &str) -> Result<PathBuf, String> {
     let root = home.join(STORAGE_DIRECTORY).join("archived").canonicalize().map_err(|error| format!("Could not locate piop archives: {error}"))?;
     let source = PathBuf::from(session_path).canonicalize().map_err(|error| format!("Could not locate archived conversation: {error}"))?;
     if !source.starts_with(&root) || source.extension().and_then(|value| value.to_str()) != Some("jsonl") || !source.is_file() { return Err("Only archived piop conversations can be accessed".into()); }
     Ok(source)
 }
 
-fn desktop_session_file(settings: &AppSettings, host_id: &str, path: &str) -> Result<String, String> {
+pub(super) fn desktop_session_file(settings: &AppSettings, host_id: &str, path: &str) -> Result<String, String> {
     if host_id == "local" { return Ok(local_desktop_session_file(path)?.to_string_lossy().into_owned()); }
     let host = remote_host(settings, host_id)?;
     remote_session_file(path, false, |script| { let mut command = ssh(host); command.arg(script); command })
 }
 
-fn archived_session_file(settings: &AppSettings, host_id: &str, path: &str) -> Result<String, String> {
+pub(super) fn archived_session_file(settings: &AppSettings, host_id: &str, path: &str) -> Result<String, String> {
     if host_id == "local" { return Ok(local_archived_session_file(path)?.to_string_lossy().into_owned()); }
     let host = remote_host(settings, host_id)?;
     remote_session_file(path, true, |script| { let mut command = ssh(host); command.arg(script); command })
 }
 
-fn remote_session_file(path: &str, archived: bool, command: impl FnOnce(String) -> Command) -> Result<String, String> {
+pub(super) fn remote_session_file(path: &str, archived: bool, command: impl FnOnce(String) -> Command) -> Result<String, String> {
     let (area, context, rejected) = if archived {
         ("archived", "Could not locate archived Piop conversation", "Only archived conversation files in this Piop profile can be deleted")
     } else {
@@ -136,7 +157,7 @@ fn archive_session_on_host(app: &AppHandle, host_id: &str, session_path: &str) -
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path: String, host_id: Option<String>, terminal_ids: Vec<String>, client_id: String) -> Result<(), String> {
+pub(super) fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path: String, host_id: Option<String>, terminal_ids: Vec<String>, client_id: String) -> Result<(), String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let client = app.state::<PiRuntime>();
     let _lifecycle = client.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
@@ -153,7 +174,7 @@ fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, session_path
     Ok(())
 }
 
-fn archive_remote_session(session_path: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
+pub(super) fn archive_remote_session(session_path: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
     let file_name = Path::new(session_path).file_name().and_then(|name| name.to_str()).ok_or("Session path has no file name")?;
     let destination = format!("{}-{file_name}", Uuid::new_v4());
     let diff_destination = Path::new(&destination).with_extension("diffs.json").to_string_lossy().into_owned();
@@ -164,7 +185,7 @@ fn archive_remote_session(session_path: &str, command: impl FnOnce(String) -> Co
     Ok(())
 }
 
-fn archive_local_session(home: &Path, session_path: &str) -> Result<(), String> {
+pub(super) fn archive_local_session(home: &Path, session_path: &str) -> Result<(), String> {
     let source = local_desktop_session_file_at(home, session_path)?;
     let archive_dir = home.join(STORAGE_DIRECTORY).join("archived");
     fs::create_dir_all(&archive_dir).map_err(|error| format!("Could not create archive directory: {error}"))?;
@@ -210,7 +231,7 @@ fn delete_stored_session(app: AppHandle, runtime: &PiRuntime, session_path: Stri
     Ok(())
 }
 
-fn delete_session_files(runtime: &PiRuntime, path: &str, host_id: &str, host: Option<&RemoteHost>, local_root: &Path, archived: bool) -> Result<(), String> {
+pub(super) fn delete_session_files(runtime: &PiRuntime, path: &str, host_id: &str, host: Option<&RemoteHost>, local_root: &Path, archived: bool) -> Result<(), String> {
     if runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?.values()
         .any(|agent| !agent.messageable && agent.host_id == host_id && agent.session_path.as_deref() == Some(path)) {
         return Err("Close the session before deleting it".into());
@@ -232,7 +253,7 @@ fn delete_session_files(runtime: &PiRuntime, path: &str, host_id: &str, host: Op
     run_session_deletion(&mut command)
 }
 
-fn run_session_deletion(command: &mut Command) -> Result<(), String> {
+pub(super) fn run_session_deletion(command: &mut Command) -> Result<(), String> {
     let output = run_limited(command, 256 * 1024, "Could not delete session")?;
     if output.status.success() { return Ok(()); }
     let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -240,12 +261,12 @@ fn run_session_deletion(command: &mut Command) -> Result<(), String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn delete_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, host_id: Option<String>, client_id: String) -> Result<(), String> {
+pub(super) fn delete_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, host_id: Option<String>, client_id: String) -> Result<(), String> {
     delete_stored_session(app, &runtime, session_path, host_id, false, client_id)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn delete_archived_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, host_id: Option<String>, client_id: String) -> Result<(), String> {
+pub(super) fn delete_archived_session(app: AppHandle, runtime: State<PiRuntime>, session_path: String, host_id: Option<String>, client_id: String) -> Result<(), String> {
     delete_stored_session(app, &runtime, session_path, host_id, true, client_id)
 }
 
@@ -264,7 +285,7 @@ fn restore_worktree_command(settings: &AppSettings, host_id: &str, path: &str) -
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn restore_archived_worktree(app: AppHandle, session_path: String, host_id: Option<String>, client_id: String) -> Result<serde_json::Value, String> {
+pub(super) fn restore_archived_worktree(app: AppHandle, session_path: String, host_id: Option<String>, client_id: String) -> Result<serde_json::Value, String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let runtime = app.state::<PiRuntime>();
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Session lifecycle lock was poisoned")?;
@@ -280,7 +301,7 @@ fn restore_archived_worktree(app: AppHandle, session_path: String, host_id: Opti
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn relocate_session(app: AppHandle, session_path: String, cwd: String, host_id: Option<String>, client_id: String) -> Result<(), String> {
+pub(super) fn relocate_session(app: AppHandle, session_path: String, cwd: String, host_id: Option<String>, client_id: String) -> Result<(), String> {
     let runtime = app.state::<PiRuntime>();
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
     let host_id = host_id.unwrap_or_else(|| "local".into());
@@ -294,7 +315,7 @@ fn relocate_session(app: AppHandle, session_path: String, cwd: String, host_id: 
     mutation.finish()
 }
 
-fn relocate_remote_session(session_path: &str, cwd: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
+pub(super) fn relocate_remote_session(session_path: &str, cwd: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
     let session = shell_quote(session_path); let replacement = shell_quote(cwd.trim());
     let relocate = shell_quote(include_str!("../../resources/relocate-session.cjs"));
     let script = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) || exit 1; path=$(realpath -- {session}) || exit 1; case "$path" in "$root"/*.jsonl) ;; *) printf 'Refusing to relocate a non-desktop session file' >&2; exit 1 ;; esac; replacement={replacement}; [ -d "$replacement" ] || {{ printf 'Project directory does not exist: %s' "$replacement" >&2; exit 1; }}; node -e {relocate} "$path" "$replacement""#);
@@ -304,7 +325,7 @@ fn relocate_remote_session(session_path: &str, cwd: &str, host_name: &str, comma
     Err(if error.is_empty() { format!("Could not relocate conversation on {host_name}") } else { error })
 }
 
-fn relocate_local_session(home: &Path, session_path: &str, cwd: &str) -> Result<(), String> {
+pub(super) fn relocate_local_session(home: &Path, session_path: &str, cwd: &str) -> Result<(), String> {
     let replacement = PathBuf::from(cwd.trim());
     if !replacement.is_dir() { return Err(format!("Project directory does not exist: {}", replacement.display())); }
     let path = local_desktop_session_file_at(home, session_path)?;

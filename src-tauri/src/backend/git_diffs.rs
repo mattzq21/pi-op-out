@@ -1,4 +1,20 @@
-fn valid_remote_snapshot(snapshot: &GitSnapshotToken) -> bool {
+use std::collections::HashMap;
+use std::fs;
+use std::io::Write;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
+use std::process::Stdio;
+use crate::platform::AppHandle;
+use crate::{GitDiffSnapshot, GitDiffSnapshots, MAX_GIT_DIFFS_BYTES, MAX_GIT_PATCH_BYTES, RemoteHost, STORAGE_DIRECTORY, conversation_ownership};
+use crate::archives::{local_desktop_session_file_at};
+use crate::worktree_setup::{GitSnapshotToken, ensure_desktop_sessions_dir, run_limited, shell_quote};
+use crate::pi_launch::{remote_login_command, saved_remote_host, ssh};
+use crate::defaults_usage::{home_dir};
+use crate::settings_storage::{atomic_write_private};
+use crate::snapshot_capture::{local_git_diff, local_git_diff_between, local_git_tree, parse_local_snapshot};
+
+pub(super) fn valid_remote_snapshot(snapshot: &GitSnapshotToken) -> bool {
     let path = Path::new(&snapshot.root);
     path.is_absolute()
         && path.components().all(|component| matches!(component, std::path::Component::RootDir | std::path::Component::Normal(_)))
@@ -12,7 +28,7 @@ fn remote_git_tree(host: &RemoteHost, cwd: &str) -> Result<Option<String>, Strin
     query_remote_git_tree(&mut command, &host.name)
 }
 
-fn query_remote_git_tree(command: &mut Command, host_name: &str) -> Result<Option<String>, String> {
+pub(super) fn query_remote_git_tree(command: &mut Command, host_name: &str) -> Result<Option<String>, String> {
     let output = run_limited(command, 64 * 1024, &format!("Could not capture Git snapshot on {host_name}"))?;
     if let Some(3 | 4 | 6) = output.status.code() { return Ok(None) }
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
@@ -22,7 +38,7 @@ fn query_remote_git_tree(command: &mut Command, host_name: &str) -> Result<Optio
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn capture_git_tree(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<Option<String>, String> {
+pub(super) fn capture_git_tree(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<Option<String>, String> {
     capture_git_tree_at_host(&cwd, saved_remote_host(app, host_id)?.as_ref())
 }
 
@@ -31,16 +47,16 @@ fn capture_git_tree_at_host(cwd: &str, host: Option<&RemoteHost>) -> Result<Opti
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn discard_git_tree(app: AppHandle, snapshot: String, host_id: Option<String>) -> Result<(), String> {
+pub(super) fn discard_git_tree(app: AppHandle, snapshot: String, host_id: Option<String>) -> Result<(), String> {
     discard_git_tree_at_host(&snapshot, saved_remote_host(app, host_id)?.as_ref())
 }
 
-fn discard_git_tree_at_host(snapshot: &str, host: Option<&RemoteHost>) -> Result<(), String> {
+pub(super) fn discard_git_tree_at_host(snapshot: &str, host: Option<&RemoteHost>) -> Result<(), String> {
     let Some(host) = host else { let snapshot = parse_local_snapshot(snapshot)?; return fs::remove_dir_all(snapshot.root).map_err(|error| format!("Could not discard Git snapshot: {error}")); };
     discard_remote_git_tree(snapshot, &host.name, |script| { let mut command = ssh(host); command.arg(script); command })
 }
 
-fn discard_remote_git_tree(snapshot: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
+pub(super) fn discard_remote_git_tree(snapshot: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
     let snapshot: GitSnapshotToken = serde_json::from_str(snapshot).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     if !valid_remote_snapshot(&snapshot) { return Err("Invalid remote Git snapshot location".into()); }
     let root = shell_quote(&snapshot.root);
@@ -50,11 +66,11 @@ fn discard_remote_git_tree(snapshot: &str, host_name: &str, command: impl FnOnce
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn load_git_diff(app: AppHandle, cwd: String, base_tree: String, host_id: Option<String>) -> Result<Option<GitDiffSnapshot>, String> {
+pub(super) fn load_git_diff(app: AppHandle, cwd: String, base_tree: String, host_id: Option<String>) -> Result<Option<GitDiffSnapshot>, String> {
     load_git_diff_at_host(&cwd, &base_tree, saved_remote_host(app, host_id)?.as_ref())
 }
 
-fn load_git_diff_at_host(cwd: &str, base_tree: &str, host: Option<&RemoteHost>) -> Result<Option<GitDiffSnapshot>, String> {
+pub(super) fn load_git_diff_at_host(cwd: &str, base_tree: &str, host: Option<&RemoteHost>) -> Result<Option<GitDiffSnapshot>, String> {
     let Some(host) = host else { return local_git_diff(cwd, base_tree); };
     load_remote_git_diff_with(base_tree,
         || remote_git_tree(host, cwd),
@@ -62,7 +78,7 @@ fn load_git_diff_at_host(cwd: &str, base_tree: &str, host: Option<&RemoteHost>) 
         |token| discard_git_tree_at_host(token, Some(host)))
 }
 
-fn load_remote_git_diff_with(base_tree: &str,
+pub(super) fn load_remote_git_diff_with(base_tree: &str,
     capture: impl FnOnce() -> Result<Option<String>, String>,
     diff: impl FnOnce(&str, &str) -> Result<Option<GitDiffSnapshot>, String>,
     mut discard: impl FnMut(&str) -> Result<(), String>,
@@ -76,12 +92,12 @@ fn load_remote_git_diff_with(base_tree: &str,
     result
 }
 
-fn load_git_diff_between_at_host(cwd: &str, base_tree: &str, current_token: &str, host: Option<&RemoteHost>) -> Result<Option<GitDiffSnapshot>, String> {
+pub(super) fn load_git_diff_between_at_host(cwd: &str, base_tree: &str, current_token: &str, host: Option<&RemoteHost>) -> Result<Option<GitDiffSnapshot>, String> {
     let Some(host) = host else { return local_git_diff_between(cwd, &parse_local_snapshot(base_tree)?, &parse_local_snapshot(current_token)?); };
     load_remote_git_diff_between(base_tree, current_token, &host.name, |script| { let mut command = ssh(host); command.arg(script); command })
 }
 
-fn load_remote_git_diff_between(base_tree: &str, current_token: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<Option<GitDiffSnapshot>, String> {
+pub(super) fn load_remote_git_diff_between(base_tree: &str, current_token: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<Option<GitDiffSnapshot>, String> {
     let base: GitSnapshotToken = serde_json::from_str(base_tree).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     let current: GitSnapshotToken = serde_json::from_str(current_token).map_err(|_| "Invalid remote Git snapshot token".to_string())?;
     if !valid_remote_snapshot(&base) || !valid_remote_snapshot(&current) { return Err("Invalid remote Git snapshot location".into()); }
@@ -92,12 +108,12 @@ fn load_remote_git_diff_between(base_tree: &str, current_token: &str, host_name:
     Ok((!patch.trim().is_empty()).then_some(GitDiffSnapshot::Located { patch, repository_root: current.repository_root, tool_paths: Vec::new() }))
 }
 
-fn remote_session_sidecar_script(session_path: &str, action: &str) -> String {
+pub(super) fn remote_session_sidecar_script(session_path: &str, action: &str) -> String {
     format!("session=$(readlink -f -- {}) || exit 7; sessions=$(cd \"$HOME/{STORAGE_DIRECTORY}/sessions\" && pwd -P) || exit 7; case \"$session\" in \"$sessions\"/*.jsonl) ;; *) exit 7;; esac; sidecar=${{session%.jsonl}}.diffs.json; {action}", shell_quote(session_path))
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn load_git_diffs(app: AppHandle, session_path: String, host_id: Option<String>) -> Result<GitDiffSnapshots, String> {
+pub(super) fn load_git_diffs(app: AppHandle, session_path: String, host_id: Option<String>) -> Result<GitDiffSnapshots, String> {
     load_git_diffs_at_host(&session_path, saved_remote_host(app, host_id)?.as_ref())
 }
 
@@ -108,7 +124,7 @@ fn validate_unsaved_session(home: &Path, candidate: &Path) -> Result<(), String>
         Ok(())
 }
 
-fn load_local_git_diffs(home: &Path, session_path: &str) -> Result<GitDiffSnapshots, String> {
+pub(super) fn load_local_git_diffs(home: &Path, session_path: &str) -> Result<GitDiffSnapshots, String> {
     let candidate = PathBuf::from(session_path);
     if !candidate.exists() {
         validate_unsaved_session(home, &candidate)?;
@@ -121,7 +137,7 @@ fn load_local_git_diffs(home: &Path, session_path: &str) -> Result<GitDiffSnapsh
     serde_json::from_str(&content).map_err(|error| format!("Could not parse saved diffs: {error}"))
 }
 
-fn load_git_diffs_at_host(session_path: &str, host: Option<&RemoteHost>) -> Result<GitDiffSnapshots, String> {
+pub(super) fn load_git_diffs_at_host(session_path: &str, host: Option<&RemoteHost>) -> Result<GitDiffSnapshots, String> {
     let content = if let Some(host) = host {
         let mut command = ssh(host); command.arg(remote_session_sidecar_script(session_path, "if [ -f \"$sidecar\" ]; then cat -- \"$sidecar\"; else printf '{}'; fi"));
         return query_remote_git_diffs(&mut command, &host.name);
@@ -132,7 +148,7 @@ fn load_git_diffs_at_host(session_path: &str, host: Option<&RemoteHost>) -> Resu
     serde_json::from_str(&content).map_err(|error| format!("Could not parse saved diffs: {error}"))
 }
 
-fn query_remote_git_diffs(command: &mut Command, host_name: &str) -> Result<GitDiffSnapshots, String> {
+pub(super) fn query_remote_git_diffs(command: &mut Command, host_name: &str) -> Result<GitDiffSnapshots, String> {
     let content = {
         let output = run_limited(command, MAX_GIT_DIFFS_BYTES, &format!("Saved diffs on {host_name} exceed the limit"))?;
         if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
@@ -142,13 +158,13 @@ fn query_remote_git_diffs(command: &mut Command, host_name: &str) -> Result<GitD
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn save_git_diffs(app: AppHandle, session_path: String, snapshots: GitDiffSnapshots, host_id: Option<String>, client_id: String) -> Result<(), String> {
+pub(super) fn save_git_diffs(app: AppHandle, session_path: String, snapshots: GitDiffSnapshots, host_id: Option<String>, client_id: String) -> Result<(), String> {
     let mutation = conversation_ownership::MutationGuard::acquire(&app, host_id.as_deref().unwrap_or("local"), &session_path, &client_id, false, "save_diffs")?;
     save_git_diffs_at_host(&session_path, snapshots, saved_remote_host(app, host_id)?.as_ref())?;
     mutation.finish()
 }
 
-fn save_git_diffs_at_host(session_path: &str, snapshots: GitDiffSnapshots, host: Option<&RemoteHost>) -> Result<(), String> {
+pub(super) fn save_git_diffs_at_host(session_path: &str, snapshots: GitDiffSnapshots, host: Option<&RemoteHost>) -> Result<(), String> {
     let body = serde_json::to_string(&snapshots).map_err(|error| format!("Could not serialize diffs: {error}"))?;
     if body.len() > MAX_GIT_DIFFS_BYTES { return Err("Diff history exceeds the 16 MiB limit".into()); }
     let Some(host) = host else { return save_local_git_diffs(&home_dir()?, session_path, &body); };
@@ -156,16 +172,16 @@ fn save_git_diffs_at_host(session_path: &str, snapshots: GitDiffSnapshots, host:
     write_remote_git_diffs(&mut command, &body)
 }
 
-fn save_local_git_diffs(home: &Path, session_path: &str, body: &str) -> Result<(), String> {
+pub(super) fn save_local_git_diffs(home: &Path, session_path: &str, body: &str) -> Result<(), String> {
     let path = local_desktop_session_file_at(home, session_path)?.with_extension("diffs.json");
     atomic_write_private(&path, body.as_bytes()).map_err(|error| format!("Could not save diffs: {error}"))
 }
 
-fn remote_save_git_diffs_script(session_path: &str) -> String {
+pub(super) fn remote_save_git_diffs_script(session_path: &str) -> String {
     remote_session_sidecar_script(session_path, "umask 077; temporary=$(mktemp \"$sidecar.XXXXXX\") || exit 1; trap 'rm -f -- \"$temporary\"' EXIT; cat > \"$temporary\" && chmod 600 -- \"$temporary\" && mv -f -- \"$temporary\" \"$sidecar\"")
 }
 
-fn write_remote_git_diffs(command: &mut Command, body: &str) -> Result<(), String> {
+pub(super) fn write_remote_git_diffs(command: &mut Command, body: &str) -> Result<(), String> {
     let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
     let write = child.stdin.take().ok_or("SSH stdin unavailable")?.write_all(body.as_bytes());
     let output = child.wait_with_output().map_err(|e| e.to_string())?; write.map_err(|e| e.to_string())?;

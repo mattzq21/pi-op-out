@@ -228,12 +228,13 @@ pub(crate) fn forward_broker(app: &AppHandle, host_id: &str, path: &str, mut bod
     let request_id = matches!(path, "/message" | "/worktrees/create" | "/worktrees/remove").then(|| body["requestId"].as_str().map(str::to_owned)).flatten();
     if let Some(id) = &request_id {
         let broker = app.state::<BrokerRuntime>();
-        let mut cancelled = broker.cancelled.lock().map_err(|_| "Broker cancellation unavailable")?;
-        if cancelled.remove(id) { return Err("Agent message was cancelled".into()); }
-        let state = app.state::<PeerRuntime>();
-        let mut messages = state.messages.lock().map_err(|_| "Peer messages unavailable")?;
-        if messages.contains_key(id) { return Err("This agent message is already in progress".into()); }
-        messages.insert(id.clone(), connection.clone());
+        broker.with_uncancelled_request(id, || {
+            let state = app.state::<PeerRuntime>();
+            let mut messages = state.messages.lock().map_err(|_| "Peer messages unavailable")?;
+            if messages.contains_key(id) { return Err("This agent message is already in progress".into()); }
+            messages.insert(id.clone(), connection.clone());
+            Ok(())
+        })?;
     }
     let result = connection.invoke("broker_request", json!({"path":path,"body":body}));
     if let Some(id) = &request_id { if let Ok(mut messages) = app.state::<PeerRuntime>().messages.lock() { messages.remove(id); } }

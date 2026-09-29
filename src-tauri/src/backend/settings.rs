@@ -1,6 +1,22 @@
-fn default_agent() -> String { "general".into() }
+use crate::defaults_usage::default_context_window_cap;
+use serde_json::json;
+use serde_json::Value;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::fs;
+use std::path::Path;
+use std::path::PathBuf;
+use std::sync::atomic::Ordering;
+use crate::platform::AppHandle;
+use walkdir::WalkDir;
+use crate::{AppSettings, MAX_REMOTE_HOSTS, PiRuntime, daemon, peers};
+use crate::pi_launch::{validate_remote_host};
+use crate::defaults_usage::{DEFAULT_MODEL, default_context_window_cap_enabled, default_keybindings, home_dir};
+use crate::settings_storage::{atomic_write_private, migrate_keybindings, settings_path, validate_keybindings};
 
-fn default_settings() -> AppSettings {
+pub(super) fn default_agent() -> String { "general".into() }
+
+pub(super) fn default_settings() -> AppSettings {
     AppSettings {
         local_enabled: true,
         worktree_setup_scripts: vec![],
@@ -33,7 +49,7 @@ fn codex_web_search_tool() -> Value {
     json!({"name":"web_search","description":"Search the web with Pi's Codex login and return cited answers","enabled":true,"builtin":false})
 }
 
-fn frontmatter_value(content: &str, key: &str) -> Option<String> {
+pub(super) fn frontmatter_value(content: &str, key: &str) -> Option<String> {
     if !content.starts_with("---") { return None; }
     content.lines().skip(1).take_while(|line| line.trim() != "---").find_map(|line| {
         let (candidate, value) = line.split_once(':')?;
@@ -41,7 +57,7 @@ fn frontmatter_value(content: &str, key: &str) -> Option<String> {
     })
 }
 
-fn codex_disables_implicit_invocation(skill_directory: &Path) -> bool {
+pub(super) fn codex_disables_implicit_invocation(skill_directory: &Path) -> bool {
     let Ok(content) = fs::read_to_string(skill_directory.join("agents/openai.yaml")) else { return false };
     let mut policy_indent = None;
     for line in content.lines() {
@@ -59,15 +75,15 @@ fn codex_disables_implicit_invocation(skill_directory: &Path) -> bool {
     false
 }
 
-fn skill_path_is_within(path: &Path, root: &Path) -> bool {
+pub(super) fn skill_path_is_within(path: &Path, root: &Path) -> bool {
     path.starts_with(root)
 }
 
-fn expand_skill_path(path: &str, home: &Path) -> PathBuf {
+pub(super) fn expand_skill_path(path: &str, home: &Path) -> PathBuf {
     path.strip_prefix("~/").map(|rest| home.join(rest)).unwrap_or_else(|| PathBuf::from(path))
 }
 
-fn discover_skills_in(root: &Path, include_root_markdown: bool) -> Vec<Value> {
+pub(super) fn discover_skills_in(root: &Path, include_root_markdown: bool) -> Vec<Value> {
     if !root.is_dir() { return Vec::new(); }
 
     let mut skill_files: Vec<PathBuf> = WalkDir::new(root)
@@ -132,7 +148,7 @@ fn merge_discovered_skills(settings: &mut AppSettings) {
     merge_discovered_skills_at(settings, &home);
 }
 
-fn merge_discovered_skills_at(settings: &mut AppSettings, home: &Path) {
+pub(super) fn merge_discovered_skills_at(settings: &mut AppSettings, home: &Path) {
     let roots = [
         (home.join(".pi/agent/skills"), true),
         (home.join(".agents/skills"), false),
@@ -166,7 +182,7 @@ fn merge_discovered_skills_at(settings: &mut AppSettings, home: &Path) {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
+pub(super) fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     let path = settings_path(&app)?;
     let mut settings = read_settings_at(&path)?;
     for tool in session_operation_tools() {
@@ -176,7 +192,7 @@ fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     Ok(settings)
 }
 
-fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
+pub(super) fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
     let mut settings = if !path.exists() { default_settings() } else { serde_json::from_slice(&fs::read(path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())? };
     migrate_question_tool(&mut settings);
     if settings.default_agent == "voice-orchestrator" { settings.default_agent = default_agent(); }
@@ -202,7 +218,7 @@ fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn save_app_settings(app: AppHandle, mut settings: AppSettings, agent_host_id: Option<String>) -> Result<Value, String> {
+pub(super) fn save_app_settings(app: AppHandle, mut settings: AppSettings, agent_host_id: Option<String>) -> Result<Value, String> {
     migrate_question_tool(&mut settings);
     for tool in session_operation_tools() {
         if !settings.tools.iter().any(|existing| existing["name"] == tool["name"]) { settings.tools.push(tool); }
@@ -218,7 +234,7 @@ fn save_app_settings(app: AppHandle, mut settings: AppSettings, agent_host_id: O
     Ok(change)
 }
 
-fn validate_settings_for_save(settings: &AppSettings) -> Result<(), String> {
+pub(super) fn validate_settings_for_save(settings: &AppSettings) -> Result<(), String> {
     if settings.context_window_cap < 1000 { return Err("Context window cap must be a whole number of at least 1000".into()); }
     validate_keybindings(settings)?;
     if settings.hosts.len() > MAX_REMOTE_HOSTS { return Err(format!("At most {MAX_REMOTE_HOSTS} remote machines can be configured")); }
@@ -234,7 +250,7 @@ fn validate_settings_for_save(settings: &AppSettings) -> Result<(), String> {
     Ok(())
 }
 
-fn save_settings_with(
+pub(super) fn save_settings_with(
     runtime: &PiRuntime, mut settings: AppSettings, agent_host_id: Option<String>,
     path: impl FnOnce() -> Result<PathBuf, String>,
     invalidate: impl FnOnce(&AppSettings) -> Result<(), String>,

@@ -1,3 +1,8 @@
+use crate::platform::AppHandle;
+use crate::{BrokerRuntime, PiRuntime, TerminalRuntime, daemon_clients, daemon_endpoint, daemon_stdio, dictation, mobile, peers, provider_auth};
+use crate::{pi_runtime, terminals, worktree_setup};
+use crate::broker::start_session_broker;
+
 #[cfg(not(feature = "desktop"))]
 pub fn run_daemon() -> Result<(), String> {
     if let Some(action @ ("start" | "stop")) = std::env::args().nth(1).as_deref() { return daemon_stdio::control(action); }
@@ -30,37 +35,20 @@ pub fn run_daemon() -> Result<(), String> {
     })
 }
 
-fn detach_owner(app: &AppHandle, owner: &str, discard_blank: bool) {
-    #[cfg(not(feature = "desktop"))]
+pub(super) fn detach_owner(app: &AppHandle, owner: &str, discard_blank: bool) {
     peers::detach_owner(app, owner);
     let runtime = app.state::<PiRuntime>();
     provider_auth::cancel_owner(&runtime, owner);
-    detach_worktree_setups(&runtime, owner);
-    let ids = runtime.processes.lock().map(|processes| processes.iter().filter(|(_, process)| process.window_label == owner).map(|(id, _)| id.clone()).collect::<Vec<_>>()).unwrap_or_default();
-    for id in ids { let _ = detach_pi_with(&runtime, &id, discard_blank, !discard_blank); }
-    let terminals = app.state::<TerminalRuntime>();
-    let ids = terminals.processes.lock().map(|processes| processes.iter().filter(|(_, process)| process.window_label == owner).map(|(id, _)| id.clone()).collect::<Vec<_>>()).unwrap_or_default();
-    let _ = stop_terminals(&terminals, &ids);
-    terminal_lookup::detach(&terminals, owner);
+    worktree_setup::detach_worktree_setups(&runtime, owner);
+    pi_runtime::detach_owner(&runtime, owner, discard_blank);
+    terminals::detach_owner(&app.state::<TerminalRuntime>(), owner);
 }
 
 fn shutdown_backend(app: &AppHandle) {
-    #[cfg(not(feature = "desktop"))]
     peers::shutdown(app);
-    let broker = app.state::<BrokerRuntime>();
-    broker.closing.store(true, Ordering::SeqCst);
-    let jobs = broker.jobs.lock().map(|mut jobs| jobs.drain().map(|(_, child)| child).collect::<Vec<_>>()).unwrap_or_default();
-    for child in jobs { if let Ok(mut child) = child.lock() { stop_message_worker(&mut child); } }
-    let terminals = app.state::<TerminalRuntime>();
-    let ids = terminals.processes.lock().map(|processes| processes.keys().cloned().collect::<Vec<_>>()).unwrap_or_default();
-    let _ = stop_terminals(&terminals, &ids);
+    app.state::<BrokerRuntime>().shutdown();
+    terminals::shutdown(&app.state::<TerminalRuntime>());
     let runtime = app.state::<PiRuntime>();
-    if let Ok(setups) = runtime.worktree_setups.lock() { for cancelled in setups.values() { cancelled.store(true, Ordering::SeqCst); } }
-    let daemons = runtime.daemons.lock().map(|daemons| daemons.values().cloned().collect::<Vec<_>>()).unwrap_or_default();
-    for daemon in &daemons { daemon.shutdown(); }
-    for daemon in daemons { daemon.wait_shutdown(); let _ = daemon.drain_captures(None); }
-    let ephemeral = runtime.ephemeral_sessions.lock().map(|mut sessions| sessions.drain().map(|(_, session)| session).collect::<Vec<_>>()).unwrap_or_default();
-    for session in ephemeral { remove_ephemeral_session(session); }
-    let previous = runtime.ephemeral_previous.lock().map(|mut sessions| sessions.drain().flat_map(|(_, sessions)| sessions).collect::<Vec<_>>()).unwrap_or_default();
-    for session in previous { remove_ephemeral_session(session); }
+    worktree_setup::shutdown(&runtime);
+    pi_runtime::shutdown(&runtime);
 }

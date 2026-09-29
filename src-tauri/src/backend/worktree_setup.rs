@@ -1,35 +1,63 @@
+use serde::Deserialize;
+use serde::Serialize;
+use std::fs;
+use std::thread;
+use std::io::BufReader;
+use std::io::Read;
+use std::io::Write;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Child;
+use std::process::ChildStdin;
+use std::process::Command;
+use std::process::ExitStatus;
+use std::process::Stdio;
+use std::sync::mpsc;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+use std::time::Instant;
+use crate::platform::AppHandle;
+use crate::platform::State;
+use uuid::Uuid;
+use crate::{AppSettings, PiRuntime, RemoteHost, STORAGE_DIRECTORY, WORKTREE_CLEANUP_TIMEOUT, WorktreeSetupScript};
+use crate::pi_launch::{remote_host, remote_login_command, ssh};
+use crate::settings::{load_app_settings};
+
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn shell_quote(value: &str) -> String { format!("'{}'", value.replace('\'', "'\\''")) }
+pub(super) fn shell_quote(value: &str) -> String { format!("'{}'", value.replace('\'', "'\\''")) }
 
-fn desktop_sessions_dir(home: &Path) -> PathBuf { home.join(STORAGE_DIRECTORY).join("sessions") }
+pub(super) fn desktop_sessions_dir(home: &Path) -> PathBuf { home.join(STORAGE_DIRECTORY).join("sessions") }
 
-fn ensure_desktop_sessions_dir(home: &Path) -> Result<PathBuf, String> {
+pub(super) fn ensure_desktop_sessions_dir(home: &Path) -> Result<PathBuf, String> {
     let root = desktop_sessions_dir(home);
     fs::create_dir_all(&root).map_err(|error| format!("Could not create piop session directory: {error}"))?;
     Ok(root)
 }
 
 #[derive(Serialize, Deserialize)]
-struct GitSnapshotToken { root: String, tree: String, #[serde(default)] repository_root: String }
+pub(super) struct GitSnapshotToken { pub(super) root: String, pub(super) tree: String, #[serde(default)] pub(super) repository_root: String }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct GitWorktree { branch: String, path: String }
+pub(super) struct GitWorktree { pub(super) branch: String, pub(super) path: String }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct GitWorktreeRemoval {
+pub(super) struct GitWorktreeRemoval {
     #[serde(skip_serializing_if = "Option::is_none")]
-    branch: Option<String>,
-    branch_deleted: bool,
+    pub(super) branch: Option<String>,
+    pub(super) branch_deleted: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    warning: Option<String>,
+    pub(super) warning: Option<String>,
 }
 
-struct LimitedOutput { status: ExitStatus, stdout: Vec<u8>, stderr: Vec<u8> }
+pub(super) struct LimitedOutput { pub(super) status: ExitStatus, pub(super) stdout: Vec<u8>, pub(super) stderr: Vec<u8> }
 
 #[derive(Clone, Copy)]
-enum WorktreeScriptPhase { Setup, Cleanup }
+pub(super) enum WorktreeScriptPhase { Setup, Cleanup }
 
 impl WorktreeScriptPhase {
     fn name(self) -> &'static str { match self { Self::Setup => "Setup", Self::Cleanup => "Cleanup" } }
@@ -38,7 +66,7 @@ impl WorktreeScriptPhase {
 
 struct WorktreeScriptTarget<'a> { cwd: &'a str, worktree_path: &'a str, host_id: &'a str, host: Option<&'a RemoteHost> }
 
-fn run_worktree_scripts(settings: &AppSettings, cwd: &str, worktree_path: &str, host_id: &str, cancelled: &AtomicBool, phase: WorktreeScriptPhase) -> Result<(), String> {
+pub(super) fn run_worktree_scripts(settings: &AppSettings, cwd: &str, worktree_path: &str, host_id: &str, cancelled: &AtomicBool, phase: WorktreeScriptPhase) -> Result<(), String> {
     let host = if host_id == "local" { None } else { Some(remote_host(settings, host_id)?) };
     let target = WorktreeScriptTarget { cwd, worktree_path, host_id, host };
     let mut scripts = settings.worktree_setup_scripts.iter().filter(|setup| setup.enabled).collect::<Vec<_>>();
@@ -116,7 +144,7 @@ exit "$status""#, source = shell_quote(cwd), project = shell_quote(project_path)
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-async fn run_worktree_setup(app: AppHandle, setup_id: String, cwd: String, worktree_path: String, host_id: Option<String>) -> Result<(), String> {
+pub(super) async fn run_worktree_setup(app: AppHandle, setup_id: String, cwd: String, worktree_path: String, host_id: Option<String>) -> Result<(), String> {
     let worker_app = app.clone();
     execute_worktree_setup(&app.state::<PiRuntime>(), &setup_id, move |cancelled| {
         let settings = load_app_settings(worker_app)?;
@@ -125,7 +153,7 @@ async fn run_worktree_setup(app: AppHandle, setup_id: String, cwd: String, workt
     }).await
 }
 
-async fn execute_worktree_setup(runtime: &PiRuntime, setup_id: &str, work: impl FnOnce(Arc<AtomicBool>) -> Result<(), String> + Send + 'static) -> Result<(), String> {
+pub(super) async fn execute_worktree_setup(runtime: &PiRuntime, setup_id: &str, work: impl FnOnce(Arc<AtomicBool>) -> Result<(), String> + Send + 'static) -> Result<(), String> {
     let cancelled = runtime.worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.get(setup_id).cloned().ok_or("Unknown setup")?;
     let result = crate::platform::async_runtime::spawn_blocking(move || work(cancelled)).await.map_err(|error| error.to_string());
     runtime.worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.remove(setup_id);
@@ -134,17 +162,17 @@ async fn execute_worktree_setup(runtime: &PiRuntime, setup_id: &str, work: impl 
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn prepare_worktree_setup(runtime: State<PiRuntime>) -> Result<String, String> {
+pub(super) fn prepare_worktree_setup(runtime: State<PiRuntime>) -> Result<String, String> {
     register_worktree_setup(&runtime)
 }
 
-fn register_worktree_setup(runtime: &PiRuntime) -> Result<String, String> {
+pub(super) fn register_worktree_setup(runtime: &PiRuntime) -> Result<String, String> {
     let id = Uuid::new_v4().to_string();
     runtime.worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.insert(id.clone(), Arc::new(AtomicBool::new(false)));
     Ok(id)
 }
 
-fn detach_worktree_setups(runtime: &PiRuntime, owner: &str) {
+pub(super) fn detach_worktree_setups(runtime: &PiRuntime, owner: &str) {
     let Ok(mut owners) = runtime.worktree_setup_owners.lock() else { return; };
     owners.detached.insert(owner.to_owned());
     let Ok(mut setups) = runtime.worktree_setups.lock() else { return; };
@@ -156,23 +184,23 @@ fn detach_worktree_setups(runtime: &PiRuntime, owner: &str) {
 }
 
 #[cfg(not(feature = "desktop"))]
-fn verify_setup_owner(runtime: &PiRuntime, setup_id: &str, owner: &str) -> Result<(), String> {
+pub(super) fn verify_setup_owner(runtime: &PiRuntime, setup_id: &str, owner: &str) -> Result<(), String> {
     let owners = runtime.worktree_setup_owners.lock().map_err(|_| "Setup lock was poisoned")?;
     if owners.detached.contains(owner) || owners.setups.get(setup_id).map(String::as_str) != Some(owner) { return Err("Setup belongs to another connection or has ended".into()); }
     Ok(())
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn cancel_worktree_setup(runtime: State<PiRuntime>, setup_id: String) -> Result<(), String> {
+pub(super) fn cancel_worktree_setup(runtime: State<PiRuntime>, setup_id: String) -> Result<(), String> {
     signal_worktree_setup_cancellation(&runtime, &setup_id)
 }
 
-fn signal_worktree_setup_cancellation(runtime: &PiRuntime, setup_id: &str) -> Result<(), String> {
+pub(super) fn signal_worktree_setup_cancellation(runtime: &PiRuntime, setup_id: &str) -> Result<(), String> {
     if let Some(cancelled) = runtime.worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.get(setup_id) { cancelled.store(true, Ordering::SeqCst); }
     Ok(())
 }
 
-fn run_setup_process(command: &mut Command, cancelled: &AtomicBool, context: &str, completion_marker: String, cancellation_message: &str, timeout: Option<Duration>) -> Result<(i32, Vec<u8>), String> {
+pub(super) fn run_setup_process(command: &mut Command, cancelled: &AtomicBool, context: &str, completion_marker: String, cancellation_message: &str, timeout: Option<Duration>) -> Result<(i32, Vec<u8>), String> {
     let mut child = command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|error| format!("{context}: {error}"))?;
     let mut input = child.stdin.take();
     let stdout = child.stdout.take().ok_or("Setup stdout was unavailable")?;
@@ -258,7 +286,7 @@ fn wait_setup_process(child: &mut Child, input: &mut Option<ChildStdin>, complet
     Ok((status, stop_reason))
 }
 
-fn run_limited(command: &mut Command, max_stdout: usize, context: &str) -> Result<LimitedOutput, String> {
+pub(super) fn run_limited(command: &mut Command, max_stdout: usize, context: &str) -> Result<LimitedOutput, String> {
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|error| format!("{context}: {error}"))?;
     let stdout = child.stdout.take().ok_or_else(|| format!("{context}: stdout was unavailable"))?;
@@ -280,4 +308,8 @@ fn run_limited(command: &mut Command, max_stdout: usize, context: &str) -> Resul
     let stderr = stderr_reader.join().unwrap_or_default();
     if oversized { return Err(format!("{context}: output exceeded {} MiB", max_stdout / 1024 / 1024)); }
     Ok(LimitedOutput { status, stdout: bytes, stderr })
+}
+
+pub(super) fn shutdown(runtime: &PiRuntime) {
+    if let Ok(setups) = runtime.worktree_setups.lock() { for cancelled in setups.values() { cancelled.store(true, Ordering::SeqCst); } }
 }

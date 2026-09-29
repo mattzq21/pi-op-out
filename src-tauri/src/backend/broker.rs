@@ -1,8 +1,44 @@
-fn resolve_agent<'a>(sessions: &'a [SessionSummary], host_id: &str, session_id: &str) -> Result<&'a SessionSummary, String> {
+use std::collections::{HashMap, HashSet};
+use crate::{change_session_groups, stop_message_worker};
+use serde_json::json;
+use serde_json::Value;
+use std::fs;
+use std::thread;
+use std::io::BufRead;
+use std::io::BufReader;
+use std::io::Read;
+use std::io::Write;
+use std::net::TcpListener;
+use std::net::TcpStream;
+use std::path::PathBuf;
+use std::process::Child;
+use std::process::Command;
+use std::process::ExitStatus;
+use std::process::Stdio;
+use std::sync::mpsc;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
+use std::time::Instant;
+use std::time::SystemTime;
+use crate::platform::AppHandle;
+use uuid::Uuid;
+use crate::{AgentAddress, AppSettings, BROKER_BODY_BYTES, BROKER_HEADER_BYTES, BROKER_QUEUE_DEPTH, BROKER_WORKERS, MAX_AGENT_OUTPUT_BYTES, PiRuntime, ProjectKind, SessionIndexRuntime, SessionSummary, TerminalRuntime, conversation_ownership, peers, session_groups, terminal_lookup};
+use crate::worktrees::{create_git_worktree, remove_git_worktree_cancellable};
+use crate::worktree_setup::{WorktreeScriptPhase, ensure_desktop_sessions_dir, run_worktree_scripts, shell_quote};
+use crate::pi_launch::{PiLaunch, build_pi_command};
+use crate::session_index::{collect_sessions, list_local_sessions};
+use crate::defaults_usage::{home_dir};
+use crate::settings::{load_app_settings};
+use crate::settings_storage::{ensure_private_dir};
+
+pub(super) fn resolve_agent<'a>(sessions: &'a [SessionSummary], host_id: &str, session_id: &str) -> Result<&'a SessionSummary, String> {
     sessions.iter().find(|session| session.host_id == host_id && session.id == session_id).ok_or_else(|| format!("Agent {host_id}/{session_id} was not found"))
 }
 
-fn agent_is_active(session: &SessionSummary, agent: &AgentAddress) -> bool {
+pub(super) fn agent_is_active(session: &SessionSummary, agent: &AgentAddress) -> bool {
     !agent.messageable && agent.host_id == session.host_id && (agent.session_id.as_deref() == Some(session.id.as_str()) || agent.session_path.as_deref() == Some(session.path.as_str()))
 }
 
@@ -22,12 +58,12 @@ fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &Ses
     message_output(output, status)
 }
 
-fn broker_response(mut stream: TcpStream, status: &str, body: Value) {
+pub(super) fn broker_response(mut stream: TcpStream, status: &str, body: Value) {
     let payload = body.to_string();
     let _ = write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len());
 }
 
-fn read_broker_line(reader: &mut BufReader<TcpStream>, remaining: &mut usize) -> Result<String, String> {
+pub(super) fn read_broker_line(reader: &mut BufReader<TcpStream>, remaining: &mut usize) -> Result<String, String> {
     if *remaining == 0 { return Err("Request headers are too large".into()); }
     let mut line = String::new();
     let count = reader.take((*remaining + 1) as u64).read_line(&mut line).map_err(|error| error.to_string())?;
@@ -62,7 +98,7 @@ fn broker_worktree_operation(broker: &BrokerRuntime, value: &Value, work: impl F
     result
 }
 
-fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStream) -> Result<(), String> {
+pub(super) fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStream) -> Result<(), String> {
     let mut reader = BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
     let mut header_bytes = BROKER_HEADER_BYTES;
     let request_line = read_broker_line(&mut reader, &mut header_bytes)?;
@@ -78,7 +114,7 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
     respond_broker_request(app, broker, stream, method, path, body)
 }
 
-fn worktree_agents(runtime: &PiRuntime, body: &[u8]) -> Result<Value, String> {
+pub(super) fn worktree_agents(runtime: &PiRuntime, body: &[u8]) -> Result<Value, String> {
     let value: Value = serde_json::from_slice(body).map_err(|_| "Invalid worktree request")?;
     let id = value.get("id").and_then(Value::as_str).ok_or("Agent identity is required")?;
     let agents = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?;
@@ -89,7 +125,7 @@ fn worktree_agents(runtime: &PiRuntime, body: &[u8]) -> Result<Value, String> {
     Ok(json!(others))
 }
 
-fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), String> {
+pub(super) fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), String> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|error| format!("Could not start session broker: {error}"))?;
     *broker.port.lock().map_err(|_| "Session broker lock was poisoned")? = listener.local_addr().map_err(|error| error.to_string())?.port();
     thread::spawn(move || {
@@ -339,4 +375,72 @@ fn broker_agents(app: &AppHandle, broker: &BrokerRuntime) -> Result<Value, Strin
 
 fn broker_message_sessions(app: &AppHandle, session_index: &SessionIndexRuntime, host_id: &str) -> Result<Vec<SessionSummary>, String> {
     if host_id == "local" { list_local_sessions(session_index, &ensure_desktop_sessions_dir(&home_dir()?)?) } else { collect_sessions(app, session_index) }
+}
+
+#[derive(Clone)]
+pub(super) struct BrokerRuntime {
+    closing: Arc<AtomicBool>,
+    message_count: Arc<Mutex<usize>>,
+    pub(super) port: Arc<Mutex<u16>>,
+    pub(super) token: String,
+    pub(super) busy: Arc<Mutex<HashSet<String>>>,
+    jobs: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
+    cancelled: Arc<Mutex<HashSet<String>>>,
+    operations: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+}
+
+impl Default for BrokerRuntime {
+    fn default() -> Self {
+        Self {
+            closing: Arc::new(AtomicBool::new(false)), message_count: Arc::new(Mutex::new(0)),
+            port: Arc::new(Mutex::new(0)),
+            token: Uuid::new_v4().to_string(),
+            busy: Arc::new(Mutex::new(HashSet::new())),
+            jobs: Arc::new(Mutex::new(HashMap::new())),
+            cancelled: Arc::new(Mutex::new(HashSet::new())),
+            operations: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+pub(super) struct BusyAgent { key: String, busy: Arc<Mutex<HashSet<String>>> }
+
+impl Drop for BusyAgent {
+    fn drop(&mut self) { if let Ok(mut busy) = self.busy.lock() { busy.remove(&self.key); } }
+}
+
+struct BrokerWriter { child: Arc<Mutex<Child>>, _claim: BusyAgent }
+
+impl Drop for BrokerWriter {
+    fn drop(&mut self) {
+        let mut child = self.child.lock().unwrap_or_else(|error| error.into_inner());
+        stop_message_worker(&mut child);
+    }
+}
+
+pub(super) fn broker_environment(broker: &BrokerRuntime) -> Result<(u16, String), String> {
+    let port = *broker.port.lock().map_err(|_| "Session broker lock was poisoned")?;
+    if port == 0 { return Err("Session broker is not ready".into()); }
+    Ok((port, broker.token.clone()))
+}
+
+pub(super) fn claim_agent(broker: &BrokerRuntime, host_id: &str, session_id: &str) -> Result<BusyAgent, String> {
+    let key = format!("{host_id}\0{session_id}");
+    let mut busy = broker.busy.lock().map_err(|_| "Session broker lock was poisoned")?;
+    if !busy.insert(key.clone()) { return Err(format!("Agent {host_id}/{session_id} is already responding")); }
+    Ok(BusyAgent { key, busy: broker.busy.clone() })
+}
+
+impl BrokerRuntime {
+    pub(super) fn shutdown(&self) {
+        self.closing.store(true, Ordering::SeqCst);
+        let jobs = self.jobs.lock().map(|mut jobs| jobs.drain().map(|(_, child)| child).collect::<Vec<_>>()).unwrap_or_default();
+        for child in jobs { if let Ok(mut child) = child.lock() { stop_message_worker(&mut child); } }
+    }
+
+    pub(super) fn with_uncancelled_request<T>(&self, id: &str, register: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+        let mut cancelled = self.cancelled.lock().map_err(|_| "Broker cancellation unavailable")?;
+        if cancelled.remove(id) { return Err("Agent message was cancelled".into()); }
+        register()
+    }
 }
