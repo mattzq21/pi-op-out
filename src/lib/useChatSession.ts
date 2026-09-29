@@ -118,7 +118,9 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
         discardPendingUpdates();
         session.memory.batch(() => {
           restoreHistory(snapshot);
-          session.setState({ ...snapshot.state, pendingMessages: snapshot.queue.pendingMessages as AgentState["pendingMessages"] });
+          session.setState(current => ({ ...snapshot.state,
+            contextUsage: snapshot.state.contextUsage ?? (current.sessionId === snapshot.state.sessionId ? current.contextUsage : undefined),
+            pendingMessages: snapshot.queue.pendingMessages as AgentState["pendingMessages"] }));
           capturedTransport.promptControls?.acknowledge(snapshot.state);
         });
         session.memory.markRevision(snapshot.revision);
@@ -128,7 +130,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
           if (owner.current !== capturedTransport || capabilityRequest.current !== request || !session.memory.revision) return;
           session.memory.batch(() => {
             restoreCapabilities(modelResult, thinkingResult, commandResult);
-            if (statsResult) session.setState((current) => ({ ...current, contextUsage: statsResult.contextUsage }));
+            if (statsResult?.contextUsage) session.setState((current) => ({ ...current, contextUsage: statsResult.contextUsage }));
           });
         }).catch(() => undefined);
         return snapshot.state;
@@ -189,7 +191,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       session.setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
       const revision = liveRevision.current;
       void load<{ contextUsage?: AgentState["contextUsage"] }>({ type: "get_session_stats" }).then((stats) => {
-        if (owner.current === transport() && revision === liveRevision.current) session.setState((current) => ({ ...current, contextUsage: stats.contextUsage }));
+        if (owner.current === transport() && revision === liveRevision.current && stats.contextUsage) session.setState((current) => ({ ...current, contextUsage: stats.contextUsage }));
       }).catch(() => undefined);
     };
     const handleDisconnected = () => {
