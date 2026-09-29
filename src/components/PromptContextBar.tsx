@@ -71,7 +71,7 @@ function contextSections(context: PromptContextInfo) {
 export const PromptContextBar = function PromptContextBar(componentProps: { context: PromptContextInfo }) {
   const context = createMemo(() => separatePromptInstructions(componentProps.context));
   const [active, setActive] = createSignal<Section>();
-  const [skillTab, setSkillTab] = createSignal<"tax" | "model" | "user">("tax");
+  const [skillTab, setSkillTab] = createSignal<"tax" | "model" | "user">("model");
   const taxText = () => skillTax(context()).replace(/^<skills>\s*/, "") || "No skills tax in this context";
   const sections = createMemo(() => (contextSections(context())));
   const visibleSkills = (): NonNullable<PromptContextInfo["userInvokedSkills"]> => skillTab() === "model" ? sections().skills : sections().userInvokedSkills;
@@ -102,9 +102,9 @@ export const PromptContextBar = function PromptContextBar(componentProps: { cont
     {(active())! === "tools" && (sections().tools.length ? <Key each={sections().tools} by={(tool) => tool.name}>{(tool, _index) => <div ><strong>{tool().name}</strong>{typeof tool().description === "string" && tool().description && <p>{tool().description}</p>}<details class="prompt-context-tool-json"><summary>JSON</summary><pre>{JSON.stringify(tool().parameters, null, 2)}</pre></details></div>}</Key> : <p>No active tools</p>)}
     {(active())! === "skills" && <>
       <nav class="prompt-skills-tabs" aria-label="Skill categories">
-        <button type="button" aria-pressed={skillTab() === "tax"} title="Share of total estimated context used by shared skill instructions" onClick={() => setSkillTab("tax")}>Tax <small>{skillPercent().tax}%</small></button>
         <button type="button" aria-pressed={skillTab() === "model"} title="Share of total estimated context used by skill definitions" onClick={() => setSkillTab("model")}>Defined <small>{skillPercent().defined}%</small></button>
         <button type="button" aria-pressed={skillTab() === "user"} title="Share of total estimated context used by invoked skills" onClick={() => setSkillTab("user")}>Invoked <small>{skillPercent().invoked}%</small></button>
+        <button type="button" aria-pressed={skillTab() === "tax"} title="Share of total estimated context used by shared skill instructions" onClick={() => setSkillTab("tax")}>Tax <small>{skillPercent().tax}%</small></button>
       </nav>
       {renderSkillContents()}
     </>}
