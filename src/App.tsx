@@ -1,5 +1,5 @@
 import { ConversationChangedError, isConversationChanged } from "./lib/conversationChanged"; import { chatSubmission, prepareChatWorktree } from "./lib/newChatWorktree"; import { useAppKeyboard } from "./useAppKeyboard";
-import { createConversationViewKey, createTransportActivation, useWorkspaceDisconnect } from "./appTransportActivation"; import { seedChatSelection } from "./lib/newChatSelection";
+import { createConversationViewKey, createTransportActivation, useWorkspaceDisconnect } from "./appTransportActivation"; import { seedChatSelection } from "./lib/newChatSelection"; import { resolveNewSessionBranch } from "./lib/newSessionBranch";
 import { createWorktreeActions } from "./appWorktrees";
 import { configureConversationRuntime, createComposerControls, inheritGroupControls, newChatAgent, openDraftSession, reassignTerminals, type ProjectControls } from "./appRuntime";
 import { Key, Rerun } from "@solid-primitives/keyed";
@@ -373,21 +373,32 @@ export default function App() {
     const ownerTransport = transport(); const ownerKey = activeConversationKeyRef.current;
     const isCurrent = () => activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey;
     const capturedSession = { ...chatSession() }; const pool = runtimePool();
-    const { hostId, projectCwd } = newSessionTarget(clearProject, group);
+    const target = newSessionTarget(clearProject, group);
+    const { hostId } = target;
+    let projectCwd = target.projectCwd;
     const conversationKey = `${hostId}:draft-${crypto.randomUUID()}`;
-    const nextTransport = createSessionTransport(projectCwd, hostId); inheritGroupControls(projectControls, nextTransport, true, composerControls.state(capturedSession.state), definedAgents(), composerControls.statuses(statuses()), settings());
+    let nextTransport: NativeTransport | undefined;
     let activated = false;
+    const releaseUnusedTransport = () => {
+      if (activated || !nextTransport) return;
+      transportConversationKeys.current.delete(nextTransport); pendingSessionGroups.current.delete(nextTransport);
+      void pool.release(nextTransport).catch((reason) => addNotice({ title: "Could not clean up the new conversation", message: String(reason) }));
+    };
     newSessionPending.current = true;
     try {
-      const cwd = await prepareNewSession(nextTransport, hostId, projectCwd);
+      projectCwd = await resolveNewSessionBranch(projectCwd, hostId, Boolean(group), isCurrent);
+      const owner = createSessionTransport(projectCwd, hostId);
+      nextTransport = owner;
+      inheritGroupControls(projectControls, owner, true, composerControls.state(capturedSession.state), definedAgents(), composerControls.statuses(statuses()), settings());
+      const cwd = await prepareNewSession(owner, hostId, projectCwd);
       if (!isCurrent()) return;
       transportConversationKeys.current.set(nextTransport, conversationKey);
       assignNewSessionGroup(nextTransport, group);
       batch(() => {
-        copyNewSessionDraft(conversationKey, nextTransport, (clearProject || Boolean(group && capturedSession.state.messageCount === 0)) && !discardDraft);
+        copyNewSessionDraft(conversationKey, owner, (clearProject || Boolean(group && capturedSession.state.messageCount === 0)) && !discardDraft);
         setView("chat"); closeSplitPane(); setTerminalOpen(false); setTerminalTarget(undefined);
         updateConnected(false); setDefinedAgents(undefined); capturedSession.discardPendingUpdates();
-        setActiveCwd(cwd); setActiveHostId(hostId); activateTransport(nextTransport); activateConversationKey(conversationKey);
+        setActiveCwd(cwd); setActiveHostId(hostId); activateTransport(owner); activateConversationKey(conversationKey);
       });
       activated = true;
       if (discardDraft) discardNewSessionDraft(ownerTransport, ownerKey);
@@ -397,10 +408,7 @@ export default function App() {
       }
     } finally {
       newSessionPending.current = false;
-      if (!activated) {
-        transportConversationKeys.current.delete(nextTransport); pendingSessionGroups.current.delete(nextTransport);
-        void pool.release(nextTransport).catch((reason) => addNotice({ title: "Could not clean up the new conversation", message: String(reason) }));
-      }
+      releaseUnusedTransport();
     }
   };
   const currentSessionHasSavedMessages = () => sessions().some(session => session.messageCount > 0 && (session.hostId ?? "local") === activeHostId() && session.path === transport().currentSessionPath());
