@@ -93,7 +93,7 @@ impl Connection {
 }
 
 impl DesktopDaemon {
-    async fn connect(&self, app: &AppHandle, window: &str) -> Result<Arc<Connection>, String> {
+    pub(crate) async fn connect(&self, app: &AppHandle, window: &str) -> Result<Arc<Connection>, String> {
         let mut connections = self.connections.lock().await;
         if let Some(connection) = connections.get(window).filter(|connection| connection.alive.load(Ordering::SeqCst)) { return Ok(connection.clone()); }
         let _startup = self.startup.lock().await;

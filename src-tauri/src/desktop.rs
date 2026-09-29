@@ -199,7 +199,14 @@ pub fn run() {
     #[cfg(feature = "webdriver")]
     let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
     builder.plugin(tauri_plugin_dialog::init()).manage(desktop_daemon::DesktopDaemon::default()).setup(move |app| -> Result<(), Box<dyn std::error::Error>> {
-        for window in app.webview_windows().values() { configure_dictation_microphone(window)?; }
+        for window in app.webview_windows().values() {
+            configure_dictation_microphone(window)?;
+            let handle = app.handle().clone();
+            let label = window.label().to_owned();
+            tauri::async_runtime::spawn(async move {
+                let _ = handle.state::<desktop_daemon::DesktopDaemon>().connect(&handle, &label).await;
+            });
+        }
         #[cfg(target_os = "linux")]
         if let Some((label, focus)) = start_window.as_ref() {
             use gtk::prelude::GtkWindowExt;
