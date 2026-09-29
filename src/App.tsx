@@ -7,19 +7,13 @@ import { ArrowLeft, Bug, FolderPlus, GitBranch, MessageSquare, Server, Settings 
 import { batch, createComputed, createMemo, createSignal, lazy, Show } from "solid-js";
 import { appendTerminalOutputs, AppLoading, dialogOwnerName, goUsageBadge, initialTerminals, LimitBadge, MAX_TERMINALS, normalizeCodexUsage, normalizeOpencodeGoUsage, selectedProjectCwd, splitConversationKey, terminalConversationKey, useUsageClock, type OwnedExtensionDialog, type QueuedTerminalOutput, type RenameTarget, type SessionTerminals, type SplitPaneState, type TerminalTarget, type WorktreeTarget } from "./appSupport";
 import { createBranchConversation } from "./branchConversation";
-import { ChatView } from "./components/ChatView";
-import { ExtensionDialog } from "./components/ExtensionDialog";
 import { ConversationQuestionsContext, createConversationQuestions } from "./components/ConversationQuestions";
 import { isAskUserRequest } from "./components/AskUserDialog";
 import { FindInPage } from "./components/FindInPage";
 import { IconButton } from "./components/IconButton";
-import { ProjectDialog } from "./components/ProjectDialog";
 import { ResizableSidebar } from "./components/ResizableSidebar";
 import { SessionPanel, type SessionAction } from "./components/SessionPanel";
-import { SplitChatPane } from "./components/SplitChatPane";
-import { SubagentPane } from "./components/SubagentPane";
 import { SubagentNavigationContext, type SubagentTarget } from "./lib/subagentNavigation";
-import { WorktreeDialog } from "./components/WorktreeDialog";
 import { encodeAgentValue } from "./lib/agentProtocol";
 import { saveClientSettings, withClientSettings } from "./lib/clientSettings";
 import { hasVisibleText } from "./lib/content";
@@ -39,6 +33,12 @@ export { formatCodexReset,normalizeCodexUsage,normalizeOpencodeGoUsage,usageWind
 declare const __PIOP_DEVELOPMENT_BRANCH__: string;
 const LocalSettingsView = lazy(() => import("./components/LocalSettingsView").then(module => ({ default: module.LocalSettingsView })));
 const TerminalView = lazy(() => import("./components/TerminalView").then(module => ({ default: module.TerminalView })));
+const ChatView = lazy(() => import("./components/ChatView").then(module => ({ default: module.ChatView })));
+const ExtensionDialog = lazy(() => import("./components/ExtensionDialog").then(module => ({ default: module.ExtensionDialog })));
+const ProjectDialog = lazy(() => import("./components/ProjectDialog").then(module => ({ default: module.ProjectDialog })));
+const SplitChatPane = lazy(() => import("./components/SplitChatPane").then(module => ({ default: module.SplitChatPane })));
+const SubagentPane = lazy(() => import("./components/SubagentPane").then(module => ({ default: module.SubagentPane })));
+const WorktreeDialog = lazy(() => import("./components/WorktreeDialog").then(module => ({ default: module.WorktreeDialog })));
 export default function App() {
   const runtimePool = createMemo(() => new SessionRuntimePool()); const [transport, setTransport] = createSignal((() => { const initial = runtimePool().create(initialWindowTarget()); runtimePool().activate(initial); return initial; })()); const [view, setView] = createSignal<"chat" | "settings">("chat");
   const activeTransportRef = createRef(transport()); createComputed(() => { activeTransportRef.current = transport(); });
@@ -227,7 +227,7 @@ export default function App() {
     const clientPending = listen("pi://client-settings-changed", () => { const current = pendingSettings ?? settings(); if (current) update(current); });
     return () => { revision++; void pending.then((unlisten) => unlisten()); void clientPending.then((unlisten) => unlisten()); };
   }, () => [applyRuntimeSettings]);
-  const loadSettings = async () => { const owner = transport(); const nextSettings = await owner.loadSettings();
+  const loadSettings = async () => { const owner = transport(); const request = owner.loadSettings(); void ChatView.preload().catch(() => undefined); const nextSettings = await request;
     if (activeTransportRef.current !== owner) throw new ConversationChangedError();
     applyRuntimeSettings(nextSettings); setSettings(nextSettings); return nextSettings; };
   const refresh = async (hostId?: string, loadedSettings?: AppSettings) => { const capturedTransport = transport(); const capturedSession = { ...chatSession() }; const capturedRuntimePool = runtimePool();
