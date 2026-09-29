@@ -22,20 +22,18 @@ export type FastModeExtensionOptions = {
 };
 
 const DEFAULT_EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
-const STATE_ENTRY = "piop-fast-mode-state";
-type FastModeState = { enabled: boolean; manual: boolean };
 type SessionContext = Pick<ExtensionContext, "sessionManager">;
 
-function savedSessionState(ctx?: SessionContext): FastModeState | undefined {
-  const states = ctx?.sessionManager.getBranch().filter(entry => entry.type === "custom" && entry.customType === STATE_ENTRY) ?? [];
-  const saved = states.at(-1)?.data as { enabled?: boolean; manual?: boolean } | undefined;
-  const manual = saved?.manual ?? states.length > 1;
-  return typeof saved?.enabled === "boolean" ? { enabled: saved.enabled, manual } : undefined;
-}
-
-function manualSessionValue(ctx?: SessionContext): boolean | undefined {
-  const saved = savedSessionState(ctx);
-  return saved?.manual ? saved.enabled : undefined;
+function savedSessionValue(ctx: SessionContext): boolean | undefined {
+  for (const entry of [...ctx.sessionManager.getBranch()].reverse()) {
+    if (entry.type !== "custom") continue;
+    const data = entry.data as { fastModeOverride?: boolean; enabled?: boolean; snapshot?: { definition?: { fastMode?: boolean } } };
+    if (entry.customType === "piop-fast-mode-state") return data.enabled;
+    if (entry.customType === "pi-define-agents-state") {
+      const enabled = data.fastModeOverride ?? data.snapshot?.definition?.fastMode;
+      if (typeof enabled === "boolean") return enabled;
+    }
+  }
 }
 
 function notifyError(
@@ -59,21 +57,11 @@ export function createPiFastModeExtension(
     let loadedCwd: string | undefined;
     let currentModel: ModelRef | undefined;
     let agentEnabled: boolean | undefined;
-    let lastSaved: FastModeState | undefined;
-    const saveState = (state: FastModeState, ctx?: SessionContext) => {
-      const previous = ctx ? savedSessionState(ctx) : lastSaved;
-      if (previous?.enabled === state.enabled) return;
-      pi.appendEntry(STATE_ENTRY, state);
-      lastSaved = state;
-    };
     const effectiveConfig = () => ({ ...config, enabled: agentEnabled ?? config.enabled });
     pi.events.on("piop:fast-mode", (request: { models?: string[]; apply?: boolean; enabled?: boolean; restore?: boolean; ctx?: ExtensionContext }) => {
       request.models = cloneConfig().targets.map((target) => `${target.provider}/${target.model}`);
       if (request.apply) {
-        const manual = request.restore ? manualSessionValue(request.ctx) : undefined;
-        agentEnabled = manual === undefined ? request.enabled : undefined;
-        config.enabled = manual ?? config.enabled;
-        if (!request.restore) saveState({ enabled: effectiveConfig().enabled, manual: false }, request.ctx);
+        agentEnabled = request.enabled;
         if (request.ctx) updateFastStatus(request.ctx, effectiveConfig(), toModelRef(request.ctx.model) ?? currentModel);
       }
     });
@@ -88,9 +76,8 @@ export function createPiFastModeExtension(
       });
 
       config = syncSupportedTargets(loaded.config);
-      lastSaved = savedSessionState(ctx);
-      config.enabled = lastSaved?.enabled ?? (pi.getFlag("fast") === true || config.enabled);
-      if (!lastSaved) saveState({ enabled: config.enabled, manual: false }, ctx);
+      config.enabled = savedSessionValue(ctx) ?? (pi.getFlag("fast") === true || config.enabled);
+      agentEnabled = undefined;
       loadedCwd = ctx.cwd;
       loadedSessionId = ctx.sessionManager.getSessionId();
     }
@@ -128,9 +115,9 @@ export function createPiFastModeExtension(
             updateFastStatus(ctx, effectiveConfig(), currentModel);
             return;
           }
-          saveState({ enabled, manual: true }, ctx);
           config.enabled = enabled;
           agentEnabled = undefined;
+          pi.events.emit("piop:fast-mode-changed", { enabled });
           updateFastStatus(ctx, effectiveConfig(), currentModel);
         } catch (error) {
           notifyError(ctx, error);
