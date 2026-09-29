@@ -7,6 +7,7 @@ import type { NativeTransport } from "./nativeTransport";
 const SESSION_LIMIT = 256 * 1024 * 1024;
 const CACHE_LIMIT = 512 * 1024 * 1024;
 const SESSION_COUNT = 20;
+const TOOL_PAYLOAD_CONCURRENCY = 2;
 type Transport = Pick<NativeTransport, "command" | "subscribe">;
 interface CachedSession {
   state: AgentState;
@@ -19,7 +20,19 @@ interface CachedSession {
 const stores = new WeakMap<Transport, SessionMemory>();
 const fifo = new Map<SessionMemory, number>();
 const measured = new WeakMap<object, number>();
-let toolPayloadTransfers: Promise<void> = Promise.resolve();
+let activeToolPayloadTransfers = 0;
+const waitingToolPayloadTransfers: (() => void)[] = [];
+
+async function transferToolPayload(transfer: () => Promise<void> | undefined) {
+  if (activeToolPayloadTransfers >= TOOL_PAYLOAD_CONCURRENCY) await new Promise<void>(resolve => waitingToolPayloadTransfers.push(resolve));
+  else activeToolPayloadTransfers++;
+  try { await transfer(); }
+  finally {
+    const next = waitingToolPayloadTransfers.shift();
+    if (next) next();
+    else activeToolPayloadTransfers--;
+  }
+}
 
 function bytes(value: unknown): number {
   if (typeof value === "string") return 24 + value.length * 2;
@@ -59,6 +72,7 @@ export class SessionMemory {
   private listeners = new Set<() => void>();
   private loaded = new Set<string>();
   private loading = new Map<string, Promise<void>>();
+  private toolPayloadTransfers: Promise<void> = Promise.resolve();
   private generation = 0;
   private omitted = 0;
   private reserved = 0;
@@ -201,11 +215,11 @@ export class SessionMemory {
     const previous = this.loading.get(id);
     if (previous) return previous;
     const generation = this.generation;
-    const request = toolPayloadTransfers.then(() => generation === this.generation ? this.fetchToolPayload(id, generation) : undefined).finally(() => {
+    const request = this.toolPayloadTransfers.then(() => transferToolPayload(() => generation === this.generation ? this.fetchToolPayload(id, generation) : undefined)).finally(() => {
       if (this.loading.get(id) === request) this.loading.delete(id);
       if (generation === this.generation) { this.reserved = 0; if (fifo.has(this)) this.commit(); }
     });
-    toolPayloadTransfers = request.catch(() => undefined);
+    this.toolPayloadTransfers = request.catch(() => undefined);
     this.loading.set(id, request);
     return request;
   }
