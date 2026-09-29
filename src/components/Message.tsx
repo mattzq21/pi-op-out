@@ -1,6 +1,6 @@
 import { Key } from "@solid-primitives/keyed";
 import { createMemo, createSignal, Index } from "solid-js";
-import { createDependencyEffect, createRef, cssPixels } from "../lib/solid";
+import { createDependencyEffect, createRef } from "../lib/solid";
 
 import { Check, ChevronRight, CircleAlert, Copy, FolderGit2, GitBranch, Pause, Undo2, Wrench } from "lucide-solid";
 import { textOf, thinkingOf } from "../lib/content";
@@ -10,6 +10,7 @@ import type { ChatMessage } from "../types";
 import { DiffViewer } from "./DiffViewer";
 import { IconButton } from "./IconButton";
 import { Markdown } from "./Markdown";
+import { ZoomableImage } from "./ZoomableImage";
 import { SubagentResults, subagentRuns } from "./SubagentResults";
 import type { FileReference } from "../lib/projectFiles";
 
@@ -76,7 +77,7 @@ function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; e
     </>}
     {componentProps.loading && <div role="status">Loading tool input and output…</div>}
     {componentProps.error && <div role="alert">{(componentProps.error)!} <button onClick={componentProps.retry}>Retry</button></div>}
-    {Array.isArray(componentProps.message.content) && <Index each={componentProps.message.content.filter((part) => part.type === "image")}>{(part) => part().type === "image" && part().data && /^image\/(png|jpeg|gif|webp)$/.test(part().mimeType ?? "") ? <img src={`data:${part().mimeType};base64,${part().data}`} alt="Tool result" style={{ "max-width": "100%", "max-height": "320px", "object-fit": "contain" }} /> : null}</Index>}
+    {Array.isArray(componentProps.message.content) && <Index each={componentProps.message.content.filter((part) => part.type === "image")}>{(part) => part().type === "image" && part().data && /^image\/(png|jpeg|gif|webp)$/.test(part().mimeType ?? "") ? <ZoomableImage src={`data:${part().mimeType};base64,${part().data}`} alt="Tool result" /> : null}</Index>}
     {needsLoad() && <button onClick={componentProps.retry}>Load input and output</button>}
   </>;
 }
@@ -133,7 +134,7 @@ export function Message(componentProps: Props) {
     const sentTime = createMemo(() => formatMessageTime(componentProps.message.timestamp));
     return <article class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`}>
       <div class="message-body">{<Key each={parts().skills} by={(skill) => skill}>{(skill, _index) => <span class="skill-reference" >${skill()}</span>}</Key>}{parts().text && (parts().literalSkill ? <span class="literal-skill-content">{parts().text}</span> : <Markdown>{parts().text}</Markdown>)}</div>
-      {Array.isArray(componentProps.message.content) && <Index each={componentProps.message.content.flatMap(part => part.type === "image" ? [part] : [])}>{(part, _index) => part().type === "image" && part().data && part().mimeType && /^image\/(png|jpeg|gif|webp)$/.test(part().mimeType) ? <img  src={`data:${part().mimeType};base64,${part().data}`} alt="Sent attachment" style={{ "max-width": "100%", "max-height": cssPixels(320), "object-fit": "contain" }} /> : null}</Index>}
+      {Array.isArray(componentProps.message.content) && <Index each={componentProps.message.content.flatMap(part => part.type === "image" ? [part] : [])}>{(part, _index) => part().type === "image" && part().data && part().mimeType && /^image\/(png|jpeg|gif|webp)$/.test(part().mimeType) ? <ZoomableImage src={`data:${part().mimeType};base64,${part().data}`} alt="Sent attachment" /> : null}</Index>}
       <div class="message-actions">
         {sentTime() && <span class="message-time">{sentTime()!.short}</span>}
         <MessageCopyButton state={copyState()} copy={copy} />
