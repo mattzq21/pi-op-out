@@ -402,7 +402,7 @@ impl Host {
         let command = &packet["command"];
         if !matches!(
             kind(command),
-            "get_snapshot" | "get_entries" | "get_state" | "get_session_revision" | "get_tool_payload"
+            "get_snapshot" | "get_entries" | "get_state" | "get_session_revision" | "get_tool_payload" | "get_session_stats"
         ) {
             return Err(ownership_error());
         }
@@ -421,6 +421,7 @@ impl Host {
             "get_snapshot" => Ok(snapshot),
             "get_entries" => Ok(snapshot["history"].clone()),
             "get_state" => Ok(snapshot["state"].clone()),
+            "get_session_stats" => Ok(json!({"contextUsage":snapshot["state"]["contextUsage"]})),
             _ => tool_payload_page(
                 saved_tool_payload(&array(&snapshot["history"], "entries"), &text(command, "toolCallId")),
                 command,
