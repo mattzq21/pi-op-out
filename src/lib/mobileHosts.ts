@@ -1,4 +1,5 @@
 import { validateHost } from "./remoteClient";
+import { clearMobileSessionCache } from "./mobileSessionCache";
 
 export interface SavedMobileHost { name: string; url: string }
 const key = "piop-mobile-hosts";
@@ -25,6 +26,7 @@ export function saveMobileHost(address: string, name: string): SavedMobileHost[]
 }
 
 export function removeMobileHost(url: string): SavedMobileHost[] {
+  clearMobileSessionCache(url);
   const next = readMobileHosts().filter((host) => host.url !== url);
   localStorage.setItem(key, JSON.stringify(next));
   const last = localStorage.getItem("piop-mobile-host");
