@@ -30,7 +30,7 @@ use crate::worktrees::{create_git_worktree, remove_git_worktree_cancellable};
 use crate::worktree_setup::{WorktreeScriptPhase, ensure_desktop_sessions_dir, run_worktree_scripts, shell_quote};
 use crate::pi_launch::{PiLaunch, build_pi_command};
 use crate::session_index::{collect_sessions, list_local_sessions};
-use crate::defaults_usage::{home_dir};
+use crate::environment::home_dir;
 use crate::settings::{load_app_settings};
 use crate::settings_storage::{ensure_private_dir};
 

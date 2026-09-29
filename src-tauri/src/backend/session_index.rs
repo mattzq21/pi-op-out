@@ -17,7 +17,7 @@ use walkdir::WalkDir;
 use crate::{AppSettings, CachedSession, DirectoryListing, MAX_GIT_PATH_LIST_BYTES, MAX_REMOTE_HOSTS, MAX_SESSION_INDEX_BATCH_BYTES, ProjectKind, RemoteHost, STORAGE_DIRECTORY, SessionIndexRuntime, SessionSummary, TemporaryChat, node_command, peers};
 use crate::worktree_setup::{run_limited, shell_quote};
 use crate::pi_launch::{local_launch_directory, remote_directory_path, remote_host, remote_login_command, ssh};
-use crate::defaults_usage::{home_dir};
+use crate::environment::home_dir;
 use crate::settings::{load_app_settings};
 
 pub(super) fn branch_appearance(bytes: &[u8], branch: Option<&str>) -> Option<Value> {

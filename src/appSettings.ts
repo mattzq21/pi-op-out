@@ -1,0 +1,87 @@
+import type { Accessor } from "solid-js";
+import { createSignal } from "solid-js";
+import { encodeAgentValue } from "./lib/agentProtocol";
+import { saveClientSettings,withClientSettings } from "./lib/clientSettings";
+import { ConversationChangedError } from "./lib/conversationChanged";
+import { recordSeenModels } from "./lib/modelVisibility";
+import { NativeTransport } from "./lib/nativeTransport";
+import { listen } from "./lib/platform";
+import { SessionRuntimePool } from "./lib/sessionRuntimePool";
+import { createDependencyEffect,createRef } from "./lib/solid";
+import { useChatSession } from "./lib/useChatSession";
+import type { AgentConfig,AppSettings,SettingsChange } from "./types";
+export function createAppSettings({ transport, runtimePool, chatSession, addNotice, preloadChat }: { transport: Accessor<NativeTransport>; runtimePool: Accessor<SessionRuntimePool>; chatSession: Accessor<ReturnType<typeof useChatSession>>; addNotice: (notice: { title: string; message: string }) => void; preloadChat: () => void }) {
+
+  const [settings, setSettings] = createSignal<AppSettings>();
+  const runtimeSettings = createRef<AppSettings | undefined>(undefined);
+  const applyRuntimeSettings = (next: AppSettings) => {
+    const previous = runtimeSettings.current;
+    runtimeSettings.current = next;
+    if (previous) runtimePool().queueSettingsChange(previous, next);
+  };
+  const settingsSavePending = createRef(false);
+  const [settingsSaving, setSettingsSaving] = createSignal(false);
+  const [debugModeSaving, setDebugModeSaving] = createSignal(false);
+  const debugModePending = createRef(false);
+  const [settingsDirty, setSettingsDirty] = createSignal(false);
+  createDependencyEffect(() => { const capturedSettings = settings(); const capturedSession = { ...chatSession() };
+    if (!capturedSettings || capturedSession.models.length === 0 || settingsSavePending.current) return;
+    const next = recordSeenModels((capturedSettings)!, capturedSession.models.map((model) => `${model.provider}/${model.id}`));
+    if (!next) return;
+    void saveClientSettings(next).then(() => setSettings(current => current ? { ...current, knownModels: next.knownModels, hiddenModels: next.hiddenModels } : current)).catch(() => undefined);
+  }, () => [chatSession().models, settings(), transport()]);
+  createDependencyEffect(() => {
+    let revision = 0; let pendingSettings: AppSettings | undefined;
+    const update = (value: AppSettings) => {
+      pendingSettings = value; const current = ++revision;
+      void withClientSettings(value).then(next => {
+        if (current !== revision) return;
+        pendingSettings = undefined; applyRuntimeSettings(next); setSettings(next);
+      }).catch(reason => addNotice({ title: "Could not load client preferences", message: String(reason) }));
+    };
+    const pending = listen<SettingsChange>("pi://settings-changed", ({ payload }) => {
+      update(payload.settings);
+    });
+    const clientPending = listen("pi://client-settings-changed", () => { const current = pendingSettings ?? settings(); if (current) update(current); });
+    return () => { revision++; void pending.then((unlisten) => unlisten()); void clientPending.then((unlisten) => unlisten()); };
+  }, () => [applyRuntimeSettings]);
+  const loadSettings = async () => { const owner = transport(); const request = owner.loadSettings(); preloadChat(); const nextSettings = await request;
+    if (transport() !== owner) throw new ConversationChangedError();
+    applyRuntimeSettings(nextSettings); setSettings(nextSettings); return nextSettings; };
+  const saveSettings = async (value: AppSettings, nextConfig?: AgentConfig, previousConfig?: AgentConfig) => {
+    if (settingsSavePending.current || debugModePending.current) throw new Error("Wait for the current settings save to finish");
+    settingsSavePending.current = true; setSettingsSaving(true);
+    try { await applySettings(value, nextConfig, previousConfig); } finally { settingsSavePending.current = false; setSettingsSaving(false); }
+  };
+  const applySettings = async (value: AppSettings, nextConfig?: AgentConfig, previousConfig?: AgentConfig) => { const capturedSettings = settings(); const capturedTransport = transport();
+    if (!capturedSettings) throw new Error("Settings are still loading");
+    const next = value; const agentHostId = nextConfig ? "local" : undefined;
+    const writeAgents = async (configuration: AgentConfig) => {
+      const writer = new NativeTransport({ cwd: "~", hostId: "local" });
+      try {
+        await writer.connect(undefined, undefined, undefined, undefined, true);
+        await writer.command({ type: "prompt", message: `/pi-define-agents-config ${encodeAgentValue(configuration)}` });
+      } finally { await writer.dispose(); }
+    };
+    let agentsSaved = false;
+    let savedChange: SettingsChange;
+    try {
+      if (nextConfig) { await writeAgents(nextConfig); agentsSaved = true; }
+      savedChange = await capturedTransport.saveSettings(next, false, agentHostId);
+    } catch (reason) {
+      if (agentsSaved && previousConfig) {
+        try { await writeAgents(previousConfig); }
+        catch { throw new Error(`Settings could not be saved, and the agent definitions could not be restored: ${reason instanceof Error ? reason.message : String(reason)}`); }
+      }
+      throw reason;
+    }
+    setSettings(savedChange.settings);
+    applyRuntimeSettings(savedChange.settings);
+  };
+  const toggleDebugMode = () => {
+    if (!settings() || debugModePending.current || settingsSavePending.current) return; debugModePending.current = true; setDebugModeSaving(true);
+    const next = { ...(settings())!, debugMode: !(settings())!.debugMode };
+    void saveClientSettings(next).then(() => { setSettings(current => current ? { ...current, debugMode: next.debugMode } : current); }).catch((reason) => addNotice({ title: "Could not change debug mode", message: reason instanceof Error ? reason.message : String(reason) })).finally(() => { debugModePending.current = false; setDebugModeSaving(false); });
+  };
+ return { settings, setSettings, runtimeSettings, applyRuntimeSettings, settingsSavePending, settingsSaving, setSettingsSaving, debugModeSaving, setDebugModeSaving, debugModePending, settingsDirty, setSettingsDirty, loadSettings, saveSettings, applySettings, toggleDebugMode };
+}

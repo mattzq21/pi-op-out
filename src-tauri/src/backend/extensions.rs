@@ -5,7 +5,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use crate::{AppSettings, DEVELOPMENT, STORAGE_DIRECTORY, daemon_endpoint};
 use crate::pi_launch::{enabled_tool_names};
-use crate::defaults_usage::{home_dir};
+use crate::environment::home_dir;
 use crate::settings_storage::{atomic_write_private, ensure_private_dir};
 
 pub(super) fn generated_extension_root() -> Result<PathBuf, String> {

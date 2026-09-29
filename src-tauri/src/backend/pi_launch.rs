@@ -1,3 +1,4 @@
+pub(super) use crate::settings_types::validate_remote_host;
 use std::{collections::HashMap, sync::Mutex};
 use crate::broker::broker_environment;
 use serde_json::json;
@@ -17,7 +18,8 @@ use uuid::Uuid;
 use crate::{AppSettings, BrokerRuntime, DEVELOPMENT, PiRuntime, RemoteHost, STORAGE_DIRECTORY, hash_claim_key, node_command};
 use crate::archives::{local_desktop_session_file_at};
 use crate::worktree_setup::{ensure_desktop_sessions_dir, run_limited, shell_quote};
-use crate::defaults_usage::{home_dir, pi_executable};
+use crate::environment::home_dir;
+use crate::environment::pi_executable;
 use crate::settings::{load_app_settings};
 use crate::extensions::{SESSION_BROKER_MODULES, LEGACY_FILE_CHANGE_ASSETS, LOOP_DETECTION_ASSETS, generated_extension_root, prepare_btw_extension, prepare_codex_web_search_extension, prepare_context_bar_extension, prepare_context_window_cap_extension, prepare_defined_agents_extension, prepare_diff_watch_extension, prepare_fast_mode_extension, prepare_loop_detection_extension, prepare_mcp_bridge, prepare_openai_cache_fork_extension, prepare_rtk_extension, prepare_runtime_settings, prepare_session_broker, prepare_session_cost_limit_extension, prepare_trace_reader, runtime_settings};
 
@@ -27,11 +29,6 @@ pub(super) fn saved_remote_host(app: AppHandle, host_id: Option<String>) -> Resu
     Ok(Some(remote_host(&load_app_settings(app)?, &host_id)?.clone()))
 }
 
-pub(super) fn validate_remote_host(host: &RemoteHost) -> Result<(), String> {
-    if host.target.is_empty() || !host.target.chars().all(|character| character.is_ascii_alphanumeric() || "._@:-[]".contains(character)) { return Err("SSH target may only contain a host, user, and port-safe characters".into()); }
-    if host.pi_path.is_empty() || !host.pi_path.chars().all(|character| character.is_ascii_alphanumeric() || "._/-~".contains(character)) { return Err("Pi executable must be a plain executable name or path".into()); }
-    Ok(())
-}
 
 pub(super) fn remote_host<'a>(settings: &'a AppSettings, host_id: &str) -> Result<&'a RemoteHost, String> {
     let host = settings.hosts.iter().find(|host| host.id == host_id).ok_or_else(|| format!("Unknown machine: {host_id}"))?;

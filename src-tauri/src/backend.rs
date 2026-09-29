@@ -1,3 +1,21 @@
+#[path = "backend/environment.rs"]
+mod environment;
+#[path = "backend/keybindings.rs"]
+mod keybindings;
+#[path = "backend/private_fs.rs"]
+mod private_fs;
+#[path = "backend/provider_codex.rs"]
+mod provider_codex;
+#[path = "backend/provider_opencode.rs"]
+mod provider_opencode;
+#[path = "backend/settings_types.rs"]
+mod settings_types;
+#[path = "backend/skill_discovery.rs"]
+mod skill_discovery;
+use crate::settings_types::RemoteHost;
+use crate::settings_types::AppSettings;
+use crate::settings_types::WorktreeSetupScript;
+use crate::settings_types::MAX_REMOTE_HOSTS;
 #[cfg(not(feature = "desktop"))]
 mod mobile;
 #[cfg(not(feature = "desktop"))]
@@ -94,7 +112,6 @@ struct SessionIndexRuntime {
 }
 
 const MAX_TERMINALS: usize = 8;
-const MAX_REMOTE_HOSTS: usize = 16;
 const BROKER_WORKERS: usize = 8;
 const BROKER_QUEUE_DEPTH: usize = 32;
 const BROKER_HEADER_BYTES: usize = 16 * 1024;
@@ -219,42 +236,9 @@ struct SessionSummary {
     host_name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RemoteHost {
-    #[serde(default = "default_true")]
-    enabled: bool,
-    id: String,
-    name: String,
-    target: String,
-    #[serde(default = "default_pi_path")]
-    pi_path: String,
-}
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CodexUsage {
-    remaining_percent: u8,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reset_at: Option<u64>,
-}
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct OpencodeGoUsageWindow {
-    status: String,
-    remaining_percent: u8,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reset_at: Option<u64>,
-}
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct OpencodeGoUsage {
-    rolling: OpencodeGoUsageWindow,
-    weekly: OpencodeGoUsageWindow,
-    monthly: OpencodeGoUsageWindow,
-}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -345,56 +329,11 @@ enum GitDiffSnapshot {
 
 type GitDiffSnapshots = HashMap<String, GitDiffSnapshot>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AppSettings {
-    #[serde(default = "default_true")]
-    local_enabled: bool,
-    #[serde(default)]
-    worktree_setup_scripts: Vec<WorktreeSetupScript>,
-    #[serde(default = "default_agent")]
-    default_agent: String,
-    default_model: String,
-    #[serde(default)]
-    hidden_models: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    known_models: Option<Vec<String>>,
-    default_thinking: String,
-    #[serde(default)]
-    default_fast_mode: bool,
-    #[serde(default = "default_context_window_cap", deserialize_with = "deserialize_context_window_cap")]
-    context_window_cap: u64,
-    #[serde(default = "default_context_window_cap_enabled")]
-    context_window_cap_enabled: bool,
-    #[serde(default = "default_true")]
-    auto_retry: bool,
-    #[serde(default)]
-    debug_mode: bool,
-    #[serde(default = "default_keybindings")]
-    keybindings: HashMap<String, String>,
-    tools: Vec<Value>,
-    skills: Vec<Value>,
-    #[serde(default)]
-    hosts: Vec<RemoteHost>,
-}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WorktreeSetupScript {
-    id: String, name: String, script: String, enabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    cleanup_script: Option<String>,
-    #[serde(default)]
-    project_path: Option<String>,
-    #[serde(default)]
-    host_id: Option<String>,
-}
 
 #[cfg(test)]
 mod tests;
 
-#[path = "backend/defaults_usage.rs"]
-mod defaults_usage;
 #[path = "backend/settings_storage.rs"]
 mod settings_storage;
 #[path = "backend/extensions.rs"]
@@ -430,9 +369,10 @@ pub use lifecycle::run_daemon;
 use lifecycle::{detach_owner};
 use pi_runtime::{StartPiOptions, detach_pi_with, open_project_directory, pi_command, pi_presence, start_pi_for_owner, stop_pi};
 use terminals::{StartTerminalOptions, close_terminal, resize_terminal, start_terminal_for_owner, write_terminal};
-use defaults_usage::default_context_window_cap;
 #[cfg(test)]
-use pi_runtime::{detach_pi, open_external_url_with, open_project_directory_with, read_dropped_file, update_runtime_snapshot};
+use pi_runtime::{detach_pi, open_project_directory_with, update_runtime_snapshot};
+#[cfg(all(test, feature = "desktop"))]
+use pi_runtime::{open_external_url_with, read_dropped_file};
 #[cfg(test)]
 use terminals::{TerminalLaunch, decode_terminal_bytes, resize_terminal_pty, start_terminal_with, stop_terminals, stream_terminal_output, write_terminal_input, write_terminal_queue};
 use archives::{archive_session, archived_session_file, delete_archived_session, delete_session, desktop_session_file, failed_storage, inspect_storage, relocate_session, restore_archived_worktree, storage_report};
@@ -455,10 +395,21 @@ use broker::{agent_is_active, broker_response, read_broker_line, resolve_agent, 
 use session_index::{collect_host_sessions, create_temporary_chat, home_directory, list_directories, list_local_sessions, list_sessions, remove_temporary_chat, validate_project_directory};
 #[cfg(test)]
 use session_index::{create_local_temporary_chat, create_remote_temporary_chat, inspect_session_projects_with, list_local_directories, parse_remote_directories, parse_remote_session_metadata, query_remote_directories, query_remote_session_metadata, read_session_summaries, read_session_summaries_with, remote_directory_listing_script, remove_local_temporary_chat, remove_remote_temporary_chat, temporary_chat_id, update_remote_session_index, validate_local_project_directory, validate_remote_project_directory};
-use defaults_usage::{codex_usage, default_context_window_cap_enabled, default_keybindings, default_pi_path, default_true, deserialize_context_window_cap, home_dir, opencode_go_usage, pi_executable};
+use crate::provider_codex::codex_usage;
 #[cfg(test)]
-use defaults_usage::{codex_response, codex_usage_values, pi_executable_in, query_codex_usage};
-use settings::{default_agent, load_app_settings, save_app_settings};
+use crate::keybindings::default_keybindings;
+use crate::environment::home_dir;
+use crate::provider_opencode::opencode_go_usage;
+use crate::environment::pi_executable;
+#[cfg(test)]
+use crate::provider_codex::codex_response;
+#[cfg(test)]
+use crate::provider_codex::codex_usage_values;
+#[cfg(test)]
+use crate::environment::pi_executable_in;
+#[cfg(test)]
+use crate::provider_codex::query_codex_usage;
+use settings::{load_app_settings, save_app_settings};
 #[cfg(test)]
 use settings::{codex_disables_implicit_invocation, default_settings, discover_skills_in, expand_skill_path, frontmatter_value, merge_discovered_skills_at, read_settings_at, save_settings_with, skill_path_is_within, validate_settings_for_save};
 use extensions::{runtime_settings};

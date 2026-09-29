@@ -12,7 +12,7 @@ use crate::{AppSettings, MAX_GIT_PATCH_BYTES, MAX_GIT_PATH_LIST_BYTES, PiRuntime
 use crate::worktree_setup::{GitWorktree, GitWorktreeRemoval, LimitedOutput, WorktreeScriptPhase, ensure_desktop_sessions_dir, run_limited, run_worktree_scripts, shell_quote};
 use crate::pi_launch::{remote_host, remote_login_command, ssh};
 use crate::session_index::{list_local_sessions, list_remote_sessions};
-use crate::defaults_usage::{home_dir};
+use crate::environment::home_dir;
 use crate::settings::{load_app_settings};
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]

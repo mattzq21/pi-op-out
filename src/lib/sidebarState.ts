@@ -1,9 +1,9 @@
-import { createMemo, createSignal, type Accessor } from "solid-js";
-import { createDependencyEffect } from "./solid";
-import { hasVisibleText } from "./content";
-import { DIRLESS_KEY, branchGroupId, firstOrderBranch, isTemporaryChatCwd, useSessionGroups } from "./sessionGroups";
-import { reconcileSessionGroupProjects } from "./sessionGroupProjects";
+import { createMemo,createSignal,type Accessor } from "solid-js";
 import type { SessionSummary } from "../types";
+import { hasVisibleText } from "./content";
+import { DIRLESS_KEY,branchGroupId,firstOrderBranch,isTemporaryChatCwd,useSessionGroups } from "./sessionGroups";
+import { useSessionProjects } from "./sessionProjects";
+import { createDependencyEffect } from "./solid";
 
 export interface DraggedSession { projectKey: string; sessionKey: string; session: SessionSummary; }
 const COLLAPSED_PROJECTS_KEY = "pi-desktop-collapsed-projects";
@@ -60,18 +60,17 @@ function orderedSessions(projectKey: string, sessions: SessionSummary[], orders:
 
 export type SidebarState = ReturnType<typeof createSidebarState>;
 
-export function createSidebarState(source: Accessor<SessionSummary[]>, query: Accessor<string>) {
+export function createSidebarState(source: Accessor<SessionSummary[]>, query: Accessor<string>, projects?: ReturnType<typeof useSessionGroups>) {
   const sessions = createMemo(() => {
     const parents = new Set(source().map(session => `${session.hostId ?? "local"}:${session.id}`));
     return source().filter(session => !session.isDraft && (!session.subagentParentId || !parents.has(`${session.hostId ?? "local"}:${session.subagentParentId}`)));
   });
-  const storedGroups = useSessionGroups(sessions);
+  const storedGroups = projects ?? useSessionProjects(sessions);
   const savedGroups = createMemo(() => storedGroups.state?.groups ?? []);
   const customGroups = createMemo(() => savedGroups().filter(group => !group.cwd && group.id !== DIRLESS_KEY));
   const [collapsedProjects, setCollapsedProjects] = createSignal(savedGroupKeys(COLLAPSED_PROJECTS_KEY));
   const [sessionOrders, setSessionOrders] = createSignal<Record<string, string[]>>(savedSessionOrders());
   const [sidebarOrder, setSidebarOrder] = createSignal<string[]>(savedSidebarOrder());
-  reconcileSessionGroupProjects(storedGroups, sessions);
   const groupNameTaken = (name: string, excludedId?: string) => name.trim().toLowerCase() === "dirless" || sidebarCollator.compare(RECENT_LABEL, name.trim()) === 0 || storedGroups.state?.groups.some((group) => group.id !== excludedId && sidebarCollator.compare(group.name.trim(), name.trim()) === 0);
   const validateGroupName = (name: string, excludedId?: string) => {
     if (!name || !hasVisibleText(name)) return "Enter a group name.";

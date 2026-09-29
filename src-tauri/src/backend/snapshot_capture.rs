@@ -6,7 +6,7 @@ use std::process::Command;
 use uuid::Uuid;
 use crate::{GitDiffSnapshot, MAX_GIT_CHANGED_PATHS, MAX_GIT_FILE_BYTES, MAX_GIT_PATCH_BYTES, MAX_GIT_PATH_LIST_BYTES, MAX_GIT_SNAPSHOT_BYTES, STORAGE_DIRECTORY};
 use crate::worktree_setup::{GitSnapshotToken, run_limited};
-use crate::defaults_usage::{home_dir};
+use crate::environment::home_dir;
 
 pub(super) fn git_root_and_objects(cwd: &str) -> Result<Option<(PathBuf, PathBuf)>, String> {
     let requested = Path::new(cwd).canonicalize().map_err(|error| format!("Could not open project directory: {error}"))?;

@@ -16,7 +16,7 @@ use crate::terminals::{stop_terminals};
 use crate::archive_worktrees::{archived_worktree_cwd, cleanup_archived_worktree};
 use crate::worktree_setup::{LimitedOutput, desktop_sessions_dir, run_limited, shell_quote};
 use crate::pi_launch::{remote_host, remote_login_command, session_identity, ssh};
-use crate::defaults_usage::{home_dir};
+use crate::environment::home_dir;
 use crate::settings::{load_app_settings};
 
 pub(super) fn inspect_storage(host: Option<&RemoteHost>) -> Result<HostStorage, String> {

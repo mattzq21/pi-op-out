@@ -3,7 +3,7 @@ import { PromptControls } from "./promptControls";
 import { nativeCall as call } from "./nativeCall";
 import { NativeSettings } from "./nativeSettings";
 import { nativeTerminals } from "./nativeTerminals";
-import { FastModeCommands } from "./fastModeCommands";
+import { ConversationCommands } from "./conversationCommands";
 import { listen, type UnlistenFn } from "./platform";
 import { open } from "@tauri-apps/plugin-dialog";
 import { restoredSessionTarget } from "./sessionResume";
@@ -119,7 +119,7 @@ export class NativeTransport {
   private temporaryChatUsed = false;
   private terminalActivity = false;
   hasTerminalActivity() { return this.terminalActivity; }
-  private readonly fastMode = new FastModeCommands({
+  private readonly fastMode = new ConversationCommands({
     command: command => this.command(command),
     send: command => call("pi_command", { runtimeId: this.runtimeId, command }),
     emit: event => this.emit(event),
@@ -153,12 +153,6 @@ export class NativeTransport {
   private async ensureConnectionDirectory(version: number) {
     if (this.cwd === undefined && this.sessionPath === undefined) { const chat = await call<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId: this.hostId, e2e: import.meta.env.MODE === "e2e" }); if (version !== this.connectionVersion) { await call<void>("remove_temporary_chat", { path: chat.cwd, hostId: this.hostId }); return false; } this.cwd = chat.cwd; this.sessionId = chat.sessionId; this.temporaryChat = true; }
     return true;
-  }
-  private normalizeCommand(command: RpcCommand) {
-    const compact = ["prompt", "steer", "follow_up"].includes(command.type) && typeof command.message === "string" ? command.message.match(/^\/compact(?:\s+([\s\S]*))?$/) : null;
-    if (compact && command.type !== "prompt") throw new Error("Stop or pause piop before running /compact.");
-    if (compact) command = { type: "compact", ...(compact[1]?.trim() ? { customInstructions: compact[1].trim() } : {}) };
-    return command;
   }
   private retainCommandSession(command: RpcCommand, result: unknown) {
     if (command.type === "get_state" || command.type === "get_snapshot") { const state = (command.type === "get_snapshot" ? (result as { state: unknown }).state : result) as { sessionFile?: string; sessionId?: string }; if (this.sessionId && this.sessionId !== state.sessionId) forgetSession(this); this.sessionPath = state.sessionFile; this.sessionId = state.sessionId; }
@@ -278,7 +272,7 @@ export class NativeTransport {
     return this.settings.runCommand(() => this.executeCommandNow<T>(command));
   }
   private async executeCommandNow<T>(command: RpcCommand) {
-    command = this.normalizeCommand(command);
+    command = this.fastMode.normalize(command);
     try {
       const result = await call<T>("pi_command", { runtimeId: this.runtimeId, command });
       this.retainCommandSession(command, result);

@@ -1,17 +1,17 @@
 import { Key } from "@solid-primitives/keyed";
-import { createComputed, createMemo, createSignal, Show } from "solid-js";
+import { createComputed,createMemo,createSignal,Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import { createDependencyEffect, createMemoFields, createRef, cssPixels, type KeyboardEvent, type MouseEvent } from "../lib/solid";
+import { createDependencyEffect,createMemoFields,createRef,cssPixels,type KeyboardEvent,type MouseEvent } from "../lib/solid";
 
-import { AppWindow, Archive, ChevronDown, Columns2, Copy, Ellipsis, FileText, Folder, FolderOpen, GitBranch, MessageSquarePlus, Pencil, Search, Trash2 } from "lucide-solid";
-import { gitWorktreeRoots, openGroupDirectory } from "../lib/nativeTransport";
+import { AppWindow,Archive,ChevronDown,Columns2,Copy,Ellipsis,FileText,Folder,FolderOpen,GitBranch,MessageSquarePlus,Pencil,Search,Trash2 } from "lucide-solid";
+import { gitWorktreeRoots,openGroupDirectory } from "../lib/nativeTransport";
 import type { SessionGroup } from "../lib/sessionGroups";
-import { RECENT_KEY, isFixedGroup, sessionKey, sessionLayoutToken, groupLayoutToken, type DraggedSession, type SidebarState } from "../lib/sidebarState";
+import { groupLayoutToken,isFixedGroup,RECENT_KEY,sessionKey,sessionLayoutToken,type DraggedSession,type SidebarState } from "../lib/sidebarState";
 import type { SessionSummary } from "../types";
-import { SessionTooltip } from "./SessionTooltip";
 import { BranchIcon } from "./BranchIcon";
 import { RemoveGroupDialog } from "./RemoveGroupDialog";
 import { RemoveWorktreeDialog } from "./RemoveWorktreeDialog";
+import { SessionTooltip } from "./SessionTooltip";
 
 export type SessionAction = "split" | "new-window" | "rename" | "clone" | "open-directory" | "archive" | "copy-id" | "open-rollout";
 interface Props { debug?: boolean; sidebar: SidebarState; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; onNewChat: (group: SessionGroup) => void; onCreateWorktree: (cwd: string, hostId: string) => void; onDeleteWorktree: (cwd: string, hostId: string, deleteBranch: boolean) => Promise<void>; createGroupRequest?: number; onCreateGroupHandled?: () => void; }

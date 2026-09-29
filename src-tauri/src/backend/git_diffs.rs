@@ -10,7 +10,7 @@ use crate::{GitDiffSnapshot, GitDiffSnapshots, MAX_GIT_DIFFS_BYTES, MAX_GIT_PATC
 use crate::archives::{local_desktop_session_file_at};
 use crate::worktree_setup::{GitSnapshotToken, ensure_desktop_sessions_dir, run_limited, shell_quote};
 use crate::pi_launch::{remote_login_command, saved_remote_host, ssh};
-use crate::defaults_usage::{home_dir};
+use crate::environment::home_dir;
 use crate::settings_storage::{atomic_write_private};
 use crate::snapshot_capture::{local_git_diff, local_git_diff_between, local_git_tree, parse_local_snapshot};
 
