@@ -94,9 +94,9 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     };
     const promise = (async () => { const capturedTransport = transport();
       try {
-        const revision = session.memory.revision ? (await load<{ revision: string }>({ type: "get_session_revision" })).revision : undefined;
+        const { revision } = await load<{ revision: string }>({ type: "get_session_revision" });
         if (owner.current !== capturedTransport) throw new ConversationChangedError();
-        if (revision !== undefined && session.memory.revision === revision) {
+        if (session.memory.revision === revision) {
           for (const message of session.memory.getSnapshot().messages.filter((message) => message.streaming)) trackLiveId(message.role, message.id);
           activeAssistantId.current = [...session.memory.getSnapshot().messages].reverse().find((message) => message.role === "assistant" && message.streaming)?.id;
           return session.memory.getSnapshot().state;

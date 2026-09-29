@@ -21,7 +21,6 @@ import { branchMessages, type PiEntry } from "./lib/messages";
 import { recordSeenModels } from "./lib/modelVisibility";
 import { initialWindowTarget, NativeTransport, openSessionWindow, resolveBranchGroup } from "./lib/nativeTransport";
 import { sessionDebugAction } from "./lib/sessionDebugAction";
-import { useMobileCachedSessions } from "./lib/mobileSessionCache";
 import { useSessionResume } from "./lib/sessionResume";
 import { isMobile, listen } from "./lib/platform";
 import { DIRLESS_KEY, inheritSessionGroup, updateSessionGroups, type SessionGroup } from "./lib/sessionGroups";
@@ -56,7 +55,7 @@ export default function App() {
   const pendingSettingsCount = createSubscription(() => (listener) => runtimePool().subscribe(listener), () => () => runtimePool().pendingSettingsCount());
   const gitDiffs = useTurnDiffs(() => (runtimePool()), () => (transport()));
   const sessionRuntime = useChatSession(() => (transport())); const chatSession = createMemo(() => (sessionRuntime));
-  const [sessions, setSessions] = useMobileCachedSessions(); const [settings, setSettings] = createSignal<AppSettings>();
+  const [sessions, setSessions] = createSignal<SessionSummary[]>([]); const [settings, setSettings] = createSignal<AppSettings>();
   const runtimeSettings = createRef<AppSettings | undefined>(undefined);
   const applyRuntimeSettings = (next: AppSettings) => {
     const previous = runtimeSettings.current;

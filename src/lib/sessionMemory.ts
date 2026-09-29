@@ -3,12 +3,11 @@ import { createMemoFields, createSubscription, type StateUpdate } from "../lib/s
 
 import type { AgentState, ChatMessage, Model, SlashCommand } from "../types";
 import type { NativeTransport } from "./nativeTransport";
-import { mobileSessionCache } from "./mobileSessionCache";
 
 const SESSION_LIMIT = 256 * 1024 * 1024;
 const CACHE_LIMIT = 512 * 1024 * 1024;
 const SESSION_COUNT = 20;
-type Transport = Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "currentHostId" | "currentSessionPath">>;
+type Transport = Pick<NativeTransport, "command" | "subscribe">;
 interface CachedSession {
   state: AgentState;
   messages: ChatMessage[];
@@ -56,8 +55,6 @@ function stripToolArguments(message: ChatMessage): ChatMessage {
 }
 
 export class SessionMemory {
-  private diskCache = mobileSessionCache();
-  private persistTimer?: ReturnType<typeof setTimeout>;
   private value: CachedSession;
   private listeners = new Set<() => void>();
   private loaded = new Set<string>();
@@ -71,27 +68,6 @@ export class SessionMemory {
   revision?: string;
   constructor(private transport: Transport, private initialState: AgentState) {
     this.value = initialSnapshot(initialState);
-    const key = this.cacheKey();
-    const cached = key ? this.diskCache.read(key) : undefined;
-    if (Array.isArray(cached)) this.value.messages = cached.filter((message): message is ChatMessage => message && typeof message.id === "string" && ["user", "assistant", "system", "tool"].includes(message.role) && (typeof message.content === "string" || Array.isArray(message.content))).map(message => this.decorate(message));
-  }
-  private cacheKey() {
-    const path = this.transport.currentSessionPath?.();
-    return path ? JSON.stringify([this.transport.currentHostId?.() ?? "local", path]) : undefined;
-  }
-  private persistMessages() {
-    if (!this.diskCache.enabled) return;
-    clearTimeout(this.persistTimer);
-    const key = this.cacheKey();
-    if (!key) return;
-    this.persistTimer = setTimeout(() => {
-      this.persistTimer = undefined;
-      if (key !== this.cacheKey()) return;
-      const messages = this.value.messages.slice(-100).map(message => message.role === "tool"
-        ? { ...message, content: "", details: undefined, toolInput: undefined, toolPayloadLoaded: false, toolStatus: message.toolStatus === "running" ? undefined : message.toolStatus, streaming: false }
-        : { ...stripToolArguments(message), streaming: false });
-      this.diskCache.write(key, messages);
-    }, 750);
   }
   getSnapshot = () => this.value;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); enforceCacheLimit(); }; };
@@ -99,7 +75,6 @@ export class SessionMemory {
   private notify() { for (const listener of this.listeners) listener(); }
 
   evict() {
-    clearTimeout(this.persistTimer);
     this.generation++;
     this.revision = undefined;
     this.loaded.clear();
@@ -193,7 +168,6 @@ export class SessionMemory {
     if (Object.is(next, this.value[key])) return;
     this.value = { ...this.value, [key]: key === "messages" ? (next as ChatMessage[]).map((message) => this.decorate(message)) : next };
     this.commit();
-    if (key === "messages") this.persistMessages();
   }
 
   private toolPayloadVersion(id: string) { return this.value.messages.find((message) => message.deferredToolPayload === id)?.toolPayloadVersion; }
