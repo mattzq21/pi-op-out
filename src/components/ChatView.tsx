@@ -178,7 +178,6 @@ export function ChatView(props: Props) {
     finally { setAskingSelection(false); }
   };
   const ConversationContent = () => {
-    const renderConcurrentViewStatus = () => ((props.state.viewers ?? 0) > 1 && <div class="concurrent-view-status" role="status">Open in {props.state.viewers} views · Messages and controls are shared</div>);
     const MessagesSection = () => (<div ref={element => { messagesRef.current = element; }} class="messages" aria-live="polite"
       onWheel={(event) => { if (event.deltaY < 0 && event.currentTarget.scrollTop > 0) followLatest.current = false; }}
       onTouchStart={(event) => { touchY.current = event.touches[0]?.clientY; }}
@@ -209,7 +208,6 @@ export function ChatView(props: Props) {
       return (<Show when={!props.readOnly}><div ref={element => { composerStack.current = element; }} class="composer-stack">{props.widgets.length > 0 && <div class="extension-widget">{<Index each={props.widgets.filter((line) => typeof line === "string")}>{(line, _index) => <div >{line()}</div>}</Index>}</div>} {activity() && <div class="runtime-activity" role="status">{(activity())!}</div>}{renderConversationOwnershipBanner()}<Show when={ownsConversation()}><div class="composer-questions"><ConversationQuestions transport={props.transport} /></div></Show><ComposerInteraction /></div></Show>);
     };
     return (<div class="conversation-content">
-      {renderConcurrentViewStatus()}
       <MessagesSection />
       {renderSelectionBtwTip()}
       <ComposerStack />
