@@ -22,7 +22,7 @@ function parentMetadata() {
 }
 
 function cleanWorktree() {
-  if (git(target, ['status', '--porcelain=v1', '--untracked-files=all', '--ignored', '--ignore-submodules=none']).length) return false;
+  if (git(target, ['status', '--porcelain=v1', '--untracked-files=all', '--ignored=no', '--ignore-submodules=none']).length) return false;
   const files = git(target, ['ls-files', '-v', '-z']).split('\0').filter(Boolean);
   if (files.some((entry) => entry[0] !== 'H')) return false;
   const gitDir = git(target, ['rev-parse', '--absolute-git-dir']).trim();
