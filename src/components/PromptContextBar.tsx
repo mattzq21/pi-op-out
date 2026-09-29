@@ -72,7 +72,7 @@ export const PromptContextBar = function PromptContextBar(componentProps: { cont
   const context = createMemo(() => separatePromptInstructions(componentProps.context));
   const [active, setActive] = createSignal<Section>();
   const [skillTab, setSkillTab] = createSignal<"tax" | "model" | "user">("tax");
-  const taxText = () => skillTax(context()) || "No skills tax in this context";
+  const taxText = () => skillTax(context()).replace(/^<skills>\s*/, "") || "No skills tax in this context";
   const sections = createMemo(() => (contextSections(context())));
   const visibleSkills = (): NonNullable<PromptContextInfo["userInvokedSkills"]> => skillTab() === "model" ? sections().skills : sections().userInvokedSkills;
   const emptySkills = () => skillTab() === "model" ? "No defined skills" : "No skills invoked in this context";
