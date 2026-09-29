@@ -1,6 +1,6 @@
-import { chatSubmission } from "../lib/newChatWorktree";
+import { acknowledgeChatSubmission, chatSubmission } from "../lib/newChatWorktree";
 import { Key } from "@solid-primitives/keyed";
-import { createComputed, createMemo, createSignal, Index, Show } from "solid-js";
+import { createComputed, createEffect, createMemo, createSignal, Index, Show } from "solid-js";
 import type { NativeTransport } from "../lib/nativeTransport";
 import { createDependencyEffect, createRef, cssPixels, type StateUpdate } from "../lib/solid";
 
@@ -64,8 +64,10 @@ export function ChatView(props: Props) {
   const turns = createMemo<ConversationGroup[]>(previous => groupTurns(messages(), previous), []);
   const sessionUsage = createMemo(() => props.messages.reduce((total, message) => ({ input: total.input + (message.usage?.input ?? 0), cacheRead: total.cacheRead + (message.usage?.cacheRead ?? 0), cacheWrite: total.cacheWrite + (message.usage?.cacheWrite ?? 0) }), { input: 0, cacheRead: 0, cacheWrite: 0 }));
   const sessionCache = createMemo(() => (cacheHitStats(sessionUsage())));
-  const pendingSubmission = createMemo(() => props.state.messageCount === 0 ? chatSubmission(props.transport) : undefined);
+  const pendingSubmission = createMemo(() => messages().length === 0 ? chatSubmission(props.transport) : undefined);
+  createEffect(() => { if (chatSubmission(props.transport) && messages().some(message => message.role === "user")) acknowledgeChatSubmission(props.transport); });
   const [submittedMessage, setSubmittedMessage] = createSignal<ChatMessage>();
+  const mcpPendingMessage = () => pendingSubmission()?.message ?? submittedMessage();
   const send: Props["onSend"] = async (text, behavior, images = []) => { const capturedOwnsConversation = ownsConversation(); const capturedControlsDisabled0 = props.controlsDisabled; const capturedOnSend1 = props.onSend;
     if (!capturedOwnsConversation || capturedControlsDisabled0) return false;
     const message: ChatMessage = { id: crypto.randomUUID(), role: "user", content: [{ type: "text", text }, ...images] };
@@ -190,7 +192,7 @@ export function ChatView(props: Props) {
         {<Key each={turns()} by={turn => turn.messages[0]?.id ?? "empty"}>{(turn, index) => <DeferredTurn  scrollRoot={messagesRef} eager={index() >= turns().length - 3}><ConversationTurn messages={turn().messages} promptContexts={turn().promptContexts} gitDiffs={props.gitDiffs} cwd={props.projectCwd} debug={props.debug ?? false} active={props.state.isStreaming && index() === turns().length - 1} retryable={retryable() && index() === turns().length - 1} paused={Boolean(props.state.isPaused || props.state.isPausing) && index() === turns().length - 1} onRetry={onRetry} onBranch={onBranch} onForkAndForget={props.onForkAndForget ? onForkAndForget : undefined} onCreateWorktree={props.onCreateWorktree ? onCreateWorktree : undefined} /></DeferredTurn>}</Key>}
         {pendingSubmission() && !mcpLoading() && <section class="mcp-pending-turn" aria-label="Preparing message" aria-busy="true"><Message message={pendingSubmission()!.message} showActions={false} /><div class="mcp-loading" role="status"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>{pendingSubmission()!.status}</span></div></section>}
         {mcpLoading() && <section class="mcp-pending-turn" aria-label="Message waiting for MCP" aria-busy="true">
-          {submittedMessage() && <div class="mcp-pending-message"><Message message={(submittedMessage())!} showActions={false} /></div>}
+          {mcpPendingMessage() && <div class="mcp-pending-message"><Message message={mcpPendingMessage()!} showActions={false} /></div>}
           <div class="mcp-loading-list" role="status">{props.debug ? <Key each={loadingServers()} by={(server) => server.id}>{(server, _index) => <div class="mcp-loading" ><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading {server().name}</span></div>}</Key> : <div class="mcp-loading"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading MCPs</span></div>}</div>
         </section>}
       </div></div>);

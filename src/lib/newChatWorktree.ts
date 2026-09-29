@@ -5,14 +5,23 @@ import type { ChatMessage, ImageAttachment } from "../types";
 type Submission = { owner: NativeTransport; message: ChatMessage; status: string };
 const [submission, setSubmission] = createSignal<Submission>();
 export const chatSubmission = (owner?: NativeTransport) => submission()?.owner === owner ? submission() : undefined;
+export function acknowledgeChatSubmission(owner?: NativeTransport) {
+  setSubmission((current) => current?.owner === owner ? undefined : current);
+}
 export function updateChatPreparation(owner: NativeTransport, status: string) {
   setSubmission((current) => current?.owner === owner ? { ...current, status } : current);
 }
 export async function trackChatSubmission<T>(owner: NativeTransport, text: string, images: ImageAttachment[], work: () => Promise<T>) {
   const message: ChatMessage = { id: crypto.randomUUID(), role: "user", content: [{ type: "text", text }, ...images] };
   setSubmission({ owner, message, status: "Preparing conversation…" });
-  try { return await work(); }
-  finally { setSubmission((current) => current?.message === message ? undefined : current); }
+  let awaitingMessage = false;
+  try {
+    const result = await work();
+    awaitingMessage = result !== false && !text.trimStart().startsWith("/");
+    return result;
+  } finally {
+    if (!awaitingMessage) setSubmission((current) => current?.message === message ? undefined : current);
+  }
 }
 
 const preparations = new WeakMap<NativeTransport, () => Promise<string | undefined>>();
@@ -40,14 +49,15 @@ function waitForConnection(owner: NativeTransport, active: Accessor<NativeTransp
   }));
 }
 
-export async function prepareChatWorktree(owner: NativeTransport, select: (path: string, host: string) => Promise<void>, active: Accessor<NativeTransport>, ready: Accessor<boolean>, error: Accessor<string | undefined>) {
+export async function prepareChatWorktree(owner: NativeTransport, select: (path: string, host: string, onActivate: (destination: NativeTransport) => void) => Promise<void>, active: Accessor<NativeTransport>, ready: Accessor<boolean>, error: Accessor<string | undefined>) {
   const path = await registeredWorktreePreparation(owner);
   if (active() !== owner) throw new Error("Conversation changed");
   if (!path) { updateChatPreparation(owner, "Sending message…"); return owner; }
   updateChatPreparation(owner, "Opening worktree…");
-  await select(path, owner.currentHostId());
+  await select(path, owner.currentHostId(), (destination) => {
+    setSubmission((current) => current?.owner === owner ? { ...current, owner: destination, status: "Connecting to worktree…" } : current);
+  });
   const destination = active();
-  setSubmission((current) => current?.owner === owner ? { ...current, owner: destination, status: "Connecting to worktree…" } : current);
   await waitForConnection(destination, active, ready, error);
   updateChatPreparation(destination, "Sending message…");
   return destination;
