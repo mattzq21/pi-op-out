@@ -130,11 +130,11 @@ export function Message(componentProps: Props) {
   const UserMessage = () => {
     const parts = createMemo(() => userMessageParts(textOf(componentProps.message.content)));
     const sentTime = createMemo(() => formatMessageTime(componentProps.message.timestamp));
-    return <article class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`} title={sentTime() ? `Sent ${sentTime()!.full}` : undefined}>
+    return <article class={`message user-message${componentProps.message.deliveryBehavior === "steer" ? " steering-message" : ""}`}>
       <div class="message-body">{<Key each={parts().skills} by={(skill) => skill}>{(skill, _index) => <span class="skill-reference" >${skill()}</span>}</Key>}{parts().text && (parts().literalSkill ? <span class="literal-skill-content">{parts().text}</span> : <Markdown>{parts().text}</Markdown>)}</div>
       {Array.isArray(componentProps.message.content) && <Index each={componentProps.message.content.flatMap(part => part.type === "image" ? [part] : [])}>{(part, _index) => part().type === "image" && part().data && part().mimeType && /^image\/(png|jpeg|gif|webp)$/.test(part().mimeType) ? <img  src={`data:${part().mimeType};base64,${part().data}`} alt="Sent attachment" style={{ "max-width": "100%", "max-height": cssPixels(320), "object-fit": "contain" }} /> : null}</Index>}
       <div class="message-actions">
-        {sentTime() && <span class="message-time" title={sentTime()!.full}>{sentTime()!.short}</span>}
+        {sentTime() && <span class="message-time">{sentTime()!.short}</span>}
         <MessageCopyButton state={copyState()} copy={copy} />
         {copyState() === "error" && <span class="copy-feedback" role="status">Could not copy message</span>}
       </div>
