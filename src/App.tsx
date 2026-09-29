@@ -1,4 +1,4 @@
-import { ConversationChangedError, isConversationChanged } from "./lib/conversationChanged"; import { prepareChatWorktree, trackChatSubmission } from "./lib/newChatWorktree"; import { useAppKeyboard } from "./useAppKeyboard";
+import { ConversationChangedError, isConversationChanged } from "./lib/conversationChanged"; import { chatSubmission, prepareChatWorktree, trackChatSubmission } from "./lib/newChatWorktree"; import { useAppKeyboard } from "./useAppKeyboard";
 import { createConversationViewKey, createTransportActivation, useWorkspaceDisconnect } from "./appTransportActivation";
 import { createWorktreeActions } from "./appWorktrees";
 import { configureConversationRuntime, createComposerControls, inheritGroupControls, newChatAgent, openDraftSession, reassignTerminals, type ProjectControls } from "./appRuntime";
@@ -44,7 +44,7 @@ export default function App() {
   const activeTransportRef = createRef(transport()); createComputed(() => { activeTransportRef.current = transport(); });
   const pendingSessionGroups = createRef(new WeakMap<NativeTransport, SessionGroup>());
   const initialConversationKey = createRef(`local:draft-${crypto.randomUUID()}`);
-  const [activeConversationKey, setActiveConversationKey] = createSignal(initialConversationKey.current); const chatViewKey = createConversationViewKey(transport, activeConversationKey);
+  const [activeConversationKey, setActiveConversationKey] = createSignal(initialConversationKey.current); const chatViewKey = createConversationViewKey(transport, activeConversationKey, () => chatSubmission(transport())?.message);
   const activeConversationKeyRef = createRef(activeConversationKey()); createComputed(() => { activeConversationKeyRef.current = activeConversationKey(); });
   const transportConversationKeys = createRef(new Map<NativeTransport, string>([[transport(), initialConversationKey.current]]));
   const liveSessionRevision = createSubscription(() => (listener) => runtimePool().subscribe(listener), () => () => runtimePool().liveSessionRevision());

@@ -7,15 +7,17 @@ import type { RefObject } from "./lib/solid";
 import type { useChatSession } from "./lib/useChatSession";
 import type { ComposerUpload } from "./types";
 
-export function createConversationViewKey<T>(transport: Accessor<T>, conversationKey: Accessor<string>) {
-  let previous: { owner: T; key: string; identity: object } | undefined;
+export function createConversationViewKey<T>(transport: Accessor<T>, conversationKey: Accessor<string>, submission: Accessor<object | undefined> = () => undefined) {
+  let previous: { owner: T; key: string; identity: object; submission?: object } | undefined;
   return createMemo(() => {
     const owner = transport();
     const key = conversationKey();
+    const pending = submission();
     const canonicalizingDraft = previous?.key.includes(":draft-") && !key.includes(":draft-");
-    const reuse = previous?.owner === owner && (previous.key === key || canonicalizingDraft);
+    const continuingSubmission = pending !== undefined && pending === previous?.submission;
+    const reuse = continuingSubmission || previous?.owner === owner && (previous.key === key || canonicalizingDraft);
     const identity = reuse ? previous!.identity : {};
-    previous = { owner, key, identity };
+    previous = { owner, key, identity, submission: pending };
     return identity;
   });
 }
