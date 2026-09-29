@@ -29,7 +29,9 @@ function projectInstructions(block: string) {
 
 function instructionsFromPrompt(prompt: string) {
   const block = prompt.match(/\n\n<project_context>[\s\S]*?<\/project_context>\n?/)?.[0] ?? "";
-  return { block, instructions: projectInstructions(block) };
+  const agent = prompt.match(/<agent_instructions>\n([\s\S]*?)\n<\/agent_instructions>/);
+  const blocks = [block, agent?.[0] ?? ""];
+  return { block: blocks.join(""), blocks, instructions: [...projectInstructions(block), ...(agent ? [{ path: "Agent instructions", content: agent[1] }] : [])] };
 }
 
 function workingDirectoryFromPrompt(prompt: string, projectContext: string) {
@@ -115,7 +117,7 @@ export default function contextBar(pi: ExtensionAPI) {
     const systemPrompt = ctx.getSystemPrompt();
     const { block: skillPrompt, skills } = skillsFromPrompt(systemPrompt);
     const invokedSkills = userInvokedSkills(messages, promptOptions, invocationWindow(branch));
-    const { block: instructionPrompt, instructions } = instructionsFromPrompt(systemPrompt);
+    const { block: instructionPrompt, blocks: instructionBlocks, instructions } = instructionsFromPrompt(systemPrompt);
     const messageProjectContext = projectContextFromMessages(messages);
     const systemCwd = workingDirectoryFromPrompt(systemPrompt, instructionPrompt);
     if (!messageProjectContext.block && systemCwd) instructions.unshift({ path: "Working directory", content: displayPath(systemCwd) });
@@ -134,7 +136,7 @@ export default function contextBar(pi: ExtensionAPI) {
       skills,
       userInvokedSkills: invokedSkills,
       skillTokens,
-      tokens: { system: estimate(systemPrompt.replace(skillPrompt, "").replace(instructionPrompt, "")), instructions: estimate(instructionPrompt) + estimate(messageProjectContext.block) + estimate(changeInstruction?.block ?? ""), tools: estimate(tools), skills: skillTokens.defined + skillTokens.invoked },
+      tokens: { system: estimate(instructionBlocks.reduce((prompt, block) => prompt.replace(block, ""), systemPrompt.replace(skillPrompt, ""))), instructions: estimate(instructionPrompt) + estimate(messageProjectContext.block) + estimate(changeInstruction?.block ?? ""), tools: estimate(tools), skills: skillTokens.defined + skillTokens.invoked },
     };
     pi.appendEntry(STATUS_KEY, snapshot);
     ctx.ui.setStatus(STATUS_KEY, `json:${JSON.stringify(snapshot)}`);

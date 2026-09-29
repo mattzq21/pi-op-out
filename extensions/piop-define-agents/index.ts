@@ -289,7 +289,8 @@ function agentToolError(pi: ExtensionAPI, agent: Agent, extensionTools: string[]
 function configureAgentSystemPrompt(prompt: string, agentPrompt: string, options: BuildSystemPromptOptions, explicitOnlySkills: string[] = []) {
   delete options.forceSystemPrompt;
   options.customPrompt = prompt || " ";
-  options.appendSystemPrompt = [options.appendSystemPrompt, agentPrompt.trim() ? agentPrompt : undefined].filter(Boolean).join("\n\n");
+  options.contextFiles = [];
+  options.sections = { ...options.sections, agent_instructions: agentPrompt.trim() ? agentPrompt : "" };
   const explicit = new Set(explicitOnlySkills.map(normalizedPath));
   options.skills = options.skills?.map((skill) => explicit.has(normalizedPath(skill.filePath)) || explicit.has(normalizedPath(skill.baseDir)) ? { ...skill, disableModelInvocation: true } : skill);
 }
