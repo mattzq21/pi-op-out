@@ -2,6 +2,7 @@ import { Key } from "@solid-primitives/keyed";
 import { createMemo, createSignal, onCleanup } from "solid-js";
 import { Check, CircleAlert, Copy } from "lucide-solid";
 import { IconButton } from "./IconButton";
+import { ContextTokenDiagram } from "./ContextTokenDiagram";
 import { type CSSProperties } from "../lib/solid";
 
 import type { PromptContextInfo } from "../types";
@@ -115,7 +116,7 @@ export const PromptContextBar = function PromptContextBar(componentProps: { cont
       <button class="instructions" aria-expanded={active() === "instructions"} onClick={() => toggle("instructions")}>Instructions <small>{percent().instructions}%</small></button>
       <button class="tools" aria-expanded={active() === "tools"} onClick={() => toggle("tools")}>Tools <small>{percent().tools}%</small></button>
       <button class="skills" aria-expanded={active() === "skills"} onClick={() => toggle("skills")}>Skills <small>{percent().skills}%</small></button>
-      <span class="prompt-context-wheel" style={wheelStyle()} title={`${totalTokens().toLocaleString()} tokens`} aria-label={`${totalTokens().toLocaleString()} tokens`} />
+      <ContextTokenDiagram tokens={totalTokens()} style={wheelStyle()} />
     </div>
     {renderPromptContextContent()}
   </section>;
