@@ -454,11 +454,11 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (error) { ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error })); ctx.ui.notify(error, "error"); return { action: "handled" }; }
     return { action: "continue" };
   });
-  pi.on("before_agent_start", (event, ctx) => {
+  pi.on("before_agent_start", (event) => {
     const agent = currentAgent(); if (!agent) return;
     const base = buildAgentSystemPrompt(activeSystemPrompt, event.systemPromptOptions, desktopList(pi, "explicitOnlySkills"));
     const systemPrompt = activeAgentPrompt.trim() ? `${base}\n\n${activeAgentPrompt}` : base;
-    return { systemPrompt: `${systemPrompt}\n\n<project_context>\nCurrent working directory: ${ctx.cwd.replace(/\\/g, "/")}\n</project_context>` };
+    return { systemPrompt };
   });
   pi.registerCommand("pi-define-agents-use", {
     description: "Select a defined agent", handler: async (args, ctx) => {
