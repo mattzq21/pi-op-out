@@ -11,12 +11,12 @@ html[data-mobile] .conversation-unowned .composer-interaction { opacity: 1; }
 @media (max-width: 700px) {
   .composer-settings { display: block; position: relative; }
   .composer-bar .composer-settings-trigger { display: inline-flex; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .composer-settings-panel { display: none; position: absolute; bottom: calc(100% + 8px); right: 0; z-index: 25; width: min(260px, calc(100vw - 48px)); padding: 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); box-shadow: 0 8px 24px #0004; }
+  .composer-settings-panel { display: none; position: absolute; bottom: calc(100% + 8px); right: 0; z-index: 25; width: max-content; max-width: calc(100vw - 64px); padding: 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); box-shadow: 0 8px 24px #0004; }
   .composer-settings-panel[data-open="true"] { display: grid; gap: 4px; }
   .composer-settings-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; }
   .composer-settings-row > span { display: block; color: var(--muted); font-size: 12px; }
   .composer-settings-row .composer-picker { min-width: 0; }
-  .composer-bar .composer-settings-row .composer-picker-trigger { max-width: 170px; height: 32px; }
+  .composer-bar .composer-settings-row .composer-picker-trigger { max-width: 100%; height: 32px; }
   .composer-bar .composer-settings-row .fast-mode-indicator { width: 32px; height: 32px; flex-basis: 32px; }
 }
 .mobile-connect { height: var(--mobile-height, 100dvh); overflow-y: auto; display: grid; align-items: safe center; justify-items: center; padding: max(28px, env(safe-area-inset-top)) 24px; background: #181817; color: #e8e5dd; }
