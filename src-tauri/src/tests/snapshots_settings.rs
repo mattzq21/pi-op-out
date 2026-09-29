@@ -523,12 +523,12 @@ fn worktree_usage_guards_resolve_nested_paths_and_isolate_hosts_and_resource_typ
     runtime.active_agents.lock().unwrap().clear();
     let _receiver = terminals.add("terminal");
     {
-        let mut processes = terminals.0.processes.lock().unwrap();
+        let mut processes = terminals.0.test_processes().lock().unwrap();
         let terminal = processes.get_mut("terminal").unwrap();
         terminal.cwd = nested.to_string_lossy().into_owned(); terminal.host_id = "remote".into();
     }
     assert!(validate_worktree_unused(&settings, "local", target, &[], &runtime, &terminals.0).is_ok());
-    terminals.0.processes.lock().unwrap().get_mut("terminal").unwrap().host_id = "local".into();
+    terminals.0.test_processes().lock().unwrap().get_mut("terminal").unwrap().host_id = "local".into();
     assert_eq!(validate_worktree_unused(&settings, "local", target, &[], &runtime, &terminals.0).unwrap_err(), "Close every terminal using this worktree before deleting it");
     assert!(worktree.exists());
     assert!(local_branch_exists(&repository, "feature").unwrap());

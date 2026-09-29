@@ -238,7 +238,7 @@ fn message_context(app: &AppHandle, broker: &BrokerRuntime, session: &SessionSum
     let ownership = conversation_ownership::MutationGuard::acquire(app, &session.host_id, &session.path, client_id, false, "message")?;
     let context = {
         let settings = load_app_settings(app.clone())?;
-        let daemon = runtime.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?.get(&session.host_id).cloned();
+        let daemon = runtime.connections.get(&session.host_id)?;
         if let Some(daemon) = daemon.filter(|daemon| daemon.alive.load(Ordering::SeqCst)) {
             daemon.request(json!({"type":"retire","sessionKey":session.id,"sessionPath":session.path}))?;
         }

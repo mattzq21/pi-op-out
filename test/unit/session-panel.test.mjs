@@ -3,6 +3,13 @@ import { describe, test, beforeEach, afterEach } from 'node:test';
 import { mockIPC, clearMocks } from '../mock-ipc.mjs';
 import { installDom, renderComponent, enterText, act } from '../dom.mjs';
 import { SessionPanel } from '../../src/components/SessionPanel.tsx';
+import { createComponent, mergeProps } from 'solid-js';
+import { createSidebarState } from '../../src/lib/sidebarState.ts';
+
+function SessionPanelFixture(props) {
+  const sidebar = createSidebarState(() => props.sessions, () => props.query);
+  return createComponent(SessionPanel, mergeProps(props, { sidebar }));
+}
 
 describe('conversation sidebar', () => {
   let dom, view, props, groups, changes, nativeCalls, responses;
@@ -29,7 +36,7 @@ describe('conversation sidebar', () => {
     props = { sessions: [session('b', 'Chat 10'), session('a', 'Chat 2')], query: '', onQuery: () => {}, onSelect: () => {}, onAction: () => {}, onNewChat: () => {}, onCreateWorktree: () => {}, onDeleteWorktree: async () => {} };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; clearMocks(); dom.restore(); });
-  async function render(extra = {}) { props = { ...props, ...extra }; if (view) await view.rerender(props); else view = await renderComponent(SessionPanel, props); }
+  async function render(extra = {}) { props = { ...props, ...extra }; if (view) await view.rerender(props); else view = await renderComponent(SessionPanelFixture, props); }
   const control = label => document.querySelector(`[aria-label="${label}"]`);
   const row = id => document.querySelector(`[data-session-key="local:${id}"] .session-main`);
   const click = async element => act(async () => element.click());

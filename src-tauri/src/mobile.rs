@@ -166,7 +166,7 @@ async fn detach_connection(app: AppHandle, owner: String, mut pending: tokio::ta
         while pending.join_next().await.is_some() {}
         let _ = tokio::task::spawn_blocking(move || {
             detach_owner(&app, &owner, false);
-            if let Ok(mut owners) = app.state::<PiRuntime>().worktree_setup_owners.lock() { owners.detached.remove(&owner); }
+            app.state::<PiRuntime>().setups.attach_owner(&owner);
         }).await;
     });
     Ok(())

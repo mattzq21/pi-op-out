@@ -136,7 +136,7 @@ pub(super) fn remote_session_file(path: &str, archived: bool, command: impl FnOn
 }
 
 fn retire_archived_session(app: &AppHandle, client: &PiRuntime, host_id: &str, session_path: &str) -> Result<(), String> {
-    let daemon = client.daemons.lock().map_err(|_| "Daemon registry lock was poisoned")?.get(host_id).cloned();
+    let daemon = client.connections.get(host_id)?;
     if let Some(daemon) = daemon {
         let settings = load_app_settings(app.clone())?;
         let path = desktop_session_file(&settings, host_id, session_path)?;

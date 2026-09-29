@@ -333,8 +333,8 @@ fn check_route_resources(state: &PeerRuntime, owner: &str, command: &str, args: 
 fn check_local_collisions(app: &AppHandle, args: &Value) -> Result<(), String> {
     for kind in ["runtimeId", "terminalId"] {
         if let Some(id) = args[kind].as_str() {
-            let collision = if kind == "runtimeId" { app.state::<PiRuntime>().processes.lock().map_err(|_| "Runtime registry unavailable")?.contains_key(id) }
-                else { app.state::<TerminalRuntime>().processes.lock().map_err(|_| "Terminal registry unavailable")?.contains_key(id) };
+            let collision = if kind == "runtimeId" { app.state::<PiRuntime>().contains_process(id)? }
+                else { app.state::<TerminalRuntime>().contains_process(id)? };
             if collision { return Err("Resource is already attached locally".into()); }
         }
     }

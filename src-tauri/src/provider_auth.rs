@@ -17,6 +17,6 @@ pub(crate) fn for_owner(app: AppHandle, owner: String, host_id: Option<String>, 
 }
 
 pub(crate) fn cancel_owner(runtime: &PiRuntime, owner: &str) {
-    let daemons = runtime.daemons.lock().map(|daemons| daemons.values().cloned().collect::<Vec<_>>()).unwrap_or_default();
+    let daemons = runtime.connections.snapshot();
     for daemon in daemons { let _ = daemon.request(json!({"type":"provider_auth_cancel_owner","owner":owner})); }
 }

@@ -1,8 +1,8 @@
+use std::{collections::HashMap, sync::{Arc, Mutex, atomic::AtomicU64}};
 use crate::broker::claim_agent;
 use serde_json::json;
 use serde_json::Value;
 use std::thread;
-use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
@@ -12,7 +12,7 @@ use crate::platform::State;
 use uuid::Uuid;
 #[cfg(feature = "desktop")]
 use crate::APP_TITLE;
-use crate::{AgentAddress, AppSettings, BlankSessionCleanup, BrokerRuntime, BusyAgent, EphemeralSession, PiProcess, PiRuntime, RemoteHost, cleanup_blank_session, daemon};
+use crate::{AgentAddress, AppSettings, BlankSessionCleanup, BrokerRuntime, BusyAgent, RemoteHost, cleanup_blank_session, daemon};
 use crate::archives::{desktop_session_file};
 use crate::pi_launch::{PiLaunch, build_pi_command, cleanup_runtime_ephemeral, create_ephemeral_fork, prepare_ephemeral_path, remote_host, session_identity};
 use crate::session_index::{validate_session_working_directory};
@@ -69,18 +69,18 @@ impl PreparedPiSession {
 fn prepare_pi_session(runtime: &PiRuntime, settings: &AppSettings, host_id: String, options: &StartPiOptions) -> Result<PreparedPiSession, String> {
     let session_id = options.session_id.clone().or_else(|| (options.session_path.is_none() && options.fork_path.is_none()).then(|| Uuid::new_v4().to_string()));
     let ephemeral_key = format!("{}:{}:{}", host_id, options.client_id, options.runtime_id.rsplit(':').next().unwrap_or(&options.runtime_id));
-    let saved_ephemeral = runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?.get(&ephemeral_key).cloned();
+    let saved_ephemeral = runtime.ephemeral.get(&ephemeral_key)?;
     let ephemeral = options.no_session.unwrap_or(false) || saved_ephemeral.is_some();
     let session_path = if ephemeral { None } else { options.session_path.as_deref().map(|path| desktop_session_file(settings, &host_id, path)).transpose()? };
     let fork_path = options.fork_path.as_deref().map(|path| desktop_session_file(settings, &host_id, path)).transpose()?;
     let reused_ephemeral = saved_ephemeral.is_some();
     let ephemeral_path = prepare_ephemeral_path(runtime, &ephemeral_key, ephemeral, saved_ephemeral, fork_path.as_deref(), |source_path| create_ephemeral_fork(settings, &host_id, source_path, options.fork_leaf_id.as_deref()))?;
     let created_ephemeral = !reused_ephemeral && ephemeral_path.is_some();
-    if ephemeral_path.is_some() { runtime.ephemeral_keys.lock().map_err(|_| "Side conversation lock was poisoned")?.insert(options.runtime_id.clone(), ephemeral_key); }
+    if ephemeral_path.is_some() { runtime.ephemeral.attach(&options.runtime_id, ephemeral_key)?; }
     Ok(PreparedPiSession { host_id, session_id, session_path, fork_path, ephemeral_path, ephemeral, created_ephemeral })
 }
 
-fn ensure_runtime_owner(runtime: &PiRuntime, runtime_id: &str, owner: &str) -> Result<(), String> {
+pub(super) fn ensure_runtime_owner(runtime: &PiRuntime, runtime_id: &str, owner: &str) -> Result<(), String> {
     if runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(runtime_id).is_some_and(|process| process.window_label != owner) {
         return Err("Runtime belongs to another connection".into());
     }
@@ -280,35 +280,20 @@ fn update_command_ownership(runtime: &PiRuntime, runtime_id: &str, command_type:
     Ok(())
 }
 
-fn update_ephemeral_snapshot(runtime: &PiRuntime, runtime_id: &str, state: &Value) -> Result<(), String> {
-        let key = runtime.ephemeral_keys.lock().map_err(|_| "Side conversation lock was poisoned")?.get(runtime_id).cloned();
-        if let (Some(key), Some(path)) = (key, state["sessionFile"].as_str()) {
-            let mut sessions = runtime.ephemeral_sessions.lock().map_err(|_| "Side conversation lock was poisoned")?;
-            if let Some(session) = sessions.get_mut(&key) {
-                if session.path() != path && Path::new(&session.path()).parent() == Path::new(path).parent() {
-                    let previous = session.clone();
-                    match session { EphemeralSession::Local(current) => *current = path.into(), EphemeralSession::Remote { path: current, .. } => *current = path.into() }
-                    runtime.ephemeral_previous.lock().map_err(|_| "Side conversation lock was poisoned")?.entry(key).or_default().push(previous);
-                }
-            }
-        }
-    Ok(())
-}
-
 pub(super) fn detach_owner(runtime: &PiRuntime, owner: &str, discard_blank: bool) {
     let ids = runtime.processes.lock().map(|processes| processes.iter().filter(|(_, process)| process.window_label == owner).map(|(id, _)| id.clone()).collect::<Vec<_>>()).unwrap_or_default();
     for id in ids { let _ = detach_pi_with(runtime, &id, discard_blank, !discard_blank); }
 }
 
 pub(super) fn shutdown(runtime: &PiRuntime) {
-    let daemons = runtime.daemons.lock().map(|daemons| daemons.values().cloned().collect::<Vec<_>>()).unwrap_or_default();
+    let daemons = runtime.connections.snapshot();
     for daemon in &daemons { daemon.shutdown(); }
     for daemon in daemons { daemon.wait_shutdown(); let _ = daemon.drain_captures(None); }
     crate::pi_launch::cleanup_all_ephemeral(runtime);
 }
 
 pub(super) fn update_runtime_snapshot(runtime: &PiRuntime, runtime_id: &str, state: &Value) -> Result<(), String> {
-        update_ephemeral_snapshot(runtime, runtime_id, state)?;
+        crate::pi_launch::update_ephemeral_snapshot(runtime, runtime_id, state)?;
         if let Some(process) = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get_mut(runtime_id) {
             if let Some(path) = state["sessionFile"].as_str() { process.blank_cleanup.path = Some(path.into()); }
             if let Some(id) = state["sessionId"].as_str() { process.blank_cleanup.id = Some(id.into()); }
@@ -319,4 +304,40 @@ pub(super) fn update_runtime_snapshot(runtime: &PiRuntime, runtime_id: &str, sta
             agent.working = state["isStreaming"].as_bool().unwrap_or(false);
         }
     Ok(())
+}
+
+struct PiProcess {
+    daemon: Arc<daemon::Daemon>,
+    window_label: String,
+    blank_cleanup: BlankSessionCleanup,
+}
+
+#[derive(Default)]
+pub(super) struct PiRuntime {
+    pub(super) setups: crate::worktree_setup::WorktreeSetups,
+    pub(super) ephemeral: crate::pi_launch::EphemeralSessions,
+    pub(super) connections: daemon::DaemonRegistry,
+    processes: Arc<Mutex<HashMap<String, PiProcess>>>,
+    pub(super) lifecycle: Mutex<()>,
+    pub(super) agent_config_revision: AtomicU64,
+    pub(super) agent_config_revisions: Mutex<HashMap<String, u64>>,
+    pub(super) active_agents: Arc<Mutex<HashMap<String, AgentAddress>>>,
+}
+
+impl PiRuntime {
+    pub(super) fn contains_process(&self, id: &str) -> Result<bool, String> {
+        Ok(self.processes.lock().map_err(|_| "Runtime registry unavailable")?.contains_key(id))
+    }
+    pub(super) fn disconnect_daemon(&self, daemon: &Arc<daemon::Daemon>) -> Vec<String> {
+        self.processes.lock().map(|mut processes| {
+            let ids: Vec<_> = processes.iter().filter(|(_, process)| Arc::ptr_eq(&process.daemon, daemon)).map(|(id, _)| id.clone()).collect();
+            for id in &ids { processes.remove(id); } ids
+        }).unwrap_or_default()
+    }
+    pub(super) fn disconnect_process(&self, id: &str, daemon: &Arc<daemon::Daemon>) -> bool {
+        self.processes.lock().map(|mut processes| {
+            if !processes.get(id).is_some_and(|process| Arc::ptr_eq(&process.daemon, daemon)) { return false; }
+            processes.remove(id); true
+        }).unwrap_or(false)
+    }
 }

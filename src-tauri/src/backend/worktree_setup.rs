@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use serde::Deserialize;
 use serde::Serialize;
 use std::fs;
@@ -154,28 +155,23 @@ pub(super) async fn run_worktree_setup(app: AppHandle, setup_id: String, cwd: St
 }
 
 pub(super) async fn execute_worktree_setup(runtime: &PiRuntime, setup_id: &str, work: impl FnOnce(Arc<AtomicBool>) -> Result<(), String> + Send + 'static) -> Result<(), String> {
-    let cancelled = runtime.worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.get(setup_id).cloned().ok_or("Unknown setup")?;
+    let cancelled = runtime.setups.pending.lock().map_err(|_| "Setup lock was poisoned")?.get(setup_id).cloned().ok_or("Unknown setup")?;
     let result = crate::platform::async_runtime::spawn_blocking(move || work(cancelled)).await.map_err(|error| error.to_string());
-    runtime.worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.remove(setup_id);
-    runtime.worktree_setup_owners.lock().map_err(|_| "Setup lock was poisoned")?.setups.remove(setup_id);
+    runtime.setups.pending.lock().map_err(|_| "Setup lock was poisoned")?.remove(setup_id);
+    runtime.setups.owners.lock().map_err(|_| "Setup lock was poisoned")?.setups.remove(setup_id);
     result?
-}
-
-#[cfg_attr(feature = "desktop", tauri::command)]
-pub(super) fn prepare_worktree_setup(runtime: State<PiRuntime>) -> Result<String, String> {
-    register_worktree_setup(&runtime)
 }
 
 pub(super) fn register_worktree_setup(runtime: &PiRuntime) -> Result<String, String> {
     let id = Uuid::new_v4().to_string();
-    runtime.worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.insert(id.clone(), Arc::new(AtomicBool::new(false)));
+    runtime.setups.pending.lock().map_err(|_| "Setup lock was poisoned")?.insert(id.clone(), Arc::new(AtomicBool::new(false)));
     Ok(id)
 }
 
 pub(super) fn detach_worktree_setups(runtime: &PiRuntime, owner: &str) {
-    let Ok(mut owners) = runtime.worktree_setup_owners.lock() else { return; };
+    let Ok(mut owners) = runtime.setups.owners.lock() else { return; };
     owners.detached.insert(owner.to_owned());
-    let Ok(mut setups) = runtime.worktree_setups.lock() else { return; };
+    let Ok(mut setups) = runtime.setups.pending.lock() else { return; };
     owners.setups.retain(|id, candidate| {
         if candidate != owner { return true; }
         if let Some(cancelled) = setups.remove(id) { cancelled.store(true, Ordering::SeqCst); }
@@ -185,7 +181,7 @@ pub(super) fn detach_worktree_setups(runtime: &PiRuntime, owner: &str) {
 
 #[cfg(not(feature = "desktop"))]
 pub(super) fn verify_setup_owner(runtime: &PiRuntime, setup_id: &str, owner: &str) -> Result<(), String> {
-    let owners = runtime.worktree_setup_owners.lock().map_err(|_| "Setup lock was poisoned")?;
+    let owners = runtime.setups.owners.lock().map_err(|_| "Setup lock was poisoned")?;
     if owners.detached.contains(owner) || owners.setups.get(setup_id).map(String::as_str) != Some(owner) { return Err("Setup belongs to another connection or has ended".into()); }
     Ok(())
 }
@@ -196,7 +192,7 @@ pub(super) fn cancel_worktree_setup(runtime: State<PiRuntime>, setup_id: String)
 }
 
 pub(super) fn signal_worktree_setup_cancellation(runtime: &PiRuntime, setup_id: &str) -> Result<(), String> {
-    if let Some(cancelled) = runtime.worktree_setups.lock().map_err(|_| "Setup lock was poisoned")?.get(setup_id) { cancelled.store(true, Ordering::SeqCst); }
+    if let Some(cancelled) = runtime.setups.pending.lock().map_err(|_| "Setup lock was poisoned")?.get(setup_id) { cancelled.store(true, Ordering::SeqCst); }
     Ok(())
 }
 
@@ -311,5 +307,28 @@ pub(super) fn run_limited(command: &mut Command, max_stdout: usize, context: &st
 }
 
 pub(super) fn shutdown(runtime: &PiRuntime) {
-    if let Ok(setups) = runtime.worktree_setups.lock() { for cancelled in setups.values() { cancelled.store(true, Ordering::SeqCst); } }
+    if let Ok(setups) = runtime.setups.pending.lock() { for cancelled in setups.values() { cancelled.store(true, Ordering::SeqCst); } }
+}
+
+#[derive(Default)]
+struct WorktreeSetupOwners { setups: HashMap<String, String>, detached: HashSet<String> }
+
+#[derive(Default)]
+pub(super) struct WorktreeSetups {
+    pending: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    owners: Mutex<WorktreeSetupOwners>,
+}
+impl WorktreeSetups {
+    pub(super) fn attach_owner(&self, owner: &str) {
+        if let Ok(mut owners) = self.owners.lock() { owners.detached.remove(owner); }
+    }
+    #[cfg(test)]
+    pub(super) fn test_pending(&self) -> &Mutex<HashMap<String, Arc<AtomicBool>>> { &self.pending }
+}
+pub(super) fn prepare_for_owner(runtime: &PiRuntime, owner: String) -> Result<String, String> {
+    let mut owners = runtime.setups.owners.lock().map_err(|_| "Setup lock was poisoned")?;
+    if owners.detached.contains(&owner) { return Err("Connection has ended".into()); }
+    let id = register_worktree_setup(runtime)?;
+    owners.setups.insert(id.clone(), owner);
+    Ok(id)
 }

@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, io::{Read, Write}, path::PathBuf, sync::{mpsc, Arc, Mutex}, thread};
 use portable_pty::{native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtySize};
 use uuid::Uuid;
-use crate::{MAX_TERMINALS, PiRuntime, terminal_lookup};
+use crate::{MAX_TERMINALS, PiRuntime};
 use crate::platform::{AppHandle, State};
 use crate::settings::load_app_settings;
 use crate::pi_launch::{remote_host, user_ssh_config};
@@ -21,8 +21,8 @@ pub(super) struct TerminalProcess {
 
 #[derive(Default)]
 pub(super) struct TerminalRuntime {
-    pub(super) processes: Arc<Mutex<HashMap<String, TerminalProcess>>>,
-    pub(super) history: Arc<Mutex<HashMap<String, terminal_lookup::Transcript>>>,
+    processes: Arc<Mutex<HashMap<String, TerminalProcess>>>,
+    history: Arc<Mutex<HashMap<String, terminal_lookup::Transcript>>>,
 }
 
 pub(super) struct TerminalLaunch { pub(super) terminal_id: String, pub(super) session_key: String, pub(super) cwd: String, pub(super) cols: u16, pub(super) rows: u16, pub(super) host_id: String, pub(super) window_label: String }
@@ -196,4 +196,22 @@ pub(super) fn detach_owner(runtime: &TerminalRuntime, owner: &str) {
 pub(super) fn shutdown(runtime: &TerminalRuntime) {
     let ids = runtime.processes.lock().map(|processes| processes.keys().cloned().collect::<Vec<_>>()).unwrap_or_default();
     let _ = stop_terminals(runtime, &ids);
+}
+
+#[path = "../terminal_lookup.rs"]
+pub(crate) mod terminal_lookup;
+
+impl TerminalRuntime {
+    pub(super) fn ensure_owner(&self, id: &str, owner: &str) -> Result<(), String> {
+        if self.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.get(id).is_some_and(|process| process.window_label != owner) { return Err("Terminal belongs to another connection".into()); }
+        Ok(())
+    }
+    pub(super) fn contains_process(&self, id: &str) -> Result<bool, String> {
+        Ok(self.processes.lock().map_err(|_| "Terminal registry unavailable")?.contains_key(id))
+    }
+    pub(super) fn working_directories(&self, host_id: &str) -> Result<Vec<String>, String> {
+        Ok(self.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.values().filter(|terminal| terminal.host_id == host_id).map(|terminal| terminal.cwd.clone()).collect())
+    }
+    #[cfg(test)]
+    pub(super) fn test_processes(&self) -> &Mutex<HashMap<String, TerminalProcess>> { &self.processes }
 }

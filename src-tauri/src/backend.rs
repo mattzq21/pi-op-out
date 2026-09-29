@@ -14,7 +14,7 @@ mod desktop_daemon;
 mod provider_auth;
 mod conversation_ownership;
 mod session_groups;
-mod terminal_lookup;
+use terminals::terminal_lookup;
 #[cfg(not(feature = "desktop"))]
 mod daemon;
 mod dictation;
@@ -34,13 +34,15 @@ use std::{
     process::{Child, ChildStdin, Command, Stdio},
     sync::{mpsc, Arc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering}},
     thread,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
 use crate::platform::AppHandle;
 #[cfg(feature = "desktop")]
 use tauri::{Emitter, Manager};
 use uuid::Uuid;
 use walkdir::WalkDir;
+#[cfg(test)]
+use std::time::SystemTime;
 #[cfg(test)]
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 #[cfg(test)]
@@ -55,12 +57,6 @@ fn node_command() -> Command {
     let mut command = Command::new("node");
     command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY);
     command
-}
-
-struct PiProcess {
-    daemon: Arc<daemon::Daemon>,
-    window_label: String,
-    blank_cleanup: BlankSessionCleanup,
 }
 
 struct BlankSessionCleanup { path: Option<String>, id: Option<String>, host: Option<RemoteHost>, submitted: bool }
@@ -85,11 +81,8 @@ fn cleanup_blank_session_at(target: BlankSessionCleanup, root: Option<&Path>) {
     }
 }
 
-#[derive(Clone)]
-enum EphemeralSession {
-    Local(PathBuf),
-    Remote { host: RemoteHost, path: String },
-}
+#[cfg(test)]
+use pi_launch::EphemeralSession;
 
 #[derive(Clone)]
 struct CachedSession { fingerprint: String, summary: SessionSummary }
@@ -116,23 +109,8 @@ const MAX_AGENT_OUTPUT_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_SESSION_INDEX_BATCH_BYTES: usize = 64 * 1024 * 1024;
 const WORKTREE_CLEANUP_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-#[derive(Default)]
-struct WorktreeSetupOwners { setups: HashMap<String, String>, detached: HashSet<String> }
 
-#[derive(Default)]
-struct PiRuntime {
-    worktree_setups: Mutex<HashMap<String, Arc<AtomicBool>>>,
-    worktree_setup_owners: Mutex<WorktreeSetupOwners>,
-    ephemeral_sessions: Mutex<HashMap<String, EphemeralSession>>,
-    ephemeral_previous: Mutex<HashMap<String, Vec<EphemeralSession>>>,
-    ephemeral_keys: Mutex<HashMap<String, String>>,
-    processes: Arc<Mutex<HashMap<String, PiProcess>>>,
-    daemons: Mutex<HashMap<String, Arc<daemon::Daemon>>>,
-    lifecycle: Mutex<()>,
-    agent_config_revision: AtomicU64,
-    agent_config_revisions: Mutex<HashMap<String, u64>>,
-    active_agents: Arc<Mutex<HashMap<String, AgentAddress>>>,
-}
+use pi_runtime::PiRuntime;
 
 #[derive(Clone)]
 struct AgentAddress { host_id: String, session_id: Option<String>, session_path: Option<String>, worktree: Option<String>, presence_id: Option<String>, working: bool, messageable: bool }
@@ -466,7 +444,7 @@ use git_diffs::{discard_remote_git_tree, load_git_diff_at_host, load_local_git_d
 use worktrees::{create_git_worktree, create_project_worktree, git_branch, git_project_kind, git_worktree_roots, is_git_repository, remove_git_worktree, sessions_on_host};
 #[cfg(test)]
 use worktrees::{canonical_worktree_roots, copy_untracked_file, create_local_git_worktree, create_project_worktree_at, git_branch_at, git_relative_path, inspect_git_project_kind, inspect_worktree_removal, local_branch_exists, local_worktree_is_registered, parse_worktree_output, remove_created_worktree, remove_worktree_target, validate_worktree_unused, worktree_branch_name, worktree_suffix, write_worktree_patch};
-use worktree_setup::{cancel_worktree_setup, ensure_desktop_sessions_dir, prepare_worktree_setup, run_limited, run_worktree_setup, shell_quote, verify_setup_owner};
+use worktree_setup::{cancel_worktree_setup, ensure_desktop_sessions_dir, run_limited, run_worktree_setup, shell_quote, verify_setup_owner};
 #[cfg(test)]
 use worktree_setup::{GitSnapshotToken, LimitedOutput, WorktreeScriptPhase, execute_worktree_setup, register_worktree_setup, run_setup_process, run_worktree_scripts, signal_worktree_setup_cancellation};
 use pi_launch::{ remote_host, remote_login_command, session_identity, ssh, ssh_base};

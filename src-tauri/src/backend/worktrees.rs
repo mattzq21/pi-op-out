@@ -505,7 +505,7 @@ pub(super) fn validate_worktree_unused(settings: &AppSettings, host_id: &str, ta
     if canonical_worktree_roots(settings, host_id, &agent_paths)?.into_iter().any(|root| root.as_deref() == Some(target)) {
         return Err("Close every conversation using this worktree before deleting it".into());
     }
-    let terminal_paths = terminals.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.values().filter(|terminal| terminal.host_id == host_id).map(|terminal| terminal.cwd.clone()).collect::<Vec<_>>();
+    let terminal_paths = terminals.working_directories(host_id)?;
     if canonical_worktree_roots(settings, host_id, &terminal_paths)?.into_iter().any(|root| root.as_deref() == Some(target)) {
         return Err("Close every terminal using this worktree before deleting it".into());
     }
