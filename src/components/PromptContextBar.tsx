@@ -39,17 +39,25 @@ function contextTokens(context: PromptContextInfo) {
   return tokens;
 }
 
+function validSkills<T extends { filePath: string }>(skills: T[] | undefined): T[] {
+  return Array.isArray(skills) ? skills.filter(item => Boolean(item) && typeof item.filePath === "string") : [];
+}
+
 function contextSections(context: PromptContextInfo) {
   const systemPrompt = typeof context?.systemPrompt === "string" ? context.systemPrompt : "";
   const instructions = Array.isArray(context?.instructions) ? context.instructions.filter((item): item is NonNullable<typeof item> => Boolean(item) && typeof (item as { path?: unknown }).path === "string") : [];
   const tools = Array.isArray(context?.tools) ? context.tools.filter((item): item is NonNullable<typeof item> => Boolean(item) && typeof (item as { name?: unknown }).name === "string") : [];
-  const skills = Array.isArray(context?.skills) ? context.skills.filter((item): item is NonNullable<typeof item> => Boolean(item) && typeof (item as { filePath?: unknown }).filePath === "string") : [];
-  return { systemPrompt, instructions, tools, skills };
+  const skills = validSkills(context?.skills);
+  const userInvokedSkills = validSkills(context?.userInvokedSkills);
+  return { systemPrompt, instructions, tools, skills, userInvokedSkills };
 }
 
 export const PromptContextBar = function PromptContextBar(componentProps: { context: PromptContextInfo }) {
   const [active, setActive] = createSignal<Section>();
+  const [skillTab, setSkillTab] = createSignal<"model" | "user">("model");
   const sections = createMemo(() => (contextSections(componentProps.context)));
+  const visibleSkills = () => skillTab() === "model" ? sections().skills : sections().userInvokedSkills;
+  const emptySkills = () => skillTab() === "model" ? "No model-invokable skills" : "No user-only skills invoked in this context";
   const tokens = createMemo(() => contextTokens(componentProps.context));
   const totalTokens = createMemo(() => Object.values(tokens()).reduce((sum, value) => sum + value, 0));
   const percent = createMemo(() => shares(tokens()));
@@ -62,14 +70,20 @@ export const PromptContextBar = function PromptContextBar(componentProps: { cont
         case "system": return section.systemPrompt || "No system prompt";
         case "instructions": return section.instructions.map((item) => `${item.path}\n${item.content ?? ""}`).join("\n\n") || "No project instructions";
         case "tools": return section.tools.map((item) => [item.name, item.description, JSON.stringify(item.parameters, null, 2)].filter(Boolean).join("\n")).join("\n\n") || "No active tools";
-        case "skills": return section.skills.map((item) => [item.name ?? item.filePath, item.description, item.filePath].filter(Boolean).join("\n")).join("\n\n") || "No model-invoked skills";
+        case "skills": return visibleSkills().map((item) => [item.name ?? item.filePath, item.description, item.filePath].filter(Boolean).join("\n")).join("\n\n") || emptySkills();
         default: return "";
       }
     }} />
     {(active())! === "system" && <pre>{sections().systemPrompt || "No system prompt"}</pre>}
     {(active())! === "instructions" && (sections().instructions.length ? <Key each={sections().instructions} by={(instruction) => instruction.path}>{(instruction, _index) => <div ><strong>{instruction().path}</strong><pre>{typeof instruction().content === "string" ? instruction().content : ""}</pre></div>}</Key> : <p>No project instructions</p>)}
     {(active())! === "tools" && (sections().tools.length ? <Key each={sections().tools} by={(tool) => tool.name}>{(tool, _index) => <div ><strong>{tool().name}</strong>{typeof tool().description === "string" && tool().description && <p>{tool().description}</p>}<pre>{JSON.stringify(tool().parameters, null, 2)}</pre></div>}</Key> : <p>No active tools</p>)}
-    {(active())! === "skills" && (sections().skills.length ? <Key each={sections().skills} by={(skill) => skill.filePath}>{(skill, _index) => <div ><strong>{typeof skill().name === "string" ? skill().name : skill().filePath}</strong>{typeof skill().description === "string" && skill().description && <p>{skill().description}</p>}<small>{skill().filePath}</small></div>}</Key> : <p>No model-invoked skills</p>)}
+    {(active())! === "skills" && <>
+      <nav class="prompt-skills-tabs" aria-label="Skill categories">
+        <button type="button" aria-pressed={skillTab() === "model"} onClick={() => setSkillTab("model")}>Model-invokable <small>{sections().skills.length}</small></button>
+        <button type="button" aria-pressed={skillTab() === "user"} onClick={() => setSkillTab("user")}>User-invoked <small>{sections().userInvokedSkills.length}</small></button>
+      </nav>
+      {visibleSkills().length ? <Key each={visibleSkills()} by={(skill) => skill.filePath}>{(skill, _index) => <div><strong>{typeof skill().name === "string" ? skill().name : skill().filePath}</strong>{typeof skill().description === "string" && skill().description && <p>{skill().description}</p>}<small>{skill().filePath}</small></div>}</Key> : <p>{emptySkills()}</p>}
+    </>}
   </div>);
   return <section class={`prompt-context${active() ? " open" : ""}`}>
     <div class="prompt-context-bar">

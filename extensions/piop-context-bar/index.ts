@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { BuildSystemPromptOptions, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const STATUS_KEY = "pi-desktop-prompt-context";
 const PROJECT_CONTEXT_MESSAGE = "pi-desktop-project-context";
@@ -79,7 +79,22 @@ function changeInstructionFromMessages(messages: unknown[]) {
   return match ? { path: "File changes", content: match[1], block: match[0] } : undefined;
 }
 
+function userInvokedSkills(messages: unknown[], options: BuildSystemPromptOptions | undefined) {
+  const available = new Map((options?.skills ?? []).filter(skill => skill.disableModelInvocation).map(skill => [skill.filePath, skill]));
+  const invoked = new Map<string, { name: string; description: string; filePath: string; content: string }>();
+  for (const value of messages) {
+    const message = value as { role?: string; content?: unknown } | null;
+    if (message?.role !== "user") continue;
+    const match = textContent(message.content).match(/^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n[\s\S]*)?$/);
+    if (!match) continue;
+    const skill = available.get(match[2]);
+    if (skill && skill.name === match[1]) invoked.set(skill.filePath, { name: skill.name, description: skill.description, filePath: skill.filePath, content: match[3] });
+  }
+  return [...invoked.values()];
+}
+
 export default function contextBar(pi: ExtensionAPI) {
+  let promptOptions: BuildSystemPromptOptions | undefined;
   const publishPromptContext = (ctx: ExtensionContext, messages: unknown[]) => {
     const branch = ctx.sessionManager.getBranch();
     const resumeMessages = new Set(branch.flatMap((entry) => {
@@ -92,6 +107,7 @@ export default function contextBar(pi: ExtensionAPI) {
     if (branch.slice(userIndex + 1).some((entry) => entry.type === "custom" && entry.customType === STATUS_KEY)) return;
     const systemPrompt = ctx.getSystemPrompt();
     const { block: skillPrompt, skills } = skillsFromPrompt(systemPrompt);
+    const invokedSkills = userInvokedSkills(messages, promptOptions);
     const { block: instructionPrompt, instructions } = instructionsFromPrompt(systemPrompt);
     const messageProjectContext = projectContextFromMessages(messages);
     const systemCwd = workingDirectoryFromPrompt(systemPrompt, instructionPrompt);
@@ -108,11 +124,13 @@ export default function contextBar(pi: ExtensionAPI) {
       instructions,
       tools,
       skills,
-      tokens: { system: estimate(systemPrompt.replace(skillPrompt, "").replace(instructionPrompt, "")), instructions: estimate(instructionPrompt) + estimate(messageProjectContext.block) + estimate(changeInstruction?.block ?? ""), tools: estimate(tools), skills: estimate(skillPrompt) },
+      userInvokedSkills: invokedSkills,
+      tokens: { system: estimate(systemPrompt.replace(skillPrompt, "").replace(instructionPrompt, "")), instructions: estimate(instructionPrompt) + estimate(messageProjectContext.block) + estimate(changeInstruction?.block ?? ""), tools: estimate(tools), skills: estimate(skillPrompt) + invokedSkills.reduce((sum, skill) => sum + estimate(skill.content), 0) },
     };
     pi.appendEntry(STATUS_KEY, snapshot);
     ctx.ui.setStatus(STATUS_KEY, `json:${JSON.stringify(snapshot)}`);
   };
-  pi.on("session_start", (_event, ctx) => { ctx.ui.setStatus(STATUS_KEY, undefined); });
+  pi.on("session_start", (_event, ctx) => { promptOptions = undefined; ctx.ui.setStatus(STATUS_KEY, undefined); });
+  pi.on("before_agent_start", (event) => { promptOptions = event.systemPromptOptions; });
   pi.on("context", (event, ctx) => { publishPromptContext(ctx, event.messages); });
 }

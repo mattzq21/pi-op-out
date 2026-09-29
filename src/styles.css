@@ -186,6 +186,10 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .prompt-context-wheel { flex: 0 0 auto; margin-left: auto; }
 .prompt-context-content > pre, .prompt-context-content div pre, .prompt-context-content small { overflow-wrap: anywhere; }
 .prompt-context-copy { float: right; position: sticky; top: 0; margin: 0 0 4px 8px; background: var(--paper); }
+.prompt-skills-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 36px 10px 0; }
+.prompt-skills-tabs button { padding: 5px 9px; border: 1px solid var(--line); border-radius: 6px; background: transparent; color: var(--muted); font-size: 11px; }
+.prompt-skills-tabs button[aria-pressed="true"] { background: var(--paper); color: #72b58c; }
+.prompt-skills-tabs button small { display: inline; margin: 0 0 0 5px; color: inherit; }
 
 .composer-wrap { padding-bottom: 13px; }
 .composer-stack::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 13px; background: var(--paper); pointer-events: none; }
