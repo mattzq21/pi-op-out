@@ -206,13 +206,15 @@ async fn local_socket(app: &AppHandle) -> Result<Socket, String> {
 
 async fn wait_local_socket(log_path: &Path, executable: &Path, child: &mut std::process::Child) -> Result<Socket, String> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let mut retry_delay = Duration::from_millis(10);
     while tokio::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(100)).await;
         if let Ok(endpoint) = daemon_endpoint::read() { if let Ok(Ok(socket)) = tokio::time::timeout_at(deadline, open(&endpoint)).await { return Ok(socket); } }
         if child.try_wait().map_err(|error| error.to_string())?.is_some() {
             tokio::time::sleep(Duration::from_millis(400)).await;
             *child = spawn_local_daemon(executable)?.1;
         }
+        tokio::time::sleep(retry_delay).await;
+        retry_delay = (retry_delay * 2).min(Duration::from_millis(100));
     }
     Err(format!("Piop daemon did not start. See {}", log_path.display()))
 }
@@ -236,6 +238,8 @@ fn ensure_development_daemon() -> Result<(), String> {
     BUILD.get_or_init(|| {
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
         if !manifest.join("Cargo.toml").is_file() { return Ok(()); }
+        let prepared = std::env::var_os("PIOP_PREBUILT_DAEMON_FOR").is_some_and(|path| PathBuf::from(path) == manifest);
+        if prepared && manifest.join("target/debug").join(format!("piopd{}", std::env::consts::EXE_SUFFIX)).is_file() { return Ok(()); }
         let output = Command::new("cargo")
             .args(["build", "--locked", "--no-default-features", "--features", "daemon", "--bin", "piopd", "--target-dir"])
             .arg(manifest.join("target")).current_dir(manifest).output()

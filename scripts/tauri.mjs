@@ -37,6 +37,7 @@ const tauri = fileURLToPath(new URL("../node_modules/.bin/tauri", import.meta.ur
 const env = {
   ...process.env,
   VITE_PIOP_DEBUG: String(development),
+  PIOP_PREBUILT_DAEMON_FOR: args[0] === "dev" ? fileURLToPath(new URL("../src-tauri", import.meta.url)) : "",
   ...(windowBounds ? { GDK_BACKEND: "x11", PI_WINDOW_BOUNDS: JSON.stringify(windowBounds) } : {}),
 };
 if (args[0] === "dev" && !args.includes("--no-watch")) {
