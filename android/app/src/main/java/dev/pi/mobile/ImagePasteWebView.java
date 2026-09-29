@@ -54,7 +54,7 @@ public class ImagePasteWebView extends CapacitorWebView {
 
     private void deliver(Uri uri, Runnable release) {
         String target = "__piopPaste_" + java.util.UUID.randomUUID().toString().replace("-", "");
-        evaluateJavascript("window[" + JSONObject.quote(target) + "] = document.activeElement", ignored -> {
+        post(() -> evaluateJavascript("window[" + JSONObject.quote(target) + "] = document.activeElement", ignored -> {
             new Thread(() -> {
                 try (InputStream input = getContext().getContentResolver().openInputStream(uri)) {
                     if (input == null) throw new IllegalStateException("Could not read pasted image");
@@ -72,7 +72,7 @@ public class ImagePasteWebView extends CapacitorWebView {
                 } catch (Exception error) { report(error, target); }
                 finally { release.run(); }
             }, "piop-image-paste").start();
-        });
+        }));
     }
 
     private void report(Exception error, String target) {
