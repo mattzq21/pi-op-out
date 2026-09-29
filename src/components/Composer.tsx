@@ -381,7 +381,7 @@ export function Composer(props: Props) {
     const changeUploads = capturedComposer.onUploadsChange ?? setLocalUploads;
     setValue(""); updateUploads([]);
     try {
-      const accepted = await capturedComposer.onSend(message || "Describe the attached image.", capturedComposer.streaming ? behavior : undefined, images);
+      const accepted = await capturedComposer.onSend(message, capturedComposer.streaming ? behavior : undefined, images);
       if (accepted === false) throw new Error("Message was not submitted");
     } catch (reason) {
       restoreSubmission(submittedValue, submittedUploads, reason, changeDraft, changeUploads);
