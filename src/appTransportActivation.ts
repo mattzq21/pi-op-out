@@ -5,7 +5,7 @@ import type { NativeTransport } from "./lib/nativeTransport";
 import type { SessionRuntimePool } from "./lib/sessionRuntimePool";
 import type { RefObject } from "./lib/solid";
 import type { useChatSession } from "./lib/useChatSession";
-import type { ComposerUpload } from "./types";
+import type { ComposerUpload, SessionSummary } from "./types";
 
 export function createConversationViewKey<T>(transport: Accessor<T>, conversationKey: Accessor<string>, submission: Accessor<object | undefined> = () => undefined) {
   let previous: { owner: T; key: string; identity: object; submission?: object } | undefined;
@@ -40,6 +40,7 @@ export function useWorkspaceDisconnect(hasDrafts: () => boolean, pool: () => Ses
 }
 
 type ActivationContext = {
+  savedSessions: Accessor<SessionSummary[]>;
   transport: Accessor<NativeTransport>;
   transportConversationKeys: RefObject<Map<NativeTransport, string>>;
   transportHasDraft: (owner: NativeTransport, key?: string) => boolean;
@@ -56,7 +57,8 @@ type ActivationContext = {
 
 export function createTransportActivation(context: ActivationContext) {
   const { transport, transportConversationKeys, transportHasDraft, conversationTerminalIds, runtimePool, chatSession, composerDrafts, activeTransportRef, setTransport, setUploadsByTransport, setComposerDrafts, setTerminalsBySession } = context;
-  const emptyConversation = () => chatSession().state.messageCount === 0 && chatSession().messages.length === 0;
+  const savedConversation = () => context.savedSessions().some(session => !session.isDraft && session.messageCount > 0 && (session.hostId ?? "local") === transport().currentHostId() && session.path === transport().currentSessionPath());
+  const emptyConversation = () => !savedConversation() && chatSession().state.messageCount === 0 && chatSession().messages.length === 0;
   const retainDraft = (previousTransport: NativeTransport, previousKey: string) => {
       const hostId = previousTransport.currentHostId(); const id = previousKey.slice(hostId.length + 1); const draft = composerDrafts()[previousKey] ?? ""; const cwd = previousTransport.currentCwd() ?? "";
       runtimePool().bind(hostId, id, previousTransport);

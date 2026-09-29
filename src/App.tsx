@@ -313,7 +313,7 @@ export default function App() {
   });
   const transportHasDraft = (owner: NativeTransport, key?: string) => Boolean(key && composerDrafts()[key]) || (uploadsByTransport().get(owner)?.length ?? 0) > 0;
   const conversationTerminalIds = (key: string) => terminalsBySession()[key]?.tabs.map((terminal) => terminal.id) ?? [];
-  const activateTransport = createTransportActivation({ transport, transportConversationKeys, transportHasDraft, conversationTerminalIds, runtimePool, chatSession, composerDrafts, activeTransportRef, setTransport, setUploadsByTransport, setComposerDrafts, setTerminalsBySession });
+  const activateTransport = createTransportActivation({ savedSessions: sessions, transport, transportConversationKeys, transportHasDraft, conversationTerminalIds, runtimePool, chatSession, composerDrafts, activeTransportRef, setTransport, setUploadsByTransport, setComposerDrafts, setTerminalsBySession });
   useWorkspaceDisconnect(() => settingsDirty() || Object.values(composerDrafts()).some(Boolean) || [...uploadsByTransport().values()].some(items => items.length > 0), runtimePool, () => Object.values(terminalsBySessionRef.current).flatMap(session => session.tabs.map(terminal => terminal.id)), () => activeTransportRef.current);
   const rekeyConversationUi = (previousKey: string, nextKey: string, ownerTransport: NativeTransport, moveTerminals = true, copyDraft = false) => {
     if (previousKey === nextKey) return;
@@ -403,14 +403,15 @@ export default function App() {
       }
     }
   };
+  const currentSessionHasSavedMessages = () => sessions().some(session => session.messageCount > 0 && (session.hostId ?? "local") === activeHostId() && session.path === transport().currentSessionPath());
   const newSession = async () => {
     if (!canStartNewSession()) return;
-    const empty = !chatSession().state.isStreaming && chatSession().state.messageCount === 0 && chatSession().messages.length === 0;
+    const empty = !currentSessionHasSavedMessages() && !chatSession().state.isStreaming && chatSession().state.messageCount === 0 && chatSession().messages.length === 0;
     const repeat = view() === "chat" && empty && lastNewSessionSelection.current === activeConversationKey();
     if (repeat) await startNewSession(true, undefined, true);
     else if (empty) await openDraftSession(transport(), { cwd: transport().currentCwd(), hostId: activeHostId() }, transport, () => { setView("chat"); closeSplitPane(); }, reason => addNotice({ title: "Project unavailable", message: String(reason) }));
     else {
-      const draft = liveSessions().filter(session => session.isDraft).sort((a, b) => b.lastMessageAt - a.lastMessageAt)[0];
+      const draft = liveSessions().filter(session => session.isDraft && !sessions().some(saved => saved.messageCount > 0 && (saved.hostId ?? "local") === (session.hostId ?? "local") && (saved.id === session.id || Boolean(session.path && saved.path === session.path)))).sort((a, b) => b.lastMessageAt - a.lastMessageAt)[0];
       if (draft) await openDraftSession(transport(), draft, transport, () => { selectSession(draft); }, reason => addNotice({ title: "Project unavailable", message: String(reason) }));
       else await startNewSession();
     }
