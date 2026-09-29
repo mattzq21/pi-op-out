@@ -5,8 +5,9 @@ import { createDependencyEffect, createMemoFields, createRef, cssPixels, type Ke
 
 import { AppWindow, Archive, ChevronDown, Columns2, CopyPlus, Ellipsis, Folder, FolderGit2, FolderOpen, GitBranch, MessageSquarePlus, Pencil, Search, Trash2 } from "lucide-solid";
 import { hasVisibleText } from "../lib/content";
-import { gitProjectKind, gitWorktreeRoots, openGroupDirectory } from "../lib/nativeTransport";
-import { isTemporaryChatCwd, useSessionGroups, type SessionGroup } from "../lib/sessionGroups";
+import { gitWorktreeRoots, openGroupDirectory } from "../lib/nativeTransport";
+import { isTemporaryChatCwd, type SessionGroup } from "../lib/sessionGroups";
+import { useSessionProjects } from "../lib/sessionProjects";
 import type { SessionSummary } from "../types";
 import { RemoveGroupDialog } from "./RemoveGroupDialog";
 import { RemoveWorktreeDialog } from "./RemoveWorktreeDialog";
@@ -109,7 +110,7 @@ export function SessionPanel(props: Props) {
   const [menu, setMenu] = createSignal<{ session: SessionSummary; x: number; y: number; returnFocus?: HTMLElement }>();
   const [groupMenu, setGroupMenu] = createSignal<{ projectKey: string; label: string; x: number; y: number; returnFocus: HTMLElement }>();
   const [collapsedProjects, setCollapsedProjects] = createSignal<Set<string>>((() => savedGroupKeys(COLLAPSED_PROJECTS_KEY))());
-  const storedGroups = useSessionGroups(() => (panel().sessions));
+  const storedGroups = useSessionProjects(() => (panel().sessions));
   const savedGroups = createMemo(() => (storedGroups.state?.groups ?? []));
   const customGroups = createMemo(() => (savedGroups().filter((group) => !group.cwd)));
   const [removingGroup, setRemovingGroup] = createSignal<{ id: string; name: string }>();
@@ -138,7 +139,6 @@ export function SessionPanel(props: Props) {
   const groupedSessionsRef = createRef<Map<string, SessionSummary[]>>(new Map());
   const sidebarEntriesRef = createRef<string[]>([]);
   const removeMouseListenersRef = createRef<() => void>(() => { });
-  const projectKindInspectionsRef = createRef(new Set<string>());
   const closeMenu = (restoreFocus = false) => { const target = groupMenu()?.returnFocus ?? menu()?.returnFocus; setMenu(undefined); setGroupMenu(undefined); if (restoreFocus) requestAnimationFrame(() => target?.focus()); };
   createDependencyEffect(() => { const capturedMenu = menu(); const capturedGroupMenu = groupMenu();
     if (!capturedMenu && !capturedGroupMenu) return;
@@ -171,20 +171,6 @@ export function SessionPanel(props: Props) {
   createDependencyEffect(() => {
     const capturedMenu = menu(); const capturedPanel = panel();
  if (capturedMenu && !capturedPanel.sessions.some((session) => sessionKey(session) === sessionKey((capturedMenu)!.session))) closeMenu(); }, () => [menu(), panel().sessions]);
-  createDependencyEffect(() => {
-    for (const group of storedGroups.state?.groups ?? []) {
-      if (!group.cwd || group.projectKind || projectKindInspectionsRef.current.has(group.id)) continue;
-      projectKindInspectionsRef.current.add(group.id);
-      void gitProjectKind(group.cwd, group.hostId ?? "local")
-        .then((projectKind) => storedGroups.change({ type: "inspectProject", id: group.id, projectKind }))
-        .catch(() => undefined);
-    }
-  }, () => [storedGroups.change, storedGroups.state?.groups]);
-  const inferredWorktreeGroup = createMemo(() => (savedGroups().find((group) => group.cwd && group.projectKind !== "worktree" && panel().sessions.some((session) => (session.hostId ?? "local") === (group.hostId ?? "local") && session.cwd === group.cwd && session.projectKind === "worktree"))));
-  createDependencyEffect(() => { const capturedInferredWorktreeGroup = inferredWorktreeGroup();
-    if (!capturedInferredWorktreeGroup) return;
-    void storedGroups.change({ type: "inspectProject", id: capturedInferredWorktreeGroup.id, projectKind: "worktree" }).catch(() => undefined);
-  }, () => [storedGroups.change, inferredWorktreeGroup()?.id]);
   const groupNameTaken = (name: string, excludedId?: string) => sidebarCollator.compare(RECENT_LABEL, name.trim()) === 0 || storedGroups.state?.groups.some((group) => group.id !== excludedId && sidebarCollator.compare(group.name.trim(), name.trim()) === 0);
   const validateGroupName = (name: string) => {
     if (!name || !hasVisibleText(name)) return "Enter a group name.";
