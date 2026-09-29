@@ -457,7 +457,7 @@ export function Composer(props: Props) {
         <textarea ref={element => { ref.current = element; }} aria-label="Message piop" readOnly={props.ownershipRequired} onFocus={() => { if (props.ownershipRequired) void props.onTakeOwnership?.(); }} disabled={composer().controlsDisabled && !props.ownershipRequired} placeholder={props.ownershipRequired ? "" : composer().controlsDisabled ? "Connecting to piop…" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setCaretAtEnd(event.currentTarget.selectionStart === event.currentTarget.value.length && event.currentTarget.selectionEnd === event.currentTarget.value.length)} onInput={(event) => { setCaretAtEnd(event.target.selectionStart === event.target.value.length && event.target.selectionEnd === event.target.value.length); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
       </div>);
     const ComposerBar = () => {
-      const ComposerTools = () => (<div class="composer-tools"><DictationControls disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); focusOwnedEditor(); }} />{composer().onOpenTerminal && <IconButton title="" label="Open terminal" disabled={composer().controlsDisabled} onClick={(composer().onOpenTerminal)!}><TerminalSquare size={17} /></IconButton>}<ContextWheel usage={composer().contextUsage} contextWindow={composer().model?.contextWindow} /><Show when={composer().sessionCache}>{cache => <span class={`session-cache-hit${cache().low ? " low" : ""}`}>Cache {cache().rate}%</span>}</Show></div>);
+      const ComposerTools = () => (<div class="composer-tools"><DictationControls disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); focusOwnedEditor(); }} />{composer().onOpenTerminal && <IconButton title="" label="Open terminal" disabled={composer().controlsDisabled} onClick={(composer().onOpenTerminal)!}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage}>{usage => <ContextWheel usage={usage()} />}</Show><Show when={composer().sessionCache}>{cache => <span class={`session-cache-hit${cache().low ? " low" : ""}`}>Cache {cache().rate}%</span>}</Show></div>);
       const renderComposerActions = () => {
         const agentSelectionDisabled = () => composer().agentLocked || composer().streaming || controls().inputDisabled;
         const changeAgent = (name: string) => { if (!agentSelectionDisabled()) composer().onAgent(name); };
@@ -629,16 +629,11 @@ function ContainedPicker(props: { label: string; selectedLabel?: string; value: 
   </div>;
 }
 
-function ContextWheel(componentProps: { usage?: ContextUsage; contextWindow?: number }) {
-  const windowSize = () => componentProps.usage?.contextWindow ?? componentProps.contextWindow;
-  const rawPercent = createMemo(() => {
-    const usage = componentProps.usage;
-    if (!usage) return null;
-    return usage.percent ?? (usage.tokens === null || usage.contextWindow <= 0 ? null : usage.tokens / usage.contextWindow * 100);
-  });
+function ContextWheel(componentProps: { usage: ContextUsage }) {
+  const rawPercent = createMemo(() => (componentProps.usage.percent ?? (componentProps.usage.tokens === null ? null : componentProps.usage.tokens / componentProps.usage.contextWindow * 100)));
   const percent = createMemo(() => (rawPercent() === null ? null : Math.max(0, Math.min(100, (rawPercent())!))));
-  const tooltip = createMemo(() => windowSize() ? `${percent() === null ? "—" : `${Math.round((percent())!)}%`} of ${windowSize()!.toLocaleString()}` : "Context usage unavailable");
-  const label = createMemo(() => percent() === null ? `Context usage unavailable${windowSize() ? `; window is ${windowSize()!.toLocaleString()} tokens` : ""}` : `${tooltip()} context tokens used`);
+  const tooltip = createMemo(() => (`${percent() === null ? "—" : `${Math.round((percent())!)}%`} of ${componentProps.usage.contextWindow.toLocaleString()}`));
+  const label = createMemo(() => (percent() === null ? `Context usage unavailable; window is ${componentProps.usage.contextWindow.toLocaleString()} tokens` : `${Math.round((percent())!)}% of ${componentProps.usage.contextWindow.toLocaleString()} context tokens used`));
   return <span class="context-wheel" data-tooltip={tooltip()} aria-label={label()} tabIndex={0}>
     <svg viewBox="0 0 20 20" aria-hidden="true"><circle class="context-wheel-track" cx="10" cy="10" r="7.5" /><circle class="context-wheel-value" cx="10" cy="10" r="7.5" pathLength="100" style={{ "stroke-dasharray": `${percent() ?? 0} 100` }} /></svg>
   </span>;
