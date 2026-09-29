@@ -7,13 +7,13 @@ import { AppWindow, Archive, ChevronDown, Columns2, CopyPlus, Ellipsis, Folder, 
 import { hasVisibleText } from "../lib/content";
 import { gitWorktreeRoots, openGroupDirectory } from "../lib/nativeTransport";
 import { isTemporaryChatCwd, type SessionGroup } from "../lib/sessionGroups";
-import { useSessionProjects } from "../lib/sessionProjects";
+import type { SessionProjects } from "../lib/sessionProjects";
 import type { SessionSummary } from "../types";
 import { RemoveGroupDialog } from "./RemoveGroupDialog";
 import { RemoveWorktreeDialog } from "./RemoveWorktreeDialog";
 
 export type SessionAction = "split" | "new-window" | "rename" | "clone" | "open-directory" | "archive";
-interface Props { sessions: SessionSummary[]; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; onNewChat: (group: SessionGroup) => void; onCreateWorktree: (cwd: string, hostId: string) => void; onDeleteWorktree: (cwd: string, hostId: string, deleteBranch: boolean) => Promise<void>; createGroupRequest?: number; onCreateGroupHandled?: () => void; }
+interface Props { sessionProjects: SessionProjects; sessions: SessionSummary[]; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; onNewChat: (group: SessionGroup) => void; onCreateWorktree: (cwd: string, hostId: string) => void; onDeleteWorktree: (cwd: string, hostId: string, deleteBranch: boolean) => Promise<void>; createGroupRequest?: number; onCreateGroupHandled?: () => void; }
 type CustomGroup = SessionGroup;
 interface DraggedSession { projectKey: string; sessionKey: string; session: SessionSummary; }
 interface DropTarget { projectKey: string; sessionKey: string; edge: "before" | "after"; layoutBefore?: string | null; }
@@ -110,7 +110,7 @@ export function SessionPanel(props: Props) {
   const [menu, setMenu] = createSignal<{ session: SessionSummary; x: number; y: number; returnFocus?: HTMLElement }>();
   const [groupMenu, setGroupMenu] = createSignal<{ projectKey: string; label: string; x: number; y: number; returnFocus: HTMLElement }>();
   const [collapsedProjects, setCollapsedProjects] = createSignal<Set<string>>((() => savedGroupKeys(COLLAPSED_PROJECTS_KEY))());
-  const storedGroups = useSessionProjects(() => (panel().sessions));
+  const storedGroups = props.sessionProjects;
   const savedGroups = createMemo(() => (storedGroups.state?.groups ?? []));
   const customGroups = createMemo(() => (savedGroups().filter((group) => !group.cwd)));
   const [removingGroup, setRemovingGroup] = createSignal<{ id: string; name: string }>();

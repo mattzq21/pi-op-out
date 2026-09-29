@@ -14,6 +14,7 @@ import { branchMessages, type PiEntry } from "./lib/messages";
 import { initialWindowTarget, NativeTransport, openSessionWindow } from "./lib/nativeTransport";
 import { isMobile, listen } from "./lib/platform";
 import { updateSessionGroups, type SessionGroup } from "./lib/sessionGroups";
+import { useSessionProjects } from "./lib/sessionProjects";
 import { SessionRuntimePool, useTurnDiffs } from "./lib/sessionRuntimePool";
 import { createDependencyEffect, createMemoFields, createRef, createSubscription, type StateUpdate } from "./lib/solid";
 import type { SubagentTarget } from "./lib/subagentNavigation";
@@ -534,6 +535,8 @@ export function createAppConversations({ view, setView, setPanelOpen, addNotice 
     });
   };
   const sidebarSessions = createMemo(() => [...sessions(), ...liveSessions().filter((live) => !archivedSessionKeys.current.has(`${live.hostId ?? "local"}:${live.id}`) && !sessions().some((saved) => saved.id === live.id && saved.hostId === live.hostId))]);
+  const projectSessions = createMemo(() => sidebarSessions().filter(session => !session.subagentParentId));
+  const sessionProjects = useSessionProjects(projectSessions);
   const isReconnecting = () => reconnectPending.current.has(transport());
   const dismissError = () => setError(undefined);
   const cancelProject = () => { projectOpenRef.current = false; setProjectOpen(false); };
@@ -543,7 +546,7 @@ export function createAppConversations({ view, setView, setPanelOpen, addNotice 
   const uploadsFor = (owner: NativeTransport) => uploadsByTransport().get(owner) ?? [];
   return {
     runtimePool, transport, settingsController, terminals, extensions,
-    sessions, sidebarSessions, runningSessions, unseenSessions, pendingSettingsCount, gitDiffs, chatSession,
+    sessions, sidebarSessions, sessionProjects, runningSessions, unseenSessions, pendingSettingsCount, gitDiffs, chatSession,
     activeConversationKey, activeHostId, activeCwd, connected, error, isGitRepository, projectCwd,
     splitPane, splitSessionId, subagentPane, hasSidePane, activePane, setActivePane,
     mainComposerFocusRequest, splitComposerFocusRequest, setMainComposerFocusRequest, setSplitComposerFocusRequest,

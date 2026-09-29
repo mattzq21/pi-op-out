@@ -4,6 +4,8 @@ import { gitProjectKind } from "./nativeTransport";
 import { useSessionGroups } from "./sessionGroups";
 import { createDependencyEffect } from "./solid";
 
+export type SessionProjects = ReturnType<typeof useSessionProjects>;
+
 export function useSessionProjects(sessions: Accessor<SessionSummary[]>) {
   const storedGroups = useSessionGroups(sessions);
   const projectKindInspections = new Set<string>();
