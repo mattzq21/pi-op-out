@@ -85,7 +85,7 @@ export const PromptContextBar = function PromptContextBar(componentProps: { cont
     }} />
     {(active())! === "system" && <pre>{sections().systemPrompt || "No system prompt"}</pre>}
     {(active())! === "instructions" && (sections().instructions.length ? <Key each={sections().instructions} by={(instruction) => instruction.path}>{(instruction, _index) => <div ><strong>{instruction().path}</strong><pre>{typeof instruction().content === "string" ? instruction().content : ""}</pre></div>}</Key> : <p>No project instructions</p>)}
-    {(active())! === "tools" && (sections().tools.length ? <Key each={sections().tools} by={(tool) => tool.name}>{(tool, _index) => <div ><strong>{tool().name}</strong>{typeof tool().description === "string" && tool().description && <p>{tool().description}</p>}<pre>{JSON.stringify(tool().parameters, null, 2)}</pre></div>}</Key> : <p>No active tools</p>)}
+    {(active())! === "tools" && (sections().tools.length ? <Key each={sections().tools} by={(tool) => tool.name}>{(tool, _index) => <div ><strong>{tool().name}</strong>{typeof tool().description === "string" && tool().description && <p>{tool().description}</p>}<details class="prompt-context-tool-json"><summary>Parameters (JSON)</summary><pre>{JSON.stringify(tool().parameters, null, 2)}</pre></details></div>}</Key> : <p>No active tools</p>)}
     {(active())! === "skills" && <>
       <nav class="prompt-skills-tabs" aria-label="Skill categories">
         <button type="button" aria-pressed={skillTab() === "model"} title="Share of total estimated context used by skill definitions" onClick={() => setSkillTab("model")}>Defined <small>{skillPercent().defined}%</small></button>
