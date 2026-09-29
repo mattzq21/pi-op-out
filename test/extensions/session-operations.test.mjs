@@ -3,8 +3,8 @@ import { test } from 'node:test';
 import { mkdtemp, mkdir, readFile, writeFile, rm, stat, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { transform } from 'esbuild';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { build } from 'esbuild';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const exec = promisify(execFile);
@@ -12,15 +12,21 @@ const exec = promisify(execFile);
 async function fixture(t) {
   const dir = await mkdtemp(join(tmpdir(), 'piop-session-operations-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  let source = await readFile(new URL('../../src-tauri/resources/session-broker.ts', import.meta.url), 'utf8');
-  source = source.replace(/import \{ Type, type AssistantMessage \} from "@earendil-works\/pi-ai";/, 'const Type = new Proxy({}, { get: () => value => value });')
-    .replace(/import \{ getAgentDir \} from "@earendil-works\/pi-coding-agent";/, 'const getAgentDir = () => "unused";')
-    .replace('const url = process.env.PI_DESKTOP_BROKER_URL;', 'const url = "http://fixture";')
-    .replace('const token = process.env.PI_DESKTOP_BROKER_TOKEN;', 'const token = "fixture";');
-  const askSource = (await readFile(new URL('../../src-tauri/resources/ask-user.ts', import.meta.url), 'utf8')).replace('import { Type } from "@earendil-works/pi-ai";', 'const Type = new Proxy({}, { get: () => value => value });');
-  await writeFile(join(dir, 'ask-user.mjs'), (await transform(askSource, { loader: 'ts', format: 'esm' })).code);
-  source = source.replace('./ask-user.ts', './ask-user.mjs');
-  await writeFile(join(dir, 'broker.mjs'), (await transform(source, { loader: 'ts', format: 'esm' })).code);
+  const bundle = await build({
+    entryPoints: [fileURLToPath(new URL('../../src-tauri/resources/session-broker.ts', import.meta.url))],
+    bundle: true, write: false, platform: 'node', format: 'esm',
+    plugins: [{ name: 'broker-fixture', setup(builder) {
+      builder.onLoad({ filter: /\.ts$/ }, async ({ path }) => ({
+        contents: (await readFile(path, 'utf8'))
+          .replace(/import \{ Type(?:, type AssistantMessage)? \} from "@earendil-works\/pi-ai";/, 'const Type = new Proxy({}, { get: () => value => value });')
+          .replace(/import \{ getAgentDir \} from "@earendil-works\/pi-coding-agent";/, 'const getAgentDir = () => "unused";')
+          .replace('const url = process.env.PI_DESKTOP_BROKER_URL;', 'const url = "http://fixture";')
+          .replace('const token = process.env.PI_DESKTOP_BROKER_TOKEN;', 'const token = "fixture";'),
+        loader: 'ts', resolveDir: join(path, '..'),
+      }));
+    } }],
+  });
+  await writeFile(join(dir, 'broker.mjs'), bundle.outputFiles[0].contents);
   const module = await import(pathToFileURL(join(dir, 'broker.mjs')));
   const entries = [
     { type: 'message', id: 'u1', parentId: null, message: { role: 'user', content: 'first prompt' } },

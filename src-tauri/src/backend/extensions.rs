@@ -42,9 +42,25 @@ pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf
     Ok(path)
 }
 
+pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 10] = [
+    ("client.ts", include_str!("../../resources/session-broker/client.ts")),
+    ("pause.ts", include_str!("../../resources/session-broker/pause.ts")),
+    ("fast-mode.ts", include_str!("../../resources/session-broker/fast-mode.ts")),
+    ("turn-capture.ts", include_str!("../../resources/session-broker/turn-capture.ts")),
+    ("catch-up.ts", include_str!("../../resources/session-broker/catch-up.ts")),
+    ("session-file.ts", include_str!("../../resources/session-broker/session-file.ts")),
+    ("fork.ts", include_str!("../../resources/session-broker/fork.ts")),
+    ("subagents.ts", include_str!("../../resources/session-broker/subagents.ts")),
+    ("operations.ts", include_str!("../../resources/session-broker/operations.ts")),
+    ("tools.ts", include_str!("../../resources/session-broker/tools.ts")),
+];
+
 pub(super) fn prepare_session_broker() -> Result<PathBuf, String> {
     let dir = generated_extension_root()?;
     ensure_private_dir(&dir)?;
+    let modules = dir.join("session-broker");
+    ensure_private_dir(&modules)?;
+    for (name, content) in SESSION_BROKER_MODULES { atomic_write_private(&modules.join(name), content.as_bytes())?; }
     let path = dir.join("session-broker.ts");
     atomic_write_private(&dir.join("ask-user.ts"), include_str!("../../resources/ask-user.ts").as_bytes())?;
     atomic_write_private(&path, include_str!("../../resources/session-broker.ts").as_bytes())?;

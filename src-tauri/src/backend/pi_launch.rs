@@ -18,7 +18,7 @@ use crate::archives::{local_desktop_session_file_at};
 use crate::worktree_setup::{ensure_desktop_sessions_dir, run_limited, shell_quote};
 use crate::defaults_usage::{home_dir, pi_executable};
 use crate::settings::{load_app_settings};
-use crate::extensions::{LEGACY_FILE_CHANGE_ASSETS, LOOP_DETECTION_ASSETS, generated_extension_root, prepare_btw_extension, prepare_codex_web_search_extension, prepare_context_bar_extension, prepare_context_window_cap_extension, prepare_defined_agents_extension, prepare_diff_watch_extension, prepare_fast_mode_extension, prepare_loop_detection_extension, prepare_mcp_bridge, prepare_openai_cache_fork_extension, prepare_rtk_extension, prepare_runtime_settings, prepare_session_broker, prepare_session_cost_limit_extension, prepare_trace_reader, runtime_settings};
+use crate::extensions::{SESSION_BROKER_MODULES, LEGACY_FILE_CHANGE_ASSETS, LOOP_DETECTION_ASSETS, generated_extension_root, prepare_btw_extension, prepare_codex_web_search_extension, prepare_context_bar_extension, prepare_context_window_cap_extension, prepare_defined_agents_extension, prepare_diff_watch_extension, prepare_fast_mode_extension, prepare_loop_detection_extension, prepare_mcp_bridge, prepare_openai_cache_fork_extension, prepare_rtk_extension, prepare_runtime_settings, prepare_session_broker, prepare_session_cost_limit_extension, prepare_trace_reader, runtime_settings};
 
 pub(super) fn saved_remote_host(app: AppHandle, host_id: Option<String>) -> Result<Option<RemoteHost>, String> {
     let host_id = host_id.unwrap_or_else(|| "local".into());
@@ -196,6 +196,10 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let remote = format!(r#"{remote} && printf %s {provider_accounts} > "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs""#);
     let remote = format!(r#"{remote} && printf %s {rtk_extension} > "$HOME/{STORAGE_DIRECTORY}/rtk.ts" && printf %s {rtk_license} > "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/rtk.ts" "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE""#);
     let mut remote = remote;
+    remote.push_str(&format!(r#" && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/session-broker""#));
+    for (name, content) in SESSION_BROKER_MODULES {
+        remote.push_str(&format!(r#" && printf %s {} > "$HOME/{STORAGE_DIRECTORY}/session-broker/{name}" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/session-broker/{name}""#, shell_quote(content)));
+    }
     remote.push_str(&format!(r#" && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/piop-loop-detection""#));
     for (name, content) in LOOP_DETECTION_ASSETS {
         remote.push_str(&format!(r#" && printf %s {} > "$HOME/{STORAGE_DIRECTORY}/piop-loop-detection/{name}" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-loop-detection/{name}""#, shell_quote(content)));
