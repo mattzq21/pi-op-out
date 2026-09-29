@@ -596,6 +596,7 @@ export default function App() {
   };
   const openSessionInWindow = async (session: SessionSummary) => { if (isMobile) { selectSession(session); return; } try { await openSessionWindow({ cwd: session.cwd, sessionPath: session.path, sessionId: session.id, hostId: session.hostId }); } catch (reason) { addNotice({ title: "Could not open window", message: String(reason) }); } };
   const sessionAction = async (session: SessionSummary, action: SessionAction) => { const capturedRuntimePool = runtimePool();
+    if (action === "copy-id") { await navigator.clipboard.writeText(session.id).catch(reason => addNotice({ title: "Could not copy session ID", message: String(reason) })); return; }
     if (session.cwdExists === false && action !== "archive" && action !== "open-directory") { await openDirlessSession(session, action); return; }
     if (action === "split") { openSplitPane(session); return; }
     if (action === "new-window") return openSessionInWindow(session);

@@ -3,7 +3,7 @@ import { createComputed, createMemo, createSignal, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect, createMemoFields, createRef, cssPixels, type KeyboardEvent, type MouseEvent } from "../lib/solid";
 
-import { AppWindow, Archive, ChevronDown, Columns2, Ellipsis, Folder, FolderOpen, GitBranch, MessageSquarePlus, Pencil, Search, Trash2 } from "lucide-solid";
+import { AppWindow, Archive, ChevronDown, Columns2, Copy, Ellipsis, Folder, FolderOpen, GitBranch, MessageSquarePlus, Pencil, Search, Trash2 } from "lucide-solid";
 import { hasVisibleText } from "../lib/content";
 import { gitProjectKind, gitWorktreeRoots, openGroupDirectory } from "../lib/nativeTransport";
 import { DIRLESS_KEY, branchGroupId, firstOrderBranch, isTemporaryChatCwd, useSessionGroups, type SessionGroup } from "../lib/sessionGroups";
@@ -13,7 +13,7 @@ import { BranchIcon } from "./BranchIcon";
 import { RemoveGroupDialog } from "./RemoveGroupDialog";
 import { RemoveWorktreeDialog } from "./RemoveWorktreeDialog";
 
-export type SessionAction = "split" | "new-window" | "rename" | "clone" | "open-directory" | "archive";
+export type SessionAction = "split" | "new-window" | "rename" | "clone" | "open-directory" | "archive" | "copy-id";
 interface Props { sessions: SessionSummary[]; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; onNewChat: (group: SessionGroup) => void; onCreateWorktree: (cwd: string, hostId: string) => void; onDeleteWorktree: (cwd: string, hostId: string, deleteBranch: boolean) => Promise<void>; createGroupRequest?: number; onCreateGroupHandled?: () => void; }
 type CustomGroup = SessionGroup;
 interface DraggedSession { projectKey: string; sessionKey: string; session: SessionSummary; }
@@ -22,7 +22,7 @@ type DraggedItem = DraggedSession | { projectKey: string };
 type MouseDrag = DraggedItem & { startX: number; startY: number; active: boolean; };
 
 const actions = [
-  ["split", Columns2, "Split pane"], ["new-window", AppWindow, "Open in new window"], ["rename", Pencil, "Rename conversation"], ["open-directory", FolderOpen, "Open project directory"]
+  ["split", Columns2, "Split pane"], ["new-window", AppWindow, "Open in new window"], ["rename", Pencil, "Rename conversation"], ["open-directory", FolderOpen, "Open project directory"], ["copy-id", Copy, "Copy session ID"]
 ] as const;
 const COLLAPSED_PROJECTS_KEY = "pi-desktop-collapsed-projects";
 const SESSION_ORDERS_KEY = "pi-desktop-session-orders";
