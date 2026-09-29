@@ -2,14 +2,13 @@ import { ConversationChangedError } from "./conversationChanged";
 import { type Accessor, createComputed, createMemo, onCleanup, untrack } from "solid-js";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
-import type { AgentState, ChatMessage, Model, RpcEvent, SlashCommand } from "../types";
-import { promptContextHistory } from "./promptContextHistory";
+import type { AgentState, ChatMessage, Model, PromptContextInfo, RpcEvent, SlashCommand } from "../types";
 import { contextUsageAfterCompaction } from "./contextUsage";
 import { appendFileChanges, applyAssistantMessageEvent, branchMessages, checkpointLatestUser, isResumeMessage, normalizeMessage, resumeMarker, type PiEntry } from "./messages";
 import type { NativeTransport } from "./nativeTransport";
 import { useSessionMemory } from "./sessionMemory";
 
-interface SessionSnapshot { revision: string; state: AgentState; history: { entries: PiEntry[]; leafId: string | null; omittedEntries?: number }; sequence: number; epoch: string; liveTools: RpcEvent[]; extensionState?: RpcEvent[]; queue: RpcEvent; }
+interface SessionSnapshot { revision: string; state: AgentState; history: { entries: PiEntry[]; leafId: string | null; omittedEntries?: number }; sequence: number; epoch: string; liveTools: RpcEvent[]; queue: RpcEvent; }
 type MessageUpdate = (messages: ChatMessage[]) => ChatMessage[];
 const emptyState: AgentState = { model: null, thinkingLevel: "off", isStreaming: false, sessionId: "", messageCount: 0, pendingMessageCount: 0 };
 
@@ -29,7 +28,6 @@ export function useChatSession(transport: Accessor<Pick<NativeTransport, "comman
 
 function createChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation">>>, initialState: Accessor<AgentState>, options: { poll?: boolean }) {
   const session = useSessionMemory(() => (transport()), () => (initialState()));
-  const promptContexts = promptContextHistory();
   const owner = createRef<ReturnType<typeof transport> | undefined>(transport());
   const loading = new AbortController();
   onCleanup(() => { owner.current = undefined; loading.abort(); });
@@ -66,7 +64,6 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     if (refreshOperation.current?.transport === transport()) return refreshOperation.current.promise;
     const buffer: RpcEvent[] = []; bufferedEvents.current = buffer;
     const restoreHistory = (snapshot: SessionSnapshot) => {
-      for (const event of snapshot.extensionState ?? []) promptContexts.receive(event);
       for (const entry of snapshot.history.entries) { const marker = resumeMarker(entry); if (marker) resumeMarkers.current.add(marker); }
       const previous = new Map(session.memory.getSnapshot().messages.filter((message) => message.toolPayloadLoaded && message.toolStatus !== "running").map((message) => [message.deferredToolPayload, message]));
       const nextMessages = branchMessages(snapshot.history.entries, snapshot.history.leafId).map((message) => {
@@ -77,7 +74,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       activeAssistantId.current = [...nextMessages].reverse().find((message) => message.role === "assistant" && message.streaming)?.id;
       activeMessageIds.current.clear();
       for (const message of nextMessages.filter((message) => message.streaming)) trackLiveId(message.role, message.id);
-      session.setMessages(nextMessages.map(promptContexts.apply));
+      session.setMessages(nextMessages);
     };
     const restoreCapabilities = (modelResult?: { models: Model[] }, thinkingResult?: { levels: string[] }, commandResult?: { commands: SlashCommand[] }) => {
       if (modelResult) session.setModels(modelResult.models);
@@ -167,9 +164,15 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       session.setState((current) => ({ ...current, viewers: Number(event.viewers), isStreaming: event.isStreaming === true }));
     };
     const handleExtensionUiRequest = () => {
-      if (!promptContexts.receive(event)) return;
-      liveRevision.current += 1;
-      session.setMessages((current) => current.map(promptContexts.apply));
+      if (event.type === "extension_ui_request" && event.method === "setStatus" && event.statusKey === "pi-desktop-prompt-context" && typeof event.statusText === "string" && event.statusText.startsWith("json:")) {
+        try {
+          const context = JSON.parse(event.statusText.slice(5)) as PromptContextInfo;
+          if (typeof context.userTimestamp === "number") {
+            liveRevision.current += 1;
+            session.setMessages((current) => current.map((message) => message.role === "user" && message.timestamp === context.userTimestamp && !message.promptContext ? { ...message, promptContext: context } : message));
+          }
+        } catch { }
+      }
     };
     const handleEntryAppended = () => {
       if (event.type === "entry_appended" && event.entry) { const entry = event.entry as PiEntry; const marker = resumeMarker(entry); if (marker) { resumeMarkers.current.add(marker); session.setMessages(checkpointLatestUser); } if (entry.customType === "piop-file-changes") { liveRevision.current += 1; session.setMessages((current) => appendFileChanges(current, entry)); } }
@@ -209,8 +212,8 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       if (event.type === "message_start") trackLiveId(roleKey, liveId); else activeMessageIds.current.delete(roleKey);
       let message = normalizeMessage(rawMessage, undefined, undefined, liveId);
       if (message.customType === "pi-desktop-btw") return;
-      message = promptContexts.apply(updateAssistant(message));
-      session.setMessages((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? { ...message, toolInput: message.toolInput ?? item.toolInput, details: message.details ?? item.details, fileChanges: item.fileChanges, promptContext: message.promptContext ?? item.promptContext } : item) : [...current, message]);
+      message = updateAssistant(message);
+      session.setMessages((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? { ...message, toolInput: message.toolInput ?? item.toolInput, details: message.details ?? item.details, fileChanges: item.fileChanges, promptContext: item.promptContext } : item) : [...current, message]);
     };
     const handleMessageUpdate = () => {
       if (event.assistantMessageEvent) queue((current) => { let index = -1; for (let candidate = current.length - 1; candidate >= 0; candidate -= 1) { const message = current[candidate]; if (message.role === "assistant" && (message.id === activeAssistantId.current || message.streaming)) { index = candidate; break; } } if (index < 0) return current; const next = [...current]; next[index] = applyAssistantMessageEvent(next[index], event.assistantMessageEvent); return next; });
