@@ -12,7 +12,8 @@ type AppEventsContext = {
   transport: NativeTransport;
   handleEvent: (event: RpcEvent) => void;
   setDialogs: Dispatch<StateUpdate<OwnedExtensionDialog[]>>;
-  refresh: (hostId?: string) => Promise<AppSettings>;
+  loadSettings: () => Promise<AppSettings>;
+  refresh: (hostId?: string, settings?: AppSettings) => Promise<AppSettings>;
   queueTerminalOutput: (terminalId: string, data: string) => void;
   setTerminalsBySession: Dispatch<StateUpdate<Record<string, SessionTerminals>>>;
   addNotice: (notice: { title: string; message: string; }) => void;
@@ -54,7 +55,8 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
     const loadSelectedSession = async () => {
       const ready = await initializeSession(current, {
         connect: () => capturedOptions.transport.connect(),
-        refresh: () => options().refresh(),
+        loadSettings: () => capturedOptions.loadSettings(),
+        refresh: (settings) => options().refresh(undefined, settings),
         configure: (settings) => options().configureRuntime(settings),
         restore: () => options().refreshSession(),
       });
@@ -196,5 +198,5 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
     });
     loadSelectedSession().catch((reason: unknown) => { if (current() && !isConversationChanged(reason)) capturedOptions.setError(reason instanceof Error ? reason.message : String(reason)); });
     return () => { cancelled = true; refreshTimers.forEach(window.clearTimeout); unsubscribe(); if (capturedOptions.terminalOutputFrame.current !== undefined) window.clearTimeout(capturedOptions.terminalOutputFrame.current); capturedOptions.flushTerminalOutput(); };
-  }, () => [options().addNotice, options().configureRuntime, options().handleEvent, options().queueExtensionDialog, options().queueTerminalOutput, options().refresh, options().refreshSession, options().transport]);
+  }, () => [options().addNotice, options().configureRuntime, options().handleEvent, options().loadSettings, options().queueExtensionDialog, options().queueTerminalOutput, options().refresh, options().refreshSession, options().transport]);
 }

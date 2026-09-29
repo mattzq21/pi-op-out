@@ -401,7 +401,7 @@ export class NativeTransport {
   }
   async isGitRepository() { if (!this.cwd) return false; return call<boolean>("is_git_repository", { cwd: this.cwd, hostId: this.hostId }); }
   async gitBranch() { if (!this.cwd) return null; const branch = await call<unknown>("git_branch", { cwd: this.cwd, hostId: this.hostId }); return typeof branch === "string" ? branch : null; }
-  async loadSettings() { const settings = await withClientSettings(await call<AppSettings>("load_app_settings")); await saveClientSettings(settings); return settings; }
+  loadSettings() { return withClientSettings(call<AppSettings>("load_app_settings"), true); }
   async loadHostSettings() {
     if (this.hostId === "local") return call<AppSettings>("load_app_settings");
     try { return await call<AppSettings>("load_host_settings", { hostId: this.hostId }); }

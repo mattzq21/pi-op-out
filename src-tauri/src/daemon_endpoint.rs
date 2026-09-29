@@ -1,31 +1,5 @@
 use super::*;
 
-#[cfg(not(feature = "desktop"))]
-pub(crate) fn executable_identity(path: &Path) -> Result<String, String> {
-    use sha2::{Digest, Sha256};
-    let mut file = fs::File::open(path).map_err(|error| error.to_string())?;
-    let mut hash = Sha256::new();
-    let mut buffer = [0u8; 65536];
-    loop {
-        let count = file.read(&mut buffer).map_err(|error| error.to_string())?;
-        if count == 0 { break; }
-        hash.update(&buffer[..count]);
-    }
-    Ok(format!("{:x}", hash.finalize()))
-}
-
-#[cfg(not(feature = "desktop"))]
-pub(crate) fn build_identity() -> Result<String, String> {
-    static ID: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
-    ID.get_or_init(|| {
-        #[cfg(target_os = "linux")]
-        let path = PathBuf::from("/proc/self/exe");
-        #[cfg(not(target_os = "linux"))]
-        let path = std::env::current_exe().map_err(|error| error.to_string())?;
-        executable_identity(&path)
-    }).clone()
-}
-
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Endpoint {
     pub url: String,
