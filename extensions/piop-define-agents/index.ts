@@ -327,7 +327,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const currentSkillPaths = () => [...new Set(currentAgent() ? agentSkills(pi, currentAgent()!).map(normalizedPath) : [])].sort();
   const fastModeModels = () => { const request: { models?: string[] } = {}; pi.events.emit("piop:fast-mode", request); return request.models ?? []; };
   const fastModeError = (agent: Agent, model: string | undefined) => agent.fastMode === true && (!model || !fastModeModels().includes(model.replace(/--piop-account-\d+(?=\/)/, ""))) ? `Agent "${agent.name}" cannot run because model ${model || "(unset)"} does not support fast mode` : undefined;
-  const publish = (ctx: ExtensionContext) => ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: currentAgent()?.name ?? active, locked: false, saved: !!snapshot, unavailable: !currentAgent(), config: { ...config, fastModeModels: fastModeModels() } })}`);
+  const publish = (ctx: ExtensionContext) => ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: currentAgent()?.name ?? active, locked, saved: !!snapshot, unavailable: !currentAgent(), config: { ...config, fastModeModels: fastModeModels() } })}`);
   const saveState = () => {
     const state = { active, locked, modelOverride, effortOverride, snapshot };
     const serialized = JSON.stringify(state);
@@ -493,6 +493,10 @@ export default async function defineAgents(pi: ExtensionAPI) {
     }
 });
   const selectAgent = async (name: string, ctx: ExtensionCommandContext) => {
+    if (locked) {
+      if (name === active) return;
+      throw new Error("This conversation's agent is fixed. Start a new conversation to use another agent.");
+    }
     if (!findAgent(name)) throw new Error(`Unknown defined agent: ${name}`);
     restore(ctx);
     const agent = findAgent(name)!;
