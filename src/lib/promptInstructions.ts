@@ -2,14 +2,14 @@ import type { PromptContextInfo } from "../types";
 
 export function separatePromptInstructions(context: PromptContextInfo): PromptContextInfo {
   if (typeof context.systemPrompt !== "string") return context;
-  const blocks = [...context.systemPrompt.matchAll(/<(instructions|INSTRUCTIONS)>\s*([\s\S]*?)\s*<\/\1>/g)];
+  const blocks = [...context.systemPrompt.matchAll(/<(instructions|INSTRUCTIONS|cwd)>\s*([\s\S]*?)\s*<\/\1>/g)];
   if (!blocks.length) return context;
   const instructions = [...(context.instructions ?? [])];
   let systemPrompt = context.systemPrompt;
   let movedTokens = 0;
-  for (const [block, , content] of blocks) {
+  for (const [block, tag, content] of blocks) {
     systemPrompt = systemPrompt.replace(block, "");
-    instructions.push({ path: "Agent instructions", content });
+    instructions.push({ path: tag === "cwd" ? "Working directory" : "Agent instructions", content });
     movedTokens += Math.ceil(block.length / 4);
   }
   const systemTokens = Number(context.tokens?.system) || 0;
