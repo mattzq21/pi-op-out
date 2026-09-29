@@ -250,9 +250,18 @@ export function Composer(props: Props) {
     window.addEventListener("resize", resize);
     return () => window.removeEventListener("resize", resize);
   }, () => []);
+  let handledFocusRequest: number | undefined;
   createDependencyEffect(() => {
-    const capturedComposer = { ...composer() };
- if (capturedComposer.focusRequest) ref.current?.focus(); }, () => [composer().focusRequest]);
+    const request = composer().focusRequest ?? 0;
+    if (composer().controlsDisabled || handledFocusRequest === request) return;
+    const frame = requestAnimationFrame(() => {
+      const editor = ref.current;
+      if (!editor?.isConnected || editor.disabled || document.querySelector("dialog[open]")) return;
+      editor.focus({ preventScroll: true });
+      if (document.activeElement === editor) handledFocusRequest = request;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, () => [composer().focusRequest, composer().controlsDisabled]);
   createDependencyEffect(() => {
     const capturedComposer = { ...composer() }; const capturedValue = value();
  if (capturedComposer.restoredDraft && (capturedComposer.restoredDraft)!.id !== restoredDraftId.current) { restoredDraftId.current = (capturedComposer.restoredDraft)!.id; if (!capturedValue) setValue((capturedComposer.restoredDraft)!.value); } }, () => [composer().restoredDraft]);
