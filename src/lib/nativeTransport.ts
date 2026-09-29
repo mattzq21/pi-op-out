@@ -1,40 +1,14 @@
 import { forgetSession, retainSessionResource } from "./sessionMemory";
 import { PromptControls } from "./promptControls";
-import { preserveDaemonPreferences, saveClientSettings, withClientSettings } from "./clientSettings";
-import { keybindingsError } from "./keybindings";
-import { invoke, listen, type UnlistenFn } from "./platform";
+import { nativeCall as call } from "./nativeCall";
+import { NativeSettings } from "./nativeSettings";
+import { nativeTerminals } from "./nativeTerminals";
+import { FastModeCommands } from "./fastModeCommands";
+import { listen, type UnlistenFn } from "./platform";
 import { open } from "@tauri-apps/plugin-dialog";
 import { restoredSessionTarget } from "./sessionResume";
-import { emit as emitNativeEvent } from "@tauri-apps/api/event";
 import type { GroupChange, SessionGroup, SessionGroups, SessionGroupSeed } from "./sessionGroups";
-import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, OpencodeGoUsage, RpcCommand, RpcEvent, SessionSummary, SettingsChange, StorageReport } from "../types";
-
-function responseKey(command: string, args?: Record<string, unknown>) {
-  return command === "pi_command" ? `${command}:${String((args?.command as RpcCommand)?.type)}` : command;
-}
-
-const terminalWrites = new Map<string, Promise<void>>();
-const terminalStarts = new Map<string, Promise<void>>();
-const daemonPreferences = (settings: AppSettings, previous: AppSettings, scope: "all" | "client") => scope === "client" ? previous : preserveDaemonPreferences(settings, previous);
-
-function mockResponse<T>(command: string, response: { error?: string; events?: RpcEvent[] }, args?: Record<string, unknown>) {
-  if (response?.error) return Promise.reject(new Error(response.error));
-  if (command === "start_pi" && Array.isArray(response?.events)) {
-    return Promise.all(response.events.map((event: RpcEvent) => emitNativeEvent("pi://event", { runtimeId: args?.runtimeId, event })))
-      .then(() => new Promise<T>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(response as T)))));
-  }
-  return Promise.resolve(response as T);
-}
-
-const call = <T>(command: string, args?: Record<string, unknown>) => {
-  if (import.meta.env.MODE !== "e2e") return invoke<T>(command, args);
-  const key = responseKey(command, args);
-  const responseField = document.querySelector<HTMLTextAreaElement>("#pi-e2e-responses"); const callField = document.querySelector<HTMLTextAreaElement>("#pi-e2e-calls");
-  const responses = JSON.parse(responseField?.value || "{}");
-  if (callField?.value) { const calls = JSON.parse(callField.value); calls.push({ command, args, mocked: key in responses }); callField.value = JSON.stringify(calls); }
-  if (!(key in responses)) return invoke<T>(command, args);
-  return mockResponse<T>(command, responses[key], args);
-};
+import type { AppSettings, CodexUsage, DirectoryListing, GitDiffSnapshot, GitDiffSnapshots, OpencodeGoUsage, RpcCommand, RpcEvent, SessionSummary, StorageReport } from "../types";
 
 export const openSessionWindow = (target: NativeConnectionTarget & { sessionId: string }) => call<string>("new_window", { target });
 export function initialWindowTarget(): NativeConnectionTarget {
@@ -117,39 +91,23 @@ export class NativeTransport {
   private connectionVersion = 0;
   private connectPromise?: Promise<void>;
   private processLifecycle: Promise<unknown> = Promise.resolve();
-  private settingsLifecycle: Promise<unknown> = Promise.resolve();
-  private pendingSettings?: { settings: AppSettings };
-  private daemonSettingsPending = false;
-  private applyingSettings?: Promise<void>;
-  private settingsApplyFailed = false;
-  private activeCommands = 0;
   private disposed = false;
   private disposal?: Promise<void>;
-  hasPendingSettings() { return Boolean(this.daemonSettingsPending || this.pendingSettings || this.applyingSettings); }
-  queueSettings(settings: AppSettings, changes: { reconnect: boolean }) {
-    if (this.disposed || (!this.pendingSettings && !changes.reconnect)) return;
-    this.pendingSettings = { settings: structuredClone(settings) };
-    this.settingsApplyFailed = false;
-    this.emit({ type: "settings_pending" });
-    this.applyPendingSettings();
-  }
-  private applyPendingSettings() {
-    if (!this.pendingSettings || this.applyingSettings || this.activeCommands || this.disposed || this.settingsApplyFailed) return;
-    this.applyingSettings = Promise.resolve().then(async () => {
-      while (this.pendingSettings && !this.disposed) {
-        const update = this.pendingSettings;
-        await this.reconnectForSettings(update.settings);
-        if (this.pendingSettings === update) this.pendingSettings = undefined;
-        this.emit({ type: "settings_applied" });
-      }
-    }).catch((reason) => {
-      this.settingsApplyFailed = true;
-      this.emit({ type: "extension_error", error: `Settings saved, but this session could not apply them: ${reason instanceof Error ? reason.message : String(reason)}. Save again to retry.` });
-    }).finally(() => {
-      this.applyingSettings = undefined;
-      this.emit({ type: "settings_pending" });
-    });
-  }
+  private readonly settings = new NativeSettings(call, {
+    target: () => ({ cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId }),
+    selectTarget: target => { this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId; },
+    resetToLocal: fresh => {
+      this.hostId = "local"; this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined;
+      this.temporaryChat = false; this.temporaryChatUsed = false;
+      if (fresh) this.fresh = true;
+    },
+    disconnect: () => this.disconnect(),
+    connect: () => this.connect(),
+    closed: () => this.disposed,
+    emit: event => this.emit(event),
+  });
+  hasPendingSettings() { return this.settings.hasPending(); }
+  queueSettings(settings: AppSettings, changes: { reconnect: boolean }) { this.settings.queue(settings, changes); }
   private cwd?: string;
   private sessionPath?: string;
   private sessionId?: string;
@@ -161,8 +119,11 @@ export class NativeTransport {
   private temporaryChatUsed = false;
   private terminalActivity = false;
   hasTerminalActivity() { return this.terminalActivity; }
-  private fastStatusCommand?: string;
-  private fastCommands = new Set<string>();
+  private readonly fastMode = new FastModeCommands({
+    command: command => this.command(command),
+    send: command => call("pi_command", { runtimeId: this.runtimeId, command }),
+    emit: event => this.emit(event),
+  });
   private readOnly: boolean;
   constructor(target: NativeConnectionTarget = {}) { this.readOnly = target.readOnly === true; this.fresh = !target.sessionPath && !target.sessionId; this.cwd = target.cwd; this.sessionPath = target.sessionPath; this.sessionId = target.sessionId; this.hostId = target.hostId ?? "local"; }
   currentHostId() { return this.hostId; }
@@ -174,8 +135,6 @@ export class NativeTransport {
   private runProcessCommand<T>(command: () => Promise<T>) { const result = this.processLifecycle.then(command, command); this.processLifecycle = result.then(() => undefined, () => undefined); return result; }
   private queueView(): RpcEvent { return this.queueSnapshot; }
   private trackSessionActivity(event: RpcEvent) {
-    if (event.type === "settings_pending" && typeof event.pending === "boolean") this.daemonSettingsPending = event.pending;
-    if (event.type === "disconnected") this.daemonSettingsPending = false;
     if (event.type === "agent_start" || (event.type === "message_start" && (event.message as { role?: string })?.role === "user")) this.temporaryChatUsed = true;
   }
   private retainWidget(event: RpcEvent) {
@@ -207,21 +166,9 @@ export class NativeTransport {
       for (const event of (result as { extensionState?: RpcEvent[] }).extensionState ?? []) this.emit(event);
     }
   }
-  private async discoverFastCommands(result: unknown) {
-    const { commands } = result as { commands: Array<{ name: string; source: string; sourceInfo?: { source?: string; path?: string } }> };
-    const fromPackage = (item: typeof commands[number], name: string) => item.sourceInfo?.source === `npm:${name}` || item.sourceInfo?.path?.split(/[\\/]/).includes(name);
-    const localFastPackages = ["piop-openai-fast-mode", "pi-openai-fast-mode-piop"];
-    const fastCommands = commands.filter((item) => item.source === "extension" && /^fast(?::\d+)?$/.test(item.name) && [...localFastPackages, "pi-openai-fast-mode"].some((name) => fromPackage(item, name)));
-    this.fastCommands = new Set(fastCommands.map((item) => item.name));
-    this.fastStatusCommand = fastCommands.some((item) => localFastPackages.some((name) => fromPackage(item, name))) ? undefined : commands.find((item) => item.source === "extension" && item.name === "pi-desktop-fast-status")?.name;
-    await this.refreshFastStatus(false);
-  }
-  private async afterPrompt(command: RpcCommand) {
-    const invocation = typeof command.message === "string" ? command.message.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/) : undefined;
-    if (invocation && this.fastCommands.has(invocation[1]) && ["", "on", "off", "toggle"].includes((invocation[2] ?? "").trim().toLowerCase())) await this.refreshFastStatus(true);
-  }
   private emit(event: RpcEvent) {
     if (event.type === "ownership_lost") this.promptControls.reset();
+    this.settings.receive(event);
     this.trackSessionActivity(event);
     this.retainExtensionState(event);
     if (event.type === "queue_update") this.queueSnapshot = event;
@@ -238,7 +185,7 @@ export class NativeTransport {
         queueMicrotask(() => { throw reason; });
       }
     }
-    if (["agent_settled", "auto_compaction_end", "queue_update"].includes(event.type)) this.applyPendingSettings();
+    this.settings.afterEvent(event);
   }
   private connectionLost() {
     ++this.connectionVersion; this.connectPromise = undefined; this.running = false; this.owns = false;
@@ -270,7 +217,7 @@ export class NativeTransport {
     await this.resolveHomeDirectory(version);
     if (version !== this.connectionVersion) return;
     if (!await this.ensureConnectionDirectory(version)) return;
-    this.fastStatusCommand = undefined; this.fastCommands.clear();
+    this.fastMode.reset();
     this.clearConnectionListeners();
     const unlisten = await listen<RpcEvent | { runtimeId: string; event: RpcEvent }>("pi://event", ({ payload }) => {
       const envelope = payload as { runtimeId?: unknown; event?: RpcEvent };
@@ -307,17 +254,12 @@ export class NativeTransport {
     this.emit({ type: this.owns ? "ownership_acquired" : "ownership_lost" });
   }
   async disconnect(discardBlank = false) { ++this.connectionVersion; this.running = false; this.presenceCleanup?.(); this.presenceCleanup = undefined; this.unlisten?.(); this.stderrUnlisten?.(); this.unlisten = undefined; this.stderrUnlisten = undefined; this.retainedStatuses.clear(); this.retainedWidgets.clear(); this.retainedRequests.clear(); return this.runProcessCommand(() => call<boolean>("stop_pi", { runtimeId: this.runtimeId, discardBlank })); }
-  async reconnectForSettings(settings: AppSettings) {
-    await this.disconnect();
-    if (this.hostId !== "local" && !settings.hosts.some((host) => host.enabled !== false && host.id === this.hostId)) { this.hostId = "local"; this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined; this.temporaryChat = false; this.temporaryChatUsed = false; this.fresh = true; }
-    try { await this.connect(); }
-    catch (reason) { this.emit({ type: "disconnected" }); throw reason; }
-  }
+  reconnectForSettings(settings: AppSettings) { return this.settings.reconnect(settings); }
   dispose() {
     if (this.disposal) return this.disposal;
-    this.disposed = true; this.pendingSettings = undefined;
+    this.disposed = true; this.settings.cancelPending();
     this.disposal = (async () => {
-      await this.applyingSettings;
+      await this.settings.whenApplied();
       const temporaryPath = this.temporaryChat && !this.temporaryChatUsed ? this.cwd : undefined;
       const temporaryHost = this.hostId;
       const stopped = await this.disconnect(true);
@@ -326,36 +268,14 @@ export class NativeTransport {
     })().catch(reason => { this.disposal = undefined; this.disposed = false; throw reason; });
     return this.disposal;
   }
-  private async refreshFastStatus(reload: boolean) {
-    if (!this.fastStatusCommand) return;
-    try {
-      await call("pi_command", { runtimeId: this.runtimeId, command: { type: "prompt", message: `/${this.fastStatusCommand}${reload ? " refresh" : ""}` } });
-    } catch {
-      this.emit({ type: "extension_ui_request", method: "setStatus", statusKey: "pi-desktop-fast-mode", statusText: "Fast mode status unavailable" });
-    }
-  }
-  async toggleFastMode() {
-    await this.changeFastMode("toggle");
-  }
-  async setFastMode(enabled: boolean) {
-    await this.command({ type: "get_commands" });
-    await this.changeFastMode(enabled ? "on" : "off");
-  }
-  private async changeFastMode(mode: "on" | "off" | "toggle") {
-    const command = this.fastCommands.values().next().value;
-    if (!command) throw new Error("Fast mode is unavailable in this conversation");
-    await call("pi_command", { runtimeId: this.runtimeId, command: { type: "prompt", message: `/${command} ${mode}` } });
-    await this.refreshFastStatus(true);
-  }
+  toggleFastMode() { return this.fastMode.toggle(); }
+  setFastMode(enabled: boolean) { return this.fastMode.set(enabled); }
   command<T>(command: RpcCommand): Promise<T> { return this.executeCommand<T>(command); }
   changePendingMessage(id: string, action: import("../types").PendingMessageAction): Promise<void> {
     return this.executeCommand({ type: "change_pending", id, action });
   }
-  private async executeCommand<T>(command: RpcCommand): Promise<T> {
-    if (this.applyingSettings) await this.applyingSettings;
-    this.activeCommands += 1;
-    try { return await this.executeCommandNow<T>(command); }
-    finally { this.activeCommands -= 1; this.applyPendingSettings(); }
+  private executeCommand<T>(command: RpcCommand): Promise<T> {
+    return this.settings.runCommand(() => this.executeCommandNow<T>(command));
   }
   private async executeCommandNow<T>(command: RpcCommand) {
     command = this.normalizeCommand(command);
@@ -363,8 +283,8 @@ export class NativeTransport {
       const result = await call<T>("pi_command", { runtimeId: this.runtimeId, command });
       this.retainCommandSession(command, result);
       this.resetChangedSession(command, result);
-      if (command.type === "get_commands") await this.discoverFastCommands(result);
-      if (command.type === "prompt") await this.afterPrompt(command);
+      const fastModeUpdate = this.fastMode.afterCommand(command, result);
+      if (fastModeUpdate) await fastModeUpdate;
       if (command.type === "extension_ui_response" && typeof command.id === "string") this.retainedRequests.delete(command.id);
       return result;
     } catch (reason) {
@@ -401,46 +321,13 @@ export class NativeTransport {
   }
   async isGitRepository() { if (!this.cwd) return false; return call<boolean>("is_git_repository", { cwd: this.cwd, hostId: this.hostId }); }
   async gitBranch() { if (!this.cwd) return null; const branch = await call<unknown>("git_branch", { cwd: this.cwd, hostId: this.hostId }); return typeof branch === "string" ? branch : null; }
-  loadSettings() { return withClientSettings(call<AppSettings>("load_app_settings"), true); }
-  async loadHostSettings() {
-    if (this.hostId === "local") return call<AppSettings>("load_app_settings");
-    try { return await call<AppSettings>("load_host_settings", { hostId: this.hostId }); }
-    catch (reason) {
-      if (String(reason).includes("Command is not available on the daemon: load_host_settings")) throw new Error("The connected or selected remote Piop daemon is older than this client. Update the daemon to access remote settings.");
-      throw reason;
-    }
-  }
-  async saveHostSettings(settings: AppSettings, agentsChanged = false) {
-    try { return await call<SettingsChange>("save_host_settings", { hostId: this.hostId, settings, agentsChanged }); }
-    catch (reason) {
-      if (String(reason).includes("Command is not available on the daemon: save_host_settings")) throw new Error("The connected or selected remote Piop daemon needs updating before it can save remote settings.");
-      throw reason;
-    }
-  }
+  loadSettings() { return this.settings.load(); }
+  loadHostSettings() { return this.settings.loadHost(); }
+  saveHostSettings(settings: AppSettings, agentsChanged = false) { return this.settings.saveHost(settings, agentsChanged); }
   loadCodexUsage() { return call<CodexUsage>("codex_usage"); }
   loadOpencodeGoUsage() { return call<OpencodeGoUsage>("opencode_go_usage"); }
   saveSettings(settings: AppSettings, reconnect = true, agentHostId?: string, scope: "all" | "client" = "all") {
-    const save = async () => {
-      const shortcutError = keybindingsError(settings.keybindings);
-      if (shortcutError) throw new Error(shortcutError);
-      const previous = await call<AppSettings>("load_app_settings"); const connection = { cwd: this.cwd, sessionPath: this.sessionPath, sessionId: this.sessionId, hostId: this.hostId };
-      const daemonSettings = daemonPreferences(settings, previous, scope);
-      const daemonChanged = JSON.stringify(daemonSettings) !== JSON.stringify(previous) || Boolean(agentHostId);
-      const change = daemonChanged ? await call<SettingsChange>("save_app_settings", { settings: daemonSettings, agentHostId }) : { settings: previous };
-      await saveClientSettings(settings);
-      change.settings = await withClientSettings(change.settings);
-      if (!reconnect || !daemonChanged) return change;
-      try { if (this.hostId !== "local" && !settings.hosts.some((host) => host.enabled !== false && host.id === this.hostId)) { this.hostId = "local"; this.cwd = undefined; this.sessionPath = undefined; this.sessionId = undefined; this.temporaryChat = false; this.temporaryChatUsed = false; } await this.disconnect(); await this.connect(); }
-      catch (reason) {
-        await call<void>("save_app_settings", { settings: previous }); this.cwd = connection.cwd; this.sessionPath = connection.sessionPath; this.sessionId = connection.sessionId; this.hostId = connection.hostId;
-        try { await this.disconnect(); await this.connect(); } catch { }
-        throw reason;
-      }
-      return change;
-    };
-    const result = this.settingsLifecycle.then(save, save);
-    this.settingsLifecycle = result.then(() => undefined, () => undefined);
-    return result;
+    return this.settings.save(settings, reconnect, agentHostId, scope);
   }
   async selectProjectDirectory(defaultPath?: string) { const selected = await open({ directory: true, multiple: false, title: "Open project", defaultPath }); return typeof selected === "string" ? selected : null; }
   homeDirectory(hostId: string) { return call<string>("home_directory", { hostId }); }
@@ -449,24 +336,12 @@ export class NativeTransport {
   async prepareTemporaryChat(hostId: string) { const chat = await call<{ cwd: string; sessionId: string }>("create_temporary_chat", { hostId, e2e: import.meta.env.MODE === "e2e" }); this.cwd = chat.cwd; this.sessionPath = undefined; this.sessionId = chat.sessionId; this.hostId = hostId; this.temporaryChat = true; this.temporaryChatUsed = false; return chat.cwd; }
   startTerminal(terminalId: string, sessionKey: string, cwd: string, cols: number, rows: number, hostId = this.hostId) {
     if (cwd === this.cwd && hostId === this.hostId) { this.terminalActivity = true; this.temporaryChatUsed = true; }
-    const pending = call<void>("start_terminal", { terminalId, sessionKey, cwd, cols, rows, hostId });
-    terminalStarts.set(terminalId, pending);
-    const clear = () => { if (terminalStarts.get(terminalId) === pending) terminalStarts.delete(terminalId); };
-    void pending.then(clear, clear);
-    return pending;
+    return nativeTerminals.start(terminalId, sessionKey, cwd, cols, rows, hostId);
   }
-  writeTerminal(terminalId: string, data: string) {
-    const starting = terminalStarts.get(terminalId);
-    const next = (terminalWrites.get(terminalId) ?? Promise.resolve()).catch(() => undefined)
-      .then(() => starting).then(() => call<void>("write_terminal", { terminalId, data }));
-    terminalWrites.set(terminalId, next);
-    const clear = () => { if (terminalWrites.get(terminalId) === next) terminalWrites.delete(terminalId); };
-    void next.then(clear, clear);
-    return next;
-  }
-  async resizeTerminal(terminalId: string, cols: number, rows: number) { await terminalStarts.get(terminalId); return call<void>("resize_terminal", { terminalId, cols, rows }); }
-  async reassignTerminal(terminalId: string, sessionKey: string) { await terminalStarts.get(terminalId); return call<void>("reassign_terminal", { terminalId, sessionKey }); }
-  async closeTerminal(terminalId: string) { await terminalStarts.get(terminalId)?.catch(() => undefined); await terminalWrites.get(terminalId)?.catch(() => undefined); terminalWrites.delete(terminalId); return call<void>("close_terminal", { terminalId }); }
+  writeTerminal(terminalId: string, data: string) { return nativeTerminals.write(terminalId, data); }
+  resizeTerminal(terminalId: string, cols: number, rows: number) { return nativeTerminals.resize(terminalId, cols, rows); }
+  reassignTerminal(terminalId: string, sessionKey: string) { return nativeTerminals.reassign(terminalId, sessionKey); }
+  closeTerminal(terminalId: string) { return nativeTerminals.close(terminalId); }
 }
 
 export async function readDroppedFile(path: string): Promise<File> {
