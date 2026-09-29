@@ -62,7 +62,7 @@ export function createPiFastModeExtension(
     let lastSaved: FastModeState | undefined;
     const saveState = (state: FastModeState, ctx?: SessionContext) => {
       const previous = ctx ? savedSessionState(ctx) : lastSaved;
-      if (previous?.enabled === state.enabled && previous.manual === state.manual) return;
+      if (previous?.enabled === state.enabled) return;
       pi.appendEntry(STATE_ENTRY, state);
       lastSaved = state;
     };
