@@ -37,8 +37,9 @@ function formatMessageTime(timestamp?: number) {
 }
 
 function responseFailure(message: ChatMessage, paused: boolean) {
-  const pausedResponse = message.stopReason === "aborted" && (paused || message.errorMessage === "Response paused");
-  const failure = message.stopReason === "aborted" ? (pausedResponse ? undefined : message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
+  const pauseMarker = message.errorMessage === "Response paused";
+  const pausedResponse = message.stopReason === "aborted" && paused;
+  const failure = message.stopReason === "aborted" ? (pausedResponse || pauseMarker ? undefined : message.errorMessage && message.errorMessage !== "Request was aborted" ? message.errorMessage : "Operation aborted") : message.stopReason === "error" ? `Response failed: ${message.errorMessage || "Unknown error"}` : undefined;
   return { pausedResponse, failure };
 }
 

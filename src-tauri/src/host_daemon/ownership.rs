@@ -257,6 +257,10 @@ impl ConversationOwnership {
             if !self.needs_handoff(previous, client, options) {
                 return Ok(None);
             }
+            if flag(options, "take") && !flag(options, "mutation") && previous["endpoint"] == self.endpoint && previous["token"] == self.token {
+                self.revoke.revoke(id, "transfer-local").await?;
+                return Ok(None);
+            }
             self.release_previous(id, previous, claim_intent(options)).await?;
         }
         self.lock(id, true).await.map(Some)

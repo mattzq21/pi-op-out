@@ -77,7 +77,7 @@ struct SessionState {
 
 pub(super) struct Session {
     pub identity: String,
-    pub client_id: String,
+    client_id: Mutex<String>,
     pub spec: LaunchSpec,
     pub cwd: Option<String>,
     pub ephemeral: bool,
@@ -147,6 +147,8 @@ impl Observer for SessionCallbacks {
 }
 
 impl Session {
+    pub fn client_id(&self) -> String { self.client_id.lock().unwrap_or_else(|error| error.into_inner()).clone() }
+    pub fn set_client_id(&self, client: String) { *self.client_id.lock().unwrap_or_else(|error| error.into_inner()) = client; }
     pub fn spawn(launch: SessionLaunch, pending: Vec<Value>, host: Arc<dyn SessionHost>, home: &Path) -> Result<Arc<Self>> {
         let SessionLaunch {
             key,
@@ -169,7 +171,7 @@ impl Session {
             .unwrap_or(0);
         let session = Arc::new_cyclic(|weak| Self {
             identity,
-            client_id,
+            client_id: Mutex::new(client_id),
             spec,
             cwd,
             ephemeral,

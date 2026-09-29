@@ -109,6 +109,7 @@ impl Attachment {
         *opened = Some(session.clone());
         session.execute(json!({"type":"get_state"})).await?;
         self.assert_current(host)?;
+        session.set_client_id(text(&self.packet, "clientId"));
         host.registry().readonly.remove(&self.runtime);
         host.attach_view(&self.runtime, session.clone(), self.packet["presence"].clone());
         host.remember(&self.runtime, &session);

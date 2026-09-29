@@ -67,7 +67,7 @@ impl SessionHost for Callbacks {
             let path = payload["parentSession"].as_str().filter(|value| !value.is_empty()).ok_or("The parent conversation is missing")?;
             let message = payload["message"].as_str().filter(|value| !value.trim().is_empty()).ok_or("A message is required")?;
             let parent = host.registry().sessions.values().find(|session| {
-                !session.closed() && session.client_id == child.client_id && session.spec.env.get("PI_DESKTOP_HOST_ID") == child.spec.env.get("PI_DESKTOP_HOST_ID")
+                !session.closed() && session.client_id() == child.client_id() && session.spec.env.get("PI_DESKTOP_HOST_ID") == child.spec.env.get("PI_DESKTOP_HOST_ID")
                     && session.saved_state()["sessionFile"].as_str() == Some(path) && session.key() != child.key()
             }).cloned().ok_or("The original main conversation is no longer connected")?;
             host.session_command(parent, "", json!({"type":"prompt","message":format!("[Message from /btw]\n{message}"),"streamingBehavior":"followUp"})).await
@@ -278,7 +278,7 @@ impl Host {
     pub async fn release_unused(&self, session: &Session) -> Result<()> {
         if !session.ephemeral && session.unused() {
             self.ownership()
-                .release_client(&session.identity, &session.client_id, || session.unused())
+                .release_client(&session.identity, &session.client_id(), || session.unused())
                 .await?;
         }
         Ok(())
@@ -307,28 +307,36 @@ impl Host {
             .filter(|session| session.identity == id)
             .cloned()
             .collect();
-        for session in sessions {
-            if matches!(intent, "message" | "archive") {
-                session.retire().await?;
-            }
-            let saved = session.saved_state();
-            for (runtime, _) in session.views() {
-                self.registry().readonly.insert(
-                    runtime,
-                    ReadonlyView {
-                        id: id.into(),
-                        path: saved["sessionFile"].as_str().map(str::to_owned),
-                    },
-                );
-            }
-            session.publish(json!({"type":"ownership_lost"}), None);
-            if session.working() || session.compacting() {
-                let _ = session.raw(json!({"type":"abort"})).await;
-            }
-            session.stop().await;
-            self.registry().captures.entry(id.into()).or_default().insert(session.key());
-        }
+        for session in sessions { self.release_owned_session(id, intent, session).await?; }
+        if intent == "transfer-local" { return Ok(()); }
         self.drain_captures(id).await
+    }
+
+    async fn release_owned_session(&self, id: &str, intent: &str, session: Arc<Session>) -> Result<()> {
+        if intent == "transfer" && (session.working() || session.compacting()) {
+            return Err("The agent is running on another daemon. Wait for it to finish before transferring ownership.".into());
+        }
+        if matches!(intent, "message" | "archive") {
+            session.retire().await?;
+        }
+        let saved = session.saved_state();
+        for (runtime, _) in session.views() {
+            self.registry().readonly.insert(
+                runtime,
+                ReadonlyView {
+                    id: id.into(),
+                    path: saved["sessionFile"].as_str().map(str::to_owned),
+                },
+            );
+        }
+        session.publish(json!({"type":"ownership_lost"}), None);
+        if intent == "transfer-local" { return Ok(()); }
+        if session.working() || session.compacting() {
+            let _ = session.raw(json!({"type":"abort"})).await;
+        }
+        session.stop().await;
+        self.registry().captures.entry(id.into()).or_default().insert(session.key());
+        Ok(())
     }
 
     async fn drain_captures(&self, id: &str) -> Result<()> {
@@ -374,12 +382,21 @@ impl Host {
     async fn readonly_command(&self, packet: &Value, target: ReadonlyView) -> Result<Value> {
         let runtime = text(packet, "runtimeId");
         if kind(packet) == "detach" {
-            let mut registry = self.registry();
-            registry.readonly.remove(&runtime);
-            registry.attachments.remove(&runtime);
+            let session = {
+                let mut registry = self.registry();
+                registry.readonly.remove(&runtime);
+                registry.attachments.remove(&runtime);
+                registry.subscriptions.remove(&runtime)
+            };
+            if let Some(session) = session {
+                session.detach_view(&runtime);
+                session.finish_detach(false, true).await;
+                self.release_unused(&session).await?;
+            }
             return Ok(json!({"stopped":false}));
         }
         if kind(packet) == "presence" {
+            if let Some(session) = self.find_session(&target.id) { session.presence(&runtime, packet["presence"].clone()); }
             return Ok(Value::Null);
         }
         let command = &packet["command"];

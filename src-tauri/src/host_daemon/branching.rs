@@ -76,7 +76,7 @@ async fn destination_ownership(host: &Host, session: &Session, destination: &Des
         host.ownership()
             .begin(
                 &destination.key,
-                &session.client_id,
+                &session.client_id(),
                 &json!({"path":destination.existing.then_some(&destination.path),"create":!destination.existing}),
             )
             .await
@@ -128,7 +128,7 @@ async fn open_destination(host: &Arc<Host>, session: &Arc<Session>, runtime: &st
             timeout: session.timeout,
             ephemeral: session.ephemeral,
             transient: false,
-            client_id: session.client_id.clone(),
+            client_id: session.client_id(),
             cwd: session.cwd.clone(),
         })?,
     };
@@ -253,7 +253,7 @@ impl Branch<'_> {
             timeout: self.session.timeout,
             ephemeral: self.session.ephemeral,
             transient: true,
-            client_id: self.session.client_id.clone(),
+            client_id: self.session.client_id(),
             cwd: self.session.cwd.clone(),
         })
     }
@@ -289,7 +289,7 @@ impl Branch<'_> {
         } else {
             self.host
                 .ownership()
-                .begin(&branch_id, &self.session.client_id, &json!({"path":destination}))
+                .begin(&branch_id, &self.session.client_id(), &json!({"path":destination}))
                 .await?
         };
         let owned = ownership.owned;
