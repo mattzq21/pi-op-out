@@ -124,6 +124,10 @@ export function createPiFastModeExtension(
           await ensureLoaded(ctx);
           refreshCurrentModel(ctx);
           const enabled = parseFastCommand(args, effectiveConfig().enabled);
+          if (enabled === effectiveConfig().enabled) {
+            updateFastStatus(ctx, effectiveConfig(), currentModel);
+            return;
+          }
           saveState({ enabled, manual: true }, ctx);
           config.enabled = enabled;
           agentEnabled = undefined;
