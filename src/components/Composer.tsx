@@ -5,6 +5,7 @@ import { createMemo, createSignal, Show, splitProps } from "solid-js";
 import { readDroppedFile } from "../lib/nativeTransport";
 import { clipboardImageFile, pastedFiles, readClipboardImages } from "../lib/clipboardImages";
 import { DictationControls } from "./DictationControls";
+import { ComposerSettingsMenu } from "./ComposerSettingsMenu";
 import { isMobile } from "../lib/platform";
 import { accountModelName, providerAccountLabel } from "../lib/providerAccounts";
 import { createDependencyEffect, createMemoFields, createRef, cssPixels, type CSSProperties, type JSXElement, type KeyboardEvent, type StateUpdate } from "../lib/solid";
@@ -470,10 +471,12 @@ export function Composer(props: Props) {
           <IconButton title="" label={composer().paused ? "Resume piop" : "Pause piop"} class="send" disabled={controls().inputDisabled} onClick={() => void control(composer().paused ? "resume" : "pause")}>{composer().paused ? <Play size={17} /> : <Pause size={17} />}</IconButton>
         </Show>;
         return (<div class="composer-actions">{renderMobileSteer()}
-          {renderAgentPicker()}
-          {renderFastModeIndicator()}
-          {renderModelPicker()}
-          <ContainedPicker label="Thinking level" value={composer().thinkingLevel} disabled={composer().streaming || controls().inputDisabled} menuWidth={120} centered compact options={thinkingOptions()} onChange={composer().onThinking} />
+          <ComposerSettingsMenu agent={composer().activeAgent ?? "general"}>
+            <div class="composer-settings-row"><span>Agent</span>{renderAgentPicker()}</div>
+            <Show when={fastModeSupported()}><div class="composer-settings-row"><span>Fast mode</span>{renderFastModeIndicator()}</div></Show>
+            <div class="composer-settings-row"><span>Model</span>{renderModelPicker()}</div>
+            <div class="composer-settings-row"><span>Effort</span><ContainedPicker label="Thinking level" value={composer().thinkingLevel} disabled={composer().streaming || controls().inputDisabled} menuWidth={120} centered compact options={thinkingOptions()} onChange={composer().onThinking} /></div>
+          </ComposerSettingsMenu>
           <span class="composer-divider" />
           {renderStopButton()}
           {renderSend()}
