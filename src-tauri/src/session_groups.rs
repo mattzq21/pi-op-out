@@ -107,20 +107,40 @@ fn prune_missing_branch_groups(app: &AppHandle, path: &Path, state: &mut Session
     let index = app.state::<super::SessionIndexRuntime>();
     let mut sessions = HashMap::new();
     let mut removed = HashSet::new();
-    for group in &state.groups {
+    let mut moved = false;
+    for group in &state.groups.clone() {
         let Some(branch) = group.branch.as_deref() else { continue; };
         let host = group.host_id.as_deref().unwrap_or("local");
         let listed = sessions.entry(host.to_owned()).or_insert_with(|| super::sessions_on_host(&settings, &index, host));
         let Ok(listed) = listed else { continue; };
-        if group_has_sessions(state, group, listed) { continue; }
-        if branch_is_missing(&settings, group, branch) { removed.insert(group.id.clone()); }
+        let (changed, remove) = inspect_empty_branch_group(state, group, listed, &settings, branch);
+        moved |= changed;
+        if remove { removed.insert(group.id.clone()); }
     }
-    if removed.is_empty() { return Ok(()); }
+    if removed.is_empty() && !moved { return Ok(()); }
     state.groups.retain(|group| !removed.contains(&group.id));
     state.assignments.retain(|_, group| !group.as_ref().is_some_and(|id| removed.contains(id)));
     write(path, state)?;
     let _ = app.emit("pi://groups-changed", &*state);
     Ok(())
+}
+
+fn inspect_empty_branch_group(state: &mut SessionGroups, group: &SessionGroup, sessions: &[super::SessionSummary], settings: &super::AppSettings, branch: &str) -> (bool, bool) {
+    let moved = move_missing_group_sessions(state, group, sessions);
+    let remove = !group_has_sessions(state, group, sessions) && (moved || branch_is_missing(settings, group, branch));
+    (moved, remove)
+}
+
+fn move_missing_group_sessions(state: &mut SessionGroups, group: &SessionGroup, sessions: &[super::SessionSummary]) -> bool {
+    let mut moved = false;
+    for session in sessions.iter().filter(|session| !session.cwd_exists) {
+        let key = format!("{}:{}", session.host_id, session.id);
+        if state.assignments.get(&key).and_then(|id| id.as_deref()) == Some(group.id.as_str()) {
+            state.assignments.insert(key, Some(DIRLESS_KEY.into()));
+            moved = true;
+        }
+    }
+    moved
 }
 
 fn group_has_sessions(state: &SessionGroups, group: &SessionGroup, sessions: &[super::SessionSummary]) -> bool {
