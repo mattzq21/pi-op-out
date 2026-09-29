@@ -69,6 +69,7 @@ export default function App() {
   const [settingsDirty, setSettingsDirty] = createSignal(false);
   const settingsDirtyRef = createRef(settingsDirty()); createComputed(() => { settingsDirtyRef.current = settingsDirty(); });
   const sessionIndexRequest = createRef<Promise<void> | undefined>(undefined);
+  const sessionIndexDirty = createRef(false);
   const [panelOpen, setPanelOpen] = createSignal((() => !window.matchMedia("(max-width: 700px)").matches)()); const [query, setQuery] = createSignal(""); const [connected, setConnected] = createSignal(false); const connectionReadyRef = createRef(connected()); createComputed(() => { connectionReadyRef.current = connected(); }); const updateConnected = (value: boolean) => { const owned = value && activeTransportRef.current.ownsConversation(); connectionReadyRef.current = owned; setConnected(owned); }; const [error, setError] = createSignal<string>();
   const [createGroupRequest, setCreateGroupRequest] = createSignal(0);
   const handleCreateGroup = () => setCreateGroupRequest(0);
@@ -191,13 +192,15 @@ export default function App() {
     void saveClientSettings(next).then(() => setSettings(current => current ? { ...current, knownModels: next.knownModels, hiddenModels: next.hiddenModels } : current)).catch(() => undefined);
   }, () => [chatSession().models, settings(), transport()]);
   const syncSessionIndex = () => {
+    if (sessionIndexRequest.current) { sessionIndexDirty.current = true; return sessionIndexRequest.current; }
+    sessionIndexDirty.current = false;
     if (!sessionIndexRequest.current) sessionIndexRequest.current = transport().listSessions().then((nextSessions) => {
       setSessions(nextSessions.filter((session) => !runtimePool().isRemoved(session) && !archivedSessionKeys.current.has(`${session.hostId ?? "local"}:${session.id}`)));
       chatSession().setState((current) => {
         const activeSession = nextSessions.find((session) => session.id === current.sessionId && (session.hostId ?? "local") === activeHostIdRef.current);
         return activeSession && activeSession.name !== current.sessionName ? { ...current, sessionName: activeSession.name } : current;
       });
-    }).catch(() => undefined).finally(() => { sessionIndexRequest.current = undefined; });
+    }).catch(() => undefined).finally(() => { sessionIndexRequest.current = undefined; if (sessionIndexDirty.current) void syncSessionIndex(); });
     return sessionIndexRequest.current;
   };
   createDependencyEffect(() => {
@@ -257,11 +260,6 @@ export default function App() {
   createDependencyEffect(() => {
     const capturedRuntimePool = runtimePool(); const capturedView = view(); const capturedTransport = transport();
  capturedRuntimePool.activate(capturedView === "chat" ? capturedTransport : undefined); }, () => [runtimePool(), transport(), view()]);
-  createDependencyEffect(() => { const capturedConnected = connected(); const capturedSettings = settings();
-    if (!capturedConnected || !capturedSettings) return;
-    const interval = window.setInterval(() => void syncSessionIndex(), (capturedSettings)!.hosts.length ? 5000 : 1500);
-    return () => window.clearInterval(interval);
-  }, () => [connected(), settings(), syncSessionIndex]);
   const parseBranchCommand = (branchCommand: RegExpExecArray) => {
     const [, command, rawArgs = ""] = branchCommand;
     const args = rawArgs.trim().split(/\s+/).filter(Boolean);
