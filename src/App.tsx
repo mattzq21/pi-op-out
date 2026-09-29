@@ -1,5 +1,5 @@
 import { ConversationChangedError, isConversationChanged } from "./lib/conversationChanged"; import { chatSubmission, prepareChatWorktree, trackChatSubmission } from "./lib/newChatWorktree"; import { useAppKeyboard } from "./useAppKeyboard";
-import { createConversationViewKey, createTransportActivation, useWorkspaceDisconnect } from "./appTransportActivation";
+import { createConversationViewKey, createTransportActivation, useWorkspaceDisconnect } from "./appTransportActivation"; import { seedChatSelection } from "./lib/newChatSelection";
 import { createWorktreeActions } from "./appWorktrees";
 import { configureConversationRuntime, createComposerControls, inheritGroupControls, newChatAgent, openDraftSession, reassignTerminals, type ProjectControls } from "./appRuntime";
 import { Key, Rerun } from "@solid-primitives/keyed";
@@ -354,7 +354,7 @@ export default function App() {
   };
   const canStartNewSession = () => !newSessionPending.current && canLeaveSettings();
   const newSessionTarget = (clearProject: boolean, group?: SessionGroup) => ({ hostId: group ? group.hostId ?? "local" : activeHostIdRef.current, projectCwd: group ? group.cwd ?? undefined : clearProject ? undefined : selectedProjectCwd(activeCwd(), transport().isTemporaryChat()) });
-  const createSessionTransport = (cwd: string | undefined, hostId: string) => runtimePool().create(cwd ? { cwd, hostId } : { hostId });
+  const createSessionTransport = (cwd: string | undefined, hostId: string) => { const owner = runtimePool().create(cwd ? { cwd, hostId } : { hostId }); seedChatSelection(owner, cwd, hostId, [...sessions(), ...liveSessions()]); return owner; };
   const prepareNewSession = (owner: NativeTransport, hostId: string, cwd?: string) => cwd ? owner.validateProjectDirectory(cwd, hostId, true) : owner.prepareTemporaryChat(hostId);
   const assignNewSessionGroup = (owner: NativeTransport, group?: SessionGroup) => { if (group) pendingSessionGroups.current.set(owner, group); };
   const discardNewSessionDraft = (owner: NativeTransport, key: string) => {

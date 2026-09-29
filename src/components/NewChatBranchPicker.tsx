@@ -4,6 +4,7 @@ import { createDependencyEffect } from "../lib/solid";
 import { projectBranches, type ProjectBranches, type NativeTransport } from "../lib/nativeTransport";
 import { NewChatWorktreePicker } from "./NewChatWorktreePicker";
 import { BranchPickerDialog } from "./BranchPickerDialog";
+import { initialChatSelection } from "../lib/newChatSelection";
 import { chatSubmission, registeredWorktreePreparation, registerWorktreePreparation } from "../lib/newChatWorktree";
 
 export function NewChatBranchPicker(props: { transport?: NativeTransport; cwd: string; hostId: string; disabled?: boolean; onSelect: (path: string) => Promise<void> }) {
@@ -22,7 +23,8 @@ export function NewChatBranchPicker(props: { transport?: NativeTransport; cwd: s
     const selection = chatSubmission(props.transport)?.selection;
     if (selection) { setListing(selection.listing); setBranchPickingEnabled(selection.createNew); return; }
     let cancelled = false;
-    setListing(undefined); setError(undefined); setBranchPickingEnabled(false); setOpen(false);
+    const initial = initialChatSelection(props.transport);
+    setListing(initial?.listing); setError(undefined); setBranchPickingEnabled(initial?.createNew ?? false); setOpen(false);
     listingRequest = projectBranches(props.cwd, props.hostId).then((value) => { if (!cancelled) setListing(value); }).catch((reason) => { if (!cancelled) setError(String(reason)); throw reason; });
     void listingRequest.catch(() => undefined);
     return () => { cancelled = true; };
