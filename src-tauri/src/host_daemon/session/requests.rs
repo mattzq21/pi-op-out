@@ -91,21 +91,35 @@ impl Session {
 
     async fn collect_tool_payload(&self, command: &Value) -> Result<Value> {
         let id = text(command, "toolCallId");
+        let revision = self.state().tool_payload_revision.to_string();
+        if let Some(payload) = self.tool_payloads.get(&self.epoch, &revision, &id) {
+            return payload.page(command);
+        }
+        let payload = Arc::new(ToolPayload::new(self.tool_payload_message(&id).await?)?);
+        let page = payload.page(command)?;
+        if self.state().tool_payload_revision.to_string() == revision {
+            self.tool_payloads.insert(&self.epoch, &revision, &id, payload);
+        }
+        Ok(page)
+    }
+
+    async fn tool_payload_message(&self, id: &str) -> Result<Option<Value>> {
         let live = self
             .state()
             .tools
             .iter()
-            .find(|(key, _)| key == &id)
+            .find(|(key, _)| key == id)
             .map(|(_, value)| value.clone());
         if let Some(live) = live {
             let mut result = live["partialResult"].as_object().cloned().map(Value::Object).unwrap_or(json!({}));
             if let Some(args) = live.get("args") {
                 result["toolInput"] = args.clone();
             }
-            return tool_payload_page(Some(result), command);
+            return Ok(Some(result));
         }
         let history = self.raw(json!({"type":"get_entries"})).await?;
-        tool_payload_page(saved_tool_payload(&array(&history, "entries"), &id), command)
+        let entries = history["entries"].as_array().map(Vec::as_slice).unwrap_or_default();
+        Ok(saved_tool_payload(entries, id))
     }
 
     async fn collect_snapshot(&self) -> Result<Value> {

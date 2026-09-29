@@ -9,6 +9,7 @@ mod providers;
 mod queue;
 mod services;
 mod session;
+mod tool_payload;
 mod worker;
 
 use futures_util::FutureExt;

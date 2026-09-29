@@ -1,6 +1,5 @@
-use super::protocol::{array, kind, Result};
+use super::protocol::{array, kind};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
 
@@ -169,52 +168,6 @@ pub(super) fn saved_tool_payload(entries: &[Value], id: &str) -> Option<Value> {
         result["toolInput"] = input;
     }
     Some(result)
-}
-
-pub(super) fn tool_payload_page(message: Option<Value>, command: &Value) -> Result<Value> {
-    let message = message.ok_or("Tool input and output are not available yet")?;
-    let mut payload = json!({"content":message.get("content").filter(|item| !item.is_null()).cloned().unwrap_or(json!(""))});
-    for key in ["details", "toolInput"] {
-        if let Some(value) = message.get(key) {
-            payload[key] = value.clone();
-        }
-    }
-    let serialized = payload.to_string();
-    let revision = format!("{:x}", Sha256::digest(serialized.as_bytes()));
-    if command["revision"].as_str().is_some_and(|expected| expected != revision) {
-        return Err("Tool payload changed; reopen it to reload".into());
-    }
-    let offset = command
-        .get("offset")
-        .filter(|value| !value.is_null())
-        .map(|value| value.as_u64().ok_or("Invalid output offset"))
-        .transpose()?
-        .unwrap_or(0);
-    let length = serialized.encode_utf16().count();
-    if offset > length as u64 {
-        return Err("Invalid output offset".into());
-    }
-    let chunk = payload_chunk(&serialized, offset as usize)?;
-    Ok(json!({"revision":revision,"length":length,"chunk":chunk}))
-}
-
-fn payload_chunk(serialized: &str, offset: usize) -> Result<String> {
-    let mut position = 0;
-    let mut chunk = String::new();
-    for ch in serialized.chars() {
-        let next = position + ch.len_utf16();
-        if position < offset && next > offset {
-            return Err("Invalid output offset".into());
-        }
-        if position >= offset {
-            if next > offset + 524288 {
-                break;
-            }
-            chunk.push(ch);
-        }
-        position = next;
-    }
-    Ok(chunk)
 }
 
 pub(super) fn assistant_delta(message: &Value, event: &Value) -> Value {

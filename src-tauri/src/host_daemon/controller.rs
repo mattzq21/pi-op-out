@@ -3,8 +3,9 @@ mod requests;
 
 use super::{
     ownership::{ownership_error, ConversationOwnership, Guard, Revocation},
-    payload::{client_payload, saved_tool_payload, tool_payload_page},
-    protocol::{array, expand_home, flag, kind, text, LaunchSpec, Result, SessionLaunch},
+    payload::{client_payload, saved_tool_payload},
+    tool_payload::{ToolPayload, ToolPayloadCache},
+    protocol::{expand_home, flag, kind, text, LaunchSpec, Result, SessionLaunch},
     session::{Session, SessionHost},
 };
 use futures_util::future::BoxFuture;
@@ -55,6 +56,7 @@ pub(super) struct Host {
     pub services: Arc<dyn Services>,
     output: std::sync::mpsc::Sender<Value>,
     weak: Weak<Self>,
+    tool_payloads: Arc<ToolPayloadCache>,
 }
 
 struct Callbacks(Weak<Host>);
@@ -163,6 +165,7 @@ impl Host {
             services,
             output,
             weak: weak.clone(),
+            tool_payloads: Arc::new(ToolPayloadCache::default()),
         });
         let ownership = ConversationOwnership::new(&host.home, storage, Arc::new(Callbacks(Arc::downgrade(&host)))).await?;
         let _ = host.ownership.set(ownership);
@@ -198,7 +201,7 @@ impl Host {
     pub fn spawn_session(&self, launch: SessionLaunch) -> Result<Arc<Session>> {
         let key = launch.key.clone();
         let pending = self.registry().pending.remove(&key).unwrap_or_default();
-        let session = match Session::spawn(launch, pending.clone(), Arc::new(Callbacks(self.weak.clone())), &self.home) {
+        let session = match Session::spawn(launch, pending.clone(), Arc::new(Callbacks(self.weak.clone())), &self.home, self.tool_payloads.clone()) {
             Ok(session) => session,
             Err(error) => {
                 if !pending.is_empty() {
@@ -416,17 +419,32 @@ impl Host {
         if kind(command) == "get_session_revision" {
             return self.ownership().revision(&target.id, target.path.as_deref());
         }
+        if kind(command) == "get_tool_payload" {
+            return self.read_saved_tool_payload(target, command);
+        }
         let snapshot = self.ownership().snapshot(&target.id, target.path.as_deref())?;
         match kind(command) {
             "get_snapshot" => Ok(snapshot),
             "get_entries" => Ok(snapshot["history"].clone()),
             "get_state" => Ok(snapshot["state"].clone()),
             "get_session_stats" => Ok(json!({"contextUsage":snapshot["state"]["contextUsage"]})),
-            _ => tool_payload_page(
-                saved_tool_payload(&array(&snapshot["history"], "entries"), &text(command, "toolCallId")),
-                command,
-            ),
+            _ => Err("Unsupported saved conversation command".into()),
         }
+    }
+
+    fn read_saved_tool_payload(&self, target: &ReadonlyView, command: &Value) -> Result<Value> {
+        let scope = format!("saved:{}", target.id);
+        let id = text(command, "toolCallId");
+        let revision = self.ownership().revision(&target.id, target.path.as_deref())?;
+        if let Some(payload) = self.tool_payloads.get(&scope, &text(&revision, "revision"), &id) {
+            return payload.page(command);
+        }
+        let snapshot = self.ownership().snapshot(&target.id, target.path.as_deref())?;
+        let entries = snapshot["history"]["entries"].as_array().map(Vec::as_slice).unwrap_or_default();
+        let payload = Arc::new(ToolPayload::new(saved_tool_payload(entries, &id))?);
+        let page = payload.page(command)?;
+        self.tool_payloads.insert(&scope, &text(&snapshot, "revision"), &id, payload);
+        Ok(page)
     }
 
     async fn session_command(self: &Arc<Self>, session: Arc<Session>, runtime: &str, command: Value) -> Result<Value> {

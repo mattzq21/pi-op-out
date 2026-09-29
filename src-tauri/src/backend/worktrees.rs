@@ -178,6 +178,7 @@ pub(super) fn local_worktree_is_registered(root: &Path, target: &Path) -> Result
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 pub(super) fn create_project_worktree(app: AppHandle, cwd: String, name: String, host_id: Option<String>) -> Result<GitWorktree, String> {
+    let _invalidate = app.state::<SessionIndexRuntime>().projects.invalidate_after(host_id.as_deref().unwrap_or("local"));
     let settings = load_app_settings(app)?;
     let host_id = host_id.as_deref().unwrap_or("local");
     let host = if host_id == "local" { None } else { Some(remote_host(&settings, host_id)?) };
@@ -255,6 +256,7 @@ fn remote_worktree_root(cwd: &str, host: &RemoteHost) -> Result<String, String> 
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 pub(super) fn create_git_worktree(app: AppHandle, cwd: String, name: String, host_id: Option<String>) -> Result<GitWorktree, String> {
+    let _invalidate = app.state::<SessionIndexRuntime>().projects.invalidate_after(host_id.as_deref().unwrap_or("local"));
     let name = worktree_suffix(&name)?;
     let host_id = host_id.as_deref().unwrap_or("local");
     if host_id != "local" {
@@ -485,6 +487,7 @@ pub(super) fn validated_removal_target(app: &AppHandle, settings: &AppSettings, 
 }
 
 pub(super) fn remove_git_worktree_cancellable(app: AppHandle, cwd: String, host_id: Option<String>, delete_branch: bool, cancelled: &AtomicBool) -> Result<GitWorktreeRemoval, String> {
+    let _invalidate = app.state::<SessionIndexRuntime>().projects.invalidate_after(host_id.as_deref().unwrap_or("local"));
     let host_id = host_id.unwrap_or_else(|| "local".into());
     let settings = load_app_settings(app.clone())?;
     let runtime = app.state::<PiRuntime>();
