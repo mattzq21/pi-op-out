@@ -1,4 +1,4 @@
-import { ConversationChangedError, isConversationChanged } from "./lib/conversationChanged"; import { chatSubmission, prepareChatWorktree, trackChatSubmission } from "./lib/newChatWorktree"; import { useAppKeyboard } from "./useAppKeyboard";
+import { ConversationChangedError, isConversationChanged } from "./lib/conversationChanged"; import { chatSubmission, prepareChatWorktree } from "./lib/newChatWorktree"; import { useAppKeyboard } from "./useAppKeyboard";
 import { createConversationViewKey, createTransportActivation, useWorkspaceDisconnect } from "./appTransportActivation"; import { seedChatSelection } from "./lib/newChatSelection";
 import { createWorktreeActions } from "./appWorktrees";
 import { configureConversationRuntime, createComposerControls, inheritGroupControls, newChatAgent, openDraftSession, reassignTerminals, type ProjectControls } from "./appRuntime";
@@ -282,7 +282,7 @@ export default function App() {
     await createWorktree(target, args.join(" "));
     return true;
   };
-  const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => trackChatSubmission(transport(), text, images, async () => { const capturedTransport = await prepareChatWorktree(transport(), async (cwd, host, onActivate) => { const group = pendingSessionGroups.current.get(transport()); await openProject(cwd, host, true, onActivate); if (group) pendingSessionGroups.current.set(transport(), group); }, transport, connected, error);
+  const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => { const capturedTransport = await prepareChatWorktree(transport(), async (cwd, host, onActivate) => { const group = pendingSessionGroups.current.get(transport()); await openProject(cwd, host, true, onActivate); if (group) pendingSessionGroups.current.set(transport(), group); }, transport, connected, error);
     if (!connectionReadyRef.current) throw new Error("piop is still connecting");
     const ownerTransport = capturedTransport;
     const imagePayload = images.length ? { images } : {};
@@ -296,7 +296,7 @@ export default function App() {
     await capturedTransport.command({ type: "prompt", message: text, ...imagePayload });
     return true;
     } catch (reason) { addNotice({ title: "Could not send message", message: reason instanceof Error ? reason.message : String(reason) }); throw reason; }
-  });
+  };
   const respondToBtw = (requestId: string, response: { value?: string; cancelled?: boolean }) => {
     const pending = pendingBtwRequest.current; if (!pending || pending.id !== requestId) return;
     pendingBtwRequest.current = undefined;

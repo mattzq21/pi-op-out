@@ -1,26 +1,30 @@
 import { createEffect, createRoot, createSignal, onCleanup, type Accessor } from "solid-js";
 import type { NativeTransport, ProjectBranches } from "./nativeTransport";
 import type { ChatMessage, ImageAttachment } from "../types";
+import { textOf } from "./content";
 
-type Submission = { owner: NativeTransport; message: ChatMessage; status: string; selection?: { listing: ProjectBranches; createNew: boolean } };
+type Submission = { owner: NativeTransport; message: ChatMessage; previousUserIds: Set<string>; status: string; selection?: { listing: ProjectBranches; createNew: boolean } };
 const [submission, setSubmission] = createSignal<Submission>();
 export const chatSubmission = (owner?: NativeTransport) => submission()?.owner === owner ? submission() : undefined;
 export function preserveChatSelection(owner: NativeTransport, listing: ProjectBranches, createNew: boolean) {
   setSubmission((current) => current?.owner === owner ? { ...current, selection: { listing, createNew } } : current);
 }
-export function acknowledgeChatSubmission(owner?: NativeTransport) {
-  setSubmission((current) => current?.owner === owner ? undefined : current);
+export function acknowledgeChatSubmission(owner: NativeTransport | undefined, messages: ChatMessage[]) {
+  const current = chatSubmission(owner);
+  if (!current) return;
+  const received = messages.some(message => message.role === "user" && !current.previousUserIds.has(message.id) && textOf(message.content) === textOf(current.message.content));
+  if (received) setSubmission(value => value === current ? undefined : value);
 }
 export function updateChatPreparation(owner: NativeTransport, status: string) {
   setSubmission((current) => current?.owner === owner ? { ...current, status } : current);
 }
-export async function trackChatSubmission<T>(owner: NativeTransport, text: string, images: ImageAttachment[], work: () => Promise<T>) {
+export async function trackChatSubmission<T>(owner: NativeTransport, text: string, images: ImageAttachment[], previousMessages: ChatMessage[], queued: boolean, work: () => Promise<T>) {
   const message: ChatMessage = { id: crypto.randomUUID(), role: "user", content: [{ type: "text", text }, ...images] };
-  setSubmission({ owner, message, status: "Preparing conversation…" });
+  setSubmission({ owner, message, previousUserIds: new Set(previousMessages.filter(item => item.role === "user").map(item => item.id)), status: "Sending message…" });
   let awaitingMessage = false;
   try {
     const result = await work();
-    awaitingMessage = result !== false && !text.trimStart().startsWith("/");
+    awaitingMessage = result !== false && !queued && !text.trimStart().startsWith("/");
     return result;
   } finally {
     if (!awaitingMessage) setSubmission((current) => current?.message === message ? undefined : current);

@@ -1,6 +1,6 @@
-import { acknowledgeChatSubmission, chatSubmission } from "../lib/newChatWorktree";
+import { acknowledgeChatSubmission, chatSubmission, trackChatSubmission } from "../lib/newChatWorktree";
 import { Key, Rerun } from "@solid-primitives/keyed";
-import { createComputed, createEffect, createMemo, createSignal, Index, Show } from "solid-js";
+import { createComputed, createMemo, createSignal, Index, Show } from "solid-js";
 import type { NativeTransport } from "../lib/nativeTransport";
 import { createDependencyEffect, createRef, cssPixels, type StateUpdate } from "../lib/solid";
 
@@ -64,15 +64,17 @@ export function ChatView(props: Props) {
   const turns = createMemo<ConversationGroup[]>(previous => groupTurns(messages(), previous), []);
   const sessionUsage = createMemo(() => props.messages.reduce((total, message) => ({ input: total.input + (message.usage?.input ?? 0), cacheRead: total.cacheRead + (message.usage?.cacheRead ?? 0), cacheWrite: total.cacheWrite + (message.usage?.cacheWrite ?? 0) }), { input: 0, cacheRead: 0, cacheWrite: 0 }));
   const sessionCache = createMemo(() => (cacheHitStats(sessionUsage())));
-  const pendingSubmission = createMemo(() => messages().length === 0 ? chatSubmission(props.transport) : undefined);
-  createEffect(() => { if (chatSubmission(props.transport) && messages().some(message => message.role === "user")) acknowledgeChatSubmission(props.transport); });
+  const pendingSubmission = createMemo(() => chatSubmission(props.transport));
+  createComputed(() => acknowledgeChatSubmission(props.transport, messages()));
   const [submittedMessage, setSubmittedMessage] = createSignal<ChatMessage>();
   const mcpPendingMessage = () => pendingSubmission()?.message ?? submittedMessage();
   const send: Props["onSend"] = async (text, behavior, images = []) => { const capturedOwnsConversation = ownsConversation(); const capturedControlsDisabled0 = props.controlsDisabled; const capturedOnSend1 = props.onSend;
     if (!capturedOwnsConversation || capturedControlsDisabled0) return false;
     const message: ChatMessage = { id: crypto.randomUUID(), role: "user", content: [{ type: "text", text }, ...images] };
     setSubmittedMessage(message);
-    try { return await capturedOnSend1(text, behavior, images); }
+    const owner = props.transport;
+    const submit = () => Promise.resolve(capturedOnSend1(text, behavior, images));
+    try { return await (owner ? trackChatSubmission(owner, text, images, messages(), Boolean(behavior), submit) : submit()); }
     finally { setSubmittedMessage((current) => current?.id === message.id ? undefined : current); }
   };
   const actions = createRef({ onSend: send, onBranch: props.onBranch, onForkAndForget: props.onForkAndForget, onCreateWorktree: props.onCreateWorktree });
