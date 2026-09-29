@@ -320,7 +320,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const finalIndex = createMemo(() => (finalResponseIndex(componentProps.messages)));
   const finalThinking = createMemo(() => (finalIndex() >= 0 ? thinkingOf(componentProps.messages[finalIndex()].content) : ""));
   const intermediate = createMemo(() => (componentProps.messages.flatMap((message, index) => {
-    if (message.role === "user" || message.role === "system") return [];
+    if (message.role === "user" || (message.role === "system" && message.customType !== "compaction")) return [];
     if (index !== finalIndex()) return [message];
     if (!finalThinking()) return [];
     const { promptContext: _promptContext, ...reasoningMessage } = message;
@@ -349,7 +349,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     {renderWorkGroup()}
     {finalMessage() && <Message message={(finalMessage())!} turnCacheUsage={turnCacheUsage()} diff={changes()} debug={componentProps.debug} paused={componentProps.paused} onBranch={componentProps.onBranch} onForkAndForget={componentProps.onForkAndForget} onCreateWorktree={worktreeResponse()} retrying={retrying()} onRetry={retryPrompt() ? () => { if (retryingRef.current) return; retryingRef.current = true; setRetrying(true); setRetryError(undefined); void Promise.resolve(componentProps.onRetry((retryPrompt())!, undefined, retryImages())).catch((reason) => setRetryError(reason instanceof Error ? reason.message : String(reason))).finally(() => { retryingRef.current = false; setRetrying(false); }); } : undefined} />}
     {retryError() && <div class="message-failure retry-error" role="alert">Retry failed: {(retryError())!}</div>}
-    <MessageList messages={componentProps.messages.filter(message => message.role === "system")} expanded={false} />
+    <MessageList messages={componentProps.messages.filter(message => message.role === "system" && message.customType !== "compaction")} expanded={false} />
   </>}>
     <div class="active-work-content"><MessageList messages={componentProps.messages.filter(message => message.role !== "user")} expanded compact={false} debug={componentProps.debug} paused={componentProps.paused} /></div>
   </Show>);

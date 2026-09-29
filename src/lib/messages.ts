@@ -3,7 +3,7 @@ import type { ChatMessage, FileChangeSnapshot, PromptContextInfo } from "../type
 const visibleUserContent = (content: unknown) => content;
 const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "pi-desktop-catch-up"]);
 
-export type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number }; customType?: string; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string };
+export type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number }; customType?: string; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string; tokensBefore?: number };
 
 function validFileChanges(data: Partial<FileChangeSnapshot> | undefined): data is FileChangeSnapshot {
   return Boolean(data && typeof data.cwd === "string" && typeof data.patch === "string" && Array.isArray(data.toolCallIds) && Array.isArray(data.paths));
@@ -107,7 +107,12 @@ function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, resumeMarkers
   return messages;
 }
 
+function compactionMessage(entry: PiEntry): ChatMessage {
+  return { id: entry.id, entryId: entry.id, role: "system", customType: "compaction", timestamp: entry.timestamp ? Date.parse(entry.timestamp) : undefined, content: typeof entry.tokensBefore === "number" ? `Context compacted · ${entry.tokensBefore.toLocaleString()} tokens before compaction` : "Context compacted" };
+}
+
 function visibleEntryMessage(entry: PiEntry, resumeMarkers: Set<string>): ChatMessage | undefined {
+  if (entry.type === "compaction") return compactionMessage(entry);
   if (entry.type === "custom_message" && entry.customType !== "pi-desktop-btw" && entry.display !== false) {
     return normalizeMessage({ role: "custom", customType: entry.customType, content: entry.content ?? "", timestamp: entry.timestamp }, entry.id, entry.timestamp);
   }
