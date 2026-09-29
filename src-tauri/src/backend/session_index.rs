@@ -1,3 +1,24 @@
+use crate::platform::{AppHandle, State};
+use serde_json::Value;
+use std::{fs, thread};
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::{Arc, Mutex, mpsc};
+use std::time::SystemTime;
+use super::{CachedSession, DirectoryListing, MAX_GIT_PATH_LIST_BYTES, MAX_SESSION_INDEX_BATCH_BYTES, ProjectKind, STORAGE_DIRECTORY, SessionIndexRuntime, SessionSummary, TemporaryChat, node_command, peers};
+use super::environment::home_dir;
+use super::pi_launch::{remote_directory_path, remote_host, remote_login_command, ssh};
+use super::settings::load_app_settings;
+use super::settings_types::{MAX_REMOTE_HOSTS, RemoteHost};
+use super::worktree_setup::{run_limited, shell_quote};
+use uuid::Uuid;
+use walkdir::WalkDir;
+#[cfg(feature = "desktop")]
+use super::worktree_setup::ensure_desktop_sessions_dir;
+#[cfg(feature = "desktop")]
+use tauri::Manager;
+
 fn unix_timestamp(time: SystemTime) -> u64 { time.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs() }
 
 fn inspect_session_projects(sessions: &mut [SessionSummary], host: Option<&RemoteHost>) -> Result<(), String> {
@@ -19,7 +40,7 @@ fn project_kind_from_flag(flag: &[u8]) -> Option<ProjectKind> {
     match flag { b"no-repo" => Some(ProjectKind::NoRepo), b"main" => Some(ProjectKind::Main), b"worktree" => Some(ProjectKind::Worktree), _ => None }
 }
 
-fn inspect_session_projects_with(sessions: &mut [SessionSummary], mut command: impl FnMut(&str, &[String]) -> Command) -> Result<(), String> {
+pub(super) fn inspect_session_projects_with(sessions: &mut [SessionSummary], mut command: impl FnMut(&str, &[String]) -> Command) -> Result<(), String> {
     let directories = sessions.iter().map(|session| session.cwd.clone()).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>();
     let script = r#"for path do
         if [ ! -d "$path" ]; then printf 'missing\000\000'; continue; fi
@@ -48,7 +69,7 @@ fn inspect_session_projects_with(sessions: &mut [SessionSummary], mut command: i
     Ok(())
 }
 
-fn read_session_summaries(candidates: &[(String, String, u64, u64)], host: Option<&RemoteHost>) -> Result<HashMap<String, CachedSession>, String> {
+pub(super) fn read_session_summaries(candidates: &[(String, String, u64, u64)], host: Option<&RemoteHost>) -> Result<HashMap<String, CachedSession>, String> {
     read_session_summaries_with(candidates, host, |script, batch| {
         if let Some(host) = host {
             let mut command = ssh(host); command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), batch.iter().map(|item| shell_quote(&item.0)).collect::<Vec<_>>().join(" ")))); command
@@ -56,7 +77,7 @@ fn read_session_summaries(candidates: &[(String, String, u64, u64)], host: Optio
     })
 }
 
-fn read_session_summaries_with(candidates: &[(String, String, u64, u64)], host: Option<&RemoteHost>,
+pub(super) fn read_session_summaries_with(candidates: &[(String, String, u64, u64)], host: Option<&RemoteHost>,
     mut command: impl FnMut(&str, &[(String, String, u64, u64)]) -> Command,
 ) -> Result<HashMap<String, CachedSession>, String> {
     let script = include_str!("../../resources/index-sessions.cjs");
@@ -85,7 +106,7 @@ fn read_session_summaries_with(candidates: &[(String, String, u64, u64)], host: 
     Ok(result)
 }
 
-fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<SessionSummary>, String> {
+pub(super) fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<SessionSummary>, String> {
     let mut cache = index.local.lock().map_err(|_| "Local session index lock was poisoned")?;
     let mut seen = HashSet::new(); let mut changed = Vec::new();
     for entry in WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok).filter(|entry| entry.file_type().is_file() && entry.path().extension().and_then(|value| value.to_str()) == Some("jsonl")) {
@@ -100,21 +121,21 @@ fn list_local_sessions(index: &SessionIndexRuntime, root: &Path) -> Result<Vec<S
     inspect_session_projects(&mut sessions, None)?; Ok(sessions)
 }
 
-fn list_remote_sessions(index: &SessionIndexRuntime, host: &RemoteHost) -> Result<Vec<SessionSummary>, String> {
+pub(super) fn list_remote_sessions(index: &SessionIndexRuntime, host: &RemoteHost) -> Result<Vec<SessionSummary>, String> {
     let metadata = query_remote_session_metadata(|script| { let mut command = ssh(host); command.arg(script); command })?;
     update_remote_session_index(index, host, &metadata,
         |changed| read_session_summaries(changed, Some(host)),
         |sessions| inspect_session_projects(sessions, Some(host)))
 }
 
-fn query_remote_session_metadata(command: impl FnOnce(&str) -> Command) -> Result<Vec<u8>, String> {
+pub(super) fn query_remote_session_metadata(command: impl FnOnce(&str) -> Command) -> Result<Vec<u8>, String> {
     let mut command = command(&format!(r#"mkdir -p "$HOME/{STORAGE_DIRECTORY}/sessions" && find "$HOME/{STORAGE_DIRECTORY}/sessions" -type f -name '*.jsonl' -printf '%p\000%T@\000%s\000' 2>/dev/null"#));
     let output = run_limited(&mut command, MAX_SESSION_INDEX_BATCH_BYTES, "Could not list remote sessions")?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).into_owned()); }
     Ok(output.stdout)
 }
 
-fn update_remote_session_index(
+pub(super) fn update_remote_session_index(
     index: &SessionIndexRuntime, host: &RemoteHost, metadata: &[u8],
     read: impl FnOnce(&[(String, String, u64, u64)]) -> Result<HashMap<String, CachedSession>, String>,
     inspect: impl FnOnce(&mut [SessionSummary]) -> Result<(), String>,
@@ -133,7 +154,7 @@ fn update_remote_session_index(
     index.remote.lock().map_err(|_| "Remote session index lock was poisoned")?.insert(host.id.clone(), next); Ok(sessions)
 }
 
-fn parse_remote_session_metadata(output: &[u8]) -> Vec<(String, String, u64, u64)> {
+pub(super) fn parse_remote_session_metadata(output: &[u8]) -> Vec<(String, String, u64, u64)> {
     let fields = output.split(|byte| *byte == 0).collect::<Vec<_>>();
     fields.chunks_exact(3).filter_map(|frame| {
         let path = String::from_utf8_lossy(frame[0]).into_owned(); let modified = String::from_utf8_lossy(frame[1]); let size = String::from_utf8_lossy(frame[2]).parse().ok()?;
@@ -142,7 +163,7 @@ fn parse_remote_session_metadata(output: &[u8]) -> Vec<(String, String, u64, u64
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn home_directory(app: AppHandle, host_id: String) -> Result<String, String> {
+pub(super) fn home_directory(app: AppHandle, host_id: String) -> Result<String, String> {
     if host_id == "local" { let home = home_dir()?; return Ok(home.canonicalize().unwrap_or(home).to_string_lossy().into_owned()); }
     let settings = load_app_settings(app)?; let host = remote_host(&settings, &host_id)?;
     let output = ssh(host).arg("cd \"$HOME\" && pwd -P").output().map_err(|error| format!("Could not resolve home on {}: {error}", host.name))?;
@@ -151,13 +172,13 @@ fn home_directory(app: AppHandle, host_id: String) -> Result<String, String> {
     (!path.is_empty()).then_some(path).ok_or_else(|| "Remote home directory was unavailable".into())
 }
 
-fn create_local_temporary_chat(home: &Path, session_id: &str) -> Result<PathBuf, String> {
+pub(super) fn create_local_temporary_chat(home: &Path, session_id: &str) -> Result<PathBuf, String> {
     let cwd = home.join(STORAGE_DIRECTORY).join("tmp").join(session_id);
     fs::create_dir_all(&cwd).map_err(|error| format!("Could not create temporary chat directory: {error}"))?;
     Ok(cwd)
 }
 
-fn temporary_chat_id(path: &str) -> Option<&str> {
+pub(super) fn temporary_chat_id(path: &str) -> Option<&str> {
     let value = Path::new(path); let id = value.file_name()?.to_str()?;
     if Uuid::parse_str(id).ok()?.to_string() != id { return None; }
     let parent = value.parent()?;
@@ -165,7 +186,7 @@ fn temporary_chat_id(path: &str) -> Option<&str> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn remove_temporary_chat(app: AppHandle, path: String, host_id: String) -> Result<(), String> {
+pub(super) fn remove_temporary_chat(app: AppHandle, path: String, host_id: String) -> Result<(), String> {
     if host_id == "local" {
         return remove_local_temporary_chat(&home_dir()?, &path);
     }
@@ -173,7 +194,7 @@ fn remove_temporary_chat(app: AppHandle, path: String, host_id: String) -> Resul
     remove_remote_temporary_chat(&path, &host.name, |script| { let mut command = ssh(host); command.arg(script); command })
 }
 
-fn remove_remote_temporary_chat(path: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
+pub(super) fn remove_remote_temporary_chat(path: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
     temporary_chat_id(path).ok_or("Refusing to remove a directory not created as a temporary chat")?;
     let script = format!("candidate={}; root=\"$HOME/{STORAGE_DIRECTORY}/tmp\"; [ \"$(dirname -- \"$candidate\")\" = \"$root\" ] && [ ! -L \"$HOME/{STORAGE_DIRECTORY}\" ] && [ ! -L \"$root\" ] && [ ! -L \"$candidate\" ] && {{ [ ! -e \"$candidate\" ] || {{ [ -d \"$candidate\" ] && node -e 'try {{ require(\"node:fs\").rmdirSync(process.argv[1]); }} catch (error) {{ if (![\"ENOTEMPTY\", \"EEXIST\", \"ENOENT\"].includes(error.code)) throw error; }}' \"$candidate\"; }}; }}", shell_quote(path));
     let output = command(script).output().map_err(|error| format!("Could not remove temporary chat directory on {host_name}: {error}"))?;
@@ -190,7 +211,7 @@ fn temporary_chat_directory_exists(directory: &Path) -> Result<bool, String> {
     }
 }
 
-fn remove_local_temporary_chat(home: &Path, path: &str) -> Result<(), String> {
+pub(super) fn remove_local_temporary_chat(home: &Path, path: &str) -> Result<(), String> {
     temporary_chat_id(path).ok_or("Refusing to remove a directory not created as a temporary chat")?;
     let expected_root = home.join(STORAGE_DIRECTORY).join("tmp");
     let candidate = PathBuf::from(path);
@@ -206,7 +227,7 @@ fn remove_local_temporary_chat(home: &Path, path: &str) -> Result<(), String> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn validate_project_directory(app: AppHandle, path: String, host_id: String) -> Result<String, String> {
+pub(super) fn validate_project_directory(app: AppHandle, path: String, host_id: String) -> Result<String, String> {
     if path.trim().is_empty() { return Err("Path can't be empty".into()); }
     if host_id == "local" {
         return validate_local_project_directory(path);
@@ -215,7 +236,7 @@ fn validate_project_directory(app: AppHandle, path: String, host_id: String) -> 
     validate_remote_project_directory(path, &host.name, |script| { let mut command = ssh(host); command.arg(script); command })
 }
 
-fn validate_local_project_directory(path: String) -> Result<String, String> {
+pub(super) fn validate_local_project_directory(path: String) -> Result<String, String> {
     if path.trim().is_empty() { return Err("Path can't be empty".into()); }
     let metadata = fs::metadata(&path).map_err(|error| format!("Could not open project directory: {error}"))?;
     if !metadata.is_dir() { return Err("Project path is not a directory".into()); }
@@ -230,7 +251,7 @@ fn validate_local_project_directory(path: String) -> Result<String, String> {
     Ok(path)
 }
 
-fn validate_remote_project_directory(path: String, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<String, String> {
+pub(super) fn validate_remote_project_directory(path: String, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<String, String> {
     if path.trim().is_empty() { return Err("Path can't be empty".into()); }
     let script = format!("test -d {0} && cd {0} || exit 1; candidate=$(pwd -P); for storage in \"$HOME/.piop\" \"$HOME/.piop-dev\"; do [ ! -d \"$storage\" ] || storage=$(cd \"$storage\" && pwd -P); case \"$candidate\" in \"$storage\"|\"$storage\"/*) echo 'Piop storage directories cannot be selected as projects' >&2; exit 1;; esac; done; printf '%s\\n' \"$candidate\"", shell_quote(&path));
     let output = command(script).output().map_err(|error| format!("Could not validate project directory on {host_name}: {error}"))?;
@@ -239,7 +260,7 @@ fn validate_remote_project_directory(path: String, host_name: &str, command: imp
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn create_temporary_chat(app: AppHandle, host_id: String, e2e: Option<bool>) -> Result<TemporaryChat, String> {
+pub(super) fn create_temporary_chat(app: AppHandle, host_id: String, e2e: Option<bool>) -> Result<TemporaryChat, String> {
     let session_id = Uuid::new_v4().to_string();
     let cwd = if host_id == "local" {
         let cwd = create_local_temporary_chat(&home_dir()?, &session_id)?;
@@ -252,7 +273,7 @@ fn create_temporary_chat(app: AppHandle, host_id: String, e2e: Option<bool>) -> 
     Ok(TemporaryChat { cwd, session_id })
 }
 
-fn create_remote_temporary_chat(session_id: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<String, String> {
+pub(super) fn create_remote_temporary_chat(session_id: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<String, String> {
     Uuid::parse_str(session_id).map_err(|_| "Invalid temporary chat session ID")?;
     let remote = format!("mkdir -p \"$HOME/{STORAGE_DIRECTORY}/tmp/{session_id}\" && cd \"$HOME/{STORAGE_DIRECTORY}/tmp/{session_id}\" && pwd -P");
     let output = command(remote).output().map_err(|error| format!("Could not create temporary chat directory on {host_name}: {error}"))?;
@@ -263,7 +284,7 @@ fn create_remote_temporary_chat(session_id: &str, host_name: &str, command: impl
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn list_directories(app: AppHandle, host_id: String, path: Option<String>) -> Result<DirectoryListing, String> {
+pub(super) fn list_directories(app: AppHandle, host_id: String, path: Option<String>) -> Result<DirectoryListing, String> {
     if host_id == "local" {
         return list_local_directories(&home_dir()?, path.as_deref());
     }
@@ -272,7 +293,7 @@ fn list_directories(app: AppHandle, host_id: String, path: Option<String>) -> Re
     query_remote_directories(&mut command, &host.name)
 }
 
-fn list_local_directories(home: &Path, path: Option<&str>) -> Result<DirectoryListing, String> {
+pub(super) fn list_local_directories(home: &Path, path: Option<&str>) -> Result<DirectoryListing, String> {
     let requested = path.filter(|value| !value.trim().is_empty()).map(PathBuf::from).unwrap_or_else(|| home.to_path_buf());
     let current = requested.canonicalize().map_err(|error| format!("Could not browse {}: {error}", requested.display()))?;
     if !current.is_dir() { return Err(format!("{} is not a directory", current.display())); }
@@ -282,17 +303,17 @@ fn list_local_directories(home: &Path, path: Option<&str>) -> Result<DirectoryLi
     Ok(DirectoryListing { path: current.to_string_lossy().into_owned(), parent: current.parent().map(|parent| parent.to_string_lossy().into_owned()), directories })
 }
 
-fn remote_directory_listing_script(path: Option<&str>) -> String {
+pub(super) fn remote_directory_listing_script(path: Option<&str>) -> String {
     format!("cd {} && printf '%s\\000' \"$PWD\" && find . -mindepth 1 -maxdepth 1 -type d -printf '%f\\000'", remote_directory_path(path))
 }
 
-fn query_remote_directories(command: &mut Command, host_name: &str) -> Result<DirectoryListing, String> {
+pub(super) fn query_remote_directories(command: &mut Command, host_name: &str) -> Result<DirectoryListing, String> {
     let output = command.output().map_err(|error| format!("Could not browse {host_name}: {error}"))?;
     if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
     parse_remote_directories(&output.stdout)
 }
 
-fn parse_remote_directories(output: &[u8]) -> Result<DirectoryListing, String> {
+pub(super) fn parse_remote_directories(output: &[u8]) -> Result<DirectoryListing, String> {
     let mut parts = output.split(|byte| *byte == 0).filter(|part| !part.is_empty());
     let current = PathBuf::from(String::from_utf8_lossy(parts.next().ok_or("Remote directory was unavailable")?).into_owned());
     let mut directories: Vec<String> = parts.map(|name| current.join(String::from_utf8_lossy(name).as_ref()).to_string_lossy().into_owned()).collect();
@@ -301,17 +322,17 @@ fn parse_remote_directories(output: &[u8]) -> Result<DirectoryListing, String> {
 }
 
 #[cfg(not(feature = "desktop"))]
-fn collect_sessions(app: &AppHandle, index: &SessionIndexRuntime) -> Result<Vec<SessionSummary>, String> { peers::all_summaries(app, index) }
+pub(super) fn collect_sessions(app: &AppHandle, index: &SessionIndexRuntime) -> Result<Vec<SessionSummary>, String> { peers::all_summaries(app, index) }
 
 #[cfg(feature = "desktop")]
-fn collect_sessions(app: &AppHandle, index: &SessionIndexRuntime) -> Result<Vec<SessionSummary>, String> {
+pub(super) fn collect_sessions(app: &AppHandle, index: &SessionIndexRuntime) -> Result<Vec<SessionSummary>, String> {
     let home = home_dir()?; let root = ensure_desktop_sessions_dir(&home)?;
     let sessions = list_local_sessions(index, &root)?;
     let hosts = load_app_settings(app.clone())?.hosts;
     collect_host_sessions(sessions, hosts, |host| list_remote_sessions(index, host), session_groups::attach_assignments)
 }
 
-fn collect_host_sessions(
+pub(super) fn collect_host_sessions(
     mut sessions: Vec<SessionSummary>, hosts: Vec<RemoteHost>,
     list: impl Fn(&RemoteHost) -> Result<Vec<SessionSummary>, String> + Sync,
     assign: impl FnOnce(&mut [SessionSummary]) -> Result<(), String>,
@@ -336,4 +357,4 @@ fn collect_host_sessions(
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn list_sessions(app: AppHandle, index: State<SessionIndexRuntime>) -> Result<Vec<SessionSummary>, String> { collect_sessions(&app, &index) }
+pub(super) fn list_sessions(app: AppHandle, index: State<SessionIndexRuntime>) -> Result<Vec<SessionSummary>, String> { collect_sessions(&app, &index) }

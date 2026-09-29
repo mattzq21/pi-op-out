@@ -1,3 +1,13 @@
+use crate::platform::AppHandle;
+use std::thread;
+use std::sync::atomic::Ordering;
+use super::{BrokerRuntime, DEVELOPMENT, PiRuntime, TerminalRuntime, daemon_endpoint, daemon_stdio, dictation, mobile, peers, provider_auth, stop_message_worker, terminal_lookup};
+use super::broker::start_session_broker;
+use super::pi_launch::remove_ephemeral_session;
+use super::pi_runtime::{detach_pi_with, stop_terminals};
+#[cfg(feature = "desktop")]
+use tauri::Manager;
+
 #[cfg(not(feature = "desktop"))]
 async fn wait_for_desktop_exit() {
     if !DEVELOPMENT || !std::env::args().any(|argument| argument == "--parent-stdin") {
@@ -51,7 +61,7 @@ pub fn run_daemon() -> Result<(), String> {
     })
 }
 
-fn detach_owner(app: &AppHandle, owner: &str, discard_blank: bool) {
+pub(super) fn detach_owner(app: &AppHandle, owner: &str, discard_blank: bool) {
     #[cfg(not(feature = "desktop"))]
     peers::detach_owner(app, owner);
     let runtime = app.state::<PiRuntime>();

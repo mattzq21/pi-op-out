@@ -19,11 +19,10 @@ mod daemon;
 mod dictation;
 mod project_files;
 #[cfg(not(feature = "desktop"))]
-#[cfg(not(feature = "desktop"))]
 use session_groups::load_session_groups;
 use session_groups::change_session_groups;
 
-use serde::{de, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
@@ -31,13 +30,17 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, Command, ExitStatus, Stdio},
+    process::{Child, ChildStdin, Command, Stdio},
     sync::{mpsc, Arc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering}},
     thread,
     time::{Duration, Instant, SystemTime},
 };
-use portable_pty::{native_pty_system, Child as PtyChild, CommandBuilder, MasterPty, PtySize};
-use crate::platform::{AppHandle, State};
+use portable_pty::{Child as PtyChild, MasterPty};
+#[cfg(test)]
+use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+#[cfg(test)]
+use std::process::ExitStatus;
+use crate::platform::AppHandle;
 #[cfg(feature = "desktop")]
 use tauri::{Emitter, Manager};
 use uuid::Uuid;
@@ -115,7 +118,6 @@ struct SessionIndexRuntime {
 }
 
 const MAX_TERMINALS: usize = 8;
-const MAX_REMOTE_HOSTS: usize = 16;
 const BROKER_WORKERS: usize = 8;
 const BROKER_QUEUE_DEPTH: usize = 32;
 const BROKER_HEADER_BYTES: usize = 16 * 1024;
@@ -285,41 +287,6 @@ struct SessionSummary {
     host_name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RemoteHost {
-    id: String,
-    name: String,
-    target: String,
-    #[serde(default = "default_pi_path")]
-    pi_path: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CodexUsage {
-    remaining_percent: u8,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reset_at: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct OpencodeGoUsageWindow {
-    status: String,
-    remaining_percent: u8,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reset_at: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct OpencodeGoUsage {
-    rolling: OpencodeGoUsageWindow,
-    weekly: OpencodeGoUsageWindow,
-    monthly: OpencodeGoUsageWindow,
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DirectoryListing {
@@ -409,63 +376,144 @@ enum GitDiffSnapshot {
 
 type GitDiffSnapshots = HashMap<String, GitDiffSnapshot>;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AppSettings {
-    #[serde(default)]
-    worktree_setup_scripts: Vec<WorktreeSetupScript>,
-    #[serde(default = "default_agent")]
-    default_agent: String,
-    default_model: String,
-    #[serde(default)]
-    hidden_models: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    known_models: Option<Vec<String>>,
-    default_thinking: String,
-    #[serde(default)]
-    default_fast_mode: bool,
-    #[serde(default = "default_context_window_cap", deserialize_with = "deserialize_context_window_cap")]
-    context_window_cap: u64,
-    #[serde(default = "default_context_window_cap_enabled")]
-    context_window_cap_enabled: bool,
-    #[serde(default = "default_true")]
-    auto_retry: bool,
-    #[serde(default)]
-    debug_mode: bool,
-    #[serde(default = "default_keybindings")]
-    keybindings: HashMap<String, String>,
-    tools: Vec<Value>,
-    skills: Vec<Value>,
-    #[serde(default)]
-    hosts: Vec<RemoteHost>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct WorktreeSetupScript {
-    id: String, name: String, script: String, enabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    cleanup_script: Option<String>,
-    #[serde(default)]
-    project_path: Option<String>,
-    #[serde(default)]
-    host_id: Option<String>,
-}
-
 #[cfg(test)]
 mod tests;
 
-include!("backend/defaults_usage.rs");
-include!("backend/settings_storage.rs");
-include!("backend/extensions.rs");
-include!("backend/settings.rs");
-include!("backend/worktree_setup.rs");
-include!("backend/snapshot_capture.rs");
-include!("backend/worktrees.rs");
-include!("backend/git_diffs.rs");
-include!("backend/pi_launch.rs");
-include!("backend/pi_runtime.rs");
-include!("backend/session_index.rs");
-include!("backend/archives.rs");
-include!("backend/broker.rs");
-include!("backend/lifecycle.rs");
+#[path = "backend/archives.rs"]
+mod archives;
+use archives::{archive_session, archived_session_file, delete_archived_session, delete_session, desktop_session_file};
+use archives::{failed_storage, inspect_storage, relocate_session, restore_archived_worktree, storage_report};
+#[cfg(test)]
+use archives::{archive_local_session, archive_remote_session, collect_storage_report, delete_session_files, local_archived_session_file_at};
+#[cfg(test)]
+use archives::{local_desktop_session_file_at, parse_storage_inventory, query_storage_inventory, relocate_local_session, relocate_remote_session};
+#[cfg(test)]
+use archives::{remote_session_file, run_session_deletion};
+#[path = "backend/broker.rs"]
+mod broker;
+#[cfg(test)]
+use broker::broker_response;
+#[cfg(test)]
+use broker::{agent_is_active, read_broker_line, resolve_agent, worktree_agents};
+#[path = "backend/environment.rs"]
+mod environment;
+use environment::{home_dir, pi_executable};
+#[cfg(test)]
+use environment::pi_executable_in;
+#[path = "backend/extensions.rs"]
+mod extensions;
+use extensions::runtime_settings;
+#[cfg(test)]
+use extensions::{prepare_btw_extension, prepare_codex_web_search_extension, prepare_context_window_cap_extension, prepare_defined_agents_extension, prepare_diff_watch_extension};
+#[cfg(test)]
+use extensions::{prepare_mcp_bridge, prepare_openai_cache_fork_extension, prepare_runtime_settings, prepare_session_broker, prepare_trace_reader};
+#[path = "backend/git_diffs.rs"]
+mod git_diffs;
+use git_diffs::{capture_git_tree, discard_git_tree, discard_git_tree_at_host, load_git_diff, load_git_diff_between_at_host};
+use git_diffs::{load_git_diffs, load_git_diffs_at_host, save_git_diffs, save_git_diffs_at_host};
+#[cfg(test)]
+use git_diffs::{discard_remote_git_tree, load_git_diff_at_host, load_local_git_diffs, load_remote_git_diff_between, load_remote_git_diff_with};
+#[cfg(test)]
+use git_diffs::{query_remote_git_diffs, query_remote_git_tree, remote_save_git_diffs_script, remote_session_sidecar_script, save_local_git_diffs};
+#[cfg(test)]
+use git_diffs::{valid_remote_snapshot, write_remote_git_diffs};
+#[path = "backend/keybindings.rs"]
+mod keybindings;
+#[cfg(test)]
+use keybindings::{canonical_shortcut, default_keybindings, migrate_keybindings, validate_keybindings};
+#[path = "backend/lifecycle.rs"]
+mod lifecycle;
+pub use lifecycle::run_daemon;
+use lifecycle::detach_owner;
+#[path = "backend/pi_launch.rs"]
+mod pi_launch;
+use pi_launch::{broker_environment, remote_host, remote_login_command, session_identity, ssh};
+use pi_launch::ssh_base;
+#[cfg(test)]
+use pi_launch::{claim_agent, create_local_ephemeral_fork, create_remote_ephemeral_fork, prepare_ephemeral_path, read_remote_session_header};
+#[cfg(test)]
+use pi_launch::{remote_directory_path, remote_pi_path, remove_ephemeral_session, stage_extension_script};
+#[path = "backend/pi_runtime.rs"]
+mod pi_runtime;
+use pi_runtime::{StartPiOptions, StartTerminalOptions, close_terminal, detach_pi_with, open_project_directory};
+use pi_runtime::{pi_command, pi_presence, resize_terminal, start_pi_for_owner, start_terminal_for_owner};
+use pi_runtime::{stop_pi, write_terminal};
+#[cfg(feature = "desktop")]
+use pi_runtime::{start_pi, start_terminal};
+#[cfg(test)]
+use pi_runtime::{TerminalLaunch, decode_terminal_bytes, open_project_directory_with, resize_terminal_pty, start_terminal_with};
+#[cfg(test)]
+use pi_runtime::{stop_terminals, stream_terminal_output, write_terminal_input, write_terminal_queue};
+#[cfg(feature = "desktop")]
+#[cfg(test)]
+use pi_runtime::{conversation_window_target, open_external_url_with, read_dropped_file};
+#[path = "backend/private_fs.rs"]
+mod private_fs;
+use private_fs::{atomic_write_private, ensure_private_dir, set_private_file_permissions};
+#[path = "backend/provider_codex.rs"]
+mod provider_codex;
+use provider_codex::codex_usage;
+#[cfg(test)]
+use provider_codex::{codex_response, codex_usage_values, query_codex_usage};
+#[path = "backend/provider_opencode.rs"]
+mod provider_opencode;
+use provider_opencode::opencode_go_usage;
+#[path = "backend/session_index.rs"]
+mod session_index;
+use session_index::{collect_host_sessions, create_temporary_chat, home_directory, list_directories, list_local_sessions};
+use session_index::{list_sessions, remove_temporary_chat, validate_project_directory};
+#[cfg(test)]
+use session_index::{create_local_temporary_chat, create_remote_temporary_chat, inspect_session_projects_with, list_local_directories, parse_remote_directories};
+#[cfg(test)]
+use session_index::{parse_remote_session_metadata, query_remote_directories, query_remote_session_metadata, read_session_summaries, read_session_summaries_with};
+#[cfg(test)]
+use session_index::{remote_directory_listing_script, remove_local_temporary_chat, remove_remote_temporary_chat, temporary_chat_id, update_remote_session_index};
+#[cfg(test)]
+use session_index::{validate_local_project_directory, validate_remote_project_directory};
+#[path = "backend/settings.rs"]
+mod settings;
+use settings::{load_app_settings, save_app_settings};
+#[cfg(test)]
+use settings::{read_settings_at, save_settings_with, validate_settings_for_save};
+#[path = "backend/settings_storage.rs"]
+mod settings_storage;
+#[cfg(test)]
+use settings_storage::settings_path_at;
+#[path = "backend/settings_types.rs"]
+mod settings_types;
+use settings_types::{AppSettings, RemoteHost};
+#[cfg(test)]
+use settings_types::{MAX_REMOTE_HOSTS, WorktreeSetupScript, default_settings, validate_remote_host};
+#[path = "backend/skill_discovery.rs"]
+mod skill_discovery;
+#[cfg(test)]
+use skill_discovery::{codex_disables_implicit_invocation, discover_skills_in, expand_skill_path, frontmatter_value, merge_discovered_skills_at};
+#[cfg(test)]
+use skill_discovery::skill_path_is_within;
+#[path = "backend/snapshot_capture.rs"]
+mod snapshot_capture;
+#[cfg(test)]
+use snapshot_capture::{capture_local_git_tree, git_root_and_objects, local_git_diff_between, local_git_diff_with, local_git_input_is_bounded};
+#[cfg(test)]
+use snapshot_capture::{local_git_tree_with, parse_local_snapshot, parse_local_snapshot_with};
+#[cfg(test)]
+use snapshot_capture::validate_snapshot_location;
+#[path = "backend/worktree_setup.rs"]
+mod worktree_setup;
+use worktree_setup::{cancel_worktree_setup, ensure_desktop_sessions_dir, prepare_worktree_setup, run_worktree_setup, shell_quote};
+#[cfg(test)]
+use worktree_setup::{GitSnapshotToken, LimitedOutput, WorktreeScriptPhase, execute_worktree_setup, register_worktree_setup};
+#[cfg(test)]
+use worktree_setup::{run_limited, run_setup_process, run_worktree_scripts, signal_worktree_setup_cancellation};
+#[path = "backend/worktrees.rs"]
+mod worktrees;
+use worktrees::{create_git_worktree, create_project_worktree, git_branch, git_project_kind, git_worktree_roots};
+use worktrees::{is_git_repository, remove_git_worktree};
+#[cfg(test)]
+use worktrees::{canonical_worktree_roots, copy_untracked_file, create_local_git_worktree, create_project_worktree_at, git_branch_at};
+#[cfg(test)]
+use worktrees::{inspect_git_project_kind, inspect_worktree_removal, local_branch_exists, local_worktree_is_registered, parse_worktree_output};
+#[cfg(test)]
+use worktrees::{remove_created_worktree, remove_worktree_target, validate_worktree_unused, worktree_branch_name, worktree_suffix};
+#[cfg(test)]
+use worktrees::git_relative_path;

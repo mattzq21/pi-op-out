@@ -1,8 +1,32 @@
-fn resolve_agent<'a>(sessions: &'a [SessionSummary], host_id: &str, session_id: &str) -> Result<&'a SessionSummary, String> {
+use crate::platform::AppHandle;
+use serde_json::{Value, json};
+use std::{fs, thread};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::{Arc, Mutex, mpsc};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant, SystemTime};
+use super::{AgentAddress, BROKER_BODY_BYTES, BROKER_HEADER_BYTES, BROKER_QUEUE_DEPTH, BROKER_WORKERS, BrokerRuntime, BrokerWriter, BusyAgent, MAX_AGENT_OUTPUT_BYTES, PiRuntime, ProjectKind, SessionIndexRuntime, SessionSummary, TerminalRuntime, conversation_ownership, peers, session_groups, stop_message_worker, terminal_lookup};
+use super::environment::home_dir;
+use super::pi_launch::{PiLaunch, build_pi_command, claim_agent};
+use super::private_fs::ensure_private_dir;
+use super::session_groups::change_session_groups;
+use super::session_index::{collect_sessions, list_local_sessions};
+use super::settings::load_app_settings;
+use super::settings_types::AppSettings;
+use super::worktree_setup::{WorktreeScriptPhase, ensure_desktop_sessions_dir, run_worktree_scripts, shell_quote};
+use super::worktrees::{create_git_worktree, remove_git_worktree_cancellable};
+use uuid::Uuid;
+#[cfg(feature = "desktop")]
+use tauri::Manager;
+
+pub(super) fn resolve_agent<'a>(sessions: &'a [SessionSummary], host_id: &str, session_id: &str) -> Result<&'a SessionSummary, String> {
     sessions.iter().find(|session| session.host_id == host_id && session.id == session_id).ok_or_else(|| format!("Agent {host_id}/{session_id} was not found"))
 }
 
-fn agent_is_active(session: &SessionSummary, agent: &AgentAddress) -> bool {
+pub(super) fn agent_is_active(session: &SessionSummary, agent: &AgentAddress) -> bool {
     !agent.messageable && agent.host_id == session.host_id && (agent.session_id.as_deref() == Some(session.id.as_str()) || agent.session_path.as_deref() == Some(session.path.as_str()))
 }
 
@@ -22,12 +46,12 @@ fn dispatch_agent_message(app: &AppHandle, broker: &BrokerRuntime, session: &Ses
     message_output(output, status)
 }
 
-fn broker_response(mut stream: TcpStream, status: &str, body: Value) {
+pub(super) fn broker_response(mut stream: TcpStream, status: &str, body: Value) {
     let payload = body.to_string();
     let _ = write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len());
 }
 
-fn read_broker_line(reader: &mut BufReader<TcpStream>, remaining: &mut usize) -> Result<String, String> {
+pub(super) fn read_broker_line(reader: &mut BufReader<TcpStream>, remaining: &mut usize) -> Result<String, String> {
     if *remaining == 0 { return Err("Request headers are too large".into()); }
     let mut line = String::new();
     let count = reader.take((*remaining + 1) as u64).read_line(&mut line).map_err(|error| error.to_string())?;
@@ -62,7 +86,7 @@ fn broker_worktree_operation(broker: &BrokerRuntime, value: &Value, work: impl F
     result
 }
 
-fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStream) -> Result<(), String> {
+pub(super) fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStream) -> Result<(), String> {
     let mut reader = BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
     let mut header_bytes = BROKER_HEADER_BYTES;
     let request_line = read_broker_line(&mut reader, &mut header_bytes)?;
@@ -78,7 +102,7 @@ fn handle_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStrea
     respond_broker_request(app, broker, stream, method, path, body)
 }
 
-fn worktree_agents(runtime: &PiRuntime, body: &[u8]) -> Result<Value, String> {
+pub(super) fn worktree_agents(runtime: &PiRuntime, body: &[u8]) -> Result<Value, String> {
     let value: Value = serde_json::from_slice(body).map_err(|_| "Invalid worktree request")?;
     let id = value.get("id").and_then(Value::as_str).ok_or("Agent identity is required")?;
     let agents = runtime.active_agents.lock().map_err(|_| "Active agent lock was poisoned")?;
@@ -89,7 +113,7 @@ fn worktree_agents(runtime: &PiRuntime, body: &[u8]) -> Result<Value, String> {
     Ok(json!(others))
 }
 
-fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), String> {
+pub(super) fn start_session_broker(app: AppHandle, broker: BrokerRuntime) -> Result<(), String> {
     let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|error| format!("Could not start session broker: {error}"))?;
     *broker.port.lock().map_err(|_| "Session broker lock was poisoned")? = listener.local_addr().map_err(|error| error.to_string())?.port();
     thread::spawn(move || {

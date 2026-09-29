@@ -1,4 +1,13 @@
-fn prepare_mcp_bridge() -> Result<PathBuf, String> {
+use serde_json::{Value, json};
+use std::fs;
+use std::path::{Path, PathBuf};
+use super::{DEVELOPMENT, STORAGE_DIRECTORY};
+use super::environment::home_dir;
+use super::pi_launch::enabled_tool_names;
+use super::private_fs::{atomic_write_private, ensure_private_dir};
+use super::settings_types::AppSettings;
+
+pub(super) fn prepare_mcp_bridge() -> Result<PathBuf, String> {
     let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let extension_path = dir.join("piop-mcp-bridge.ts");
@@ -6,11 +15,11 @@ fn prepare_mcp_bridge() -> Result<PathBuf, String> {
     Ok(extension_path)
 }
 
-fn runtime_settings(settings: &AppSettings) -> Value {
+pub(super) fn runtime_settings(settings: &AppSettings) -> Value {
     json!({ "tools": enabled_tool_names(settings), "skills": settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false)).filter_map(|skill| skill.get("path").and_then(Value::as_str)).collect::<Vec<_>>(), "explicitOnlySkills": settings.skills.iter().filter(|skill| skill.get("enabled").and_then(Value::as_bool).unwrap_or(false) && skill.get("userInvokedOnly").and_then(Value::as_bool).unwrap_or(false)).filter_map(|skill| skill.get("path").and_then(Value::as_str)).collect::<Vec<_>>(), "contextWindowCap": settings.context_window_cap, "contextWindowCapEnabled": settings.context_window_cap_enabled })
 }
 
-fn prepare_rtk_extension() -> Result<PathBuf, String> {
+pub(super) fn prepare_rtk_extension() -> Result<PathBuf, String> {
     let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let path = dir.join("rtk.ts");
@@ -18,7 +27,7 @@ fn prepare_rtk_extension() -> Result<PathBuf, String> {
     atomic_write_private(&dir.join("rtk.LICENSE"), include_str!("../../../extensions/piop-rtk/LICENSE").as_bytes())?;
     Ok(path)
 }
-fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf, String> {
+pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf, String> {
     let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let path = dir.join("runtime-settings.ts");
@@ -28,7 +37,7 @@ fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn prepare_session_broker() -> Result<PathBuf, String> {
+pub(super) fn prepare_session_broker() -> Result<PathBuf, String> {
     let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let path = dir.join("session-broker.ts");
@@ -37,7 +46,7 @@ fn prepare_session_broker() -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn prepare_trace_reader() -> Result<PathBuf, String> {
+pub(super) fn prepare_trace_reader() -> Result<PathBuf, String> {
     let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let path = dir.join("piop-trace-reader.ts");
@@ -45,7 +54,7 @@ fn prepare_trace_reader() -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn prepare_openai_cache_fork_extension() -> Result<PathBuf, String> {
+pub(super) fn prepare_openai_cache_fork_extension() -> Result<PathBuf, String> {
     let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let path = dir.join("piop-openai-cache-fork.ts");
@@ -63,7 +72,7 @@ fn migrate_extension_directory(old: &str, new: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn prepare_fast_mode_extension() -> Result<PathBuf, String> {
+pub(super) fn prepare_fast_mode_extension() -> Result<PathBuf, String> {
     migrate_extension_directory("pi-openai-fast-mode-piop", "piop-openai-fast-mode")?;
     let dir = home_dir()?.join(STORAGE_DIRECTORY).join("piop-openai-fast-mode");
     ensure_private_dir(&dir)?;
@@ -72,7 +81,7 @@ fn prepare_fast_mode_extension() -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn prepare_codex_web_search_extension() -> Result<PathBuf, String> {
+pub(super) fn prepare_codex_web_search_extension() -> Result<PathBuf, String> {
     let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let path = dir.join("piop-codex-web-search.ts");
@@ -80,7 +89,7 @@ fn prepare_codex_web_search_extension() -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn prepare_context_window_cap_extension(settings: &AppSettings) -> Result<PathBuf, String> {
+pub(super) fn prepare_context_window_cap_extension(settings: &AppSettings) -> Result<PathBuf, String> {
     migrate_extension_directory("pi-context-window-cap", "piop-context-window-cap")?;
     let dir = home_dir()?.join(STORAGE_DIRECTORY).join("piop-context-window-cap");
     ensure_private_dir(&dir)?;
@@ -91,7 +100,7 @@ fn prepare_context_window_cap_extension(settings: &AppSettings) -> Result<PathBu
     Ok(extension_path)
 }
 
-fn prepare_session_cost_limit_extension(_settings: &AppSettings) -> Result<PathBuf, String> {
+pub(super) fn prepare_session_cost_limit_extension(_settings: &AppSettings) -> Result<PathBuf, String> {
     migrate_extension_directory("pi-session-cost-limit", "piop-session-cost-limit")?;
     let dir = home_dir()?.join(STORAGE_DIRECTORY).join("piop-session-cost-limit");
     ensure_private_dir(&dir)?;
@@ -100,23 +109,23 @@ fn prepare_session_cost_limit_extension(_settings: &AppSettings) -> Result<PathB
     Ok(extension_path)
 }
 
-const LOOP_DETECTION_ASSETS: [(&str, &str); 4] = [
+pub(super) const LOOP_DETECTION_ASSETS: [(&str, &str); 4] = [
     ("index.ts", include_str!("../../../extensions/piop-loop-detection/index.ts")),
     ("detector.ts", include_str!("../../../extensions/piop-loop-detection/detector.ts")),
     ("observations.ts", include_str!("../../../extensions/piop-loop-detection/observations.ts")),
     ("persistence.ts", include_str!("../../../extensions/piop-loop-detection/persistence.ts")),
 ];
 
-fn prepare_loop_detection_extension() -> Result<PathBuf, String> {
+pub(super) fn prepare_loop_detection_extension() -> Result<PathBuf, String> {
     let dir = home_dir()?.join(STORAGE_DIRECTORY).join("piop-loop-detection");
     ensure_private_dir(&dir)?;
     for (name, content) in LOOP_DETECTION_ASSETS { atomic_write_private(&dir.join(name), content.as_bytes())?; }
     Ok(dir.join("index.ts"))
 }
 
-const LEGACY_FILE_CHANGE_ASSETS: [&str; 3] = ["file-changes.ts", "sitecustomize.py", "node_fs.cjs"];
+pub(super) const LEGACY_FILE_CHANGE_ASSETS: [&str; 3] = ["file-changes.ts", "sitecustomize.py", "node_fs.cjs"];
 
-fn prepare_diff_watch_extension() -> Result<PathBuf, String> {
+pub(super) fn prepare_diff_watch_extension() -> Result<PathBuf, String> {
     migrate_extension_directory("pi-diff-watch", "piop-diff-watch")?;
     let config_dir = home_dir()?.join(STORAGE_DIRECTORY);
     let legacy_dir = config_dir.join("pi-git-change-context");
@@ -152,7 +161,7 @@ fn migrate_agent_config(config: &Path, legacy_dir: &Path) -> Result<(), String> 
     atomic_write_private(config, &serde_json::to_vec_pretty(&migrated).map_err(|error| error.to_string())?)
 }
 
-fn prepare_defined_agents_extension() -> Result<PathBuf, String> {
+pub(super) fn prepare_defined_agents_extension() -> Result<PathBuf, String> {
     migrate_extension_directory("pi-define-agents", "piop-define-agents")?;
     let dir = home_dir()?.join(STORAGE_DIRECTORY).join("piop-define-agents");
     ensure_private_dir(&dir)?;
@@ -174,7 +183,7 @@ fn remove_legacy_agent_extension(legacy_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn prepare_btw_extension() -> Result<PathBuf, String> {
+pub(super) fn prepare_btw_extension() -> Result<PathBuf, String> {
     let dir = home_dir()?.join(STORAGE_DIRECTORY);
     ensure_private_dir(&dir)?;
     let path = dir.join("piop-btw.ts");

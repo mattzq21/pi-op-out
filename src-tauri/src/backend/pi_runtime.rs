@@ -1,12 +1,39 @@
-struct TerminalLaunch { terminal_id: String, session_key: String, cwd: String, cols: u16, rows: u16, host_id: String, window_label: String }
+use crate::platform::{AppHandle, State};
+use portable_pty::{Child as PtyChild, CommandBuilder, PtySize, native_pty_system};
+use serde_json::{Value, json};
+use std::thread;
+use std::io::{Read, Write};
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::sync::atomic::Ordering;
+use super::{AgentAddress, BlankSessionCleanup, BrokerRuntime, BusyAgent, MAX_TERMINALS, PiProcess, PiRuntime, TerminalProcess, TerminalRuntime, cleanup_blank_session, daemon, terminal_lookup};
+use super::archives::desktop_session_file;
+use super::pi_launch::{PiLaunch, build_pi_command, claim_agent, create_ephemeral_fork, prepare_ephemeral_path, remote_host, remove_ephemeral_session, session_identity, user_ssh_config};
+use super::settings::load_app_settings;
+use super::settings_types::{AppSettings, RemoteHost};
+use super::worktree_setup::shell_quote;
+use uuid::Uuid;
+#[cfg(feature = "desktop")]
+use std::fs;
+#[cfg(feature = "desktop")]
+use std::path::Path;
+#[cfg(feature = "desktop")]
+use super::APP_TITLE;
+#[cfg(feature = "desktop")]
+use super::pi_launch::ssh;
+#[cfg(feature = "desktop")]
+use tauri::{Emitter, Manager};
 
-struct StartTerminalOptions { terminal_id: String, session_key: String, cwd: String, cols: u16, rows: u16, host_id: Option<String> }
+pub(super) struct TerminalLaunch { pub(super) terminal_id: String, pub(super) session_key: String, pub(super) cwd: String, pub(super) cols: u16, pub(super) rows: u16, pub(super) host_id: String, pub(super) window_label: String }
 
-struct StartPiOptions { runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, no_session: Option<bool>, host_id: Option<String>, presence: Option<Value>, client_id: String }
+pub(super) struct StartTerminalOptions { pub(super) terminal_id: String, pub(super) session_key: String, pub(super) cwd: String, pub(super) cols: u16, pub(super) rows: u16, pub(super) host_id: Option<String> }
+
+pub(super) struct StartPiOptions { pub(super) runtime_id: String, pub(super) cwd: Option<String>, pub(super) session_path: Option<String>, pub(super) session_id: Option<String>, pub(super) fork_path: Option<String>, pub(super) no_session: Option<bool>, pub(super) host_id: Option<String>, pub(super) presence: Option<Value>, pub(super) client_id: String }
 
 #[cfg(feature = "desktop")]
 #[tauri::command(async)]
-fn start_pi(app: AppHandle, window: tauri::WebviewWindow, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, no_session: Option<bool>, host_id: Option<String>, presence: Option<Value>, client_id: String) -> Result<Value, String> {
+pub(super) fn start_pi(app: AppHandle, window: tauri::WebviewWindow, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, cwd: Option<String>, session_path: Option<String>, session_id: Option<String>, fork_path: Option<String>, no_session: Option<bool>, host_id: Option<String>, presence: Option<Value>, client_id: String) -> Result<Value, String> {
     start_pi_for_owner(app, window.label().into(), runtime, broker, StartPiOptions { runtime_id, cwd, session_path, session_id, fork_path, no_session, host_id, presence, client_id })
 }
 
@@ -70,7 +97,7 @@ fn runtime_is_attached(runtime: &PiRuntime, runtime_id: &str, settings: &AppSett
     Ok(runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(runtime_id).is_some_and(|process| process.daemon.alive.load(Ordering::SeqCst) && process.daemon.matches_connection(settings, host_id)))
 }
 
-fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, options: StartPiOptions) -> Result<Value, String> {
+pub(super) fn start_pi_for_owner(app: AppHandle, owner: String, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, options: StartPiOptions) -> Result<Value, String> {
     let _lifecycle = runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
     ensure_runtime_owner(&runtime, &options.runtime_id, &owner)?;
     let settings = load_app_settings(app.clone())?;
@@ -99,7 +126,7 @@ fn detach_pi(runtime: &PiRuntime, runtime_id: &str, discard_blank: bool) -> Resu
     detach_pi_with(runtime, runtime_id, discard_blank, false)
 }
 
-fn detach_pi_with(runtime: &PiRuntime, runtime_id: &str, discard_blank: bool, preserve_running: bool) -> Result<bool, String> {
+pub(super) fn detach_pi_with(runtime: &PiRuntime, runtime_id: &str, discard_blank: bool, preserve_running: bool) -> Result<bool, String> {
     let mut stopped = false;
     let process = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.remove(runtime_id);
     if let Some(mut process) = process {
@@ -117,12 +144,12 @@ fn detach_pi_with(runtime: &PiRuntime, runtime_id: &str, discard_blank: bool, pr
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn stop_pi(runtime: State<PiRuntime>, runtime_id: String, discard_blank: Option<bool>) -> Result<bool, String> {
+pub(super) fn stop_pi(runtime: State<PiRuntime>, runtime_id: String, discard_blank: Option<bool>) -> Result<bool, String> {
     detach_pi(&runtime, &runtime_id, discard_blank.unwrap_or(false))
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn pi_presence(runtime: State<PiRuntime>, runtime_id: String, presence: Value) -> Result<(), String> {
+pub(super) fn pi_presence(runtime: State<PiRuntime>, runtime_id: String, presence: Value) -> Result<(), String> {
     let daemon = runtime.processes.lock().map_err(|_| "Pi runtime lock was poisoned")?.get(&runtime_id).map(|process| process.daemon.clone());
     if let Some(daemon) = daemon { daemon.request(json!({"type":"presence","runtimeId":runtime_id,"presence":presence}))?; }
     Ok(())
@@ -134,7 +161,7 @@ fn execute_pi_command(runtime: &PiRuntime, runtime_id: &str, command: Value) -> 
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn pi_command(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, mut command: Value) -> Result<Value, String> {
+pub(super) fn pi_command(app: AppHandle, runtime: State<PiRuntime>, broker: State<BrokerRuntime>, runtime_id: String, mut command: Value) -> Result<Value, String> {
     let command_type = command["type"].as_str().unwrap_or_default().to_owned();
     let _lifecycle = if command_type == "switch_session" { Some(runtime.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?) } else { None };
     let mut _claim = None;
@@ -166,7 +193,7 @@ fn new_window(app: AppHandle, target: Value) -> Result<String, String> {
 }
 
 #[cfg(feature = "desktop")]
-fn conversation_window_target(target: &Value) -> Result<(String, String), String> {
+pub(super) fn conversation_window_target(target: &Value) -> Result<(String, String), String> {
     if !target["sessionId"].as_str().is_some_and(|id| !id.trim().is_empty()) { return Err("Select a conversation to open in another window".into()); }
     let label = format!("chat-{}", Uuid::new_v4());
     let mut url = reqwest::Url::parse("https://piop.invalid/").map_err(|error| error.to_string())?;
@@ -177,11 +204,11 @@ fn conversation_window_target(target: &Value) -> Result<(String, String), String
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-fn start_terminal(app: AppHandle, window: tauri::WebviewWindow, runtime: State<TerminalRuntime>, terminal_id: String, session_key: String, cwd: String, cols: u16, rows: u16, host_id: Option<String>) -> Result<(), String> {
+pub(super) fn start_terminal(app: AppHandle, window: tauri::WebviewWindow, runtime: State<TerminalRuntime>, terminal_id: String, session_key: String, cwd: String, cols: u16, rows: u16, host_id: Option<String>) -> Result<(), String> {
     start_terminal_for_owner(app, window.label().into(), runtime, StartTerminalOptions { terminal_id, session_key, cwd, cols, rows, host_id })
 }
 
-fn start_terminal_for_owner(app: AppHandle, owner: String, runtime: State<TerminalRuntime>, options: StartTerminalOptions) -> Result<(), String> {
+pub(super) fn start_terminal_for_owner(app: AppHandle, owner: String, runtime: State<TerminalRuntime>, options: StartTerminalOptions) -> Result<(), String> {
     let StartTerminalOptions { terminal_id, session_key, cwd, cols, rows, host_id } = options;
     let session_runtime = app.state::<PiRuntime>();
     let _lifecycle = session_runtime.lifecycle.lock().map_err(|_| "Session lifecycle lock was poisoned")?;
@@ -207,7 +234,7 @@ fn spawn_terminal_shell(slave: &dyn portable_pty::SlavePty, command: impl FnOnce
     slave.spawn_command(command).map_err(|error| format!("Could not start terminal shell: {error}"))
 }
 
-fn start_terminal_with(runtime: &TerminalRuntime, launch: TerminalLaunch,
+pub(super) fn start_terminal_with(runtime: &TerminalRuntime, launch: TerminalLaunch,
     command: impl FnOnce() -> Result<CommandBuilder, String>, mut emit: impl FnMut(Value) + Send + 'static) -> Result<(), String> {
     let TerminalLaunch { terminal_id, session_key, cwd, cols, rows, host_id, window_label } = launch;
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
@@ -248,13 +275,13 @@ fn start_terminal_with(runtime: &TerminalRuntime, launch: TerminalLaunch,
     Ok(())
 }
 
-fn write_terminal_queue(writer: &mut impl Write, queued: mpsc::Receiver<String>) {
+pub(super) fn write_terminal_queue(writer: &mut impl Write, queued: mpsc::Receiver<String>) {
     while let Ok(data) = queued.recv() {
         if writer.write_all(data.as_bytes()).and_then(|_| writer.flush()).is_err() { break; }
     }
 }
 
-fn stream_terminal_output(reader: &mut impl Read, terminal_id: &str, mut emit: impl FnMut(Value)) {
+pub(super) fn stream_terminal_output(reader: &mut impl Read, terminal_id: &str, mut emit: impl FnMut(Value)) {
     let mut buffer = [0_u8; 8192];
     let mut pending_utf8 = Vec::new();
     loop {
@@ -271,7 +298,7 @@ fn stream_terminal_output(reader: &mut impl Read, terminal_id: &str, mut emit: i
     if !tail.is_empty() { emit(json!({"type":"terminal_output","terminalId":terminal_id,"data":tail})); }
 }
 
-fn decode_terminal_bytes(pending: &mut Vec<u8>, bytes: &[u8], eof: bool) -> String {
+pub(super) fn decode_terminal_bytes(pending: &mut Vec<u8>, bytes: &[u8], eof: bool) -> String {
     pending.extend_from_slice(bytes);
     let mut output = String::new();
     loop {
@@ -295,11 +322,11 @@ fn decode_terminal_bytes(pending: &mut Vec<u8>, bytes: &[u8], eof: bool) -> Stri
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn write_terminal(runtime: State<TerminalRuntime>, terminal_id: String, data: String) -> Result<(), String> {
+pub(super) fn write_terminal(runtime: State<TerminalRuntime>, terminal_id: String, data: String) -> Result<(), String> {
     write_terminal_input(&runtime, &terminal_id, data)
 }
 
-fn write_terminal_input(runtime: &TerminalRuntime, terminal_id: &str, data: String) -> Result<(), String> {
+pub(super) fn write_terminal_input(runtime: &TerminalRuntime, terminal_id: &str, data: String) -> Result<(), String> {
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
     let process = processes.get_mut(terminal_id).ok_or("Terminal is not running")?;
     if data.len() > 1024 * 1024 { return Err("Terminal input exceeds 1 MiB; paste a smaller block".into()); }
@@ -307,24 +334,24 @@ fn write_terminal_input(runtime: &TerminalRuntime, terminal_id: &str, data: Stri
 }
 
 #[cfg_attr(feature = "desktop", tauri::command)]
-fn resize_terminal(runtime: State<TerminalRuntime>, terminal_id: String, cols: u16, rows: u16) -> Result<(), String> {
+pub(super) fn resize_terminal(runtime: State<TerminalRuntime>, terminal_id: String, cols: u16, rows: u16) -> Result<(), String> {
     resize_terminal_pty(&runtime, &terminal_id, cols, rows)
 }
 
-fn resize_terminal_pty(runtime: &TerminalRuntime, terminal_id: &str, cols: u16, rows: u16) -> Result<(), String> {
+pub(super) fn resize_terminal_pty(runtime: &TerminalRuntime, terminal_id: &str, cols: u16, rows: u16) -> Result<(), String> {
     let processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
     let process = processes.get(terminal_id).ok_or("Terminal is not running")?;
     process.master.resize(PtySize { rows: rows.max(1), cols: cols.max(1), pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn close_terminal(runtime: State<TerminalRuntime>, terminal_id: String) -> Result<(), String> {
+pub(super) fn close_terminal(runtime: State<TerminalRuntime>, terminal_id: String) -> Result<(), String> {
     if let Some(mut process) = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?.remove(&terminal_id) { let _ = process.child.kill(); let _ = process.child.wait(); }
     runtime.history.lock().map_err(|_| "Terminal history lock was poisoned")?.remove(&terminal_id);
     Ok(())
 }
 
-fn stop_terminals(runtime: &TerminalRuntime, terminal_ids: &[String]) -> Result<(), String> {
+pub(super) fn stop_terminals(runtime: &TerminalRuntime, terminal_ids: &[String]) -> Result<(), String> {
     let mut processes = runtime.processes.lock().map_err(|_| "Terminal runtime lock was poisoned")?;
     for id in terminal_ids {
         if let Some(mut process) = processes.remove(id) { let _ = process.child.kill(); let _ = process.child.wait(); }
@@ -342,7 +369,7 @@ fn open_system_resource(target: &std::ffi::OsStr) -> Result<(), String> {
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 #[cfg(feature = "desktop")]
-fn read_dropped_file(path: String) -> Result<Value, String> {
+pub(super) fn read_dropped_file(path: String) -> Result<Value, String> {
     let path = Path::new(&path);
     let file = fs::File::open(path).map_err(|error| error.to_string())?;
     let metadata = file.metadata().map_err(|error| error.to_string())?;
@@ -363,14 +390,14 @@ fn open_external_url(url: String) -> Result<(), String> {
 }
 
 #[cfg(feature = "desktop")]
-fn open_external_url_with(url: &str, open: impl FnOnce(&std::ffi::OsStr) -> Result<(), String>) -> Result<(), String> {
+pub(super) fn open_external_url_with(url: &str, open: impl FnOnce(&std::ffi::OsStr) -> Result<(), String>) -> Result<(), String> {
     let parsed = reqwest::Url::parse(url).map_err(|_| "Enter a valid HTTP or HTTPS URL")?;
     if !matches!(parsed.scheme(), "http" | "https") || !parsed.has_host() { return Err("Only HTTP and HTTPS links can be opened in the browser".into()); }
     open(std::ffi::OsStr::new(parsed.as_str()))
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-fn open_project_directory(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<(), String> {
+pub(super) fn open_project_directory(app: AppHandle, cwd: String, host_id: Option<String>) -> Result<(), String> {
     if host_id.as_deref().unwrap_or("local") != "local" {
         let settings = load_app_settings(app)?;
         let host = remote_host(&settings, host_id.as_deref().unwrap_or_default())?;
@@ -379,7 +406,7 @@ fn open_project_directory(app: AppHandle, cwd: String, host_id: Option<String>) 
     open_project_directory_with(&cwd, None, open_system_resource)
 }
 
-fn open_project_directory_with(cwd: &str, host: Option<&RemoteHost>, open: impl FnOnce(&std::ffi::OsStr) -> Result<(), String>) -> Result<(), String> {
+pub(super) fn open_project_directory_with(cwd: &str, host: Option<&RemoteHost>, open: impl FnOnce(&std::ffi::OsStr) -> Result<(), String>) -> Result<(), String> {
     if let Some(host) = host { return Err(format!("Opening project directories on {} is not supported by the local file manager", host.name)); }
     let path = PathBuf::from(cwd);
     if !path.is_dir() { return Err(format!("Project directory does not exist: {}", path.display())); }

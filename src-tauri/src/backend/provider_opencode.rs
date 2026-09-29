@@ -1,91 +1,28 @@
-fn default_pi_path() -> String { "pi".into() }
- fn default_context_window_cap() -> u64 { 300_000 }
-fn default_context_window_cap_enabled() -> bool { true }
-fn default_true() -> bool { true }
-fn deserialize_context_window_cap<'de, D>(deserializer: D) -> Result<u64, D::Error> where D: Deserializer<'de> {
-    let value = Value::deserialize(deserializer)?;
-    value.as_u64().ok_or_else(|| de::Error::custom("Context window cap must be a whole number"))
-}
-const DEFAULT_MODEL: &str = if DEVELOPMENT { "openai-codex/gpt-5.6-luna" } else { "openai-codex/gpt-5.6-sol" };
+use serde::Serialize;
+use serde_json::Value;
+use std::fs;
+use std::time::Duration;
+use super::environment::home_dir;
+#[cfg(test)]
+use serde_json::json;
+#[cfg(test)]
+use super::settings_types::AppSettings;
 
-fn default_keybindings() -> HashMap<String, String> {
-    [
-        ("newConversation", "Ctrl+N"),
-        ("toggleConversations", "Ctrl+B"),
-        ("toggleTerminal", "Ctrl+J"),
-        ("toggleDebugMode", "Ctrl+D"),
-        ("focusComposer", "Ctrl+E"),
-        ("openSettings", "Ctrl+,"),
-    ].into_iter().map(|(action, shortcut)| (action.into(), shortcut.into())).collect()
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpencodeGoUsageWindow {
+    status: String,
+    remaining_percent: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reset_at: Option<u64>,
 }
 
-fn home_dir() -> Result<PathBuf, String> {
-    #[cfg(feature = "test-home")]
-    if let Some(path) = std::env::var_os("PIOP_TEST_HOME") { return Ok(PathBuf::from(path)); }
-    std::env::var_os("HOME").map(PathBuf::from).ok_or_else(|| "HOME is not set".into())
-}
-
-fn pi_executable() -> PathBuf { pi_executable_in(home_dir().ok()) }
-
-fn pi_executable_in(home: Option<PathBuf>) -> PathBuf {
-    if let Some(home) = home {
-        for candidate in [home.join(".local/bin/pi"), home.join(".npm-global/bin/pi"), home.join(".bun/bin/pi")] { if candidate.is_file() { return candidate; } }
-    }
-    pi_on_path().unwrap_or_else(|| PathBuf::from("pi"))
-}
-
-fn pi_on_path() -> Option<PathBuf> {
-    let paths = std::env::var_os("PATH")?;
-    std::env::split_paths(&paths).map(|directory| directory.join("pi")).find(|candidate| candidate.is_file())
-}
-
-fn codex_executable() -> PathBuf {
-    if let Ok(home) = home_dir() {
-        for candidate in [home.join(".local/bin/codex"), home.join(".npm-global/bin/codex"), home.join(".bun/bin/codex")] { if candidate.is_file() { return candidate; } }
-    }
-    PathBuf::from("codex")
-}
-
-fn codex_response(receiver: &mpsc::Receiver<String>, id: u64, deadline: Instant) -> Result<Value, String> {
-    loop {
-        let timeout = deadline.checked_duration_since(Instant::now()).ok_or("Codex usage request timed out")?;
-        let line = receiver.recv_timeout(timeout).map_err(|_| "Codex usage request timed out".to_string())?;
-        let Ok(value) = serde_json::from_str::<Value>(&line) else { continue };
-        if value.get("id").and_then(Value::as_u64) != Some(id) { continue; }
-        if let Some(error) = value.get("error") { return Err(error.to_string()); }
-        return value.get("result").cloned().ok_or_else(|| "Codex returned no usage data".into());
-    }
-}
-fn codex_usage_values(response: &Value) -> Option<CodexUsage> {
-    let limits = response.pointer("/rateLimitsByLimitId/codex").or_else(|| response.get("rateLimits"))?;
-    let (used, reset_at) = ["primary", "secondary"].iter().filter_map(|window| {
-        let value = limits.get(window)?;
-        Some((value.get("usedPercent")?.as_f64()?, value.get("resetsAt").and_then(Value::as_u64)))
-    }).max_by(|left, right| left.0.total_cmp(&right.0))?;
-    Some(CodexUsage { remaining_percent: (100.0 - used.clamp(0.0, 100.0)).round() as u8, reset_at })
-}
-
-#[cfg_attr(feature = "desktop", tauri::command(async))]
-fn codex_usage() -> Result<CodexUsage, String> {
-    query_codex_usage(Command::new(codex_executable()).current_dir(home_dir()?))
-}
-
-fn query_codex_usage(command: &mut Command) -> Result<CodexUsage, String> {
-    let mut child = command.arg("app-server").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|error| format!("Could not start Codex: {error}"))?;
-    let result = (|| {
-        let mut stdin = child.stdin.take().ok_or("Codex stdin was unavailable")?;
-        let stdout = child.stdout.take().ok_or("Codex stdout was unavailable")?;
-        let (sender, receiver) = mpsc::channel();
-        thread::spawn(move || for line in BufReader::new(stdout).lines().map_while(Result::ok) { if sender.send(line).is_err() { break; } });
-        let deadline = Instant::now() + Duration::from_secs(8);
-        writeln!(stdin, "{}", json!({"method":"initialize","id":1,"params":{"clientInfo":{"name":"piop","title":"piop","version":env!("CARGO_PKG_VERSION")},"capabilities":null}})).map_err(|error| error.to_string())?;
-        codex_response(&receiver, 1, deadline)?;
-        writeln!(stdin, "{}", json!({"method":"initialized"})).map_err(|error| error.to_string())?;
-        writeln!(stdin, "{}", json!({"method":"account/rateLimits/read","id":2})).map_err(|error| error.to_string())?;
-        let response = codex_response(&receiver, 2, deadline)?;
-        codex_usage_values(&response).ok_or_else(|| "Codex usage is unavailable".into())
-    })();
-    let _ = child.kill(); let _ = child.wait(); result
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct OpencodeGoUsage {
+    rolling: OpencodeGoUsageWindow,
+    weekly: OpencodeGoUsageWindow,
+    monthly: OpencodeGoUsageWindow,
 }
 
 fn opencode_go_api_key() -> Option<String> {
@@ -166,7 +103,7 @@ fn opencode_go_usage_values(response: &Value) -> Option<OpencodeGoUsage> {
 }
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
-async fn opencode_go_usage() -> Result<OpencodeGoUsage, String> {
+pub(super) async fn opencode_go_usage() -> Result<OpencodeGoUsage, String> {
     let api_key = opencode_go_api_key().ok_or("OpenCode Go API key is not configured")?;
     let client = reqwest::Client::builder().timeout(Duration::from_secs(8)).build().map_err(|error| format!("Could not create HTTP client: {error}"))?;
     let response = client.get("https://opencode.ai/zen/go/v1/usage").bearer_auth(api_key).send().await.map_err(|error| format!("OpenCode Go usage request failed: {error}"))?;
