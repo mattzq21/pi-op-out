@@ -467,8 +467,7 @@ export function SessionPanel(props: Props) {
     onMouseDown: (event: MouseEvent<HTMLElement>) => startMouseDrag(event, { projectKey }),
     onClick: (event: MouseEvent<HTMLElement>) => {
       if (suppressClickRef.current === groupLayoutToken(projectKey)) { suppressClickRef.current = undefined; event.preventDefault(); return; }
-      const destination = groupDestination(projectKey);
-      if (destination) { expandProject(projectKey); panel().onNewChat(destination); } else toggleProject(projectKey);
+      toggleProject(projectKey);
     },
     onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
       if (normalizedQuery() || !event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
