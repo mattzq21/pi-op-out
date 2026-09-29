@@ -14,7 +14,7 @@ import { RemoveGroupDialog } from "./RemoveGroupDialog";
 import { RemoveWorktreeDialog } from "./RemoveWorktreeDialog";
 
 export type SessionAction = "split" | "new-window" | "rename" | "clone" | "open-directory" | "archive" | "copy-id";
-interface Props { sessions: SessionSummary[]; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; onNewChat: (group: SessionGroup) => void; onCreateWorktree: (cwd: string, hostId: string) => void; onDeleteWorktree: (cwd: string, hostId: string, deleteBranch: boolean) => Promise<void>; createGroupRequest?: number; onCreateGroupHandled?: () => void; }
+interface Props { debug?: boolean; sessions: SessionSummary[]; activeId?: string; activeHostId?: string; runningSessions?: ReadonlySet<string>; unseenSessions?: ReadonlySet<string>; query: string; onQuery: (query: string) => void; onSelect: (session: SessionSummary) => void; onAction: (session: SessionSummary, action: SessionAction) => void; onNewChat: (group: SessionGroup) => void; onCreateWorktree: (cwd: string, hostId: string) => void; onDeleteWorktree: (cwd: string, hostId: string, deleteBranch: boolean) => Promise<void>; createGroupRequest?: number; onCreateGroupHandled?: () => void; }
 type CustomGroup = SessionGroup;
 interface DraggedSession { projectKey: string; sessionKey: string; session: SessionSummary; }
 interface DropTarget { projectKey: string; sessionKey: string; edge: "before" | "after"; layoutBefore?: string | null; }
@@ -90,8 +90,8 @@ function formatApiCost(cost = 0) {
   return `$${cost.toFixed(2)}`;
 }
 
-function sessionPanelDefaults({ sessions, activeId, activeHostId = "local", runningSessions = new Set(), unseenSessions = new Set(), query, onQuery, onSelect, onAction, onNewChat, onCreateWorktree, onDeleteWorktree, createGroupRequest = 0, onCreateGroupHandled }: Props) {
-  return { sessions, activeId, activeHostId, runningSessions, unseenSessions, query, onQuery, onSelect, onAction, onNewChat, onCreateWorktree, onDeleteWorktree, createGroupRequest, onCreateGroupHandled };
+function sessionPanelDefaults({ debug = false, sessions, activeId, activeHostId = "local", runningSessions = new Set(), unseenSessions = new Set(), query, onQuery, onSelect, onAction, onNewChat, onCreateWorktree, onDeleteWorktree, createGroupRequest = 0, onCreateGroupHandled }: Props) {
+  return { debug, sessions, activeId, activeHostId, runningSessions, unseenSessions, query, onQuery, onSelect, onAction, onNewChat, onCreateWorktree, onDeleteWorktree, createGroupRequest, onCreateGroupHandled };
 }
 
 function groupLabel(project: string, hostId: string, hostName: string | undefined) {
@@ -523,7 +523,7 @@ export function SessionPanel(props: Props) {
       { label: "Create worktree", Icon: GitBranch, disabled: !groupDirectory, run: () => { if (groupDirectory?.cwd) panel().onCreateWorktree(groupDirectory.cwd, groupDirectory.hostId ?? "local"); } },
       ...(isWorktreeGroup && groupDirectory?.cwd ? [{ label: "Delete worktree…", Icon: Trash2, disabled: false, run: () => void prepareWorktreeRemoval((groupMenu())!.projectKey, (groupMenu())!.label, groupDirectory) }] : []),
       { label: "Forget group", Icon: Trash2, disabled: false, run: () => setRemovingGroup({ id: (groupMenu())!.projectKey, name: (groupMenu())!.label }) },
-    ] : menu() ? actions.filter(([action]) => action !== "split" || (menu())!.session.id !== panel().activeId || ((menu())!.session.hostId ?? "local") !== panel().activeHostId).map(([action, Icon, label]) => ({ label, Icon, disabled: false, run: () => panel().onAction((menu())!.session, action) })) : [];
+    ] : menu() ? actions.filter(([action]) => action !== "copy-id" || panel().debug).filter(([action]) => action !== "split" || (menu())!.session.id !== panel().activeId || ((menu())!.session.hostId ?? "local") !== panel().activeHostId).map(([action, Icon, label]) => ({ label, Icon, disabled: false, run: () => panel().onAction((menu())!.session, action) })) : [];
     return { activeMenu, menuItems };
   };
   const menuActions = createMemo(() => (contextMenu()));
