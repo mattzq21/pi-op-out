@@ -79,18 +79,25 @@ function changeInstructionFromMessages(messages: unknown[]) {
   return match ? { path: "File changes", content: match[1], block: match[0] } : undefined;
 }
 
-function userInvokedSkills(messages: unknown[], options: BuildSystemPromptOptions | undefined) {
-  const available = new Map((options?.skills ?? []).map(skill => [skill.filePath, skill]));
-  const invoked = new Map<string, { name: string; description: string; filePath: string; content: string }>();
-  for (const value of messages) {
-    const message = value as { role?: string; content?: unknown } | null;
+function userInvokedSkills(messages: unknown[], options: BuildSystemPromptOptions | undefined, sinceCompaction?: Set<number>) {
+  const available = new Map((options?.skills ?? []).map(skill => [`${skill.name}\0${skill.filePath}`, skill]));
+  const invoked: Array<{ id: string; name: string; description: string; filePath: string; content: string }> = [];
+  for (const [index, value] of messages.entries()) {
+    const message = value as { role?: string; content?: unknown; timestamp?: number } | null;
     if (message?.role !== "user") continue;
+    if (sinceCompaction && !sinceCompaction.has(message.timestamp!)) continue;
     const match = textContent(message.content).match(/^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n[\s\S]*)?$/);
     if (!match) continue;
-    const skill = available.get(match[2]);
-    if (skill && skill.name === match[1]) invoked.set(skill.filePath, { name: skill.name, description: skill.description, filePath: skill.filePath, content: match[3] });
+    const skill = available.get(`${match[1]}\0${match[2]}`);
+    if (skill) invoked.push({ id: `${message.timestamp}:${index}`, name: skill.name, description: skill.description, filePath: skill.filePath, content: match[3] });
   }
-  return [...invoked.values()];
+  return invoked;
+}
+
+function invocationWindow(branch: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>) {
+  const compacted = branch.findLastIndex(entry => entry.type === "compaction");
+  if (compacted < 0) return undefined;
+  return new Set(branch.slice(compacted + 1).flatMap(entry => entry.type === "message" && entry.message.role === "user" ? [entry.message.timestamp] : []));
 }
 
 export default function contextBar(pi: ExtensionAPI) {
@@ -107,7 +114,7 @@ export default function contextBar(pi: ExtensionAPI) {
     if (branch.slice(userIndex + 1).some((entry) => entry.type === "custom" && entry.customType === STATUS_KEY)) return;
     const systemPrompt = ctx.getSystemPrompt();
     const { block: skillPrompt, skills } = skillsFromPrompt(systemPrompt);
-    const invokedSkills = userInvokedSkills(messages, promptOptions);
+    const invokedSkills = userInvokedSkills(messages, promptOptions, invocationWindow(branch));
     const { block: instructionPrompt, instructions } = instructionsFromPrompt(systemPrompt);
     const messageProjectContext = projectContextFromMessages(messages);
     const systemCwd = workingDirectoryFromPrompt(systemPrompt, instructionPrompt);

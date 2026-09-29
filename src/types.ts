@@ -14,7 +14,7 @@ export interface PromptContextInfo {
   instructions: Array<{ path: string; content: string }>;
   tools: Array<{ name: string; description: string; parameters?: unknown }>;
   skills: Array<{ name: string; description: string; filePath: string }>;
-  userInvokedSkills?: Array<{ name: string; description: string; filePath: string; content?: string }>;
+  userInvokedSkills?: Array<{ id?: string; name: string; description: string; filePath: string; content?: string }>;
   skillTokens?: { defined: number; invoked: number };
   tokens: { system: number; instructions: number; tools: number; skills: number };
 }
