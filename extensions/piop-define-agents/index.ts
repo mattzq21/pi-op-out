@@ -11,7 +11,12 @@ import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@e
 export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; extensions?: string[]; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: McpServer[] };
 type RuntimeDefaults = { model: string; effort: string };
 type AgentSnapshot = { version: 2; definition: Agent } | { version: 1; definition: Agent; systemPrompt: string; agentPrompt: string };
-type SessionAgentState = { snapshot?: AgentSnapshot; active?: string; locked?: boolean; modelOverride?: string; effortOverride?: string; fastModeOverride?: boolean };
+type SessionAgentState = { snapshot?: AgentSnapshot; active?: string; locked?: boolean; modelOverride?: string; effortOverride?: string; fastModeOverride?: boolean | null };
+
+function persistedAgentIdentity(state: SessionAgentState) {
+  const agent = state.snapshot?.definition;
+  return JSON.stringify([state.active, state.modelOverride || agent?.model, state.effortOverride || agent?.effort, state.fastModeOverride ?? agent?.fastMode ?? false]);
+}
 
 const STATUS_KEY = "pi-define-agents";
 const STATE_ENTRY = "pi-define-agents-state";
@@ -343,8 +348,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const fastModeError = (agent: Agent, model: string | undefined) => agent.fastMode === true && (!model || !fastModeModels().includes(model.replace(/--piop-account-\d+(?=\/)/, ""))) ? `Agent "${agent.name}" cannot run because model ${model || "(unset)"} does not support fast mode` : undefined;
   const publish = (ctx: ExtensionContext) => ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: currentAgent()?.name ?? active, locked, saved: !!snapshot, unavailable: !currentAgent(), config: { ...config, fastModeModels: fastModeModels() } })}`);
   const saveState = () => {
-    const state = { active, locked, modelOverride, effortOverride, fastModeOverride: fastModeOverride ?? null, snapshot };
-    const serialized = JSON.stringify(state);
+    const state = { active, modelOverride, effortOverride, fastModeOverride: fastModeOverride ?? null, snapshot };
+    const serialized = persistedAgentIdentity(state);
     if (serialized === savedState) return;
     pi.appendEntry(STATE_ENTRY, state);
     savedState = serialized;
@@ -478,7 +483,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const branch = ctx.sessionManager.getBranch();
     const states = branch.flatMap((entry) => entry.type === "custom" && entry.customType === STATE_ENTRY ? [entry.data as SessionAgentState] : []);
     const stored = states.at(-1);
-    savedState = stored ? JSON.stringify(stored) : undefined;
+    savedState = stored ? persistedAgentIdentity(stored) : undefined;
     snapshot = migrateQuestionSnapshot(stored?.snapshot);
     active = snapshot?.definition.name ?? restoredAgentName(stored?.active);
     if (active === "voice-orchestrator") { active = "general"; snapshot = undefined; }
@@ -496,7 +501,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   pi.on("session_shutdown", (_event, ctx) => { delete process.env.PI_DEFINE_AGENTS_ACTIVE; if (!reloading) ctx.ui.setStatus(STATUS_KEY, undefined); });
   pi.on("resources_discover", () => { const agent = currentAgent(); const skillPaths = agent ? agentSkills(pi, agent) : []; return skillPaths.length ? { skillPaths } : undefined; });
   pi.on("input", async (event, ctx) => {
-    if (!locked) { locked = true; saveState(); publish(ctx); }
+    if (!locked) { locked = true; publish(ctx); }
     const error = await useAgent(active, ctx, true, true, false);
     if (error) { ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error })); ctx.ui.notify(error, "error"); return { action: "handled" }; }
     return { action: "continue" };
