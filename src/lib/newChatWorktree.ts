@@ -1,10 +1,13 @@
 import { createEffect, createRoot, createSignal, onCleanup, type Accessor } from "solid-js";
-import type { NativeTransport } from "./nativeTransport";
+import type { NativeTransport, ProjectBranches } from "./nativeTransport";
 import type { ChatMessage, ImageAttachment } from "../types";
 
-type Submission = { owner: NativeTransport; message: ChatMessage; status: string };
+type Submission = { owner: NativeTransport; message: ChatMessage; status: string; selection?: { listing: ProjectBranches; createNew: boolean } };
 const [submission, setSubmission] = createSignal<Submission>();
 export const chatSubmission = (owner?: NativeTransport) => submission()?.owner === owner ? submission() : undefined;
+export function preserveChatSelection(owner: NativeTransport, listing: ProjectBranches, createNew: boolean) {
+  setSubmission((current) => current?.owner === owner ? { ...current, selection: { listing, createNew } } : current);
+}
 export function acknowledgeChatSubmission(owner?: NativeTransport) {
   setSubmission((current) => current?.owner === owner ? undefined : current);
 }

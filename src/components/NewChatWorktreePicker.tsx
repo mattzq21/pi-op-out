@@ -2,7 +2,7 @@ import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
 import { Portal } from "solid-js/web";
 import { Check, FolderGit2, Plus } from "lucide-solid";
 import type { NativeTransport, ProjectBranches } from "../lib/nativeTransport";
-import { registerWorktreePreparation, updateChatPreparation } from "../lib/newChatWorktree";
+import { chatSubmission, preserveChatSelection, registerWorktreePreparation, updateChatPreparation } from "../lib/newChatWorktree";
 
 function WorktreeOptions(props: { local: boolean; pending: boolean; error?: string; onLocal: () => void; onCreate: () => void; onClose: () => void }) {
   let dialog!: HTMLDialogElement;
@@ -22,14 +22,15 @@ function WorktreeOptions(props: { local: boolean; pending: boolean; error?: stri
 
 export function NewChatWorktreePicker(props: { transport: NativeTransport; listing: ProjectBranches; disabled?: boolean; onSelect: (path: string) => Promise<void>; onBranchPickingChange: (enabled: boolean) => void }) {
   const [open, setOpen] = createSignal(false);
-  const [createNew, setCreateNew] = createSignal(false);
-  const [pending, setPending] = createSignal(true);
+  const selection = chatSubmission(props.transport)?.selection;
+  const [createNew, setCreateNew] = createSignal(selection?.createNew ?? false);
+  const [pending, setPending] = createSignal(!selection);
   const [error, setError] = createSignal<string>();
   createEffect(() => props.onBranchPickingChange(createNew() && !pending()));
   let disposed = false;
   onCleanup(() => { disposed = true; });
   const normalize = (path: string) => path.replace(/[\\/]+$/, "");
-  const defaults = props.transport.listSessions().then((sessions) => {
+  const defaults = selection ? Promise.resolve() : props.transport.listSessions().then((sessions) => {
     if (!disposed) setCreateNew(sessions.some((session) => !session.isDraft && session.messageCount > 0 && (session.hostId ?? "local") === props.transport.currentHostId() && normalize(session.worktreeRoot ?? session.cwd) === normalize(props.listing.path)));
   }).catch((reason) => { if (!disposed) setError(String(reason)); throw reason; }).finally(() => { if (!disposed) setPending(false); });
   void defaults.catch(() => undefined);
@@ -38,6 +39,7 @@ export function NewChatWorktreePicker(props: { transport: NativeTransport; listi
     if (createNew()) updateChatPreparation(props.transport, "Creating worktree");
     await defaults;
     if (disposed) throw new Error("Conversation changed");
+    preserveChatSelection(props.transport, props.listing, createNew());
     if (!createNew()) return undefined;
     const owner = props.transport; const cwd = props.listing.path; const host = owner.currentHostId();
     updateChatPreparation(owner, "Creating worktree");
