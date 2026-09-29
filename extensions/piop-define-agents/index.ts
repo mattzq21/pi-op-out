@@ -23,10 +23,10 @@ const STATE_ENTRY = "pi-define-agents-state";
 const DEFAULTS_ENV = "PI_DEFINE_AGENTS_RUNTIME_DEFAULTS";
 const DRAFT_STATE_ENV = "PIOP_AGENT_DRAFT_STATE";
 
-function draftAgentState(session: string): SessionAgentState | undefined {
+function draftAgentState(session: string, identity: string | undefined): SessionAgentState | undefined {
   try {
     const draft = JSON.parse(process.env[DRAFT_STATE_ENV] || "null");
-    return draft?.session === session ? draft.state : undefined;
+    return draft?.session === session && draft.identity === identity ? draft.state : undefined;
   } catch { return undefined; }
 }
 const configPath = process.env.PIOP_AGENT_CONFIG_PATH || join(dirname(fileURLToPath(import.meta.url)), "config.json");
@@ -183,8 +183,9 @@ function restoredFastMode(branch: ReturnType<ExtensionContext["sessionManager"][
 function readAgentState(branch: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>, session: string) {
   const states = branch.flatMap(entry => entry.type === "custom" && entry.customType === STATE_ENTRY ? [entry.data as SessionAgentState] : []);
   const persisted = states.at(-1);
-  const stored = persisted ?? draftAgentState(session);
-  return { states, stored, identity: persisted ? persistedAgentIdentity(persisted) : undefined, fastMode: stored?.fastModeOverride ?? restoredFastMode(branch) };
+  const identity = persisted ? persistedAgentIdentity(persisted) : undefined;
+  const stored = draftAgentState(session, identity) ?? persisted;
+  return { states, stored, identity, fastMode: stored?.fastModeOverride ?? restoredFastMode(branch) };
 }
 
 function promptPath(agent: Agent): string {
@@ -362,17 +363,17 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const fastModeModels = () => { const request: { models?: string[] } = {}; pi.events.emit("piop:fast-mode", request); return request.models ?? []; };
   const fastModeError = (agent: Agent, model: string | undefined) => agent.fastMode === true && (!model || !fastModeModels().includes(model.replace(/--piop-account-\d+(?=\/)/, ""))) ? `Agent "${agent.name}" cannot run because model ${model || "(unset)"} does not support fast mode` : undefined;
   const publish = (ctx: ExtensionContext) => ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: currentAgent()?.name ?? active, locked, saved: !!snapshot, unavailable: !currentAgent(), config: { ...config, fastModeModels: fastModeModels() } })}`);
-  const saveState = () => {
+  const saveState = (submit = false) => {
     const state = { active, modelOverride, effortOverride, fastModeOverride: fastModeOverride ?? null, snapshot };
-    if (!locked && savedState === undefined) {
-      process.env[DRAFT_STATE_ENV] = JSON.stringify({ session: runtimeSession, state });
+    if (!submit) {
+      process.env[DRAFT_STATE_ENV] = JSON.stringify({ session: runtimeSession, identity: savedState, state });
       return;
     }
+    delete process.env[DRAFT_STATE_ENV];
     const serialized = persistedAgentIdentity(state);
     if (serialized === savedState) return;
     pi.appendEntry(STATE_ENTRY, state);
     savedState = serialized;
-    delete process.env[DRAFT_STATE_ENV];
   };
   const reload = async (ctx: ExtensionCommandContext) => {
     publish(ctx);
@@ -523,6 +524,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (!locked) { locked = true; publish(ctx); }
     const error = await useAgent(active, ctx, true, true, false);
     if (error) { ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error })); ctx.ui.notify(error, "error"); return { action: "handled" }; }
+    saveState(true);
     return { action: "continue" };
   });
   pi.on("before_agent_start", (event) => {
