@@ -10,7 +10,7 @@ import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@e
 
 export type Agent = { name: string; model: string; effort: string; fastMode?: boolean; extensions?: string[]; path_systemprompt: string; path_agentprompt: string; tools: string[]; skills: string[]; mcpServers: McpServer[] };
 type RuntimeDefaults = { model: string; effort: string };
-type AgentSnapshot = { version: 1; definition: Agent; systemPrompt: string; agentPrompt: string };
+type AgentSnapshot = { version: 2; definition: Agent } | { version: 1; definition: Agent; systemPrompt: string; agentPrompt: string };
 type SessionAgentState = { snapshot?: AgentSnapshot; active?: string; locked?: boolean; modelOverride?: string; effortOverride?: string };
 
 const STATUS_KEY = "pi-define-agents";
@@ -77,6 +77,20 @@ async function ensurePromptFile(relativePath: string, contents: string) {
     try { await link(temporary, path); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
   } finally { await rm(temporary, { force: true }); }
+}
+
+async function snapshotPrompt(contents: string) {
+  const hash = createHash("sha256").update(contents).digest("hex");
+  const path = resolvePromptPath(`prompt-snapshots/${hash}.md`);
+  await ensurePromptFile(path, contents);
+  return path;
+}
+
+async function snapshotPrompts(definition: Agent, systemPrompt: string, agentPrompt: string): Promise<AgentSnapshot> {
+  return { version: 2, definition: { ...definition,
+    path_systemprompt: await snapshotPrompt(systemPrompt),
+    path_agentprompt: agentPrompt ? await snapshotPrompt(agentPrompt) : "",
+  } };
 }
 
 async function ensureDefaultAgentPrompt() {
@@ -224,7 +238,7 @@ function migrateTerminalAgent(config: Config, pi: ExtensionAPI) {
   return true;
 }
 function migrateQuestionSnapshot(stored: AgentSnapshot | undefined) {
-  if (stored?.version !== 1) return undefined;
+  if (stored?.version !== 1 && stored?.version !== 2) return undefined;
   const snapshot = structuredClone(stored);
   snapshot.definition.tools = [...new Set(snapshot.definition.tools.map((tool) => tool === "request_user_input_async" ? "request_user_input" : tool))];
   return snapshot;
@@ -286,6 +300,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
   let config = await loadConfig(pi);
   let active = "general";
   let snapshot: AgentSnapshot | undefined;
+  let savedState: string | undefined;
   let locked = false;
   let runtimeDefaults: RuntimeDefaults | undefined;
   let runtimeSession = "";
@@ -306,14 +321,20 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (!agent) { request.error = "Choose a configured agent profile"; return; }
     request.state = request.agent
       ? { active: agent.name, locked: false }
-      : { active: agent.name, locked: false, snapshot: { version: 1, definition: structuredClone(agent), systemPrompt: activeSystemPrompt, agentPrompt: activeAgentPrompt }, modelOverride: modelOverride || agent.model || runtimeDefaults?.model, effortOverride: pi.getThinkingLevel() };
+      : { active: agent.name, locked: false, snapshot: snapshot && structuredClone(snapshot), modelOverride: modelOverride || agent.model || runtimeDefaults?.model, effortOverride: pi.getThinkingLevel() };
   });
   const restoredAgentName = (name: string | undefined) => !name || (name === "default" && !findAgent("default")) ? "general" : name;
   const currentSkillPaths = () => [...new Set(currentAgent() ? agentSkills(pi, currentAgent()!).map(normalizedPath) : [])].sort();
   const fastModeModels = () => { const request: { models?: string[] } = {}; pi.events.emit("piop:fast-mode", request); return request.models ?? []; };
   const fastModeError = (agent: Agent, model: string | undefined) => agent.fastMode === true && (!model || !fastModeModels().includes(model.replace(/--piop-account-\d+(?=\/)/, ""))) ? `Agent "${agent.name}" cannot run because model ${model || "(unset)"} does not support fast mode` : undefined;
   const publish = (ctx: ExtensionContext) => ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: currentAgent()?.name ?? active, locked: false, saved: !!snapshot, unavailable: !currentAgent(), config: { ...config, fastModeModels: fastModeModels() } })}`);
-  const saveState = () => pi.appendEntry(STATE_ENTRY, { active, locked, modelOverride, effortOverride, snapshot });
+  const saveState = () => {
+    const state = { active, locked, modelOverride, effortOverride, snapshot };
+    const serialized = JSON.stringify(state);
+    if (serialized === savedState) return;
+    pi.appendEntry(STATE_ENTRY, state);
+    savedState = serialized;
+  };
   const reload = async (ctx: ExtensionCommandContext) => {
     publish(ctx);
     reloading = true;
@@ -330,10 +351,14 @@ export default async function defineAgents(pi: ExtensionAPI) {
   };
 
   const snapshotDefinition = (agent: Agent) => structuredClone({ ...agent, model: agent.model.trim() || runtimeDefaults?.model || "", effort: agent.effort.trim() || runtimeDefaults?.effort || "" });
+  const persistAgentSnapshot = async (agent: Agent, persist: boolean) => {
+    if (snapshot?.version !== 2) snapshot = await snapshotPrompts(snapshotDefinition(agent), activeSystemPrompt, activeAgentPrompt);
+    if (persist) saveState();
+  };
   const prepareAgentPrompts = async (agent: Agent, persistSnapshot: boolean) => {
     activeSystemPrompt = "";
     activeAgentPrompt = "";
-    if (snapshot) {
+    if (snapshot?.version === 1) {
       activeSystemPrompt = snapshot.systemPrompt;
       activeAgentPrompt = snapshot.agentPrompt;
     } else {
@@ -345,9 +370,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
         try { activeAgentPrompt = await readFile(path, "utf8"); }
         catch (error) { pi.setActiveTools([]); return `Agent "${agent.name}" cannot read agent prompt ${path}: ${error instanceof Error ? error.message : String(error)}`; }
       }
-      snapshot = { version: 1, definition: snapshotDefinition(agent), systemPrompt: activeSystemPrompt, agentPrompt: activeAgentPrompt };
-      if (persistSnapshot) saveState();
     }
+    await persistAgentSnapshot(agent, persistSnapshot);
 
   };
 
@@ -433,6 +457,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const branch = ctx.sessionManager.getBranch();
     const states = branch.flatMap((entry) => entry.type === "custom" && entry.customType === STATE_ENTRY ? [entry.data as SessionAgentState] : []);
     const stored = states.at(-1);
+    savedState = stored ? JSON.stringify(stored) : undefined;
     snapshot = migrateQuestionSnapshot(stored?.snapshot);
     active = snapshot?.definition.name ?? restoredAgentName(stored?.active);
     if (active === "voice-orchestrator") { active = "general"; snapshot = undefined; }
