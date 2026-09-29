@@ -4,6 +4,7 @@
 html[data-mobile] .mobile-sidebar-toggle { display: flex; }
 html[data-mobile] body { min-width: 0; }
 html[data-mobile] .app { padding-top: env(safe-area-inset-top); }
+html[data-mobile] .conversation-unowned .composer-interaction { opacity: 1; }
 .mobile-sidebar-backdrop { display: none; }
 .mobile-connect { height: var(--mobile-height, 100dvh); overflow-y: auto; display: grid; align-items: safe center; justify-items: center; padding: max(28px, env(safe-area-inset-top)) 24px; background: #181817; color: #e8e5dd; }
 .mobile-connect form { width: min(100%, 420px); display: grid; gap: 20px; }
@@ -57,6 +58,7 @@ html[data-mobile] .app:has(.icon-rail:not(.compact)) ~ .mobile-reconnect-banner 
   .message-content pre, .message-content table { max-width: 100%; overflow-x: auto; }
   .conversation, .composer-wrap, .composer-questions, .extension-widget, .runtime-activity { width: calc(100% - 16px); }
   .composer { margin-inline: 0; }
+  .conversation-unowned .composer-interaction { opacity: 1; }
   .composer-bar { flex-wrap: wrap; }
   .composer-tools { flex-wrap: wrap; }
   .composer-actions { margin-left: auto; }
