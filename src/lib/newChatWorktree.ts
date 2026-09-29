@@ -65,5 +65,6 @@ export async function prepareChatWorktree(owner: NativeTransport, select: (path:
   });
   const destination = active();
   await waitForConnection(destination, active, ready, error);
+  owner.promptControls.copyTo(destination.promptControls);
   return destination;
 }

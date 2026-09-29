@@ -1,4 +1,5 @@
 import { forgetSession, retainSessionResource } from "./sessionMemory";
+import { PromptControls } from "./promptControls";
 import { preserveDaemonPreferences, saveClientSettings, withClientSettings } from "./clientSettings";
 import { keybindingsError } from "./keybindings";
 import { invoke, listen, type UnlistenFn } from "./platform";
@@ -77,6 +78,11 @@ export const restoreArchivedWorktree = (sessionPath: string, hostId = "local") =
 export const removeArchivedWorktree = (cwd: string, hostId = "local") => call<GitWorktreeRemoval>("remove_git_worktree", { cwd, hostId, deleteBranch: false });
 
 export class NativeTransport {
+  readonly promptControls = new PromptControls();
+  async submitPrompt<T>(command: RpcCommand): Promise<T> {
+    await this.promptControls.flush(value => this.command(value), enabled => this.setFastMode(enabled));
+    return this.command<T>(command);
+  }
   private owns = true;
   ownsConversation() { return this.owns; }
   async takeOwnership() {

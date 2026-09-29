@@ -12,7 +12,7 @@ interface SessionSnapshot { revision: string; state: AgentState; history: { entr
 type MessageUpdate = (messages: ChatMessage[]) => ChatMessage[];
 const emptyState: AgentState = { model: null, thinkingLevel: "off", isStreaming: false, sessionId: "", messageCount: 0, pendingMessageCount: 0 };
 
-export function useChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation">>>, initialState: Accessor<AgentState> = () => emptyState, options: { poll?: boolean } = {}) {
+export function useChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation" | "promptControls">>>, initialState: Accessor<AgentState> = () => emptyState, options: { poll?: boolean } = {}) {
   const runtime = createMemo(() => {
     const current = transport();
     return untrack(() => createChatSession(() => current, initialState, options));
@@ -26,7 +26,7 @@ export function useChatSession(transport: Accessor<Pick<NativeTransport, "comman
   };
 }
 
-function createChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation">>>, initialState: Accessor<AgentState>, options: { poll?: boolean }) {
+function createChatSession(transport: Accessor<Pick<NativeTransport, "command" | "subscribe"> & Partial<Pick<NativeTransport, "ownsConversation" | "promptControls">>>, initialState: Accessor<AgentState>, options: { poll?: boolean }) {
   const session = useSessionMemory(() => (transport()), () => (initialState()));
   const owner = createRef<ReturnType<typeof transport> | undefined>(transport());
   const loading = new AbortController();
@@ -119,6 +119,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
         session.memory.batch(() => {
           restoreHistory(snapshot);
           session.setState({ ...snapshot.state, pendingMessages: snapshot.queue.pendingMessages as AgentState["pendingMessages"] });
+          capturedTransport.promptControls?.acknowledge(snapshot.state);
         });
         session.memory.markRevision(snapshot.revision);
         bufferedEvents.current = undefined;

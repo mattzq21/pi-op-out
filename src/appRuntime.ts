@@ -23,7 +23,7 @@ function emptyContextUsage(state: AgentState, inherited?: ProjectControls) {
   return contextWindow && contextWindow > 0 ? { tokens: 0, percent: 0, contextWindow } : state.contextUsage;
 }
 
-export function createComposerControls(transport: Accessor<NativeTransport>, connected: Accessor<boolean>, controls: WeakMap<NativeTransport, ProjectControls>) {
+export function createComposerControls(transport: Accessor<NativeTransport>, connected: Accessor<boolean>, controls: WeakMap<NativeTransport, ProjectControls>, fastModels: Accessor<string[] | undefined> = () => undefined) {
   const snapshot = createMemo<{ owner: NativeTransport; controls?: ProjectControls }>((previous) => {
     const owner = transport();
     const inherited = previous?.owner === owner ? previous.controls : controls.get(owner);
@@ -33,15 +33,15 @@ export function createComposerControls(transport: Accessor<NativeTransport>, con
     state: (state: AgentState) => {
       const inherited = snapshot().controls;
       const contextUsage = initialContextUsage(state, inherited);
-      return inherited ? { ...state, model: inherited.model, thinkingLevel: inherited.thinking, contextUsage } : { ...state, contextUsage };
+      return transport().promptControls.state(inherited ? { ...state, model: inherited.model, thinkingLevel: inherited.thinking, contextUsage } : { ...state, contextUsage });
     },
     statuses: (statuses: Record<string, string>) => {
       const inherited = snapshot().controls;
-      return inherited?.fastMode === undefined ? statuses : { ...statuses, "pi-desktop-fast-mode": inherited.fastMode ? "Fast mode on" : "Fast mode off" };
+      return transport().promptControls.statuses(inherited?.fastMode === undefined ? statuses : { ...statuses, "pi-desktop-fast-mode": inherited.fastMode ? "Fast mode on" : "Fast mode off" }, fastModels());
     },
     thinkingLevels: (levels: string[]) => {
       const thinking = snapshot().controls?.thinking;
-      return thinking && !levels.includes(thinking) ? [...levels, thinking] : levels;
+      return transport().promptControls.levels(thinking && !levels.includes(thinking) ? [...levels, thinking] : levels);
     },
     agent: (agent?: string) => snapshot().controls?.agent ?? agent,
   };
@@ -65,22 +65,18 @@ export function reassignTerminals(transport: NativeTransport, terminals: readonl
 async function applyInherited(transport: NativeTransport, inherited: ProjectControls, models: Model[]) {
   if (inherited.agent) await transport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(inherited.agent)}` });
   if (inherited.model && models.some((model) => model.provider === inherited.model!.provider && model.id === inherited.model!.id)) {
-    await transport.command({ type: "set_model", provider: inherited.model.provider, modelId: inherited.model.id });
+    transport.promptControls.model(inherited.model);
   }
-  const { levels } = await transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" });
-  if (levels.includes(inherited.thinking)) await transport.command({ type: "set_thinking_level", level: inherited.thinking });
-  if (inherited.fastMode !== undefined) await transport.setFastMode(inherited.fastMode);
+  transport.promptControls.thinking(inherited.thinking);
+  if (inherited.fastMode !== undefined) transport.promptControls.fast(inherited.fastMode);
 }
 
 async function applyDefaults(transport: NativeTransport, value: AppSettings, models: Model[], current: () => boolean) {
   const model = models.find((model) => `${model.provider}/${model.id}` === value.defaultModel);
-  if (model) await transport.command({ type: "set_model", provider: model.provider, modelId: model.id });
+  if (model) transport.promptControls.model(model);
   if (!current()) return;
-  const { levels } = await transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" });
-  if (!current()) return;
-  if (levels.includes(value.defaultThinking)) await transport.command({ type: "set_thinking_level", level: value.defaultThinking });
-  if (!current()) return;
-  await transport.setFastMode(value.defaultFastMode);
+  transport.promptControls.thinking(value.defaultThinking);
+  transport.promptControls.fast(value.defaultFastMode);
   if (!current()) return;
   await transport.command({ type: "prompt", message: `/pi-define-agents-use ${encodeAgentValue(value.defaultAgent ?? "general")}` });
   transport.defaultsApplied();
