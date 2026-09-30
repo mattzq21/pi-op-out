@@ -224,6 +224,19 @@ fn managed_worktree_target(root: &Path, host: Option<&RemoteHost>, branch: &str)
     Ok(ManagedWorktreeTarget { path: PathBuf::from(path), host: host.cloned() })
 }
 
+fn require_new_worktree_path(target: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(target) {
+        Ok(_) => Err(format!("Worktree directory already exists: {}", target.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn worktree_creation_error(stderr: &[u8]) -> String {
+    let error = String::from_utf8_lossy(stderr).trim().to_string();
+    if error.is_empty() { "Could not create Git worktree".into() } else { error }
+}
+
 pub(super) fn create_project_worktree_at(cwd: &str, name: &str, host: Option<&RemoteHost>) -> Result<GitWorktree, String> {
     let name = worktree_suffix(name)?;
     let root = project_worktree_root(cwd, host)?;
@@ -233,16 +246,11 @@ pub(super) fn create_project_worktree_at(cwd: &str, name: &str, host: Option<&Re
     let output = if let Some(host) = host {
         run_limited(ssh(host).arg(format!("target={}; if [ -e \"$target\" ] || [ -L \"$target\" ]; then printf 'Worktree directory already exists: %s' \"$target\" >&2; exit 1; fi; git -C {} worktree add -b {} \"$target\" HEAD", shell_quote(&target.to_string_lossy()), shell_quote(&root.to_string_lossy()), shell_quote(&branch))), 64 * 1024, "Could not create Git worktree")?
     } else {
-        match fs::symlink_metadata(target) {
-            Ok(_) => return Err(format!("Worktree directory already exists: {}", target.display())),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
-            Err(error) => return Err(error.to_string()),
-        }
+        require_new_worktree_path(target)?;
         run_limited(Command::new("git").arg("-C").arg(&root).args(["worktree", "add", "-b", &branch]).arg(target).arg("HEAD"), 64 * 1024, "Could not create Git worktree")?
     };
     if !output.status.success() {
-        let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if error.is_empty() { "Could not create Git worktree".into() } else { error });
+        return Err(worktree_creation_error(&output.stderr));
     }
     Ok(GitWorktree { branch, path: target.to_string_lossy().into_owned() })
 }
