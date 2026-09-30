@@ -9,8 +9,35 @@ function ImageViewer(props: { src: string; alt: string; onClose: () => void }) {
   const imageRef = createRef<HTMLImageElement>(null);
   const [fullSize, setFullSize] = createSignal(false);
   const [zoom, setZoom] = createSignal<number>();
+  const [dragging, setDragging] = createSignal(false);
+  const pan = createRef<{ pointerId: number; x: number; y: number; left: number; top: number } | undefined>(undefined);
+  const suppressClick = createRef(false);
   const expanded = () => fullSize() || zoom() !== undefined;
   const toggleSize = () => { const fit = expanded(); setZoom(undefined); setFullSize(!fit); };
+  const startPan = (event: PointerEvent & { currentTarget: HTMLImageElement }) => {
+    suppressClick.current = false;
+    const content = contentRef.current;
+    if (!expanded() || !content || event.button !== 0 || event.pointerType === "touch") return;
+    pan.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, left: content.scrollLeft, top: content.scrollTop };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const movePan = (event: PointerEvent) => {
+    const start = pan.current;
+    const content = contentRef.current;
+    if (!start || !content || event.pointerId !== start.pointerId) return;
+    const dx = event.clientX - start.x;
+    const dy = event.clientY - start.y;
+    if (!dragging() && Math.hypot(dx, dy) < 4) return;
+    suppressClick.current = true;
+    setDragging(true);
+    content.scrollLeft = start.left - dx;
+    content.scrollTop = start.top - dy;
+  };
+  const endPan = () => { pan.current = undefined; setDragging(false); };
+  const clickImage = (event: MouseEvent) => {
+    if (suppressClick.current) { suppressClick.current = false; event.preventDefault(); event.stopPropagation(); return; }
+    if (event.target === imageRef.current || event.detail === 0) { event.stopPropagation(); toggleSize(); }
+  };
   const zoomImage = (event: WheelEvent) => {
     if (!event.ctrlKey) return;
     event.preventDefault();
@@ -41,8 +68,8 @@ function ImageViewer(props: { src: string; alt: string; onClose: () => void }) {
       <button type="button" autofocus aria-label="Close image" title="Close image"><X size={22} /></button>
     </div>
     <div ref={element => { contentRef.current = element; }} class="image-viewer-content">
-      <button type="button" class="image-viewer-image" classList={{ "full-size": expanded() }} aria-label={expanded() ? "Fit image to screen" : "View image at full size"} onClick={event => { if (event.target === imageRef.current || event.detail === 0) { event.stopPropagation(); toggleSize(); } }}>
-        <img ref={element => { imageRef.current = element; }} src={props.src} alt={props.alt} draggable={false} style={{ width: zoom() !== undefined ? `${imageRef.current!.naturalWidth * zoom()!}px` : undefined, height: zoom() !== undefined ? `${imageRef.current!.naturalHeight * zoom()!}px` : undefined }} />
+      <button type="button" class="image-viewer-image" classList={{ "full-size": expanded(), dragging: dragging() }} aria-label={expanded() ? "Fit image to screen" : "View image at full size"} onClick={clickImage}>
+        <img ref={element => { imageRef.current = element; }} src={props.src} alt={props.alt} draggable={false} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan} onLostPointerCapture={endPan} style={{ width: zoom() !== undefined ? `${imageRef.current!.naturalWidth * zoom()!}px` : undefined, height: zoom() !== undefined ? `${imageRef.current!.naturalHeight * zoom()!}px` : undefined }} />
       </button>
     </div>
   </dialog>;
