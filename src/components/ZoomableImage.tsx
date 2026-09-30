@@ -22,7 +22,7 @@ function ImageViewer(props: { src: string; alt: string; onClose: () => void }) {
     const x = (event.clientX - before.left) / before.width;
     const y = (event.clientY - before.top) / before.height;
     const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? content.clientHeight : 1);
-    const factor = Math.exp(Math.max(-0.25, Math.min(0.25, delta * 0.002)));
+    const factor = Math.exp(Math.max(-0.25, Math.min(0.25, -delta * 0.002)));
     setZoom(Math.max(0.01, Math.min(16, before.width / image.naturalWidth * factor)));
     const after = image.getBoundingClientRect();
     content.scrollLeft += after.left + x * after.width - event.clientX;
