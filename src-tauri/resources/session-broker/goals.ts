@@ -2,53 +2,70 @@ import type { ExtensionAPI, ExtensionContext, AgentBeforeSettleEvent } from "@ea
 import { GoalState, GOAL_CONTEXT, goalTokens } from "./goal-state.ts";
 import { goalBudgetPrompt, goalChangedPrompt, goalInactivePrompt, goalPrompt } from "./goal-prompts.ts";
 import { registerGoalControls } from "./goal-controls.ts";
+import { GoalCoordination } from "./goal-coordination.ts";
+import { registerPauseControl } from "./pause.ts";
 
 function persistent(ctx: ExtensionContext) {
   const path = ctx.sessionManager.getSessionFile();
   return !!path && !/(?:^|[\\/])pi-desktop-btw-[^/\\]+\.jsonl$/.test(path);
 }
 
+function providerErrorStatus(message: string | undefined): "usage_limited" | "blocked" {
+  return /usage[_\s-]*limit|rate[_\s-]*limit|insufficient[_\s-]*quota|quota[_\s-]*(?:exceeded|exhausted)|too many requests|out of budget|monthly usage limit|available balance|\b429\b/i.test(message ?? "") ? "usage_limited" : "blocked";
+}
+
 export function registerGoals(pi: ExtensionAPI) {
   const state = new GoalState(pi);
+  const pauseController = registerPauseControl(pi);
+  const pause = (ctx: ExtensionContext) => { void pauseController.pause(ctx).catch(error => ctx.ui.notify(String(error), "error")); };
+  const coordination = new GoalCoordination();
+  const schedule = (ctx: ExtensionContext, operation: () => void) => {
+    void coordination.run(ctx, operation).catch(error => ctx.ui.notify(String(error), "error"));
+  };
   let context: ExtensionContext | undefined;
   let starting = false;
+  let pendingStart = false;
   let restored = false;
   let emptyTurns = 0;
   let failedTurns = 0;
   let activity = false;
+  let emptyFinal = false;
   let successfulTool = false;
   let failedTool = false;
-  let lastError = "";
   let automatic = false;
   let runGoalId: string | undefined;
   let responseGoalId: string | undefined;
   let runSignal: AbortSignal | undefined;
   const resetAudit = () => { emptyTurns = 0; failedTurns = 0; automatic = false; };
-  const allowed = () => pi.getActiveTools().includes("goal");
+  const allowed = () => ["get_goal", "create_goal", "update_goal"].every(name => pi.getActiveTools().includes(name));
   const assertAvailable = (ctx: ExtensionContext) => {
     if (!persistent(ctx)) throw new Error("Goals require a saved conversation and are unavailable in temporary side chats.");
-    if (!allowed()) throw new Error("Enable the goal tool in Settings → Tools and allow it for this agent before starting a goal.");
+    if (!allowed()) throw new Error("Enable get_goal, create_goal and update_goal in Settings → Tools and allow them for this agent before starting a goal.");
   };
   const steering = (content: string) => pi.sendMessage({ customType: GOAL_CONTEXT, content, display: false, details: { goalId: state.goal?.id } }, { triggerTurn: false });
   const account = (ctx: ExtensionContext, tokens: number, includeStopped = false) => {
-    if (state.account(ctx, tokens, includeStopped) && state.goal) steering(goalBudgetPrompt(state.goal));
+    if (state.account(ctx, tokens, includeStopped) && state.goal) {
+      steering(goalBudgetPrompt(state.goal));
+      pause(ctx);
+    }
   };
   const start = (ctx: ExtensionContext) => {
     if (starting || state.goal?.status !== "active" || !ctx.isIdle() || ctx.hasPendingMessages()) return;
     assertAvailable(ctx);
     starting = true;
+    pendingStart = true;
     pi.sendUserMessage("Continue working toward the active conversation goal.", { deliverAs: "followUp" });
   };
   const changed = (ctx: ExtensionContext) => {
     resetAudit(); state.save(ctx);
     if (!ctx.isIdle()) steering(goalChangedPrompt(state.goal));
   };
-  registerGoalControls(pi, { state, assertAvailable, changed, start });
+  registerGoalControls(pi, { state, coordination, assertAvailable, changed, start });
 
-  const restore = (ctx: ExtensionContext, navigating: boolean) => {
-    context = ctx; starting = false; resetAudit(); runGoalId = undefined;
+  const restore = (ctx: ExtensionContext) => {
+    context = ctx; starting = false; pendingStart = false; resetAudit(); runGoalId = undefined;
     try {
-      state.restore(ctx, navigating);
+      state.restore(ctx);
       if (!persistent(ctx)) { state.goal = null; state.publish(ctx); }
       restored = true;
     } catch (error) {
@@ -56,96 +73,128 @@ export function registerGoals(pi: ExtensionAPI) {
       ctx.ui.notify(`Could not restore goal: ${String(error)}`, "error");
     }
   };
-  pi.on("session_start", (_event, ctx) => restore(ctx, false));
-  pi.on("session_tree", (_event, ctx) => restore(ctx, true));
+  pi.on("session_start", (_event, ctx) => coordination.run(ctx, () => restore(ctx)));
+  pi.on("session_tree", (_event, ctx) => coordination.run(ctx, () => restore(ctx)));
   const ready = pi.events.on("piop:agents:ready", value => {
     const { ctx } = value as { ctx: ExtensionContext };
+    schedule(ctx, () => {
     if (!restored || state.goal?.status !== "active") return;
     if (!allowed()) { state.setStatus(ctx, "paused"); return; }
     start(ctx);
+    });
   });
-  pi.on("input", event => {
+  pi.on("input", (event, ctx) => coordination.run(ctx, () => {
     starting = false;
+    if (event.source === "extension" && pendingStart && event.text === "Continue working toward the active conversation goal.") {
+      pendingStart = false;
+      if (state.goal?.status !== "active") return { action: "handled" as const };
+    }
     if (event.source !== "extension") resetAudit();
-  });
-  pi.on("agent_start", (_event, ctx) => {
+  }));
+  pi.on("agent_start", (_event, ctx) => coordination.run(ctx, () => {
     context = ctx; starting = false;
     runSignal = ctx.signal;
-    activity = false; successfulTool = false; failedTool = false; lastError = "";
+    activity = false; emptyFinal = false; successfulTool = false; failedTool = false;
     runGoalId = state.goal?.status === "active" ? state.goal.id : undefined;
     if (state.goal?.status === "active" && !allowed()) state.setStatus(ctx, "paused");
     state.beginRun();
-  });
-  pi.on("message_start", event => {
+  }));
+  pi.on("message_start", (event, ctx) => coordination.run(ctx, () => {
     if (event.message.role !== "assistant") return;
     responseGoalId = state.usageGoalId();
-  });
-  pi.on("message_end", (event, ctx) => {
+  }));
+  pi.on("message_end", (event, ctx) => coordination.run(ctx, () => {
     if (event.message.role !== "assistant") return;
     const message = event.message;
     activity ||= message.content.some(part => part.type === "toolCall" || (part.type === "text" ? part.text.trim() : part.thinking.trim()));
-    lastError = message.errorMessage ?? "";
     if (responseGoalId && responseGoalId === state.goal?.id) account(ctx, goalTokens(message.usage), true);
     if (message.stopReason === "aborted" && state.goal?.status === "active") state.setStatus(ctx, "paused");
-  });
-  pi.on("tool_result", (event, ctx) => {
+  }));
+  pi.on("message_end", (event, ctx) => coordination.run(ctx, () => {
+    if (event.message.role !== "assistant") return;
+    emptyFinal ||= event.message.stopReason === "stop" && !event.message.content.some(part => part.type === "text" && part.text.trim());
+    if (event.message.stopReason !== "error") return;
+    try {
+      if (state.usageGoalId()) state.setStatus(ctx, providerErrorStatus(event.message.errorMessage));
+    } finally { pause(ctx); }
+    return { message: { ...event.message, stopReason: "aborted" as const, errorMessage: "Response paused" } };
+  }));
+  pi.on("tool_result", (event, ctx) => coordination.run(ctx, () => {
     activity = true;
     successfulTool ||= !event.isError;
     failedTool ||= event.isError;
     account(ctx, 0);
-  });
-  pi.on("session_compact", (event, ctx) => {
+  }));
+  pi.on("session_compact", (event, ctx) => coordination.run(ctx, () => {
     account(ctx, goalTokens(event.compactionEntry.usage));
     if (state.goal?.status === "active") steering(goalPrompt(state.goal));
-  });
-  pi.on("session_compact_failed", (event, ctx) => {
+  }));
+  pi.on("session_compact_failed", (event, ctx) => coordination.run(ctx, () => {
     if (event.errorMessage && state.goal?.status === "active") state.setStatus(ctx, "blocked");
-  });
-  pi.on("agent_end", (_event, ctx) => { state.flushClock(); state.save(ctx); });
+  }));
+  pi.on("agent_end", (_event, ctx) => coordination.run(ctx, () => { state.flushClock(); state.save(ctx); }));
+  pi.on("after_provider_response", (event, ctx) => coordination.run(ctx, () => {
+    if (event.status !== 429) return;
+    try {
+      if (state.usageGoalId()) state.setStatus(ctx, "usage_limited");
+    } finally { pause(ctx); }
+  }));
 
   const stopForOutcome = (event: AgentBeforeSettleEvent, ctx: ExtensionContext) => {
     if (event.outcome === "completed") return false;
     if (!state.usageGoalId()) return false;
     if (event.outcome === "aborted") state.setStatus(ctx, "paused");
-    else state.setStatus(ctx, /quota|usage.limit|rate.limit|too many requests|429/i.test(lastError) ? "usage_limited" : "blocked");
+    else state.setStatus(ctx, "blocked");
     return true;
   };
   const stalled = () => {
-    emptyTurns = automatic && !activity ? emptyTurns + 1 : 0;
+    emptyTurns = automatic && emptyFinal && !activity ? emptyTurns + 1 : 0;
     if (successfulTool) failedTurns = 0;
     else if (failedTool) failedTurns++;
-    return emptyTurns >= 3 || failedTurns >= 3;
+    return emptyTurns >= 3 || failedTurns >= 5;
   };
-  pi.on("agent_before_settle", (event, ctx) => {
+  pi.on("agent_before_settle", (event, ctx) => coordination.run(ctx, () => {
     if (stopForOutcome(event, ctx)) return;
     if (state.goal?.status !== "active") return;
     if (!allowed()) { state.setStatus(ctx, "paused"); return; }
     if (runGoalId !== state.goal.id) resetAudit();
-    if (stalled()) { state.setStatus(ctx, "blocked"); return; }
+    if (stalled()) {
+      try { state.setStatus(ctx, "blocked"); }
+      finally { pause(ctx); }
+      return;
+    }
     if (ctx.hasPendingMessages() || event.context.pendingMessages.length) return;
     automatic = true;
     return { continue: true, entries: [{ type: "custom_message" as const, customType: GOAL_CONTEXT, content: goalPrompt(state.goal), display: false, details: { goalId: state.goal.id } }] };
-  });
-  pi.on("agent_settled", (_event, ctx) => {
+  }));
+  pi.on("agent_settled", (_event, ctx) => coordination.run(ctx, () => {
     starting = false; state.finishRun(); responseGoalId = undefined;
     if (state.goal?.status === "active" && runSignal?.aborted) state.setStatus(ctx, "paused");
     state.save(ctx);
-  });
+  }));
 
   const stopControl = pi.events.on("piop:goal-control", value => {
-    const { action, ctx } = value as { action: "pause" | "resume"; ctx: ExtensionContext };
+    const event = value as { action: "pause" | "resume"; ctx: ExtensionContext; ready?: Promise<void> };
+    const { action, ctx } = event;
+    const operation = () => {
     if (!state.goal) return;
     if (action === "pause" && state.goal.status === "active") state.setStatus(ctx, "paused");
-    if (action === "resume" && state.goal.status === "paused" && allowed()) { resetAudit(); state.setStatus(ctx, "active"); }
+    if (action !== "resume") return;
+    if (state.goal.tokenBudget !== null && state.goal.tokensUsed >= state.goal.tokenBudget && state.goal.status !== "complete") throw new Error("Increase or clear the goal token budget before resuming.");
+    if (["paused", "blocked", "usage_limited", "budget_limited"].includes(state.goal.status) && allowed()) { resetAudit(); state.setStatus(ctx, "active"); }
+    };
+    if (action === "resume") event.ready = coordination.run(ctx, operation);
+    else schedule(ctx, operation);
   });
   const scope = pi.events.on("piop:goal-scope", value => {
-    (value as { goalId?: string }).goalId = state.usageGoalId();
+    const event = value as { goalId?: string; ctx: ExtensionContext; ready?: Promise<void> };
+    event.ready = coordination.run(event.ctx, () => { event.goalId = state.usageGoalId(); });
   });
   const usage = pi.events.on("piop:goal-usage", value => {
     const event = value as { goalId?: string; tokens: number; ctx: ExtensionContext };
-    if (event.goalId && event.goalId === state.goal?.id) account(event.ctx, event.tokens, true);
+    schedule(event.ctx, () => { if (event.goalId && event.goalId === state.goal?.id) account(event.ctx, event.tokens, true); });
   });
-  pi.on("context", (event, ctx) => {
+  pi.on("context", (event, ctx) => coordination.run(ctx, () => {
     if (state.goal?.status === "active" && !allowed()) state.setStatus(ctx, "paused");
     const messages = event.messages.filter(message => message.role !== "custom" || !["piop-goal-summary", GOAL_CONTEXT].includes(message.customType));
     if (state.goal) {
@@ -155,11 +204,11 @@ export function registerGoals(pi: ExtensionAPI) {
       messages.push({ role: "custom", customType: GOAL_CONTEXT, content: goalChangedPrompt(null), display: false, timestamp: Date.now() });
     }
     return { messages };
-  });
-  pi.on("session_shutdown", () => {
+  }));
+  pi.on("session_shutdown", (_event, ctx) => coordination.run(ctx, () => {
     if (context) { state.finishRun(); state.save(context); }
     ready(); stopControl(); scope(); usage();
-  });
+  }));
 }
 
 function currentPrompt(state: GoalState) {

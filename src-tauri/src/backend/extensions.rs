@@ -42,7 +42,7 @@ pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf
     Ok(path)
 }
 
-pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 14] = [
+pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 17] = [
     ("client.ts", include_str!("../../resources/session-broker/client.ts")),
     ("pause.ts", include_str!("../../resources/session-broker/pause.ts")),
     ("fast-mode.ts", include_str!("../../resources/session-broker/fast-mode.ts")),
@@ -51,11 +51,14 @@ pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 14] = [
     ("session-file.ts", include_str!("../../resources/session-broker/session-file.ts")),
     ("fork.ts", include_str!("../../resources/session-broker/fork.ts")),
     ("subagents.ts", include_str!("../../resources/session-broker/subagents.ts")),
+    ("subagent-usage.ts", include_str!("../../resources/session-broker/subagent-usage.ts")),
     ("operations.ts", include_str!("../../resources/session-broker/operations.ts")),
     ("tools.ts", include_str!("../../resources/session-broker/tools.ts")),
     ("goals.ts", include_str!("../../resources/session-broker/goals.ts")),
     ("goal-state.ts", include_str!("../../resources/session-broker/goal-state.ts")),
     ("goal-controls.ts", include_str!("../../resources/session-broker/goal-controls.ts")),
+    ("goal-coordination.ts", include_str!("../../resources/session-broker/goal-coordination.ts")),
+    ("goal-files.ts", include_str!("../../resources/session-broker/goal-files.ts")),
     ("goal-prompts.ts", include_str!("../../resources/session-broker/goal-prompts.ts")),
 ];
 

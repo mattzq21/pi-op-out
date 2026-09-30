@@ -133,8 +133,13 @@ export function Composer(props: Props) {
   const restoredDraftId = createRef<string | undefined>(undefined);
   const commandQuery = createMemo(() => (caretAtEnd() ? value().match(/^\/([^\s]*)$/)?.[1]?.toLowerCase() : undefined));
   const skillQuery = createMemo(() => (caretAtEnd() && commandQuery() === undefined ? skillReference(value()) : undefined));
+  const visibleCommands = createMemo(() => {
+    const agent = composer().agents.find(agent => agent.name === composer().activeAgent);
+    const goalEnabled = !composer().agentUnavailable && ["get_goal", "create_goal", "update_goal"].every(tool => agent?.tools.includes(tool));
+    return composer().commands.filter(command => command.name !== "goal" || goalEnabled);
+  });
   const matches = createMemo(() => paletteDismissed() ? [] : commandQuery() !== undefined
-    ? composer().commands.filter((command) => command.name.toLowerCase().includes((commandQuery())!)).sort((a, b) => Number(b.name.toLowerCase() === commandQuery()) - Number(a.name.toLowerCase() === commandQuery())).slice(0, 7)
+    ? visibleCommands().filter((command) => command.name.toLowerCase().includes((commandQuery())!)).sort((a, b) => Number(b.name.toLowerCase() === commandQuery()) - Number(a.name.toLowerCase() === commandQuery())).slice(0, 7)
     : skillQuery() !== undefined
       ? composer().commands.filter((command) => skillName(command)?.toLowerCase().includes((skillQuery())!)).slice(0, 7)
       : []);

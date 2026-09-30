@@ -200,7 +200,7 @@ function normalize(value: Partial<Config>, pi: ExtensionAPI): Config {
     name: agent.name, model: typeof agent.model === "string" ? agent.model : "", effort: typeof agent.effort === "string" ? agent.effort : fallbackConfig.agents[0].effort,
     fastMode: agent.fastMode, extensions: extensionPaths(agent.extensions),
     path_systemprompt: promptPath(agent), path_agentprompt: typeof agent.path_agentprompt === "string" ? agent.path_agentprompt.trim() : ["default", "general"].includes(agent.name) ? DEFAULT_AGENT_PROMPT_PATH : "",
-    tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => typeof item === "string") : defaultAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => typeof item === "string") : [], mcpServers: mcpServers(agent.mcpServers),
+    tools: Array.isArray(agent.tools) ? agent.tools.filter((item): item is string => typeof item === "string").flatMap(item => item === "goal" ? ["get_goal", "create_goal", "update_goal"] : [item]) : defaultAgent(pi).tools, skills: Array.isArray(agent.skills) ? agent.skills.filter((item): item is string => typeof item === "string") : [], mcpServers: mcpServers(agent.mcpServers),
   })) : [];
   if (!supplied.some((agent) => agent.name === "general")) {
     const legacy = supplied.find((agent) => agent.name === "default");
