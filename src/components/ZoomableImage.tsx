@@ -35,13 +35,13 @@ function ImageViewer(props: { src: string; alt: string; onClose: () => void }) {
     dialog?.addEventListener("wheel", zoomImage, { passive: false });
     return () => { dialog?.removeEventListener("wheel", zoomImage); dialog?.close(); returnFocus?.focus({ preventScroll: true }); };
   }, () => []);
-  return <dialog ref={element => { dialogRef.current = element; }} class="image-viewer" aria-label={props.alt} onCancel={event => { event.preventDefault(); props.onClose(); }} onClose={props.onClose}>
+  return <dialog ref={element => { dialogRef.current = element; }} class="image-viewer" aria-label={props.alt} onClick={props.onClose} onCancel={event => { event.preventDefault(); props.onClose(); }} onClose={props.onClose}>
     <div class="image-viewer-toolbar">
       <span class="image-viewer-zoom-hint">Ctrl + scroll to zoom{zoom() !== undefined ? ` · ${Math.round(zoom()! * 100)}%` : ""}</span>
-      <button type="button" autofocus aria-label="Close image" title="Close image" onClick={props.onClose}><X size={22} /></button>
+      <button type="button" autofocus aria-label="Close image" title="Close image"><X size={22} /></button>
     </div>
     <div ref={element => { contentRef.current = element; }} class="image-viewer-content">
-      <button type="button" class="image-viewer-image" classList={{ "full-size": expanded() }} aria-label={expanded() ? "Fit image to screen" : "View image at full size"} onClick={toggleSize}>
+      <button type="button" class="image-viewer-image" classList={{ "full-size": expanded() }} aria-label={expanded() ? "Fit image to screen" : "View image at full size"} onClick={event => { if (event.target === imageRef.current || event.detail === 0) { event.stopPropagation(); toggleSize(); } }}>
         <img ref={element => { imageRef.current = element; }} src={props.src} alt={props.alt} draggable={false} style={{ width: zoom() !== undefined ? `${imageRef.current!.naturalWidth * zoom()!}px` : undefined, height: zoom() !== undefined ? `${imageRef.current!.naturalHeight * zoom()!}px` : undefined }} />
       </button>
     </div>
