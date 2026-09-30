@@ -85,7 +85,7 @@ export function SplitChatPane(componentProps: Props) {
         const request = event as unknown as ExtensionUiRequest;
         if (request.method === "input" && request.title === BTW_REQUEST_TITLE) {
           void capturedTransport.command({ type: "extension_ui_response", id: request.id, cancelled: true }).catch(reportControlError);
-          setControlError("To start /btw from this conversation, select it in the main pane first.");
+          setControlError("To start /btw or /review from this conversation, select it in the main pane first.");
           return;
         }
         const showDialog = () => capturedOnDialogRequest9(request, capturedTransport, `Split: ${capturedSession5.name}`);

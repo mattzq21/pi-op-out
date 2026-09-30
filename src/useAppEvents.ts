@@ -84,9 +84,9 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         if (capturedOptions.transport !== capturedOptions.activeTransportRef.current) return;
         const notifyExtension = () => { if (!event.inputRejected) capturedOptions.addNotice({ title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "piop extension", message: request.message || "Notification" }); };
         const btwPayload = () => {
-          const payload = JSON.parse(request.placeholder || "{}") as { task?: unknown; sessionFile?: unknown; cwd?: unknown };
+          const payload = JSON.parse(request.placeholder || "{}") as { task?: unknown; sessionFile?: unknown; cwd?: unknown; kind?: unknown };
           if (typeof payload.task !== "string" || !payload.task.trim() || typeof payload.sessionFile !== "string" || !payload.sessionFile) throw new Error("Invalid /btw branch request");
-          return { task: payload.task, sessionFile: payload.sessionFile, cwd: payload.cwd };
+          return { task: payload.task, sessionFile: payload.sessionFile, cwd: payload.cwd, review: payload.kind === "review" };
         };
         const openBtw = () => {
           try {
@@ -97,7 +97,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
             capturedOptions.pendingBtwRequest.current = { id: request.id, transport: capturedOptions.transport };
             capturedOptions.setSplitPane({
               key: crypto.randomUUID(),
-              session: { id: `btw-${request.id}`, path: "", name: "BTW", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task, messageCount: 0, lastMessageAt: Date.now(), apiCost: 0, hostId: capturedOptions.activeHostIdRef.current },
+              session: { id: `btw-${request.id}`, path: "", name: payload.review ? "Code review" : "BTW", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task, messageCount: 0, lastMessageAt: Date.now(), apiCost: 0, hostId: capturedOptions.activeHostIdRef.current },
               btw: { task: payload.task, forkFrom: payload.sessionFile, requestId: request.id, images: capturedOptions.btwImages.get(capturedOptions.transport) },
             });
             capturedOptions.btwImages.delete(capturedOptions.transport);

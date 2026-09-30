@@ -289,7 +289,7 @@ export default function App() {
     if (!connectionReadyRef.current) throw new Error("piop is still connecting");
     const ownerTransport = capturedTransport;
     const imagePayload = images.length ? { images } : {};
-    if (/^\/btw(?:\s|$)/.test(text.trim())) btwImages.set(capturedTransport, images);
+    if (/^\/(?:btw|review)(?:\s|$)/.test(text.trim())) btwImages.set(capturedTransport, images);
     const branchCommand = /^\/(worktree|branch-off)(?:\s+(.*))?$/s.exec(text.trim());
     if (branchCommand) {
       return sendBranchCommand(branchCommand, images);

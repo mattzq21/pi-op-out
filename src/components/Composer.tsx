@@ -65,6 +65,11 @@ const COMPOSER_MAX_HEIGHT = 130;
 const displayModelName = (model: Model, models: Model[]) => accountModelName(model, models).replace(/^gpt-/i, "");
 const skillName = (command: SlashCommand) => command.source === "skill" ? command.name.replace(/^skill:/, "") : undefined;
 const skillReference = (value: string) => value.match(/(?:^|[\s([{])\$([a-zA-Z0-9_-]*)$/)?.[1]?.toLowerCase();
+const reviewSuggestions: SlashCommand[] = [
+  { name: "review uncommitted", description: "Review staged, unstaged, and new files", source: "builtin" },
+  { name: "review branch", description: "Review this branch against its base", source: "builtin" },
+  { name: "review commit", description: "Review the latest commit", source: "builtin" },
+];
 function expandSkillReference(value: string, commands: SlashCommand[]) {
   if (value.startsWith("/")) return value;
   const skills = new Map(commands.flatMap((command) => { const name = skillName(command); return name ? [[name.toLowerCase(), name] as const] : []; }));
@@ -199,10 +204,12 @@ export function Composer(props: Props) {
   const [draggingFiles, setDraggingFiles] = createSignal(false);
   const dragDepth = createRef(0);
   const restoredDraftId = createRef<string | undefined>(undefined);
-  const commandQuery = createMemo(() => (caretAtEnd() ? value().match(/^\/([^\s]*)$/)?.[1]?.toLowerCase() : undefined));
+  const commandQuery = createMemo(() => (caretAtEnd() ? value().match(/^\/(review\s+[^\n]*|[^\s]*)$/)?.[1]?.toLowerCase() : undefined));
+  const suggestedCommands = createMemo(() => composer().commands.some(command => command.name === "review")
+    ? [...composer().commands, ...reviewSuggestions] : composer().commands);
   const skillQuery = createMemo(() => (caretAtEnd() && commandQuery() === undefined ? skillReference(value()) : undefined));
   const matches = createMemo(() => paletteDismissed() ? [] : commandQuery() !== undefined
-    ? composer().commands.filter((command) => command.name.toLowerCase().includes((commandQuery())!)).sort((a, b) => Number(b.name.toLowerCase() === commandQuery()) - Number(a.name.toLowerCase() === commandQuery())).slice(0, 7)
+    ? suggestedCommands().filter((command) => command.name.toLowerCase().includes((commandQuery())!)).sort((a, b) => Number(b.name.toLowerCase() === commandQuery()) - Number(a.name.toLowerCase() === commandQuery())).slice(0, 7)
     : skillQuery() !== undefined
       ? composer().commands.filter((command) => skillName(command)?.toLowerCase().includes((skillQuery())!)).slice(0, 7)
       : []);
