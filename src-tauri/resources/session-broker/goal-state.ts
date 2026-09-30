@@ -54,6 +54,7 @@ export class GoalState {
     const entry = [...ctx.sessionManager.getEntries()].reverse().find(item => item.type === "custom" && item.customType === GOAL_ENTRY);
     this.goal = validateSaved(entry?.type === "custom" ? entry.data : null);
     this.saved = JSON.stringify(this.goal);
+    if (this.goal?.status === "complete") { this.clear(ctx); return; }
     if (!this.goal) { this.publish(ctx); return; }
     if (this.goal.sessionId !== ctx.sessionManager.getSessionId()) {
       this.goal.sessionId = ctx.sessionManager.getSessionId();

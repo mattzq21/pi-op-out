@@ -17,7 +17,8 @@ const goalToolDescription = "Update the existing goal.\nSet status to `paused` o
 function registerGoalTool(pi: ExtensionAPI, controls: GoalControls) {
   const result = (ctx: ExtensionContext, completed = false) => {
     const data = controls.state.response(completed);
-    controls.state.save(ctx);
+    if (completed && data.goal?.status === "complete") controls.state.clear(ctx);
+    else controls.state.save(ctx);
     return { content: [{ type: "text" as const, text: JSON.stringify(data) }], details: data };
   };
   pi.registerTool({
