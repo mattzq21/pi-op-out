@@ -515,6 +515,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const error = await useAgent(active, ctx, false, true, "restore");
     if (error) ctx.ui.notify(error, "warning");
     publish(ctx);
+    pi.events.emit("piop:agents:ready", { ctx });
   };
   pi.on("session_start", restoreSession);
   pi.on("session_tree", restoreSession);

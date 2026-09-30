@@ -7,6 +7,7 @@ import { registerCatchUp } from "./session-broker/catch-up.ts";
 import { registerForkAndForget, registerSessionOperations } from "./session-broker/operations.ts";
 import { registerSubagents } from "./session-broker/subagents.ts";
 import { registerBrokerTools } from "./session-broker/tools.ts";
+import { registerGoals } from "./session-broker/goals.ts";
 
 export { desktopPauseContext, registerPauseControl, type PauseController } from "./session-broker/pause.ts";
 export { registerFastModeStatus } from "./session-broker/fast-mode.ts";
@@ -25,4 +26,5 @@ export default function sessionBroker(pi: ExtensionAPI) {
   registerSubagents(pi);
   registerRequestUserInput(pi);
   registerBrokerTools(pi);
+  registerGoals(pi);
 }

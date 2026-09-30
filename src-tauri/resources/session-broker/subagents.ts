@@ -7,6 +7,7 @@ import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { cancelRequest, currentHost, request } from "./client.ts";
 import { writeSessionFile } from "./session-file.ts";
+import { goalTokens } from "./goal-state.ts";
 
 const SUBAGENT_RUN = "piop-subagent-run";
 const SUBAGENT_PARENT = "piop-subagent-parent";
@@ -23,24 +24,26 @@ function completedSubagentOutput(last: AssistantMessage | undefined) {
   return output.length > 16_000 ? `${output.slice(0, 16_000)}\n[Result truncated. Full conversation is saved in the child transcript.]` : output;
 }
 
-async function subagentCompletion(run: SubagentRun, offset: number) {
+async function subagentCompletion(run: SubagentRun, offset: number, reportUsage: (tokens: number) => void) {
   let last: AssistantMessage | undefined;
   let cost = 0;
+  let tokens = 0;
   const input = createReadStream(run.sessionPath, { start: offset });
   const lines = createInterface({ input, crlfDelay: Infinity });
   try {
     for await (const line of lines) {
       let entry;
       try { entry = JSON.parse(line); } catch { continue; }
-      if (entry.type !== "message" || entry.message?.role !== "assistant") continue;
+      if (entry.type !== "message") { tokens += goalTokens(entry.usage); continue; }
+      if (entry.message?.role !== "assistant") continue;
       last = entry.message as AssistantMessage;
       const amount = last.usage?.cost?.total;
       if (Number.isFinite(amount) && amount >= 0) cost += amount;
+      tokens += goalTokens(last.usage);
     }
-  } finally { lines.close(); input.destroy(); }
+  } finally { lines.close(); input.destroy(); reportUsage(tokens); }
   run.apiCost = cost;
-  run.output = completedSubagentOutput(last);
-  run.status = "completed";
+  return last;
 }
 
 async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: SubagentTask, toolCallId: string): Promise<SubagentRun> {
@@ -75,16 +78,28 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
 
 type SubagentExecution = { pi: ExtensionAPI; ctx: ExtensionContext; toolCallId: string; active: Set<string>; results: SubagentRun[]; signal?: AbortSignal; publish: () => void };
 
-async function dispatchSubagent(run: SubagentRun, requestId: string, signal?: AbortSignal) {
+async function dispatchSubagent(run: SubagentRun, requestId: string, execution: SubagentExecution) {
+  const { signal, pi, ctx } = execution;
   signal?.throwIfAborted();
   const offset = (await stat(run.sessionPath)).size;
+  const scope: { goalId?: string } = {};
+  pi.events.emit("piop:goal-scope", scope);
+  const reportUsage = (tokens: number) => pi.events.emit("piop:goal-usage", { ...scope, tokens, ctx });
   const abort = () => { void cancelRequest(requestId); };
   signal?.addEventListener("abort", abort, { once: true });
+  let dispatched = false;
+  let last: AssistantMessage | undefined;
   try {
     await request("/message", { hostId: run.hostId, sessionId: run.sessionId, message: run.task, requestId, deadline: Date.now() + SUBAGENT_TIMEOUT_MS }, signal, SUBAGENT_TIMEOUT_MS);
-    await subagentCompletion(run, offset);
+    dispatched = true;
   } catch (error) { await cancelRequest(requestId); throw error; }
-  finally { signal?.removeEventListener("abort", abort); }
+  finally {
+    signal?.removeEventListener("abort", abort);
+    try { last = await subagentCompletion(run, offset, reportUsage); }
+    catch (error) { if (dispatched) throw error; }
+  }
+  run.output = completedSubagentOutput(last);
+  run.status = "completed";
 }
 
 async function executeSubagent(task: SubagentTask, execution: SubagentExecution) {
@@ -99,7 +114,7 @@ async function executeSubagent(task: SubagentTask, execution: SubagentExecution)
     Object.assign(run, child);
     active.add(run.sessionId); claimed = true;
     pi.appendEntry(SUBAGENT_RUN, { ...run }); publish();
-    await dispatchSubagent(run, randomUUID(), signal);
+    await dispatchSubagent(run, randomUUID(), execution);
   } catch (error) {
     run.status = signal?.aborted ? "cancelled" : "failed";
     run.output = error instanceof Error ? error.message : String(error);
