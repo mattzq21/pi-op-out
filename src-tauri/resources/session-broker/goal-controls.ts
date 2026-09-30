@@ -129,7 +129,7 @@ export function registerGoalControls(pi: ExtensionAPI, controls: GoalControls) {
         const value = args.trim();
         const preparing = value === "edit" || (value && !["clear", "pause", "resume", "budget"].includes(value) && !value.startsWith("budget "));
         const summary = preparing ? await prepareGoal(value, ctx, controls, value === "edit") : await commit(ctx, controls, () => applyCommand(value, ctx, controls), Boolean(value));
-        if (summary) pi.sendMessage({ customType: "piop-goal-summary", content: summary, display: true }, { triggerTurn: false });
+        if (summary && value !== "clear") pi.sendMessage({ customType: "piop-goal-summary", content: summary, display: true }, { triggerTurn: false });
       } catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
     },
   });
