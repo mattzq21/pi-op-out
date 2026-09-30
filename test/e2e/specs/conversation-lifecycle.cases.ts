@@ -159,18 +159,19 @@ describe("Conversation lifecycle", () => {
     try {
       await app.openConversations();
       await emitPiEvent({ type: "session_switched" });
-      await updateBackendResponse("pi_command:get_state", connectedSessionResponses(selected.id)["pi_command:get_state"]);
+      await updateBackendResponse("pi_command:get_state", { ...connectedSessionResponses(selected.id)["pi_command:get_state"], messageCount: 2, sessionFile: selected.path });
       await app.conversationSearch.setValue(selected.name);
       await $(".session-item .session-main").click();
       await app.composer.waitForEnabled();
       await app.prepareMessage("Discard this old draft");
       await updateBackendResponse("pi_command:get_state", connectedSessionResponses("keyboard-new-session")["pi_command:get_state"]);
       const callCount = (await backendCalls()).length;
-      await app.confirmAction("Start a new conversation and discard the unsent draft?", () => browser.keys(["Control", "n"]), true);
+      await browser.keys(["Control", "n"]);
 
       await expect(app.composer).toHaveValue("");
-      await browser.waitUntil(async () => (await backendCalls()).slice(callCount).some(({ command }) => command === "start_pi"))
-        .catch(async (cause) => { throw new Error(`New conversation did not connect: ${JSON.stringify(await backendCalls())}; ${await $("body").getText()}`, { cause }); });
+      await app.prepareMessage("Begin the new conversation");
+      await app.sendMessageButton.click();
+      await browser.waitUntil(async () => (await backendCalls()).slice(callCount).some(({ command }) => command === "start_pi"));
       const starts = (await backendCalls()).slice(callCount).filter(({ command }) => command === "start_pi");
       expect(starts).toHaveLength(1);
       expect(starts[0].args).toMatchObject({ cwd: selected.cwd, hostId: selected.hostId });

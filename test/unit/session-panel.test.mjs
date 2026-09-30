@@ -4,6 +4,7 @@ import { mockIPC, clearMocks } from '../mock-ipc.mjs';
 import { installDom, renderComponent, enterText, act } from '../dom.mjs';
 import { SessionPanel } from '../../src/components/SessionPanel.tsx';
 import { createComponent, mergeProps } from 'solid-js';
+import { cacheSessionGroups } from '../../src/lib/sessionGroupsCache.ts';
 import { createSidebarState } from '../../src/lib/sidebarState.ts';
 
 function SessionPanelFixture(props) {
@@ -36,7 +37,7 @@ describe('conversation sidebar', () => {
     props = { sessions: [session('b', 'Chat 10'), session('a', 'Chat 2')], query: '', onQuery: () => {}, onSelect: () => {}, onAction: () => {}, onNewChat: () => {}, onCreateWorktree: () => {}, onDeleteWorktree: async () => {} };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; clearMocks(); dom.restore(); });
-  async function render(extra = {}) { props = { ...props, ...extra }; if (view) await view.rerender(props); else view = await renderComponent(SessionPanelFixture, props); }
+  async function render(extra = {}) { props = { ...props, ...extra }; if (view) await view.rerender(props); else { cacheSessionGroups(structuredClone(groups)); view = await renderComponent(SessionPanelFixture, props); } }
   const control = label => document.querySelector(`[aria-label="${label}"]`);
   const row = id => document.querySelector(`[data-session-key="local:${id}"] .session-main`);
   const click = async element => act(async () => element.click());
@@ -94,7 +95,7 @@ describe('conversation sidebar', () => {
 
   test('collapsed groups persist and search temporarily reveals matching conversations', async () => {
     const queries = []; await render({ onQuery: value => queries.push(value) });
-    await click(document.querySelector('.project-label')); assert.equal(document.querySelector('.project-label').getAttribute('aria-expanded'), 'false'); assert.deepEqual(JSON.parse(localStorage.getItem('pi-desktop-collapsed-projects')), ['local:/repo']);
+    await click(document.querySelector('.project-disclosure')); assert.equal(document.querySelector('.project-disclosure').getAttribute('aria-expanded'), 'false'); assert.deepEqual(JSON.parse(localStorage.getItem('pi-desktop-collapsed-projects')), ['local:/repo']);
     await enterText(control('Search conversations'), 'Chat 2'); assert.deepEqual(queries, ['Chat 2']);
     await render({ query: 'Chat 2' }); assert.equal(document.querySelector('.project-label').disabled, true); assert.ok(row('a')); assert.equal(row('b'), null);
     await render({ query: 'missing' }); assert.match(document.querySelector('.empty-small').textContent, /No conversations match/);
@@ -130,7 +131,7 @@ describe('conversation sidebar', () => {
     groups.groups.push({ id: 'custom', name: 'Research' }); localStorage.setItem('pi-desktop-collapsed-projects', JSON.stringify(['custom']));
     await render(); const heading = document.querySelector('[data-drop-project-key=custom]'); hit(heading);
     await mouse(row('a'), 'mousedown'); await mouse(window, 'mousemove', 50, 60); await mouse(window, 'mouseup');
-    assert.deepEqual(changes.at(-1), { type: 'assign', key: 'local:a', group: 'custom' }); assert.equal(row('a').parentElement.dataset.projectKey, 'custom'); assert.equal(document.querySelector('[data-drop-project-key=custom] .project-label').getAttribute('aria-expanded'), 'true');
+    assert.deepEqual(changes.at(-1), { type: 'assign', key: 'local:a', group: 'custom' }); assert.equal(row('a').parentElement.dataset.projectKey, 'custom'); assert.equal(document.querySelector('[data-drop-project-key=custom] .project-disclosure').getAttribute('aria-expanded'), 'true');
   });
 
   test('drag cancellation and invalid targets preserve assignments and stop auto scrolling', async () => {
@@ -147,10 +148,10 @@ describe('conversation sidebar', () => {
     const source = document.querySelector('[data-drop-project-key="local:/repo"] .project-label');
     const target = document.querySelector('[data-sidebar-token="group:custom"]'); hit(target);
     await mouse(source, 'mousedown'); await mouse(window, 'mousemove', 20, 75); await mouse(window, 'mouseup');
-    assert.deepEqual(JSON.parse(localStorage.getItem('pi-desktop-sidebar-order')), ['group:custom', 'group:local:/repo']);
+    assert.deepEqual(JSON.parse(localStorage.getItem('pi-desktop-sidebar-order')), ['group:custom', 'group:local:/repo', 'group:__pi-desktop-ungrouped__', 'group:__pi-desktop-dirless__']);
     await key(row('a'), 'ArrowUp', { altKey: true, shiftKey: true }); assert.equal(row('a').parentElement.dataset.projectKey, 'custom');
     await key(document.querySelector('[data-drop-project-key=custom] .project-label'), 'ArrowDown', { altKey: true });
-    assert.deepEqual(JSON.parse(localStorage.getItem('pi-desktop-sidebar-order')), ['group:local:/repo', 'group:custom']);
+    assert.deepEqual(JSON.parse(localStorage.getItem('pi-desktop-sidebar-order')), ['group:local:/repo', 'group:custom', 'group:__pi-desktop-ungrouped__', 'group:__pi-desktop-dirless__']);
   });
 
   test('forgetting a group releases chats and removes persisted grouping preferences', async () => {
@@ -174,9 +175,10 @@ describe('conversation sidebar', () => {
 
   test('worktree deletion checks conversation roots and blocks deletion while chats depend on it', async () => {
     groups.groups[0].projectKind = 'worktree'; responses.set('git_worktree_roots', ['/repo', '/repo', '/elsewhere']);
-    await render({ sessions: props.sessions.map(item => ({ ...item, projectKind: 'worktree' })) });
+    await render({ sessions: props.sessions.map(item => ({ ...item, projectKind: 'worktree' })), onDeleteWorktree: async () => { throw new Error('1 conversation is still using this worktree'); } });
     await click(control('Group actions for repo')); await click(menuAction('Delete worktree…'));
-    assert.match(document.querySelector('dialog [role=alert]').textContent, /1 conversation/); assert.equal(document.querySelector('dialog .primary-button').disabled, true);
+    await click(document.querySelector('dialog .primary-button'));
+    assert.match(document.querySelector('dialog [role=alert]').textContent, /1 conversation/); assert.equal(document.querySelector('dialog .primary-button').disabled, false);
     await click(document.querySelector('dialog button')); assert.equal(document.querySelector('dialog'), null);
     responses.set('git_worktree_roots', [null]); await click(control('Group actions for repo')); await click(menuAction('Delete worktree…')); assert.match(document.querySelector('[role=alert]').textContent, /Could not resolve/); assert.equal(document.querySelector('dialog'), null);
   });

@@ -75,7 +75,7 @@ test('saved question tools migrate without changing the historical snapshot', as
   assert.deepEqual(f.entries[0].data.snapshot, snapshot);
 });
 
-test('project instructions escape paths and explicit skills match either file or directory', async t => {
+test('prompt options clear duplicate project context and mark explicit skills by file or directory', async t => {
   const f = await agentFixture(t, { runtime: { tools: ['read'], skills: [], explicitOnlySkills: ['/skills/file/SKILL.md', '/skills/directory/'] } });
   await f.load(); await f.start();
   const skills = [
@@ -84,7 +84,9 @@ test('project instructions escape paths and explicit skills match either file or
     { filePath: '/skills/normal/SKILL.md', baseDir: '/skills/normal' },
   ];
   const result = await f.prompt({ contextFiles: [{ path: 'a&"<>b', content: 'First instructions' }, { path: 'second', content: 'Second instructions' }], skills });
-  assert.equal(result.systemPrompt, `System instructions\n\n<project_context>\n<project_instructions path="a&amp;&quot;&lt;&gt;b">\nFirst instructions\n</project_instructions>\n\n<project_instructions path="second">\nSecond instructions\n</project_instructions>\n</project_context>\n\nSkills via read: /skills/file/SKILL.md (explicit), /skills/directory/SKILL.md (explicit), /skills/normal/SKILL.md\n\nCurrent working directory ${f.dir}`);
+  assert.equal(result.customPrompt, 'System instructions');
+  assert.deepEqual(result.contextFiles, []);
+  assert.deepEqual(result.skills, skills.map((skill, index) => index < 2 ? { ...skill, disableModelInvocation: true } : skill));
   assert.ok(skills.every(skill => skill.disableModelInvocation === undefined));
 });
 
@@ -92,7 +94,7 @@ test('subagents inherit the active snapshot and overrides, while named profiles 
   const f = await agentFixture(t); await f.load(); await f.start();
   await f.pi.setModel({ provider: 'test', id: 'review/model' }); f.pi.setThinkingLevel('low');
   const current = {}; f.pi.events.emit('piop:agents:subagent', current);
-  assert.deepEqual(JSON.parse(JSON.stringify(current.state)), { active: 'general', locked: false, snapshot: f.entries[0].data.snapshot, modelOverride: 'test/review/model', effortOverride: 'low' });
+  assert.deepEqual(JSON.parse(JSON.stringify(current.state)), { active: 'general', locked: false, snapshot: f.state().snapshot, modelOverride: 'test/review/model', effortOverride: 'low' });
   current.state.snapshot.definition.tools.push('mutated');
   assert.deepEqual(f.pi.getActiveTools(), ['read']);
   const next = {}; f.pi.events.emit('piop:agents:subagent', next); assert.deepEqual(next.state.snapshot.definition.tools, ['read']);
@@ -117,7 +119,7 @@ test('fast-mode support recognizes numbered provider accounts without rewriting 
   await f.load(); await f.start();
   assert.deepEqual(f.notices, []); assert.deepEqual(f.pi.getActiveTools(), ['read']);
   assert.deepEqual(await f.input('hello'), { action: 'continue' });
-  assert.equal(f.entries[0].data.snapshot.definition.model, 'test--piop-account-12/default');
+  assert.equal(f.state().snapshot.definition.model, 'test--piop-account-12/default');
 });
 
 test('terminal lookup remains restricted to the terminal agent even in saved definitions', async t => {
@@ -140,15 +142,16 @@ test('session-tree changes restore the selected branch profile and its prompt', 
   f.entries.splice(0, f.entries.length, { type: 'custom', customType: 'pi-define-agents-state', data: { active: 'reviewer', snapshot: { version: 1, definition: profile('reviewer', { tools: ['bash'] }), systemPrompt: 'Branch prompt', agentPrompt: '' } } });
   await f.emit('session_tree');
   assert.equal(f.capability().active, 'reviewer'); assert.deepEqual(f.pi.getActiveTools(), ['bash']);
-  assert.equal((await f.prompt()).systemPrompt, `Branch prompt\n\nCurrent working directory ${f.dir}`);
+  assert.equal((await f.prompt()).customPrompt, 'Branch prompt');
 });
 
 test('input before session startup persists the newly captured agent snapshot', async t => {
   const f = await agentFixture(t); await f.load();
   assert.deepEqual(await f.input('early'), { action: 'continue' });
-  assert.equal(f.entries.at(-1).data.snapshot.systemPrompt, 'System instructions');
-  assert.equal(f.entries.at(-1).data.snapshot.definition.name, 'general');
-  assert.equal(f.entries.at(-1).data.locked, true);
+  assert.equal(f.state().snapshot.version, 2);
+  assert.equal(await readFile(f.state().snapshot.definition.path_systemprompt, 'utf8'), 'System instructions');
+  assert.equal(f.state().snapshot.definition.name, 'general');
+  assert.equal(f.capability().locked, true);
 });
 
 test('session tool migration persists independently of the other completed migrations', async t => {

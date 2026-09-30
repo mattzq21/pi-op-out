@@ -67,6 +67,7 @@ describe('chat session hook', () => {
     assert.equal(hook.current.state.viewers, 3); assert.equal(hook.current.state.pendingMessageCount, 2);
     assert.deepEqual(hook.current.state.pendingMessages, [{ id: 'pending' }]);
     await send({ type: 'compaction_start' }); assert.equal(hook.current.state.activity, 'Compacting context…');
+    responses.set('get_session_stats', { contextUsage: { tokens: 100, contextWindow: 1000, percent: 10 } });
     await send({ type: 'compaction_end', result: { estimatedTokensAfter: 100 } });
     assert.equal(hook.current.state.contextUsage.percent, 10); assert.equal(hook.current.state.activity, undefined);
     await send({ type: 'auto_retry_start', attempt: 2 }); assert.equal(hook.current.state.activity, 'Retrying · attempt 2');

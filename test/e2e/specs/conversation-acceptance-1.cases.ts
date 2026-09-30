@@ -89,7 +89,7 @@ describe("Conversation acceptance", () => {
       await pressShortcut(terminalShortcut);
       await expect(app.terminalPanel).not.toBeExisting();
       await pressShortcut(composerShortcut);
-      expect(await browser.execute(() => document.activeElement?.getAttribute("aria-label"))).toBe("Message piop");
+      await browser.waitUntil(async () => await browser.execute(() => document.activeElement?.getAttribute("aria-label")) === "Message piop");
     } finally {
       if (await app.terminalPanel.isExisting()) await pressShortcut(terminalShortcut);
       await resetBackend();
@@ -114,7 +114,7 @@ describe("Conversation acceptance", () => {
 
       const menu = $('[role="menu"][aria-label="Acceptance indexed conversation actions"]');
       await expect(menu).toBeDisplayed();
-      await expect(menu.$$("[role='menuitem']")).toBeElementsArrayOfSize(5);
+      await expect(menu.$$("[role='menuitem']")).toBeElementsArrayOfSize(4);
       await expect(session.$('button[aria-label^="Archive "]')).toBeExisting();
       await browser.keys("Escape");
       await expect(menu).not.toBeExisting();
@@ -127,12 +127,17 @@ describe("Conversation acceptance", () => {
   it("collapses and restores a project's conversation group", async () => {
     const indexed = { id: "acceptance-collapse", path: "/tmp/acceptance-collapse.jsonl", name: "Acceptance grouped conversation", project: "Collapsible project", cwd: "/tmp/acceptance-collapse-project", preview: "Grouped preview", messageCount: 1, hostId: "local" };
     await mockBackend({ list_sessions: [indexed] });
+    await browser.execute(async (session) => {
+      const group = { id: `local:${session.cwd}`, name: session.project, cwd: session.cwd, hostId: "local" };
+      const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
+      await tauri.invoke("plugin:event|emit", { event: "pi://groups-changed", payload: { groups: [group], assignments: { [`local:${session.id}`]: group.id }, removedProjects: [] } });
+    }, indexed);
     try {
       await app.conversationSearch.setValue(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
       await app.conversationSearch.clearValue();
 
-      const project = $('//button[contains(@class,"project-label")][.//span[normalize-space(.)="Collapsible project"]]');
+      const project = $('//section[contains(@class,"project")][.//span[normalize-space(.)="Collapsible project"]]//button[contains(@class,"project-disclosure")]');
       const groupedSession = $('//section[contains(@class,"project")][.//span[normalize-space(.)="Collapsible project"]]//div[contains(@class,"session-item")]');
       await expect(project).toHaveAttribute("aria-expanded", "true");
       await project.click();
@@ -147,18 +152,18 @@ describe("Conversation acceptance", () => {
     }
   });
 
-  it("clones an indexed conversation from its visible action", async () => {
+  it("opens an indexed conversation in a new window from its visible action", async () => {
     const indexed = { id: "acceptance-clone", path: "/tmp/acceptance-clone.jsonl", name: "Acceptance clone target", project: "Acceptance project", cwd: "/tmp", preview: "Clone preview", messageCount: 2, hostId: "local" };
-    await mockBackend({ list_sessions: [indexed], ...connectedSessionResponses(indexed.id), "pi_command:clone": {} });
+    await mockBackend({ list_sessions: [indexed], ...connectedSessionResponses(indexed.id), new_window: "acceptance-window" });
     try {
       await emitPiEvent({ type: "session_switched" });
       await app.conversationSearch.setValue(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
       await browser.execute(() => document.querySelector(".session-item")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 })));
-      await $('//div[@role="menu"]//button[normalize-space(.)="Clone conversation"]').click();
+      await $('//div[@role="menu"]//button[normalize-space(.)="Open in new window"]').click();
 
-      await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => (args.command as { type?: string })?.type === "clone"));
-      expect((await backendCalls()).find(({ args }) => (args.command as { type?: string })?.type === "clone")?.args.command).toEqual({ type: "clone" });
+      await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "new_window"));
+      expect((await backendCalls()).find(({ command }) => command === "new_window")?.args.target).toEqual({ cwd: indexed.cwd, sessionId: indexed.id, sessionPath: indexed.path, hostId: "local" });
     } finally {
       await app.conversationSearch.clearValue();
       await resetBackend();
@@ -187,25 +192,19 @@ describe("Conversation acceptance", () => {
 
   it("relocates a conversation whose original project directory moved", async () => {
     const indexed = { id: "acceptance-relocate", path: "/tmp/acceptance-relocate.jsonl", name: "Acceptance relocation target", project: "Moved project", cwd: "/missing/original-project", cwdExists: false, preview: "Relocation preview", messageCount: 3, hostId: "local" };
-    await mockBackend({ list_sessions: [indexed], relocate_session: {}, start_pi: {}, ...connectedSessionResponses(indexed.id) });
+    const groups = { groups: [], assignments: { [`local:${indexed.id}`]: "__pi-desktop-dirless__" }, removedProjects: [] };
+    await mockBackend({ list_sessions: [indexed], load_session_groups: groups, change_session_groups: groups, create_temporary_chat: { cwd: "/tmp/relocated-acceptance-project", sessionId: "dirless" }, relocate_session: {}, start_pi: {}, ...connectedSessionResponses(indexed.id) });
     try {
       await app.conversationSearch.setValue(indexed.name);
       const session = $(".session-item");
       await expect(session).toHaveText(expect.stringContaining(indexed.name));
+      await updateBackendResponse("list_sessions", [{ ...indexed, cwd: "/tmp/relocated-acceptance-project", cwdExists: true }]);
       await session.$(".session-main").click();
 
-      await expect(app.extensionDialogHeading).toHaveText("Locate conversation project");
-      const replacement = $('input[aria-label="Replacement project directory"]');
-      await replacement.clearValue();
-      await $('//dialog//button[normalize-space(.)="Continue"]').click();
-      await expect($('[role="alert"]')).toHaveText("Path can't be empty");
-
-      await replacement.setValue("/tmp/relocated-acceptance-project");
-      await updateBackendResponse("list_sessions", [{ ...indexed, cwd: "/tmp/relocated-acceptance-project", cwdExists: true }]);
-      await $('//dialog//button[normalize-space(.)="Continue"]').click();
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "relocate_session") && (await backendCalls()).some(({ command }) => command === "start_pi"));
       expect((await backendCalls()).find(({ command }) => command === "relocate_session")?.args).toEqual({ sessionPath: indexed.path, cwd: "/tmp/relocated-acceptance-project", hostId: "local" });
       expect((await backendCalls()).find(({ command }) => command === "start_pi")?.args).toEqual(expect.objectContaining({ cwd: "/tmp/relocated-acceptance-project", sessionPath: indexed.path, hostId: "local" }));
+      await expect(app.composer).toBeEnabled();
     } finally {
       await app.conversationSearch.clearValue();
       if (await app.extensionDialogHeading.isExisting()) await $('//dialog//button[normalize-space(.)="Cancel"]').click();
@@ -215,17 +214,17 @@ describe("Conversation acceptance", () => {
 
   it("reports when relocating a moved conversation fails", async () => {
     const indexed = { id: "acceptance-relocate-failure", path: "/tmp/acceptance-relocate-failure.jsonl", name: "Acceptance failed relocation", project: "Moved project", cwd: "/missing/failed-project", cwdExists: false, preview: "Failed relocation preview", messageCount: 2, hostId: "local" };
-    await mockBackend({ list_sessions: [indexed], relocate_session: { error: "Replacement directory is not a project" } });
+    const groups = { groups: [], assignments: { [`local:${indexed.id}`]: "__pi-desktop-dirless__" }, removedProjects: [] };
+    await mockBackend({ list_sessions: [indexed], load_session_groups: groups, change_session_groups: groups, create_temporary_chat: { cwd: "/tmp/dirless-failure", sessionId: "dirless" }, relocate_session: { error: "Dirless directory is unavailable" } });
     try {
       await app.conversationSearch.setValue(indexed.name);
       const session = $(".session-item");
       await expect(session).toHaveText(expect.stringContaining(indexed.name));
       await session.$(".session-main").click();
-      await $('input[aria-label="Replacement project directory"]').setValue("/tmp/not-a-project");
-      await $('//dialog//button[normalize-space(.)="Continue"]').click();
 
-      await expect($(".dialog-error")).toHaveText("Replacement directory is not a project");
-      expect((await backendCalls()).find(({ command }) => command === "relocate_session")?.args).toEqual({ sessionPath: indexed.path, cwd: "/tmp/not-a-project", hostId: "local" });
+      await expect($(".error-toast strong")).toHaveText("Could not open Dirless conversation");
+      await expect($(".error-toast span")).toHaveText("Error: Dirless directory is unavailable");
+      expect((await backendCalls()).find(({ command }) => command === "relocate_session")?.args).toEqual({ sessionPath: indexed.path, cwd: "/tmp/dirless-failure", hostId: "local" });
     } finally {
       await app.conversationSearch.clearValue();
       if (await app.extensionDialogHeading.isExisting()) await $('//dialog//button[normalize-space(.)="Cancel"]').click();

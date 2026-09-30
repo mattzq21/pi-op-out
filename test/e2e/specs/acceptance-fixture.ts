@@ -1,5 +1,5 @@
 import { $, browser } from "@wdio/globals";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
 import { encodeAgentValue } from "../../../src/lib/agentProtocol.js";
 import type { AppSettings, DefinedAgentsCapability, AgentConfig } from "../../../src/types.js";
@@ -44,13 +44,30 @@ export const withSessionSnapshot = (responses: Record<string, unknown>) => {
 export const mockBackend = async (responses: Record<string, unknown>) => {
   const models = (responses["pi_command:get_available_models"] as { models?: Array<{ provider: string; id: string }> })?.models;
   if (models) await browser.execute((ids) => {
-    const preferences = JSON.parse(localStorage.getItem("piop-client-settings") ?? "{}");
-    preferences.knownModels = [...new Set([...(preferences.knownModels ?? []), ...ids])];
-    preferences.hiddenModels = (preferences.hiddenModels ?? []).filter((id: string) => !ids.includes(id));
-    localStorage.setItem("piop-client-settings", JSON.stringify(preferences));
+    const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: <T>(command: string, args?: unknown) => Promise<T> } }).__TAURI_INTERNALS__;
+    return tauri.invoke<Record<string, unknown>>("load_client_settings").then(async stored => {
+      const preferences = stored ?? {};
+      preferences.knownModels = [...new Set([...(preferences.knownModels as string[] ?? []), ...ids])];
+      preferences.hiddenModels = (preferences.hiddenModels as string[] ?? []).filter((id: string) => !ids.includes(id));
+      await tauri.invoke("save_client_settings", { settings: preferences });
+    });
   }, models.map(model => `${model.provider}/${model.id}`));
   await callBridge().setValue("[]");
   await responseBridge().setValue(JSON.stringify(withSessionSnapshot({ ...isolatedUsageResponses, ...responses })));
+  if (responses.list_sessions) await browser.execute(async () => {
+    const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
+    await tauri.invoke("plugin:event|emit", { event: "pi://sessions-changed", payload: {} });
+  });
+};
+
+export const withClientSettingsWriteFailure = async (action: () => Promise<void>) => {
+  const path = join(process.env.PIOP_TEST_HOME!, ".piop", "client-settings.json");
+  const backup = `${path}.e2e-backup`;
+  renameSync(path, backup);
+  try {
+    mkdirSync(path);
+    try { await action(); } finally { rmdirSync(path); }
+  } finally { renameSync(backup, path); }
 };
 
 export const backendCalls = async () => (JSON.parse(await callBridge().getValue() || "[]") as Partial<BackendCall>[]).filter((call) => call && typeof call === "object").map((call) => ({
@@ -64,11 +81,18 @@ export const updateBackendResponse = async (command: string, response: unknown) 
   await responseBridge().setValue(JSON.stringify(withSessionSnapshot({ ...responses, [command]: response })));
 };
 
-export const resetBackend = async () => { agentEvent = undefined; await callBridge().setValue("[]"); await responseBridge().setValue(JSON.stringify(isolatedUsageResponses)); };
+export const resetBackend = async () => {
+  const prompts = (await backendCalls()).filter(call => call.mocked && isUserPrompt(call.args.command));
+  for (const prompt of prompts) await emitPiEvent({ type: "message_start", message: { role: "user", content: (prompt.args.command as { message: string }).message, timestamp: Date.now() } });
+  agentEvent = undefined;
+  await callBridge().setValue("[]");
+  await responseBridge().setValue(JSON.stringify(isolatedUsageResponses));
+};
 
 export const resetApp = async () => {
   try { await resetBackend(); }
   catch (cause) { throw new Error(`Backend reset failed: ${await $("body").getText()}`, { cause }); }
+  await browser.execute(() => { for (const key of Object.keys(localStorage)) if (key.startsWith("piop-last-session:")) localStorage.removeItem(key); });
   await app.refreshForReset();
   try { await app.root.waitForDisplayed({ timeout: 10_000 }); }
   catch (cause) { throw new Error(`App reset failed: ${await $("body").getText()}`, { cause }); }
@@ -157,7 +181,6 @@ export const startTemporaryConversation = async (responses: Record<string, unkno
     ...responses,
   });
   await $('button[aria-label="New conversation"]').click();
-  await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "create_temporary_chat"));
   await app.composer.waitForEnabled();
-  await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-define-agents-use ")));
+  await emitPiEvent({ type: "session_switched" });
 };

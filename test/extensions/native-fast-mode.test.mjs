@@ -10,6 +10,7 @@ const compiled = await build({
     builder.onResolve({ filter: /(?:^|\/)platform$|^@tauri-apps\/plugin-dialog$/ }, args => ({ path: args.path, namespace: 'bridge' }));
     builder.onLoad({ filter: /.*/, namespace: 'bridge' }, () => ({ contents: `
       export const calls = [];
+      export const isMobile = false;
       let commands = [];
       export function setCommands(value) { commands = value; calls.length = 0; }
       export async function invoke(name, args) {

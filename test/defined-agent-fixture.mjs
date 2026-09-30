@@ -13,7 +13,7 @@ export async function agentFixture(t, options = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'piop-agent-contract-'));
   const home = join(dir, 'home'); await mkdir(home);
   const previous = { ...process.env };
-  for (const name of ['PI_DEFINE_AGENTS_RUNTIME_DEFAULTS', 'PI_DEFINE_AGENTS_ACTIVE', 'PI_DESKTOP_MCP_CONFIG', 'PIOP_STORAGE_DIRECTORY']) delete process.env[name];
+  for (const name of ['PI_DEFINE_AGENTS_RUNTIME_DEFAULTS', 'PI_DEFINE_AGENTS_ACTIVE', 'PIOP_AGENT_DRAFT_STATE', 'PI_DESKTOP_MCP_CONFIG', 'PIOP_STORAGE_DIRECTORY']) delete process.env[name];
   Object.assign(process.env, options.env);
   t.after(async () => {
     for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key];
@@ -69,7 +69,8 @@ export async function agentFixture(t, options = {}) {
     select: name => commands.get('pi-define-agents-use').handler(name, ctx),
     configure: value => commands.get('pi-define-agents-config').handler(encoded(value), ctx),
     config: async () => JSON.parse(await readFile(join(dir, 'config.json'), 'utf8')),
+    state: () => JSON.parse(process.env.PIOP_AGENT_DRAFT_STATE || 'null')?.state ?? entries.findLast(entry => entry.customType === 'pi-define-agents-state' && entry.data)?.data,
     capability: () => JSON.parse(Buffer.from(statuses.get('pi-define-agents').slice(5), 'base64url')),
-    prompt: options => emit('before_agent_start', { systemPromptOptions: options ?? {} }),
+    prompt: async (options = {}) => { await emit('before_agent_start', { systemPromptOptions: options }); return options; },
   };
 }

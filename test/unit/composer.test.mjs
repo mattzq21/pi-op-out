@@ -24,7 +24,7 @@ describe('composer interactions', () => {
   const editor = () => control('Message piop');
   const click = async element => act(async () => element.click());
   const key = async (key, extra = {}, element = editor()) => { const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra }); await act(async () => element.dispatchEvent(event)); return event; };
-  const paste = async files => { const event = new Event('paste', { bubbles: true, cancelable: true }); Object.defineProperty(event, 'clipboardData', { value: { files } }); await act(async () => editor().dispatchEvent(event)); return event; };
+  const paste = async files => { const event = new Event('paste', { bubbles: true, cancelable: true }); Object.defineProperty(event, 'clipboardData', { value: { files, items: [], getData: () => files.length ? '' : 'plain text' } }); await act(async () => editor().dispatchEvent(event)); return event; };
   const drag = async (type, data = {}, target = document.querySelector('.composer')) => {
     const transfer = { types: ['Files'], files: [], getData: () => '', ...data };
     const event = new Event(type, { bubbles: true, cancelable: true }); Object.defineProperty(event, 'dataTransfer', { value: transfer });
@@ -104,7 +104,7 @@ describe('composer interactions', () => {
     await click(control('Model')); await click(document.querySelector('[role=option]')); assert.equal(choices[1], model);
     await click(control('Thinking level')); await click(document.querySelector('[role=option][data-value=high]')); assert.equal(choices[2], 'high');
     await click(control('Agent')); await key('Escape', {}, control('Agent')); assert.equal(control('Agent options'), null);
-    await click(control('Model')); await render({ streaming: true }); assert.equal(control('Model options'), null); assert.equal(control('Model').disabled, true);
+    await click(control('Model')); await render({ controlsDisabled: true }); assert.equal(control('Model options'), null); assert.equal(control('Model').disabled, true);
   });
 
   test('empty picker menus and outside or resize dismissal leave selection unchanged', async () => {
@@ -129,7 +129,7 @@ describe('composer interactions', () => {
     await enterText(editor(), 'Edited'); await render({ restoredDraft: { id: 'b', value: 'Other text' } }); assert.equal(editor().value, 'Edited');
     await enterText(editor(), ''); await render({ restoredDraft: { id: 'b', value: 'Other text' } }); assert.equal(editor().value, '');
     await render({ restoredDraft: { id: 'c', value: 'Fresh' } }); assert.equal(editor().value, 'Fresh');
-    editor().blur(); await render({ focusRequest: 1 }); assert.equal(document.activeElement, editor());
+    editor().blur(); await render({ focusRequest: 1 }); await dom.flushFrames(); assert.equal(document.activeElement, editor());
   });
 
   test('context indicators clamp percentages and describe unavailable usage', async () => {
@@ -177,7 +177,7 @@ describe('composer interactions', () => {
     const image = { type: 'image', mimeType: 'image/png', data: 'aA==' };
     await render({ uploads: [{ id: 'image', kind: 'image', name: 'photo.png', byteSize: 1, image }], onSend: props.onSend }); await key('Enter'); assert.ok(control('Dismiss image input error'));
     await render({ model: { id: 'vision', provider: 'p' }, models: [{ id: 'vision', provider: 'p', input: ['image'] }], onSend: async (...args) => sent.push(args) });
-    assert.equal(control('Dismiss image input error'), null); await key('Enter'); assert.deepEqual(sent, [['Describe the attached image.', undefined, [image]]]);
+    assert.equal(control('Dismiss image input error'), null); await key('Enter'); assert.deepEqual(sent, [['', undefined, [image]]]);
   });
 
   test('queued messages enforce ordering boundaries, change delivery, and recover from action failures', async () => {

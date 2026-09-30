@@ -111,6 +111,7 @@ describe("Project behavior", () => {
       await app.setProjectPath("/tmp");
       await app.openProjectButton.click();
       await expect(app.projectDialogHeading).not.toBeExisting();
+      await emitPiEvent({ type: "session_switched" });
       await expect(app.modelPicker).toBeEnabled();
       await expect(app.modelPicker).toHaveAttribute("data-options", expect.stringContaining("e2e/alternate"));
       await callBridge().setValue("[]");
@@ -119,6 +120,9 @@ describe("Project behavior", () => {
       await app.chooseComposerOption("Thinking level", "Off");
       await expect(app.thinkingLevelPicker).toHaveText("Off");
 
+      expect((await backendCalls()).filter(({ args }) => ["set_model", "set_thinking_level"].includes(String((args.command as { type?: string })?.type)))).toHaveLength(0);
+      await app.prepareMessage("Use the selected model and effort");
+      await app.sendMessageButton.click();
       await browser.waitUntil(async () => (await backendCalls()).filter(({ args }) => ["set_model", "set_thinking_level"].includes(String((args.command as { type?: string })?.type))).length === 2);
       expect((await backendCalls()).filter(({ args }) => ["set_model", "set_thinking_level"].includes(String((args.command as { type?: string })?.type))).map(({ args }) => args.command)).toEqual([
         { type: "set_model", provider: "e2e", modelId: "alternate" }, { type: "set_thinking_level", level: "off" },

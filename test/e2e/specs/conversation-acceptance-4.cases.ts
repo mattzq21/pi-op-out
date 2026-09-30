@@ -1,7 +1,7 @@
 import { $, $$, browser, expect } from "@wdio/globals";
 
 import { app } from "../pageobjects/app.page.js";
-import { isUserPrompt, mockBackend, backendCalls, updateBackendResponse, resetBackend, resetApp, emitPiEvent, pressShortcut, connectedSessionResponses, startTemporaryConversation } from './acceptance-fixture.js';
+import { isUserPrompt, mockBackend, backendCalls, updateBackendResponse, resetBackend, resetApp, emitPiEvent, pressShortcut, connectedSessionResponses, startTemporaryConversation, withClientSettingsWriteFailure } from './acceptance-fixture.js';
 
 describe("Conversation acceptance", () => {
   before(async () => {
@@ -99,20 +99,17 @@ describe("Conversation acceptance", () => {
   });
 
   it("stacks simultaneous application and extension notices", async () => {
-    await browser.execute(() => {
-      const original = Storage.prototype.setItem;
-      (window as unknown as { __restoreStorage: () => void }).__restoreStorage = () => { Storage.prototype.setItem = original; };
-      Storage.prototype.setItem = function (key, value) { if (key === "piop-client-settings") throw new Error("Client settings write deliberately failed"); original.call(this, key, value); };
-    });
     const debug = $('button[aria-label$="debug mode"]');
     try {
-      await debug.click();
+      await withClientSettingsWriteFailure(async () => {
+        await debug.click();
+        await expect($(".error-toast strong")).toHaveText("Could not change debug mode");
+      });
       await emitPiEvent({ type: "extension_ui_request", id: "stacked-notice", method: "notify", notifyType: "warning", message: "Review generated changes" });
       const toasts = await $$(".error-toast");
       await expect(toasts).toBeElementsArrayOfSize(2);
       expect(await toasts[0].getLocation("y")).not.toBe(await toasts[1].getLocation("y"));
     } finally {
-      await browser.execute(() => (window as unknown as { __restoreStorage: () => void }).__restoreStorage());
       while (await $(".error-toast button").isExisting()) await $(".error-toast button").click();
       await resetBackend();
     }

@@ -19,6 +19,18 @@ try {
  const errors=[]; page.on('pageerror', error=>errors.push(error.stack));
   const settings={worktreeSetupScripts:[],defaultAgent:'default',defaultModel:'test/model',hiddenModels:[],defaultThinking:'high',defaultFastMode:false,contextWindowCap:200000,contextWindowCapEnabled:true,autoRetry:true,debugMode:false,keybindings:{newConversation:'Ctrl+N',toggleConversations:'Ctrl+B',toggleTerminal:'Ctrl+J',toggleDebugMode:'Ctrl+D',focusComposer:'Ctrl+E',openSettings:'Ctrl+,'},tools:[],skills:[],hosts:[]};
  const state={model:{id:'model',provider:'test',name:'Test model'},thinkingLevel:'high',isStreaming:false,sessionId:'mobile-test',sessionFile:'/tmp/mobile-test.jsonl',messageCount:0,pendingMessageCount:0};
+ await page.addInitScript(initialSettings => {
+  window.__testClientPreferences = initialSettings;
+  window.Capacitor = {
+   PluginHeaders: [{name:'ClientPreferences',methods:[{name:'load',rtype:'promise'},{name:'save',rtype:'promise'}]}],
+   nativePromise: async (plugin,method,options) => {
+    if(plugin!=='ClientPreferences') throw new Error(`Unexpected native plugin: ${plugin}`);
+    if(method==='load') return {settings:window.__testClientPreferences};
+    if(method==='save') {window.__testClientPreferences=options.settings;return;}
+    throw new Error(`Unexpected native method: ${method}`);
+   }
+  };
+ },settings);
  let connection; const savedSettings=[];
  await page.routeWebSocket('wss://piop.example.test/', ws=> {
   connection=ws;
@@ -52,7 +64,8 @@ try {
  assert.equal(usageBadges[0].go,true);
  assert.match(usageBadges[0].label,/OpenCode Go usage remaining: 70%/);
  assert.match(usageBadges[1].label,/Codex usage remaining: 80%/);
- await page.waitForFunction(() => (JSON.parse(localStorage.getItem('piop-client-settings') ?? '{}').knownModels ?? []).includes('test/model'));
+ connection.send(JSON.stringify({event:'pi://event',payload:{type:'session_switched'}}));
+ await page.waitForFunction(() => (window.__testClientPreferences.knownModels ?? []).includes('test/model'));
  await page.getByRole('textbox',{name:'Message piop'}).fill('First line');
  await page.getByRole('textbox',{name:'Message piop'}).press('Enter');
  assert.equal(await page.getByRole('textbox',{name:'Message piop'}).inputValue(),'First line\n');
@@ -65,12 +78,12 @@ try {
  assert.equal(await page.evaluate(()=>document.body.scrollWidth<=innerWidth),true);
  await page.getByRole('button',{name:'Toggle conversations'}).click();
  await page.getByRole('textbox',{name:'Message piop'}).waitFor();
- await page.getByRole('button',{name:'Toggle conversations'}).click();
  await page.getByRole('button',{name:'Close conversations'}).waitFor();
  await page.getByRole('button',{name:'Close conversations'}).click({position:{x:370,y:500}});
  connection.close();
  await page.getByRole('button',{name:'Reconnect',exact:true}).waitFor();
  await page.getByRole('button',{name:'Toggle conversations'}).click();
+ page.once('dialog', dialog => dialog.accept());
  await page.getByRole('button',{name:'Host',exact:true}).click();
  await page.getByRole('button',{name:'Connect to workspace'}).waitFor();
  await page.getByRole('button',{name:'Remove host',exact:true}).click();

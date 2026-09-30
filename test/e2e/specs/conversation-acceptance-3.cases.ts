@@ -68,6 +68,7 @@ describe("Conversation acceptance", () => {
       await expect(wheel).toBeDisplayed();
       expect((await wheel.getAttribute("aria-label"))?.replaceAll(",", "")).toBe("42% of 100000 context tokens used");
 
+      await updateBackendResponse("pi_command:get_session_stats", { contextUsage: { tokens: 18_000, contextWindow: 100_000, percent: 18 } });
       await emitPiEvent({ type: "compaction_end", result: { estimatedTokensAfter: 18_000 } });
       await browser.waitUntil(async () => (await wheel.getAttribute("aria-label"))?.startsWith("18%") === true);
       expect((await wheel.getAttribute("aria-label"))?.replaceAll(",", "")).toBe("18% of 100000 context tokens used");
@@ -99,11 +100,9 @@ describe("Conversation acceptance", () => {
   });
 
   it("renders terminal output and reports when the process exits", async () => {
-    const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
-    await mockBackend({ create_temporary_chat: { cwd: "/tmp/terminal-output", sessionId: "terminal-output" }, list_sessions: [], ...connectedSessionResponses(""), "pi_command:set_model": {}, load_app_settings: settings, start_pi: {}, stop_pi: {}, start_terminal: {}, resize_terminal: {}, close_terminal: {} });
+    await startTemporaryConversation({ start_terminal: {}, resize_terminal: {}, close_terminal: {} });
     try {
       while (await $(".error-toast button").isExisting()) await $(".error-toast button").click();
-      await $('button[aria-label="New conversation"]').click();
       await expect(app.openTerminalButton).toBeEnabled();
       await app.openTerminalButton.click();
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "start_terminal"));

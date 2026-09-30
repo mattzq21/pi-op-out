@@ -60,6 +60,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         restore: () => options().refreshSession(),
       });
       if (!ready) return;
+      capturedOptions.setActiveCwd(capturedOptions.transport.currentCwd());
       capturedOptions.setError(undefined);
       capturedOptions.updateConnected(true);
     };

@@ -54,9 +54,9 @@ describe('rendered controls and dialogs', () => {
 
   test('worktree creation validates names and recovers from a failed request', async () => {
     const names = []; const view = await render(WorktreeDialog, { projectPath: '/repo', fromProject: true, onCancel() {}, onCreate: async name => { names.push(name); throw new Error('creation failed'); } });
-    await click(button('Create worktree')); assert.equal(document.querySelector('[role=alert]').textContent, "Name can't be empty");
+    await click(button('Create worktree')); assert.equal(document.querySelector('[role=alert]').textContent, "Branch name can't be empty");
     const input = document.querySelector('input'); await enterText(input, ' feature ');
-    assert.equal(document.querySelector('[role=alert]'), null); assert.equal(document.querySelector('.worktree-preview code').textContent, 'feature');
+    assert.equal(document.querySelector('[role=alert]'), null); assert.equal(document.querySelector('.worktree-preview code').textContent, 'parent|feature');
     await key(input, 'Enter'); assert.deepEqual(names, ['feature']); assert.equal(document.querySelector('[role=alert]').textContent, 'creation failed'); assert.equal(input.disabled, false);
     await view.rerender({ projectPath: '/repo', beforePrompt: true, onCancel() {}, onCreate: async () => {} });
     assert.match(document.body.textContent, /before this response’s prompt/);
@@ -74,14 +74,13 @@ describe('rendered controls and dialogs', () => {
     assert.equal(input.disabled, false); await click(button('Cancel')); assert.equal(closed, 1);
   });
 
-  test('worktree removal stays disabled while conversations remain and passes the selected branch policy', async () => {
+  test('worktree removal reports backend usage checks and passes the selected branch policy', async () => {
     const values = []; const props = { name: 'feature', path: '/repo/feature', conversationCount: 1, onCancel() {}, onRemove: async value => values.push(value) };
     const view = await render(RemoveWorktreeDialog, props);
-    assert.match(document.querySelector('[role=alert]').textContent, /1 conversation using/); assert.equal(button('Delete worktree').disabled, true);
-    await click(button('Delete worktree')); assert.deepEqual(values, []);
-    await view.rerender({ ...props, conversationCount: 2 }); assert.match(document.querySelector('[role=alert]').textContent, /2 conversations/);
-    await view.rerender({ ...props, conversationCount: 0 }); await click(document.querySelector('input')); await click(button('Delete worktree'));
-    assert.deepEqual(values, [true]);
+    assert.match(document.body.textContent, /checks for conversations and terminals still using/);
+    await click(button('Delete worktree')); assert.deepEqual(values, [false]);
+    await view.rerender(props); await click(document.querySelector('input')); await click(button('Delete worktree'));
+    assert.deepEqual(values, [false, true]);
   });
 
   test('group removal disables cancellation while pending and makes failed operations retryable', async () => {

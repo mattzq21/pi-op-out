@@ -39,7 +39,7 @@ async function fixture(t) {
   const sourceText = [header, ...entries].map(JSON.stringify).join('\n') + '\n';
   await writeFile(sourcePath, sourceText);
   const notices = [], messages = [], commands = new Map(), tools = new Map();
-  const ctx = { cwd: dir, sessionManager: { getBranch: () => entries, getHeader: () => header, getSessionFile: () => sourcePath, getSessionDir: () => dir }, ui: { notify: (...args) => notices.push(args) } };
+  const ctx = { cwd: dir, sessionManager: { getEntries: () => entries, getBranch: () => entries, getHeader: () => header, getSessionFile: () => sourcePath, getSessionDir: () => dir }, ui: { notify: (...args) => notices.push(args) } };
   module.registerSessionOperations({ registerTool: tool => tools.set(tool.name, tool), registerCommand: (name, command) => commands.set(name, command), sendMessage: message => messages.push(message) });
   return { ...module, ctx, dir, entries, sourcePath, sourceText, notices, messages, commands, tools };
 }

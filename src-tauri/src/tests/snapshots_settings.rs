@@ -267,7 +267,7 @@ fn settings_path_rejects_directory_obstructions_without_changing_their_permissio
 
 #[test]
 fn project_worktree_creation_uses_repository_root_and_preserves_source_changes() {
-    let temporary = TestDirectory::new();
+    let temporary = TestDirectory::new(); let _home = HomeOverride::take(&temporary.0);
     let repository = temporary.0.join("Project's files");
     let nested = repository.join("nested");
     fs::create_dir_all(&nested).unwrap();
@@ -277,8 +277,9 @@ fn project_worktree_creation_uses_repository_root_and_preserves_source_changes()
     fs::write(repository.join("tracked"), "local edits").unwrap();
     fs::write(repository.join("untracked"), "private").unwrap();
     let worktree = create_project_worktree_at(nested.to_str().unwrap(), " feature ", None).unwrap();
-    assert_eq!(worktree.branch, "Project-s-files-feature");
-    assert_eq!(Path::new(&worktree.path), temporary.0.join("Project-s-files-feature"));
+    assert_eq!(worktree.branch, "main|feature");
+    assert_eq!(Path::new(&worktree.path).file_name(), repository.file_name());
+    assert!(Path::new(&worktree.path).starts_with(temporary.0.join(STORAGE_DIRECTORY).join("worktrees")));
     assert_eq!(fs::read_to_string(Path::new(&worktree.path).join("tracked")).unwrap(), "committed");
     assert!(!Path::new(&worktree.path).join("untracked").exists());
     assert_eq!(fs::read_to_string(repository.join("tracked")).unwrap(), "local edits");
@@ -292,7 +293,7 @@ fn project_worktree_creation_uses_repository_root_and_preserves_source_changes()
 
 #[test]
 fn project_worktree_creation_rejects_invalid_sources_and_names_without_creating_targets() {
-    let temporary = TestDirectory::new();
+    let temporary = TestDirectory::new(); let _home = HomeOverride::take(&temporary.0);
     let repository = temporary.0.join("project"); fs::create_dir(&repository).unwrap();
     for name in ["", "../escape", "two words", "a/b"] {
         assert!(create_project_worktree_at(repository.to_str().unwrap(), name, None).is_err());
@@ -307,7 +308,7 @@ fn project_worktree_creation_rejects_invalid_sources_and_names_without_creating_
 
 #[test]
 fn project_worktree_creation_preserves_existing_branch_and_target_on_collisions() {
-    let temporary = TestDirectory::new();
+    let temporary = TestDirectory::new(); let _home = HomeOverride::take(&temporary.0);
     let repository = temporary.0.join("project"); fs::create_dir(&repository).unwrap();
     test_git(&repository, &["init", "--initial-branch=main"]);
     test_git(&repository, &["commit", "--allow-empty", "-m", "Initial"]);
@@ -318,14 +319,15 @@ fn project_worktree_creation_preserves_existing_branch_and_target_on_collisions(
     assert!(local_worktree_is_registered(&repository, Path::new(&created.path)).unwrap());
     let occupied = temporary.0.join("project-occupied"); fs::create_dir(&occupied).unwrap();
     fs::write(occupied.join("keep"), "unrelated directory").unwrap();
-    assert!(create_project_worktree_at(repository.to_str().unwrap(), "occupied", None).is_err());
+    let distinct = create_project_worktree_at(repository.to_str().unwrap(), "occupied", None).unwrap();
+    assert_ne!(Path::new(&distinct.path), occupied);
     assert_eq!(fs::read_to_string(occupied.join("keep")).unwrap(), "unrelated directory");
     assert!(!local_worktree_is_registered(&repository, &occupied).unwrap());
 }
 
 #[test]
 fn copied_worktree_supports_unborn_repositories_with_staged_and_untracked_files() {
-    let temporary = TestDirectory::new(); let repository = temporary.0.join("project");
+    let temporary = TestDirectory::new(); let _home = HomeOverride::take(&temporary.0); let repository = temporary.0.join("project");
     fs::create_dir(&repository).unwrap(); test_git(&repository, &["init", "--initial-branch=main"]);
     fs::write(repository.join("staged"), "staged content").unwrap();
     test_git(&repository, &["add", "staged"]);
@@ -344,16 +346,17 @@ fn copied_worktree_supports_unborn_repositories_with_staged_and_untracked_files(
 }
 
 #[test]
-fn copied_worktree_rejects_missing_but_registered_targets_without_removing_the_registration() {
-    let temporary = TestDirectory::new(); let repository = temporary.0.join("project");
+fn copied_worktree_uses_managed_storage_without_removing_missing_sibling_registrations() {
+    let temporary = TestDirectory::new(); let _home = HomeOverride::take(&temporary.0); let repository = temporary.0.join("project");
     fs::create_dir(&repository).unwrap(); test_git(&repository, &["init", "--initial-branch=main"]);
     test_git(&repository, &["commit", "--allow-empty", "-m", "Initial"]);
     let target = temporary.0.join("project-copy");
     test_git(&repository, &["worktree", "add", "--detach", target.to_str().unwrap()]);
     fs::remove_dir_all(&target).unwrap();
     assert!(local_worktree_is_registered(&repository, &target).unwrap());
-    let error = create_local_git_worktree(repository.to_str().unwrap(), "copy").err().unwrap();
-    assert!(error.contains("Git worktree is already registered"), "{error}");
+    let copied = create_local_git_worktree(repository.to_str().unwrap(), "copy").unwrap();
+    assert_ne!(Path::new(&copied.path), target);
+    assert!(local_worktree_is_registered(&repository, Path::new(&copied.path)).unwrap());
     assert!(local_worktree_is_registered(&repository, &target).unwrap());
     assert!(!local_branch_exists(&repository, "project-copy").unwrap());
     assert!(!target.exists());
@@ -362,12 +365,13 @@ fn copied_worktree_rejects_missing_but_registered_targets_without_removing_the_r
 #[cfg(unix)]
 #[test]
 fn copied_worktree_preserves_broken_symlink_destinations_and_copies_relative_file_links() {
-    let temporary = TestDirectory::new(); let repository = temporary.0.join("project");
+    let temporary = TestDirectory::new(); let _home = HomeOverride::take(&temporary.0); let repository = temporary.0.join("project");
     fs::create_dir(&repository).unwrap(); test_git(&repository, &["init", "--initial-branch=main"]);
     test_git(&repository, &["commit", "--allow-empty", "-m", "Initial"]);
     let occupied = temporary.0.join("project-occupied");
     std::os::unix::fs::symlink("missing-target", &occupied).unwrap();
-    assert!(create_local_git_worktree(repository.to_str().unwrap(), "occupied").err().unwrap().contains("Worktree directory already exists"));
+    let distinct = create_local_git_worktree(repository.to_str().unwrap(), "occupied").unwrap();
+    assert!(Path::new(&distinct.path).starts_with(temporary.0.join(STORAGE_DIRECTORY).join("worktrees")));
     assert_eq!(fs::read_link(&occupied).unwrap(), PathBuf::from("missing-target"));
     fs::write(repository.join("file"), "contents").unwrap();
     std::os::unix::fs::symlink("file", repository.join("link")).unwrap();
@@ -381,7 +385,7 @@ fn copied_worktree_preserves_broken_symlink_destinations_and_copies_relative_fil
 
 #[test]
 fn copied_worktree_combines_staged_unstaged_binary_and_untracked_changes() {
-    let temporary = TestDirectory::new(); let repository = temporary.0.join("project");
+    let temporary = TestDirectory::new(); let _home = HomeOverride::take(&temporary.0); let repository = temporary.0.join("project");
     fs::create_dir(&repository).unwrap(); test_git(&repository, &["init", "--initial-branch=main"]);
     fs::write(repository.join("tracked"), "original\n").unwrap();
     fs::write(repository.join("binary"), [0, 1, 2]).unwrap();
@@ -396,7 +400,7 @@ fn copied_worktree_combines_staged_unstaged_binary_and_untracked_changes() {
     let index_before = fs::read(repository.join(".git/index")).unwrap();
     let result = create_local_git_worktree(repository.join("nested").to_str().unwrap(), "copy").unwrap();
     let target = Path::new(&result.path);
-    assert_eq!(result.branch, "project-copy");
+    assert_eq!(result.branch, "main|copy");
     assert_eq!(fs::read_to_string(target.join("tracked")).unwrap(), "unstaged final\n");
     assert_eq!(fs::read(target.join("binary")).unwrap(), vec![0, 255, 17, 0]);
     assert_eq!(fs::read_to_string(target.join("nested/new file")).unwrap(), "new content");
@@ -408,18 +412,19 @@ fn copied_worktree_combines_staged_unstaged_binary_and_untracked_changes() {
 }
 
 #[test]
-fn copied_worktree_rejects_invalid_refs_and_existing_destinations_before_mutation() {
-    let temporary = TestDirectory::new(); let repository = temporary.0.join("project");
+fn copied_worktree_rejects_invalid_refs_and_preserves_existing_sibling_directories() {
+    let temporary = TestDirectory::new(); let _home = HomeOverride::take(&temporary.0); let repository = temporary.0.join("project");
     fs::create_dir(&repository).unwrap();
     assert_eq!(create_local_git_worktree(repository.to_str().unwrap(), "copy").err().unwrap(), "Project is not a Git repository");
     test_git(&repository, &["init", "--initial-branch=main"]);
     test_git(&repository, &["commit", "--allow-empty", "-m", "Initial"]);
     assert!(create_local_git_worktree(repository.to_str().unwrap(), "bad..ref").err().unwrap().contains("Invalid Git branch"));
-    test_git(&repository, &["branch", "project-existing"]);
+    test_git(&repository, &["branch", "main|existing"]);
     assert!(create_local_git_worktree(repository.to_str().unwrap(), "existing").err().unwrap().contains("Git branch already exists"));
     let target = temporary.0.join("project-occupied"); fs::create_dir(&target).unwrap();
     fs::write(target.join("keep"), "untouched").unwrap();
-    assert!(create_local_git_worktree(repository.to_str().unwrap(), "occupied").err().unwrap().contains("Worktree directory already exists"));
+    let distinct = create_local_git_worktree(repository.to_str().unwrap(), "occupied").unwrap();
+    assert!(Path::new(&distinct.path).starts_with(temporary.0.join(STORAGE_DIRECTORY).join("worktrees")));
     assert_eq!(fs::read_to_string(target.join("keep")).unwrap(), "untouched");
     assert!(!local_branch_exists(&repository, "project-occupied").unwrap());
 }
@@ -427,7 +432,7 @@ fn copied_worktree_rejects_invalid_refs_and_existing_destinations_before_mutatio
 #[cfg(unix)]
 #[test]
 fn copied_worktree_rolls_back_branch_and_registration_when_nested_file_copy_fails() {
-    let temporary = TestDirectory::new(); let repository = temporary.0.join("project");
+    let temporary = TestDirectory::new(); let _home = HomeOverride::take(&temporary.0); let repository = temporary.0.join("project");
     fs::create_dir(&repository).unwrap(); test_git(&repository, &["init", "--initial-branch=main"]);
     test_git(&repository, &["commit", "--allow-empty", "-m", "Initial"]);
     let nested = repository.join("nested"); fs::create_dir(&nested).unwrap();
@@ -552,7 +557,7 @@ fn project_inspection_batches_distinct_directories_and_updates_all_matching_sess
         batches.push(batch.len()); for path in batch { assert!(inspected.insert(path.clone())); }
         let mut command = Command::new("sh"); command.args(["-c", script, "sh"]).args(batch).env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_CONFIG_GLOBAL", "/dev/null"); command
     }).unwrap();
-    assert_eq!(batches, [128, 2]); assert_eq!(inspected.len(), 130);
+    assert_eq!(batches, [16, 16, 16, 16, 16, 16, 16, 16, 2]); assert_eq!(inspected.len(), 130);
     assert!(matches!(sessions[0].project_kind, Some(ProjectKind::Main)));
     assert!(matches!(sessions[1].project_kind, Some(ProjectKind::Worktree)));
     assert!(matches!(sessions[2].project_kind, Some(ProjectKind::NoRepo)));
@@ -576,7 +581,7 @@ fn project_inspection_preserves_all_sessions_when_a_later_batch_is_incomplete() 
             else { command.args(["-c", failure]); }
             command
         }).unwrap_err();
-        assert!(!error.is_empty()); assert_eq!(calls, 2);
+        assert!(!error.is_empty()); assert_eq!(calls, 9);
         assert_eq!(serde_json::to_value(&sessions).unwrap(), original);
     }
     assert!(inspect_session_projects_with(&mut sessions, |_, _| Command::new("/missing/piop-project-test")).is_err());

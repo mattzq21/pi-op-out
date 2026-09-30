@@ -187,7 +187,7 @@ export const config: WebdriverIO.Config = {
   onComplete: async () => {
     await stopFixtureDaemon();
     try { cleanupTestSessions(); }
-    finally { try { restoreNativeConfigs(); } finally { if (ownsFixtureHome) rmSync(fixtureHome, { recursive: true, force: true }); } }
+    finally { try { restoreNativeConfigs(); } finally { if (ownsFixtureHome) rmSync(fixtureHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } }
   },
   before: async () => {
     const [mainWindow] = await browser.getWindowHandles();
