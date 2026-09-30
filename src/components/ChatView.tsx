@@ -357,7 +357,7 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
     {retryError() && <div class="message-failure retry-error" role="alert">Retry failed: {(retryError())!}</div>}
     <MessageList messages={componentProps.messages.filter(message => message.role === "system" && message.customType !== "compaction")} expanded={false} />
   </>}>
-    <div class="active-work-content"><MessageList messages={componentProps.messages.filter(message => message.role !== "user")} expanded compact={false} debug={componentProps.debug} paused={componentProps.paused} /></div>
+    <div class="active-work-content"><MessageList messages={componentProps.messages.filter(message => message.role !== "user")} expanded compact={false} debug={componentProps.debug} paused={componentProps.paused} showActions={false} /></div>
   </Show>);
   const renderDiffViewer = () => (<Show when={componentProps.active || componentProps.paused || !finalMessage()}><DiffViewer {...changes()} /></Show>);
   return <section class="conversation-turn">
