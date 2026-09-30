@@ -471,6 +471,12 @@ function completedSubagentOutput(last: AssistantMessage | undefined) {
   return output.length > 16_000 ? `${output.slice(0, 16_000)}\n[Result truncated. Full conversation is saved in the child transcript.]` : output;
 }
 
+function subagentEntryCost(entry: { type?: string; usage?: { cost?: { total?: number } }; message?: { usage?: { cost?: { total?: number } } } }) {
+  const source = entry.type === "usage" ? entry : entry.type === "message" ? entry.message : undefined;
+  const amount = source?.usage?.cost?.total;
+  return typeof amount === "number" && Number.isFinite(amount) ? Math.max(0, amount) : 0;
+}
+
 async function subagentCompletion(run: SubagentRun, offset: number) {
   let last: AssistantMessage | undefined;
   let cost = 0;
@@ -480,10 +486,8 @@ async function subagentCompletion(run: SubagentRun, offset: number) {
     for await (const line of lines) {
       let entry;
       try { entry = JSON.parse(line); } catch { continue; }
-      if (entry.type !== "message") continue;
-      if (entry.message?.role === "assistant") last = entry.message as AssistantMessage;
-      const amount = entry.message?.usage?.cost?.total;
-      if (Number.isFinite(amount)) cost += Math.max(0, amount);
+      if (entry.type === "message" && entry.message?.role === "assistant") last = entry.message as AssistantMessage;
+      cost += subagentEntryCost(entry);
     }
   } finally { lines.close(); input.destroy(); }
   run.apiCost = cost;

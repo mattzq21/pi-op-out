@@ -47,12 +47,12 @@ class SessionIndex {
       if (!this.first && message.role === 'user') this.first = content.slice(0, 2000);
       this.preview = [...content].slice(0, 100).join('');
     }
-    this.recordCost(message);
+    if (message.role === 'assistant' || message.role === 'toolResult') this.recordCost(message);
   }
 
   recordCost(message) {
     const amount = message.usage?.cost?.total;
-    if (message.role === 'assistant' && Number.isFinite(amount) && amount >= 0) this.cost += amount;
+    if (Number.isFinite(amount) && amount >= 0) this.cost += amount;
   }
 
   line(line) {
@@ -65,6 +65,7 @@ class SessionIndex {
       return;
     }
     this.metadata(entry);
+    if (entry.type === 'usage') this.recordCost(entry);
     this.message(entry);
   }
 

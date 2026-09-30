@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 
 const STATUS_KEY = "piop-session-cost";
 const LIMIT_ENTRY = "piop-session-cost-limit";
@@ -21,9 +21,9 @@ function parseAmount(raw: string): number {
   return amount;
 }
 
-function entryCost(entry: unknown): number {
-  if (!entry || typeof entry !== "object" || (entry as { type?: unknown }).type !== "message") return 0;
-  const amount = (entry as { message?: { usage?: { cost?: { total?: unknown } } } }).message?.usage?.cost?.total;
+function entryCost(entry: SessionEntry): number {
+  const source = entry.type === "usage" ? entry : entry.type === "message" ? entry.message : undefined;
+  const amount = (source as { usage?: { cost?: { total?: unknown } } } | undefined)?.usage?.cost?.total;
   return typeof amount === "number" && Number.isFinite(amount) && amount > 0 ? amount : 0;
 }
 
@@ -77,6 +77,13 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
   });
   pi.on("agent_end", (_event, ctx) => {
     publish(ctx);
+  });
+
+  pi.on("cache_warming_decision", (event, ctx) => {
+    if (limit === undefined) return;
+    publish(ctx);
+    const cost = sessionCost(ctx);
+    if (cost >= limit || !Number.isFinite(event.warmCost) || cost + Math.max(0, event.warmCost) > limit) return { action: "stop" };
   });
 
   pi.on("input", (event, ctx) => {
