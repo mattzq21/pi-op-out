@@ -19,7 +19,6 @@ export function registerGoals(pi: ExtensionAPI) {
   let emptyFinal = false;
   let successfulTool = false;
   let failedTool = false;
-  let usageLimited = false;
   let automatic = false;
   let runGoalId: string | undefined;
   let responseGoalId: string | undefined;
@@ -72,7 +71,7 @@ export function registerGoals(pi: ExtensionAPI) {
   pi.on("agent_start", (_event, ctx) => {
     context = ctx; starting = false;
     runSignal = ctx.signal;
-    activity = false; emptyFinal = false; successfulTool = false; failedTool = false; usageLimited = false;
+    activity = false; emptyFinal = false; successfulTool = false; failedTool = false;
     runGoalId = state.goal?.status === "active" ? state.goal.id : undefined;
     if (state.goal?.status === "active" && !allowed()) state.setStatus(ctx, "paused");
     state.beginRun();
@@ -106,13 +105,18 @@ export function registerGoals(pi: ExtensionAPI) {
     if (event.errorMessage && state.goal?.status === "active") state.setStatus(ctx, "blocked");
   });
   pi.on("agent_end", (_event, ctx) => { state.flushClock(); state.save(ctx); });
-  pi.on("after_provider_response", event => { usageLimited = event.status === 429; });
+  pi.on("after_provider_response", (event, ctx) => {
+    if (event.status !== 429) return;
+    try {
+      if (state.usageGoalId()) state.setStatus(ctx, "usage_limited");
+    } finally { ctx.abort(); }
+  });
 
   const stopForOutcome = (event: AgentBeforeSettleEvent, ctx: ExtensionContext) => {
     if (event.outcome === "completed") return false;
     if (!state.usageGoalId()) return false;
     if (event.outcome === "aborted") state.setStatus(ctx, "paused");
-    else state.setStatus(ctx, usageLimited ? "usage_limited" : "blocked");
+    else state.setStatus(ctx, "blocked");
     return true;
   };
   const stalled = () => {
