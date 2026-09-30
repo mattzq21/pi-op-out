@@ -21,7 +21,10 @@ function duration(ms: number) {
 }
 
 export function GoalBar(props: { value?: string; disabled: boolean; onCommand: (action: string) => Promise<unknown> }) {
-  const goal = createMemo(() => readGoal(props.value));
+  const goal = createMemo(() => {
+    const current = readGoal(props.value);
+    return current?.status === "complete" ? undefined : current;
+  });
   const [expanded, setExpanded] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string>();
