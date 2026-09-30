@@ -40,7 +40,7 @@ export function registerGoals(pi: ExtensionAPI) {
   const allowed = () => ["get_goal", "create_goal", "update_goal"].every(name => pi.getActiveTools().includes(name));
   const assertAvailable = (ctx: ExtensionContext) => {
     if (!persistent(ctx)) throw new Error("Goals require a saved conversation and are unavailable in temporary side chats.");
-    if (!allowed()) throw new Error("Enable get_goal, create_goal and update_goal in Settings → Tools and allow them for this agent before starting a goal.");
+    if (!allowed()) throw new Error("Enable get_goal, create_goal and update_goal for this agent under Settings → Agents → Tools before starting a goal.");
   };
   const steering = (content: string) => pi.sendMessage({ customType: GOAL_CONTEXT, content, display: false, details: { goalId: state.goal?.id } }, { triggerTurn: false });
   const account = (ctx: ExtensionContext, tokens: number, includeStopped = false) => {

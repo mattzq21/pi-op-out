@@ -58,12 +58,13 @@ pub(super) fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
 }
 
 fn migrate_goal_tools(settings: &mut AppSettings) {
-    let enabled = settings.tools.iter().find(|tool| tool["name"] == "goal").map(|tool| tool["enabled"].as_bool().unwrap_or(false));
     settings.tools.retain(|tool| tool["name"] != "goal");
-    for mut tool in session_operation_tools().into_iter().filter(|tool| matches!(tool["name"].as_str(), Some("get_goal" | "create_goal" | "update_goal"))) {
-        if settings.tools.iter().any(|existing| existing["name"] == tool["name"]) { continue; }
-        if let Some(enabled) = enabled { tool["enabled"] = json!(enabled); }
-        settings.tools.push(tool);
+    for tool in session_operation_tools().into_iter().filter(|tool| matches!(tool["name"].as_str(), Some("get_goal" | "create_goal" | "update_goal"))) {
+        if let Some(existing) = settings.tools.iter_mut().find(|existing| existing["name"] == tool["name"]) {
+            existing["enabled"] = json!(true);
+        } else {
+            settings.tools.push(tool);
+        }
     }
 }
 
