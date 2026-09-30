@@ -3,6 +3,7 @@ import { GoalState, GOAL_CONTEXT, goalTokens } from "./goal-state.ts";
 import { goalBudgetPrompt, goalChangedPrompt, goalInactivePrompt, goalPrompt } from "./goal-prompts.ts";
 import { registerGoalControls } from "./goal-controls.ts";
 import { GoalCoordination } from "./goal-coordination.ts";
+import { registerPauseControl } from "./pause.ts";
 
 function persistent(ctx: ExtensionContext) {
   const path = ctx.sessionManager.getSessionFile();
@@ -15,6 +16,8 @@ function providerErrorStatus(message: string | undefined): "usage_limited" | "bl
 
 export function registerGoals(pi: ExtensionAPI) {
   const state = new GoalState(pi);
+  const pauseController = registerPauseControl(pi);
+  const pause = (ctx: ExtensionContext) => { void pauseController.pause(ctx).catch(error => ctx.ui.notify(String(error), "error")); };
   const coordination = new GoalCoordination();
   const schedule = (ctx: ExtensionContext, operation: () => void) => {
     void coordination.run(ctx, operation).catch(error => ctx.ui.notify(String(error), "error"));
@@ -41,7 +44,10 @@ export function registerGoals(pi: ExtensionAPI) {
   };
   const steering = (content: string) => pi.sendMessage({ customType: GOAL_CONTEXT, content, display: false, details: { goalId: state.goal?.id } }, { triggerTurn: false });
   const account = (ctx: ExtensionContext, tokens: number, includeStopped = false) => {
-    if (state.account(ctx, tokens, includeStopped) && state.goal) steering(goalBudgetPrompt(state.goal));
+    if (state.account(ctx, tokens, includeStopped) && state.goal) {
+      steering(goalBudgetPrompt(state.goal));
+      pause(ctx);
+    }
   };
   const start = (ctx: ExtensionContext) => {
     if (starting || state.goal?.status !== "active" || !ctx.isIdle() || ctx.hasPendingMessages()) return;
@@ -110,7 +116,8 @@ export function registerGoals(pi: ExtensionAPI) {
     if (event.message.stopReason !== "error") return;
     try {
       if (state.usageGoalId()) state.setStatus(ctx, providerErrorStatus(event.message.errorMessage));
-    } finally { ctx.abort(); }
+    } finally { pause(ctx); }
+    return { message: { ...event.message, stopReason: "aborted" as const, errorMessage: "Response paused" } };
   }));
   pi.on("tool_result", (event, ctx) => coordination.run(ctx, () => {
     activity = true;
@@ -130,7 +137,7 @@ export function registerGoals(pi: ExtensionAPI) {
     if (event.status !== 429) return;
     try {
       if (state.usageGoalId()) state.setStatus(ctx, "usage_limited");
-    } finally { ctx.abort(); }
+    } finally { pause(ctx); }
   }));
 
   const stopForOutcome = (event: AgentBeforeSettleEvent, ctx: ExtensionContext) => {
@@ -153,7 +160,7 @@ export function registerGoals(pi: ExtensionAPI) {
     if (runGoalId !== state.goal.id) resetAudit();
     if (stalled()) {
       try { state.setStatus(ctx, "blocked"); }
-      finally { ctx.abort(); }
+      finally { pause(ctx); }
       return;
     }
     if (ctx.hasPendingMessages() || event.context.pendingMessages.length) return;
@@ -167,12 +174,17 @@ export function registerGoals(pi: ExtensionAPI) {
   }));
 
   const stopControl = pi.events.on("piop:goal-control", value => {
-    const { action, ctx } = value as { action: "pause" | "resume"; ctx: ExtensionContext };
-    schedule(ctx, () => {
+    const event = value as { action: "pause" | "resume"; ctx: ExtensionContext; ready?: Promise<void> };
+    const { action, ctx } = event;
+    const operation = () => {
     if (!state.goal) return;
     if (action === "pause" && state.goal.status === "active") state.setStatus(ctx, "paused");
-    if (action === "resume" && state.goal.status === "paused" && allowed()) { resetAudit(); state.setStatus(ctx, "active"); }
-    });
+    if (action !== "resume") return;
+    if (state.goal.tokenBudget !== null && state.goal.tokensUsed >= state.goal.tokenBudget && state.goal.status !== "complete") throw new Error("Increase or clear the goal token budget before resuming.");
+    if (["paused", "blocked", "usage_limited", "budget_limited"].includes(state.goal.status) && allowed()) { resetAudit(); state.setStatus(ctx, "active"); }
+    };
+    if (action === "resume") event.ready = coordination.run(ctx, operation);
+    else schedule(ctx, operation);
   });
   const scope = pi.events.on("piop:goal-scope", value => {
     const event = value as { goalId?: string; ctx: ExtensionContext; ready?: Promise<void> };

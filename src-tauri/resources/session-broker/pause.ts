@@ -35,7 +35,7 @@ export function desktopPauseContext(messages: ContextEvent["messages"], resumeMe
 export interface PauseController {
   state(): { isPaused: boolean; isPausing: boolean };
   pause(ctx: ExtensionContext): Promise<void>;
-  resume(ctx: ExtensionContext): string | undefined;
+  resume(ctx: ExtensionContext): Promise<string | undefined>;
   stop(ctx: ExtensionContext): Promise<void>;
 }
 
@@ -120,11 +120,15 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
       }
       return pauseOperation ?? Promise.resolve();
     },
-    resume(ctx) {
+    async resume(ctx) {
       controlContext = ctx;
       if (isPausing || !ctx.isIdle()) throw new Error("Wait for Pi to finish pausing before resuming");
       if (!isPaused) return undefined;
-      pi.events.emit("piop:goal-control", { action: "resume", ctx });
+      const version = generation;
+      const goalControl: { action: "resume"; ctx: ExtensionContext; ready?: Promise<void> } = { action: "resume", ctx };
+      pi.events.emit("piop:goal-control", goalControl);
+      await goalControl.ready;
+      if (version !== generation || !isPaused || !ctx.isIdle()) return;
       const message = `/pi-desktop-resume-turn ${crypto.randomUUID()}`;
       resumeMessages.add(message); pi.appendEntry(resumeEntry, { message });
       return message;
