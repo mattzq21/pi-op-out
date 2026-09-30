@@ -7,7 +7,7 @@ use super::{
 use serde_json::{json, Value};
 use std::{
     fs::OpenOptions,
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -21,8 +21,8 @@ struct Destination {
 }
 
 pub(super) async fn switch(host: &Arc<Host>, session: &Arc<Session>, runtime: &str, command: Value) -> Result<Value> {
-    if session.working() || !session.queue.is_empty() {
-        return Err("Stop or pause the response and finish queued messages before branching or switching".into());
+    if !matches!(kind(&command), "fork" | "fork_after") && (session.working() || !session.queue.is_empty()) {
+        return Err("Stop or pause the response and finish queued messages before switching".into());
     }
     let state = session.execute(json!({"type":"get_state"})).await?;
     assert_current(host, session, runtime)?;
@@ -240,10 +240,24 @@ impl Branch<'_> {
     }
 
     fn spawn_preparing(&self) -> Result<Arc<Session>> {
-        let mut spec = self.session.spec.session("--fork", self.path);
+        let source = self.snapshot_source()?;
+        let mut spec = self.session.spec.session("--fork", &source.to_string_lossy());
         spec.args
             .extend(["--session-dir".into(), self.directory.to_string_lossy().into_owned()]);
         self.spawn(Uuid::new_v4().to_string(), spec)
+    }
+
+    fn snapshot_source(&self) -> Result<PathBuf> {
+        let source = std::fs::File::open(self.path).map_err(|error| error.to_string())?;
+        let length = source.metadata().map_err(|error| error.to_string())?.len();
+        let mut content = Vec::new();
+        source.take(length).read_to_end(&mut content).map_err(|error| error.to_string())?;
+        let end = content.iter().rposition(|byte| *byte == b'\n').ok_or("The conversation has no complete session header")?;
+        let snapshot = self.directory.join("source.jsonl");
+        private_file(&snapshot)?
+            .write_all(&content[..=end])
+            .map_err(|error| error.to_string())?;
+        Ok(snapshot)
     }
 
     fn spawn(&self, key: String, spec: LaunchSpec) -> Result<Arc<Session>> {
@@ -325,7 +339,8 @@ impl Branch<'_> {
         self.host.attach_view(self.runtime, opened.clone(), presence);
         self.committed = true;
         self.host.remember(self.runtime, opened);
-        finish_transfer(self.host, self.session).await?;
+        self.session.finish_detach(false, true).await;
+        self.host.release_unused(self.session).await?;
         self.host.reconcile(opened.clone());
         if self.host.current(self.runtime, opened) {
             opened.publish(json!({"type":"session_switched"}), Some(self.runtime));
