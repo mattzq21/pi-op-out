@@ -16,18 +16,19 @@ export function registerGoals(pi: ExtensionAPI) {
   let emptyTurns = 0;
   let failedTurns = 0;
   let activity = false;
+  let emptyFinal = false;
   let successfulTool = false;
   let failedTool = false;
-  let lastError = "";
+  let usageLimited = false;
   let automatic = false;
   let runGoalId: string | undefined;
   let responseGoalId: string | undefined;
   let runSignal: AbortSignal | undefined;
   const resetAudit = () => { emptyTurns = 0; failedTurns = 0; automatic = false; };
-  const allowed = () => pi.getActiveTools().includes("goal");
+  const allowed = () => ["get_goal", "create_goal", "update_goal"].every(name => pi.getActiveTools().includes(name));
   const assertAvailable = (ctx: ExtensionContext) => {
     if (!persistent(ctx)) throw new Error("Goals require a saved conversation and are unavailable in temporary side chats.");
-    if (!allowed()) throw new Error("Enable the goal tool in Settings → Tools and allow it for this agent before starting a goal.");
+    if (!allowed()) throw new Error("Enable get_goal, create_goal and update_goal in Settings → Tools and allow them for this agent before starting a goal.");
   };
   const steering = (content: string) => pi.sendMessage({ customType: GOAL_CONTEXT, content, display: false, details: { goalId: state.goal?.id } }, { triggerTurn: false });
   const account = (ctx: ExtensionContext, tokens: number, includeStopped = false) => {
@@ -45,10 +46,10 @@ export function registerGoals(pi: ExtensionAPI) {
   };
   registerGoalControls(pi, { state, assertAvailable, changed, start });
 
-  const restore = (ctx: ExtensionContext, navigating: boolean) => {
+  const restore = (ctx: ExtensionContext) => {
     context = ctx; starting = false; resetAudit(); runGoalId = undefined;
     try {
-      state.restore(ctx, navigating);
+      state.restore(ctx);
       if (!persistent(ctx)) { state.goal = null; state.publish(ctx); }
       restored = true;
     } catch (error) {
@@ -56,8 +57,8 @@ export function registerGoals(pi: ExtensionAPI) {
       ctx.ui.notify(`Could not restore goal: ${String(error)}`, "error");
     }
   };
-  pi.on("session_start", (_event, ctx) => restore(ctx, false));
-  pi.on("session_tree", (_event, ctx) => restore(ctx, true));
+  pi.on("session_start", (_event, ctx) => restore(ctx));
+  pi.on("session_tree", (_event, ctx) => restore(ctx));
   const ready = pi.events.on("piop:agents:ready", value => {
     const { ctx } = value as { ctx: ExtensionContext };
     if (!restored || state.goal?.status !== "active") return;
@@ -71,7 +72,7 @@ export function registerGoals(pi: ExtensionAPI) {
   pi.on("agent_start", (_event, ctx) => {
     context = ctx; starting = false;
     runSignal = ctx.signal;
-    activity = false; successfulTool = false; failedTool = false; lastError = "";
+    activity = false; emptyFinal = false; successfulTool = false; failedTool = false; usageLimited = false;
     runGoalId = state.goal?.status === "active" ? state.goal.id : undefined;
     if (state.goal?.status === "active" && !allowed()) state.setStatus(ctx, "paused");
     state.beginRun();
@@ -84,14 +85,17 @@ export function registerGoals(pi: ExtensionAPI) {
     if (event.message.role !== "assistant") return;
     const message = event.message;
     activity ||= message.content.some(part => part.type === "toolCall" || (part.type === "text" ? part.text.trim() : part.thinking.trim()));
-    lastError = message.errorMessage ?? "";
     if (responseGoalId && responseGoalId === state.goal?.id) account(ctx, goalTokens(message.usage), true);
     if (message.stopReason === "aborted" && state.goal?.status === "active") state.setStatus(ctx, "paused");
+  });
+  pi.on("message_end", event => {
+    if (event.message.role !== "assistant") return;
+    emptyFinal ||= event.message.stopReason === "stop" && !event.message.content.some(part => part.type === "text" && part.text.trim());
   });
   pi.on("tool_result", (event, ctx) => {
     activity = true;
     successfulTool ||= !event.isError;
-    failedTool ||= event.isError;
+    failedTool ||= event.isError && event.toolName === "exec" && event.details === undefined;
     account(ctx, 0);
   });
   pi.on("session_compact", (event, ctx) => {
@@ -102,16 +106,17 @@ export function registerGoals(pi: ExtensionAPI) {
     if (event.errorMessage && state.goal?.status === "active") state.setStatus(ctx, "blocked");
   });
   pi.on("agent_end", (_event, ctx) => { state.flushClock(); state.save(ctx); });
+  pi.on("after_provider_response", event => { usageLimited = event.status === 429; });
 
   const stopForOutcome = (event: AgentBeforeSettleEvent, ctx: ExtensionContext) => {
     if (event.outcome === "completed") return false;
     if (!state.usageGoalId()) return false;
     if (event.outcome === "aborted") state.setStatus(ctx, "paused");
-    else state.setStatus(ctx, /quota|usage.limit|rate.limit|too many requests|429/i.test(lastError) ? "usage_limited" : "blocked");
+    else state.setStatus(ctx, usageLimited ? "usage_limited" : "blocked");
     return true;
   };
   const stalled = () => {
-    emptyTurns = automatic && !activity ? emptyTurns + 1 : 0;
+    emptyTurns = automatic && emptyFinal && !activity ? emptyTurns + 1 : 0;
     if (successfulTool) failedTurns = 0;
     else if (failedTool) failedTurns++;
     return emptyTurns >= 3 || failedTurns >= 3;

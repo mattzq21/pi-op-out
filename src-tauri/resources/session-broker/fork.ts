@@ -36,6 +36,11 @@ async function pinForkPrompts(header: NonNullable<ReturnType<ExtensionContext["s
   }
 }
 
+function inheritGoal(ctx: ExtensionContext, retained: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>, timestamp: string) {
+  const goal = [...ctx.sessionManager.getEntries()].reverse().find(entry => entry.type === "custom" && entry.customType === "piop-goal");
+  if (goal?.type === "custom") retained.push({ ...structuredClone(goal), id: randomUUID().slice(0, 8), parentId: retained.at(-1)?.id ?? null, timestamp });
+}
+
 export async function forkConversation(ctx: ExtensionContext, options: ForkOptions, createWorktree: (name: string) => Promise<CreatedWorktree>) {
   const retained = structuredClone(forkHistory(ctx, options.entryId));
   const header = ctx.sessionManager.getHeader();
@@ -45,6 +50,7 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
   if (worktree) cwd = worktree.path;
   const sessionId = randomUUID();
   const timestamp = new Date().toISOString();
+  inheritGoal(ctx, retained, timestamp);
   const sessionPath = join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`);
   let created = false;
   const pinned: PinnedPrompt[] = [];

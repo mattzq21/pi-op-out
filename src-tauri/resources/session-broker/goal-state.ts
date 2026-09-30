@@ -48,19 +48,16 @@ export class GoalState {
   private saved = "";
   constructor(private pi: ExtensionAPI) {}
 
-  restore(ctx: ExtensionContext, navigating = false) {
+  restore(ctx: ExtensionContext) {
     this.clock = undefined;
     this.accountingGoalId = undefined;
-    const entry = [...ctx.sessionManager.getBranch()].reverse().find(item => item.type === "custom" && item.customType === GOAL_ENTRY);
+    const entry = [...ctx.sessionManager.getEntries()].reverse().find(item => item.type === "custom" && item.customType === GOAL_ENTRY);
     this.goal = validateSaved(entry?.type === "custom" ? entry.data : null);
     this.saved = JSON.stringify(this.goal);
     if (!this.goal) { this.publish(ctx); return; }
     if (this.goal.sessionId !== ctx.sessionManager.getSessionId()) {
-      this.goal.id = randomUUID();
       this.goal.sessionId = ctx.sessionManager.getSessionId();
-      navigating = true;
     }
-    if (navigating && this.goal.status === "active") this.goal.status = "paused";
     this.save(ctx);
   }
 
@@ -138,10 +135,11 @@ export class GoalState {
     return this.goal;
   }
 
-  response() {
+  response(completed = false) {
     this.flushClock();
     const goal = this.goal && { ...this.goal, timeUsedSeconds: Math.floor(this.goal.elapsedMs / 1000) };
-    return { goal, remainingTokens: goal?.tokenBudget == null ? null : Math.max(0, goal.tokenBudget - goal.tokensUsed) };
+    const completionBudgetReport = completed && goal?.status === "complete" && (goal.tokenBudget !== null || goal.timeUsedSeconds > 0) ? "Goal achieved. Report final usage from this tool result's structured goal fields. If goal.tokenBudget is present, include goal.tokensUsed and goal.tokenBudget. If goal.timeUsedSeconds is greater than 0, summarize elapsed time in a concise, human-friendly form appropriate to the response language." : null;
+    return { goal, remainingTokens: goal?.tokenBudget == null ? null : Math.max(0, goal.tokenBudget - goal.tokensUsed), completionBudgetReport };
   }
 
   save(ctx: ExtensionContext) {

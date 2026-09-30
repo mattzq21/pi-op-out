@@ -57,9 +57,20 @@ pub(super) fn load_app_settings(app: AppHandle) -> Result<AppSettings, String> {
     Ok(settings)
 }
 
+fn migrate_goal_tools(settings: &mut AppSettings) {
+    let enabled = settings.tools.iter().find(|tool| tool["name"] == "goal").map(|tool| tool["enabled"].as_bool().unwrap_or(false));
+    settings.tools.retain(|tool| tool["name"] != "goal");
+    for mut tool in session_operation_tools().into_iter().filter(|tool| matches!(tool["name"].as_str(), Some("get_goal" | "create_goal" | "update_goal"))) {
+        if settings.tools.iter().any(|existing| existing["name"] == tool["name"]) { continue; }
+        if let Some(enabled) = enabled { tool["enabled"] = json!(enabled); }
+        settings.tools.push(tool);
+    }
+}
+
 pub(super) fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
     let mut settings = if !path.exists() { default_settings() } else { serde_json::from_slice(&fs::read(path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())? };
     migrate_question_tool(&mut settings);
+    migrate_goal_tools(&mut settings);
     if settings.default_agent == "voice-orchestrator" { settings.default_agent = default_agent(); }
     for (legacy, replacements) in [
         ("exec_command", &["read", "bash", "grep", "find", "ls"][..]),
@@ -85,6 +96,7 @@ pub(super) fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 pub(super) fn save_app_settings(app: AppHandle, mut settings: AppSettings, agent_host_id: Option<String>) -> Result<Value, String> {
     migrate_question_tool(&mut settings);
+    migrate_goal_tools(&mut settings);
     for tool in session_operation_tools() {
         if !settings.tools.iter().any(|existing| existing["name"] == tool["name"]) { settings.tools.push(tool); }
     }

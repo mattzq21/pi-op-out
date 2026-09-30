@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
-import { GoalState, validateBudget, validateObjective } from "./goal-state.ts";
+import { GoalState, validateBudget } from "./goal-state.ts";
+import { materializeGoal } from "./goal-files.ts";
 
 export type GoalControls = {
   state: GoalState;
@@ -9,38 +10,37 @@ export type GoalControls = {
   start(ctx: ExtensionContext): void;
 };
 const USAGE = "/goal [objective|edit|pause|resume|clear|budget <tokens|clear>]";
-type GoalToolInput = { action: "get" | "create" | "update"; objective?: string; tokenBudget?: number; status?: "complete" | "blocked" | "paused" };
-
-function applyTool(input: GoalToolInput, ctx: ExtensionContext, state: GoalState) {
-  if (input.action === "create") {
-    if (input.objective === undefined || input.status !== undefined) throw new Error("Create requires objective and accepts only an optional tokenBudget.");
-    state.create(ctx, input.objective, input.tokenBudget ?? null);
-    return;
-  }
-  if (input.objective !== undefined || input.tokenBudget !== undefined) throw new Error("Only create accepts objective and tokenBudget. Use /goal commands to edit them.");
-  if (input.action === "update") {
-    if (!input.status) throw new Error("Update requires status: complete, blocked, or paused.");
-    state.setStatus(ctx, input.status);
-  } else if (input.status !== undefined) throw new Error("Get does not accept status.");
-}
+const goalToolDescription = "Update the existing goal.\nSet status to `paused` only at the user's explicit request to pause this goal, never on your own initiative. Ask if unclear; a later resume revokes that request. Report the returned status and stop goal work. Budget limits take precedence over pausing.\nSet status to `complete` only when the objective has actually been achieved and no required work remains.\nSet status to `blocked` only when the same blocking condition has repeated for at least three consecutive goal turns, counting the original/user-triggered turn and any automatic continuations, and the agent cannot make meaningful progress without user input or an external-state change.\nIf the user resumes a goal that was previously marked `blocked`, treat the resumed run as a fresh blocked audit. If the same blocking condition then repeats for at least three consecutive resumed goal turns, set status to `blocked` again.\nOnce the blocked threshold is satisfied, do not keep reporting that you are still blocked while leaving the goal active; set status to `blocked`.\nDo not use `blocked` merely because the work is hard, slow, uncertain, incomplete, or would benefit from clarification.\nDo not mark a goal complete merely because its budget is nearly exhausted or because you are stopping work.\nYou cannot use this tool to resume, budget-limit, or usage-limit a goal; those status changes are controlled by the user or system.\nWhen marking a budgeted goal achieved with status `complete`, report the final token usage from the tool result to the user.";
 
 function registerGoalTool(pi: ExtensionAPI, controls: GoalControls) {
+  const result = (ctx: ExtensionContext, completed = false) => {
+    const data = controls.state.response(completed);
+    controls.state.save(ctx);
+    return { content: [{ type: "text" as const, text: JSON.stringify(data) }], details: data };
+  };
   pi.registerTool({
-    name: "goal", label: "Conversation goal",
-    description: "Manage a persistent conversation goal. Create only when the user explicitly asks for a goal or persistent work until an outcome is achieved; never infer a goal from an ordinary task. Supply a token budget only when explicitly requested. Get returns current status, token usage and elapsed active time. Update may mark complete only after verifying every requirement; blocked only after the same genuine blocker persists for at least three consecutive goal turns and no meaningful progress is possible; paused only on explicit user request. A resumed blocked goal starts a fresh audit. Never mark complete merely to stop or because a budget is exhausted. Resume, objective edits, budget changes and clearing belong to user /goal commands. On completion report the returned usage.",
-    parameters: Type.Object({
-      action: Type.Union([Type.Literal("get"), Type.Literal("create"), Type.Literal("update")]),
-      objective: Type.Optional(Type.String({ minLength: 1, maxLength: 4000 })),
-      tokenBudget: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
-      status: Type.Optional(Type.Union([Type.Literal("complete"), Type.Literal("blocked"), Type.Literal("paused")])),
-    }, { additionalProperties: false }),
+    name: "get_goal", label: "Get goal", description: "Get the current goal, including status, budget, token and elapsed-time usage, and remaining token budget.",
+    parameters: Type.Object({}, { additionalProperties: false }),
+    async execute(_id, _params, signal, _update, ctx) {
+      signal?.throwIfAborted(); controls.assertAvailable(ctx); return result(ctx);
+    },
+  });
+  pi.registerTool({
+    name: "create_goal", label: "Create goal", description: "Create a goal only when explicitly requested by the user or system/developer instructions; never infer goals from ordinary tasks. Set token_budget only when explicitly requested. Fails if an unfinished goal exists; use update_goal only for status.",
+    parameters: Type.Object({ objective: Type.String(), token_budget: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })) }, { additionalProperties: false }),
     async execute(_id, params, signal, _update, ctx) {
-      signal?.throwIfAborted();
-      controls.assertAvailable(ctx);
-      applyTool(params, ctx, controls.state);
-      const data = controls.state.response();
-      controls.state.save(ctx);
-      return { content: [{ type: "text", text: JSON.stringify(data) }], details: data };
+      signal?.throwIfAborted(); controls.assertAvailable(ctx);
+      controls.state.create(ctx, params.objective, params.token_budget ?? null);
+      return result(ctx);
+    },
+  });
+  pi.registerTool({
+    name: "update_goal", label: "Update goal", description: goalToolDescription,
+    parameters: Type.Object({ status: Type.Union([Type.Literal("complete"), Type.Literal("blocked"), Type.Literal("paused")]) }, { additionalProperties: false }),
+    async execute(_id, params, signal, _update, ctx) {
+      signal?.throwIfAborted(); controls.assertAvailable(ctx);
+      controls.state.setStatus(ctx, params.status); controls.state.finishRun();
+      return result(ctx, params.status === "complete");
     },
   });
 }
@@ -50,24 +50,26 @@ async function editGoal(ctx: ExtensionCommandContext, controls: GoalControls) {
   const objective = await ctx.ui.editor("Edit goal", goal.objective);
   if (objective === undefined) return;
   if (controls.state.goal?.id !== goal.id) throw new Error("The goal changed while the editor was open. Reopen /goal edit.");
-  const text = validateObjective(objective);
   controls.assertAvailable(ctx);
+  const draft = await materializeGoal(objective, ctx);
+  if (controls.state.goal?.id !== goal.id) { await draft.cleanup(); throw new Error("The goal changed. Reopen /goal edit."); }
   controls.state.flushClock();
-  goal.objective = text;
+  goal.objective = draft.objective;
   if (["complete", "budget_limited"].includes(goal.status)) controls.state.setStatus(ctx, "active");
   controls.changed(ctx);
 }
 
 async function createGoal(args: string, ctx: ExtensionCommandContext, controls: GoalControls) {
   controls.assertAvailable(ctx);
-  const objective = validateObjective(args);
   const previous = controls.state.goal;
   if (previous && previous.status !== "complete") {
     if (!await ctx.ui.confirm("Replace current goal?", "This starts a new objective with fresh usage and no token budget.")) return;
     if (controls.state.goal?.id !== previous.id) throw new Error("The goal changed. Submit /goal again.");
   }
+  const draft = await materializeGoal(args, ctx);
+  if (controls.state.goal !== previous) { await draft.cleanup(); throw new Error("The goal changed. Submit /goal again."); }
   controls.state.clear(ctx);
-  controls.state.create(ctx, objective, null);
+  controls.state.create(ctx, draft.objective, null);
   controls.changed(ctx);
 }
 
