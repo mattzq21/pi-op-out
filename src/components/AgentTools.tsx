@@ -19,7 +19,7 @@ export function AgentTools(props: { tools: ToolConfig[]; selected: string[]; onC
       const checkbox = createRef<HTMLInputElement>(null);
       createDependencyEffect(() => { if (checkbox.current) checkbox.current.indeterminate = some() && !all(); }, () => [some(), all()]);
       return <section class="agent-tool-group" aria-label={`${group.name} tools`}>
-        <h4 class="agent-tool-group-heading"><label><input ref={element => { checkbox.current = element; }} type="checkbox" aria-label={`Allow all ${group.name} tools`} checked={all()} onInput={event => toggle(members().map(tool => tool.name), event.currentTarget.checked)} />{group.name}</label></h4>
+        <h4 class="agent-tool-group-heading"><label>{group.name}<input ref={element => { checkbox.current = element; }} type="checkbox" aria-label={`Allow all ${group.name} tools`} checked={all()} onInput={event => toggle(members().map(tool => tool.name), event.currentTarget.checked)} /></label></h4>
         <div class="agent-tool-group-members"><For each={members()}>{renderTool}</For></div>
       </section>;
     }}</For>
