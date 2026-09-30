@@ -269,7 +269,6 @@ export default async function mcpBridge(pi: ExtensionAPI) {
     const loaded = [...connections].filter(([, connection]) => connection.connected);
     pi.sendMessage({ customType: MCP_STATUS_KEY, content: loaded.length ? loaded.map(([id, connection]) => `${id}: ${connection.tools.join(", ") || "no tools"}`).join("\n") : "No MCP servers loaded", display: true }, { triggerTurn: false });
   };
-  pi.registerCommand("mcp-status", { description: "Show MCP servers and tools loaded by piop", handler: showStatus });
   pi.registerCommand("mcp", { description: "Show Piop MCP status; configure servers in the agent settings", handler: async (args, ctx) => {
     if (args.trim()) { ctx.ui.notify("Configure MCP servers in Piop's agent settings. /mcp shows the selected agent's connections.", "info"); return; }
     await showStatus();
