@@ -94,7 +94,7 @@ export function registerGoals(pi: ExtensionAPI) {
   pi.on("tool_result", (event, ctx) => {
     activity = true;
     successfulTool ||= !event.isError;
-    failedTool ||= event.isError && event.toolName === "exec" && event.details === undefined;
+    failedTool ||= event.isError;
     account(ctx, 0);
   });
   pi.on("session_compact", (event, ctx) => {
@@ -123,14 +123,18 @@ export function registerGoals(pi: ExtensionAPI) {
     emptyTurns = automatic && emptyFinal && !activity ? emptyTurns + 1 : 0;
     if (successfulTool) failedTurns = 0;
     else if (failedTool) failedTurns++;
-    return emptyTurns >= 3 || failedTurns >= 3;
+    return emptyTurns >= 3 || failedTurns >= 5;
   };
   pi.on("agent_before_settle", (event, ctx) => {
     if (stopForOutcome(event, ctx)) return;
     if (state.goal?.status !== "active") return;
     if (!allowed()) { state.setStatus(ctx, "paused"); return; }
     if (runGoalId !== state.goal.id) resetAudit();
-    if (stalled()) { state.setStatus(ctx, "blocked"); return; }
+    if (stalled()) {
+      try { state.setStatus(ctx, "blocked"); }
+      finally { ctx.abort(); }
+      return;
+    }
     if (ctx.hasPendingMessages() || event.context.pendingMessages.length) return;
     automatic = true;
     return { continue: true, entries: [{ type: "custom_message" as const, customType: GOAL_CONTEXT, content: goalPrompt(state.goal), display: false, details: { goalId: state.goal.id } }] };
