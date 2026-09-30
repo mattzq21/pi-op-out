@@ -74,11 +74,11 @@ export function registerGoals(pi: ExtensionAPI) {
     activity = false; successfulTool = false; failedTool = false; lastError = "";
     runGoalId = state.goal?.status === "active" ? state.goal.id : undefined;
     if (state.goal?.status === "active" && !allowed()) state.setStatus(ctx, "paused");
-    state.startClock();
+    state.beginRun();
   });
   pi.on("message_start", event => {
     if (event.message.role !== "assistant") return;
-    responseGoalId = state.goal && ["active", "budget_limited"].includes(state.goal.status) ? state.goal.id : undefined;
+    responseGoalId = state.usageGoalId();
   });
   pi.on("message_end", (event, ctx) => {
     if (event.message.role !== "assistant") return;
@@ -127,7 +127,7 @@ export function registerGoals(pi: ExtensionAPI) {
     return { continue: true, entries: [{ type: "custom_message" as const, customType: GOAL_CONTEXT, content: goalPrompt(state.goal), display: false, details: { goalId: state.goal.id } }] };
   });
   pi.on("agent_settled", (_event, ctx) => {
-    starting = false; state.flushClock(true);
+    starting = false; state.finishRun(); responseGoalId = undefined;
     if (state.goal?.status === "active" && runSignal?.aborted) state.setStatus(ctx, "paused");
     state.save(ctx);
   });
@@ -139,7 +139,7 @@ export function registerGoals(pi: ExtensionAPI) {
     if (action === "resume" && state.goal.status === "paused" && allowed()) { resetAudit(); state.setStatus(ctx, "active"); }
   });
   const scope = pi.events.on("piop:goal-scope", value => {
-    if (state.goal?.status === "active") (value as { goalId?: string }).goalId = state.goal.id;
+    (value as { goalId?: string }).goalId = state.usageGoalId();
   });
   const usage = pi.events.on("piop:goal-usage", value => {
     const event = value as { goalId?: string; tokens: number; ctx: ExtensionContext };
@@ -157,7 +157,7 @@ export function registerGoals(pi: ExtensionAPI) {
     return { messages };
   });
   pi.on("session_shutdown", () => {
-    if (context) { state.flushClock(true); state.save(context); }
+    if (context) { state.finishRun(); state.save(context); }
     ready(); stopControl(); scope(); usage();
   });
 }

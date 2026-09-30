@@ -44,11 +44,13 @@ function validateAccounting(goal: Goal) {
 export class GoalState {
   goal: Goal | null = null;
   private clock: number | undefined;
+  private accountingGoalId: string | undefined;
   private saved = "";
   constructor(private pi: ExtensionAPI) {}
 
   restore(ctx: ExtensionContext, navigating = false) {
     this.clock = undefined;
+    this.accountingGoalId = undefined;
     const entry = [...ctx.sessionManager.getBranch()].reverse().find(item => item.type === "custom" && item.customType === GOAL_ENTRY);
     this.goal = validateSaved(entry?.type === "custom" ? entry.data : null);
     this.saved = JSON.stringify(this.goal);
@@ -67,11 +69,28 @@ export class GoalState {
     const now = Date.now();
     this.goal = { version: 1, id: randomUUID(), sessionId: ctx.sessionManager.getSessionId(), objective: validateObjective(objective), status: "active", tokenBudget: validateBudget(tokenBudget), tokensUsed: 0, elapsedMs: 0, createdAt: now, updatedAt: now };
     this.clock = ctx.isIdle() ? undefined : performance.now();
+    this.accountingGoalId = ctx.isIdle() ? undefined : this.goal.id;
     this.save(ctx);
   }
 
+  beginRun() {
+    if (this.goal?.status === "active") this.accountingGoalId = this.goal.id;
+    else if (this.accountingGoalId !== this.goal?.id) this.accountingGoalId = undefined;
+    this.startClock();
+  }
+
+  finishRun() {
+    this.flushClock(true);
+    this.accountingGoalId = undefined;
+  }
+
+  usageGoalId() {
+    if (!this.goal || !["active", "budget_limited"].includes(this.goal.status)) return undefined;
+    return this.accountingGoalId === this.goal.id ? this.accountingGoalId : undefined;
+  }
+
   startClock() {
-    if (this.goal?.status === "active" && this.clock === undefined) this.clock = performance.now();
+    if (this.usageGoalId() && this.clock === undefined) this.clock = performance.now();
   }
 
   flushClock(stop = false) {
@@ -83,6 +102,7 @@ export class GoalState {
 
   account(ctx: ExtensionContext, tokens: number, includeStopped = false) {
     if (!this.goal || this.goal.status === "complete") return false;
+    if (this.accountingGoalId !== this.goal.id) return false;
     if (!includeStopped && !["active", "budget_limited"].includes(this.goal.status)) return false;
     this.flushClock();
     this.goal.tokensUsed = Math.min(Number.MAX_SAFE_INTEGER, this.goal.tokensUsed + amount(tokens));
@@ -105,12 +125,12 @@ export class GoalState {
     this.flushClock(status !== "active");
     if (goal.status !== "budget_limited" || !["paused", "blocked"].includes(status)) goal.status = status;
     this.enforceBudget();
-    if (!ctx.isIdle()) this.startClock();
+    if (!ctx.isIdle()) this.beginRun();
     this.save(ctx);
   }
 
   clear(ctx: ExtensionContext) {
-    this.clock = undefined; this.goal = null; this.save(ctx);
+    this.clock = undefined; this.accountingGoalId = undefined; this.goal = null; this.save(ctx);
   }
 
   require() {
