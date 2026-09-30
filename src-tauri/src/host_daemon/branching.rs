@@ -20,8 +20,12 @@ struct Destination {
     existing: bool,
 }
 
+fn requires_idle_source(session: &Session, command: &Value) -> bool {
+    !matches!(kind(command), "fork" | "fork_after") && (session.working() || !session.queue.is_empty())
+}
+
 pub(super) async fn switch(host: &Arc<Host>, session: &Arc<Session>, runtime: &str, command: Value) -> Result<Value> {
-    if !matches!(kind(&command), "fork" | "fork_after") && (session.working() || !session.queue.is_empty()) {
+    if requires_idle_source(session, &command) {
         return Err("Stop or pause the response and finish queued messages before switching".into());
     }
     let state = session.execute(json!({"type":"get_state"})).await?;
