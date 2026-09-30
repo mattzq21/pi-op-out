@@ -48,6 +48,7 @@ export function useAppKeyboard(context: KeyboardContext) {
       if (!binding) return;
       event.preventDefault();
       event.stopPropagation();
+      if (view() === "settings" && ["toggleTerminal", "focusComposer", "toggleConversations"].includes(binding.action)) return;
       const actions: Record<string, () => void> = { newConversation: () => { void newSession(); }, toggleConversations: () => { if (!canLeaveSettings()) return; setView("chat"); setPanelOpen((open) => !open); }, toggleTerminal, toggleDebugMode, openSettings: () => setView("settings") };
       if (Object.hasOwn(actions, binding.action)) { actions[binding.action](); return; }
       if (!canLeaveSettings()) return; setView("chat"); window.setTimeout(() => { if (capturedActivePane === "split" && capturedSplitPane) setSplitComposerFocusRequest((value) => value + 1); else setMainComposerFocusRequest((value) => value + 1); }, 0);
