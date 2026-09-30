@@ -85,19 +85,35 @@ async function forkDirectory(cwd: string, options: ForkOptions) {
   return path;
 }
 
+function responseBoundary(branch: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>, index: number) {
+  const entry = branch[index];
+  if (entry.type !== "message" || entry.message.role !== "assistant") throw new Error("Select an assistant response to branch from");
+  const pending = new Set(entry.message.content.flatMap(part => part.type === "toolCall" ? [part.id] : []));
+  let end = index;
+  while (pending.size && end + 1 < branch.length) {
+    const next = branch[++end];
+    if (next.type !== "message") continue;
+    if (next.message.role !== "toolResult") break;
+    pending.delete(next.message.toolCallId);
+  }
+  if (pending.size) throw new Error("The selected response still has unfinished tool calls. Wait for those tools to finish before branching.");
+  return end;
+}
+
 function forkHistory(ctx: ExtensionContext, entryId?: string) {
   const branch = ctx.sessionManager.getBranch();
   const complete = (entry: typeof branch[number]) => entry.type === "message" && entry.message.role === "assistant" && entry.message.stopReason !== "toolUse" && !entry.message.content.some((part) => part.type === "toolCall");
   const entry = entryId ? branch.find((entry) => entry.id === entryId) : [...branch].reverse().find(complete);
-  if (entryId && (!entry || !complete(entry))) throw new Error("entryId must identify a completed assistant response on the current branch");
+  if (entryId && !entry) throw new Error("The selected response is no longer on the current branch. Reload the conversation and select it again.");
   if (!entry) return [];
-  const retained = branch.slice(0, branch.indexOf(entry) + 1);
+  const end = responseBoundary(branch, branch.indexOf(entry));
+  const retained = branch.slice(0, end + 1);
   const ids = new Set(retained.map((item) => item.id));
-  const checkpoint = branch.slice(branch.indexOf(entry) + 1).find((item) => item.type === "custom" && item.customType === "pi-project-files-watch-snapshot"
+  const checkpoint = branch.slice(end + 1).find((item) => item.type === "custom" && item.customType === "pi-project-files-watch-snapshot"
     && (item.data as { responseEntryIds?: string[] })?.responseEntryIds?.includes(entry.id));
   if (checkpoint?.type === "custom") {
     const data = checkpoint.data as { responseEntryIds: string[] };
-    retained.push({ ...checkpoint, parentId: entry.id, data: { ...data, responseEntryIds: data.responseEntryIds.filter((id) => ids.has(id)) } });
+    retained.push({ ...checkpoint, parentId: retained.at(-1)!.id, data: { ...data, responseEntryIds: data.responseEntryIds.filter((id) => ids.has(id)) } });
   }
   return retained;
 }
