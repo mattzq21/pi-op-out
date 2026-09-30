@@ -45,7 +45,8 @@ export class SessionRuntimePool {
     }
     this.liveRevision += 1; this.notify();
   }
-  liveSessionSummaries() { return [...this.liveSessions].filter(([transport]) => !transport.isEphemeral()).map(([, session]) => session); }
+  private reviewTransports = new WeakSet<NativeTransport>();
+  liveSessionSummaries() { return [...this.liveSessions].filter(([transport]) => !transport.isEphemeral() && !this.reviewTransports.has(transport)).map(([, session]) => session); }
   setLiveSession(transport: NativeTransport, session: SessionSummary) {
     if (this.isRemoved(session)) return;
     this.liveSessions.set(transport, session);
@@ -167,9 +168,9 @@ export class SessionRuntimePool {
     return transport;
   }
 
-  createEphemeral(target: NativeConnectionTarget) {
-    const transport = this.create(target); const state = this.diffState(transport);
-    state.persistence = "memory";
+  forReview(session: SessionSummary) {
+    const transport = this.forSession(session);
+    this.reviewTransports.add(transport);
     return transport;
   }
 

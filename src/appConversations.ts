@@ -351,13 +351,14 @@ export function createAppConversations(preloadChat: () => void) {
   const clearChatProject = () => startNewSession(true);
   const isSplitSession = (session: SessionSummary) => splitPane()?.session.id === session.id && ((splitPane())!.session.hostId ?? "local") === (session.hostId ?? "local");
   const isSelectedSession = (session: SessionSummary) => session.id === chatSession().state.sessionId && (session.hostId ?? "local") === activeHostId();
+  const closeSplitForSession = (session: SessionSummary) => { if (isSplitSession(session) || splitPane()?.review) closeSplitPane(); };
   const selectSession = (session: SessionSummary) => {
     if (!canLeaveSettings()) return undefined;
     lastNewSessionSelection.current = undefined;
     if (window.matchMedia("(max-width: 700px)").matches) setPanelOpen(false);
     if (archives.isPending(session)) return undefined;
     const hostId = session.hostId ?? "local"; if (isSelectedSession(session)) { if (!connected()) reconnectMain(); return transport(); }
-    if (isSplitSession(session)) closeSplitPane();
+    closeSplitForSession(session);
     if (session.cwdExists === false) { void openDirlessSession(session, "select"); return undefined; }
     const nextTransport = runtimePool().forSession(session);
     const conversationKey = `${hostId}:${session.id}`; transportConversationKeys.current.set(nextTransport, conversationKey); activateConversationKey(conversationKey); chatSession().discardPendingUpdates(); setView("chat"); setTerminalOpen(false); updateConnected(false); setDefinedAgents(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd); activateTransport(nextTransport); return nextTransport;

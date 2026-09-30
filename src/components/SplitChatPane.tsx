@@ -18,7 +18,7 @@ interface Props { uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUp
 const initialState = (session: SessionSummary): AgentState => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, pendingMessageCount: 0 });
 
 export function SplitChatPane(componentProps: Props) {
-  const [transport] = createSignal((() => componentProps.freshReview ? componentProps.runtimePool.createEphemeral({ cwd: componentProps.session.cwd, hostId: componentProps.session.hostId }) : componentProps.runtimePool.forSession(componentProps.session))());
+  const [transport] = createSignal((() => componentProps.freshReview ? componentProps.runtimePool.forReview(componentProps.session) : componentProps.runtimePool.forSession(componentProps.session))());
   const gitDiffs = useTurnDiffs(() => (componentProps.runtimePool), () => (transport())); const runtime = useChatSession(() => (transport()), () => (initialState(componentProps.session)));
   const session = createMemo(() => (runtime)); const [error, setError] = createSignal<string>(); const [connected, setConnected] = createSignal(false);
   const [controlError, setControlError] = createSignal<string>();
@@ -45,7 +45,8 @@ export function SplitChatPane(componentProps: Props) {
       await Promise.all([capturedTransport.command({ type: "set_auto_compaction", enabled: true }), capturedTransport.command({ type: "set_auto_retry", enabled: runtimeSettings.autoRetry })]);
     };
     const sendInitialPrompt = async (initial: boolean) => {
-      if (initial && capturedInitialPrompt2) { await capturedTransport.submitPrompt({ type: "prompt", message: (capturedInitialPrompt2)!, images: componentProps.initialImages }); if (!closing) capturedOnReady3?.(); }
+      if (initial && capturedInitialPrompt2) { await capturedTransport.submitPrompt({ type: "prompt", message: (capturedInitialPrompt2)!, images: componentProps.initialImages }); }
+      if (initial && !closing) capturedOnReady3?.();
     };
     const reportConnectionFailure = (initial: boolean, reason: unknown) => {
       if (closing) return;
@@ -57,7 +58,7 @@ export function SplitChatPane(componentProps: Props) {
       if (reconnecting || closing) return;
       reconnecting = true;
       try {
-        if (initial) await capturedTransport.connect(capturedSession5.cwd, capturedFreshReview6 ? undefined : capturedSession5.path, capturedSession5.hostId, undefined, Boolean(capturedFreshReview6));
+        if (initial) await capturedTransport.connect(capturedSession5.cwd, capturedSession5.path, capturedSession5.hostId);
         else await capturedTransport.connect();
         await capturedSession.refresh(); if (capturedTransport.ownsConversation()) await configure();
         if (closing) return;

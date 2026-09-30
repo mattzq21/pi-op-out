@@ -19,6 +19,7 @@ class SessionIndex {
   header;
   name;
   subagentParentId;
+  review = false;
   first = '';
   hasUserMessage = false;
   preview = '';
@@ -74,12 +75,13 @@ class SessionIndex {
       return;
     }
     this.metadata(entry);
+    if (entry.type === 'custom' && entry.customType === 'piop-review-parent') this.review = true;
     if (entry.type === 'usage') this.recordCost(entry);
     this.message(entry);
   }
 
   print(path) {
-    if (!this.header) return;
+    if (!this.header || this.review) return;
     console.log(JSON.stringify({ path, id: this.header.id || '', cwd: this.header.cwd || 'Unknown project', name: this.name || this.first || 'Untitled session', preview: this.preview, messageCount: this.count, lastMessageAt: this.lastMessageAt, apiCost: this.cost, explicitlyNamed: !!this.name, hasUserMessage: this.hasUserMessage, bytes: this.bytes, subagentParentId: this.subagentParentId }));
   }
 }

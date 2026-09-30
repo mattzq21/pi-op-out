@@ -1,3 +1,4 @@
+import { ReviewLink } from "./ReviewLink";
 import { Key } from "@solid-primitives/keyed";
 import { createMemo, createSignal, Index } from "solid-js";
 import { createDependencyEffect, createRef } from "../lib/solid";
@@ -190,5 +191,5 @@ export function Message(componentProps: Props) {
   const renderAssistantMessage = () => (<article class={`message assistant-message ${thinking() ? "reasoning-message" : ""}`} aria-label={metadata().responseLabel}>
     {renderMessageBody()}
   </article>);
-  return <>{componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? (<ToolResult message={componentProps.message} toolCount={(componentProps.toolCount === undefined ? 1 : componentProps.toolCount)} debug={(componentProps.debug === undefined ? false : componentProps.debug)} />) : componentProps.message.role === "user" ? (<UserMessage />) : (renderAssistantMessage())}</>;
+  return <>{componentProps.message.customType === "piop-review-link" ? <ReviewLink details={componentProps.message.details} /> : componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? (<ToolResult message={componentProps.message} toolCount={(componentProps.toolCount === undefined ? 1 : componentProps.toolCount)} debug={(componentProps.debug === undefined ? false : componentProps.debug)} />) : componentProps.message.role === "user" ? (<UserMessage />) : (renderAssistantMessage())}</>;
 }

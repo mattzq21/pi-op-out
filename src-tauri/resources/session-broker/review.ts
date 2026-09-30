@@ -1,5 +1,32 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
+import { randomUUID } from "node:crypto";
+import { join } from "node:path";
+import { writeSessionFile } from "./session-file.ts";
+
+type ReviewRecord = { sessionId: string; sessionPath: string; cwd: string; parentSessionId: string };
+
+async function createReview(ctx: ExtensionContext): Promise<ReviewRecord> {
+  const header = ctx.sessionManager.getHeader();
+  if (!header || !ctx.sessionManager.getSessionFile()) throw new Error("Save the main conversation before starting a review");
+  const timestamp = new Date().toISOString();
+  const sessionId = randomUUID();
+  const record = { sessionId, sessionPath: join(ctx.sessionManager.getSessionDir(), `${timestamp.replace(/[:.]/g, "-")}_${sessionId}.jsonl`), cwd: ctx.cwd, parentSessionId: ctx.sessionManager.getSessionId() };
+  const metadataId = randomUUID().slice(0, 8);
+  await writeSessionFile(record.sessionPath, [
+    { type: "session", version: header.version, id: sessionId, timestamp, cwd: ctx.cwd },
+    { type: "custom", id: metadataId, parentId: null, timestamp, customType: "piop-review-parent", data: { parentSessionId: record.parentSessionId } },
+    { type: "session_info", id: randomUUID().slice(0, 8), parentId: metadataId, timestamp, name: "Code review" },
+  ]);
+  return record;
+}
+
+function openReview(ctx: ExtensionContext, record: ReviewRecord, start: boolean) {
+  ctx.ui.setStatus("review", "Opening code review…");
+  void ctx.ui.input("__pi_desktop_review__", JSON.stringify({ ...record, ...(start ? { task: reviewTask() } : {}) })).catch(error => {
+    ctx.ui.notify(`/review failed: ${error instanceof Error ? error.message : String(error)}`, "error");
+  }).finally(() => ctx.ui.setStatus("review", undefined));
+}
 
 function registerReviewMessaging(pi: ExtensionAPI) {
   let reviewerId: string | undefined;
@@ -11,9 +38,9 @@ function registerReviewMessaging(pi: ExtensionAPI) {
   pi.on("session_shutdown", stop);
   pi.on("session_start", () => { reviewerId = undefined; });
   pi.registerCommand("pi-orchestration-review-init", {
-    description: "Initialize a temporary reviewer",
+    description: "Initialize reviewer tools",
     handler: async (_args, ctx) => {
-      if (ctx.sessionManager.getSessionFile()) throw new Error("Reviewer tools require a temporary review session");
+      if (!ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-review-parent")) throw new Error("Reviewer tools require a saved review session");
       reviewerId = ctx.sessionManager.getSessionId();
       pi.setActiveTools([...new Set([...pi.getActiveTools(), "message_main_chat"])]);
     },
@@ -47,11 +74,20 @@ export function registerReview(pi: ExtensionAPI) {
     description: "Review this branch against its base in a side pane",
     handler: async (args, ctx) => {
       if (args.trim()) { ctx.ui.notify("Usage: /review — reviews the current branch", "warning"); return; }
-      const payload = { task: reviewTask(), cwd: ctx.cwd, parentSessionId: ctx.sessionManager.getSessionId() };
-      ctx.ui.setStatus("review", "Opening code review…");
-      void ctx.ui.input("__pi_desktop_review__", JSON.stringify(payload)).catch(error => {
-        ctx.ui.notify(`/review failed: ${error instanceof Error ? error.message : String(error)}`, "error");
-      }).finally(() => ctx.ui.setStatus("review", undefined));
+      const record = await createReview(ctx);
+      pi.appendEntry("piop-review", record);
+      pi.sendMessage({ customType: "piop-review-link", content: "Code review", display: true, details: record }, { triggerTurn: false });
+      openReview(ctx, record, true);
+    },
+  });
+  pi.registerCommand("pi-orchestration-review-open", {
+    description: "Open a saved review belonging to this chat",
+    handler: async (args, ctx) => {
+      const entry = ctx.sessionManager.getEntries().find(entry => entry.type === "custom" && entry.customType === "piop-review" && (entry.data as ReviewRecord)?.sessionId === args.trim());
+      if (!entry || entry.type !== "custom") throw new Error("Review not found in this conversation");
+      const record = entry.data as ReviewRecord;
+      if (record.parentSessionId !== ctx.sessionManager.getSessionId()) throw new Error("This review belongs to another conversation");
+      openReview(ctx, record, false);
     },
   });
 }

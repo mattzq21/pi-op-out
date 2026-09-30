@@ -1,9 +1,9 @@
 import type { ChatMessage, FileChangeSnapshot, PromptContextInfo } from "../types";
 
 const visibleUserContent = (content: unknown) => content;
-const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "pi-desktop-catch-up"]);
+const SYSTEM_MESSAGES = new Set(["pi-desktop-mcp-status", "pi-desktop-catch-up", "piop-review-link"]);
 
-export type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number }; customType?: string; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string; tokensBefore?: number };
+export type PiEntry = { type: string; id: string; parentId: string | null; message?: Omit<ChatMessage, "id" | "entryId"> & { role: string; timestamp?: number }; customType?: string; details?: unknown; content?: ChatMessage["content"]; data?: unknown; display?: boolean; timestamp?: string; tokensBefore?: number };
 
 function validFileChanges(data: Partial<FileChangeSnapshot> | undefined): data is FileChangeSnapshot {
   return Boolean(data && typeof data.cwd === "string" && typeof data.patch === "string" && Array.isArray(data.toolCallIds) && Array.isArray(data.paths));
@@ -114,7 +114,7 @@ function compactionMessage(entry: PiEntry): ChatMessage {
 function visibleEntryMessage(entry: PiEntry, resumeMarkers: Set<string>): ChatMessage | undefined {
   if (entry.type === "compaction") return compactionMessage(entry);
   if (entry.type === "custom_message" && entry.customType !== "pi-desktop-btw" && entry.display !== false) {
-    return normalizeMessage({ role: "custom", customType: entry.customType, content: entry.content ?? "", timestamp: entry.timestamp }, entry.id, entry.timestamp);
+    return normalizeMessage({ role: "custom", customType: entry.customType, details: entry.details, content: entry.content ?? "", timestamp: entry.timestamp }, entry.id, entry.timestamp);
   }
   if (entry.type !== "message" || !entry.message || isResumeMessage(entry.message, resumeMarkers)) return undefined;
   const message = normalizeMessage(entry.message as unknown as Record<string, unknown>, entry.id, entry.timestamp);

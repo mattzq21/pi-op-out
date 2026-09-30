@@ -1,3 +1,4 @@
+import { ReviewNavigationContext } from "./ReviewLink";
 import { acknowledgeChatSubmission, chatSubmission, trackChatSubmission } from "../lib/newChatWorktree";
 import { Key, Rerun } from "@solid-primitives/keyed";
 import { createComputed, createMemo, createSignal, Index, Show } from "solid-js";
@@ -177,7 +178,7 @@ export function ChatView(props: Props) {
   const ConversationShell = () => <main class={`chat-shell${ownsConversation() ? "" : " conversation-unowned"}`} oncapture:focus={() => props.onActivate?.()} oncapture:pointerdown={() => props.onActivate?.()}>
     <ConversationContent />
   </main>;
-  return <ConversationHostContext.Provider value={() => props.transport?.currentHostId() ?? "local"}><ConversationShell /></ConversationHostContext.Provider>;
+  return <ConversationHostContext.Provider value={() => props.transport?.currentHostId() ?? "local"}><ReviewNavigationContext.Provider value={async id => { if (!props.transport) throw new Error("Conversation is unavailable"); await props.transport.command({ type: "prompt", message: `/pi-orchestration-review-open ${id}` }); }}><ConversationShell /></ReviewNavigationContext.Provider></ConversationHostContext.Provider>;
 }
 
 type ConversationGroup = { messages: ChatMessage[]; promptContexts: PromptContextInfo[] };
