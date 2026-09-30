@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { cancelRequest, currentHost, request } from "./client.ts";
 import { writeSessionFile } from "./session-file.ts";
 import { goalTokens } from "./goal-state.ts";
-import { watchSubagentUsage } from "./subagent-usage.ts";
+import { listenSubagentUsage, registerSubagentUsage } from "./subagent-usage.ts";
 
 const SUBAGENT_RUN = "piop-subagent-run";
 const SUBAGENT_PARENT = "piop-subagent-parent";
@@ -93,7 +93,7 @@ async function dispatchSubagent(run: SubagentRun, requestId: string, execution: 
   };
   const usageFailure = new AbortController();
   const requestSignal = signal ? AbortSignal.any([signal, usageFailure.signal]) : usageFailure.signal;
-  const stopWatching = scope.goalId ? watchSubagentUsage(run.sessionPath, offset, reportUsage, error => { usageFailure.abort(error); void cancelRequest(requestId); }) : async () => {};
+  const closeUsage = scope.goalId ? await listenSubagentUsage(run.sessionPath, reportUsage, error => { usageFailure.abort(error); void cancelRequest(requestId); }) : async () => {};
   const abort = () => { void cancelRequest(requestId); };
   signal?.addEventListener("abort", abort, { once: true });
   let dispatched = false;
@@ -104,7 +104,7 @@ async function dispatchSubagent(run: SubagentRun, requestId: string, execution: 
   } catch (error) { await cancelRequest(requestId); throw error; }
   finally {
     signal?.removeEventListener("abort", abort);
-    try { await stopWatching(); last = await subagentCompletion(run, offset, reportUsage); }
+    try { await closeUsage(); last = await subagentCompletion(run, offset, reportUsage); }
     catch (error) { if (dispatched) throw error; }
   }
   run.output = completedSubagentOutput(last);
@@ -134,6 +134,7 @@ async function executeSubagent(task: SubagentTask, execution: SubagentExecution)
 }
 
 export function registerSubagents(pi: ExtensionAPI) {
+  registerSubagentUsage(pi);
   const active = new Set<string>();
   pi.registerTool({
     name: "subagent", label: "Subagents",
