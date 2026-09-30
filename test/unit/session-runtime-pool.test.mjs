@@ -199,50 +199,8 @@ describe('session runtime pool', () => {
     assert.equal(commands('start_pi')[0].args.hostId, 'remote');
   });
 
-  test('ephemeral turns retain daemon diffs in memory without saving them to the source session', async () => {
-    responses.set('load_git_diffs', { previous: patch });
-    const client = pool.createEphemeralFork({ cwd: '/repo' }, '/source'); const id = await connect(client);
-    responses.set('pi_command:get_state', { sessionId: 'fork', sessionFile: '/fork' });
-    await client.command({ type: 'get_state' });
-    const snapshot = { patch, repositoryRoot: '/repo' };
-    await send(id, { type: 'turn_diff', hostId: 'remote', sessionPath: '/fork', messageId: 'wrong-host', snapshot });
-    await send(id, { type: 'turn_diff', hostId: 'local', sessionPath: '/other', messageId: 'wrong-path', snapshot });
-    await send(id, { type: 'turn_diff', hostId: 'local', sessionPath: '/fork', messageId: 'answer', snapshot });
-    await settled();
-    assert.deepEqual(pool.gitDiffs(client), { previous: patch, answer: snapshot });
-    assert.deepEqual(await pool.captureMemoryDiffs(client), { previous: patch, answer: snapshot });
-    assert.equal(commands('save_git_diffs').length, 0);
-    assert.equal(commands('capture_git_tree').length, 0);
-  });
 
-  test('late ephemeral diff events cannot restore a released session', async () => {
-    const pending = Promise.withResolvers();
-    responses.set('load_git_diffs', () => pending.promise);
-    const client = pool.createEphemeralFork({ cwd: '/repo' }, '/source'); const id = await connect(client);
-    responses.set('pi_command:get_state', { sessionId: 'fork', sessionFile: '/fork' });
-    await client.command({ type: 'get_state' });
-    await send(id, { type: 'turn_diff', hostId: 'local', sessionPath: '/fork', messageId: 'answer', snapshot: { patch } });
-    await pool.release(client);
-    pending.resolve({ previous: patch }); await settled();
-    assert.equal(pool.isRetained(client), false);
-    assert.equal(commands('save_git_diffs').length, 0);
-    assert.deepEqual(pool.liveSessionSummaries(), []);
-  });
 
-  test('branching an ephemeral conversation retains inherited and subsequent diffs in memory', async () => {
-    responses.set('load_git_diffs', { previous: patch, removed: patch });
-    const client = pool.createEphemeralFork({ cwd: '/repo' }, '/source'); const id = await connect(client);
-    await settled();
-    responses.set('save_git_diffs', new Error('Only piop session files can be accessed'));
-    await pool.copySavedDiffs(client, '/source', '/tmp/branch.jsonl', new Set(['previous']));
-    responses.set('pi_command:get_state', { sessionId: 'branch', sessionFile: '/tmp/branch.jsonl' });
-    await client.command({ type: 'get_state' });
-    const snapshot = { patch, repositoryRoot: '/repo' };
-    await send(id, { type: 'turn_diff', hostId: 'local', sessionPath: '/tmp/branch.jsonl', messageId: 'next', snapshot });
-    await settled();
-    assert.deepEqual(pool.gitDiffs(client), { previous: patch, next: snapshot });
-    assert.equal(commands('save_git_diffs').length, 0);
-  });
 
   test('delayed pane cleanup cannot release a transport reused by a visible pane', async () => {
     const client = pool.forSession(session); await connect(client);

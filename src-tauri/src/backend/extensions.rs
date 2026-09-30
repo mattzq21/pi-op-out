@@ -65,6 +65,7 @@ pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 17] = [
 pub(super) fn prepare_session_broker() -> Result<PathBuf, String> {
     let dir = generated_extension_root()?;
     ensure_private_dir(&dir)?;
+    remove_obsolete_side_chat_extensions(&dir)?;
     let modules = dir.join("session-broker");
     ensure_private_dir(&modules)?;
     for (name, content) in SESSION_BROKER_MODULES { atomic_write_private(&modules.join(name), content.as_bytes())?; }
@@ -72,6 +73,19 @@ pub(super) fn prepare_session_broker() -> Result<PathBuf, String> {
     atomic_write_private(&dir.join("ask-user.ts"), include_str!("../../resources/ask-user.ts").as_bytes())?;
     atomic_write_private(&path, include_str!("../../resources/session-broker.ts").as_bytes())?;
     Ok(path)
+}
+
+fn remove_obsolete_side_chat_extensions(dir: &Path) -> Result<(), String> {
+    let mut paths = vec![dir.join("piop-btw.ts")];
+    if !DEVELOPMENT { paths.push(home_dir()?.join(".pi/agent/extensions/pi-desktop-btw.ts")); }
+    for path in paths {
+        match fs::remove_file(path) {
+            Ok(()) => {},
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn prepare_trace_reader() -> Result<PathBuf, String> {
@@ -228,14 +242,4 @@ pub(super) fn prepare_defined_agents_extension() -> Result<PathBuf, String> {
 fn remove_legacy_agent_extension(legacy_dir: &Path) -> Result<(), String> {
     if !DEVELOPMENT && legacy_dir.join("index.ts").exists() { fs::remove_file(legacy_dir.join("index.ts")).map_err(|error| error.to_string())?; }
     Ok(())
-}
-
-pub(super) fn prepare_btw_extension() -> Result<PathBuf, String> {
-    let dir = generated_extension_root()?;
-    ensure_private_dir(&dir)?;
-    let path = dir.join("piop-btw.ts");
-    atomic_write_private(&path, include_str!("../../resources/btw.ts").as_bytes())?;
-    let legacy = home_dir()?.join(".pi/agent/extensions/pi-desktop-btw.ts");
-    if !DEVELOPMENT && legacy.exists() { fs::remove_file(legacy).map_err(|error| error.to_string())?; }
-    Ok(path)
 }

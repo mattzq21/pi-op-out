@@ -83,10 +83,6 @@ impl Session {
     }
 
     fn receive_extension(&self, mut event: Value) -> Option<Value> {
-        if event["method"] == "input" && event["title"] == "__pi_desktop_btw_message__" {
-            self.receive_parent_message(event);
-            return None;
-        }
         if event["method"] == "setStatus" && self.receive_status(&event) {
             return None;
         }
@@ -109,21 +105,6 @@ impl Session {
         }
         self.receive_dialog(&event);
         None
-    }
-
-    fn receive_parent_message(&self, event: Value) {
-        let weak = self.weak.clone();
-        tokio::spawn(async move {
-            let Some(session) = weak.upgrade() else { return; };
-            let result = match serde_json::from_str::<Value>(&text(&event, "placeholder")) {
-                Ok(payload) => session.host.message_parent(session.identity.clone(), payload).await,
-                Err(error) => Err(error.to_string()),
-            };
-            let value = match result { Ok(_) => "delivered".to_string(), Err(error) => error };
-            if let Err(error) = session.send(&json!({"type":"extension_ui_response","id":event["id"],"value":value})).await {
-                session.host.output(json!({"type":"diagnostic","line":error}));
-            }
-        });
     }
 
     fn receive_dialog(&self, event: &Value) {

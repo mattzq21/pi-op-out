@@ -4,7 +4,6 @@ import { createComputed, createMemo, createSignal } from "solid-js";
 import { createDependencyEffect, createRef, type StateUpdate } from "../lib/solid";
 
 import { X } from "lucide-solid";
-import { BTW_REQUEST_TITLE } from "../appSupport";
 import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY, encodeAgentValue } from "../lib/agentProtocol";
 import type { NativeTransport } from "../lib/nativeTransport";
 import { SessionRuntimePool, useTurnDiffs } from "../lib/sessionRuntimePool";
@@ -14,11 +13,11 @@ import type { AgentState, AppSettings, ChatMessage, ComposerUpload, DefinedAgent
 import { branchMessages, type PiEntry } from "../lib/messages";
 import { ChatView } from "./ChatView";
 
-interface Props { uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; forkFrom?: string; forkLeafId?: string; initialPrompt?: string; initialImages?: ImageAttachment[]; onReady?: () => void; onFailed?: (reason: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
+interface Props { uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
 const initialState = (session: SessionSummary): AgentState => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, pendingMessageCount: 0 });
 
 export function SplitChatPane(componentProps: Props) {
-  const [transport] = createSignal((() => componentProps.forkFrom ? componentProps.runtimePool.createEphemeralFork({ cwd: componentProps.session.cwd, hostId: componentProps.session.hostId }, (componentProps.forkFrom)!) : componentProps.runtimePool.forSession(componentProps.session))());
+  const [transport] = createSignal((() => componentProps.runtimePool.forSession(componentProps.session))());
   const gitDiffs = useTurnDiffs(() => (componentProps.runtimePool), () => (transport())); const runtime = useChatSession(() => (transport()), () => (initialState(componentProps.session)));
   const session = createMemo(() => (runtime)); const [error, setError] = createSignal<string>(); const [connected, setConnected] = createSignal(false);
   const [controlError, setControlError] = createSignal<string>();
@@ -35,32 +34,27 @@ export function SplitChatPane(componentProps: Props) {
   const [extensionFocusRequest, setExtensionFocusRequest] = createSignal(0);
   const reconnectRef = createRef<() => void>(() => undefined);
   const lifecycleRef = createRef(0);
-  createDependencyEffect(() => { const capturedTransport = transport(); const capturedSession = { ...session() }; const capturedRuntimePool0 = componentProps.runtimePool; const capturedSettings1 = componentProps.settings; const capturedInitialPrompt2 = componentProps.initialPrompt; const capturedOnReady3 = componentProps.onReady; const capturedOnFailed4 = componentProps.onFailed; const capturedSession5 = componentProps.session; const capturedForkFrom6 = componentProps.forkFrom; const capturedOnDialogTransportClosed7 = componentProps.onDialogTransportClosed; const capturedOnDialogResolved8 = componentProps.onDialogResolved; const capturedOnDialogRequest9 = componentProps.onDialogRequest; const capturedOnDraftChange10 = componentProps.onDraftChange; const capturedOnReleaseTransport11 = componentProps.onReleaseTransport;
+  createDependencyEffect(() => { const capturedTransport = transport(); const capturedSession = { ...session() }; const capturedRuntimePool0 = componentProps.runtimePool; const capturedSettings1 = componentProps.settings; const capturedSession5 = componentProps.session; const capturedOnDialogTransportClosed7 = componentProps.onDialogTransportClosed; const capturedOnDialogResolved8 = componentProps.onDialogResolved; const capturedOnDialogRequest9 = componentProps.onDialogRequest; const capturedOnDraftChange10 = componentProps.onDraftChange; const capturedOnReleaseTransport11 = componentProps.onReleaseTransport;
     const lifecycle = ++lifecycleRef.current; let closing = false; let reconnecting = false; let connectedOnce = false;
     capturedRuntimePool0.setInteractive(capturedTransport, true);
     const configure = async () => {
       const runtimeSettings = capturedTransport.currentHostId() === "local" ? capturedSettings1 : await capturedTransport.loadHostSettings();
       await Promise.all([capturedTransport.command({ type: "set_auto_compaction", enabled: true }), capturedTransport.command({ type: "set_auto_retry", enabled: runtimeSettings.autoRetry })]);
     };
-    const sendInitialPrompt = async (initial: boolean) => {
-      if (initial && capturedInitialPrompt2) { await capturedTransport.submitPrompt({ type: "prompt", message: (capturedInitialPrompt2)!, images: componentProps.initialImages }); if (!closing) capturedOnReady3?.(); }
-    };
     const reportConnectionFailure = (initial: boolean, reason: unknown) => {
       if (closing) return;
       const message = reason instanceof Error ? reason.message : String(reason);
       if (initial && !connectedOnce) setError(message); else setControlError(message);
-      if (initial) capturedOnFailed4?.(reason);
     };
     const connectRuntime = async (initial: boolean) => {
       if (reconnecting || closing) return;
       reconnecting = true;
       try {
-        if (initial) await capturedTransport.connect(capturedSession5.cwd, capturedForkFrom6 ? undefined : capturedSession5.path, capturedSession5.hostId, capturedForkFrom6, Boolean(capturedForkFrom6), componentProps.forkLeafId);
+        if (initial) await capturedTransport.connect(capturedSession5.cwd, capturedSession5.path, capturedSession5.hostId);
         else await capturedTransport.connect();
         await capturedSession.refresh(); if (capturedTransport.ownsConversation()) await configure();
         if (closing) return;
         updateConnected(capturedTransport.ownsConversation()); connectedOnce = true; setError(undefined); setControlError(undefined);
-        await sendInitialPrompt(initial);
       } catch (reason) {
         reportConnectionFailure(initial, reason);
       } finally { reconnecting = false; }
@@ -83,11 +77,6 @@ export function SplitChatPane(componentProps: Props) {
       };
       const handleExtensionUiRequest = () => {
         const request = event as unknown as ExtensionUiRequest;
-        if (request.method === "input" && request.title === BTW_REQUEST_TITLE) {
-          void capturedTransport.command({ type: "extension_ui_response", id: request.id, cancelled: true }).catch(reportControlError);
-          setControlError("To start /btw from this conversation, select it in the main pane first.");
-          return;
-        }
         const showDialog = () => capturedOnDialogRequest9(request, capturedTransport, `Split: ${capturedSession5.name}`);
         const methods: Record<string, () => void> = {
           setStatus: () => {
@@ -144,7 +133,7 @@ export function SplitChatPane(componentProps: Props) {
     });
     void connectRuntime(true);
     return () => { closing = true; capturedRuntimePool0.setInteractive(capturedTransport, false); document.title = "piop"; reconnectRef.current = () => undefined; unsubscribe(); queueMicrotask(() => { if (lifecycleRef.current === lifecycle) void capturedOnReleaseTransport11(capturedTransport); }); };
-  }, () => [transport(), componentProps.forkFrom, componentProps.initialPrompt, session().handleEvent, session().refresh, componentProps.onDialogRequest, componentProps.onDialogTransportClosed, componentProps.onReleaseTransport]);
+  }, () => [transport(), session().handleEvent, session().refresh, componentProps.onDialogRequest, componentProps.onDialogTransportClosed, componentProps.onReleaseTransport]);
   createDependencyEffect(() => {
     const capturedConnected = connected(); const capturedTransport = transport(); const capturedSettings0 = componentProps.settings;
  if (!capturedConnected || capturedTransport.currentHostId() !== "local") return; void Promise.all([capturedTransport.command({ type: "set_auto_compaction", enabled: true }), capturedTransport.command({ type: "set_auto_retry", enabled: capturedSettings0.autoRetry })]).catch((reason) => setControlError(reason instanceof Error ? reason.message : String(reason))); }, () => [connected(), componentProps.settings.autoRetry, transport()]);

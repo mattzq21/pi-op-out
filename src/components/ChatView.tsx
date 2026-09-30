@@ -2,7 +2,7 @@ import { acknowledgeChatSubmission, chatSubmission, trackChatSubmission } from "
 import { Key, Rerun } from "@solid-primitives/keyed";
 import { createComputed, createMemo, createSignal, Index, Show } from "solid-js";
 import type { NativeTransport } from "../lib/nativeTransport";
-import { createDependencyEffect, createRef, cssPixels, type StateUpdate } from "../lib/solid";
+import { createDependencyEffect, createRef, type StateUpdate } from "../lib/solid";
 
 import { ChevronRight, FolderGit2, LoaderCircle, X } from "lucide-solid";
 import { findReplaceableAbortedTurn } from "../lib/abortedTurn";
@@ -20,19 +20,13 @@ import { Message } from "./Message";
 import { PromptContextBar } from "./PromptContextBar";
 import { ConversationHostContext } from "../lib/subagentNavigation";
 
-interface Props { transport?: NativeTransport; state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; debug?: boolean; agents?: AgentProfile[]; activeAgent?: string; agentLocked?: boolean; agentSaved?: boolean; agentUnavailable?: boolean; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; selectionBtw?: boolean; draft?: string; onDraftChange?: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onPause: () => void | Promise<void>; onResume: () => void | Promise<void>; onOpenTerminal?: () => void; onOpenProject: () => void; onClearProject?: () => void; onProjectBranch?: (path: string) => Promise<void>; onBranch: (message: ChatMessage) => void; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
+interface Props { transport?: NativeTransport; state: AgentState; messages: ChatMessage[]; gitDiffs?: GitDiffSnapshots; debug?: boolean; agents?: AgentProfile[]; activeAgent?: string; agentLocked?: boolean; agentSaved?: boolean; agentUnavailable?: boolean; models: Model[]; commands: SlashCommand[]; thinkingLevels: string[]; widgets: string[]; statuses: Record<string, string>; projectCwd?: string; readOnly?: boolean; controlsDisabled?: boolean; draft?: string; onDraftChange?: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; uploads?: ComposerUpload[]; onUploadsChange?: (uploads: StateUpdate<ComposerUpload[]>) => void; onSend: (text: string, behavior?: "steer" | "followUp", images?: ImageAttachment[]) => void | boolean | Promise<void | boolean>; onChangePending?: (id: string, behavior: import("../types").PendingMessageAction) => Promise<void>; onAbort: () => void | Promise<void>; onPause: () => void | Promise<void>; onResume: () => void | Promise<void>; onOpenTerminal?: () => void; onOpenProject: () => void; onClearProject?: () => void; onProjectBranch?: (path: string) => Promise<void>; onBranch: (message: ChatMessage) => void; onForkAndForget?: (message: ChatMessage) => void | Promise<void>; onCreateWorktree?: (message: ChatMessage) => void; onAgent?: (name: string) => void; onModel: (model: Model) => void; onToggleFastMode: () => void | Promise<void>; onThinking: (level: string) => void; }
 
-type SelectionBtwTip = { text: string; left: number; top: number; below: boolean };
 
 function canRetry(props: Props, ownsConversation: boolean) {
   return ownsConversation && !props.readOnly && !props.controlsDisabled && !props.state.isStreaming && !props.state.isPaused && !props.state.isPausing;
 }
 
-function selectionWithinMessage(range: Range, messages: HTMLElement) {
-  const ancestor = range.commonAncestorContainer instanceof Element ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement;
-  const body = ancestor?.closest(".message-body");
-  return body && messages.contains(body) && body.contains(range.startContainer) && body.contains(range.endContainer);
-}
 
 export function ChatView(props: Props) {
   const [ownsConversation, setOwnsConversation] = createSignal((() => props.transport?.ownsConversation() !== false)());
@@ -59,9 +53,6 @@ export function ChatView(props: Props) {
   const lastScrollTop = createRef(0);
   const touchY = createRef<number | undefined>(undefined);
   const composerStack = createRef<HTMLDivElement>(null);
-  const [selectionBtwTip, setSelectionBtwTip] = createSignal<SelectionBtwTip>();
-  const [askingSelection, setAskingSelection] = createSignal(false);
-  const [selectionBtwError, setSelectionBtwError] = createSignal(false);
   const messages = () => props.messages;
   const turns = createMemo<ConversationGroup[]>(previous => groupTurns(messages(), previous), []);
   const sessionUsage = createMemo(() => props.messages.reduce((total, message) => ({ input: total.input + (message.usage?.input ?? 0), cacheRead: total.cacheRead + (message.usage?.cacheRead ?? 0), cacheWrite: total.cacheWrite + (message.usage?.cacheWrite ?? 0) }), { input: 0, cacheRead: 0, cacheWrite: 0 }));
@@ -150,42 +141,6 @@ export function ChatView(props: Props) {
       composer.style.removeProperty("padding-right");
     };
   }, () => [props.readOnly, scrollToLatest]);
-  const selectionBtwEnabled = createMemo(() => (Boolean(ownsConversation() && props.selectionBtw && !props.readOnly && !props.controlsDisabled && props.commands.some((command) => command.name === "btw"))));
-  createDependencyEffect(() => { const capturedSelectionBtwEnabled = selectionBtwEnabled();
-    if (!capturedSelectionBtwEnabled) { setSelectionBtwTip(undefined); return; }
-    const updateTip = () => {
-      const selection = window.getSelection();
-      const messages = messagesRef.current;
-      if (!selection || selection.isCollapsed || !selection.rangeCount || !messages) { setSelectionBtwTip(undefined); return; }
-      const range = selection.getRangeAt(0);
-      if (!selectionWithinMessage(range, messages)) { setSelectionBtwTip(undefined); return; }
-      const text = selection.toString().trim();
-      const rect = Array.from(range.getClientRects()).filter((box) => box.width || box.height).at(-1);
-      if (!text || !rect) { setSelectionBtwTip(undefined); return; }
-      const below = rect.top < 48;
-      setSelectionBtwError(false);
-      setSelectionBtwTip({ text, left: Math.max(112, Math.min(rect.left + rect.width / 2, window.innerWidth - 112)), top: below ? rect.bottom + 8 : rect.top - 8, below });
-    };
-    const dismiss = () => setSelectionBtwTip(undefined);
-    document.addEventListener("selectionchange", updateTip);
-    window.addEventListener("resize", dismiss);
-    window.addEventListener("blur", dismiss);
-    return () => {
-      document.removeEventListener("selectionchange", updateTip);
-      window.removeEventListener("resize", dismiss);
-      window.removeEventListener("blur", dismiss);
-    };
-  }, () => [selectionBtwEnabled()]);
-  const askSelectionInBtw = async () => { const capturedSelectionBtwTip = selectionBtwTip(); const capturedAskingSelection = askingSelection(); const capturedState0 = props.state;
-    if (!capturedSelectionBtwTip || capturedAskingSelection) return;
-    setAskingSelection(true);
-    try {
-      await send(`/btw ${(capturedSelectionBtwTip)!.text}`, capturedState0.isStreaming ? "followUp" : undefined);
-      window.getSelection()?.removeAllRanges();
-      setSelectionBtwTip(undefined);
-    } catch { setSelectionBtwError(true); }
-    finally { setAskingSelection(false); }
-  };
   const ConversationContent = () => {
     const MessagesSection = () => (<div ref={element => { messagesRef.current = element; }} class="messages" aria-live="polite"
       onWheel={(event) => { if (event.deltaY < 0 && event.currentTarget.scrollTop > 0) followLatest.current = false; }}
@@ -193,7 +148,6 @@ export function ChatView(props: Props) {
       onTouchMove={(event) => { const y = event.touches[0]?.clientY; if (y !== undefined && touchY.current !== undefined && y > touchY.current && event.currentTarget.scrollTop > 0) followLatest.current = false; touchY.current = y; }}
       oncapture:keydown={(event) => { if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) followLatest.current = false; }}
       onScroll={(event) => {
-        setSelectionBtwTip(undefined);
         const element = event.currentTarget;
         if (element.scrollTop < lastScrollTop.current) followLatest.current = false;
         else if (element.scrollTop > lastScrollTop.current) followLatest.current = element.scrollHeight - element.scrollTop - element.clientHeight <= 2;
@@ -207,7 +161,6 @@ export function ChatView(props: Props) {
           <div class="mcp-loading-list" role="status">{props.debug ? <Key each={loadingServers()} by={(server) => server.id}>{(server, _index) => <div class="mcp-loading" ><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading {server().name}</span></div>}</Key> : <div class="mcp-loading"><LoaderCircle class="mcp-loading-spinner" size={14} aria-hidden="true" /><span>Loading MCPs</span></div>}</div>
         </section>}
       </div></div>);
-    const renderSelectionBtwTip = () => (selectionBtwTip() && <button type="button" class={`selection-btw-tip${(selectionBtwTip())!.below ? " below" : ""}${selectionBtwError() ? " error" : ""}`} style={{ left: cssPixels((selectionBtwTip())!.left), top: cssPixels((selectionBtwTip())!.top) }} aria-label="Ask about selected text in a side chat with /btw" aria-live="polite" disabled={askingSelection()} onPointerDown={(event) => event.preventDefault()} onClick={() => void askSelectionInBtw()}><span>{askingSelection() ? "Opening side chat…" : selectionBtwError() ? "Could not open side chat" : "Ask in side chat"}</span><kbd>/btw</kbd></button>);
     const ComposerStack = () => {
       const selectionDisabled = () => props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission());
       const renderNewChatBranch = () => <Show when={Boolean(props.projectCwd && props.onProjectBranch)}><Rerun on={() => props.transport}>{(_owner) => <NewChatBranchPicker transport={props.transport} cwd={props.projectCwd!} hostId={props.transport?.currentHostId() ?? "local"} disabled={props.controlsDisabled || !ownsConversation() || Boolean(pendingSubmission())} onSelect={props.onProjectBranch!} />}</Rerun></Show>;
@@ -218,7 +171,6 @@ export function ChatView(props: Props) {
     };
     return (<div class="conversation-content">
       <MessagesSection />
-      {renderSelectionBtwTip()}
       <ComposerStack />
     </div>);
   };

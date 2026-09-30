@@ -13,7 +13,7 @@ describe('split conversation lifecycle', () => {
     responses = new Map([['get_session_revision', { revision: 'changed' }], ['get_snapshot', { revision: 'snapshot', state, history: { entries: [], leafId: null }, sequence: 0, epoch: 'epoch', liveTools: [], queue: { pendingMessages: [] } }], ['get_available_models', { models: [] }], ['get_available_thinking_levels', { levels: ['off', 'high'] }], ['get_commands', { commands: [] }]]);
     transport = { currentHostId: () => 'local', ownsConversation: () => true, connect: async (...args) => connected.push(args), subscribe: handler => { listeners.add(handler); return () => listeners.delete(handler); }, command: async command => { calls.push(command); const result = responses.get(command.type); if (result instanceof Error) throw result; return typeof result === 'function' ? result(command) : result; } };
     const diffs = {};
-    props = { uploadsFor: () => [], onUploadsChange: () => {}, runtimePool: { forSession: () => transport, createEphemeralFork: () => transport, subscribe: () => () => {}, gitDiffs: () => diffs, captureMemoryDiffs: async () => undefined, setInteractive: (_, value) => calls.push({ interactive: value }) }, session: { id: 'session', name: 'Conversation', cwd: '/repo', path: '/session.jsonl', project: 'repo', messageCount: 0 }, settings: { autoCompaction: true, autoRetry: true, hiddenModels: [] }, draft: '', onDraftChange: () => {}, onOpenTerminal: () => {}, onDialogRequest: (...args) => dialogs.push(args), onDialogResolved: (...args) => dialogs.push(args), onDialogTransportClosed: async () => {}, onReleaseTransport: async value => released.push(value), onSessionChange: () => {}, onClose: () => {} };
+    props = { uploadsFor: () => [], onUploadsChange: () => {}, runtimePool: { forSession: () => transport, subscribe: () => () => {}, gitDiffs: () => diffs, captureMemoryDiffs: async () => undefined, setInteractive: (_, value) => calls.push({ interactive: value }) }, session: { id: 'session', name: 'Conversation', cwd: '/repo', path: '/session.jsonl', project: 'repo', messageCount: 0 }, settings: { autoCompaction: true, autoRetry: true, hiddenModels: [] }, draft: '', onDraftChange: () => {}, onOpenTerminal: () => {}, onDialogRequest: (...args) => dialogs.push(args), onDialogResolved: (...args) => dialogs.push(args), onDialogTransportClosed: async () => {}, onReleaseTransport: async value => released.push(value), onSessionChange: () => {}, onClose: () => {} };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; dom.restore(); });
   async function render(extra = {}) { props = { ...props, ...extra }; if (view) await view.rerender(props); else view = await renderComponent(SplitChatPane, props); }
@@ -31,17 +31,6 @@ describe('split conversation lifecycle', () => {
     await view.unmount(); view = undefined; assert.deepEqual(released, [transport]); assert.equal(listeners.size, 0); assert.deepEqual(calls.at(-1), { interactive: false });
   });
 
-  test('fork startup sends its initial prompt only after refresh and reports connection failure', async () => {
-    let ready = 0;
-    await render({ forkFrom: 'entry', forkLeafId: 'captured-leaf', initialPrompt: 'Explore this', onReady: () => ready++ });
-    assert.deepEqual(connected[0], ['/repo', undefined, undefined, 'entry', true, 'captured-leaf']); assert.equal(ready, 1);
-    const promptIndex = calls.findIndex(command => command.type === 'prompt');
-    assert.deepEqual(calls[promptIndex], { type: 'prompt', message: 'Explore this', images: undefined }); assert.ok(promptIndex > calls.findIndex(command => command.type === 'get_snapshot'));
-    await view.unmount(); view = undefined;
-    const failure = new Error('connection refused'); const failures = [];
-    transport.connect = async () => { throw failure; };
-    await render({ onFailed: reason => failures.push(reason) }); assert.deepEqual(failures, [failure]); assert.equal(document.querySelector('.split-pane-status.error').textContent, 'connection refused'); assert.equal(control('Message piop'), null);
-  });
 
   test('extension status, widgets, notices and dialogs are routed to the split owner', async () => {
     await render();

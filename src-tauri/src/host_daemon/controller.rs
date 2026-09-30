@@ -62,20 +62,6 @@ pub(super) struct Host {
 struct Callbacks(Weak<Host>);
 
 impl SessionHost for Callbacks {
-    fn message_parent(&self, source: String, payload: Value) -> BoxFuture<'_, Result<Value>> {
-        Box::pin(async move {
-            let host = self.0.upgrade().ok_or("Daemon is shutting down")?;
-            let child = host.find_session(&source).filter(|session| session.ephemeral).ok_or("This tool is only available in /btw conversations")?;
-            let path = payload["parentSession"].as_str().filter(|value| !value.is_empty()).ok_or("The parent conversation is missing")?;
-            let message = payload["message"].as_str().filter(|value| !value.trim().is_empty()).ok_or("A message is required")?;
-            let parent = host.registry().sessions.values().find(|session| {
-                !session.closed() && session.client_id() == child.client_id() && session.spec.env.get("PI_DESKTOP_HOST_ID") == child.spec.env.get("PI_DESKTOP_HOST_ID")
-                    && session.saved_state()["sessionFile"].as_str() == Some(path) && session.key() != child.key()
-            }).cloned().ok_or("The original main conversation is no longer connected")?;
-            host.session_command(parent, "", json!({"type":"prompt","message":format!("[Message from /btw]\n{message}"),"streamingBehavior":"followUp"})).await
-        })
-    }
-
     fn output(&self, packet: Value) {
         if let Some(host) = self.0.upgrade() {
             host.output(packet);

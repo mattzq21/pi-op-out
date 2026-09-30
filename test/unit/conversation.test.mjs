@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { setTimeout as delay } from 'node:timers/promises';
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, act } from '../dom.mjs';
 import { ChatView } from '../../src/components/ChatView.tsx';
@@ -16,11 +15,6 @@ describe('conversation behavior', () => {
   const assistant = (id, content = 'Answer', extra = {}) => ({ id, role: 'assistant', content, ...extra });
   const retryButton = () => document.querySelector('.message-failure button');
   const click = async element => act(async () => element.click());
-  async function selectText(element = document.querySelector('.message-body p'), top = 100) {
-    const range = document.createRange(); range.selectNodeContents(element);
-    range.getClientRects = () => [{ left: 10, top, bottom: top + 20, width: 100, height: 20 }];
-    await act(async () => { window.getSelection().removeAllRanges(); window.getSelection().addRange(range); await delay(0); document.dispatchEvent(new Event('selectionchange')); });
-  }
 
   test('settled turns compact repeated tools and separate reasoning from the final answer', async () => {
     const messages = [user('u'), assistant('call', [{ type: 'toolCall', name: 'read' }]), { id: 't1', role: 'tool', toolName: 'read', content: 'one' }, { id: 't2', role: 'tool', toolName: 'read', content: 'two' }, assistant('a', [{ type: 'thinking', thinking: 'Consider the evidence' }, { type: 'text', text: 'Final answer' }], { completedAt: 61000 }), { id: 's', role: 'system', content: 'Saved' }];
@@ -108,32 +102,8 @@ describe('conversation behavior', () => {
     await render({ messages: [user('u'), assistant('a', 'Latest output')] }); assert.equal(scroller.scrollTop, 1200);
   });
 
-  test('selected message text opens a side chat and clears selection after successful submission', async () => {
-    const sent = [], pending = Promise.withResolvers();
-    await render({ readOnly: false, selectionBtw: true, commands: [{ name: 'btw' }], messages: [assistant('a', 'Explain this phrase')], onSend: (...args) => { sent.push(args); return pending.promise; } });
-    await selectText(); const tip = document.querySelector('.selection-btw-tip'); assert.equal(tip.style.left, '112px'); assert.equal(tip.style.top, '92px');
-    await click(tip); assert.equal(tip.disabled, true); assert.deepEqual(sent, [['/btw Explain this phrase', undefined, []]]);
-    await act(async () => pending.resolve()); assert.equal(document.querySelector('.selection-btw-tip'), null); assert.equal(window.getSelection().rangeCount, 0);
-  });
 
-  test('side chat failures retain selection for retry and streaming submissions queue a follow-up', async () => {
-    const sent = [];
-    await render({ readOnly: false, selectionBtw: true, commands: [{ name: 'btw' }], state: { isStreaming: true }, messages: [assistant('a', 'Selected text')], onSend: async () => { throw new Error('offline'); } });
-    await selectText(undefined, 20); assert.ok(document.querySelector('.selection-btw-tip.below')); assert.equal(document.querySelector('.selection-btw-tip').style.top, '48px');
-    await click(document.querySelector('.selection-btw-tip')); assert.match(document.querySelector('.selection-btw-tip.error').textContent, /Could not open side chat/); assert.equal(window.getSelection().rangeCount, 1);
-    await render({ onSend: async (...args) => sent.push(args) }); await click(document.querySelector('.selection-btw-tip'));
-    assert.deepEqual(sent, [['/btw Selected text', 'followUp', []]]); assert.equal(document.querySelector('.selection-btw-tip'), null);
-  });
 
-  test('side-chat selection ignores content outside messages and closes when the view changes', async () => {
-    await render({ readOnly: false, selectionBtw: true, commands: [{ name: 'btw' }], messages: [assistant('a')] });
-    const outside = document.createElement('p'); outside.textContent = 'Outside'; document.body.append(outside);
-    await selectText(outside); assert.equal(document.querySelector('.selection-btw-tip'), null);
-    for (const type of ['resize', 'blur']) { await selectText(); assert.ok(document.querySelector('.selection-btw-tip')); await act(async () => window.dispatchEvent(new Event(type))); assert.equal(document.querySelector('.selection-btw-tip'), null); }
-    await selectText(); await render({ controlsDisabled: true }); assert.equal(document.querySelector('.selection-btw-tip'), null);
-    await render({ controlsDisabled: false }); await selectText(); await act(async () => { window.getSelection().removeAllRanges(); document.dispatchEvent(new Event('selectionchange')); }); assert.equal(document.querySelector('.selection-btw-tip'), null);
-    outside.remove();
-  });
 
   test('editable chat shows project actions, extension activity and the submitted message while MCP loads', async () => {
     let opened = 0, cleared = 0; const pending = Promise.withResolvers();

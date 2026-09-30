@@ -364,28 +364,6 @@ fn development_extensions_are_scoped_to_the_daemon_worktree() {
 
 
 #[test]
-fn side_conversation_preparation_removes_only_the_legacy_extension_after_installing() {
-    let home = TestDirectory::new();
-    let _home = HomeOverride::take(&home.0);
-    let entry = generated_extension_root().unwrap().join("piop-btw.ts");
-    let legacy = home.0.join(".pi/agent/extensions/pi-desktop-btw.ts");
-    fs::create_dir_all(legacy.parent().unwrap()).unwrap();
-    fs::write(&legacy, "old btw").unwrap();
-    let other = legacy.with_file_name("user-extension.ts");
-    fs::write(&other, "keep").unwrap();
-    assert_eq!(prepare_btw_extension().unwrap(), entry);
-    assert_eq!(fs::read_to_string(&entry).unwrap(), include_str!("../../resources/btw.ts"));
-    assert_eq!(legacy.exists(), DEVELOPMENT, "legacy cleanup is disabled in development builds");
-    assert_eq!(fs::read_to_string(&other).unwrap(), "keep");
-    assert_eq!(prepare_btw_extension().unwrap(), entry);
-    fs::remove_file(&entry).unwrap();
-    fs::create_dir(&entry).unwrap();
-    fs::write(&legacy, "preserve until install succeeds").unwrap();
-    assert!(prepare_btw_extension().is_err());
-    assert_eq!(fs::read_to_string(&legacy).unwrap(), "preserve until install succeeds");
-}
-
-#[test]
 fn diff_watch_preparation_replaces_legacy_assets_and_refreshes_all_bundled_files() {
     let home = TestDirectory::new();
     let _home = HomeOverride::take(&home.0);
