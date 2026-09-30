@@ -38,7 +38,6 @@ function ImageViewer(props: { src: string; alt: string; onClose: () => void }) {
   return <dialog ref={element => { dialogRef.current = element; }} class="image-viewer" aria-label={props.alt} onCancel={event => { event.preventDefault(); props.onClose(); }} onClose={props.onClose}>
     <div class="image-viewer-toolbar">
       <span class="image-viewer-zoom-hint">Ctrl + scroll to zoom{zoom() !== undefined ? ` · ${Math.round(zoom()! * 100)}%` : ""}</span>
-      <button type="button" aria-pressed={expanded()} onClick={toggleSize}>{expanded() ? "Fit to screen" : "Full size"}</button>
       <button type="button" autofocus aria-label="Close image" title="Close image" onClick={props.onClose}><X size={22} /></button>
     </div>
     <div ref={element => { contentRef.current = element; }} class="image-viewer-content">
