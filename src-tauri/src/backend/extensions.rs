@@ -42,7 +42,7 @@ pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf
     Ok(path)
 }
 
-pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 17] = [
+pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 18] = [
     ("client.ts", include_str!("../../resources/session-broker/client.ts")),
     ("pause.ts", include_str!("../../resources/session-broker/pause.ts")),
     ("fast-mode.ts", include_str!("../../resources/session-broker/fast-mode.ts")),
@@ -55,6 +55,7 @@ pub(super) const SESSION_BROKER_MODULES: [(&str, &str); 17] = [
     ("operations.ts", include_str!("../../resources/session-broker/operations.ts")),
     ("tools.ts", include_str!("../../resources/session-broker/tools.ts")),
     ("goals.ts", include_str!("../../resources/session-broker/goals.ts")),
+    ("review.ts", include_str!("../../resources/session-broker/review.ts")),
     ("goal-state.ts", include_str!("../../resources/session-broker/goal-state.ts")),
     ("goal-controls.ts", include_str!("../../resources/session-broker/goal-controls.ts")),
     ("goal-coordination.ts", include_str!("../../resources/session-broker/goal-coordination.ts")),

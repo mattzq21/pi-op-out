@@ -167,6 +167,13 @@ export class SessionRuntimePool {
     return transport;
   }
 
+  createEphemeralFork(target: NativeConnectionTarget, sourceSessionPath: string) {
+    const transport = this.create(target); const state = this.diffState(transport);
+    state.persistence = "memory";
+    if (sourceSessionPath) void this.loadSavedDiffs(transport, sourceSessionPath);
+    return transport;
+  }
+
   forSession(session: SessionSummary) {
     const hostId = session.hostId ?? "local"; const key = sessionKey(session.daemonId ?? hostId, session.id);
     const existing = this.sessions.get(key) ?? this.sessions.get(sessionKey(hostId, session.id)); if (existing) return existing;

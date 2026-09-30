@@ -14,7 +14,9 @@ type SessionTerminals = { activeId: string; tabs: TerminalTabState[] };
 
 type QueuedTerminalOutput = { data: string; length: number };
 
-type SplitPaneState = { key: string; session: SessionSummary };
+type ReviewRequest = { task: string; forkFrom: string; leafId?: string; requestId: string; images?: import("./types").ImageAttachment[] };
+
+type SplitPaneState = { key: string; session: SessionSummary; review?: ReviewRequest };
 
 type OwnedExtensionDialog = { request: ExtensionUiRequest; transport: NativeTransport; owner: string; queueId: string };
 
@@ -24,6 +26,7 @@ type WorktreeTarget = { transport: NativeTransport; cwd: string; hostId: string;
 
 type TerminalTarget = { sessionKey: string; cwd?: string; hostId: string };
 
+const REVIEW_REQUEST_TITLE = "__pi_desktop_review__";
 
 const PROMPT_CONTEXT_STATUS_KEY = "pi-desktop-prompt-context";
 
@@ -106,5 +109,5 @@ function useUsageClock(codexUsage: Accessor<CodexUsage | undefined>, opencodeGoU
 }
 
 function definedAgentSettings(capability?: DefinedAgentsCapability): AgentConfig | undefined { return capability ? { agents: capability.config.agents, fastModeModels: capability.config.fastModeModels } : undefined; }
-export { appendTerminalOutputs,AppLoading,definedAgentSettings,dialogOwnerName,formatCodexReset,goUsageBadge,initialTerminals,LimitBadge,MAX_TERMINALS,MCP_STATUS_KEY,normalizeCodexUsage,normalizeOpencodeGoUsage,PROMPT_CONTEXT_STATUS_KEY,selectedProjectCwd,splitConversationKey,staleExtensionContext,terminalConversationKey,usageWindowsDescription,useUsageClock,windowInstanceId };
-export type { OwnedExtensionDialog,QueuedTerminalOutput,RenameTarget,SessionTerminals,SplitPaneState,TerminalTabState,TerminalTarget,WorktreeTarget };
+export { appendTerminalOutputs,AppLoading,REVIEW_REQUEST_TITLE,definedAgentSettings,dialogOwnerName,formatCodexReset,goUsageBadge,initialTerminals,LimitBadge,MAX_TERMINALS,MCP_STATUS_KEY,normalizeCodexUsage,normalizeOpencodeGoUsage,PROMPT_CONTEXT_STATUS_KEY,selectedProjectCwd,splitConversationKey,staleExtensionContext,terminalConversationKey,usageWindowsDescription,useUsageClock,windowInstanceId };
+export type { ReviewRequest,OwnedExtensionDialog,QueuedTerminalOutput,RenameTarget,SessionTerminals,SplitPaneState,TerminalTabState,TerminalTarget,WorktreeTarget };

@@ -3,7 +3,7 @@ import { initializeSession } from "./lib/sessionInitialization";
 import { type Accessor } from "solid-js";
 import { createDependencyEffect, type Dispatch, type RefObject, type StateUpdate } from "./lib/solid";
 
-import { MCP_STATUS_KEY, PROMPT_CONTEXT_STATUS_KEY, staleExtensionContext, type OwnedExtensionDialog, type TerminalTarget } from "./appSupport";
+import { REVIEW_REQUEST_TITLE, MCP_STATUS_KEY, PROMPT_CONTEXT_STATUS_KEY, staleExtensionContext, type OwnedExtensionDialog, type SplitPaneState, type TerminalTarget } from "./appSupport";
 import { decodeAgentValue, DEFINED_AGENTS_STATUS_KEY } from "./lib/agentProtocol";
 import { NativeTransport } from "./lib/nativeTransport";
 import type { AgentState, AppSettings, DefinedAgentsCapability, ExtensionUiRequest, RpcEvent } from "./types";
@@ -18,6 +18,9 @@ type AppEventsContext = {
   terminalExited: (terminalId: unknown) => void;
   addNotice: (notice: { title: string; message: string; }) => void;
   activeTransportRef: RefObject<NativeTransport>;
+  pendingReviewRequest: RefObject<{ id: string; transport: NativeTransport; } | undefined>;
+  reviewImages: WeakMap<NativeTransport, import("./types").ImageAttachment[]>;
+  setSplitPane: Dispatch<StateUpdate<SplitPaneState | undefined>>;
   activeHostIdRef: RefObject<string>;
   setExtensionOwner: Dispatch<StateUpdate<NativeTransport>>;
   setDefinedAgents: Dispatch<StateUpdate<DefinedAgentsCapability | undefined>>;
@@ -83,6 +86,29 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         const request = event as unknown as ExtensionUiRequest;
         if (capturedOptions.transport !== capturedOptions.activeTransportRef.current) return;
         const notifyExtension = () => { if (!event.inputRejected) capturedOptions.addNotice({ title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "piop extension", message: request.message || "Notification" }); };
+        const reviewPayload = () => {
+          const payload = JSON.parse(request.placeholder || "{}") as { task?: unknown; sessionFile?: unknown; leafId?: unknown; cwd?: unknown };
+          if (typeof payload.task !== "string" || !payload.task.trim() || typeof payload.sessionFile !== "string" || !payload.sessionFile) throw new Error("Invalid /review branch request");
+          return { task: payload.task, sessionFile: payload.sessionFile, leafId: payload.leafId, cwd: payload.cwd };
+        };
+        const openReview = () => {
+          try {
+            const payload = reviewPayload();
+            const cwd = typeof payload.cwd === "string" && payload.cwd ? payload.cwd : ".";
+            const previous = capturedOptions.pendingReviewRequest.current;
+            if (previous && previous.id !== request.id) void previous.transport.command({ type: "extension_ui_response", id: previous.id, cancelled: true }).catch(() => undefined);
+            capturedOptions.pendingReviewRequest.current = { id: request.id, transport: capturedOptions.transport };
+            capturedOptions.setSplitPane({
+              key: crypto.randomUUID(),
+              session: { id: `review-${request.id}`, path: "", name: "Code review", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task, messageCount: 0, lastMessageAt: Date.now(), apiCost: 0, hostId: capturedOptions.activeHostIdRef.current },
+              review: { task: payload.task, forkFrom: payload.sessionFile, leafId: typeof payload.leafId === "string" ? payload.leafId : payload.leafId === null ? "" : undefined, requestId: request.id, images: capturedOptions.reviewImages.get(capturedOptions.transport) },
+            });
+            capturedOptions.reviewImages.delete(capturedOptions.transport);
+          } catch (reason) {
+            void capturedOptions.transport.command({ type: "extension_ui_response", id: request.id, cancelled: true });
+            capturedOptions.addNotice({ title: "Could not start /review", message: reason instanceof Error ? reason.message : String(reason) });
+          }
+        };
         const setDefinedAgentStatus = () => {
           capturedOptions.setExtensionOwner(capturedOptions.transport);
           try {
@@ -109,6 +135,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         const handleStatus = () => { if (request.statusKey === DEFINED_AGENTS_STATUS_KEY) return setDefinedAgentStatus(); if (request.statusKey === MCP_STATUS_KEY) return; if (request.statusKey && request.statusKey !== PROMPT_CONTEXT_STATUS_KEY) return setExtensionStatus(); };
         const openExtensionDialog = () => { capturedOptions.queueExtensionDialog(request, capturedOptions.transport, capturedOptions.mainDialogOwnerRef.current); };
         if (request.method === "notify") return notifyExtension();
+        if (request.method === "input" && request.title === REVIEW_REQUEST_TITLE) return openReview();
         if (request.method === "setStatus") return handleStatus();
         if (request.method === "setWidget" && request.widgetKey) return setExtensionWidget();
         const otherMethods: Record<string, () => void> = { setTitle: setExtensionTitle, set_editor_text: setEditorText, input: openExtensionDialog, editor: openExtensionDialog, select: openExtensionDialog, confirm: openExtensionDialog };
