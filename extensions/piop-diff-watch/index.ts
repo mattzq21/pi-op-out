@@ -296,13 +296,13 @@ async function capturePrompt(root: string, ctx: ExtensionContext): Promise<Promp
   return { key, owner: sessionId, commit, base, capturedAt, repositoryRoot: root };
 }
 
-async function pinPromptHistory(root: string, sessionId: string, entries: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>, sourceOwner?: string) {
+async function pinPromptHistory(root: string | undefined, sessionId: string, entries: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>, sourceOwner?: string) {
   const checkpoints = entries.flatMap((entry) => entry.type === "custom" && entry.customType === PROMPT_ENTRY
     ? [checkpointData(entry.data)].filter((value): value is PromptCheckpoint => Boolean(value)) : []);
   for (const checkpoint of checkpoints) {
     const target = promptRef(sessionId, checkpoint.key);
     const source = promptRef(sourceOwner ?? checkpoint.owner, checkpoint.key);
-    const repositories = new Set([root, checkpoint.repositoryRoot ?? root]);
+    const repositories = new Set([root, checkpoint.repositoryRoot].filter((repository): repository is string => Boolean(repository)));
     for (const repository of repositories) {
       if (await resolveRef(repository, target) === checkpoint.commit) break;
       if (await resolveRef(repository, source) !== checkpoint.commit) continue;
@@ -321,17 +321,14 @@ async function checkpointWorktreeTarget(root: string, branch: string) {
   if (!project) throw new Error("Git repository directory has no name");
   const storage = join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "worktrees");
   await mkdir(storage, { recursive: true, mode: 0o700 });
-  for (let attempt = 0; attempt < 256; attempt++) {
-    const container = join(storage, randomUUID().slice(0, 4));
-    const target = join(container, project);
-    if (worktrees.includes(target)) continue;
-    try { await mkdir(container, { mode: 0o700 }); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") continue; throw error; }
-    try { await writeFile(join(container, "parent.json"), JSON.stringify({ branch, parentBranch }), { flag: "wx", mode: 0o600 }); }
-    catch (error) { await rmdir(container).catch(() => undefined); throw error; }
-    return target;
-  }
-  throw new Error("Could not allocate a unique worktree directory");
+  const container = join(storage, randomUUID().slice(0, 4));
+  const target = join(container, project);
+  if (worktrees.includes(target)) throw new Error(`Git worktree is already registered: ${target}`);
+  try { await mkdir(container, { mode: 0o700 }); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`Worktree directory already exists: ${container}`); throw error; }
+  try { await writeFile(join(container, "parent.json"), JSON.stringify({ branch, parentBranch }), { flag: "wx", mode: 0o600 }); }
+  catch (error) { await rmdir(container).catch(() => undefined); throw error; }
+  return target;
 }
 
 async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: string, afterResponse = false) {
@@ -497,7 +494,7 @@ export default function diffWatch(pi: ExtensionAPI) {
       await inheritSnapshot(ctx, ctx.sessionManager.getHeader()?.parentSession ?? event.previousSessionFile);
       const root = await repositoryRoot(ctx.cwd);
       const parentFile = ctx.sessionManager.getHeader()?.parentSession ?? event.previousSessionFile;
-      if (root) await pinPromptHistory(root, ctx.sessionManager.getSessionId(), ctx.sessionManager.getBranch(), parentFile ? await sessionIdFromFile(parentFile) : undefined);
+      await pinPromptHistory(root, ctx.sessionManager.getSessionId(), ctx.sessionManager.getBranch(), parentFile ? await sessionIdFromFile(parentFile) : undefined);
       lastError = "";
     }).catch((error) => reportError(ctx, error));
     return snapshotQueue;

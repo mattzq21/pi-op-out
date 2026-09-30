@@ -1,7 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
-import { readFile, realpath, stat, open, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { readFile, realpath, mkdir, rmdir, open, rm } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { currentHost } from "./client.ts";
 import { writeSessionFile } from "./session-file.ts";
 import { execFile } from "node:child_process";
@@ -72,16 +72,27 @@ export async function forkConversation(ctx: ExtensionContext, options: ForkOptio
       await rm(sessionPath.replace(/\.jsonl$/, ".diffs.json"), { force: true });
     }
     await Promise.all(pinned.map(item => runFile("git", ["-C", item.cwd, "update-ref", "-d", item.ref, item.commit], { timeout: 10000 })));
+    await cleanupForkDirectory(cwd, options);
     if (worktree) throw new Error(`Worktree kept at ${cwd}, but conversation fork failed: ${String(error)}`);
     throw error;
   }
   return { hostId: currentHost(), sessionId, sessionPath, cwd, ...worktree };
 }
 
+async function cleanupForkDirectory(cwd: string, options: ForkOptions) {
+  if (options.cwd !== undefined) await rmdir(cwd).catch(() => undefined);
+}
+
 async function forkDirectory(cwd: string, options: ForkOptions) {
-  if (options.cwd && options.worktree) throw new Error("Choose cwd or worktree, not both");
-  const path = await realpath(resolve(cwd, options.cwd ?? "."));
-  if (!(await stat(path)).isDirectory()) throw new Error("Fork destination must be an existing directory");
+  if (options.cwd !== undefined && options.worktree !== undefined) throw new Error("Choose cwd or worktree, not both");
+  if (options.cwd === undefined) return realpath(cwd);
+  const destination = resolve(cwd, options.cwd);
+  const path = join(await realpath(dirname(destination)), basename(destination));
+  try { await mkdir(path, { mode: 0o700 }); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`Fork destination already exists: ${path}`);
+    throw error;
+  }
   return path;
 }
 

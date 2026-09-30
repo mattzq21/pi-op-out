@@ -24,18 +24,14 @@ function allocate() {
   const project = path.basename(worktrees[0]);
   if (!project) throw new Error('Git repository directory has no name');
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  for (let attempt = 0; attempt < 256; attempt++) {
-    const container = path.join(root, randomUUID().slice(0, 4));
-    const target = path.join(container, project);
-    if (worktrees.includes(target)) continue;
-    try { fs.mkdirSync(container, { mode: 0o700 }); }
-    catch (error) { if (error.code === 'EEXIST') continue; throw error; }
-    try { fs.writeFileSync(path.join(container, 'parent.json'), JSON.stringify({ branch, parentBranch }), { flag: 'wx', mode: 0o600 }); }
-    catch (error) { cleanup(target); throw error; }
-    process.stdout.write(target);
-    return;
-  }
-  throw new Error('Could not allocate a unique worktree directory');
+  const container = path.join(root, randomUUID().slice(0, 4));
+  const target = path.join(container, project);
+  if (worktrees.includes(target)) throw new Error(`Git worktree is already registered: ${target}`);
+  try { fs.mkdirSync(container, { mode: 0o700 }); }
+  catch (error) { if (error.code === 'EEXIST') throw new Error(`Worktree directory already exists: ${container}`); throw error; }
+  try { fs.writeFileSync(path.join(container, 'parent.json'), JSON.stringify({ branch, parentBranch }), { flag: 'wx', mode: 0o600 }); }
+  catch (error) { cleanup(target); throw error; }
+  process.stdout.write(target);
 }
 
 try {
