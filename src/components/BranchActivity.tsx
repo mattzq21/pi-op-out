@@ -4,5 +4,5 @@ import { isBranching } from "../lib/branchActivity";
 import "./branch-activity.css";
 
 export function BranchActivity() {
-  return <Show when={isBranching()}><div class="branch-activity" role="status" aria-label="Branching conversation" aria-live="polite"><LoaderCircle size={36} class="spinning" aria-hidden="true" /></div></Show>;
+  return <Show when={isBranching()}><div class="branch-activity" role="status" aria-label="Branching conversation" aria-live="polite"><LoaderCircle size={72} class="spinning" aria-hidden="true" /></div></Show>;
 }
