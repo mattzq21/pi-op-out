@@ -12,8 +12,10 @@ export default {
         const source = context.sourceCode;
         const comments = source.getAllComments().filter((comment) => comment.type !== 'Shebang');
         const licenses = licenseHeaderComments(source.text, comments);
+
         for (const comment of comments) {
           if (licenses.has(comment) || isLintDirective(comment.value)) continue;
+
           context.report({ loc: comment.loc, messageId: 'forbidden' });
         }
       },
