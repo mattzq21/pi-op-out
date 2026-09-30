@@ -109,6 +109,7 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
     state: () => ({ isPaused, isPausing }),
     pause(ctx) {
       controlContext = ctx;
+      pi.events.emit("piop:goal-control", { action: "pause", ctx });
       if (!pauseOperation && !isPaused) {
         const version = generation;
         pauseStopped = false; isPausing = true; persistPause(true); isPaused = false; publishPause();
@@ -123,11 +124,13 @@ export function registerPauseControl(pi: ExtensionAPI): PauseController {
       controlContext = ctx;
       if (isPausing || !ctx.isIdle()) throw new Error("Wait for Pi to finish pausing before resuming");
       if (!isPaused) return undefined;
+      pi.events.emit("piop:goal-control", { action: "resume", ctx });
       const message = `/pi-desktop-resume-turn ${crypto.randomUUID()}`;
       resumeMessages.add(message); pi.appendEntry(resumeEntry, { message });
       return message;
     },
     async stop(ctx) {
+      pi.events.emit("piop:goal-control", { action: "pause", ctx });
       pi.events.emit("piop:cancel-preparation", {});
       controlContext = ctx; pauseStopped = true;
       if (isPaused || isPausing) persistPause(false);
