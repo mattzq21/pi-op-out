@@ -2,7 +2,7 @@ import { AgentTools } from "./AgentTools";
 import { Key, Rerun } from "@solid-primitives/keyed";
 import { createComputed, createMemo, createSignal, Index, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
-import { accountModelName } from "../lib/providerAccounts";
+import { accountModelNameLookup } from "../lib/providerAccounts";
 import { createDependencyEffect, createMemoFields, createRef, type JSXElement } from "../lib/solid";
 
 import { Bot, Check, CircleGauge, CirclePlus, Cpu, HardDrive, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Wrench, Zap } from "lucide-solid";
@@ -84,6 +84,7 @@ function settingsViewDefaults({ selectedSection, embedded = false, resourceError
 export function SettingsView(props: SettingsViewProps) {
   const settingsFields = createMemoFields(() => settingsViewDefaults(props));
   const settingsProps = () => settingsFields;
+  const modelName = createMemo(() => accountModelNameLookup(settingsProps().models));
   const providerHostId = createMemo(() => settingsProps().providerHostId);
   const [saving, setSaving] = createSignal(false);
   createDependencyEffect(() => {
@@ -207,19 +208,26 @@ export function SettingsView(props: SettingsViewProps) {
     return levels.filter((level) => model.thinkingLevelMap?.[level] !== null && (!(level === "xhigh" || level === "max") || model.thinkingLevelMap?.[level] !== undefined));
   };
   const supportsFastMode = (model: string) => (agentConfig()?.fastModeModels ?? []).includes(model.replace(/--piop-account-\d+(?=\/)/, ""));
-  const validateAgentResources = () => {
+  const modelCatalog = createMemo(() => {
     const availableModelIds = new Set(settingsProps().models.map((model) => `${model.provider}/${model.id}`));
     const hiddenModels = new Set(draft().hiddenModels);
-    const modelChoices = [...settingsProps().models.map((model) => ({ id: `${model.provider}/${model.id}`, name: accountModelName(model, settingsProps().models) }))];
+    const modelChoices = [...settingsProps().models.map((model) => ({ id: `${model.provider}/${model.id}`, name: modelName()(model) }))];
     for (const id of new Set([...(draft().knownModels ?? []), ...settingsProps().settings.hiddenModels, ...hiddenModels])) if (!availableModelIds.has(id)) modelChoices.push({ id, name: id });
-    const filteredModelChoices = modelChoices.filter((model) => `${model.name} ${model.id}`.toLocaleLowerCase().includes(modelFilter().trim().toLocaleLowerCase()));
+    return { availableModelIds, hiddenModels, modelChoices };
+  });
+  const filteredModelChoices = createMemo(() => {
+    const query = modelFilter().trim().toLocaleLowerCase();
+    return modelCatalog().modelChoices.filter((model) => `${model.name} ${model.id}`.toLocaleLowerCase().includes(query));
+  });
+  const validateAgentResources = () => {
+    const { availableModelIds, hiddenModels, modelChoices } = modelCatalog();
     const modelDiscoveryUnavailable = settingsProps().models.length === 0;
     const thinkingDiscoveryUnavailable = modelDiscoveryUnavailable;
     const agentsValid = !agentConfig() || (agentDrafts().some(isBuiltInAgent) && agentDrafts().every((item) => item.name.length > 0 && !!item.path_systemprompt?.trim() && (!item.model || modelDiscoveryUnavailable || availableModelIds.has(item.model)) && (!item.effort || thinkingDiscoveryUnavailable || agentLevels(item).includes(item.effort)) && validAgentMcp(item.mcpServers)) && new Set(agentDrafts().map((item) => item.name)).size === agentDrafts().length);
     const defaultAgentAvailable = !agentConfig() || agentDrafts().some((item) => item.name === (draft().defaultAgent ?? "general"));
     const invalidHost = draft().hosts.find((host) => !host.name.trim() || !host.target.trim() || !host.piPath.trim());
     const invalidMcp = agentDrafts().flatMap((item) => item.mcpServers).find((server) => mcpServerError(server));
-    return { availableModelIds, hiddenModels, modelChoices, filteredModelChoices, modelDiscoveryUnavailable, thinkingDiscoveryUnavailable, agentsValid, defaultAgentAvailable, invalidHost, invalidMcp };
+    return { availableModelIds, hiddenModels, modelChoices, modelDiscoveryUnavailable, thinkingDiscoveryUnavailable, agentsValid, defaultAgentAvailable, invalidHost, invalidMcp };
   };
   const agentValidation = createMemo(() => (validateAgentResources()));
   const validateShortcuts = () => {
@@ -328,15 +336,15 @@ export function SettingsView(props: SettingsViewProps) {
           <button type="button" class="section-toggle-all" disabled={saving() || !agentValidation().hiddenModels.size} onClick={() => patch({ hiddenModels: [] })}>Enable all models</button>
           <button type="button" class="section-toggle-all" disabled={saving() || !agentValidation().modelChoices.some(model => !agentValidation().hiddenModels.has(model.id))} onClick={() => patch({ hiddenModels: agentValidation().modelChoices.map(model => model.id) })}>Disable all models</button>
         </div>
-        <div class="config-list">{<Key each={agentValidation().filteredModelChoices} by={(model) => model.id}>{(model, _index) => <div class="config-row model-row" ><span class="config-icon"><Cpu size={16} /></span><span><strong>{model().name}</strong><small>{model().id}{!agentValidation().availableModelIds.has(model().id) ? " · Currently unavailable" : ""}</small></span><Toggle label={`Show ${model().id}`} checked={!agentValidation().hiddenModels.has(model().id)} onChange={(visible) => setDraft((current) => ({ ...current, hiddenModels: visible ? current.hiddenModels.filter((id) => id !== model().id) : [...current.hiddenModels, model().id] }))} /></div>}</Key>}</div>
-        {!agentValidation().filteredModelChoices.length && <div class="empty-small">{agentValidation().modelChoices.length ? "No models match your search." : "No models discovered. Connect to a session to manage model visibility."}</div>}
+        <div class="config-list">{<Key each={filteredModelChoices()} by={(model) => model.id}>{(model, _index) => <div class="config-row model-row" ><span class="config-icon"><Cpu size={16} /></span><span><strong>{model().name}</strong><small>{model().id}{!agentValidation().availableModelIds.has(model().id) ? " · Currently unavailable" : ""}</small></span><Toggle label={`Show ${model().id}`} checked={!agentValidation().hiddenModels.has(model().id)} onChange={(visible) => setDraft((current) => ({ ...current, hiddenModels: visible ? current.hiddenModels.filter((id) => id !== model().id) : [...current.hiddenModels, model().id] }))} /></div>}</Key>}</div>
+        {!filteredModelChoices().length && <div class="empty-small">{agentValidation().modelChoices.length ? "No models match your search." : "No models discovered. Connect to a session to manage model visibility."}</div>}
       </SettingsSection>);
       const renderAgents = () => {
         const renderAgentEditor = () => {
           const renderAgentFields = () => {
             const renderAgentNameRow = () => (<div class="agent-name-row"><label class="field"><span>Agent name</span><input aria-label="Agent name" aria-invalid={!isBuiltInAgent(agent()) && (!agent().name.trim() || agent().name.trim().toLowerCase() === "general" || nameValidation().duplicateAgentNames.has(agent().name.trim().toLowerCase()))} disabled={isBuiltInAgent(agent())} value={agent().name} onInput={(event) => { renameAgent(event.currentTarget.value.replace(/[^a-zA-Z0-9_-]/g, "")); event.currentTarget.value = agent().name; }} /></label><IconButton label={`Remove ${agent().name}`} disabled={isBuiltInAgent(agent())} onClick={removeAgent}><Trash2 size={15} /></IconButton></div>);
             const renderAgentDefaults = () => {
-              const renderAgentModel = () => (<label class="field"><span>Default model</span><select aria-label="Agent default model" value={agent().model} onChange={(event) => updateAgent({ model: event.target.value })}><option value="">Use fallback ({draft().defaultModel})</option>{agent().model && !agentValidation().availableModelIds.has(agent().model) && <option value={agent().model} disabled>Unavailable: {agent().model}</option>}{<Key each={settingsProps().models} by={(model) => `${model.provider}/${model.id}`}>{(model, _index) => <option  value={`${model().provider}/${model().id}`}>{accountModelName(model(), settingsProps().models)}</option>}</Key>}</select></label>);
+              const renderAgentModel = () => (<label class="field"><span>Default model</span><select aria-label="Agent default model" value={agent().model} onChange={(event) => updateAgent({ model: event.target.value })}><option value="">Use fallback ({draft().defaultModel})</option>{agent().model && !agentValidation().availableModelIds.has(agent().model) && <option value={agent().model} disabled>Unavailable: {agent().model}</option>}{<Key each={settingsProps().models} by={(model) => `${model.provider}/${model.id}`}>{(model, _index) => <option  value={`${model().provider}/${model().id}`}>{modelName()(model())}</option>}</Key>}</select></label>);
               const renderAgentFastMode = () => (<div class="field general-fast-mode" title={agent().fastMode === undefined ? "Using the fallback fast mode setting" : "Fast mode default for this agent"}><span>Fast mode</span><div><button type="button" class={`fast-mode-indicator${agentFastModeEnabled() ? " active" : ""}`} aria-label="Agent fast mode" aria-description={agent().fastMode === undefined ? "Using fallback setting" : agentFastModeEnabled() ? "Fast mode on" : "Fast mode off"} aria-pressed={agentFastModeEnabled()} aria-invalid={agent().fastMode === true && !supportsFastMode(agent().model || draft().defaultModel)} onClick={() => updateAgent({ fastMode: !agentFastModeEnabled() })}><Zap size={22} strokeWidth={1.5} fill={agentFastModeEnabled() ? "currentColor" : "none"} aria-hidden="true" /></button></div></div>);
               const renderAgentEffort = () => (<label class="field"><span>Default effort</span><select aria-label="Agent default effort" aria-invalid={Boolean(!agentValidation().thinkingDiscoveryUnavailable && agent().effort && !agentLevels(agent()).includes(agent().effort))} value={agent().effort} onChange={(event) => updateAgent({ effort: event.target.value })}><option value="">Use fallback ({draft().defaultThinking})</option>{agent().effort && !agentLevels(agent()).includes(agent().effort) && <option value={agent().effort} disabled>Unavailable: {agent().effort}</option>}{<Key each={agentLevels(agent())} by={(level) => level}>{(level, _index) => <option  value={level()}>{level().charAt(0).toUpperCase() + level().slice(1)}</option>}</Key>}</select></label>);
               return (<div class="agent-defaults">{renderAgentModel()}{renderAgentFastMode()}{renderAgentEffort()}</div>);

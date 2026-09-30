@@ -1,6 +1,8 @@
 import { env, InferenceSession, Tensor } from "onnxruntime-web/wasm";
 import wasmUrl from "../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm?url";
+import moduleUrl from "../../node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs?url";
 import modelBase64 from "../assets/silero-vad.base64?raw";
+import { decodeBase64 } from "./base64";
 
 const SAMPLE_RATE = 16000;
 const FRAME_SIZE = 512;
@@ -41,11 +43,12 @@ export class DictationVad {
 
   static async create(sampleRate: number) {
     env.wasm.numThreads = 1;
-    env.wasm.wasmPaths = { wasm: new URL(wasmUrl, window.location.href).href };
-    const binary = atob(modelBase64.replace(/\s/g, ""));
-    const model = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    env.wasm.wasmPaths = { wasm: new URL(wasmUrl, window.location.href).href, mjs: new URL(moduleUrl, window.location.href).href };
+    const model = decodeBase64(modelBase64.replace(/\s/g, ""));
     const session = await InferenceSession.create(model, { executionProviders: ["wasm"] });
-    return new DictationVad(session, sampleRate);
+    const vad = new DictationVad(session, sampleRate);
+    try { await vad.detect(true); return vad; }
+    catch (error) { await session.release(); throw error; }
   }
 
   push(chunk: Float32Array, onComplete: () => void, onError: (error: unknown) => void) {
@@ -81,7 +84,7 @@ export class DictationVad {
     }
   }
 
-  private async detect() {
+  private async detect(warmup = false) {
     const input = new Float32Array(64 + FRAME_SIZE);
     input.set(this.context); input.set(this.frame, 64);
     const feeds = {
@@ -92,6 +95,7 @@ export class DictationVad {
     try {
       const outputs = await this.session.run(feeds);
       try {
+        if (warmup) return false;
         this.state.set(outputs.stateN.data as Float32Array);
         this.context.set(this.frame.subarray(FRAME_SIZE - 64));
         return this.endpoint.accept(Number(outputs.output.data[0]));

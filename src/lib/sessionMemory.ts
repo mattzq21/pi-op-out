@@ -40,7 +40,7 @@ function bytes(value: unknown): number {
   const previous = measured.get(value);
   if (previous !== undefined) return previous;
   let size = 64;
-  for (const [key, item] of Object.entries(value)) size += 32 + key.length * 2 + bytes(item);
+  for (const key of Object.keys(value)) size += 32 + key.length * 2 + bytes((value as Record<string, unknown>)[key]);
   measured.set(value, size);
   return size;
 }
@@ -113,19 +113,32 @@ export class SessionMemory {
     this.value = { ...this.value, resources: {} };
   }
 
-  private dropToolPayload(id: string) {
-    this.loaded.delete(id);
-    this.value = { ...this.value, messages: this.value.messages.map((message) => message.deferredToolPayload === id
-      ? { ...message, content: "", details: undefined, toolInput: undefined, nestedCalls: undefined, toolPayloadLoaded: false } : message) };
+  private trimToolPayloads(size: number) {
+    if (size <= SESSION_LIMIT || !this.loaded.size) return size;
+    const messages = [...this.value.messages];
+    const positions = new Map<string, number[]>();
+    messages.forEach((message, index) => {
+      const id = message.deferredToolPayload;
+      if (id === undefined || !this.loaded.has(id)) return;
+      const indices = positions.get(id) ?? [];
+      indices.push(index); positions.set(id, indices);
+    });
+    for (const id of this.loaded) {
+      if (size <= SESSION_LIMIT) break;
+      this.loaded.delete(id);
+      for (const index of positions.get(id) ?? []) {
+        const previous = messages[index];
+        const next = { ...previous, content: "", details: undefined, toolInput: undefined, nestedCalls: undefined, toolPayloadLoaded: false };
+        size += bytes(next) - bytes(previous);
+        messages[index] = next;
+      }
+    }
+    this.value = { ...this.value, messages };
+    return bytes(this.value) + this.reserved;
   }
 
   private trim() {
-    let size = bytes(this.value) + this.reserved;
-    for (const id of this.loaded) {
-      if (size <= SESSION_LIMIT) break;
-      this.dropToolPayload(id);
-      size = bytes(this.value) + this.reserved;
-    }
+    let size = this.trimToolPayloads(bytes(this.value) + this.reserved);
     if (size <= SESSION_LIMIT) return size;
     this.dropResources();
     size = bytes(this.value) + this.reserved;
@@ -154,6 +167,7 @@ export class SessionMemory {
   }
 
   private decorate(message: ChatMessage): ChatMessage {
+    if (message.role !== "tool" && !Array.isArray(message.content)) return message;
     const cached = this.decorated.get(message);
     if (cached) return cached;
     const result = this.decorateMessage(message);
@@ -191,7 +205,7 @@ export class SessionMemory {
     let serialized = "";
     let revision: string | undefined;
     for (;;) {
-      const page = await this.transport.command<{ chunk: string; length: number; revision: string }>({ type: "get_tool_payload", toolCallId: id, offset: serialized.length, revision });
+      const page = await this.transport.command<{ chunk: string; length: number; revision: string }>({ type: "get_tool_payload", toolCallId: id, offset: serialized.length, revision, limit: 2 * 1024 * 1024 });
       if (generation !== this.generation) return;
       if (page.length * 6 > SESSION_LIMIT) throw new Error("This tool payload exceeds the client memory limit.");
       this.reserved = page.length * 6;

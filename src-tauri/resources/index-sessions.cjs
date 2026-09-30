@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const PREVIEW_CODE_POINTS = 100;
 
 function text(message) {
   return typeof message.content === 'string' ? message.content : Array.isArray(message.content) ? message.content.filter(p => p.type === 'text').map(p => p.text || '').join('\n') : '';
@@ -55,7 +56,7 @@ class SessionIndex {
     this.count++;
     if (content) {
       if (!this.first && message.role === 'user') this.first = content.slice(0, 2000);
-      this.preview = [...content].slice(0, 100).join('');
+      this.preview = [...content.slice(0, PREVIEW_CODE_POINTS * 2)].slice(0, PREVIEW_CODE_POINTS).join('');
     }
     if (message.role === 'assistant' || message.role === 'toolResult') this.recordCost(message);
   }

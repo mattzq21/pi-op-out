@@ -1,4 +1,4 @@
-import { createMemo, createSignal, createUniqueId, For, onCleanup, onMount } from "solid-js";
+import { createMemo, createSelector, createSignal, createUniqueId, For, onCleanup, onMount } from "solid-js";
 import { Portal } from "solid-js/web";
 import { ArrowDown, ArrowUp, Check, GitBranch, Search } from "lucide-solid";
 import { createDependencyEffect } from "../lib/solid";
@@ -9,14 +9,18 @@ export function BranchPickerDialog(props: { branches: string[]; current: string 
   const id = createUniqueId();
   const [query, setQuery] = createSignal("");
   const [active, setActive] = createSignal(0);
-  const results = createMemo(() => props.branches.filter((branch) => branch.toLowerCase().includes(query().trim().toLowerCase())));
+  const isActive = createSelector(active);
+  const results = createMemo(() => {
+    const search = query().trim().toLowerCase();
+    return props.branches.filter(branch => branch.toLowerCase().includes(search));
+  });
   onMount(() => {
     const returnFocus = document.activeElement;
     dialog.showModal(); input.focus();
     onCleanup(() => { dialog.close(); if (returnFocus instanceof HTMLElement && returnFocus.isConnected) returnFocus.focus(); });
   });
   createDependencyEffect(() => { setActive(0); }, () => [results()]);
-  createDependencyEffect(() => { dialog?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" }); }, () => [active()]);
+  createDependencyEffect(() => { document.getElementById(`${id}-branch-${active()}`)?.scrollIntoView({ block: "nearest" }); }, () => [active()]);
   const cancel = () => { if (!props.pending) props.onCancel(); };
   const choose = (branch: string) => { if (!props.pending) props.onSelect(branch); };
   const navigate = (event: KeyboardEvent) => {
@@ -35,7 +39,7 @@ export function BranchPickerDialog(props: { branches: string[]; current: string 
     <div class="directory-palette-search"><Search size={20} /><input ref={input} role="combobox" aria-label="Search branches" aria-autocomplete="list" aria-expanded="true" aria-controls={`${id}-results`} aria-activedescendant={results().length ? `${id}-branch-${active()}` : undefined} autocomplete="off" spellcheck={false} placeholder="Search branches…" value={query()} disabled={props.pending} onInput={(event) => setQuery(event.currentTarget.value)} onKeyDown={navigate} /></div>
     <div class="directory-palette-caption"><span>{props.pending ? "Opening branch…" : `${results().length} branches`}</span><span>Enter to select</span></div>
     <div id={`${id}-results`} class="directory-palette-results" role="listbox" aria-label="Branches" aria-busy={props.pending}>
-      <For each={results()}>{(branch, index) => <div id={`${id}-branch-${index()}`} class="directory-palette-result" role="option" aria-selected={active() === index()} aria-disabled={props.pending} onMouseDown={(event) => event.preventDefault()} onMouseMove={() => setActive(index())} onClick={() => choose(branch)}><GitBranch size={17} /><span>{branch}</span>{branch === props.current && <small><Check size={13} />Current</small>}</div>}</For>
+      <For each={results()}>{(branch, index) => <div id={`${id}-branch-${index()}`} class="directory-palette-result" role="option" aria-selected={isActive(index())} aria-disabled={props.pending} onMouseDown={(event) => event.preventDefault()} onMouseMove={() => setActive(index())} onClick={() => choose(branch)}><GitBranch size={17} /><span>{branch}</span>{branch === props.current && <small><Check size={13} />Current</small>}</div>}</For>
       {!results().length && <div class="directory-palette-empty">No matching branches.</div>}
     </div>
     {props.error && <p class="dialog-error" role="alert">{props.error}</p>}

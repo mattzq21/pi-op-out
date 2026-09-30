@@ -5,6 +5,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 const PAGE_UNITS: usize = 524288;
+const MAX_PAGE_UNITS: usize = 2 * 1024 * 1024;
 const INDEX_UNITS: usize = 4096;
 const CACHE_BYTES: usize = 128 * 1024 * 1024;
 const CACHE_ENTRIES: usize = 32;
@@ -25,7 +26,8 @@ impl ToolPayload {
                 payload[key] = value.take();
             }
         }
-        let serialized = payload.to_string();
+        let mut serialized = payload.to_string();
+        if serialized.capacity() > serialized.len().saturating_add(1024) { serialized.shrink_to_fit(); }
         let revision = format!("{:x}", Sha256::digest(serialized.as_bytes()));
         let mut length = 0;
         let mut checkpoints = vec![(0, 0)];
@@ -58,12 +60,15 @@ impl ToolPayload {
         let offset = command.get("offset").filter(|value| !value.is_null())
             .map(|value| value.as_u64().ok_or("Invalid output offset")).transpose()?.unwrap_or(0);
         if offset > self.length as u64 { return Err("Invalid output offset".into()); }
+        let limit = command.get("limit").filter(|value| !value.is_null())
+            .map(|value| value.as_u64().filter(|limit| *limit >= 2).ok_or("Invalid output page size"))
+            .transpose()?.unwrap_or(PAGE_UNITS as u64).min(MAX_PAGE_UNITS as u64) as usize;
         let start = self.byte_offset(offset as usize)?;
         let mut units = 0;
         let mut bytes = 0;
         for ch in self.serialized[start..].chars() {
             units += ch.len_utf16();
-            if units > PAGE_UNITS { break; }
+            if units > limit { break; }
             bytes += ch.len_utf8();
         }
         Ok(json!({"revision":self.revision,"length":self.length,"chunk":&self.serialized[start..start + bytes]}))

@@ -1,5 +1,5 @@
 import { Key } from "@solid-primitives/keyed";
-import { createComputed, createMemo, createSignal } from "solid-js";
+import { createComputed, createMemo, createSelector, createSignal } from "solid-js";
 import { createDependencyEffect, createRef, type KeyboardEvent } from "../lib/solid";
 
 import { ArrowDown, ArrowUp, Folder, FolderOpen, Search } from "lucide-solid";
@@ -60,18 +60,25 @@ export function ProjectDialog(componentProps: Props) {
   const [opening, setOpening] = createSignal(false);
   const openingRef = createRef(false);
   const [active, setActive] = createSignal(0);
+  const isActive = createSelector(active);
   const [browseRequest, setBrowseRequest] = createSignal(0);
   const separator = createMemo(() => (Math.max(query().lastIndexOf("/"), isWindowsPath(homePath()) || isWindowsPath(query()) ? query().lastIndexOf("\\") : -1)));
   const typedParent = createMemo(() => (separator() < 0 ? "" : query().slice(0, separator() + 1)));
   const parent = createMemo(() => (parentPath(typedParent(), homePath(), basePath())));
   const fragment = createMemo(() => (query().slice(separator() + 1)));
   const listing = createMemo(() => (loaded()?.hostId === hostId() && (loaded())!.requested === parent() ? (loaded())!.listing : undefined));
-  const results = createMemo(() => ((listing()?.directories ?? []).filter((path) => folderName(path).toLocaleLowerCase().includes(fragment().toLocaleLowerCase())).sort((a, b) => {
-    const prefix = fragment().toLocaleLowerCase();
-    const exact = Number(folderName(b) === fragment()) - Number(folderName(a) === fragment());
-    if (exact) return exact;
-    return Number(folderName(b).toLocaleLowerCase().startsWith(prefix)) - Number(folderName(a).toLocaleLowerCase().startsWith(prefix)) || a.localeCompare(b);
-  })));
+  const directories = createMemo(() => (listing()?.directories ?? []).map(path => {
+    const name = folderName(path);
+    return { path, name, lower: name.toLocaleLowerCase() };
+  }));
+  const results = createMemo(() => {
+    const query = fragment(), prefix = query.toLocaleLowerCase();
+    return directories().filter(entry => entry.lower.includes(prefix)).sort((a, b) => {
+      const exact = Number(b.name === query) - Number(a.name === query);
+      if (exact) return exact;
+      return Number(b.lower.startsWith(prefix)) - Number(a.lower.startsWith(prefix)) || a.path.localeCompare(b.path);
+    }).map(entry => entry.path);
+  });
   const selected = createMemo(() => (results()[active()]));
   const hasHomePrefix = createMemo(() => (query().startsWith("~/")));
   const isMac = createMemo(() => (/Mac|iPhone|iPad/.test(navigator.platform)));
@@ -170,7 +177,7 @@ export function ProjectDialog(componentProps: Props) {
   const renderDirectoryPaletteSearch = () => (<div class="directory-palette-search"><Search size={20} />{hasHomePrefix() && <span class="directory-palette-prefix" aria-hidden="true">~/</span>}<input ref={element => { inputRef.current = element; }} autofocus role="combobox" aria-label={hasHomePrefix() ? "Folder path relative to home" : "Search or type a folder path"} aria-autocomplete="list" aria-expanded="true" aria-controls="directory-palette-results" aria-activedescendant={!loading() && selected() ? "directory-result-" + active() : undefined} autocomplete="off" spellcheck={false} placeholder="Type a folder path…" readOnly={opening()} value={hasHomePrefix() ? query().slice(2) : query()} onInput={(event) => { const value = event.target.value; changeQuery(hasHomePrefix() && !isAbsolutePath(value) && !value.startsWith("~") ? "~/" + value : value); }} onKeyDown={handlePathKey} /></div>);
   const renderDirectoryPaletteCaption = () => (<div class="directory-palette-caption"><span>{loading() ? "Finding folders…" : fragment() ? results().length + " matching folders" : "Continue into a folder"}</span><span>Tab to complete · Enter to open</span></div>);
   const renderDirectoryPaletteResults = () => (<div id="directory-palette-results" class="directory-palette-results" role="listbox" aria-label="Matching folders" aria-busy={loading()}>
-      {!loading() && <Key each={results()} by={(path) => path}>{(path, index) => <div id={"directory-result-" + index()}  role="option" aria-selected={index() === active()} class="directory-palette-result" onMouseDown={(event) => event.preventDefault()} onMouseMove={() => setActive(index())} onClick={() => { if (!opening()) browse(path()); }}><Folder size={17} /><span>{folderName(path())}</span></div>}</Key>}
+      {!loading() && <Key each={results()} by={(path) => path}>{(path, index) => <div id={"directory-result-" + index()}  role="option" aria-selected={isActive(index())} class="directory-palette-result" onMouseDown={(event) => event.preventDefault()} onMouseMove={() => setActive(index())} onClick={() => { if (!opening()) browse(path()); }}><Folder size={17} /><span>{folderName(path())}</span></div>}</Key>}
       {!loading() && !results().length && <div class="directory-palette-empty">{error() ? "Check the path and try again." : fragment() ? "No matches. Keep typing a path, or press Enter to open it." : "No child folders. Press Enter to open this folder."}</div>}
       {loading() && <div class="directory-palette-empty" role="status">Loading folder suggestions…</div>}
     </div>);

@@ -319,7 +319,14 @@ export function SessionPanel(props: Props) {
       {renderGroupLoading()}
       {renderNewGroup()}
       {<Key each={sidebarEntries().filter((token) => groupsByToken().has(token))} by={(token) => token}>{(token) => {
-        const group = () => groupsByToken().get(token())!; const projectKey = group()[0]; const label = () => groupLabel(group()[1], group()[2], group()[3]); const collapsed = () => !normalizedQuery() && collapsedProjects().has(projectKey); const groupId = disclosureId(projectKey); const renderProjectHeading = () => {
+        const group = () => groupsByToken().get(token())!; const projectKey = group()[0]; const label = () => groupLabel(group()[1], group()[2], group()[3]); const collapsed = () => !normalizedQuery() && collapsedProjects().has(projectKey); const groupId = disclosureId(projectKey);
+        const visibleSessions = createMemo<SessionSummary[]>((previous = []) => {
+          if (!collapsed()) return group()[4];
+          if (!previous.length) return previous;
+          const retained = new Set(previous.map(sessionKey));
+          return group()[4].filter(session => retained.has(sessionKey(session)));
+        });
+        const renderProjectHeading = () => {
           const disclosureLabel = () => `${collapsed() ? "Expand" : "Collapse"} ${label()}`;
           const renderProjectLabel = () => {
             const renderGroupNameInput = () => (<input ref={element => { groupNameRef.current = element; }} disabled={groupSaving()} aria-label="Rename session group" aria-invalid={Boolean(groupDraftError())} aria-describedby={groupDraftError() ? "rename-group-error" : undefined} value={newGroupName() ?? ""} onInput={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onBlur={() => finishGroup()} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} />);
@@ -349,7 +356,7 @@ export function SessionPanel(props: Props) {
         };
         return [renderDropZone(token()), <section data-sidebar-token={token()} class={`project ${!normalizedQuery() ? "reorderable" : ""} ${draggedProject() === projectKey ? "dragging" : ""} ${dropTarget()?.projectKey === projectKey && !(dropTarget())!.sessionKey && (dropTarget())!.layoutBefore === undefined ? "drop-project" : ""}`} >
           {renderProjectHeading()}
-          <div id={groupId} hidden={collapsed()}><Key each={group()[4]} by={sessionKey}>{session => <SessionRow session={session()} projectKey={projectKey} />}</Key></div>
+          <div id={groupId} hidden={collapsed()}><Key each={visibleSessions()} by={sessionKey}>{session => <SessionRow session={session()} projectKey={projectKey} />}</Key></div>
         </section>];
       }}</Key>}
       {sidebarEntries().length > 0 && renderDropZone(null)}

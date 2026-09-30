@@ -15,7 +15,18 @@ export function reconcileSessionGroupProjects(storedGroups: { readonly state: Se
         .catch(() => undefined);
     }
   }, () => [storedGroups.change, storedGroups.state?.groups]);
-  const inferredWorktreeGroup = createMemo(() => ((storedGroups.state?.groups ?? []).find((group) => group.cwd && group.projectKind !== "worktree" && sessions().some((session) => (session.hostId ?? "local") === (group.hostId ?? "local") && session.cwd === group.cwd && session.projectKind === "worktree"))));
+  const worktrees = createMemo(() => {
+    const locations = new Map<string, Set<string>>();
+    for (const session of sessions()) {
+      if (session.projectKind !== "worktree") continue;
+      const host = session.hostId ?? "local";
+      const paths = locations.get(host) ?? new Set<string>();
+      paths.add(session.cwd);
+      locations.set(host, paths);
+    }
+    return locations;
+  });
+  const inferredWorktreeGroup = createMemo(() => ((storedGroups.state?.groups ?? []).find((group) => group.cwd && group.projectKind !== "worktree" && worktrees().get(group.hostId ?? "local")?.has(group.cwd))));
   createDependencyEffect(() => { const capturedInferredWorktreeGroup = inferredWorktreeGroup();
     if (!capturedInferredWorktreeGroup) return;
     void storedGroups.change({ type: "inspectProject", id: capturedInferredWorktreeGroup.id, projectKind: "worktree" }).catch(() => undefined);

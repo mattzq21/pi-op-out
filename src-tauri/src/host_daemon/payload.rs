@@ -1,4 +1,4 @@
-use super::protocol::{array, kind};
+use super::protocol::kind;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
@@ -65,7 +65,7 @@ fn defer_tool_result(value: &mut Value) {
     }
 }
 
-pub(super) fn branch(history: &Value) -> Vec<Value> {
+fn branch_entries(history: &Value) -> Vec<&Value> {
     let entries: HashMap<_, _> = history["entries"]
         .as_array()
         .into_iter()
@@ -82,7 +82,7 @@ pub(super) fn branch(history: &Value) -> Vec<Value> {
         let Some(entry) = entries.get(id) else {
             break;
         };
-        result.push((*entry).clone());
+        result.push(*entry);
         cursor = entry["parentId"].as_str();
     }
     result.reverse();
@@ -99,21 +99,22 @@ fn client_history(mut history: Value) -> Value {
             .filter(|part| kind(part) == "toolCall")
         {
             if let Some(id) = part["id"].as_str() {
-                inputs.insert(id.to_owned(), part["arguments"].clone());
+                inputs.insert(id, &part["arguments"]);
             }
         }
     }
-    let branch = branch(&history);
+    let branch = branch_entries(&history);
     let mut entries = Vec::new();
     let mut size = 0;
     let mut wire_size = 0;
-    for mut entry in branch.iter().rev().cloned() {
+    for entry in branch.iter().rev() {
+        let mut entry = (*entry).clone();
         if entry["message"]["role"] == "toolResult" {
             let message = &entry["message"];
             let input = inputs
                 .get(message["toolCallId"].as_str().unwrap_or_default())
-                .cloned()
-                .unwrap_or(Value::Null);
+                .copied()
+                .unwrap_or(&Value::Null);
             let patch = message["details"]["patch"].as_str().or_else(|| match message["toolName"].as_str() {
                 Some("edit") => message["details"]["diff"].as_str(),
                 Some("apply_patch") => input["patch"].as_str().or_else(|| input["input"].as_str()),
@@ -144,115 +145,96 @@ fn client_history(mut history: Value) -> Value {
 }
 
 pub(super) fn saved_tool_payload(entries: &[Value], id: &str) -> Option<Value> {
-    let mut input = None;
-    let mut result = None;
-    for entry in entries {
-        let message = &entry["message"];
-        if message["role"] == "toolResult" && message["toolCallId"] == id {
-            result = Some(message.clone());
-        }
-        if let Some(call) = message["content"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|part| kind(part) == "toolCall" && part["id"] == id)
-        {
-            input = call.get("arguments").cloned();
-        }
-    }
-    if result.is_none() && input.is_none() {
-        return None;
-    }
-    let mut result = result.unwrap_or_else(|| json!({"content":""}));
-    if let Some(input) = input {
-        result["toolInput"] = input;
-    }
+    let (input, result) = latest_tool_parts(entries, id);
+    if result.is_none() && input.is_none() { return None; }
+    let mut result = result.cloned().unwrap_or_else(|| json!({"content":""}));
+    if let Some(input) = input { result["toolInput"] = input.clone(); }
     Some(result)
 }
 
-pub(super) fn assistant_delta(message: &Value, event: &Value) -> Value {
-    let Some(index) = event["contentIndex"].as_u64().and_then(|index| usize::try_from(index).ok()) else {
-        return message.clone();
-    };
-    let mut content = if message["content"].is_array() {
-        array(message, "content")
-    } else if message["content"].is_string() {
-        vec![json!({"type":"text","text":message["content"]})]
-    } else {
-        Vec::new()
-    };
-    if index > 1_000_000 {
-        return message.clone();
+fn latest_tool_parts<'a>(entries: &'a [Value], id: &str) -> (Option<&'a Value>, Option<&'a Value>) {
+    let mut call = None;
+    let mut result = None;
+    for entry in entries.iter().rev() {
+        let message = &entry["message"];
+        if result.is_none() && message["role"] == "toolResult" && message["toolCallId"] == id {
+            result = Some(message);
+        }
+        if call.is_none() {
+            call = message["content"].as_array().into_iter().flatten().find(|part| kind(part) == "toolCall" && part["id"] == id);
+        }
+        if result.is_some() && call.is_some() { break; }
     }
-    content.resize_with(content.len().max(index + 1), || json!({"type":"text","text":""}));
-    let current = &content[index];
-    let next = if kind(event).starts_with("toolcall_") {
-        tool_delta(current, event, index)
-    } else {
-        text_delta(current, event)
-    };
-    let Some(next) = next else {
-        return message.clone();
-    };
-    content[index] = next;
-    let mut result = message.clone();
-    result["content"] = json!(content);
-    result
+    (call.and_then(|call| call.get("arguments")), result)
 }
 
-fn tool_delta(current: &Value, event: &Value, index: usize) -> Option<Value> {
-    let tool = if kind(current) == "toolCall" {
-        current.clone()
-    } else {
-        json!({"type":"toolCall","id":event.get("id").cloned().unwrap_or(json!(format!("tool-{index}"))),
-            "name":event.get("toolName").cloned().unwrap_or(json!("tool")),"arguments":{}})
+pub(super) fn assistant_delta(mut message: Value, event: &Value) -> Value {
+    let Some(index) = event["contentIndex"].as_u64().and_then(|index| usize::try_from(index).ok()) else {
+        return message;
     };
-    let mut next;
+    if index > 1_000_000 || !valid_delta(event) { return message; }
+    if !message["content"].is_array() {
+        let content = message["content"].take();
+        message["content"] = if content.is_string() { json!([{"type":"text","text":content}]) } else { json!([]) };
+    }
+    let content = message["content"].as_array_mut().unwrap();
+    content.resize_with(content.len().max(index + 1), || json!({"type":"text","text":""}));
+    if kind(event).starts_with("toolcall_") {
+        tool_delta(&mut content[index], event, index);
+    } else {
+        text_delta(&mut content[index], event);
+    }
+    message
+}
+
+fn valid_delta(event: &Value) -> bool {
+    match kind(event) {
+        "text_start" | "text_delta" | "text_end" | "thinking_start" | "thinking_delta" | "thinking_end" | "toolcall_start" | "toolcall_delta" => true,
+        "toolcall_end" => event["toolCall"].is_object(),
+        _ => false,
+    }
+}
+
+fn append_delta(current: &mut Value, field: &str, event: &Value) {
+    if !current[field].is_string() { current[field] = json!(""); }
+    if let Value::String(value) = &mut current[field] {
+        value.push_str(event["delta"].as_str().unwrap_or_default());
+    }
+}
+
+fn tool_delta(current: &mut Value, event: &Value, index: usize) {
+    if kind(current) != "toolCall" {
+        *current = json!({"type":"toolCall","id":event.get("id").cloned().unwrap_or(json!(format!("tool-{index}"))),
+            "name":event.get("toolName").cloned().unwrap_or(json!("tool")),"arguments":{}});
+    }
     match kind(event) {
         "toolcall_start" => {
-            next = json!({"type":"toolCall","id":event.get("id").unwrap_or(&tool["id"]),"name":event.get("toolName").unwrap_or(&tool["name"]),"arguments":{},"partialArgs":""})
+            *current = json!({"type":"toolCall","id":event.get("id").unwrap_or(&current["id"]),"name":event.get("toolName").unwrap_or(&current["name"]),"arguments":{},"partialArgs":""});
         }
-        "toolcall_delta" => {
-            next = tool;
-            next["partialArgs"] = json!(format!(
-                "{}{}",
-                next["partialArgs"].as_str().unwrap_or_default(),
-                event["delta"].as_str().unwrap_or_default()
-            ));
+        "toolcall_delta" => append_delta(current, "partialArgs", event),
+        "toolcall_end" => {
+            *current = event["toolCall"].clone();
+            current["type"] = json!("toolCall");
         }
-        "toolcall_end" if event["toolCall"].is_object() => {
-            next = event["toolCall"].clone();
-            next["type"] = json!("toolCall");
-        }
-        _ => return None,
+        _ => {}
     }
-    Some(next)
 }
 
-fn text_delta(current: &Value, event: &Value) -> Option<Value> {
-    let (field, action) = kind(event).split_once('_')?;
-    if !matches!(field, "text" | "thinking") {
-        return None;
-    }
-    let mut next = current.clone();
+fn text_delta(current: &mut Value, event: &Value) {
+    let (field, action) = kind(event).split_once('_').unwrap();
     match action {
-        "start" => next = json!({"type":field,field:""}),
+        "start" => *current = json!({"type":field,field:""}),
         "delta" => {
-            let before = if kind(current) == field {
-                current[field].as_str().unwrap_or_default()
-            } else {
-                ""
-            };
-            next["type"] = json!(field);
-            next[field] = json!(format!("{before}{}", event["delta"].as_str().unwrap_or_default()));
+            if kind(current) != field { current[field] = json!(""); }
+            current["type"] = json!(field);
+            append_delta(current, field, event);
         }
         "end" => {
-            next["type"] = json!(field);
-            next[field] = event.get("content").cloned().unwrap_or(json!(""));
+            current["type"] = json!(field);
+            current[field] = event.get("content").cloned().unwrap_or(json!(""));
         }
-        _ => return None,
+        _ => {}
     }
-    Some(next)
 }
 
 #[cfg(test)]

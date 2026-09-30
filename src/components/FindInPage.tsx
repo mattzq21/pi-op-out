@@ -5,6 +5,25 @@ import { ArrowDown, ArrowUp, Search, X } from "lucide-solid";
 
 type Match = { range: Range };
 type Box = { left: number; top: number; width: number; height: number; active: boolean };
+type Bounds = { left: number; top: number; right: number; bottom: number };
+
+function sharedTextMatch(matches: Match[], index: number) {
+  const range = matches[index].range;
+  return range.startContainer === range.endContainer && range.startContainer.nodeType === Node.TEXT_NODE
+    && [matches[index - 1], matches[index + 1]].some(match => match?.range.startContainer === range.startContainer && match.range.endContainer === range.startContainer);
+}
+
+function textOutside(range: Range, clip: Bounds, cache: Map<Node, DOMRect>) {
+  const node = range.startContainer;
+  let bounds = cache.get(node);
+  if (!bounds) {
+    const entire = document.createRange();
+    entire.selectNodeContents(node);
+    bounds = entire.getBoundingClientRect();
+    cache.set(node, bounds);
+  }
+  return bounds.right <= clip.left || bounds.left >= clip.right || bounds.bottom <= clip.top || bounds.top >= clip.bottom;
+}
 
 function findMatches(root: HTMLElement, query: string): Match[] {
   if (!query) return [];
@@ -13,8 +32,14 @@ function findMatches(root: HTMLElement, query: string): Match[] {
   const matches: Match[] = [];
   let block: Element | null = null;
   let text = "";
+  let trailingSpace = false;
   let offsets: Array<{ node: Text; start: number; end: number }> = [];
+  let pending: Array<{ node: Text; collapse: boolean }> = [];
   const flush = () => {
+    const candidate = pattern.test(pending.map(({ node }) => node.data).join(""));
+    pattern.lastIndex = 0;
+    if (candidate) pending.forEach(({ node, collapse }) => appendNode(node, collapse));
+    pending = [];
     for (const found of text.matchAll(pattern)) {
       const start = found.index!, end = start + found[0].length;
       const first = offsets[start], last = offsets[end - 1];
@@ -24,13 +49,15 @@ function findMatches(root: HTMLElement, query: string): Match[] {
       range.setEnd(last.node, last.end);
       if (range.getClientRects().length) matches.push({ range });
     }
-    text = ""; offsets = [];
+    text = ""; trailingSpace = false; offsets = [];
   };
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const appendNode = (node: Text, collapse: boolean) => {
-    for (let i = 0; i < node.data.length; i++) {
-      const char = collapse && /[ \t\r\n\f]/.test(node.data[i]) ? " " : node.data[i];
-      if (collapse && char === " " && text.endsWith(" ")) { if (offsets[offsets.length - 1].node === node) offsets[offsets.length - 1].end = i + 1; continue; }
+    const data = node.data;
+    for (let i = 0; i < data.length; i++) {
+      const char = collapse && /[ \t\r\n\f]/.test(data[i]) ? " " : data[i];
+      if (collapse && char === " " && trailingSpace) { if (offsets[offsets.length - 1].node === node) offsets[offsets.length - 1].end = i + 1; continue; }
+      trailingSpace = char === " ";
       text += char; offsets.push({ node, start: i, end: i + 1 });
     }
   };
@@ -42,7 +69,7 @@ function findMatches(root: HTMLElement, query: string): Match[] {
     const nextBlock = parent.closest("p, pre, li, h1, h2, h3, h4, h5, h6, td, th, summary, button, label, .message-body") ?? parent;
     if (block !== nextBlock) { flush(); block = nextBlock; }
     const collapse = !["pre", "pre-wrap", "break-spaces"].includes(style.whiteSpace);
-    appendNode(node, collapse);
+    pending.push({ node, collapse });
   }
   flush();
   return matches;
@@ -50,6 +77,28 @@ function findMatches(root: HTMLElement, query: string): Match[] {
 
 function composerBounds(element: Element) {
   return element.classList.contains("messages") ? element.closest(".chat-shell")?.querySelector(".composer-stack")?.getBoundingClientRect() : undefined;
+}
+
+function clippingBounds() {
+  const viewport = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+  const cache = new Map<Element, typeof viewport>();
+  const read = (element: Element | null): typeof viewport => {
+    if (!element) return viewport;
+    const cached = cache.get(element);
+    if (cached) return cached;
+    const result = { ...read(element.parentElement) };
+    const style = getComputedStyle(element);
+    if (/auto|scroll|hidden|clip/.test(style.overflowX + style.overflowY)) {
+      const bounds = element.getBoundingClientRect();
+      if (style.overflowX !== "visible") { result.left = Math.max(result.left, bounds.left); result.right = Math.min(result.right, bounds.right); }
+      if (style.overflowY !== "visible") { result.top = Math.max(result.top, bounds.top); result.bottom = Math.min(result.bottom, bounds.bottom); }
+      const composer = composerBounds(element);
+      if (composer) result.bottom = Math.min(result.bottom, composer.top);
+    }
+    cache.set(element, result);
+    return result;
+  };
+  return read;
 }
 
 function reveal(range: Range) {
@@ -93,6 +142,7 @@ export function FindInPage(componentProps: { selector: string; scopeKey: string;
   const input = createRef<HTMLInputElement>(null);
   const previousFocus = createRef<HTMLElement | null>(null);
   const selected = createRef<Match | undefined>(undefined);
+  let scheduleDraw = () => {};
   const close = () => {
     setOpen(false);
     if (previousFocus.current?.isConnected) previousFocus.current.focus({ preventScroll: true });
@@ -170,19 +220,12 @@ export function FindInPage(componentProps: { selector: string; scopeKey: string;
       const bounds = document.querySelector(capturedSelector1)?.getBoundingClientRect();
       if (bounds) setPlacement({ top: bounds.top + 8, right: window.innerWidth - bounds.right + 8, maxWidth: Math.max(0, bounds.width - 16) });
       const next: Box[] = [];
+      const clip = clippingBounds();
+      const textBounds = new Map<Node, DOMRect>();
       capturedMatches.forEach(({ range }, matchIndex) => {
         if (!range.startContainer.isConnected) return;
-        let left = 0, top = 0, right = window.innerWidth, bottom = window.innerHeight;
-        for (let parent = range.startContainer.parentElement; parent; parent = parent.parentElement) {
-          const style = getComputedStyle(parent);
-          if (/auto|scroll|hidden|clip/.test(style.overflowX + style.overflowY)) {
-            const bounds = parent.getBoundingClientRect();
-            if (style.overflowX !== "visible") { left = Math.max(left, bounds.left); right = Math.min(right, bounds.right); }
-            if (style.overflowY !== "visible") { top = Math.max(top, bounds.top); bottom = Math.min(bottom, bounds.bottom); }
-            const composer = composerBounds(parent);
-            if (composer) bottom = Math.min(bottom, composer.top);
-          }
-        }
+        const { left, top, right, bottom } = clip(range.startContainer.parentElement);
+        if (sharedTextMatch(capturedMatches, matchIndex) && textOutside(range, { left, top, right, bottom }, textBounds)) return;
         for (const rect of range.getClientRects()) {
           const x = Math.max(left, rect.left), y = Math.max(top, rect.top);
           const width = Math.min(right, rect.right) - x, height = Math.min(bottom, rect.bottom) - y;
@@ -191,17 +234,27 @@ export function FindInPage(componentProps: { selector: string; scopeKey: string;
       });
       setBoxes(next);
     };
-    const schedule = () => { if (!frame) frame = requestAnimationFrame(draw); };
+    scheduleDraw = () => { if (!frame) frame = requestAnimationFrame(draw); };
     draw();
-    document.addEventListener("scroll", schedule, true);
+    return () => { cancelAnimationFrame(frame); scheduleDraw = () => {}; };
+  }, () => [open(), matches(), index(), componentProps.selector, componentProps.scopeKey, (componentProps.enabled === undefined ? true : componentProps.enabled)]);
+
+  createDependencyEffect(() => {
+    if (!open() || componentProps.enabled === false) return;
+    const root = document.querySelector<HTMLElement>(componentProps.selector);
+    const schedule = () => scheduleDraw();
+    const onScroll = (event: Event) => {
+      const target = event.target;
+      if (!root || !(target instanceof Node) || root.contains(target) || target.contains(root)) schedule();
+    };
+    document.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", schedule);
     const observer = new ResizeObserver(schedule);
-    const root = document.querySelector<HTMLElement>(capturedSelector1);
     if (root) observer.observe(root);
     const composer = root?.querySelector(".composer-stack");
     if (composer) observer.observe(composer);
-    return () => { cancelAnimationFrame(frame); observer.disconnect(); document.removeEventListener("scroll", schedule, true); window.removeEventListener("resize", schedule); };
-  }, () => [open(), matches(), index(), componentProps.selector, componentProps.scopeKey, (componentProps.enabled === undefined ? true : componentProps.enabled)]);
+    return () => { observer.disconnect(); document.removeEventListener("scroll", onScroll, true); window.removeEventListener("resize", schedule); };
+  }, () => [open(), componentProps.selector, componentProps.scopeKey, componentProps.enabled]);
 
   return <>{!open() || !(componentProps.enabled === undefined ? true : componentProps.enabled) ? (null) : (<>
     <div class="find-highlights" aria-hidden="true">{<Index each={boxes()}>{(box, _i) => <span  class={box().active ? "active" : undefined} style={{ left: cssPixels(box().left), top: cssPixels(box().top), width: cssPixels(box().width), height: cssPixels(box().height) }} />}</Index>}</div>

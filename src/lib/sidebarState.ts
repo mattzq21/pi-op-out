@@ -67,6 +67,7 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   });
   const storedGroups = projects ?? useSessionProjects(sessions);
   const savedGroups = createMemo(() => storedGroups.state?.groups ?? []);
+  const savedGroupsById = createMemo(() => new Map(savedGroups().map(group => [group.id, group] as const).reverse()));
   const customGroups = createMemo(() => savedGroups().filter(group => !group.cwd && group.id !== DIRLESS_KEY));
   const [collapsedProjects, setCollapsedProjects] = createSignal(savedGroupKeys(COLLAPSED_PROJECTS_KEY));
   const [sessionOrders, setSessionOrders] = createSignal<Record<string, string[]>>(savedSessionOrders());
@@ -139,13 +140,13 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     return details;
   });
   const groupBranchBadge = (id: string) => {
-    const group = storedGroups.state?.groups.find((item) => item.id === id);
+    const group = savedGroupsById().get(id);
     const session = branchGroupDetails().get(id);
     const branch = group?.branch ?? (session && firstOrderBranch(session));
     return branch ? { branch, appearance: session?.branchAppearance ?? group?.branchAppearance } : undefined;
   };
   const groupDestination = (id: string) => {
-    const group = storedGroups.state?.groups.find((item) => item.id === id);
+    const group = savedGroupsById().get(id);
     const session = branchGroupDetails().get(id);
     return group && session && !group.branch ? { ...group, cwd: session.worktreeRoot ?? session.cwd, projectKind: session.projectKind } : group;
   };
@@ -160,14 +161,14 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
     if (session.cwdExists === false) return DIRLESS_KEY;
     const destination = storedGroups.state?.assignments[sessionKey(session)];
     if (!destination) return RECENT_KEY;
-    const group = (storedGroups.state)!?.groups.find((item) => item.id === destination);
+    const group = savedGroupsById().get(destination);
     return group?.cwd && isTemporaryChatCwd(group.cwd) ? RECENT_KEY : destination;
   };
   const filtered = createMemo(() => (sessions().filter((session) => {
     if (!storedGroups.state) return false;
     if (!normalizedQuery()) return true;
     const location = visualProjectKey(session);
-    const groupName = location === DIRLESS_KEY ? "Dirless" : location === RECENT_KEY ? RECENT_LABEL : (storedGroups.state)!?.groups.find((group) => group.id === location)?.name ?? "";
+    const groupName = location === DIRLESS_KEY ? "Dirless" : location === RECENT_KEY ? RECENT_LABEL : savedGroupsById().get(location)?.name ?? "";
     return `${session.name} ${session.project} ${projectName(session)} ${session.preview} ${session.hostName ?? session.hostId ?? "Local"} ${groupName}`.toLowerCase().includes(normalizedQuery());
   })));
   const groupedSessions = createMemo(() => (filtered().reduce<Record<string, SessionSummary[]>>((result, session) => {
@@ -212,8 +213,10 @@ export function createSidebarState(source: Accessor<SessionSummary[]>, query: Ac
   const fixedTokens = [groupLayoutToken(RECENT_KEY), groupLayoutToken(DIRLESS_KEY)];
   const orderedSidebarEntries = (entries: string[]) => {
     const availableEntries = new Set(entries);
-    const addedEntries = entries.filter((entry) => !sidebarOrder().includes(entry));
-    return [...addedEntries.filter((entry) => !fixedTokens.includes(entry)), ...sidebarOrder().filter((entry) => !fixedTokens.includes(entry) && availableEntries.has(entry)), ...fixedTokens.filter(entry => availableEntries.has(entry))];
+    const order = sidebarOrder();
+    const knownEntries = new Set(order);
+    const addedEntries = entries.filter((entry) => !knownEntries.has(entry));
+    return [...addedEntries.filter((entry) => !fixedTokens.includes(entry)), ...order.filter((entry) => !fixedTokens.includes(entry) && availableEntries.has(entry)), ...fixedTokens.filter(entry => availableEntries.has(entry))];
   };
   const sidebarEntries = createMemo(() => (orderedSidebarEntries(defaultSidebarEntries())));
   const saveGroup = (name: string, id?: string) => storedGroups.change(id ? { type: "rename", id, name } : { type: "create", name });

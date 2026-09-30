@@ -53,8 +53,8 @@ export class DiffParser {
     this.inHunk = false; return true;
   }
 
-  private prepareFile(text: string, next?: string) {
-    const pairedHeader = !this.codex && text.startsWith('--- ') && next?.startsWith('+++ ');
+  private prepareFile(text: string, nextIsNewFile: boolean) {
+    const pairedHeader = !this.codex && text.startsWith('--- ') && nextIsNewFile;
     if (pairedHeader && this.finishedHunk()) {
       this.prepareUnifiedFile();
     }
@@ -132,17 +132,24 @@ export class DiffParser {
     if (text && !['index ', '--- ', '+++ '].some(prefix => text.startsWith(prefix))) this.pushLine({ kind: 'meta', text });
   }
 
-  private consume(text: string, next?: string) {
+  private consume(text: string, nextIsNewFile: boolean) {
     if (this.gitHeader(text) || this.codexHeader(text)) return;
-    this.prepareFile(text, next);
+    this.prepareFile(text, nextIsNewFile);
     if (!this.file) return;
     if (this.filePath(text) || this.hunkHeader(text) || this.numberedLine(text) || this.changeLine(text)) return;
     this.metadata(text);
   }
 
   parse(patch: string) {
-    const bounded = patch.slice(0, MAX_INPUT_CHARS), lines = bounded.split('\n');
-    for (let index = 0; index < lines.length; index++) this.consume(lines[index], lines[index + 1]);
+    const bounded = patch.slice(0, MAX_INPUT_CHARS);
+    for (let start = 0; start < bounded.length;) {
+      const newline = bounded.indexOf('\n', start);
+      const end = newline < 0 ? bounded.length : newline;
+      const text = bounded.slice(start, end);
+      if (text) this.consume(text, text.startsWith('--- ') && bounded.startsWith('+++ ', end + 1));
+      start = end + 1;
+      while (bounded.charCodeAt(start) === 10) start++;
+    }
     if (patch.length > bounded.length || this.renderedLines >= MAX_LINES) this.files.at(-1)?.lines.push({ kind: 'meta', text: 'Diff display truncated for performance.' });
     return this.files;
   }

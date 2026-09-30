@@ -4,6 +4,20 @@ let renderer: Promise<typeof import("mermaid")> | undefined;
 let queue = Promise.resolve();
 let sequence = 0;
 const cache = new Map<string, string>();
+const MAX_CACHE_CHARACTERS = 3_200_000;
+let cacheCharacters = 0;
+
+function cacheDiagram(key: string, svg: string) {
+  const characters = key.length + svg.length;
+  if (characters > MAX_CACHE_CHARACTERS) return;
+  while (cache.size >= 16 || cacheCharacters + characters > MAX_CACHE_CHARACTERS) {
+    const oldest = cache.keys().next().value!;
+    cacheCharacters -= oldest.length + cache.get(oldest)!.length;
+    cache.delete(oldest);
+  }
+  cache.set(key, svg);
+  cacheCharacters += characters;
+}
 
 function cleanSvg(svg: string) {
   const clean = DOMPurify.sanitize(svg, {
@@ -53,10 +67,7 @@ export function renderDiagram(source: string, dark: boolean, current: () => bool
     const cached = cache.get(key);
     if (cached) return instanceSvg(cached);
     const svg = await render(source, dark);
-    if (svg.length < 200_000) {
-      cache.set(key, svg);
-      if (cache.size > 16) cache.delete(cache.keys().next().value!);
-    }
+    cacheDiagram(key, svg);
     return instanceSvg(svg);
   });
   queue = result.then(() => undefined, () => undefined);

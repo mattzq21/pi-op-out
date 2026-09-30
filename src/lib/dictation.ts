@@ -1,6 +1,7 @@
 import { createSignal, onCleanup, onMount } from "solid-js";
 import { invoke, listen } from "./platform";
 import type { DictationVad } from "./dictationVad";
+import { encodeBase64 } from "./base64";
 
 type Configuration = { enabled: boolean; loading: boolean };
 const MAX_SECONDS = 120;
@@ -59,9 +60,7 @@ function wavAudio(chunks: Float32Array[], sampleRate: number) {
     const sample = Math.max(-1, Math.min(1, sum / (end - start)));
     view.setInt16(44 + i * 2, Math.round(sample * (sample < 0 ? 32768 : 32767)), true);
   }
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
-  return btoa(binary);
+  return encodeBase64(bytes);
 }
 
 export class DictationRecording {

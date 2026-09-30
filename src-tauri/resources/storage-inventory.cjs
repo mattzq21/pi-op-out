@@ -155,16 +155,24 @@ async function archiveDetails(file, header, explicitName, firstPrompt, malformed
   };
 }
 
+const worktreeChecks = new Map();
+function currentWorktree(cwd) {
+  if (!worktreeChecks.has(cwd)) worktreeChecks.set(cwd, (async () => {
+    try {
+      const root = (await git(cwd, ['rev-parse', '--show-toplevel'])).trim();
+      const common = await fs.realpath((await git(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim());
+      const own = await fs.realpath((await git(root, ['rev-parse', '--absolute-git-dir'])).trim());
+      return own !== common ? root : null;
+    } catch { return undefined; }
+  })());
+  return worktreeChecks.get(cwd);
+}
+
 async function archivedWorktree(header) {
   if (!validSessionHeader(header)) return {};
-  try {
-    const root = (await git(header.cwd, ['rev-parse', '--show-toplevel'])).trim();
-    const common = await fs.realpath((await git(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).trim());
-    const own = await fs.realpath((await git(root, ['rev-parse', '--absolute-git-dir'])).trim());
-    return own !== common ? { worktreePath: root } : {};
-  } catch {
-    return restorableWorktree(header.worktreeRestore);
-  }
+  const current = await currentWorktree(header.cwd);
+  if (current === undefined) return restorableWorktree(header.worktreeRestore);
+  return current ? { worktreePath: current } : {};
 }
 
 async function restorableWorktree(saved) {
@@ -276,7 +284,8 @@ async function checkpointStorage(repositoryRoots) {
       const snapshots = refs.filter((ref) => ref === "refs/pi-session-snapshots" || ref.startsWith("refs/pi-session-snapshots/"));
       if (!snapshots.length) continue;
       itemCount += snapshots.length;
-      const ordinary = refs.filter((ref) => !snapshots.includes(ref)).map((ref) => `^${ref}`);
+      const snapshotRefs = new Set(snapshots);
+      const ordinary = refs.filter((ref) => !snapshotRefs.has(ref)).map((ref) => `^${ref}`);
       try { await git(cwd, ["rev-parse", "--verify", "HEAD"]); ordinary.push("^HEAD"); } catch { }
       const revisions = `${snapshots.join("\n")}\n${ordinary.join("\n")}\n`;
       const objects = [...new Set((await git(cwd, ["rev-list", "--objects", "--stdin"], revisions)).trim().split("\n").filter(Boolean).map((line) => line.split(" ", 1)[0]))];

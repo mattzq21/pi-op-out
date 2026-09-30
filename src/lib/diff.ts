@@ -43,11 +43,17 @@ function intralineParts(before: string, after: string): [DiffPart[], DiffPart[]]
   return [leftParts, rightParts];
 }
 
-function similarity(left: string, right: string) {
+function tokenCounts(text: string) {
+  const items = tokens(text);
+  const counts = new Map<string, number>();
+  for (const token of items) counts.set(token, (counts.get(token) ?? 0) + 1);
+  return { length: items.length, counts };
+}
+
+function similarity(left: string, right: string, a: ReturnType<typeof tokenCounts>, b: ReturnType<typeof tokenCounts>) {
   if (left === right) return 1;
-  const a = tokens(left); const b = tokens(right); if (!a.length || !b.length) return 0;
-  const counts = new Map<string, number>(); for (const token of a) counts.set(token, (counts.get(token) ?? 0) + 1);
-  let common = 0; for (const token of b) { const count = counts.get(token) ?? 0; if (count > 0) { common += 1; counts.set(token, count - 1); } }
+  if (!a.length || !b.length) return 0;
+  let common = 0; for (const [token, count] of a.counts) common += Math.min(count, b.counts.get(token) ?? 0);
   return 2 * common / (a.length + b.length);
 }
 
@@ -64,7 +70,8 @@ function linePairTable(scores: number[][], width: number) {
 function annotateBlock(block: DiffLine[]) {
   const deleted = block.filter((line) => line.kind === "delete"); const added = block.filter((line) => line.kind === "add");
   if (!canAnnotate(deleted, added)) return;
-  const scores = deleted.map((line) => added.map((candidate) => similarity(line.text, candidate.text)));
+  const deletedTokens = deleted.map(line => tokenCounts(line.text)); const addedTokens = added.map(line => tokenCounts(line.text));
+  const scores = deleted.map((line, i) => added.map((candidate, j) => similarity(line.text, candidate.text, deletedTokens[i], addedTokens[j])));
   const table = linePairTable(scores, added.length);
   let i = 0; let j = 0;
   while (i < deleted.length && j < added.length) {

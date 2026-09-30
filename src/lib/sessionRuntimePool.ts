@@ -83,8 +83,12 @@ export class SessionRuntimePool {
   }
 
   private publishSessionStates() {
-    const running = new Set([...this.sessions].filter(([, transport]) => this.runningTransports.has(transport)).map(([key]) => key));
-    const unseen = new Set([...this.sessions].filter(([, transport]) => this.unseenTransports.has(transport)).map(([key]) => key));
+    const running = new Set<string>();
+    const unseen = new Set<string>();
+    for (const [key, transport] of this.sessions) {
+      if (this.runningTransports.has(transport)) running.add(key);
+      if (this.unseenTransports.has(transport)) unseen.add(key);
+    }
     const runningChanged = running.size !== this.runningSessionKeys.size || [...running].some((key) => !this.runningSessionKeys.has(key));
     const unseenChanged = unseen.size !== this.unseenSessionKeys.size || [...unseen].some((key) => !this.unseenSessionKeys.has(key));
     if (!runningChanged && !unseenChanged) return;
@@ -148,10 +152,13 @@ export class SessionRuntimePool {
   }
 
   private updateActivity(transport: NativeTransport, event: RpcEvent) {
+    const running = this.runningTransports.size;
+    const unseen = this.unseenTransports.size;
     if (event.type === "runtime_presence") { if (event.isStreaming) this.runningTransports.add(transport); else this.runningTransports.delete(transport); }
     if (event.type === "agent_start" || startsUserMessage(event)) { this.runningTransports.add(transport); this.unseenTransports.delete(transport); }
     if (event.type === "agent_settled") { this.runningTransports.delete(transport); if (transport !== this.activeTransport && !this.interactiveTransports.has(transport)) this.unseenTransports.add(transport); }
     if (event.type === "disconnected") { this.runningTransports.delete(transport); }
+    return running !== this.runningTransports.size || unseen !== this.unseenTransports.size;
   }
 
   create(target?: NativeConnectionTarget) {
@@ -161,8 +168,7 @@ export class SessionRuntimePool {
       this.retainMcpSession(transport, event);
       this.retainUserSession(transport, event);
       this.captureDiffEvent(transport, event);
-      this.updateActivity(transport, event);
-      this.publishSessionStates();
+      if (this.updateActivity(transport, event)) this.publishSessionStates();
       if (event.type === "settings_pending" || event.type === "settings_applied") this.notify();
     });
     return transport;
