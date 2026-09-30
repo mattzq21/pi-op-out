@@ -101,7 +101,7 @@ export function registerGoals(pi: ExtensionAPI) {
   pi.on("session_compact_failed", (event, ctx) => {
     if (event.errorMessage && state.goal?.status === "active") state.setStatus(ctx, "blocked");
   });
-  pi.on("agent_end", (_event, ctx) => { state.flushClock(true); state.save(ctx); });
+  pi.on("agent_end", (_event, ctx) => { state.flushClock(); state.save(ctx); });
 
   const stopForOutcome = (event: AgentBeforeSettleEvent, ctx: ExtensionContext) => {
     if (event.outcome === "completed") return false;
