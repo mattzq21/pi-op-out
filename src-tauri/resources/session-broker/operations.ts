@@ -10,16 +10,17 @@ export function registerForkAndForget(pi: ExtensionAPI) {
     description: "Branch after a completed response",
     async handler(args, ctx) {
       let id: string | undefined;
+      let responseContext: ExtensionContext = ctx;
       try {
         const request = JSON.parse(args) as { id?: string; entryId?: string };
         id = request.id;
         if (!id || ctx.mode !== "rpc" || typeof request.entryId !== "string") throw new Error("Invalid branch request");
         const fork = await forkConversation(ctx, { entryId: request.entryId }, async () => { throw new Error("Unexpected worktree request"); });
-        const result = await ctx.switchSession(fork.sessionPath);
-        ctx.ui.setStatus(statusKey, `json:${JSON.stringify({ type: "response", id, success: true, data: { cancelled: result.cancelled } })}`);
+        const result = await ctx.switchSession(fork.sessionPath, { withSession: async next => { responseContext = next; } });
+        responseContext.ui.setStatus(statusKey, `json:${JSON.stringify({ type: "response", id, success: true, data: { cancelled: result.cancelled } })}`);
       } catch (error) {
-        if (id) ctx.ui.setStatus(statusKey, `json:${JSON.stringify({ type: "response", id, success: false, error: error instanceof Error ? error.message : String(error) })}`);
-        else ctx.ui.notify(String(error), "error");
+        if (id) responseContext.ui.setStatus(statusKey, `json:${JSON.stringify({ type: "response", id, success: false, error: error instanceof Error ? error.message : String(error) })}`);
+        else responseContext.ui.notify(String(error), "error");
       }
     },
   });
