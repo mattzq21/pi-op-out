@@ -1,6 +1,5 @@
 .goal-bar { width: min(708px, calc(100% - 96px)); margin: 0 auto 4px; border: 1px solid var(--line); border-radius: 18px; background: color-mix(in srgb, var(--paper) 92%, var(--ink)); color: var(--muted); font: 13px/1.4 "DM Sans", sans-serif; overflow: hidden; }
 .goal-bar-row { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 5px 10px; }
-.goal-bar-icon { flex: none; margin-right: 2px; }
 .goal-bar-status { flex: none; color: var(--ink); }
 .goal-bar-objective { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .goal-bar-time { flex: none; white-space: nowrap; margin-inline: 3px; font-variant-numeric: tabular-nums; }

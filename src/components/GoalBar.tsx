@@ -1,5 +1,5 @@
 import { createMemo, createSignal, Show } from "solid-js";
-import { CirclePause, CirclePlay, Pencil, Target, Trash2 } from "lucide-solid";
+import { CirclePause, CirclePlay, Pencil, Trash2 } from "lucide-solid";
 import "./goal-bar.css";
 
 type Goal = { objective: string; status: string; tokensUsed: number; tokenBudget: number | null; elapsedMs: number };
@@ -36,8 +36,7 @@ export function GoalBar(props: { value?: string; disabled: boolean; onCommand: (
   };
   return <Show when={goal()}>{current => <section class="goal-bar" aria-label="Conversation goal">
     <div class="goal-bar-row">
-      <Target size={14} class="goal-bar-icon" />
-      <span class="goal-bar-status">{labels[current().status]}</span>
+      <span class="goal-bar-status" title={labels[current().status]}>/goal</span>
       <span class="goal-bar-objective" title={current().objective}>{current().objective}</span>
       <span class="goal-bar-time" title="Active time">{duration(current().elapsedMs)}</span>
       <button type="button" title="Clear goal" aria-label="Clear goal" disabled={props.disabled || busy()} onClick={() => void run("clear")}><Trash2 size={14} /></button>
