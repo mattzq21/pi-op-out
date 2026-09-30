@@ -1,6 +1,4 @@
-import { builtinRules } from 'eslint/use-at-your-own-risk';
 import noComments from './oxlint-no-comments.mjs';
-import daemonScope from './oxlint-daemon-scope.mjs';
 
 const noAssertions = {
   meta: {
@@ -20,7 +18,5 @@ export default {
   rules: {
     'no-comments': noComments,
     'no-assertions': noAssertions,
-    'daemon-shared-bindings': daemonScope,
-    'daemon-no-unused-vars': builtinRules.get('no-unused-vars'),
   },
 };

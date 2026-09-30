@@ -50,15 +50,5 @@
     "anti-slop/no-widen-then-assert": "error",
     "anti-slop/require-readable-spacing": "error",
     "anti-slop/require-safety-comment-for-type-assertion": "off"
-  },
-  "overrides": [
-    {
-      "files": ["extensions/piop-runtime-settings/provider-accounts.mjs", "src-tauri/resources/provider-sdk.mjs"],
-      "rules": {
-        "no-unused-vars": "off",
-        "local/daemon-shared-bindings": "error",
-        "local/daemon-no-unused-vars": ["error", { "args": "all", "argsIgnorePattern": "^_", "caughtErrors": "all", "caughtErrorsIgnorePattern": "^_", "ignoreRestSiblings": true }]
-      }
-    }
-  ]
+  }
 }
