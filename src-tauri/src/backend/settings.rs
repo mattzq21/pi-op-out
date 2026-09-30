@@ -2,6 +2,7 @@ fn default_agent() -> String { "general".into() }
 
 fn default_settings() -> AppSettings {
     AppSettings {
+        dictation_model_path: None,
         worktree_setup_scripts: vec![],
         default_agent: default_agent(),
         default_fast_mode: false,

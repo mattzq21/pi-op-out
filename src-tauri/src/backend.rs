@@ -412,6 +412,8 @@ type GitDiffSnapshots = HashMap<String, GitDiffSnapshot>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AppSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dictation_model_path: Option<String>,
     #[serde(default)]
     worktree_setup_scripts: Vec<WorktreeSetupScript>,
     #[serde(default = "default_agent")]

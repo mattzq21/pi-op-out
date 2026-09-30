@@ -34,15 +34,14 @@ fn publish(app: &AppHandle) {
 
 pub(crate) fn start(app: AppHandle) {
     tokio::spawn(async move {
-        let found = tokio::task::spawn_blocking(candidates).await;
-        if let Ok(Ok((executables, models))) = found {
-            'search: for executable in executables {
-                for model in &models {
-                    let engine = Engine { executable: executable.clone(), model: model.clone() };
-                    if transcribe(&engine, &silent_wav(), Duration::from_secs(90)).await.is_ok() {
-                        if let Ok(mut current) = app.state::<DictationRuntime>().engine.lock() { *current = Some(engine); }
-                        break 'search;
-                    }
+        let settings_app = app.clone();
+        let found = tokio::task::spawn_blocking(move || candidates(&settings_app)).await;
+        if let Ok(Ok((executables, model))) = found {
+            for executable in executables {
+                let engine = Engine { executable, model: model.clone() };
+                if transcribe(&engine, &silent_wav(), Duration::from_secs(90)).await.is_ok() {
+                    if let Ok(mut current) = app.state::<DictationRuntime>().engine.lock() { *current = Some(engine); }
+                    break;
                 }
             }
         }
@@ -51,8 +50,12 @@ pub(crate) fn start(app: AppHandle) {
     });
 }
 
-fn candidates() -> Result<(Vec<PathBuf>, Vec<PathBuf>), String> {
+fn candidates(app: &AppHandle) -> Result<(Vec<PathBuf>, PathBuf), String> {
     let home = home_dir()?;
+    let settings = read_settings_at(&settings_path(app)?)?;
+    let configured = settings.dictation_model_path.filter(|path| !path.trim().is_empty()).ok_or("No dictation model configured")?;
+    let model = configured.strip_prefix("~/").map(|path| home.join(path)).unwrap_or_else(|| PathBuf::from(&configured));
+    if !model.is_file() { return Err("Dictation model is not a file".into()); }
     let name = format!("transcribe-cli{}", std::env::consts::EXE_SUFFIX);
     let mut executables = Vec::new();
     let mut directories: Vec<PathBuf> = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
@@ -66,13 +69,7 @@ fn candidates() -> Result<(Vec<PathBuf>, Vec<PathBuf>), String> {
     }
     let mut seen = HashSet::new();
     executables.retain(|path| path.is_file() && path.canonicalize().is_ok_and(|path| seen.insert(path)));
-    if executables.is_empty() { return Ok((executables, Vec::new())); }
-    let mut models: Vec<_> = WalkDir::new(home.join("Models/STT")).follow_links(true).max_depth(8).into_iter().filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_file() && entry.path().extension().and_then(|ext| ext.to_str()).is_some_and(|ext| ext.eq_ignore_ascii_case("gguf") || ext.eq_ignore_ascii_case("bin")))
-        .filter_map(|entry| entry.metadata().ok().map(|metadata| (metadata.len(), entry.into_path())))
-        .filter(|(size, _)| *size > 0).collect();
-    models.sort();
-    Ok((executables, models.into_iter().map(|(_, path)| path).collect()))
+    Ok((executables, model))
 }
 
 struct AudioFiles(PathBuf);
@@ -143,5 +140,10 @@ pub(crate) async fn dictate(app: AppHandle, audio: String) -> Result<Value, Stri
     let runtime = app.state::<DictationRuntime>();
     let _permit = runtime.busy.try_acquire().map_err(|_| "Dictation is busy. Try again shortly.")?;
     let engine = runtime.engine.lock().map_err(|_| "Dictation is unavailable")?.clone().ok_or("Dictation is unavailable")?;
-    transcribe(&engine, &wav, Duration::from_secs(180)).await.map(|text| json!({"text":text}))
+    let result = transcribe(&engine, &wav, Duration::from_secs(180)).await;
+    if result.is_err() {
+        if let Ok(mut current) = runtime.engine.lock() { *current = None; }
+        publish(&app);
+    }
+    result.map(|text| json!({"text":text}))
 }
