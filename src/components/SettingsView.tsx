@@ -29,10 +29,7 @@ export const sections = [
 ];
 export const clientSections = new Set<Section>(["models", "keybinds", "connections"]);
 const isBuiltInAgent = (agent: AgentProfile) => agent.name === "general";
-const firstEditableAgent = (agents: AgentProfile[]) => {
-  const editableIndex = agents.findIndex((agent) => !isBuiltInAgent(agent));
-  return editableIndex >= 0 ? editableIndex : agents.length ? 0 : -1;
-};
+const firstAgentIndex = (agents: AgentProfile[]) => agents.length ? 0 : -1;
 
 function stableSnapshot(value: unknown) {
   const stable = (value: unknown): unknown => Array.isArray(value) ? value.map(stable) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, stable(item)])) : value;
@@ -94,7 +91,7 @@ export function SettingsView(props: SettingsViewProps) {
   const capabilitiesBeforeSave = createRef({ configuration: settingsProps().incomingConfiguration });
   createComputed(() => { if (!saving()) capabilitiesBeforeSave.current = { configuration: settingsProps().incomingConfiguration }; });
   const agentConfig = createMemo(() => (saving() ? capabilitiesBeforeSave.current.configuration : settingsProps().incomingConfiguration));
-  const [draft, setDraft] = createSignal((() => structuredClone(settingsProps().settings))()); const [agentDrafts, setAgentDrafts] = createSignal((() => structuredClone(agentConfig()?.agents ?? []))()); const [agentIndex, setAgentIndex] = createSignal((() => firstEditableAgent(agentConfig()?.agents ?? []))()); const [section, setSection] = createSignal<Section>(settingsProps().scope === "client" ? "keybinds" : "general"); const [saved, setSaved] = createSignal(false); const savingRef = createRef(false); const [saveError, setSaveError] = createSignal<string>();
+  const [draft, setDraft] = createSignal((() => structuredClone(settingsProps().settings))()); const [agentDrafts, setAgentDrafts] = createSignal((() => structuredClone(agentConfig()?.agents ?? []))()); const [agentIndex, setAgentIndex] = createSignal((() => firstAgentIndex(agentConfig()?.agents ?? []))()); const [section, setSection] = createSignal<Section>(settingsProps().scope === "client" ? "keybinds" : "general"); const [saved, setSaved] = createSignal(false); const savingRef = createRef(false); const [saveError, setSaveError] = createSignal<string>();
   const [modelFilter, setModelFilter] = createSignal("");
   const [settingsQuery, setSettingsQuery] = createSignal("");
   const [pastHeader, setPastHeader] = createSignal(false);
@@ -164,7 +161,7 @@ export function SettingsView(props: SettingsViewProps) {
     const selectedIndex = next?.agents.findIndex(item => item.name === selectedName) ?? -1;
     setHasAgentConfigDraft(next !== undefined);
     setAgentDrafts(next?.agents ?? []);
-    setAgentIndex(selectedIndex >= 0 ? selectedIndex : firstEditableAgent(next?.agents ?? []));
+    setAgentIndex(selectedIndex >= 0 ? selectedIndex : firstAgentIndex(next?.agents ?? []));
     setBaselineAgentConfig(agentEditsSnapshot(next));
   };
   createDependencyEffect(() => { const capturedAgentConfigSnapshot = agentConfigSnapshot(); const capturedAgentConfigDirty = agentConfigDirty(); const capturedAgentConfig = agentConfig();
@@ -200,7 +197,7 @@ export function SettingsView(props: SettingsViewProps) {
   const toggleAgentResource = (key: "tools" | "skills", value: string) => { if (agent()) updateAgent({ [key]: agent()[key].includes(value) ? agent()[key].filter((item) => item !== value) : [...agent()[key], value] }); };
   const renameAgent = (name: string) => { if (!agent() || (!isBuiltInAgent(agent()) && name.trim().toLowerCase() === "general")) return; if ((draft().defaultAgent ?? "general") === agent().name) patch({ defaultAgent: name }); updateAgent({ name }); };
   const addAgent = () => { if (!agentConfig() || saving()) return; let suffix = nextAgentSuffixRef.current; while (agentDrafts().some((item) => item.name.toLowerCase() === `agent-${suffix}`)) suffix += 1; nextAgentSuffixRef.current = suffix + 1; const next: AgentProfile = { name: `agent-${suffix}`, model: "", effort: "", path_systemprompt: "sysprompt/default.md", path_agentprompt: "", tools: draft().tools.filter((item) => item.enabled && item.name !== "goal").map((item) => item.name), skills: draft().skills.filter((item) => item.enabled).map((item) => item.path), mcpServers: [] }; setAgentDrafts((current) => [...current, next]); setAgentIndex(agentDrafts().length - 1); };
-  const removeAgent = () => { if (!agent() || isBuiltInAgent(agent())) return; if (draft().defaultAgent === agent().name) patch({ defaultAgent: "general" }); const next = agentDrafts().filter((_, index) => index !== agentIndex()); setAgentDrafts(next); setAgentIndex(firstEditableAgent(next)); };
+  const removeAgent = () => { if (!agent() || isBuiltInAgent(agent())) return; if (draft().defaultAgent === agent().name) patch({ defaultAgent: "general" }); const next = agentDrafts().filter((_, index) => index !== agentIndex()); setAgentDrafts(next); setAgentIndex(firstAgentIndex(next)); };
   const agentLevels = (item: AgentProfile) => {
     const model = settingsProps().models.find((model) => `${model.provider}/${model.id}` === (item.model || draft().defaultModel));
     const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
