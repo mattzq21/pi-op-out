@@ -39,12 +39,18 @@ const windowInstanceId = crypto.randomUUID();
 const initialTerminals = (sessionId: string): SessionTerminals => { const id = `terminal-${windowInstanceId}-${sessionId}-1`; return { activeId: id, tabs: [{ id, output: "", outputEnd: 0, started: false }] }; };
 
 function appendTerminalOutputs(current: Record<string, SessionTerminals>, chunks: Map<string, QueuedTerminalOutput>) {
-  return Object.fromEntries(Object.entries(current).map(([sessionId, session]) => [sessionId, {
-    ...session, tabs: session.tabs.map((terminal) => {
-      const chunk = chunks.get(terminal.id);
-      return chunk ? { ...terminal, ...retainTerminalOutput(terminal.output, terminal.outputEnd, chunk.data, chunk.length) } : terminal;
-    })
-  }]));
+  let changed = false;
+  const next = Object.fromEntries(Object.entries(current).map(([sessionId, session]) => {
+    if (!session.tabs.some(terminal => chunks.has(terminal.id))) return [sessionId, session];
+    changed = true;
+    return [sessionId, {
+      ...session, tabs: session.tabs.map((terminal) => {
+        const chunk = chunks.get(terminal.id);
+        return chunk ? { ...terminal, ...retainTerminalOutput(terminal.output, terminal.outputEnd, chunk.data, chunk.length) } : terminal;
+      }),
+    }];
+  }));
+  return changed ? next : current;
 }
 
 function selectedProjectCwd(cwd: string | undefined, temporary: boolean) { return !cwd || temporary || isTemporaryChatCwd(cwd) ? undefined : cwd; }

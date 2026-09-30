@@ -57,7 +57,7 @@ test('nested dependencies load once and share the universal context', async t =>
   await f.loader.activate(await f.loader.prepare([]), f.ctx);
   await f.emit('input');
   assert.equal(f.messages.length, 2);
-  assert.throws(() => f.tools.get('leaf').execute(), /inactive/);
+  await assert.rejects(async () => f.tools.get('leaf').execute(), /inactive/);
 });
 
 test('failed dependency or parent publishes no registrations', async t => {
@@ -143,7 +143,7 @@ test('failed startup restores tool schemas and cleans up the failed group', asyn
   assert.equal(await f.tools.get('shared').execute(), 'good');
   assert.deepEqual(f.messages, ['cleanup']);
   await f.loader.activate(await f.loader.prepare([]), f.ctx);
-  assert.throws(() => f.tools.get('shared').execute(), /inactive/);
+  await assert.rejects(async () => f.tools.get('shared').execute(), /inactive/);
 });
 
 test('event bus unsubscription and agent shutdown release active listeners', async t => {
@@ -176,7 +176,7 @@ test('a failed restored agent blocks input while global config edits preserve th
   assert.deepEqual(JSON.parse(await readFile(join(f.dir, 'config.json'), 'utf8')).agents[0].extensions, ['other-missing.mjs']);
   assert.deepEqual(await f.emit('input', { text: 'Still unavailable' }), { action: 'handled' });
   assert.match(JSON.parse(f.statuses.get('piop-input-rejected')).error, /missing.mjs/);
-  assert.deepEqual(f.entries.at(-1).data.snapshot.definition.extensions, ['missing.mjs']);
+  assert.deepEqual(JSON.parse(process.env.PIOP_AGENT_DRAFT_STATE).state.snapshot.definition.extensions, ['missing.mjs']);
 });
 
 const stagedExtension = name => `
@@ -238,7 +238,7 @@ async function assertRejectedExtensionGroup(f, scenario) {
   assert.equal(await f.tools.get('stable_tool').execute(), 'stable');
   for (const name of ['parent', 'child', 'invalid']) {
     const tool = f.tools.get(`${name}_tool`);
-    if (tool) assert.throws(() => tool.execute(), /inactive/, `${name} tool must not run`);
+    if (tool) await assert.rejects(async () => tool.execute(), /inactive/, `${name} tool must not run`);
     const command = f.commands.get(`${name}_command`);
     if (command) await assert.rejects(async () => command.handler('', f.ctx), /inactive/, `${name} command must not run`);
   }
@@ -284,7 +284,8 @@ test('agent switching requires idle state while model and effort survive restore
   await f.select('general');
   await f.select('reviewer');
   assert.deepEqual(await f.emit('input', { text: 'Review this' }), { action: 'continue' });
-  assert.equal(f.capability().locked, false);
+  assert.equal(f.capability().locked, true);
+  f.entries.push({ type: 'message', message: { role: 'user', content: 'Review this' } });
   const entries = structuredClone(f.entries);
   f.ctx.isIdle = () => false;
   await assert.rejects(f.select('general'), /Wait for the current response/);
@@ -301,14 +302,14 @@ test('agent switching requires idle state while model and effort survive restore
   restored.entries.push(...structuredClone(f.entries));
   await restored.emit('session_start');
   assert.equal(restored.capability().active, 'reviewer');
-  assert.equal(restored.capability().locked, false);
+  assert.equal(restored.capability().locked, true);
   assert.equal(restored.ctx.model.id, 'another-model');
   assert.equal(restored.pi.getThinkingLevel(), 'low');
-  await restored.select('general');
-  assert.equal(restored.capability().active, 'general');
+  await assert.rejects(restored.select('general'), /agent is fixed/);
+  assert.equal(restored.capability().active, 'reviewer');
 });
 
-test('legacy conversations retain a snapshot when global definitions change and can switch while idle', async t => {
+test('legacy conversations retain their fixed agent when global definitions change', async t => {
   const f = await sessionAgentFixture(t);
   f.entries.push(
     { type: 'message', message: { role: 'user', content: 'Existing conversation' } },
@@ -316,14 +317,14 @@ test('legacy conversations retain a snapshot when global definitions change and 
   );
   await f.emit('session_start');
   assert.equal(f.capability().active, 'reviewer');
-  assert.equal(f.capability().locked, false);
+  assert.equal(f.capability().locked, true);
   const config = JSON.parse(await readFile(join(f.dir, 'config.json'), 'utf8'));
   config.agents = config.agents.filter(agent => agent.name !== 'reviewer');
   await f.commands.get('pi-define-agents-config').handler(Buffer.from(JSON.stringify(config)).toString('base64url'), f.ctx);
   assert.equal(f.capability().active, 'reviewer');
   assert.equal(f.capability().saved, true);
-  await f.select('general');
-  assert.equal(f.capability().active, 'general');
+  await assert.rejects(f.select('general'), /agent is fixed/);
+  assert.equal(f.capability().active, 'reviewer');
 });
 
 test('a missing restored agent blocks input until a replacement is selected', async t => {
@@ -339,13 +340,13 @@ test('a missing restored agent blocks input until a replacement is selected', as
 });
 
 
-test('compacted history and a new empty session allow idle agent selection', async t => {
+test('compacted history fixes agent selection while a new empty session allows it', async t => {
   const f = await sessionAgentFixture(t);
   f.entries.push({ type: 'compaction' });
   await f.emit('session_start');
-  assert.equal(f.capability().locked, false);
-  await f.select('reviewer');
-  assert.equal(f.capability().active, 'reviewer');
+  assert.equal(f.capability().locked, true);
+  await assert.rejects(f.select('reviewer'), /agent is fixed/);
+  assert.equal(f.capability().active, 'general');
   f.entries.length = 0;
   f.ctx.sessionManager.getSessionFile = () => join(f.dir, 'new-session');
   await f.emit('session_start');

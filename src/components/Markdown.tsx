@@ -10,10 +10,13 @@ import { webUrl } from "../lib/webLinks";
 import { diagramFenceClosed } from "../lib/diagrams";
 import { markdownBlocks } from "./markdownBlocks";
 import { streamingMarkdown } from "./streamingMarkdown";
+import { markdownHooks, markdownTokenizer } from "../lib/markdownTokenizer";
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
 const parser = new Marked({
   gfm: true,
+  tokenizer: markdownTokenizer,
+  hooks: markdownHooks,
   renderer: {
     html: ({ text }) => escapeHtml(text),
     image: ({ text }) => `<span class="message-image-placeholder" role="img" aria-label="${escapeHtml(text || "Blocked remote image")}">[Image: ${escapeHtml(text || "blocked")}]</span>`,
@@ -33,7 +36,11 @@ const parser = new Marked({
 let purifier: ReturnType<typeof DOMPurify> | undefined;
 let purifierWindow: Window | undefined;
 export function markdownHtml(source: string, streaming = false, detectFiles = false) {
-  return sanitizeMarkdown(parser.parse(source, { async: false }), streaming, detectFiles);
+  try { return sanitizeMarkdown(parser.parse(source, { async: false }), streaming, detectFiles); }
+  catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    return `<pre>${escapeHtml(source)}</pre>`;
+  }
 }
 
 function sanitizeMarkdown(html: string, streaming: boolean, detectFiles: boolean) {
@@ -42,8 +49,12 @@ function sanitizeMarkdown(html: string, streaming: boolean, detectFiles: boolean
     USE_PROFILES: { html: true },
     FORBID_TAGS: ["img", "video", "audio", "source", "iframe", "form", "style"],
     FORBID_ATTR: ["style", "src", "srcset", "id", "name"],
+    RETURN_DOM_FRAGMENT: true,
   });
-  return detectFiles ? detectFileLinks(sanitized) : sanitized;
+  if (detectFiles) return detectFileLinks(sanitized);
+  const template = document.createElement("template");
+  template.content.append(sanitized);
+  return template.innerHTML;
 }
 
 type LinkMenu = { href: string; x: number; y: number; returnFocus?: HTMLElement };
@@ -55,7 +66,12 @@ export function Markdown(props: { children: string; streaming?: boolean; onOpenF
   let root: HTMLDivElement | undefined;
   const blocks = markdownBlocks();
   createEffect(() => {
-    const html = renderMarkdown(props.children, Boolean(props.streaming), Boolean(props.onOpenFile));
+    let html: string[];
+    try { html = renderMarkdown(props.children, Boolean(props.streaming), Boolean(props.onOpenFile)); }
+    catch (error) {
+      if (!(error instanceof RangeError)) throw error;
+      html = [`<pre>${escapeHtml(props.children)}</pre>`];
+    }
     if (root) blocks.update(root, html);
   });
   onCleanup(() => blocks.dispose());

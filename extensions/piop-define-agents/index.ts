@@ -171,7 +171,7 @@ function sessionIsLocked(states: SessionAgentState[], branch: ReturnType<Extensi
 
 function restoredFastMode(branch: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>) {
   for (const entry of [...branch].reverse()) {
-    if (entry.type !== "custom") continue;
+    if (entry.type !== "custom" || !entry.data || typeof entry.data !== "object") continue;
     if (entry.customType === STATE_ENTRY && Object.hasOwn(entry.data as object, "fastModeOverride")) return (entry.data as SessionAgentState).fastModeOverride ?? undefined;
     if (entry.customType === "piop-fast-mode-state") {
       const legacy = entry.data as { enabled?: boolean; manual?: boolean };
@@ -181,7 +181,7 @@ function restoredFastMode(branch: ReturnType<ExtensionContext["sessionManager"][
 }
 
 function readAgentState(branch: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>, session: string) {
-  const states = branch.flatMap(entry => entry.type === "custom" && entry.customType === STATE_ENTRY ? [entry.data as SessionAgentState] : []);
+  const states = branch.flatMap(entry => entry.type === "custom" && entry.customType === STATE_ENTRY && entry.data && typeof entry.data === "object" ? [entry.data as SessionAgentState] : []);
   const persisted = states.at(-1);
   const identity = persisted ? persistedAgentIdentity(persisted) : undefined;
   const stored = draftAgentState(session, identity) ?? persisted;
@@ -271,6 +271,7 @@ function migrateTerminalAgent(config: Config, pi: ExtensionAPI) {
 }
 function migrateQuestionSnapshot(stored: AgentSnapshot | undefined) {
   if (stored?.version !== 1 && stored?.version !== 2) return undefined;
+  if (!stored.definition || !Array.isArray(stored.definition.tools)) return undefined;
   const snapshot = structuredClone(stored);
   snapshot.definition.tools = [...new Set(snapshot.definition.tools.map((tool) => tool === "request_user_input_async" ? "request_user_input" : tool))];
   return snapshot;
@@ -556,7 +557,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     }
 });
   const selectAgent = async (name: string, ctx: ExtensionCommandContext) => {
-    if (locked) {
+    if (locked && currentAgent()) {
       if (name === active) return;
       throw new Error("This conversation's agent is fixed. Start a new conversation to use another agent.");
     }
@@ -574,15 +575,11 @@ export default async function defineAgents(pi: ExtensionAPI) {
     const previousEffort = effortOverride;
     const previousSkills = currentSkillPaths();
     active = name; snapshot = undefined; modelOverride = undefined; effortOverride = undefined; fastModeOverride = undefined;
-    if (JSON.stringify(previousSkills) !== JSON.stringify(currentSkillPaths())) {
-      const error = await useAgent(active, ctx, false, false);
-      if (error) { active = previousActive; snapshot = previousSnapshot; modelOverride = previousModel; effortOverride = previousEffort; fastModeOverride = previousFastMode; await useAgent(active, ctx, false, false); throw new Error(error); }
-      saveState();
-      return reload(ctx);
-    }
+    const skillsChanged = JSON.stringify(previousSkills) !== JSON.stringify(currentSkillPaths());
     const activationError = await useAgent(active, ctx, false, false);
     if (activationError) { active = previousActive; snapshot = previousSnapshot; modelOverride = previousModel; effortOverride = previousEffort; fastModeOverride = previousFastMode; await useAgent(active, ctx, false, false); throw new Error(activationError); }
     saveState();
+    if (skillsChanged) return reload(ctx);
   };
   pi.registerCommand("pi-define-agents-config", {
     description: "Update agent definitions", handler: async (args, ctx) => {

@@ -18,6 +18,7 @@ describe('settings editor', () => {
   const save = () => document.querySelector('.settings-save > button');
   const section = async name => click([...document.querySelectorAll('nav button')].find(item => item.textContent === name));
   const select = async (label, value) => act(async () => { control(label).value = value; control(label).dispatchEvent(new Event('change', { bubbles: true })); });
+  const selectAgent = async name => click([...document.querySelectorAll('.agent-list button')].find(item => item.textContent === name));
   const profile = (name, extra = {}) => ({ name, model: '', effort: '', path_systemprompt: 'system.md', path_agentprompt: '', tools: [], skills: [], mcpServers: [], ...extra });
 
   test('save tracks dirty state, deduplicates requests and preserves edits made while saving', async () => {
@@ -82,7 +83,7 @@ describe('settings editor', () => {
     const generalServer = { id: 'shared', name: 'General search', command: 'general-server', args: '', enabled: true };
     const reviewServer = { id: 'shared', name: 'Review search', command: 'review-server', args: '', enabled: true };
     const config = { agents: [profile('general', { mcpServers: [generalServer] }), profile('review', { mcpServers: [reviewServer] })] };
-    await render({ agentConfig: config }); await section('Agents');
+    await render({ agentConfig: config }); await section('Agents'); await selectAgent('review');
     assert.equal(control('Server name').value, 'Review search');
     await enterText(document.querySelector('.stdio-fields input'), 'changed-review-server');
     await click(control('Enable Review search'));
@@ -101,10 +102,10 @@ describe('settings editor', () => {
 
   test('machine removal confirms existing session dependencies while new machines validate required fields', async () => {
     props.settings.hosts = [{ id: 'remote', name: 'Remote', target: 'user@host', piPath: 'pi' }];
-    const confirmations = []; window.confirm = message => { confirmations.push(message); return false; };
     await render({ sessions: [{ hostId: 'remote' }, { hostId: 'remote' }] }); await section('Machines');
-    await click(control('Remove Remote')); assert.match(confirmations[0], /2 indexed conversations depend/); assert.ok(control('Remove Remote'));
-    window.confirm = () => true; await click(control('Remove Remote')); assert.equal(control('Remove Remote'), null);
+    await click(control('Remove Remote')); assert.match(document.querySelector('dialog').textContent, /files and conversations will remain on the remote machine/);
+    await click(button('Cancel')); assert.ok(control('Remove Remote'));
+    await click(control('Remove Remote')); await click(button('Remove machine')); assert.equal(control('Remove Remote'), null);
     await click(button('Add machine')); await enterText(control('Machine name'), 'Local'); assert.match(document.querySelector('[role=alert]').textContent, /reserved/);
     await enterText(control('Machine name'), 'Build'); await enterText(control('Build SSH target'), 'builder@host'); await enterText(control('Build Piop daemon executable'), '/opt/pi'); await click(save());
     assert.equal(saves[0][0].hosts[0].target, 'builder@host'); assert.equal(saves[0][0].hosts[0].piPath, '/opt/pi');
@@ -136,7 +137,7 @@ describe('settings editor', () => {
   test('agent edits save defaults, prompts and resource permissions without changing the built-in identity', async () => {
     props.settings.tools = [{ name: 'read', enabled: true }]; props.settings.skills = [{ name: 'Research', path: '/research', enabled: true }];
     await render({ agentConfig: { agents: [profile('general'), profile('review')], fastModeModels: ['p/model'] }, models: [{ provider: 'p', id: 'model', reasoning: true }] });
-    await section('Agents'); assert.equal(control('Agent name').value, 'review');
+    await section('Agents'); await selectAgent('review'); assert.equal(control('Agent name').value, 'review');
     await enterText(control('Agent name'), 'code review!'); assert.equal(control('Agent name').value, 'codereview');
     await enterText(control('Agent name'), 'general'); assert.equal(control('Agent name').value, 'codereview');
     await select('Agent default model', 'p/model'); await select('Agent default effort', 'high'); await click(control('Agent fast mode'));
@@ -149,7 +150,7 @@ describe('settings editor', () => {
 
   test('renaming and deleting the default agent maintain a valid default and new agents inherit enabled resources', async () => {
     props.settings.defaultAgent = 'review'; props.settings.tools = [{ name: 'read', enabled: true }, { name: 'write', enabled: false }];
-    await render({ agentConfig: { agents: [profile('general'), profile('review')] } }); await section('Agents');
+    await render({ agentConfig: { agents: [profile('general'), profile('review')] } }); await section('Agents'); await selectAgent('review');
     await enterText(control('Agent name'), 'renamed'); await click(save()); assert.equal(saves[0][0].defaultAgent, 'renamed');
     await click(control('Remove renamed')); await click(save()); assert.equal(saves[1][0].defaultAgent, 'general'); assert.deepEqual(saves[1][1].agents.map(agent => agent.name), ['general']);
     await click(button('Add agent')); assert.equal(control('Allow read').checked, true); assert.equal(control('Allow write').checked, false);
@@ -158,7 +159,7 @@ describe('settings editor', () => {
 
   test('unavailable agent settings block saving until corrected and embedded servers can be removed', async () => {
     await render({ agentConfig: { agents: [profile('general'), profile('review', { model: 'p/missing', effort: 'extreme', mcpServers: [{ id: 'existing', name: 'Existing', command: 'cmd', args: '', enabled: true }] })] }, models: [{ provider: 'p', id: 'model' }], thinkingLevels: ['off', 'high'] });
-    await section('Agents'); assert.match(document.querySelector('[role=alert]').textContent, /model is unavailable/);
+    await section('Agents'); await selectAgent('review'); assert.match(document.querySelector('[role=alert]').textContent, /model is unavailable/);
     await select('Agent default model', 'p/model'); assert.match(document.querySelector('[role=alert]').textContent, /effort is unavailable/);
     await select('Agent default effort', 'high');
     await enterText(control('System prompt file'), ''); assert.match(document.querySelector('[role=alert]').textContent, /system prompt file is required/);
@@ -168,7 +169,7 @@ describe('settings editor', () => {
 
   test('late configuration discovery preserves general edits and leaves existing agent edits intact', async () => {
     await render(); await click(control('Automatic retry'));
-    await render({ agentConfig: { agents: [profile('general'), profile('discovered')] } }); await section('Agents'); assert.equal(control('Agent name').value, 'discovered');
+    await render({ agentConfig: { agents: [profile('general'), profile('discovered')] } }); await section('Agents'); await selectAgent('discovered'); assert.equal(control('Agent name').value, 'discovered');
     await click(save()); assert.equal(saves[0][0].autoRetry, false); assert.equal(saves[0][1], undefined);
     await enterText(control('Agent name'), 'edited');
     await render({ agentConfig: { agents: [profile('general'), profile('external')] } }); assert.equal(control('Agent name').value, 'edited');

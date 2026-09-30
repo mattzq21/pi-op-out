@@ -80,6 +80,6 @@ describe('settings panels', () => {
     }
     await view.rerender({ context: { tokens: { system: 0, instructions: 0, tools: 0, skills: 0 }, systemPrompt: '', instructions: [], tools: [], skills: [] } });
     assert.ok([...document.querySelectorAll('button small')].every(node => node.textContent === '0%'));
-    for (const [section, text] of [['system', 'No system prompt'], ['instructions', 'No project instructions'], ['tools', 'No active tools'], ['skills', 'No model-invoked skills']]) { await click(document.querySelector(`button.${section}`)); assert.equal(document.querySelector('.prompt-context-content').textContent, text); }
+    for (const [section, text] of [['system', 'No system prompt'], ['instructions', 'No project instructions'], ['tools', 'No active tools'], ['skills', 'Defined 0%Invoked 0%Tax 0%No defined skills']]) { await click(document.querySelector(`button.${section}`)); assert.equal(document.querySelector('.prompt-context-content').textContent, text); }
   });
 });

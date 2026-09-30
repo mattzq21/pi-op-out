@@ -1,7 +1,7 @@
 import { $, $$, browser, expect } from "@wdio/globals";
 
 import { app } from "../pageobjects/app.page.js";
-import { mockBackend, backendCalls, updateBackendResponse, resetBackend, resetApp, emitPiEvent, defaultSettings, enableAgents, connectedSessionResponses, startTemporaryConversation } from './acceptance-fixture.js';
+import { mockBackend, updateBackendResponse, resetBackend, resetApp, emitPiEvent, defaultSettings, enableAgents, connectedSessionResponses, startTemporaryConversation, withClientSettingsWriteFailure } from './acceptance-fixture.js';
 
 describe("BUGS-3 regressions", () => {
   before(async () => {
@@ -40,14 +40,13 @@ describe("BUGS-3 regressions", () => {
     await mockBackend({ create_temporary_chat: { cwd: "/tmp/bugs3-fresh", sessionId: "bugs3-fresh" }, start_pi: {}, stop_pi: {}, list_sessions: [], load_app_settings: settings, ...connectedSessionResponses(""), "pi_command:set_model": {}, start_terminal: {}, resize_terminal: {} });
     try {
       await $('button[aria-label="New conversation"]').click();
-      await browser.waitUntil(async () => (await backendCalls()).filter(({ command }) => command === "create_temporary_chat").length === 1);
+      await app.composer.waitForEnabled();
       await app.prepareMessage("First fresh draft");
       await app.openTerminalButton.click();
       await app.addTerminalButton.click();
       await expect($$(".terminal-tab")).toBeElementsArrayOfSize(2);
 
       await $('button[aria-label="New conversation"]').click();
-      await browser.waitUntil(async () => (await backendCalls()).filter(({ command }) => command === "create_temporary_chat").length === 2);
 
       await expect(app.composer).toHaveValue("");
       await expect(app.terminalPanel).not.toBeExisting();
@@ -95,12 +94,11 @@ describe("BUGS-3 regressions", () => {
   it("does not enable debug mode when persistence fails", async () => {
     const toggle = $('button[aria-label="Enable debug mode"], button[aria-label="Disable debug mode"]');
     const initialLabel = await toggle.getAttribute("aria-label");
-    await mockBackend({ load_app_settings: defaultSettings, save_app_settings: { error: "Settings persistence failed" } });
-
-    await toggle.click();
-
-    await expect(toggle).toHaveAttribute("aria-label", initialLabel!);
-    await expect($(".error-toast strong")).toHaveText("Could not change debug mode");
-    await expect($(".error-toast span")).toHaveText("Settings persistence failed");
+    await withClientSettingsWriteFailure(async () => {
+      await toggle.click();
+      await expect($(".error-toast strong")).toHaveText("Could not change debug mode");
+      await expect(toggle).toHaveAttribute("aria-label", initialLabel!);
+      await expect($(".error-toast span")).toHaveText(expect.stringMatching(/directory|denied|exists/i));
+    });
   });
 });

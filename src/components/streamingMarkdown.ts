@@ -1,4 +1,5 @@
 import type { Marked, Token, TokensList } from "marked";
+import { MarkdownLexer } from "../lib/markdownTokenizer";
 
 type Block = { raw: string; type: string; html: string };
 type Sanitize = (html: string, streaming: boolean, detectFiles: boolean) => string;
@@ -30,11 +31,11 @@ export function streamingMarkdown(parser: Marked, sanitize: Sanitize) {
     const append = streaming && sameOptions && source.startsWith(previousSource);
     if (!append) { committed = []; offset = 0; }
     let tail = source.slice(offset);
-    let tokens = parser.lexer(tail);
+    let tokens = new MarkdownLexer(parser.defaults).lex(tail);
     const fullContext = needsFullContext(parser, tokens);
     if (fullContext && offset) {
       committed = []; offset = 0; tail = source;
-      tokens = parser.lexer(source);
+      tokens = new MarkdownLexer(parser.defaults).lex(source);
     }
     const links = JSON.stringify(tokens.links);
     const reuse = append && links === previousLinks;

@@ -36,7 +36,7 @@ export function MobileApp() {
     if (!window.dispatchEvent(new CustomEvent("piop-mobile-before-disconnect", { cancelable: true, detail: { waitUntil: (task: Promise<unknown>) => tasks.push(task) } }))) return;
     setDisconnecting(true);
     try { await Promise.all(tasks); }
-    catch (reason) { setError(String(reason)); setDisconnecting(false); return; }
+    catch (reason) { if (connected()) { setError(String(reason)); setDisconnecting(false); return; } }
     intentionalDisconnect.current = true; generation.current++; clearTimeout(retry.current);
     setWorkspaceOpen(false); remoteClient.close(); setConnected(false); setConnecting(false); setError("");
     setDisconnecting(false);

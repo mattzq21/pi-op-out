@@ -3,15 +3,24 @@ import { describe, test, beforeEach, afterEach } from 'node:test';
 import { installDom, renderComponent, act } from '../dom.mjs';
 import { SplitChatPane } from '../../src/components/SplitChatPane.tsx';
 import { encodeAgentValue } from '../../src/lib/agentProtocol.ts';
+import { PromptControls } from '../../src/lib/promptControls.ts';
+import { mockIPC } from '../mock-ipc.mjs';
 
 describe('split conversation lifecycle', () => {
   let dom, view, props, calls, listeners, responses, transport, connected, released, dialogs;
   beforeEach(() => {
     dom = installDom(); HTMLElement.prototype.scrollIntoView = () => {};
+    mockIPC(command => ['load_session_groups', 'change_session_groups'].includes(command) ? { version: 1, groups: [], assignments: {} } : undefined, { shouldMockEvents: true });
     calls = []; listeners = new Set(); connected = []; released = []; dialogs = [];
     const state = { model: null, thinkingLevel: 'off', isStreaming: false, sessionId: 'session', messageCount: 0, pendingMessageCount: 0 };
     responses = new Map([['get_session_revision', { revision: 'changed' }], ['get_snapshot', { revision: 'snapshot', state, history: { entries: [], leafId: null }, sequence: 0, epoch: 'epoch', liveTools: [], queue: { pendingMessages: [] } }], ['get_available_models', { models: [] }], ['get_available_thinking_levels', { levels: ['off', 'high'] }], ['get_commands', { commands: [] }]]);
     transport = { currentHostId: () => 'local', ownsConversation: () => true, connect: async (...args) => connected.push(args), subscribe: handler => { listeners.add(handler); return () => listeners.delete(handler); }, command: async command => { calls.push(command); const result = responses.get(command.type); if (result instanceof Error) throw result; return typeof result === 'function' ? result(command) : result; } };
+    transport.promptControls = new PromptControls();
+    transport.setFastMode = async enabled => calls.push({ fastMode: enabled });
+    transport.submitPrompt = async command => {
+      await transport.promptControls.flush(value => transport.command(value), transport.setFastMode);
+      return transport.command(command);
+    };
     const diffs = {};
     props = { uploadsFor: () => [], onUploadsChange: () => {}, runtimePool: { forSession: () => transport, subscribe: () => () => {}, gitDiffs: () => diffs, captureMemoryDiffs: async () => undefined, setInteractive: (_, value) => calls.push({ interactive: value }) }, session: { id: 'session', name: 'Conversation', cwd: '/repo', path: '/session.jsonl', project: 'repo', messageCount: 0 }, settings: { autoCompaction: true, autoRetry: true, hiddenModels: [] }, draft: '', onDraftChange: () => {}, onOpenTerminal: () => {}, onDialogRequest: (...args) => dialogs.push(args), onDialogResolved: (...args) => dialogs.push(args), onDialogTransportClosed: async () => {}, onReleaseTransport: async value => released.push(value), onSessionChange: () => {}, onClose: () => {} };
   });
@@ -24,7 +33,7 @@ describe('split conversation lifecycle', () => {
 
   test('connects an existing session, applies settings and releases its transport on unmount', async () => {
     let closed = 0; await render({ onClose: () => closed++ });
-    assert.deepEqual(connected, [['/repo', '/session.jsonl', undefined, undefined, false, undefined]]); assert.equal(control('Message piop').disabled, false);
+    assert.deepEqual(connected, [['/repo', '/session.jsonl', undefined]]); assert.equal(control('Message piop').disabled, false);
     assert.ok(calls.some(command => command.type === 'set_auto_compaction' && command.enabled));
     await render({ settings: { ...props.settings, autoRetry: false } }); assert.ok(calls.some(command => command.type === 'set_auto_retry' && command.enabled === false));
     await click(control('Close split pane')); assert.equal(closed, 1);
@@ -48,15 +57,17 @@ describe('split conversation lifecycle', () => {
 
   test('editor injection replaces existing drafts and focuses the composer', async () => {
     const changes = []; await render({ onDraftChange: value => changes.push(value) });
-    await extension('set_editor_text', { text: 'Suggested' }); assert.deepEqual(changes, ['Suggested']); assert.equal(document.activeElement, control('Message piop'));
+    await extension('set_editor_text', { text: 'Suggested' }); await dom.flushFrames(); assert.deepEqual(changes, ['Suggested']); assert.equal(document.activeElement, control('Message piop'));
     await render({ draft: 'User edit' }); await extension('set_editor_text', { text: 'Replace' }); assert.deepEqual(changes, ['Suggested', 'Replace']);
   });
 
   test('send routes prompts and streaming steering to their respective runtime commands', async () => {
     await render({ draft: 'Question' }); await click(control('Send message')); assert.ok(calls.some(command => command.type === 'prompt' && command.message === 'Question'));
+    await event({ type: 'message_start', message: { role: 'user', content: 'Question', timestamp: 1 } });
+    await dom.flushFrames();
     await event({ type: 'agent_start' }); await render({ draft: 'Direction' });
     await act(async () => control('Message piop').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true })));
-    assert.ok(calls.some(command => command.type === 'steer' && command.message === 'Direction'));
+    assert.ok(calls.some(command => command.type === 'steer' && command.message === 'Direction'), JSON.stringify(calls));
     await render({ draft: '/catch-up latest' });
     await act(async () => control('Message piop').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
     assert.ok(calls.some(command => command.type === 'follow_up' && command.message === '/catch-up latest'));
@@ -106,20 +117,28 @@ describe('split conversation lifecycle', () => {
   });
 
   test('model controls serialize changes and recover after a rejected command', async () => {
-    responses.set('get_available_models', { models: [{ provider: 'p', id: 'one' }, { provider: 'p', id: 'two' }] });
+    responses.set('get_available_models', { models: [{ provider: 'p', id: 'one', reasoning: true }, { provider: 'p', id: 'two', reasoning: true }] });
     const pending = Promise.withResolvers(); responses.set('set_model', () => pending.promise);
     await render(); await click(control('Model')); await click(document.querySelector('[role=option][data-value="p/one"]'));
     await click(control('Thinking level')); await click(document.querySelector('[role=option][data-value=high]'));
     assert.equal(calls.some(command => command.type === 'set_thinking_level'), false);
+    assert.equal(calls.some(command => command.type === 'set_model'), false);
+    await render({ draft: 'Question' }); await click(control('Send message'));
     await act(async () => pending.reject(new Error('model unavailable')));
-    assert.ok(calls.some(command => command.type === 'set_thinking_level' && command.level === 'high')); assert.equal(control('Thinking level').dataset.value, 'high'); assert.match(document.querySelector('.split-control-error').textContent, /model unavailable/);
-    let toggles = 0; transport.toggleFastMode = async () => toggles++;
-    await extension('setStatus', { statusKey: 'pi-desktop-fast-mode', statusText: 'Fast mode off' }); await click(control('Fast mode')); assert.equal(toggles, 1);
+    assert.equal(calls.some(command => command.type === 'set_thinking_level'), false);
+    assert.match(document.querySelector('.upload-error').textContent, /model unavailable/);
+    responses.set('set_model', {});
+    await extension('setStatus', { statusKey: 'pi-desktop-fast-mode', statusText: 'Fast mode off' }); await click(control('Fast mode'));
+    assert.equal(calls.some(command => 'fastMode' in command), false);
+    await click(control('Send message'));
+    assert.ok(calls.some(command => command.type === 'set_thinking_level' && command.level === 'high'));
+    assert.ok(calls.some(command => command.fastMode === true));
+    assert.ok(calls.some(command => command.type === 'prompt' && command.message === 'Question'));
   });
 
   test('agent capability updates populate the picker and selection sends encoded agent names', async () => {
     await render();
-    await extension('setStatus', { statusKey: 'pi-define-agents', statusText: `json:${encodeAgentValue({ config: { agents: [{ name: 'general' }, { name: 'review' }] }, active: 'general' })}` });
+    await extension('setStatus', { statusKey: 'pi-define-agents', statusText: `json:${encodeAgentValue({ config: { agents: ['general', 'review'].map(name => ({ name, model: '', effort: '', tools: [], skills: [], mcpServers: [], path_systemprompt: '', path_agentprompt: '' })) }, active: 'general' })}` });
     await click(control('Agent')); await click(document.querySelector('[role=option][data-value=review]'));
     assert.ok(calls.some(command => command.type === 'prompt' && command.message === `/pi-define-agents-use ${encodeAgentValue('review')}`));
     await extension('setStatus', { statusKey: 'pi-define-agents', statusText: 'json:invalid' }); assert.equal(control('Agent').dataset.options, '');

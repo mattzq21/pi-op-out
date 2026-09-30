@@ -408,11 +408,11 @@ impl Host {
         if kind(command) == "get_tool_payload" {
             return self.read_saved_tool_payload(target, command);
         }
-        let snapshot = self.ownership().snapshot(&target.id, target.path.as_deref())?;
+        let mut snapshot = self.ownership().snapshot(&target.id, target.path.as_deref())?;
         match kind(command) {
             "get_snapshot" => Ok(snapshot),
-            "get_entries" => Ok(snapshot["history"].clone()),
-            "get_state" => Ok(snapshot["state"].clone()),
+            "get_entries" => Ok(snapshot.get_mut("history").map(Value::take).unwrap_or(Value::Null)),
+            "get_state" => Ok(snapshot.get_mut("state").map(Value::take).unwrap_or(Value::Null)),
             "get_session_stats" => Ok(json!({"contextUsage":snapshot["state"]["contextUsage"]})),
             _ => Err("Unsupported saved conversation command".into()),
         }

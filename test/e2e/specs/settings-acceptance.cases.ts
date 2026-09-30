@@ -104,6 +104,7 @@ describe("Settings acceptance", () => {
     await expect(target).toHaveValue("tester@example.com");
     await expect(executable).toHaveValue("/opt/pi/bin/piopd");
     await $('button[aria-label="Remove Acceptance machine"]').click();
+    await $('//dialog//button[normalize-space(.)="Remove machine"]').click();
     await expect($$("input[aria-label='Machine name']")).toBeElementsArrayOfSize(before.length);
     await app.openConversations();
   });

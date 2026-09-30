@@ -17,7 +17,8 @@ function fixture(t, options = {}) {
     runWorktreeSetup: async (...args) => { calls.push(['setup', ...args]); if (options.setupError) throw options.setupError; },
     removeGitWorktree: async (...args) => { calls.push(['remove', ...args]); if (options.removeError) throw options.removeError; return { warning: options.warning }; },
     currentSessionPath: () => '/sessions/parent.jsonl',
-    command: async request => { calls.push(['command', request]); return request.type === 'get_entries' ? { entries: options.entries, leafId: options.entries.at(-1)?.id } : result; },
+    listSessions: async () => [],
+    command: async request => { calls.push(['command', request]); return request.type === 'get_entries' ? { entries: options.entries, leafId: options.entries.at(-1)?.id } : request.type === 'get_state' ? { sessionId: 'parent' } : result; },
   };
   const child = {}, memoryDiffs = { a1: { files: [] } };
   const actions = createWorktreeActions({
@@ -45,7 +46,7 @@ for (const [hostId, settings, hostName] of [
   const onSetup = () => {};
   assert.equal(await f.actions.createWorktree({ transport: f.owner, cwd: '/parent', hostId }, 'experiment', onSetup), f.result);
   assert.deepEqual(f.calls, [['create', '/parent', 'experiment', hostId], ['setup', '/parent', '/child', hostId, onSetup], ['target', undefined]]);
-  assert.deepEqual(f.groups, [{ type: 'project', project: { id: `${hostId}:/child`, name: 'experiment', cwd: '/child', hostId, hostName, projectKind: 'worktree' }, key: `${hostId}:child` }]);
+  assert.deepEqual(f.groups, []);
   assert.deepEqual(f.notices, []);
   assert.deepEqual(f.sessions, [{ id: 'existing' }]);
 });
@@ -54,7 +55,6 @@ for (const setupError of [new Error('Environment setup cancelled'), new Error('s
   const f = fixture(t, { setupError, groupError: new Error('group failed') });
   assert.equal(await f.actions.createWorktree({ transport: f.owner, cwd: '/parent', hostId: 'local' }, 'experiment'), f.result);
   assert.deepEqual(f.notices, [
-    { title: 'Worktree created, but could not add its group', message: '/child\nError: group failed' },
     { title: setupError.message === 'Environment setup cancelled' ? 'Environment setup cancelled; worktree kept' : 'Worktree created, but environment setup failed', message: `/child\n${setupError.message ?? setupError}` },
   ]);
   assert.deepEqual(f.calls.at(-1), ['target', undefined]);
@@ -78,8 +78,8 @@ for (const selected of ['u2', 'a2']) for (const entryId of [true, false]) test(`
   const f = fixture(t, { entries });
   const message = { ...entries.find(entry => entry.id === selected).message, ...(entryId ? { entryId: selected } : {}) };
   assert.equal(await f.actions.createWorktree({ transport: f.owner, hostId: 'remote', cwd: '/parent', message }, 'experiment'), f.result);
-  assert.deepEqual(f.calls.filter(call => call[0] === 'command'), [['command', { type: 'get_entries' }], ['command', { type: 'branch_checkpoint', entryId: selected, name: 'experiment', afterResponse: selected === 'a2' }]]);
-  const session = { id: 'child', path: '/sessions/child.jsonl', cwd: '/child', cwdExists: true, projectKind: 'worktree', project: 'experiment', name: 'experiment', preview: '', messageCount: 0, lastMessageAt: 0, apiCost: 0, hostId: 'remote' };
+  assert.deepEqual(f.calls.filter(call => call[0] === 'command'), [['command', { type: 'get_entries' }], ['command', { type: 'get_state' }], ['command', { type: 'branch_checkpoint', entryId: selected, name: 'experiment', afterResponse: selected === 'a2' }]]);
+  const session = { id: 'child', path: '/sessions/child.jsonl', cwd: '/child', cwdExists: true, projectKind: 'worktree', projectRoot: '/parent', worktreeRoot: '/child', branch: 'experiment', project: 'parent', name: 'experiment', preview: '', messageCount: 0, lastMessageAt: 0, apiCost: 0, hostId: 'remote' };
   assert.deepEqual(f.sessions, [{ id: 'existing' }, session]);
   assert.deepEqual(f.calls.find(call => call[0] === 'forSession'), ['forSession', session]);
   assert.deepEqual(f.calls.find(call => call[0] === 'draft'), ['draft', 'remote:child', selected === 'u2' ? 'u2' : '']);

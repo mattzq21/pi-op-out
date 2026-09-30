@@ -38,7 +38,8 @@ export function usePendingMessageDrag(messages: Accessor<PendingMessage[]>, disa
       const bounds = queue.getBoundingClientRect();
       if (drag.x < bounds.left - 64 || drag.x > bounds.right + 64 || drag.y < bounds.top - 40 || drag.y > bounds.bottom + 40) return { id };
       const peers = latest.current.messages.filter((item) => !item.retry && item.behavior === source.behavior && item.id !== id);
-      const rows = Array.from(queue.querySelectorAll<HTMLElement>("[data-pending-id]")).filter((row) => peers.some((item) => item.id === row.dataset.pendingId));
+      const peerIds = new Set(peers.map(item => item.id));
+      const rows = Array.from(queue.querySelectorAll<HTMLElement>("[data-pending-id]")).filter((row) => peerIds.has(row.dataset.pendingId ?? ""));
       const before = rows.find((row) => { const rect = row.getBoundingClientRect(); return drag.y < rect.top + rect.height / 2; });
       const row = before ?? rows.at(-1);
       return { id, targetId: row?.dataset.pendingId, edge: before ? "before" : "after" };

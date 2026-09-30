@@ -15,39 +15,41 @@ test('restoring general preserves explicitly enabled question tools', async t =>
   assert.ok(f.pi.getActiveTools().includes('request_user_input'));
 });
 
-test('successful selections persist one complete snapshot and preserve immutable prompt history', async t => {
+test('selections stay drafts until input and preserve immutable prompt files', async t => {
   const f = await agentFixture(t, { config: configured([profile(), profile('reviewer', { model: 'test/review/model', effort: 'low', path_agentprompt: 'agent.md' })]), files: { 'agent.md': 'Review instructions' } });
   await f.load(); await f.start();
   assert.equal(process.env.PI_DEFINE_AGENTS_ACTIVE, '1');
-  assert.equal(f.entries.length, 1);
-  assert.deepEqual(f.entries[0].data.snapshot, { version: 1, definition: { ...profile(), extensions: [], model: 'test/default', effort: 'high' }, systemPrompt: 'System instructions', agentPrompt: '' });
+  assert.deepEqual(f.entries, []);
+  assert.equal(f.state().snapshot.version, 2);
+  assert.equal(await readFile(f.state().snapshot.definition.path_systemprompt, 'utf8'), 'System instructions');
   await f.select(` ${encoded('reviewer')} `);
-  assert.equal(f.entries.length, 2);
-  const saved = structuredClone(f.entries.at(-1));
-  assert.equal(saved.customType, 'pi-define-agents-state');
-  assert.equal(saved.data.active, 'reviewer'); assert.equal(saved.data.locked, false);
-  assert.equal(saved.data.modelOverride, undefined); assert.equal(saved.data.effortOverride, undefined);
-  assert.equal(saved.data.snapshot.definition.model, 'test/review/model'); assert.equal(saved.data.snapshot.definition.effort, 'low');
-  assert.equal(saved.data.snapshot.agentPrompt, 'Review instructions');
+  assert.deepEqual(f.entries, []);
+  const draft = structuredClone(f.state());
+  assert.equal(draft.active, 'reviewer');
+  assert.equal(draft.modelOverride, undefined); assert.equal(draft.effortOverride, undefined);
+  assert.equal(draft.snapshot.definition.model, 'test/review/model'); assert.equal(draft.snapshot.definition.effort, 'low');
+  assert.equal(await readFile(draft.snapshot.definition.path_agentprompt, 'utf8'), 'Review instructions');
   assert.deepEqual(f.modelSelections, [{ provider: 'test', id: 'review/model' }]);
   assert.equal(f.pi.getThinkingLevel(), 'low');
+  assert.deepEqual(await f.input('hello'), { action: 'continue' });
+  assert.equal(f.entries.length, 1); assert.deepEqual(f.entries[0].data, draft);
+  const saved = structuredClone(f.entries);
   await f.file('prompt.md', 'Changed on disk'); await f.file('agent.md', 'Changed agent prompt');
   await f.configure(configured([profile(), profile('reviewer', { path_systemprompt: 'new.md' })]));
-  assert.deepEqual(f.entries.at(-1), saved);
   await f.start();
-  assert.deepEqual(await f.prompt(), { systemPrompt: `System instructions\n\nReview instructions\n\nCurrent working directory ${f.dir}` });
+  assert.deepEqual(f.entries, saved);
+  const prompt = await f.prompt();
+  assert.equal(prompt.customPrompt, 'System instructions'); assert.equal(prompt.sections.instructions, 'Review instructions');
   assert.equal(f.capability().saved, true); assert.equal(f.capability().unavailable, false);
-  assert.deepEqual(await f.input('hello'), { action: 'continue' });
-  assert.equal(f.entries.at(-1).data.locked, true);
-  const count = f.entries.length; await f.input('again'); assert.equal(f.entries.length, count);
+  await f.input('again'); assert.equal(f.entries.length, 1);
 });
 
 test('skill switches save before reload and failed activation restores overrides without history writes', async t => {
   const f = await agentFixture(t, { config: configured([profile(), profile('reviewer', { skills: ['/skills/review'], model: 'test/review/model', effort: 'low' }), profile('broken', { skills: ['/skills/broken'], tools: ['missing'] })]) });
   await f.load(); await f.start();
   let reloads = 0;
-  f.ctx.reload = async () => { reloads++; assert.equal(f.entries.at(-1).data.active, 'reviewer'); assert.equal(f.capability().active, 'reviewer'); };
-  await f.select('reviewer'); assert.equal(reloads, 1); assert.equal(f.entries.length, 2);
+  f.ctx.reload = async () => { reloads++; assert.equal(f.state().active, 'reviewer'); assert.equal(f.capability().active, 'reviewer'); };
+  await f.select('reviewer'); assert.equal(reloads, 1); assert.equal(f.entries.length, 0);
   await f.pi.setModel({ provider: 'test', id: 'default' }); f.pi.setThinkingLevel('medium');
   const before = structuredClone(f.entries);
   await assert.rejects(f.select('broken'), /cannot run because Pi does not allow its configured tool: missing/);
@@ -62,13 +64,13 @@ test('skill switches save before reload and failed activation restores overrides
 test('manual model and effort overrides persist and become defaults for later agents and sessions', async t => {
   const f = await agentFixture(t); await f.load(); await f.start();
   await f.pi.setModel({ provider: 'test', id: 'review/model' }); f.pi.setThinkingLevel('low');
-  assert.equal(f.entries.at(-1).data.modelOverride, 'test/review/model'); assert.equal(f.entries.at(-1).data.effortOverride, 'low');
+  assert.equal(f.state().modelOverride, 'test/review/model'); assert.equal(f.state().effortOverride, 'low');
   assert.deepEqual(JSON.parse(process.env.PI_DEFINE_AGENTS_RUNTIME_DEFAULTS), { model: 'test/review/model', effort: 'low', session: join(f.dir, 'session') });
-  await f.select('reviewer'); assert.equal(f.entries.at(-1).data.modelOverride, undefined); assert.equal(f.entries.at(-1).data.effortOverride, undefined);
-  assert.equal(f.entries.at(-1).data.snapshot.definition.model, 'test/review/model'); assert.equal(f.entries.at(-1).data.snapshot.definition.effort, 'low');
+  await f.select('reviewer'); assert.equal(f.state().modelOverride, undefined); assert.equal(f.state().effortOverride, undefined);
+  assert.equal(f.state().snapshot.definition.model, 'test/review/model'); assert.equal(f.state().snapshot.definition.effort, 'low');
   f.ctx.sessionManager.getSessionFile = () => join(f.dir, 'second-session'); f.entries.length = 0;
   f.ctx.model = { provider: 'test', id: 'default' }; f.pi.getThinkingLevel = () => 'medium';
-  await f.start(); assert.equal(f.entries[0].data.snapshot.definition.model, 'test/default'); assert.equal(f.entries[0].data.snapshot.definition.effort, 'medium');
+  await f.start(); assert.equal(f.state().snapshot.definition.model, 'test/default'); assert.equal(f.state().snapshot.definition.effort, 'medium');
 });
 
 for (const mode of ['missing', 'rejected', 'throw-error', 'throw-string']) test(`model selection ${mode} blocks input and preserves the selected agent on failure`, async t => {
@@ -93,7 +95,7 @@ test('missing prompt files reject input with their resolved path and recover aft
     await assert.rejects(f.select(name), error => error.message.startsWith(`Agent "${name}" cannot read ${kind} prompt ${join(f.dir, file)}: ENOENT`));
     assert.equal(f.capability().active, 'general'); assert.deepEqual(f.pi.getActiveTools(), ['read']);
   }
-  await f.file('absent-agent.md', 'Now available'); await f.select('writer'); assert.match((await f.prompt()).systemPrompt, /Now available/);
+  await f.file('absent-agent.md', 'Now available'); await f.select('writer'); assert.match((await f.prompt()).sections.instructions, /Now available/);
 });
 
 test('fast mode validates configured and override models and applies supported selections', async t => {
@@ -113,7 +115,7 @@ for (const enabled of [false, true]) test(`restoring an agent delegates the save
   const requests = [];
   f.pi.events.on('piop:fast-mode', request => { if (request.apply) requests.push(request); });
   await f.start();
-  assert.deepEqual(requests, [{ apply: true, enabled: !enabled, restore: true, ctx: f.ctx }]);
+  assert.deepEqual(requests, [{ apply: true, enabled, restore: true, ctx: f.ctx }]);
 });
 
 test('MCP selections wait for readiness, deduplicate tools, and report unavailable or rejected bridges', async t => {
@@ -141,10 +143,11 @@ test('agent MCP tools come from bridge selections and refresh respects global to
   f.pi.events.on('piop:mcp:select', request => { request.ready = Promise.resolve(['mcp_my_server_query', 'mcp_tool_query']); });
   await f.load(); await f.start(); await f.input('go');
   assert.deepEqual(f.pi.getActiveTools(), ['read', 'mcp_my_server_query', 'mcp_tool_query']);
+  const stopTools = f.pi.events.on('piop:mcp:tools', request => { request.tools = ['mcp_my_server_query', 'mcp_tool_query']; });
   let request = { ctx: f.ctx }; f.pi.events.emit('piop:agents:refresh', request); await request.ready;
   assert.deepEqual(f.pi.getActiveTools(), ['read', 'mcp_my_server_query', 'mcp_tool_query']);
   runtime.tools = []; request = { ctx: f.ctx }; f.pi.events.emit('piop:agents:refresh', request); await request.ready; assert.deepEqual(f.pi.getActiveTools(), []);
-  runtime.tools = ['read']; request = { ctx: f.ctx }; f.pi.events.emit('piop:agents:refresh', request); await request.ready; assert.deepEqual(f.pi.getActiveTools(), ['read']);
+  stopTools(); runtime.tools = ['read']; request = { ctx: f.ctx }; f.pi.events.emit('piop:agents:refresh', request); await request.ready; assert.deepEqual(f.pi.getActiveTools(), ['read']);
   await f.emit('session_shutdown'); request = { ctx: f.ctx }; f.pi.events.emit('piop:agents:refresh', request); assert.equal(request.ready, undefined);
 });
 
@@ -155,9 +158,9 @@ test('skills are intersected by normalized path and prompts preserve append inst
   await f.load(); await f.start(); assert.deepEqual(await f.emit('resources_discover'), { skillPaths: ['~/allowed'] });
   f.ctx.cwd = 'C:\\project\\folder';
   const skills = [{ filePath: '/skills/one', baseDir: '/skills' }, { filePath: '/skills/two', baseDir: '/skills' }];
-  assert.deepEqual(await f.prompt({ appendSystemPrompt: 'Appended', skills }), { systemPrompt: 'System instructions\n\nAppended\n\nSkills via read: /skills/one, /skills/two\n\nAgent instructions\n\nCurrent working directory C:/project/folder' });
-  assert.match((await f.prompt({ skills, selectedTools: ['bash'] })).systemPrompt, /Skills via bash:/);
-  assert.doesNotMatch((await f.prompt({ skills, selectedTools: [] })).systemPrompt, /Skills via/);
+  assert.deepEqual(await f.prompt({ appendSystemPrompt: 'Appended', skills }), { customPrompt: 'System instructions', sections: { instructions: 'Appended\n\nAgent instructions' }, contextFiles: [], appendSystemPrompt: '', skills });
+  assert.deepEqual((await f.prompt({ skills, selectedTools: ['bash'] })).selectedTools, ['bash']);
+  assert.deepEqual((await f.prompt({ skills, selectedTools: [] })).selectedTools, []);
   runtime.skills = []; assert.equal(await f.emit('resources_discover'), undefined);
 });
 
@@ -167,7 +170,7 @@ test('configuration edits normalize resources and persist atomically without mod
   const saved = await f.config(); assert.deepEqual(saved.agents.map(a => a.name), ['reviewer', 'general']);
   assert.equal(saved.agents[0].model, ''); assert.equal(saved.agents[0].effort, 'high'); assert.deepEqual(saved.agents[0].tools, ['read']); assert.deepEqual(saved.agents[0].skills, ['/skill']); assert.deepEqual(saved.agents[0].mcpServers, [remoteMcp]); assert.equal(saved.agents[0].path_agentprompt, 'agent.md');
   assert.equal(saved.webSearchDefaultApplied, true); assert.equal(saved.sessionToolsDefaultApplied, true);
-  assert.equal(f.capability().active, 'general'); assert.deepEqual(f.entries[0].data.snapshot.definition.tools, ['read']);
+  assert.equal(f.capability().active, 'general'); assert.deepEqual(f.state().snapshot.definition.tools, ['read']);
   assert.equal((await stat(join(f.dir, 'config.json'))).mode & 0o777, 0o600);
   assert.equal((await readdir(f.dir)).some(name => name.endsWith('.tmp')), false);
   const before = await readFile(join(f.dir, 'config.json'), 'utf8');
@@ -183,7 +186,7 @@ for (const development of [false, true]) test(`first run creates private default
   const allTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'fork_session', 'create_worktree', 'remove_worktree', 'subagent'];
   const f = await agentFixture(t, { config: null, env, runtime: { tools: allTools, skills: [] }, tools: allTools, files: { 'home/.agents/AGENTS.md': 'Personal instructions' } });
   await f.load(); const config = await f.config();
-  assert.deepEqual(config.agents[0], { name: 'general', model: '', effort: development ? 'medium' : 'high', ...(development ? { fastMode: false } : {}), extensions: [], path_systemprompt: 'sysprompt/default.md', path_agentprompt: `~/${development ? '.piop-dev' : '.piop'}/agents/default.md`, tools: allTools, skills: [], mcpServers: [] });
+  assert.deepEqual(config.agents[0], { name: 'general', model: development ? 'openai-codex/gpt-6-luna' : '', effort: development ? 'medium' : 'high', ...(development ? { fastMode: false } : {}), extensions: [], path_systemprompt: 'sysprompt/default.md', path_agentprompt: `~/${development ? '.piop-dev' : '.piop'}/agents/default.md`, tools: allTools, skills: [], mcpServers: [] });
   assert.equal(config.webSearchDefaultApplied, true); assert.equal(config.sessionToolsDefaultApplied, true);
   const system = join(f.dir, 'sysprompt/default.md'), agent = join(f.home, development ? '.piop-dev' : '.piop', 'agents/default.md');
   assert.match(await readFile(system, 'utf8'), /^You are an expert coding assistant/); assert.equal(await readFile(agent, 'utf8'), 'Personal instructions');
@@ -255,7 +258,7 @@ test('normalization supplies defaults for absent arrays and filters malformed pr
   assert.equal(reviewer.model, full.model); assert.equal(reviewer.effort, full.effort); assert.equal(reviewer.fastMode, false);
   assert.deepEqual(reviewer.tools, ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls']); assert.deepEqual(reviewer.skills, []); assert.deepEqual(reviewer.mcpServers, []); assert.equal(reviewer.path_agentprompt, '');
   await f.select('reviewer'); assert.equal(f.ctx.model.id, 'review/model'); assert.equal(f.pi.getThinkingLevel(), 'low');
-  assert.equal(f.entries.at(-1).data.snapshot.definition.model, 'test/review/model'); assert.equal(f.entries.at(-1).data.snapshot.definition.effort, 'low');
+  assert.equal(f.state().snapshot.definition.model, 'test/review/model'); assert.equal(f.state().snapshot.definition.effort, 'low');
   await f.configure({ agents: [profile('default'), profile('general')] }); assert.deepEqual((await f.config()).agents.map(agent => agent.name), ['default', 'general']);
   await f.configure({ agents: 'invalid' }); assert.deepEqual((await f.config()).agents.map(agent => agent.name), ['general']);
   await assert.rejects(f.configure(configured([profile('bad', { path_systemprompt: '  ' })])), /requires a nonempty path_systemprompt/);
@@ -265,7 +268,7 @@ for (const state of [undefined, 'not JSON', { session: 'wrong', model: 'test/rev
   const f = await agentFixture(t);
   if (state !== undefined) process.env.PI_DEFINE_AGENTS_RUNTIME_DEFAULTS = typeof state === 'string' ? state : JSON.stringify({ session: join(f.dir, 'session'), ...state });
   await f.load(); await f.start();
-  assert.equal(f.entries[0].data.snapshot.definition.model, 'test/default'); assert.equal(f.entries[0].data.snapshot.definition.effort, 'high');
+  assert.equal(f.state().snapshot.definition.model, 'test/default'); assert.equal(f.state().snapshot.definition.effort, 'high');
   assert.deepEqual(JSON.parse(process.env.PI_DEFINE_AGENTS_RUNTIME_DEFAULTS), { model: 'test/default', effort: 'high', session: join(f.dir, 'session') });
 });
 
@@ -273,9 +276,9 @@ test('matching cached defaults survive a process reload and explicit choices rep
   const f = await agentFixture(t);
   process.env.PI_DEFINE_AGENTS_RUNTIME_DEFAULTS = JSON.stringify({ session: join(f.dir, 'session'), model: 'test/review/model', effort: 'low' });
   await f.load(); await f.start();
-  assert.deepEqual(f.ctx.model, { provider: 'test', id: 'review/model' }); assert.equal(f.pi.getThinkingLevel(), 'low'); assert.equal(f.entries.length, 1);
+  assert.deepEqual(f.ctx.model, { provider: 'test', id: 'review/model' }); assert.equal(f.pi.getThinkingLevel(), 'low'); assert.equal(f.entries.length, 0);
   await f.pi.setModel({ provider: 'test', id: 'default' }); f.pi.setThinkingLevel('medium');
-  assert.equal(f.entries.length, 3); assert.equal(f.entries[1].data.modelOverride, 'test/default'); assert.equal(f.entries[2].data.effortOverride, 'medium');
+  assert.equal(f.entries.length, 0); assert.equal(f.state().modelOverride, 'test/default'); assert.equal(f.state().effortOverride, 'medium');
   const count = f.modelSelections.length; await f.input('reuse'); assert.equal(f.modelSelections.length, count);
 });
 
@@ -286,10 +289,10 @@ test('session restore uses the latest state, ignores unrelated custom records, a
     { type: 'custom', customType: 'other', data: { active: 'missing' } },
     { type: 'message', message: { role: 'assistant' } },
   ] });
-  await f.load(); await f.start(); assert.equal(f.capability().active, 'general'); assert.equal(f.entries.at(-1).data.locked, true);
+  await f.load(); await f.start(); assert.equal(f.capability().active, 'general'); assert.equal(f.capability().locked, true);
   assert.deepEqual(await f.input('hello'), { action: 'continue' });
   f.entries.length = 0; f.entries.push({ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'missing' } });
-  await f.start(); assert.equal(f.capability().unavailable, true); assert.equal(f.capability().saved, false); assert.equal(await f.prompt(), undefined); assert.equal(await f.emit('resources_discover'), undefined);
+  await f.start(); assert.equal(f.capability().unavailable, true); assert.equal(f.capability().saved, false); assert.deepEqual(await f.prompt(), {}); assert.equal(await f.emit('resources_discover'), undefined);
   const request = { ctx: f.ctx }; f.pi.events.emit('piop:agents:refresh', request); await request.ready; assert.deepEqual(f.pi.getActiveTools(), []);
   assert.deepEqual(f.notices.at(-1), { message: 'Agent unavailable: "missing". Select a replacement or general to continue.', level: 'warning' });
 });
@@ -340,22 +343,23 @@ test('absent prompt paths migrate independently while explicit general and defau
 test('equivalent skill sets avoid unnecessary reloads after normalization and sorting', async t => {
   const f = await agentFixture(t, { config: configured([profile('general', { skills: ['/skills/b', '~/skills/a', '/skills/b'] }), profile('reviewer', { skills: ['~/skills/a', '/skills/b'] })]) });
   await f.load(); await f.start(); await f.select('reviewer');
-  assert.equal(f.capability().active, 'reviewer'); assert.equal(f.entries.at(-1).data.active, 'reviewer');
+  assert.equal(f.capability().active, 'reviewer'); assert.equal(f.state().active, 'reviewer');
 });
 
 test('initial startup without a model or persistent session still records stable empty defaults', async t => {
   const f = await agentFixture(t, { model: undefined, effort: '' }); f.ctx.sessionManager.getSessionFile = () => undefined;
   await f.load(); await f.start();
   assert.deepEqual(JSON.parse(process.env.PI_DEFINE_AGENTS_RUNTIME_DEFAULTS), { session: '', model: '', effort: '' });
-  assert.equal(f.entries[0].data.snapshot.definition.model, ''); assert.equal(f.entries[0].data.snapshot.definition.effort, ''); assert.deepEqual(f.modelSelections, []);
+  assert.equal(f.state().snapshot.definition.model, ''); assert.equal(f.state().snapshot.definition.effort, ''); assert.deepEqual(f.modelSelections, []);
   await f.configure(configured([profile('general', { fastMode: true })]));
   await assert.rejects(f.select('general'), { message: 'Agent "general" cannot run because model (unset) does not support fast mode' });
 });
 
 test('fresh sessions recognize conversational history but ignore tool messages and unrelated custom entries', async t => {
   for (const [entry, locked] of [[{ type: 'message', message: { role: 'user' } }, true], [{ type: 'message', message: { role: 'assistant' } }, true], [{ type: 'compaction' }, true], [{ type: 'message', message: { role: 'toolResult' } }, false], [{ type: 'custom', customType: 'unrelated', data: { locked: true } }, false]]) await t.test(JSON.stringify(entry), async t => {
-    const f = await agentFixture(t, { entries: [entry] }); await f.load(); await f.start(); assert.equal(f.entries.at(-1).data.locked, locked);
-    const count = f.entries.length; await f.input('hello'); assert.equal(f.entries.length, count + (locked ? 0 : 1));
+    const f = await agentFixture(t, { entries: [entry] }); await f.load(); await f.start(); assert.equal(f.capability().locked, locked);
+    const count = f.entries.length; await f.input('hello'); assert.equal(f.entries.length, count + 1);
+    await f.input('again'); assert.equal(f.entries.length, count + 1);
   });
 });
 
@@ -375,9 +379,9 @@ test('an unreadable inherited agent prompt does not silently become an empty pro
 
 test('absolute and home-relative prompt paths retain whitespace content and canonical cwd separators', async t => {
   const f = await agentFixture(t, { config: configured([profile('general', { path_systemprompt: '~/system.md', path_agentprompt: '~/agent.md' })]), files: { 'home/system.md': '  System\n', 'home/agent.md': '   ' } });
-  await f.load(); await f.start(); assert.deepEqual(await f.prompt(), { systemPrompt: `  System\n\n\nCurrent working directory ${f.dir}` });
+  await f.load(); await f.start(); assert.deepEqual(await f.prompt(), { customPrompt: '  System\n', sections: { instructions: '' }, contextFiles: [], appendSystemPrompt: '', skills: undefined });
   await f.configure(configured([profile('general', { path_systemprompt: join(f.home, 'system.md'), path_agentprompt: '' })]));
-  await f.select('general'); assert.deepEqual(await f.prompt({ selectedTools: [], appendSystemPrompt: '' }), { systemPrompt: `  System\n\n\nCurrent working directory ${f.dir}` });
+  await f.select('general'); assert.deepEqual(await f.prompt({ selectedTools: [], appendSystemPrompt: '' }), { selectedTools: [], customPrompt: '  System\n', sections: { instructions: '' }, contextFiles: [], appendSystemPrompt: '', skills: undefined });
 });
 
 test('current configurations are read without rewriting their contents or replacing their inode', async t => {
@@ -440,7 +444,7 @@ test('model selection failures clear suppression markers before the user retries
     f.pi.setModel = async () => { if (rejection === false) return false; throw rejection; };
     await assert.rejects(f.select('reviewer')); f.pi.setModel = setModel;
     const count = f.entries.length; await f.pi.setModel({ provider: 'test', id: 'review/model' });
-    assert.equal(f.entries.length, count + 1); assert.equal(f.entries.at(-1).data.modelOverride, 'test/review/model');
+    assert.equal(f.entries.length, count); assert.equal(f.state().modelOverride, 'test/review/model');
   });
 });
 
@@ -458,6 +462,7 @@ test('configuration and refresh publish new capability data and discard stale no
   const fastModels = ['test/default'];
   const f = await agentFixture(t, { fastModels }); await f.load(); await f.start();
   await f.configure(configured([profile(), profile('new-agent')])); assert.deepEqual(f.capability().config.agents.map(agent => agent.name), ['general', 'new-agent']);
+  f.pi.events.on('piop:mcp:tools', request => { request.tools = ['mcp_remote_read']; });
   f.pi.setActiveTools(['read', 'stale', 'mcp_remote_read']); fastModels.push('test/review/model');
   const request = { ctx: f.ctx }; f.pi.events.emit('piop:agents:refresh', request); await request.ready;
   assert.deepEqual(f.pi.getActiveTools(), ['read', 'mcp_remote_read']); assert.deepEqual(f.capability().config.fastModeModels, fastModels);
@@ -470,8 +475,9 @@ test('session restore selects the last matching custom record and preserves its 
     { type: 'custom', customType: 'unrelated', data: { active: 'general', locked: false } },
     { type: 'other', customType: 'pi-define-agents-state', data: { active: 'general' } },
   ] }); await f.load(); await f.start();
-  assert.equal(f.capability().active, 'reviewer'); assert.equal(f.entries.at(-1).data.locked, true);
-  const count = f.entries.length; await f.input('go'); assert.equal(f.entries.length, count);
+  assert.equal(f.capability().active, 'reviewer'); assert.equal(f.capability().locked, true);
+  const count = f.entries.length; await f.input('go'); assert.equal(f.entries.length, count + 1);
+  await f.input('again'); assert.equal(f.entries.length, count + 1);
 });
 
 test('restored fast-mode snapshots validate both configured models and conversation overrides', async t => {
@@ -561,7 +567,7 @@ test('fast-mode preflight rejects unsupported models before attempting to load e
 test('fast-mode model names are trimmed consistently during preflight and activation', async t => {
   const f = await agentFixture(t, { fastModels: ['test/default'], config: configured([profile('general', { model: ' test/default ', fastMode: true })]) });
   await f.load(); await f.start(); assert.deepEqual(f.notices, []); assert.deepEqual(f.pi.getActiveTools(), ['read']);
-  await f.select('general'); assert.equal(f.entries.at(-1).data.snapshot.definition.model, 'test/default');
+  await f.select('general'); assert.equal(f.state().snapshot.definition.model, 'test/default');
 });
 
 test('implicit default profiles do not trigger a config rewrite without a legacy rename', async t => {
@@ -598,7 +604,7 @@ test('model and effort events can arrive before session defaults have been captu
 
 test('null historical agent state does not hide the latest valid selection', async t => {
   const f = await agentFixture(t, { entries: [{ type: 'custom', customType: 'pi-define-agents-state', data: null }, { type: 'custom', customType: 'pi-define-agents-state', data: { active: 'reviewer' } }] });
-  await f.load(); await f.start(); assert.equal(f.capability().active, 'reviewer'); assert.equal(f.entries.at(-1).data.locked, false);
+  await f.load(); await f.start(); assert.equal(f.capability().active, 'reviewer'); assert.equal(f.capability().locked, false);
 });
 
 test('initial resource discovery exposes the general agents skills before session startup', async t => {

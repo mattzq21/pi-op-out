@@ -57,7 +57,15 @@ export function ChatView(props: Props) {
   const composerStack = createRef<HTMLDivElement>(null);
   const messages = () => props.messages;
   const turns = createMemo<ConversationGroup[]>(previous => groupTurns(messages(), previous), []);
-  const sessionUsage = createMemo(() => props.messages.reduce((total, message) => ({ input: total.input + (message.usage?.input ?? 0), cacheRead: total.cacheRead + (message.usage?.cacheRead ?? 0), cacheWrite: total.cacheWrite + (message.usage?.cacheWrite ?? 0) }), { input: 0, cacheRead: 0, cacheWrite: 0 }));
+  const sessionUsage = createMemo(() => {
+    let input = 0, cacheRead = 0, cacheWrite = 0;
+    for (const message of props.messages) {
+      input += message.usage?.input ?? 0;
+      cacheRead += message.usage?.cacheRead ?? 0;
+      cacheWrite += message.usage?.cacheWrite ?? 0;
+    }
+    return { input, cacheRead, cacheWrite };
+  });
   const sessionCache = createMemo(() => (cacheHitStats(sessionUsage())));
   const pendingSubmission = createMemo(() => chatSubmission(props.transport));
   createComputed(() => acknowledgeChatSubmission(props.transport, messages()));
@@ -183,28 +191,58 @@ export function ChatView(props: Props) {
 }
 
 type ConversationGroup = { messages: ChatMessage[]; promptContexts: PromptContextInfo[] };
-function groupTurns(messages: ChatMessage[], previous: ConversationGroup[] = []) {
-  const groups = messages.reduce<ChatMessage[][]>((turns, message) => {
-    if (message.role === "user" || message.customType === "pi-desktop-btw" || turns.length === 0) turns.push([]);
-    turns[turns.length - 1].push(message);
-    return turns;
-  }, []);
-  const turns = groups.map(messages => ({ messages, promptContexts: [] as PromptContextInfo[] }));
-  for (const [index, group] of groups.entries()) {
-    for (const prompt of group) {
-      if (prompt.role !== "user" || !prompt.promptContext) continue;
-      turns[index].promptContexts.push(prompt.promptContext);
-    }
+function startsTurn(message: ChatMessage | undefined) {
+  return message?.role === "user" || message?.customType === "pi-desktop-btw";
+}
+
+function sameTurn(turn: ConversationGroup, messages: ChatMessage[], start: number) {
+  let context = 0;
+  return turn.messages.every((previous, index) => {
+    const message = messages[start + index];
+    if (message !== previous || (index > 0 && startsTurn(message))) return false;
+    if (message.role !== "user" || !message.promptContext) return true;
+    return turn.promptContexts[context++] === message.promptContext;
+  }) && context === turn.promptContexts.length;
+}
+
+function reusableTurns(messages: ChatMessage[], previous: ConversationGroup[]) {
+  let start = 0;
+  let count = 0;
+  for (const turn of previous) {
+    const end = start + turn.messages.length;
+    if (!turn.messages.length || end > messages.length || (end < messages.length && !startsTurn(messages[end]))) break;
+    if (!sameTurn(turn, messages, start)) break;
+    start = end;
+    count++;
   }
-  const prior = new Map(previous.map(turn => [turn.messages[0]?.id, turn]));
+  return { start, count };
+}
+
+function turnPromptContexts(messages: ChatMessage[]) {
+  const contexts: PromptContextInfo[] = [];
+  for (const message of messages) if (message.role === "user" && message.promptContext) contexts.push(message.promptContext);
+  return contexts;
+}
+
+function groupTurns(messages: ChatMessage[], previous: ConversationGroup[] = []) {
+  const prefix = reusableTurns(messages, previous);
+  if (prefix.start === messages.length && prefix.count === previous.length) return previous;
+  const groups: ChatMessage[][] = [];
+  for (let index = prefix.start; index < messages.length; index++) {
+    const message = messages[index];
+    if (startsTurn(message) || groups.length === 0) groups.push([]);
+    groups[groups.length - 1].push(message);
+  }
+  const turns = groups.map(messages => ({ messages, promptContexts: turnPromptContexts(messages) }));
+  const prior = new Map(previous.slice(prefix.count).map(turn => [turn.messages[0]?.id, turn]));
   const same = <T,>(left: T[], right: T[]) => left.length === right.length && left.every((item, index) => item === right[index]);
-  return turns.map(turn => {
+  return [...previous.slice(0, prefix.count), ...turns.map(turn => {
     const old = prior.get(turn.messages[0]?.id);
     if (!old) return turn;
     const messages = same(old.messages, turn.messages) ? old.messages : turn.messages;
     const promptContexts = same(old.promptContexts, turn.promptContexts) ? old.promptContexts : turn.promptContexts;
     return messages === old.messages && promptContexts === old.promptContexts ? old : { messages, promptContexts };
-  });
+  })];
 }
 
 function formatWorkedFor(startedAt?: number, completedAt?: number) {
@@ -261,7 +299,14 @@ function worktreeAction(onCreateWorktree: Props['onCreateWorktree'], finalMessag
 }
 
 function MessageList(props: { messages: ChatMessage[]; expanded: boolean; compact?: boolean; debug?: boolean; paused?: boolean; showActions?: boolean }) {
-  return <Key each={compactCompletedTools(props.messages, (props.compact ?? true) && !props.debug)} by={entry => entry.message.id}>{entry => <Message message={entry().message} toolCount={entry().count} showActions={props.showActions ?? true} expanded={props.expanded} debug={props.debug} paused={props.paused} />}</Key>;
+  const entries = createMemo<Array<{ message: ChatMessage; count: number }>>(previous => {
+    const retained = new Map(previous.map(entry => [entry.message, entry]));
+    return compactCompletedTools(props.messages, (props.compact ?? true) && !props.debug).map(entry => {
+      const prior = retained.get(entry.message);
+      return prior?.count === entry.count ? prior : entry;
+    });
+  }, []);
+  return <Key each={entries()} by={entry => entry.message.id}>{entry => <Message message={entry().message} toolCount={entry().count} showActions={props.showActions ?? true} expanded={props.expanded} debug={props.debug} paused={props.paused} />}</Key>;
 }
 
 type ConversationTurnProps = { messages: ChatMessage[]; promptContexts: PromptContextInfo[]; gitDiffs?: GitDiffSnapshots; cwd?: string; debug: boolean; active: boolean; retryable: boolean; paused: boolean; onRetry: Props["onSend"]; onBranch: Props["onBranch"]; onForkAndForget?: Props["onForkAndForget"]; onCreateWorktree?: Props["onCreateWorktree"] };

@@ -63,20 +63,26 @@ fn inspect_project_batches(directories: &[String], script: &str, command: &mut i
 }
 
 pub(super) fn inspect_session_projects_with(sessions: &mut [SessionSummary], mut command: impl FnMut(&str, &[String]) -> Command) -> Result<(), String> {
-    let directories = sessions.iter().map(|session| session.cwd.clone()).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>();
-    let script = r#"for path do
+    let mut directories = sessions.iter().map(|session| session.cwd.clone()).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>();
+    directories.sort();
+    let script = r#"previous_git_dir=
+    for path do
         if [ ! -d "$path" ]; then printf 'missing\000\000\000\000\000'; continue; fi
         git_dir=$(git -C "$path" rev-parse --absolute-git-dir 2>/dev/null) || { printf 'no-repo\000\000\000\000\000'; continue; }
-        common_dir=$(git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || { printf 'unknown\000\000\000\000\000'; continue; }
-        if [ "$git_dir" = "$common_dir" ]; then printf 'main\000'; else printf 'worktree\000'; fi
-        project_root=$(git -C "$path" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
-        branch=$(git -C "$path" symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=$(git -C "$path" rev-parse --short HEAD 2>/dev/null | sed 's/^/Detached at /')
-        printf '%s\000%s\000' "$project_root" "$branch"
-        if [ -n "$project_root" ] && [ -f "$project_root/.piop/branches.json" ]; then
-            head -c 32768 "$project_root/.piop/branches.json" 2>/dev/null | tr -d '\000'
+        if [ "$git_dir" != "$previous_git_dir" ] || [ -n "${GIT_DIR+x}${GIT_WORK_TREE+x}${GIT_COMMON_DIR+x}" ]; then
+            common_dir=$(git -C "$path" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || { printf 'unknown\000\000\000\000\000'; continue; }
+            if [ "$git_dir" = "$common_dir" ]; then project_kind=main; else project_kind=worktree; fi
+            project_root=$(git -C "$path" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')
+            branch=$(git -C "$path" symbolic-ref --quiet --short HEAD 2>/dev/null) || branch=$(git -C "$path" rev-parse --short HEAD 2>/dev/null | sed 's/^/Detached at /')
+            appearance=
+            if [ -n "$project_root" ] && [ -f "$project_root/.piop/branches.json" ]; then
+                appearance=$(head -c 32768 "$project_root/.piop/branches.json" 2>/dev/null | tr -d '\000'; printf '.')
+                appearance="${appearance%.}"
+            fi
+            worktree_root=$(git -C "$path" rev-parse --show-toplevel 2>/dev/null)
+            previous_git_dir=$git_dir
         fi
-        worktree_root=$(git -C "$path" rev-parse --show-toplevel 2>/dev/null)
-        printf '\000%s\000' "$worktree_root"
+        printf '%s\000%s\000%s\000%s\000%s\000' "$project_kind" "$project_root" "$branch" "$appearance" "$worktree_root"
     done"#;
     let mut projects = HashMap::new();
     for (batch, output) in inspect_project_batches(&directories, script, &mut command)? {
@@ -186,7 +192,7 @@ pub(super) fn update_remote_session_index(
 
 pub(super) fn parse_remote_session_metadata(output: &[u8]) -> Vec<(String, String, u64, u64)> {
     let fields = output.split(|byte| *byte == 0).collect::<Vec<_>>();
-    fields.chunks_exact(5).filter_map(|frame| {
+    fields.chunks_exact(3).filter_map(|frame| {
         let path = String::from_utf8_lossy(frame[0]).into_owned(); let modified = String::from_utf8_lossy(frame[1]); let size = String::from_utf8_lossy(frame[2]).parse().ok()?;
         Some((path, format!("{modified}:{size}"), modified.split('.').next()?.parse().ok()?, size))
     }).collect()
@@ -346,8 +352,13 @@ pub(super) fn list_local_directories(home: &Path, path: Option<&str>) -> Result<
     let current = requested.canonicalize().map_err(|error| format!("Could not browse {}: {error}", requested.display()))?;
     if !current.is_dir() { return Err(format!("{} is not a directory", current.display())); }
     let entries = fs::read_dir(&current).map_err(|error| format!("Could not browse {}: {error}", current.display()))?;
-    let mut directories: Vec<String> = entries.filter_map(Result::ok).map(|entry| entry.path()).filter(|entry| entry.is_dir()).map(|entry| entry.to_string_lossy().into_owned()).collect();
-    directories.sort_by_key(|directory| directory.to_lowercase());
+    let mut directories: Vec<String> = entries.filter_map(Result::ok).filter(|entry| {
+        match entry.file_type() {
+            Ok(kind) if !kind.is_symlink() => kind.is_dir(),
+            _ => entry.path().is_dir(),
+        }
+    }).map(|entry| entry.path().to_string_lossy().into_owned()).collect();
+    directories.sort_by_cached_key(|directory| directory.to_lowercase());
     Ok(DirectoryListing { path: current.to_string_lossy().into_owned(), parent: current.parent().map(|parent| parent.to_string_lossy().into_owned()), directories })
 }
 
@@ -365,7 +376,7 @@ pub(super) fn parse_remote_directories(output: &[u8]) -> Result<DirectoryListing
     let mut parts = output.split(|byte| *byte == 0).filter(|part| !part.is_empty());
     let current = PathBuf::from(String::from_utf8_lossy(parts.next().ok_or("Remote directory was unavailable")?).into_owned());
     let mut directories: Vec<String> = parts.map(|name| current.join(String::from_utf8_lossy(name).as_ref()).to_string_lossy().into_owned()).collect();
-    directories.sort_by_key(|directory| directory.to_lowercase());
+    directories.sort_by_cached_key(|directory| directory.to_lowercase());
     Ok(DirectoryListing { path: current.to_string_lossy().into_owned(), parent: current.parent().map(|parent| parent.to_string_lossy().into_owned()), directories })
 }
 

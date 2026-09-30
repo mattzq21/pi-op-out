@@ -21,7 +21,7 @@ export function SubagentResults(props: { runs: Run[] }) {
   const host = useContext(ConversationHostContext);
   const rows = createMemo(() => props.runs.map((run, index) => ({ run, key: `${run.hostId}:${run.sessionId || run.sessionPath || `pending-${index}`}` })));
   return <div aria-label="Subagent results"><Key each={rows()} by="key">{row => {
-    const run = () => row().run;
+    const run = createMemo(() => row().run);
     return <section class="tool-payload">
     <div class="tool-payload-label">{run().name} · {run().status}{typeof run().apiCost === "number" && Number.isFinite(run().apiCost) ? ` · $${run().apiCost!.toFixed(4)}` : ""}</div>
     <p>{run().task}</p>

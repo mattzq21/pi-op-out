@@ -277,17 +277,13 @@ fn retain_message(state: &mut SessionState, event: &Value) {
     match kind(event) {
         "message_start" => set(&mut state.live_messages, text(&event["message"], "role"), event["message"].clone()),
         "message_update" => {
-            let previous = state
-                .live_messages
-                .iter()
-                .find(|(role, _)| role == "assistant")
-                .map(|(_, message)| message);
             let next = event["assistantMessageEvent"]
                 .get("partial")
                 .filter(|value| !value.is_null())
                 .or_else(|| event.get("message").filter(|value| !value.is_null()))
                 .cloned()
-                .or_else(|| previous.map(|message| assistant_delta(message, &event["assistantMessageEvent"])));
+                .or_else(|| state.live_messages.iter_mut().find(|(role, _)| role == "assistant")
+                    .map(|(_, message)| assistant_delta(message.take(), &event["assistantMessageEvent"])));
             if let Some(mut next) = next {
                 if let Some(usage) = event.get("usage") {
                     next["usage"] = usage.clone();

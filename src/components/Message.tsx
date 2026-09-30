@@ -1,6 +1,6 @@
 import { ReviewLink } from "./ReviewLink";
 import { Key } from "@solid-primitives/keyed";
-import { createMemo, createSignal, Index } from "solid-js";
+import { type Accessor, createMemo, createSignal, Index } from "solid-js";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
 import { Check, ChevronRight, CircleAlert, Copy, FolderGit2, GitBranch, Pause, Undo2, Wrench } from "lucide-solid";
@@ -28,13 +28,16 @@ function userMessageParts(content: string) {
   return { skills: [invocation[1]], text: (invocation[2] ?? "").trim(), literalSkill: false };
 }
 
+const shortMessageTime = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
+const fullMessageTime = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+
 function formatMessageTime(timestamp?: number) {
   if (typeof timestamp !== "number" || !Number.isFinite(timestamp)) return undefined;
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return undefined;
   return {
-    short: date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
-    full: date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }),
+    short: shortMessageTime.format(date),
+    full: fullMessageTime.format(date),
   };
 }
 
@@ -45,17 +48,18 @@ function responseFailure(message: ChatMessage, paused: boolean) {
   return { pausedResponse, failure };
 }
 
-function responseMetadata(message: ChatMessage, turnCacheUsage: Props['turnCacheUsage']) {
-  return {
-    cache: cacheHitStats(turnCacheUsage ?? message.usage),
-    responseLabel: `Assistant response${message.timestamp ? ` from ${new Date(message.timestamp).toLocaleString()}` : ` ${message.id.slice(0, 8)}`}`,
-    responseTime: formatMessageTime(message.completedAt ?? message.timestamp),
-  };
+function responseMetadata(message: Accessor<ChatMessage>, turnCacheUsage: Accessor<Props['turnCacheUsage']>) {
+  const timestamp = createMemo(() => message().timestamp);
+  const completedAt = createMemo(() => message().completedAt ?? timestamp());
+  const id = createMemo(() => message().id);
+  const responseLabel = createMemo(() => `Assistant response${timestamp() ? ` from ${new Date(timestamp()!).toLocaleString()}` : ` ${id().slice(0, 8)}`}`);
+  const responseTime = createMemo(() => formatMessageTime(completedAt()));
+  return createMemo(() => ({ cache: cacheHitStats(turnCacheUsage() ?? message().usage), responseLabel: responseLabel(), responseTime: responseTime() }));
 }
 
-function toolInputLines(message: ChatMessage) {
-  const input = message.toolInput === undefined ? undefined : JSON.stringify(message.toolInput, null, 2);
-  return input && message.toolInput !== null && typeof message.toolInput === "object" && !Array.isArray(message.toolInput) ? input.slice(1, -1).replace(/^\n|\n$/g, "").replace(/^  /gm, "") : input;
+function toolInputLines(value: unknown) {
+  const input = value === undefined ? undefined : JSON.stringify(value, null, 2);
+  return input && value !== null && typeof value === "object" && !Array.isArray(value) ? input.slice(1, -1).replace(/^\n|\n$/g, "").replace(/^  /gm, "") : input;
 }
 
 function MessageCopyButton(componentProps: { state: "idle" | "copied" | "error"; copy: () => Promise<void> }) {
@@ -67,7 +71,8 @@ function ToolLabel(componentProps: { message: ChatMessage; toolCount: number; st
 }
 
 function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; error?: string; retry: () => void }) {
-  const input = createMemo(() => (toolInputLines(componentProps.message)));
+  const toolInput = createMemo(() => componentProps.message.toolInput);
+  const input = createMemo(() => toolInputLines(toolInput()));
   const output = createMemo(() => (textOf(componentProps.message.content)));
   const runs = createMemo(() => componentProps.message.toolName === "subagent" ? subagentRuns(componentProps.message.details) : []);
   const needsLoad = () => !componentProps.loading && !componentProps.error && componentProps.message.deferredToolPayload && !componentProps.message.toolPayloadLoaded;
@@ -145,51 +150,54 @@ export function Message(componentProps: Props) {
     </article>;
   };
 
-  const output = createMemo(() => (textOf(componentProps.message.content)));
-  const thinking = createMemo(() => (thinkingOf(componentProps.message.content)));
-  const metadata = createMemo(() => (responseMetadata(componentProps.message, componentProps.turnCacheUsage)));
-  const failureState = createMemo(() => (responseFailure(componentProps.message, (componentProps.paused === undefined ? false : componentProps.paused))));
-  const branch = async () => { const capturedOnBranch0 = componentProps.onBranch; const capturedMessage1 = componentProps.message;
-    if (!capturedOnBranch0 || branchingRef.current || forgettingRef.current) return;
-    branchingRef.current = true; setBranching(true);
-    try { await (capturedOnBranch0)!(capturedMessage1); } finally { branchingRef.current = false; setBranching(false); }
-  };
-  const forkAndForget = async () => { const capturedOnForkAndForget0 = componentProps.onForkAndForget; const capturedMessage1 = componentProps.message;
-    if (!capturedOnForkAndForget0 || branchingRef.current || forgettingRef.current) return;
-    forgettingRef.current = true; setForgetting(true);
-    try { await (capturedOnForkAndForget0)!(capturedMessage1); } finally { forgettingRef.current = false; setForgetting(false); }
-  };
-  const renderMessageBody = () => {
-    const renderResponse = () => <Markdown onOpenFile={componentProps.onOpenFile} streaming={componentProps.message.streaming}>{output()}</Markdown>;
-    const renderMessageFailure = () => (failureState().failure && <div class="message-failure" role="status"><CircleAlert size={14} /><span>{(failureState().failure)!}</span>{componentProps.onRetry && <button disabled={(componentProps.retrying === undefined ? false : componentProps.retrying)} onClick={(componentProps.onRetry)!}>{(componentProps.retrying === undefined ? false : componentProps.retrying) ? "Retrying…" : "Retry"}</button>}</div>);
-    const renderStreamCaret = () => (componentProps.message.streaming && <span class="stream-caret" />);
-    const renderMessageActions = () => {
-      const renderCopyResponse = () => (<IconButton title="Copy" label={copyState() === "copied" ? `${metadata().responseLabel} copied` : copyState() === "error" ? `Copy failed for ${metadata().responseLabel.toLowerCase()}` : `Copy ${metadata().responseLabel.toLowerCase()}`} onClick={copy}>{copyState() === "copied" ? <Check size={14} /> : copyState() === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>);
-      const renderBranchAction = () => (componentProps.onBranch && <button class="branch-button" aria-label={`Branch from ${metadata().responseLabel.toLowerCase()}`} title="Branch from here" disabled={branching() || forgetting()} onClick={() => void branch()}><GitBranch size={14} /></button>);
-      const renderForkAndForgetAction = () => (componentProps.onForkAndForget && <button class="branch-button" aria-label={`Fork and forget from ${metadata().responseLabel.toLowerCase()}`} title="Fork and forget from here" disabled={branching() || forgetting()} onClick={() => void forkAndForget()}><Undo2 size={14} /></button>);
-      const renderCacheHitRate = () => ((componentProps.debug === undefined ? false : componentProps.debug) && metadata().cache && <span class={`cache-hit-rate${(metadata().cache)!.low ? " low" : ""}`} tabIndex={0} aria-label={`Cache ${(metadata().cache)!.rate}%, ${(metadata().cache)!.cachedTokens}/${(metadata().cache)!.promptTokens}`}>Cache {(metadata().cache)!.rate}%<span class="cache-fraction-tooltip" aria-hidden="true"><span>{cacheTokenDigits((metadata().cache)!.cachedTokens)}</span><span>{cacheTokenDigits((metadata().cache)!.promptTokens)}</span></span></span>);
-      return ((componentProps.showActions === undefined ? true : componentProps.showActions) && !componentProps.message.streaming && (output().trim().length > 0 || componentProps.onCreateWorktree) && <div class="message-actions">
-        {renderCopyResponse()}
-        {copyState() === "error" && <span class="copy-feedback" role="status">Could not copy response</span>}
-        {renderBranchAction()}
-        {renderForkAndForgetAction()}
-        {componentProps.onCreateWorktree && <button class="branch-button" aria-label="Create Git worktree" title="Create Git worktree after this response" onClick={() => (componentProps.onCreateWorktree)!(componentProps.message)}><FolderGit2 size={14} /></button>}
-        {renderCacheHitRate()}
-        {metadata().responseTime && <span class="message-time">{(metadata().responseTime)!.short}</span>}
+  const renderAssistantMessage = () => {
+    const output = createMemo(() => (textOf(componentProps.message.content)));
+    const thinking = createMemo(() => (thinkingOf(componentProps.message.content)));
+    const streaming = createMemo(() => componentProps.message.streaming);
+    const metadata = responseMetadata(() => componentProps.message, () => componentProps.turnCacheUsage);
+    const failureState = createMemo(() => (responseFailure(componentProps.message, (componentProps.paused === undefined ? false : componentProps.paused))));
+    const branch = async () => { const capturedOnBranch0 = componentProps.onBranch; const capturedMessage1 = componentProps.message;
+      if (!capturedOnBranch0 || branchingRef.current || forgettingRef.current) return;
+      branchingRef.current = true; setBranching(true);
+      try { await (capturedOnBranch0)!(capturedMessage1); } finally { branchingRef.current = false; setBranching(false); }
+    };
+    const forkAndForget = async () => { const capturedOnForkAndForget0 = componentProps.onForkAndForget; const capturedMessage1 = componentProps.message;
+      if (!capturedOnForkAndForget0 || branchingRef.current || forgettingRef.current) return;
+      forgettingRef.current = true; setForgetting(true);
+      try { await (capturedOnForkAndForget0)!(capturedMessage1); } finally { forgettingRef.current = false; setForgetting(false); }
+    };
+    const renderMessageBody = () => {
+      const renderResponse = () => <Markdown onOpenFile={componentProps.onOpenFile} streaming={streaming()}>{output()}</Markdown>;
+      const renderMessageFailure = () => (failureState().failure && <div class="message-failure" role="status"><CircleAlert size={14} /><span>{(failureState().failure)!}</span>{componentProps.onRetry && <button disabled={(componentProps.retrying === undefined ? false : componentProps.retrying)} onClick={(componentProps.onRetry)!}>{(componentProps.retrying === undefined ? false : componentProps.retrying) ? "Retrying…" : "Retry"}</button>}</div>);
+      const renderStreamCaret = () => (streaming() && <span class="stream-caret" />);
+      const renderMessageActions = () => {
+        const renderCopyResponse = () => (<IconButton title="Copy" label={copyState() === "copied" ? `${metadata().responseLabel} copied` : copyState() === "error" ? `Copy failed for ${metadata().responseLabel.toLowerCase()}` : `Copy ${metadata().responseLabel.toLowerCase()}`} onClick={copy}>{copyState() === "copied" ? <Check size={14} /> : copyState() === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>);
+        const renderBranchAction = () => (componentProps.onBranch && <button class="branch-button" aria-label={`Branch from ${metadata().responseLabel.toLowerCase()}`} title="Branch from here" disabled={branching() || forgetting()} onClick={() => void branch()}><GitBranch size={14} /></button>);
+        const renderForkAndForgetAction = () => (componentProps.onForkAndForget && <button class="branch-button" aria-label={`Fork and forget from ${metadata().responseLabel.toLowerCase()}`} title="Fork and forget from here" disabled={branching() || forgetting()} onClick={() => void forkAndForget()}><Undo2 size={14} /></button>);
+        const renderCacheHitRate = () => ((componentProps.debug === undefined ? false : componentProps.debug) && metadata().cache && <span class={`cache-hit-rate${(metadata().cache)!.low ? " low" : ""}`} tabIndex={0} aria-label={`Cache ${(metadata().cache)!.rate}%, ${(metadata().cache)!.cachedTokens}/${(metadata().cache)!.promptTokens}`}>Cache {(metadata().cache)!.rate}%<span class="cache-fraction-tooltip" aria-hidden="true"><span>{cacheTokenDigits((metadata().cache)!.cachedTokens)}</span><span>{cacheTokenDigits((metadata().cache)!.promptTokens)}</span></span></span>);
+        return ((componentProps.showActions === undefined ? true : componentProps.showActions) && !streaming() && (output().trim().length > 0 || componentProps.onCreateWorktree) && <div class="message-actions">
+          {renderCopyResponse()}
+          {copyState() === "error" && <span class="copy-feedback" role="status">Could not copy response</span>}
+          {renderBranchAction()}
+          {renderForkAndForgetAction()}
+          {componentProps.onCreateWorktree && <button class="branch-button" aria-label="Create Git worktree" title="Create Git worktree after this response" onClick={() => (componentProps.onCreateWorktree)!(componentProps.message)}><FolderGit2 size={14} /></button>}
+          {renderCacheHitRate()}
+          {metadata().responseTime && <span class="message-time">{(metadata().responseTime)!.short}</span>}
+        </div>);
+      };
+      return (<div class="message-body">
+        {thinking() && <div class="reasoning-text"><Markdown streaming={streaming()}>{thinking()}</Markdown></div>}
+        {renderResponse()}
+        {renderMessageFailure()}
+        {failureState().pausedResponse && <div class="message-paused" role="status"><Pause size={14} /><span>Response paused</span></div>}
+        {renderStreamCaret()}
+        {componentProps.diff && <DiffViewer {...(componentProps.diff)!} />}
+        {renderMessageActions()}
       </div>);
     };
-    return (<div class="message-body">
-      {thinking() && <div class="reasoning-text"><Markdown streaming={componentProps.message.streaming}>{thinking()}</Markdown></div>}
-      {renderResponse()}
-      {renderMessageFailure()}
-      {failureState().pausedResponse && <div class="message-paused" role="status"><Pause size={14} /><span>Response paused</span></div>}
-      {renderStreamCaret()}
-      {componentProps.diff && <DiffViewer {...(componentProps.diff)!} />}
-      {renderMessageActions()}
-    </div>);
+    return (<article class={`message assistant-message ${thinking() ? "reasoning-message" : ""}`} aria-label={metadata().responseLabel}>
+      {renderMessageBody()}
+    </article>);
   };
-  const renderAssistantMessage = () => (<article class={`message assistant-message ${thinking() ? "reasoning-message" : ""}`} aria-label={metadata().responseLabel}>
-    {renderMessageBody()}
-  </article>);
   return <>{componentProps.message.customType === "piop-review-link" ? <ReviewLink details={componentProps.message.details} /> : componentProps.message.role === "system" ? (<div class="command-result" role="status">{textOf(componentProps.message.content)}</div>) : componentProps.message.role === "tool" ? (<ToolResult message={componentProps.message} toolCount={(componentProps.toolCount === undefined ? 1 : componentProps.toolCount)} debug={(componentProps.debug === undefined ? false : componentProps.debug)} />) : componentProps.message.role === "user" ? (<UserMessage />) : (renderAssistantMessage())}</>;
 }

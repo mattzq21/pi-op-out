@@ -107,6 +107,19 @@ function sessionGroupSeed(session: SessionSummary): SessionGroupSeed {
   };
 }
 
+function sessionGroupSeedInputs(session: SessionSummary) {
+  return [session.id, session.hostId, session.cwd, session.projectRoot, session.project, session.hostName, session.projectKind, session.branch, JSON.stringify(session.branchAppearance)];
+}
+
+function sessionGroupSeeds(sessions: Accessor<SessionSummary[]>) {
+  return createMemo((previous: { inputs: ReturnType<typeof sessionGroupSeedInputs>[]; json: string } | undefined) => {
+    const eligible = sessions().filter(session => !session.isDraft && session.messageCount > 0 && session.projectKind != null && !isTemporaryChatCwd(session.cwd));
+    const inputs = eligible.map(sessionGroupSeedInputs);
+    if (previous && inputs.length === previous.inputs.length && inputs.every((input, index) => input.every((value, field) => value === previous.inputs[index][field]))) return previous;
+    return { inputs, json: JSON.stringify(eligible.map(sessionGroupSeed).sort((a, b) => a.sessionKey.localeCompare(b.sessionKey))) };
+  });
+}
+
 export function useSessionGroups(sessions: Accessor<SessionSummary[]>) {
   const [state, setState] = createSignal<SessionGroups | undefined>(restoreSessionGroups());
   const [error, setError] = createSignal<string>();
@@ -118,7 +131,8 @@ export function useSessionGroups(sessions: Accessor<SessionSummary[]>) {
     const stop = listen<SessionGroups>("pi://groups-changed", ({ payload }) => { eventRevision++; publish(payload); });
     return () => { mounted.current = false; listeners.delete(listener); void stop.then((unlisten) => unlisten()); };
   }, () => []);
-  const seedsJson = createMemo(() => JSON.stringify(sessions().filter((session) => !session.isDraft && session.messageCount > 0 && session.projectKind != null && !isTemporaryChatCwd(session.cwd)).map(sessionGroupSeed).sort((a, b) => a.sessionKey.localeCompare(b.sessionKey))));
+  const seeds = sessionGroupSeeds(sessions);
+  const seedsJson = createMemo(() => seeds().json);
   createDependencyEffect(() => { const capturedSeedsJson = seedsJson();
     const seeds: SessionGroupSeed[] = JSON.parse(capturedSeedsJson);
     void enqueue(async () => { const revision = eventRevision; const state = await loadSessionGroups(seeds, legacyGroups(seeds)); if (revision === eventRevision) publish(state); }).catch((reason) => { if (mounted.current) setError(String(reason)); });

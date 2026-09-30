@@ -1,11 +1,11 @@
 import { Key } from "@solid-primitives/keyed";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { createMemo,createSignal,Show,splitProps } from "solid-js";
+import { createMemo,createSelector,createSignal,Show,splitProps } from "solid-js";
 import { clipboardImageFile,pastedFiles,readClipboardImages } from "../lib/clipboardImages";
 import { buildComposerPrompt,composerReference,isPromptCommand,skillName } from "../lib/composerPrompt";
 import { isMobile } from "../lib/platform";
-import { accountModelName,providerAccountLabel } from "../lib/providerAccounts";
+import { accountModelNameLookup,providerAccountLabel } from "../lib/providerAccounts";
 import { createDependencyEffect,createMemoFields,createRef,cssPixels,type CSSProperties,type JSXElement,type KeyboardEvent,type StateUpdate } from "../lib/solid";
 import { useComposerAttachments } from "../lib/useComposerAttachments";
 import { ComposerSettingsMenu } from "./ComposerSettingsMenu";
@@ -14,7 +14,7 @@ import { DictationControls } from "./DictationControls";
 import { ArrowUp,ChevronDown,ChevronUp,CircleStop,CircleX,CornerDownRight,FileText,ImagePlus,MoveVertical,Pause,Play,TerminalSquare,Trash2,X,Zap } from "lucide-solid";
 import { hasVisibleText } from "../lib/content";
 import { usePendingMessageDrag } from "../lib/usePendingMessageDrag";
-import type { AgentProfile,ComposerUpload,ContextUsage,ImageAttachment,Model,SlashCommand } from "../types";
+import type { AgentProfile,ComposerUpload,ContextUsage,ImageAttachment,Model,PendingMessage,SlashCommand } from "../types";
 import { IconButton } from "./IconButton";
 
 interface Props {
@@ -60,7 +60,26 @@ interface Props {
 }
 
 const COMPOSER_MAX_HEIGHT = 130;
-const displayModelName = (model: Model, models: Model[]) => accountModelName(model, models).replace(/^gpt-/i, "");
+function commandMatches(commands: SlashCommand[], query: string) {
+  const exact: SlashCommand[] = [];
+  const matches: SlashCommand[] = [];
+  for (const command of commands) {
+    const name = command.name.toLowerCase();
+    if (name === query) exact.push(command);
+    else if (matches.length < 7 && name.includes(query)) matches.push(command);
+    if (exact.length === 7) break;
+  }
+  return [...exact, ...matches].slice(0, 7);
+}
+
+function skillMatches(commands: SlashCommand[], query: string) {
+  const matches: SlashCommand[] = [];
+  for (const command of commands) {
+    if (skillName(command)?.toLowerCase().includes(query)) matches.push(command);
+    if (matches.length === 7) break;
+  }
+  return matches;
+}
 function composerDefaults({ streaming, compacting = false, paused = false, pausing = false, queued, pendingMessages = [], onChangePending, commands, agents, activeAgent, agentLocked = false, agentSaved = false, agentUnavailable = false, models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled = false, draft, onDraftChange, uploads: controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking }: Props) {
   return { streaming, compacting, paused, pausing, queued, pendingMessages, onChangePending, commands, agents, activeAgent, agentLocked, agentSaved, agentUnavailable, models, model, fastModeStatus, thinkingLevel, thinkingLevels, sessionCache, contextUsage, controlsDisabled, draft, onDraftChange, controlledUploads, onUploadsChange, restoredDraft, focusRequest, onSend, onAbort, onPause, onResume, onOpenTerminal, onAgent, onModel, onToggleFastMode, onThinking };
 }
@@ -76,6 +95,18 @@ function insideBounds(bounds: DOMRect | undefined, x: number, y: number) {
 
 function pendingControlsDisabled(controlsDisabled: boolean, changingPending: boolean, pausing: boolean, onChangePending: Props['onChangePending']) {
   return controlsDisabled || changingPending || pausing || !onChangePending;
+}
+
+function pendingQueuePositions(messages: PendingMessage[]) {
+  const queues = new Map<PendingMessage["behavior"], { length: number; positions: Map<string, number> }>();
+  for (const message of messages) {
+    if (!message || message.retry) continue;
+    let queue = queues.get(message.behavior);
+    if (!queue) queues.set(message.behavior, queue = { length: 0, positions: new Map() });
+    if (!queue.positions.has(message.id)) queue.positions.set(message.id, queue.length);
+    queue.length++;
+  }
+  return queues;
 }
 
 function pendingMessageClass(id: string, expanded: string | undefined, drop: ReturnType<typeof usePendingMessageDrag>['drop']) {
@@ -94,10 +125,13 @@ export function Composer(props: Props) {
   const [visualProps, controlProps] = splitProps(props, ["toolbar"]);
   const composerFields = createMemoFields(() => composerDefaults(controlProps));
   const composer = () => composerFields;
+  const pendingQueues = createMemo(() => pendingQueuePositions(composer().pendingMessages));
   const [localValue, setLocalValue] = createSignal("");
   const value = createMemo(() => (composer().draft ?? localValue()));
   const agentOptions = createMemo(() => composer().agents.map(agent => ({ value: agent.name, label: agent.name })));
-  const modelOptions = createMemo(() => composer().models.map(item => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item, composer().models), detail: providerAccountLabel(item.provider) })));
+  const modelName = createMemo(() => accountModelNameLookup(composer().models));
+  const displayModelName = (model: Model) => modelName()(model).replace(/^gpt-/i, "");
+  const modelOptions = createMemo(() => composer().models.map(item => ({ value: `${item.provider}/${item.id}`, label: displayModelName(item), detail: providerAccountLabel(item.provider) })));
   const thinkingOptions = createMemo(() => composer().thinkingLevels.map(level => ({ value: level, label: level.charAt(0).toUpperCase() + level.slice(1) })));
   const fastModeEnabled = createMemo(() => (composer().fastModeStatus === "Fast mode on"));
   const fastModeSupported = createMemo(() => (fastModeEnabled() || composer().fastModeStatus === "Fast mode off"));
@@ -144,9 +178,9 @@ export function Composer(props: Props) {
     return composer().commands.filter(command => (command.name !== "goal" || goalEnabled) && (!reference()?.start || isPromptCommand(command)));
   });
   const matches = createMemo(() => paletteDismissed() ? [] : commandQuery() !== undefined
-    ? visibleCommands().filter((command) => command.name.toLowerCase().includes((commandQuery())!)).sort((a, b) => Number(b.name.toLowerCase() === commandQuery()) - Number(a.name.toLowerCase() === commandQuery())).slice(0, 7)
+    ? commandMatches(visibleCommands(), commandQuery()!)
     : skillQuery() !== undefined
-      ? composer().commands.filter((command) => skillName(command)?.toLowerCase().includes((skillQuery())!)).slice(0, 7)
+      ? skillMatches(composer().commands, skillQuery()!)
       : []);
   createDependencyEffect(() => setSelectedMatch(0), () => [commandQuery(), skillQuery(), matches().length]);
   createDependencyEffect(() => {
@@ -351,7 +385,7 @@ export function Composer(props: Props) {
         const changeAgent = (name: string) => { if (!agentSelectionDisabled()) composer().onAgent(name); };
         const renderAgentPicker = () => (<ContainedPicker label="Agent" selectedLabel={composer().agentUnavailable ? `Agent unavailable: ${composer().activeAgent}` : composer().activeAgent ?? "general"} value={composer().activeAgent ?? "general"} disabled={agentSelectionDisabled()} menuMinWidth={130} centered compact options={agentOptions()} onChange={changeAgent} />);
         const renderFastModeIndicator = () => (fastModeSupported() && <button type="button" class={`fast-mode-indicator${fastModeEnabled() ? " active" : ""}`} aria-label="Fast mode" aria-description={(composer().fastModeStatus)!} aria-pressed={fastModeEnabled()} aria-busy={togglingFastMode()} disabled={controls().inputDisabled || togglingFastMode()} onClick={() => void toggleFastMode()}><Zap size={14} strokeWidth={1.5} fill={fastModeEnabled() ? "currentColor" : "none"} aria-hidden="true" /></button>);
-        const renderModelPicker = () => (<ContainedPicker label="Model" selectedLabel={composer().model ? displayModelName((composer().model)!, composer().models) : undefined} value={composer().model ? `${(composer().model)!.provider}/${(composer().model)!.id}` : ""} disabled={controls().inputDisabled} options={modelOptions()} onChange={(value) => { const next = composer().models.find((item) => `${item.provider}/${item.id}` === value); if (next) composer().onModel(next); }} />);
+        const renderModelPicker = () => (<ContainedPicker label="Model" selectedLabel={composer().model ? displayModelName((composer().model)!) : undefined} value={composer().model ? `${(composer().model)!.provider}/${(composer().model)!.id}` : ""} disabled={controls().inputDisabled} options={modelOptions()} onChange={(value) => { const next = composer().models.find((item) => `${item.provider}/${item.id}` === value); if (next) composer().onModel(next); }} />);
         const renderStopButton = () => (<Show when={composer().streaming || composer().compacting || composer().paused || composer().pausing}><IconButton title="" label="Stop piop" class="stop-compact" disabled={controls().stopDisabled} onClick={() => void control("abort")}><CircleStop size={17} /></IconButton></Show>);
         const showPauseResume = () => (composer().streaming || composer().paused) && !(hasVisibleText(value()) || uploads().length) || composer().pausing;
         const renderSend = () => <Show when={showPauseResume()} fallback={<IconButton title="" label="Send message" class="send" disabled={controls().inputDisabled || sending() || readingUploads() > 0 || (!hasVisibleText(value()) && uploads().length === 0)} onClick={() => void submit()}><ArrowUp size={18} /></IconButton>}>
@@ -430,15 +464,16 @@ export function Composer(props: Props) {
       const text = createMemo(() => (typeof message().message === "string" ? message().message : String(message().message ?? "")));
       const change = (action: import("../types").PendingMessageAction) => changePending(message().id, action);
       const disabled = createMemo(() => (composer().controlsDisabled || changingPending() || composer().pausing));
-      const peers = createMemo(() => (composer().pendingMessages.filter((item) => !item.retry && item.behavior === message().behavior)));
-      const position = createMemo(() => (peers().findIndex((item) => item.id === message().id)));
-      const renderPendingDragHandle = () => (<button type="button" class="pending-icon-button pending-drag-handle" disabled={disabled() || message().retry || !composer().onChangePending || peers().length < 2} aria-label={`Drag to reorder queued message: ${text()}`} title="Drag to reorder · Arrow keys to move" onKeyDown={(event) => {
+      const queue = createMemo(() => pendingQueues().get(message().behavior));
+      const peerCount = createMemo(() => queue()?.length ?? 0);
+      const position = createMemo(() => queue()?.positions.get(message().id) ?? -1);
+      const renderPendingDragHandle = () => (<button type="button" class="pending-icon-button pending-drag-handle" disabled={disabled() || message().retry || !composer().onChangePending || peerCount() < 2} aria-label={`Drag to reorder queued message: ${text()}`} title="Drag to reorder · Arrow keys to move" onKeyDown={(event) => {
           if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); change(event.key === "ArrowUp" ? "moveUp" : "moveDown"); }
         }} onPointerDown={(event) => pendingDrag.begin(event, message().id)}><MoveVertical size={16} /></button>);
       const renderPendingMessageActions = () => (composer().onChangePending && <div class="pending-message-actions">
           <div class="pending-order-actions">
             <button type="button" class="pending-icon-button" disabled={disabled() || position() <= 0} aria-label={`Move queued message up: ${text()}`} title="Move earlier in this delivery queue" onClick={() => change("moveUp")}><ChevronUp size={13} /></button>
-            <button type="button" class="pending-icon-button" disabled={disabled() || position() < 0 || position() >= peers().length - 1} aria-label={`Move queued message down: ${text()}`} title="Move later in this delivery queue" onClick={() => change("moveDown")}><ChevronDown size={13} /></button>
+            <button type="button" class="pending-icon-button" disabled={disabled() || position() < 0 || position() >= peerCount() - 1} aria-label={`Move queued message down: ${text()}`} title="Move later in this delivery queue" onClick={() => change("moveDown")}><ChevronDown size={13} /></button>
           </div>
           <button type="button" disabled={disabled()} title={message().behavior === "steer" ? "Queue after the current response" : "Steer at the next turn"} onClick={() => change(message().retry ? message().behavior : message().behavior === "steer" ? "followUp" : "steer")}><CornerDownRight size={13} />{message().retry ? "Retry" : message().behavior === "steer" ? "Queue" : "Steer"}</button>
           <button type="button" class="pending-icon-button" disabled={disabled()} aria-label={`Remove queued message: ${text()}`} title="Remove message" onClick={() => change("remove")}><Trash2 size={13} /></button>
@@ -466,6 +501,7 @@ function ContainedPicker(props: { label: string; selectedLabel?: string; value: 
   const picker = () => pickerFields;
   const [menuStyle, setMenuStyle] = createSignal<CSSProperties>();
   const [activeIndex, setActiveIndex] = createSignal(0);
+  const isActive = createSelector(activeIndex);
   const root = createRef<HTMLDivElement>(null);
   const trigger = createRef<HTMLButtonElement>(null);
   const optionRefs = createRef<Array<HTMLButtonElement | null>>([]);
@@ -512,7 +548,7 @@ function ContainedPicker(props: { label: string; selectedLabel?: string; value: 
   };
   return <div ref={element => { root.current = element; }} class="composer-picker" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close(); }} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); trigger.current?.focus(); } else if (menuStyle() && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); move(event.key === "ArrowDown" ? 1 : -1); } }}>
     <button ref={element => { trigger.current = element; }} type="button" class="select-control composer-picker-trigger" aria-label={picker().label} aria-haspopup="listbox" aria-expanded={Boolean(menuStyle())} data-value={picker().value} data-options={picker().options.map((option) => option.value).join(" ")} disabled={picker().disabled} onClick={toggle}>{picker().selectedLabel ?? selectedOption()?.label ?? picker().label}</button>
-    {menuStyle() && <div class={`composer-picker-menu${picker().centered ? " centered" : ""}${picker().compact ? " compact" : ""}`} role="listbox" aria-label={`${picker().label} options`} style={(menuStyle())!}>{picker().options.length === 0 && <div class="empty-small">No options available</div>}{<Key each={picker().options} by={(option) => `${option.detail ?? picker().label}:${option.value}`}>{(option, index) => <button ref={(element) => { optionRefs.current[index()] = element; }}  type="button" role="option" aria-selected={option().value === picker().value} tabIndex={index() === activeIndex() ? 0 : -1} data-value={option().value} disabled={picker().disabled || option().disabled} onFocus={() => setActiveIndex(index())} onClick={() => { if (picker().disabled || optionChosenRef.current) return; optionChosenRef.current = true; picker().onChange(option().value); close(); trigger.current?.focus(); }}><span>{option().label}</span>{option().detail && <small>{option().detail}</small>}</button>}</Key>}</div>}
+    {menuStyle() && <div class={`composer-picker-menu${picker().centered ? " centered" : ""}${picker().compact ? " compact" : ""}`} role="listbox" aria-label={`${picker().label} options`} style={(menuStyle())!}>{picker().options.length === 0 && <div class="empty-small">No options available</div>}{<Key each={picker().options} by={(option) => `${option.detail ?? picker().label}:${option.value}`}>{(option, index) => <button ref={(element) => { optionRefs.current[index()] = element; }}  type="button" role="option" aria-selected={option().value === picker().value} tabIndex={isActive(index()) ? 0 : -1} data-value={option().value} disabled={picker().disabled || option().disabled} onFocus={() => setActiveIndex(index())} onClick={() => { if (picker().disabled || optionChosenRef.current) return; optionChosenRef.current = true; picker().onChange(option().value); close(); trigger.current?.focus(); }}><span>{option().label}</span>{option().detail && <small>{option().detail}</small>}</button>}</Key>}</div>}
   </div>;
 }
 

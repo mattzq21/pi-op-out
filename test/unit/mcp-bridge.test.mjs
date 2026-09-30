@@ -110,7 +110,7 @@ test('same-id MCP definition changes close the old lease and invalidate its tool
     assert.deepEqual(await f.select([definition.id]), names);
     assert.equal(oldClient.closed, 1); assert.equal(f.clients.length, 2);
     assert.equal(f.clients[1].transport.options.command, 'replacement-server');
-    await assert.rejects(oldTool.execute('call', {}), /not connected/);
+    await assert.rejects(oldTool.execute('call', {}), /not available for this agent/);
     await f.select([definition.id]); assert.equal(f.clients.length, 2);
   });
 });
@@ -158,7 +158,7 @@ test('MCP bridge discovers paginated tools and forwards calls with an opted-in p
   assert.notEqual(client.calls.at(-1)[1].arguments.agent_id, 'spoofed'); assert.equal(client.calls.at(-1)[2].timeout, 120000);
   assert.deepEqual(await f.select([stdio.id]), names); assert.equal(f.clients.length, 1);
   f.setActive(['builtin', ...names]); await f.select([], 'agent'); assert.deepEqual(f.getActive(), ['builtin']);
-  await assert.rejects(tool.execute('call', {}), /not connected for this agent/); assert.equal(client.closed, 1);
+  await assert.rejects(tool.execute('call', {}), /not available for this agent/); assert.equal(client.closed, 1);
 }));
 
 test('MCP bridge configures HTTP headers and reconnects on agent changes without aliasing tools', async () => fixture([
@@ -167,13 +167,13 @@ test('MCP bridge configures HTTP headers and reconnects on agent changes without
   const names = await f.select(['http']); const oldTool = f.tools.get(names[0]); const oldClient = f.clients[0];
   assert.equal(oldClient.transport.url.href, 'https://example.invalid/mcp'); assert.deepEqual(oldClient.transport.options.requestInit.headers, { 'X-Test': 'value' });
   assert.deepEqual(await f.select(['http'], 'different-agent'), names); assert.equal(oldClient.closed, 1);
-  await assert.rejects(oldTool.execute('call', {}), /not connected/);
+  await assert.rejects(oldTool.execute('call', {}), /not available for this agent/);
   const tool = f.tools.get(names[0]); const signal = AbortSignal.abort(); await assert.rejects(tool.execute('call', {}, signal), /aborted/);
   globalThis.__MCP_TEST_RESULT__ = { isError: true, content: [{ type: 'text', text: 'remote failure' }] };
   await assert.rejects(tool.execute('call', {}), /remote failure/);
   globalThis.__MCP_TEST_RESULT__ = { structuredContent: { value: 3 } };
   assert.deepEqual(JSON.parse((await tool.execute('call', {})).content[0].text), globalThis.__MCP_TEST_RESULT__.structuredContent);
-  f.clients.at(-1).onclose(); await assert.rejects(tool.execute('call', {}), /not connected/);
+  f.clients.at(-1).onclose(); await assert.rejects(tool.execute('call', {}), /not available for this agent/);
   await f.select(['http'], 'different-agent'); assert.equal(f.clients.length, 3);
 }));
 

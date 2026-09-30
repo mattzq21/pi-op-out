@@ -40,7 +40,11 @@ async function main() {
   const parent = await metadata(source);
   if (typeof parent.id !== "string") throw new Error("Conversation has no session ID");
   const sessions = await collect(root);
-  const ids = new Set([parent.id]);
+  process.stdout.write(JSON.stringify(descendants(sessions, parent.id, source)));
+}
+
+function descendants(sessions, parentId, source) {
+  const ids = new Set([parentId]);
   const files = new Set([source]);
   let added = true;
   while (added) {
@@ -51,7 +55,7 @@ async function main() {
       }
     }
   }
-  process.stdout.write(JSON.stringify([...files].filter(file => file !== source)));
+  return [...files].filter(file => file !== source);
 }
 
 main().catch(error => { console.error(error.message); process.exitCode = 1; });

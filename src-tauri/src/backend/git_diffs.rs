@@ -138,14 +138,9 @@ pub(super) fn load_local_git_diffs(home: &Path, session_path: &str) -> Result<Gi
 }
 
 pub(super) fn load_git_diffs_at_host(session_path: &str, host: Option<&RemoteHost>) -> Result<GitDiffSnapshots, String> {
-    let content = if let Some(host) = host {
-        let mut command = ssh(host); command.arg(remote_session_sidecar_script(session_path, "if [ -f \"$sidecar\" ]; then cat -- \"$sidecar\"; else printf '{}'; fi"));
-        return query_remote_git_diffs(&mut command, &host.name);
-    } else {
-        let snapshots = load_local_git_diffs(&home_dir()?, session_path)?;
-        serde_json::to_string(&snapshots).map_err(|error| format!("Could not serialize diffs: {error}"))?
-    };
-    serde_json::from_str(&content).map_err(|error| format!("Could not parse saved diffs: {error}"))
+    let Some(host) = host else { return load_local_git_diffs(&home_dir()?, session_path); };
+    let mut command = ssh(host); command.arg(remote_session_sidecar_script(session_path, "if [ -f \"$sidecar\" ]; then cat -- \"$sidecar\"; else printf '{}'; fi"));
+    query_remote_git_diffs(&mut command, &host.name)
 }
 
 pub(super) fn query_remote_git_diffs(command: &mut Command, host_name: &str) -> Result<GitDiffSnapshots, String> {

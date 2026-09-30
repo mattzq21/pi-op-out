@@ -7,7 +7,7 @@ impl Session {
                 "get_session_revision" => return Ok(json!({"revision":self.revision()})),
                 "get_tool_payload" => return self.collect_tool_payload(&command).await,
                 "get_snapshot" => return self.collect_snapshot().await,
-                "get_entries" => return self.collect_snapshot().await.map(|snapshot| snapshot["history"].clone()),
+                "get_entries" => return self.collect_snapshot().await.map(|mut snapshot| snapshot.get_mut("history").map(Value::take).unwrap_or(Value::Null)),
                 "get_state" => return self.collect_state(command).await,
                 "force_stop" => {
                     self.stop().await;
@@ -142,14 +142,14 @@ impl Session {
         }
     }
 
-    pub(super) fn response(&self, event: Value, request: &Request) -> Result<Value> {
+    pub(super) fn response(&self, mut event: Value, request: &Request) -> Result<Value> {
         if request.request_type == "prompt" {
             self.check_prompt_error(&request.command)?;
         }
         if !flag(&event, "success") {
             return Err(event["error"].as_str().unwrap_or("Pi command failed").into());
         }
-        let mut data = event.get("data").cloned().unwrap_or(Value::Null);
+        let mut data = event.get_mut("data").map(std::mem::take).unwrap_or(Value::Null);
         if matches!(request.request_type.as_str(), "get_entries" | "get_snapshot_entries") {
             self.queue.tag_entries(&mut data);
         }
@@ -202,8 +202,7 @@ impl Session {
         let queue = self.queue.view();
         let state = self.state();
         for (_, message) in &state.live_messages {
-            if !array(&data, "entries")
-                .iter()
+            if !data["entries"].as_array().into_iter().flatten()
                 .any(|entry| entry["message"]["role"] == message["role"] && entry["message"]["timestamp"] == message["timestamp"])
             {
                 let id = format!("live-{}-{}", text(message, "role"), message["timestamp"]);

@@ -21,19 +21,20 @@ function expandInlineCommand(value: string, commands: SlashCommand[]) {
 const proseOnly = (value: string) => value.replace(/(^|\n)( {0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n\2\3[^\n]*(?=\n|$)|$)|(`+)[^`]*?\4/g, (code) => code.replace(/[^\n]/g, " "));
 export const skillReference = (value: string) => value.match(/(?:^|[\s([{])\$([a-zA-Z0-9_-]*)$/)?.[1]?.toLowerCase();
 function expandSkillReference(value: string, commands: SlashCommand[]) {
-  if (value.startsWith("/")) return value;
-  const skills = new Map(commands.flatMap((command) => { const name = skillName(command); return name ? [[name.toLowerCase(), name] as const] : []; }));
+  if (value.startsWith("/") || !value.includes("$")) return value;
+  let skills: Map<string, string> | undefined;
   const reference = /(^|[^a-zA-Z0-9_$])\$([a-zA-Z0-9][a-zA-Z0-9_-]*)\b/g;
   let primary: string | undefined;
   let rest = value;
   const prose = proseOnly(value);
-  for (const match of [...prose.matchAll(reference)]) {
+  for (const match of prose.matchAll(reference)) {
+    skills ??= new Map(commands.flatMap((command) => { const name = skillName(command); return name ? [[name.toLowerCase(), name] as const] : []; }));
     const name = skills.get(match[2].toLowerCase());
     if (!name || match.index === undefined) continue;
     if (!primary) primary = name;
     const token = match[0].slice(match[1].length);
     const at = match.index + match[1].length;
-    if (at >= 0) rest = rest.slice(0, at) + rest.slice(at + token.length);
+    rest = rest.slice(0, at) + rest.slice(at + token.length);
     break;
   }
   if (!primary) return value;

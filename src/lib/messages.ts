@@ -9,7 +9,13 @@ function validFileChanges(data: Partial<FileChangeSnapshot> | undefined): data i
   return Boolean(data && typeof data.cwd === "string" && typeof data.patch === "string" && Array.isArray(data.toolCallIds) && Array.isArray(data.paths));
 }
 
-export function appendFileChanges(messages: ChatMessage[], entry: PiEntry): ChatMessage[] {
+function replaceMessage(messages: ChatMessage[], index: number, message: ChatMessage, inPlace: boolean) {
+  const result = inPlace ? messages : messages.slice();
+  result[index] = message;
+  return result;
+}
+
+export function appendFileChanges(messages: ChatMessage[], entry: PiEntry, inPlace = false): ChatMessage[] {
   if (entry.type !== "custom" || entry.customType !== "piop-file-changes") return messages;
   const data = entry.data as Partial<FileChangeSnapshot> | undefined;
   if (!validFileChanges(data)) return messages;
@@ -18,7 +24,8 @@ export function appendFileChanges(messages: ChatMessage[], entry: PiEntry): Chat
   if (index < 0) return messages;
   const toolPaths = Array.isArray(data.toolPaths) ? data.toolPaths.filter((value) => value && typeof value === "object" && typeof value.toolCallId === "string" && typeof value.path === "string" && typeof value.absolutePath === "string" && typeof value.canonicalPath === "string") : [];
   const snapshot: FileChangeSnapshot = { id: entry.id, cwd: data.cwd, patch: data.patch, toolCallIds: data.toolCallIds.filter((id) => typeof id === "string"), toolPaths, paths: data.paths.filter((path) => typeof path === "string"), warnings: Array.isArray(data.warnings) ? data.warnings.filter((value) => typeof value === "string") : [] };
-  return messages.map((message, candidate) => candidate === index ? { ...message, fileChanges: [...(message.fileChanges ?? []).filter((change) => change.id !== entry.id), snapshot] } : message);
+  const message = messages[index];
+  return replaceMessage(messages, index, { ...message, fileChanges: [...(message.fileChanges ?? []).filter((change) => change.id !== entry.id), snapshot] }, inPlace);
 }
 
 function latestMatchingTool(messages: ChatMessage[], ids: Set<string>) {
@@ -39,10 +46,16 @@ export function isResumeMessage(message: { role?: unknown; content?: unknown }, 
   return markers.has(text);
 }
 
-export function checkpointLatestUser(messages: ChatMessage[]) {
-  const index = messages.map((message) => message.role).lastIndexOf("user");
+function latestUser(messages: ChatMessage[]) {
+  let index = messages.length - 1;
+  while (index >= 0 && messages[index].role !== "user") index--;
+  return index;
+}
+
+export function checkpointLatestUser(messages: ChatMessage[], inPlace = false) {
+  const index = latestUser(messages);
   if (index < 0 || messages[index].contextCheckpoint) return messages;
-  return messages.map((message, candidate) => candidate === index ? { ...message, contextCheckpoint: true } : message);
+  return replaceMessage(messages, index, { ...messages[index], contextCheckpoint: true }, inPlace);
 }
 
 export function cacheHitStats(usage?: { input: number; cacheRead: number; cacheWrite?: number }) {
@@ -94,15 +107,15 @@ function entryBranch(entries: PiEntry[], leafId: string | null): PiEntry[] {
 }
 
 function appendPromptContext(messages: ChatMessage[], entry: PiEntry) {
-  const userIndex = messages.map((message) => message.role).lastIndexOf("user");
+  const userIndex = latestUser(messages);
   if (userIndex >= 0 && !messages[userIndex].promptContext) messages[userIndex] = { ...messages[userIndex], promptContext: entry.data as PromptContextInfo };
 }
 
 function applyCustomEntry(messages: ChatMessage[], entry: PiEntry, resumeMarkers: Set<string>) {
-  if (entry.customType === "piop-file-changes") return appendFileChanges(messages, entry);
+  if (entry.customType === "piop-file-changes") return appendFileChanges(messages, entry, true);
   const marker = resumeMarker(entry);
-  if (marker) { resumeMarkers.add(marker); return checkpointLatestUser(messages); }
-  if (entry.customType === "pi-desktop-pause-state" && (entry.data as { isPaused?: boolean } | undefined)?.isPaused) return checkpointLatestUser(messages);
+  if (marker) { resumeMarkers.add(marker); return checkpointLatestUser(messages, true); }
+  if (entry.customType === "pi-desktop-pause-state" && (entry.data as { isPaused?: boolean } | undefined)?.isPaused) return checkpointLatestUser(messages, true);
   if (["piop-context", "pi-desktop-prompt-context"].includes(entry.customType ?? "")) appendPromptContext(messages, entry);
   return messages;
 }

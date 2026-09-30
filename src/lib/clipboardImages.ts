@@ -1,4 +1,5 @@
 import { isTauri, invoke } from "@tauri-apps/api/core";
+import { decodeBase64 } from "./base64";
 
 export function pastedFiles(data: DataTransfer): File[] {
   const files = Array.from(data.files);
@@ -26,5 +27,5 @@ export async function readClipboardImages(): Promise<File[]> {
   return files;
 }
 export function clipboardImageFile(data: string, mimeType = "image/png") {
-  return new File([Uint8Array.from(atob(data), char => char.charCodeAt(0))], `Pasted image.${mimeType.slice(6)}`, { type: mimeType });
+  return new File([decodeBase64(data)], `Pasted image.${mimeType.slice(6)}`, { type: mimeType });
 }

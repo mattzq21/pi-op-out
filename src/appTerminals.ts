@@ -41,7 +41,7 @@ export function createTerminalController({ transport, conversationKey, location,
   const queueTerminalOutput = (terminalId: string, data: string) => {
     const queued = queuedTerminalOutput.current.get(terminalId); const combined = `${queued?.data ?? ""}${data}`;
     queuedTerminalOutput.current.set(terminalId, { data: combined.slice(-TERMINAL_OUTPUT_LIMIT), length: (queued?.length ?? 0) + data.length });
-    if (terminalOutputFrame.current === undefined) terminalOutputFrame.current = window.setTimeout(flushTerminalOutput, 0);
+    if (terminalOutputFrame.current === undefined) terminalOutputFrame.current = window.setTimeout(flushTerminalOutput, 16);
   };
   const startTerminal = async (terminalId: string, cols: number, rows: number) => { const capturedTerminalSessionId = terminalSessionId(); const capturedTerminalLocationState = { ...terminalLocationState() }; const capturedTransport = transport();
     if (startingTerminals.current.has(terminalId)) return; startingTerminals.current.add(terminalId);
@@ -91,9 +91,12 @@ export function createTerminalController({ transport, conversationKey, location,
     });
     setTerminalTarget(current => current?.sessionKey === previousKey ? { ...current, sessionKey: nextKey } : current);
   };
-  const exited = (terminalId: unknown) => setTerminalsBySession(current => Object.fromEntries(Object.entries(current).map(([key, session]) => [key, {
-    ...session, tabs: session.tabs.map(terminal => terminal.id === terminalId ? { ...terminal, exited: true } : terminal),
-  }])));
+  const exited = (terminalId: unknown) => {
+    flushOutput();
+    setTerminalsBySession(current => Object.fromEntries(Object.entries(current).map(([key, session]) => [key, {
+      ...session, tabs: session.tabs.map(terminal => terminal.id === terminalId ? { ...terminal, exited: true } : terminal),
+    }])));
+  };
   const toggleFor = (target: TerminalTarget) => {
     const close = terminalOpen() && terminalSessionId() === target.sessionKey;
     terminalPanelRevision.current += 1;

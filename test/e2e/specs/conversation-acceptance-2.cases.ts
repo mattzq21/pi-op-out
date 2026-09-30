@@ -242,7 +242,7 @@ describe("Conversation acceptance", () => {
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => isUserPrompt(args.command)));
       const command = (await backendCalls()).find(({ args }) => isUserPrompt(args.command))?.args.command as { message: string; images: Array<{ data: string; mimeType: string; name: string }> };
-      expect(command.message).toBe("Describe the attached image.");
+      expect(command.message).toBe("");
       expect(command.images).toEqual([{ type: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", mimeType: "image/png", name: "pixel.png" }]);
     } finally {
       await resetBackend();

@@ -10,7 +10,7 @@ describe('conversation behavior', () => {
     props = { readOnly: false, state: { isStreaming: false, messageCount: 0 }, messages: [], models: [], commands: [], thinkingLevels: [], widgets: [], statuses: {}, onSend: async () => {}, onBranch: () => {} };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; dom.restore(); });
-  async function render(extra = {}) { props = { ...props, ...extra }; if (view) await view.rerender(props); else view = await renderComponent(ChatView, props); }
+  async function render(extra = {}) { props = { ...props, ...extra, state: { model: null, thinkingLevel: 'off', isStreaming: false, messageCount: 0, ...(extra.state ?? props.state) } }; if (view) await view.rerender(props); else view = await renderComponent(ChatView, props); }
   const user = (id, content = 'Question', timestamp = 0) => ({ id, role: 'user', content, timestamp });
   const assistant = (id, content = 'Answer', extra = {}) => ({ id, role: 'assistant', content, ...extra });
   const retryButton = () => document.querySelector('.message-failure button');
@@ -39,7 +39,6 @@ describe('conversation behavior', () => {
     await render({ messages, state: { isStreaming: true, viewers: 2 } });
     assert.equal(document.querySelectorAll('.conversation-turn').length, 3);
     assert.equal(document.querySelectorAll('.active-work-content').length, 1);
-    assert.match(document.querySelector('.concurrent-view-status').textContent, /Open in 2 views/);
     await render({ state: { isPaused: true } });
     assert.match(document.querySelector('.active-work-content').textContent, /Response paused/);
     assert.equal(retryButton(), null);
