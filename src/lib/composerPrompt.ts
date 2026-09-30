@@ -1,6 +1,24 @@
 import type { ComposerUpload, SlashCommand } from "../types";
 
 export const skillName = (command: SlashCommand) => command.source === "skill" ? command.name.replace(/^skill:/, "") : undefined;
+export const isPromptCommand = (command: SlashCommand) => command.name === "goal" || command.source === "skill" || command.source === "prompt";
+export function composerReference(value: string, caret: number) {
+  const match = value.slice(0, caret).match(/(?:^|\s)([/$])([^\s/$]*)$/);
+  return match ? { start: caret - match[2].length - 1, end: caret, marker: match[1], query: match[2].toLowerCase() } : undefined;
+}
+
+function expandInlineCommand(value: string, commands: SlashCommand[]) {
+  if (value.startsWith("/")) return value;
+  const available = new Map(commands.filter(isPromptCommand).map(command => [command.name, command]));
+  for (const match of proseOnly(value).matchAll(/\s\/(\S+)(?=\s|$)/g)) {
+    const command = available.get(match[1]);
+    if (!command) continue;
+    const rest = `${value.slice(0, match.index)} ${value.slice(match.index + match[0].length)}`.trim();
+    return `/${command.name}${rest ? ` ${rest}` : ""}`;
+  }
+  return value;
+}
+const proseOnly = (value: string) => value.replace(/(^|\n)( {0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n\2\3[^\n]*(?=\n|$)|$)|(`+)[^`]*?\4/g, (code) => code.replace(/[^\n]/g, " "));
 export const skillReference = (value: string) => value.match(/(?:^|[\s([{])\$([a-zA-Z0-9_-]*)$/)?.[1]?.toLowerCase();
 function expandSkillReference(value: string, commands: SlashCommand[]) {
   if (value.startsWith("/")) return value;
@@ -8,7 +26,7 @@ function expandSkillReference(value: string, commands: SlashCommand[]) {
   const reference = /(^|[^a-zA-Z0-9_$])\$([a-zA-Z0-9][a-zA-Z0-9_-]*)\b/g;
   let primary: string | undefined;
   let rest = value;
-  const prose = value.replace(/(^|\n)( {0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:\n\2\3[^\n]*(?=\n|$)|$)|(`+)[^`]*?\4/g, (code) => code.replace(/[^\n]/g, " "));
+  const prose = proseOnly(value);
   for (const match of [...prose.matchAll(reference)]) {
     const name = skills.get(match[2].toLowerCase());
     if (!name || match.index === undefined) continue;
@@ -27,7 +45,7 @@ const escapeAttribute = (value: string) => value.replace(/[&<>"']/g, (character)
 export function buildComposerPrompt(value: string, uploads: ComposerUpload[], commands: SlashCommand[]) {
   const textFiles = uploads.filter((upload) => upload.kind === "text");
   const escapeFileContent = (text: string) => text.replace(/<\/file>/gi, "<\\/file>");
-  const message = [expandSkillReference(value.trim(), commands), ...textFiles.map((file) => `<file name="${escapeAttribute(file.name)}">\n${escapeFileContent(file.text ?? "")}\n</file>`)].filter(Boolean).join("\n\n");
+  const message = [expandSkillReference(expandInlineCommand(value.trim(), commands), commands), ...textFiles.map((file) => `<file name="${escapeAttribute(file.name)}">\n${escapeFileContent(file.text ?? "")}\n</file>`)].filter(Boolean).join("\n\n");
   const images = uploads.flatMap((upload) => upload.image ? [upload.image] : []);
   return { message, images };
 }

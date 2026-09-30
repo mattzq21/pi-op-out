@@ -3,7 +3,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { createMemo,createSignal,Show,splitProps } from "solid-js";
 import { clipboardImageFile,pastedFiles,readClipboardImages } from "../lib/clipboardImages";
-import { buildComposerPrompt,skillName,skillReference } from "../lib/composerPrompt";
+import { buildComposerPrompt,composerReference,isPromptCommand,skillName } from "../lib/composerPrompt";
 import { isMobile } from "../lib/platform";
 import { accountModelName,providerAccountLabel } from "../lib/providerAccounts";
 import { createDependencyEffect,createMemoFields,createRef,cssPixels,type CSSProperties,type JSXElement,type KeyboardEvent,type StateUpdate } from "../lib/solid";
@@ -123,7 +123,7 @@ export function Composer(props: Props) {
   const controls = createMemo(() => { const state = composerControlState(composer().controlsDisabled, controlAction(), composer().pausing, stopping()); return { ...state, inputDisabled: state.inputDisabled || composer().compacting }; });
   const [selectedMatch, setSelectedMatch] = createSignal(0);
   const [paletteDismissed, setPaletteDismissed] = createSignal(false);
-  const [caretAtEnd, setCaretAtEnd] = createSignal(true);
+  const [selection, setSelection] = createSignal<{ start: number; end: number }>();
   const ref = createRef<HTMLTextAreaElement>(null);
   const focusOwnedEditor = () => { if (!props.ownershipRequired) ref.current?.focus(); };
   const composerRef = createRef<HTMLDivElement>(null);
@@ -131,12 +131,17 @@ export function Composer(props: Props) {
   const [draggingFiles, setDraggingFiles] = createSignal(false);
   const dragDepth = createRef(0);
   const restoredDraftId = createRef<string | undefined>(undefined);
-  const commandQuery = createMemo(() => (caretAtEnd() ? value().match(/^\/([^\s]*)$/)?.[1]?.toLowerCase() : undefined));
-  const skillQuery = createMemo(() => (caretAtEnd() && commandQuery() === undefined ? skillReference(value()) : undefined));
+  const reference = createMemo(() => {
+    const caret = selection();
+    if (caret && caret.start !== caret.end) return undefined;
+    return composerReference(value(), caret?.start ?? value().length);
+  });
+  const commandQuery = createMemo(() => reference()?.marker === "/" ? reference()?.query : undefined);
+  const skillQuery = createMemo(() => reference()?.marker === "$" ? reference()?.query : undefined);
   const visibleCommands = createMemo(() => {
     const agent = composer().agents.find(agent => agent.name === composer().activeAgent);
     const goalEnabled = !composer().agentUnavailable && ["get_goal", "create_goal", "update_goal"].every(tool => agent?.tools.includes(tool));
-    return composer().commands.filter(command => command.name !== "goal" || goalEnabled);
+    return composer().commands.filter(command => (command.name !== "goal" || goalEnabled) && (!reference()?.start || isPromptCommand(command)));
   });
   const matches = createMemo(() => paletteDismissed() ? [] : commandQuery() !== undefined
     ? visibleCommands().filter((command) => command.name.toLowerCase().includes((commandQuery())!)).sort((a, b) => Number(b.name.toLowerCase() === commandQuery()) - Number(a.name.toLowerCase() === commandQuery())).slice(0, 7)
@@ -282,13 +287,18 @@ export function Composer(props: Props) {
     finally { controlActionRef.current = false; setControlAction(undefined); }
   };
   const chooseCommand = (command: SlashCommand) => {
+    const token = reference();
+    if (!token) return;
     const name = skillName(command);
-    if (skillQuery() !== undefined && name) setValue(value().replace(/\$[a-zA-Z0-9_-]*$/, `$${name} `));
-    else setValue(`/${command.name} `);
+    const replacement = name && (token.marker === "$" || token.start > 0) ? `$${name} ` : `/${command.name} `;
+    setValue(value().slice(0, token.start) + replacement + value().slice(token.end));
+    const caret = token.start + replacement.length;
+    setSelection({ start: caret, end: caret });
     focusOwnedEditor();
+    ref.current?.setSelectionRange(caret, caret);
   };
   const handlePaletteKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.currentTarget.selectionStart !== value().length || event.currentTarget.selectionEnd !== value().length) return false;
+    if (event.currentTarget.selectionStart !== event.currentTarget.selectionEnd) return false;
     if (event.key === "Escape" && matches().length) { event.preventDefault(); event.stopPropagation(); setPaletteDismissed(true); return true; }
     if (matches().length && (event.key === "ArrowDown" || event.key === "ArrowUp")) { event.preventDefault(); setSelectedMatch((current) => (current + (event.key === "ArrowDown" ? 1 : -1) + matches().length) % matches().length); return true; }
     if (canPickCommand(event) && matches()[selectedMatch()]) { event.preventDefault(); chooseCommand(matches()[selectedMatch()]); return true; }
@@ -332,7 +342,7 @@ export function Composer(props: Props) {
     const renderComposerDropHint = () => (draggingFiles() && !controls().inputDisabled && <div class="composer-drop-hint" role="status">Drop files to attach</div>);
     const renderCommandPalette = () => (<Show when={matches().length > 0}><div class="command-palette" role="listbox" aria-label={skillQuery() === undefined ? "piop commands" : "piop skills"}>{<Key each={matches()} by={(command) => `${command.source}:${command.name}`}>{(command, index) => <button ref={element => { if (index() === selectedMatch()) selectedCommandRef.current = element; }} role="option" aria-selected={index() === selectedMatch()}  type="button" onClick={() => chooseCommand(command())}><span><strong>{skillQuery() !== undefined ? `$${skillName(command())}` : `/${command().name}`}</strong>{command().description && <small>{command().description}</small>}</span></button>}</Key>}</div></Show>);
     const renderComposerEditor = () => (<div class="composer-editor">
-        <textarea ref={element => { ref.current = element; }} aria-label="Message piop" readOnly={props.ownershipRequired} onFocus={() => { if (props.ownershipRequired) void props.onTakeOwnership?.(); }} disabled={composer().controlsDisabled && !props.ownershipRequired} placeholder={props.ownershipRequired ? "" : composer().controlsDisabled ? "Connecting to piop…" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setCaretAtEnd(event.currentTarget.selectionStart === event.currentTarget.value.length && event.currentTarget.selectionEnd === event.currentTarget.value.length)} onInput={(event) => { setCaretAtEnd(event.target.selectionStart === event.target.value.length && event.target.selectionEnd === event.target.value.length); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
+        <textarea ref={element => { ref.current = element; }} aria-label="Message piop" readOnly={props.ownershipRequired} onFocus={() => { if (props.ownershipRequired) void props.onTakeOwnership?.(); }} disabled={composer().controlsDisabled && !props.ownershipRequired} placeholder={props.ownershipRequired ? "" : composer().controlsDisabled ? "Connecting to piop…" : composer().paused ? "Send a message to continue piop…" : composer().streaming ? "Queue a follow-up…" : "Ask piop to build, explain, or change anything…"} value={value()} rows={1} onSelect={(event) => setSelection({ start: event.currentTarget.selectionStart, end: event.currentTarget.selectionEnd })} onInput={(event) => { setSelection({ start: event.target.selectionStart, end: event.target.selectionEnd }); setPaletteDismissed(false); setValue(event.target.value); }} onKeyDown={handleEditorKey} />
       </div>);
     const ComposerBar = () => {
       const ComposerTools = () => (<div class="composer-tools"><DictationControls disabled={composer().controlsDisabled} onText={(text) => { const current = value(); setValue(`${current}${current && !/\s$/.test(current) ? " " : ""}${text}`); focusOwnedEditor(); }} />{composer().onOpenTerminal && <IconButton title="" label="Open terminal" disabled={composer().controlsDisabled} onClick={(composer().onOpenTerminal)!}><TerminalSquare size={17} /></IconButton>}<Show when={composer().contextUsage}>{usage => <ContextWheel usage={usage()} />}</Show><Show when={composer().sessionCache}>{cache => <span class={`session-cache-hit${cache().low ? " low" : ""}`}>Cache {cache().rate}%</span>}</Show></div>);
