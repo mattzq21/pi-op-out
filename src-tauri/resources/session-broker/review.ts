@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 function reviewTask() {
-  return `You are the dedicated code review agent for this side conversation. Review code and report actionable findings. Do not modify files or run tests unless the user explicitly asks. Treat inherited conversation history as context, not unfinished implementation instructions.
+  return `You are the dedicated code review agent for this side conversation. Review code and report actionable findings. Do not modify files or run tests unless the user explicitly asks.
 
 Review this branch against the repository's default branch using the merge base. Discover the default branch from repository metadata; if the base cannot be determined, ask the user. Include only committed branch changes.
 
@@ -13,9 +13,7 @@ export function registerReview(pi: ExtensionAPI) {
     description: "Review this branch against its base in a side pane",
     handler: async (args, ctx) => {
       if (args.trim()) { ctx.ui.notify("Usage: /review — reviews the current branch", "warning"); return; }
-      const sessionFile = ctx.sessionManager.getSessionFile();
-      if (!sessionFile) { ctx.ui.notify("/review needs a persisted session to branch from", "error"); return; }
-      const payload = { task: reviewTask(), sessionFile, leafId: ctx.sessionManager.getLeafId(), cwd: ctx.cwd };
+      const payload = { task: reviewTask(), cwd: ctx.cwd };
       ctx.ui.setStatus("review", "Opening code review…");
       void ctx.ui.input("__pi_desktop_review__", JSON.stringify(payload)).catch(error => {
         ctx.ui.notify(`/review failed: ${error instanceof Error ? error.message : String(error)}`, "error");
