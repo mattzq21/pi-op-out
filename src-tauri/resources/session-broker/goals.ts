@@ -105,7 +105,7 @@ export function registerGoals(pi: ExtensionAPI) {
 
   const stopForOutcome = (event: AgentBeforeSettleEvent, ctx: ExtensionContext) => {
     if (event.outcome === "completed") return false;
-    if (!state.goal || !["active", "budget_limited"].includes(state.goal.status)) return false;
+    if (!state.usageGoalId()) return false;
     if (event.outcome === "aborted") state.setStatus(ctx, "paused");
     else state.setStatus(ctx, /quota|usage.limit|rate.limit|too many requests|429/i.test(lastError) ? "usage_limited" : "blocked");
     return true;
