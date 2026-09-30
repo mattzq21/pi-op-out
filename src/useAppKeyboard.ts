@@ -10,7 +10,7 @@ type KeyboardContext = {
   activePane: Accessor<"main" | "split">;
   splitPane: Accessor<SplitPaneState | undefined>;
   canLeaveSettings: () => boolean;
-  setView: Setter<"chat" | "settings" | "workflow">;
+  setView: Setter<"chat" | "settings">;
   setPanelOpen: Setter<boolean>;
   newSession: () => unknown;
   toggleTerminal: () => void;
@@ -18,7 +18,7 @@ type KeyboardContext = {
   setSplitComposerFocusRequest: Setter<number>;
   setMainComposerFocusRequest: Setter<number>;
   settingsDirty: Accessor<boolean>;
-  view: Accessor<"chat" | "settings" | "workflow">;
+  view: Accessor<"chat" | "settings">;
   terminalOpen: Accessor<boolean>;
   setTerminalOpen: Setter<boolean>;
 };
