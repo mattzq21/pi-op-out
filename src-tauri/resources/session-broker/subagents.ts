@@ -82,7 +82,7 @@ async function createSubagent(pi: ExtensionAPI, ctx: ExtensionContext, task: Sub
   return run;
 }
 
-type SubagentExecution = { pi: ExtensionAPI; ctx: ExtensionContext; toolCallId: string; active: Set<string>; results: SubagentRun[]; signal?: AbortSignal; publish: () => void };
+type SubagentExecution = { pi: ExtensionAPI; ctx: ExtensionContext; toolCallId: string; active: Set<string>; results: SubagentRun[]; signal?: AbortSignal; ready: () => void; publish: (run: SubagentRun) => void };
 
 async function dispatchSubagent(run: SubagentRun, requestId: string, execution: SubagentExecution) {
   const { signal, pi, ctx } = execution;
@@ -128,7 +128,8 @@ async function executeSubagent(task: SubagentTask, execution: SubagentExecution)
     if (active.has(child.sessionId)) throw new Error("This subagent is already running");
     Object.assign(run, child);
     active.add(run.sessionId); claimed = true;
-    pi.appendEntry(SUBAGENT_RUN, { ...run }); publish();
+    pi.appendEntry(SUBAGENT_RUN, { ...run }); publish(run);
+    execution.ready();
     await dispatchSubagent(run, randomUUID(), execution);
   } catch (error) {
     run.status = signal?.aborted ? "cancelled" : "failed";
@@ -136,16 +137,38 @@ async function executeSubagent(task: SubagentTask, execution: SubagentExecution)
   }
   if (claimed) active.delete(run.sessionId);
   run.endedAt = Date.now();
-  pi.appendEntry(SUBAGENT_RUN, { ...run }); publish();
+  pi.appendEntry(SUBAGENT_RUN, { ...run }); publish(run);
+}
+
+function subagentPayload(runs: SubagentRun[]) {
+  return { content: [{ type: "text" as const, text: runs.map((run) => `${run.name}: ${run.status}\nSession: ${run.hostId}/${run.sessionId}\nTranscript: ${run.sessionPath}${run.output ? `\n${run.output}` : ""}`).join("\n\n") }], details: { version: 1, runs: structuredClone(runs) } };
+}
+
+function launchSubagent(task: SubagentTask, execution: Omit<SubagentExecution, "ready">, pending: Set<Promise<void>>) {
+  return new Promise<void>((ready) => {
+    const completion = executeSubagent(task, { ...execution, ready })
+      .catch(error => execution.ctx.ui.notify(`Subagent failed: ${String(error)}`, "error"))
+      .finally(() => { ready(); pending.delete(completion); });
+    pending.add(completion);
+  });
 }
 
 export function registerSubagents(pi: ExtensionAPI) {
   registerSubagentUsage(pi);
   const active = new Set<string>();
+  const pending = new Set<Promise<void>>();
+  let controller = new AbortController();
+  const stop = async () => {
+    controller.abort();
+    await Promise.allSettled([...pending]);
+    controller = new AbortController();
+  };
+  pi.on("session_before_switch", stop);
+  pi.on("session_shutdown", stop);
   pi.registerTool({
     name: "subagent", label: "Subagents",
     exposure: "model-only",
-    description: "Delegate 1–4 independent tasks in parallel and wait for their results. Each child has a fresh context, a saved transcript visible in piop, and the current working directory (files are shared). Supply all necessary context in task. Defaults to the current agent profile and model; agent selects a named piop profile. Resume a previous child with its returned sessionId. Child agents cannot delegate further. Avoid overlapping edits. Runs are cancelled when this tool is stopped and time out after ten minutes.",
+    description: "Delegate 1–4 independent tasks in the background. Returns child session IDs once created, without waiting for results; completion or failure arrives automatically as a follow-up message. Continue other work while children run. Each child has a fresh context, a saved transcript visible in piop, and the current working directory (files are shared). Supply all necessary context in task. Defaults to the current agent profile and model; agent selects a named piop profile. Resume a finished child with its returned sessionId. Child agents cannot delegate further. Avoid overlapping edits. Runs are cancelled when the parent session closes or switches and time out after ten minutes.",
     parameters: Type.Object({ tasks: Type.Array(Type.Object({ name: Type.String({ minLength: 1, maxLength: 120 }), task: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1 })), sessionId: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1, maxItems: 4 }) }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       signal?.throwIfAborted();
@@ -154,9 +177,15 @@ export function registerSubagents(pi: ExtensionAPI) {
       const resumed = params.tasks.flatMap((task) => task.sessionId ? [task.sessionId] : []);
       if (new Set(resumed).size !== resumed.length) throw new Error("A child can only receive one task at a time");
       const results: SubagentRun[] = [];
-      const payload = () => ({ content: [{ type: "text" as const, text: results.map((run) => `${run.name}: ${run.status}\nSession: ${run.hostId}/${run.sessionId}\nTranscript: ${run.sessionPath}${run.output ? `\n${run.output}` : ""}`).join("\n\n") }], details: { version: 1, runs: structuredClone(results) } });
-      await Promise.all(params.tasks.map((task) => executeSubagent(task, { pi, ctx, toolCallId, active, results, signal, publish: () => onUpdate?.(payload()) })));
-      return { ...payload(), isError: results.some((run) => run.status !== "completed") };
+      const backgroundSignal = controller.signal;
+      const publish = (run: SubagentRun) => {
+        if (backgroundSignal.aborted) return;
+        if (run.status === "running") { onUpdate?.(subagentPayload(results)); return; }
+        const payload = subagentPayload([run]);
+        pi.sendMessage({ customType: "piop-subagent-result", ...payload, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+      };
+      await Promise.all(params.tasks.map((task) => launchSubagent(task, { pi, ctx, toolCallId, active, results, signal: backgroundSignal, publish }, pending)));
+      return { ...subagentPayload(results), isError: results.some((run) => run.status === "failed" || run.status === "cancelled") };
     },
   });
 }
