@@ -58,6 +58,7 @@ export default function App() {
           onDialogRequest={queueExtensionDialog} onDialogResolved={resolveExtensionDialog} onDialogTransportClosed={closeTransportDialogs}
           onReleaseTransport={releaseSplitTransport} onSessionChange={changeSession} freshReview={Boolean(pane.review)} initialPrompt={pane.review?.task} initialImages={pane.review?.images}
           onReady={pane.review ? () => respondToReview(pane.review!.requestId, { value: "opened" }) : undefined}
+          onMessageMain={pane.review?.messageMain}
           onFailed={pane.review ? () => respondToReview(pane.review!.requestId, { cancelled: true }) : undefined}
           onClose={() => { if (currentPane()) closeSplitPane(); }} />;
       }}</Rerun></Show>);

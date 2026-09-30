@@ -14,7 +14,7 @@ import type { AgentState, AppSettings, ChatMessage, ComposerUpload, DefinedAgent
 import { branchMessages, type PiEntry } from "../lib/messages";
 import { ChatView } from "./ChatView";
 
-interface Props { uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; freshReview?: boolean; initialPrompt?: string; initialImages?: ImageAttachment[]; onReady?: () => void; onFailed?: (reason: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
+interface Props { uploadsFor: (owner: NativeTransport) => ComposerUpload[]; onUploadsChange: (owner: NativeTransport, update: StateUpdate<ComposerUpload[]>) => void; runtimePool: SessionRuntimePool; session: SessionSummary; settings: AppSettings; draft: string; onDraftChange: (value: StateUpdate<string>) => void; focusRequest?: number; onActivate?: () => void; onOpenTerminal: () => void; onDialogRequest: (request: ExtensionUiRequest, transport: NativeTransport, owner: string) => void; onDialogResolved: (transport: NativeTransport, id: string) => void; onDialogTransportClosed: (transport: NativeTransport) => Promise<void>; onReleaseTransport: (transport: NativeTransport) => Promise<void>; freshReview?: boolean; initialPrompt?: string; initialImages?: ImageAttachment[]; onMessageMain?: (message: string) => Promise<void>; onReady?: () => void; onFailed?: (reason: unknown) => void; onSessionChange: (session: SessionSummary, transport: NativeTransport) => void; onClose: () => void; }
 const initialState = (session: SessionSummary): AgentState => ({ model: null, thinkingLevel: "off", isStreaming: false, sessionId: session.id, sessionName: session.name, messageCount: session.messageCount, pendingMessageCount: 0 });
 
 export function SplitChatPane(componentProps: Props) {
@@ -35,11 +35,13 @@ export function SplitChatPane(componentProps: Props) {
   const [extensionFocusRequest, setExtensionFocusRequest] = createSignal(0);
   const reconnectRef = createRef<() => void>(() => undefined);
   const lifecycleRef = createRef(0);
-  createDependencyEffect(() => { const capturedTransport = transport(); const capturedSession = { ...session() }; const capturedRuntimePool0 = componentProps.runtimePool; const capturedSettings1 = componentProps.settings; const capturedInitialPrompt2 = componentProps.initialPrompt; const capturedOnReady3 = componentProps.onReady; const capturedOnFailed4 = componentProps.onFailed; const capturedSession5 = componentProps.session; const capturedFreshReview6 = componentProps.freshReview; const capturedOnDialogTransportClosed7 = componentProps.onDialogTransportClosed; const capturedOnDialogResolved8 = componentProps.onDialogResolved; const capturedOnDialogRequest9 = componentProps.onDialogRequest; const capturedOnDraftChange10 = componentProps.onDraftChange; const capturedOnReleaseTransport11 = componentProps.onReleaseTransport;
+  const reviewDeliveries = new Map<string, Promise<string>>();
+  createDependencyEffect(() => { const capturedTransport = transport(); const capturedSession = { ...session() }; const capturedRuntimePool0 = componentProps.runtimePool; const capturedSettings1 = componentProps.settings; const capturedInitialPrompt2 = componentProps.initialPrompt; const capturedOnReady3 = componentProps.onReady; const capturedOnFailed4 = componentProps.onFailed; const capturedSession5 = componentProps.session; const capturedFreshReview6 = componentProps.freshReview; const messageMain = componentProps.onMessageMain; const capturedOnDialogTransportClosed7 = componentProps.onDialogTransportClosed; const capturedOnDialogResolved8 = componentProps.onDialogResolved; const capturedOnDialogRequest9 = componentProps.onDialogRequest; const capturedOnDraftChange10 = componentProps.onDraftChange; const capturedOnReleaseTransport11 = componentProps.onReleaseTransport;
     const lifecycle = ++lifecycleRef.current; let closing = false; let reconnecting = false; let connectedOnce = false;
     capturedRuntimePool0.setInteractive(capturedTransport, true);
     const configure = async () => {
       const runtimeSettings = capturedTransport.currentHostId() === "local" ? capturedSettings1 : await capturedTransport.loadHostSettings();
+      if (capturedFreshReview6) await capturedTransport.command({ type: "prompt", message: "/pi-orchestration-review-init" });
       await Promise.all([capturedTransport.command({ type: "set_auto_compaction", enabled: true }), capturedTransport.command({ type: "set_auto_retry", enabled: runtimeSettings.autoRetry })]);
     };
     const sendInitialPrompt = async (initial: boolean) => {
@@ -83,6 +85,21 @@ export function SplitChatPane(componentProps: Props) {
       };
       const handleExtensionUiRequest = () => {
         const request = event as unknown as ExtensionUiRequest;
+        if (request.method === "input" && request.title === "__piop_review_message_main__") {
+          let delivery = reviewDeliveries.get(request.id);
+          if (!delivery) {
+            delivery = Promise.resolve().then(async () => {
+              if (!capturedFreshReview6 || !messageMain) throw new Error("No main conversation is attached to this reviewer");
+              const { message } = JSON.parse(request.placeholder || "{}");
+              if (typeof message !== "string" || !message.trim()) throw new Error("A message is required");
+              await messageMain(message);
+              return "delivered";
+            }).catch(reason => reason instanceof Error ? reason.message : String(reason));
+            reviewDeliveries.set(request.id, delivery);
+          }
+          void delivery.then(value => capturedTransport.command({ type: "extension_ui_response", id: request.id, value })).catch(reportControlError);
+          return;
+        }
         if (request.method === "input" && request.title === REVIEW_REQUEST_TITLE) {
           void capturedTransport.command({ type: "extension_ui_response", id: request.id, cancelled: true }).catch(reportControlError);
           setControlError("To start /review from this conversation, select it in the main pane first.");

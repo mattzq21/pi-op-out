@@ -14,7 +14,7 @@ type SessionTerminals = { activeId: string; tabs: TerminalTabState[] };
 
 type QueuedTerminalOutput = { data: string; length: number };
 
-type ReviewRequest = { task: string; requestId: string; images?: import("./types").ImageAttachment[] };
+type ReviewRequest = { task: string; requestId: string; images?: import("./types").ImageAttachment[]; messageMain: (message: string) => Promise<void> };
 
 type SplitPaneState = { key: string; session: SessionSummary; review?: ReviewRequest };
 

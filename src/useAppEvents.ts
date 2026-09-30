@@ -87,9 +87,9 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
         if (capturedOptions.transport !== capturedOptions.activeTransportRef.current) return;
         const notifyExtension = () => { if (!event.inputRejected) capturedOptions.addNotice({ title: request.notifyType === "error" ? "Extension error" : request.notifyType === "warning" ? "Extension warning" : "piop extension", message: request.message || "Notification" }); };
         const reviewPayload = () => {
-          const payload = JSON.parse(request.placeholder || "{}") as { task?: unknown; cwd?: unknown };
-          if (typeof payload.task !== "string" || !payload.task.trim()) throw new Error("Invalid /review request");
-          return { task: payload.task, cwd: payload.cwd };
+          const payload = JSON.parse(request.placeholder || "{}") as { task?: unknown; cwd?: unknown; parentSessionId?: unknown };
+          if (typeof payload.task !== "string" || !payload.task.trim() || typeof payload.parentSessionId !== "string" || !payload.parentSessionId) throw new Error("Invalid /review request");
+          return { task: payload.task, cwd: payload.cwd, parentSessionId: payload.parentSessionId };
         };
         const openReview = () => {
           try {
@@ -101,7 +101,11 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
             capturedOptions.setSplitPane({
               key: crypto.randomUUID(),
               session: { id: `review-${request.id}`, path: "", name: "Code review", project: cwd.split(/[\\/]/).filter(Boolean).at(-1) || "Workspace", cwd, preview: payload.task, messageCount: 0, lastMessageAt: Date.now(), apiCost: 0, hostId: capturedOptions.activeHostIdRef.current },
-              review: { task: payload.task, requestId: request.id, images: capturedOptions.reviewImages.get(capturedOptions.transport) },
+              review: { task: payload.task, requestId: request.id, images: capturedOptions.reviewImages.get(capturedOptions.transport), messageMain: async message => {
+                const parent = capturedOptions.transport;
+                if (parent.connectionTarget().sessionId !== payload.parentSessionId) throw new Error("The original main conversation is no longer connected");
+                await parent.command({ type: "prompt", message: `[Message from code review]\n${message}`, streamingBehavior: "followUp" });
+              } },
             });
             capturedOptions.reviewImages.delete(capturedOptions.transport);
           } catch (reason) {
