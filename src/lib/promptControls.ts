@@ -32,7 +32,7 @@ export class PromptControls {
   statuses(statuses: Record<string, string>, fastModels?: string[]) {
     const selected = this.selection[0]();
     if (selected.model && fastModels) {
-      const id = `${selected.model.provider}/${selected.model.id}`.replace(/--piop-account-\d+(?=\/)/, "");
+      const id = `${selected.model.provider}/${selected.model.id}`;
       if (!fastModels.includes(id)) return { ...statuses, [fastKey]: "Fast mode unavailable" };
     }
     const enabled = selected.fastMode ?? (selected.model && fastModels ? statuses[fastKey] === "Fast mode on" : undefined);

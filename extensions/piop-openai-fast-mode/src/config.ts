@@ -12,76 +12,7 @@ import {
 
 export const DEFAULT_CONFIG: FastModeConfig = {
   enabled: false,
-  targets: [
-    { provider: "openai", model: "gpt-5.4", serviceTier: DEFAULT_SERVICE_TIER },
-    { provider: "openai", model: "gpt-5.5", serviceTier: DEFAULT_SERVICE_TIER },
-    { provider: "openai", model: "gpt-5.6", serviceTier: DEFAULT_SERVICE_TIER },
-    {
-      provider: "openai",
-      model: "gpt-5.6-sol",
-      serviceTier: DEFAULT_SERVICE_TIER,
-    },
-    {
-      provider: "openai",
-      model: "gpt-5.6-terra",
-      serviceTier: DEFAULT_SERVICE_TIER,
-    },
-    {
-      provider: "openai",
-      model: "gpt-5.6-luna",
-      serviceTier: DEFAULT_SERVICE_TIER,
-    },
-    {
-      provider: "openai",
-      model: "gpt-6-astra",
-      serviceTier: DEFAULT_SERVICE_TIER,
-    },
-    {
-      provider: "openai",
-      model: "gpt-6-luna",
-      serviceTier: DEFAULT_SERVICE_TIER,
-    },
-    {
-      provider: "openai-codex",
-      model: "gpt-5.4",
-      serviceTier: DEFAULT_SERVICE_TIER,
-    },
-    {
-      provider: "openai-codex",
-      model: "gpt-5.5",
-      serviceTier: DEFAULT_SERVICE_TIER,
-    },
-    {
-      provider: "openai-codex",
-      model: "gpt-5.6",
-      serviceTier: DEFAULT_SERVICE_TIER,
-    },
-    {
-      provider: "openai-codex",
-      model: "gpt-5.6-sol",
-      serviceTier: DEFAULT_SERVICE_TIER,
-    },
-    {
-      provider: "openai-codex",
-      model: "gpt-5.6-terra",
-      serviceTier: DEFAULT_SERVICE_TIER,
-    },
-    {
-      provider: "openai-codex",
-      model: "gpt-5.6-luna",
-      serviceTier: DEFAULT_SERVICE_TIER,
-    },
-    {
-      provider: "openai-codex",
-      model: "gpt-6-astra",
-      serviceTier: DEFAULT_SERVICE_TIER,
-    },
-    {
-      provider: "openai-codex",
-      model: "gpt-6-luna",
-      serviceTier: DEFAULT_SERVICE_TIER,
-    },
-  ],
+  targets: [],
 };
 
 const SUPPORTED_PROVIDER_SET = new Set<string>(SUPPORTED_PROVIDERS);
@@ -109,10 +40,10 @@ export function cloneConfig(
   };
 }
 
-export function syncSupportedTargets(config: FastModeConfig): FastModeConfig {
+export function syncSupportedTargets(config: FastModeConfig, targets: FastTarget[] = []): FastModeConfig {
   return {
     enabled: config.enabled,
-    targets: DEFAULT_CONFIG.targets.map(cloneTarget),
+    targets: targets.map(cloneTarget),
   };
 }
 

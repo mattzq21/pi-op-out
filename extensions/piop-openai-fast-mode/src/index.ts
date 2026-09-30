@@ -7,6 +7,7 @@ import type {
   ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 import { getFastCommandCompletions, parseFastCommand } from "./commands";
+import { createFastModeDiscovery } from "./discovery";
 import {
   cloneConfig,
   loadConfigForScope,
@@ -14,7 +15,7 @@ import {
 } from "./config";
 import { getFastModePayload, toModelRef } from "./payload";
 import { clearFastStatus, updateFastStatus } from "./status";
-import type { FastModeConfig, ModelRef } from "./types";
+import type { FastModeConfig, FastTarget, ModelRef } from "./types";
 
 export type FastModeExtensionOptions = {
   extensionDir?: string;
@@ -57,9 +58,16 @@ export function createPiFastModeExtension(
     let loadedCwd: string | undefined;
     let currentModel: ModelRef | undefined;
     let agentEnabled: boolean | undefined;
+    let configuredTargets: FastTarget[] = [];
+    let loading: Promise<void> | undefined;
+    const discover = createFastModeDiscovery();
     const effectiveConfig = () => ({ ...config, enabled: agentEnabled ?? config.enabled });
-    pi.events.on("piop:fast-mode", (request: { models?: string[]; apply?: boolean; enabled?: boolean; restore?: boolean; ctx?: ExtensionContext }) => {
-      request.models = cloneConfig().targets.map((target) => `${target.provider}/${target.model}`);
+    pi.events.on("piop:fast-mode", (request: { models?: string[]; ready?: Promise<void>; refresh?: boolean; apply?: boolean; enabled?: boolean; restore?: boolean; ctx?: ExtensionContext }) => {
+      request.models = config.targets.map((target) => `${target.provider}/${target.model}`);
+      if (request.refresh && request.ctx) request.ready = ensureLoaded(request.ctx).then(async () => {
+        await refreshTargets(request.ctx!);
+        request.models = config.targets.map((target) => `${target.provider}/${target.model}`);
+      });
       if (request.apply) {
         agentEnabled = request.enabled;
         if (request.ctx) updateFastStatus(request.ctx, effectiveConfig(), toModelRef(request.ctx.model) ?? currentModel);
@@ -67,7 +75,7 @@ export function createPiFastModeExtension(
     });
 
     async function loadForContext(
-      ctx: Pick<ExtensionContext, "cwd" | "sessionManager">,
+      ctx: ExtensionContext,
     ): Promise<void> {
       const loaded = await loadConfigForScope({
         cwd: ctx.cwd,
@@ -75,7 +83,8 @@ export function createPiFastModeExtension(
         agentDir,
       });
 
-      config = syncSupportedTargets(loaded.config);
+      configuredTargets = loaded.config.targets;
+      config = syncSupportedTargets(loaded.config, await discover(ctx, configuredTargets));
       config.enabled = savedSessionValue(ctx) ?? (pi.getFlag("fast") === true || config.enabled);
       agentEnabled = undefined;
       loadedCwd = ctx.cwd;
@@ -83,11 +92,21 @@ export function createPiFastModeExtension(
     }
 
     async function ensureLoaded(
-      ctx: Pick<ExtensionContext, "cwd" | "sessionManager">,
+      ctx: ExtensionContext,
     ): Promise<void> {
+      if (loading) await loading;
       if (loadedSessionId !== ctx.sessionManager.getSessionId() || loadedCwd !== ctx.cwd) {
-        await loadForContext(ctx);
+        loading = loadForContext(ctx);
+        try { await loading; } finally { loading = undefined; }
       }
+    }
+
+    async function refreshTargets(ctx: ExtensionContext): Promise<void> {
+      const targets = await discover(ctx, configuredTargets);
+      const changed = JSON.stringify(targets) !== JSON.stringify(config.targets);
+      config.targets = targets;
+      if (changed) pi.events.emit("piop:fast-mode-models-changed", { ctx });
+      updateFastStatus(ctx, effectiveConfig(), toModelRef(ctx.model) ?? currentModel);
     }
 
     function refreshCurrentModel(ctx: Pick<ExtensionContext, "model">): void {
@@ -109,6 +128,7 @@ export function createPiFastModeExtension(
       ): Promise<void> => {
         try {
           await ensureLoaded(ctx);
+          await refreshTargets(ctx);
           refreshCurrentModel(ctx);
           const enabled = parseFastCommand(args, effectiveConfig().enabled);
           if (enabled === effectiveConfig().enabled) {
@@ -128,7 +148,7 @@ export function createPiFastModeExtension(
     pi.on("session_start", async (_event, ctx) => {
       try {
         currentModel = toModelRef(ctx.model);
-        await loadForContext(ctx);
+        await ensureLoaded(ctx);
 
         updateFastStatus(ctx, effectiveConfig(), currentModel);
       } catch (error) {
@@ -148,6 +168,8 @@ export function createPiFastModeExtension(
 
     pi.on("model_select", async (event, ctx) => {
       currentModel = toModelRef(event.model) ?? toModelRef(ctx.model);
+      await ensureLoaded(ctx);
+      await refreshTargets(ctx);
       updateFastStatus(ctx, effectiveConfig(), currentModel);
     });
 

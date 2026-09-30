@@ -370,7 +370,12 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const restoredAgentName = (name: string | undefined) => !name || (name === "default" && !findAgent("default")) ? "general" : name;
   const currentSkillPaths = () => [...new Set(currentAgent() ? agentSkills(pi, currentAgent()!).map(normalizedPath) : [])].sort();
   const fastModeModels = () => { const request: { models?: string[] } = {}; pi.events.emit("piop:fast-mode", request); return request.models ?? []; };
-  const fastModeError = (agent: Agent, model: string | undefined) => agent.fastMode === true && (!model || !fastModeModels().includes(model.replace(/--piop-account-\d+(?=\/)/, ""))) ? `Agent "${agent.name}" cannot run because model ${model || "(unset)"} does not support fast mode` : undefined;
+  const fastModeError = (agent: Agent, model: string | undefined) => agent.fastMode === true && (!model || !fastModeModels().includes(model)) ? `Agent "${agent.name}" cannot run because model ${model || "(unset)"} does not support fast mode` : undefined;
+  const refreshFastMode = async (ctx: ExtensionContext) => {
+    const request: { ctx: ExtensionContext; refresh: boolean; ready?: Promise<void> } = { ctx, refresh: true };
+    pi.events.emit("piop:fast-mode", request);
+    await request.ready;
+  };
   const publish = (ctx: ExtensionContext) => ctx.ui.setStatus(STATUS_KEY, `json:${encode({ version: 1, active: currentAgent()?.name ?? active, locked, saved: !!snapshot, unavailable: !currentAgent(), config: { ...config, fastModeModels: fastModeModels() } })}`);
   const saveState = (submit = false) => {
     const state = { active, modelOverride, effortOverride, fastModeOverride: fastModeOverride ?? null, snapshot };
@@ -438,6 +443,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     }
   };
   const configureAgentModel = async (agent: Agent, ctx: ExtensionContext) => {
+    await refreshFastMode(ctx);
     const modelName = modelOverride || agent.model.trim() || runtimeDefaults?.model; const currentModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
     const fastError = validateFastMode(agent, modelName, currentModel);
     if (fastError) { pi.setActiveTools([]); return fastError; }
@@ -505,7 +511,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
     fastModeOverride = enabled;
     saveState();
   });
-  pi.on("session_shutdown", () => { stopSubagentProfiles(); stopRefresh(); stopFastModeChanges(); extensions.stop(); });
+  const stopFastModelChanges = pi.events.on("piop:fast-mode-models-changed", (value) => publish((value as { ctx: ExtensionContext }).ctx));
+  pi.on("session_shutdown", () => { stopSubagentProfiles(); stopRefresh(); stopFastModeChanges(); stopFastModelChanges(); extensions.stop(); });
   pi.on("model_select", (event) => { const model = `${event.model.provider}/${event.model.id}`; if (applyingAgentModel === model) { applyingAgentModel = undefined; return; } modelOverride = model; saveState(); saveRuntimeDefaults({ model, effort: runtimeDefaults?.effort || pi.getThinkingLevel() }); });
   pi.on("thinking_level_select", (event) => { if (applyingAgentEffort === event.level) { applyingAgentEffort = undefined; return; } effortOverride = event.level; saveState(); saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); });
   const restoreSession = async (_event: unknown, ctx: ExtensionContext) => {
@@ -556,6 +563,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (!findAgent(name)) throw new Error(`Unknown defined agent: ${name}`);
     restore(ctx);
     const agent = findAgent(name)!;
+    await refreshFastMode(ctx);
     const error = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model);
     if (error) throw new Error(error);
     await extensions.prepare(extensionPaths(agent.extensions));
