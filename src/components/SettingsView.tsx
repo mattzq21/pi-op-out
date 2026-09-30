@@ -206,7 +206,7 @@ export function SettingsView(props: SettingsViewProps) {
     if (!model.reasoning) return ["off"];
     return levels.filter((level) => model.thinkingLevelMap?.[level] !== null && (!(level === "xhigh" || level === "max") || model.thinkingLevelMap?.[level] !== undefined));
   };
-  const supportsFastMode = (model: string) => (agentConfig()?.fastModeModels ?? []).includes(model.replace(/--piop-account-\d+(?=\/)/, ""));
+  const supportsFastMode = (model: string) => (agentConfig()?.fastModeModels ?? []).includes(model);
   const validateAgentResources = () => {
     const availableModelIds = new Set(settingsProps().models.map((model) => `${model.provider}/${model.id}`));
     const hiddenModels = new Set(draft().hiddenModels);

@@ -34,7 +34,7 @@ export function findMatchingTarget(
 
   return targets.find(
     (target) =>
-      target.provider === model.provider.replace(/--piop-account-\d+$/, "") &&
+      target.provider === model.provider &&
       target.model === model.id &&
       isSupportedProvider(target.provider),
   );
