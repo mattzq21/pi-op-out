@@ -1,7 +1,7 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { createHash } from "node:crypto";
-import { Type } from "@earendil-works/pi-ai";
+import { Type, type JsonValue } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 type ServerConfig = {
@@ -134,8 +134,11 @@ type Connection = { client: Client; instanceId: string; tools: string[]; connect
 const SELECT_EVENT = "piop:mcp:select";
 
 export default async function mcpBridge(pi: ExtensionAPI) {
+  const structuredResults = typeof pi.registerMcpServer === "function";
   let servers: ServerConfig[] = [];
   const connections = new Map<string, Connection>();
+  const selectedTools = () => [...connections.values()].filter((connection) => connection.connected).flatMap((connection) => connection.tools);
+  const stopToolList = pi.events.on("piop:mcp:tools", (value) => { (value as { tools?: string[] }).tools = selectedTools(); });
   const toolNames = new Map<string, string>();
   const toolOwners = new Map<string, string>();
   const registeredName = (serverId: string, toolName: string) => {
@@ -180,13 +183,22 @@ export default async function mcpBridge(pi: ExtensionAPI) {
           pi.registerTool({
             name, label: `${server.name} · ${tool.name}`, description: tool.description || `Run ${tool.name} on the ${server.name} MCP server`,
             promptSnippet: `Use ${tool.name} from the ${server.name} MCP server`, parameters: Type.Unsafe(parameters),
+            exposure: "direct",
+            namespace: { name: `piop_mcp_${safeName(server.id)}`, description: server.name },
+            annotations: tool.annotations,
+            outputSchema: Type.Unsafe({ type: "object", properties: {
+              content: { type: "array", items: { type: "object" } },
+              ...(tool.outputSchema ? { structuredContent: tool.outputSchema } : {}),
+              isError: { type: "boolean" },
+            }, required: ["content"] }),
             async execute(_toolCallId, params, signal) {
               if (signal?.aborted) throw new Error("MCP tool call aborted");
-              if (!connection.connected || connections.get(id) !== connection) throw new Error(`MCP server "${id}" is not connected for this agent`);
+              if (!connection.connected || connections.get(id) !== connection || !connection.tools.includes(name)) throw new Error(`MCP tool "${name}" is not available for this agent`);
               const args = injectAgentId ? { ...params as Record<string, unknown>, agent_id: connection.instanceId } : params as Record<string, unknown>;
               const result = await client.callTool({ name: tool.name, arguments: args }, { signal, timeout: TOOL_TIMEOUT_MS });
-              if ((result as { isError?: boolean })?.isError) throw new Error(resultContent(result).map((part) => part.type === "text" ? part.text : "MCP image result").join("\n"));
-              return { content: resultContent(result), details: { server: server.name, tool: tool.name, result } };
+              if (result.isError && !structuredResults) throw new Error(resultContent(result).map((part) => part.type === "text" ? part.text : "MCP image result").join("\n"));
+              const { _meta: _metadata, ...scriptResult } = result;
+              return { content: resultContent(result), details: { server: server.name, tool: tool.name, result }, structuredContent: scriptResult as JsonValue, ...(result.isError ? { isError: true } : {}) };
             },
           });
         }
@@ -253,13 +265,18 @@ export default async function mcpBridge(pi: ExtensionAPI) {
     pending = selection.ready.catch(() => undefined);
   });
   pi.on("session_start", (_event, ctx) => { context = ctx; publish(); });
-  pi.registerCommand("mcp-status", { description: "Show MCP servers and tools loaded by piop", handler: async () => {
+  const showStatus = async () => {
     const loaded = [...connections].filter(([, connection]) => connection.connected);
     pi.sendMessage({ customType: MCP_STATUS_KEY, content: loaded.length ? loaded.map(([id, connection]) => `${id}: ${connection.tools.join(", ") || "no tools"}`).join("\n") : "No MCP servers loaded", display: true }, { triggerTurn: false });
+  };
+  pi.registerCommand("mcp-status", { description: "Show MCP servers and tools loaded by piop", handler: showStatus });
+  pi.registerCommand("mcp", { description: "Show Piop MCP status; configure servers in the agent settings", handler: async (args, ctx) => {
+    if (args.trim()) { ctx.ui.notify("Configure MCP servers in Piop's agent settings. /mcp shows the selected agent's connections.", "info"); return; }
+    await showStatus();
   } });
   pi.on("context", (event) => ({ messages: event.messages.filter((message) => message.role !== "custom" || message.customType !== MCP_STATUS_KEY) }));
   pi.on("session_shutdown", async () => {
-    unsubscribe(); cancelPreparation(); preparing?.abort(); shutdown.abort();
+    unsubscribe(); stopToolList(); cancelPreparation(); preparing?.abort(); shutdown.abort();
     await pending;
     await Promise.all([...connections.keys()].map(close));
     context?.ui.setStatus(MCP_STATUS_KEY, undefined);

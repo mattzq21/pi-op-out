@@ -350,6 +350,15 @@ export default async function defineAgents(pi: ExtensionAPI) {
   process.env.PI_DEFINE_AGENTS_ACTIVE = "1";
   const findAgent = (name: string) => config.agents.find((agent) => agent.name === name);
   const currentAgent = () => snapshot?.definition ?? findAgent(active);
+  const currentMcpTools = () => { const request: { tools?: string[] } = {}; pi.events.emit("piop:mcp:tools", request); return request.tools ?? []; };
+  pi.on("tool_call", (event, ctx) => {
+    const agent = currentAgent();
+    const required = { ctx, tools: [] as string[] }; pi.events.emit("piop:required-tools", required);
+    const allowed = agent && !activeToolError && new Set([...agent.tools, ...extensions.tools(), ...currentMcpTools(), ...required.tools]);
+    if (!allowed || !allowed.has(event.toolName) || (event.toolName === "lookup_terminals" && agent?.name !== "terminal-agent")) {
+      return { block: true, reason: `Tool ${event.toolName} is not allowed for agent ${agent?.name ?? active}` };
+    }
+  });
   const stopSubagentProfiles = pi.events.on("piop:agents:subagent", (value) => {
     const request = value as { agent?: string; state?: SessionAgentState; error?: string };
     const agent = request.agent ? findAgent(request.agent) : currentAgent();
@@ -484,7 +493,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
       const agent = currentAgent();
       if (!agent) { pi.setActiveTools([]); publish(request.ctx); return; }
       activeToolError = agentToolError(pi, agent, extensions.tools());
-      const mcpTools = pi.getActiveTools().filter((name) => name.startsWith("mcp_"));
+      const mcpTools = currentMcpTools();
       const required = { ctx: request.ctx, tools: [] as string[] }; pi.events.emit("piop:required-tools", required);
       pi.setActiveTools(activeToolError ? [] : [...new Set([...agent.tools, ...extensions.tools(), ...mcpTools, ...required.tools])]);
       publish(request.ctx);

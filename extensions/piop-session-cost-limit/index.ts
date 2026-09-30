@@ -85,6 +85,13 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
     publish(ctx);
   });
 
+  pi.on("cache_warming_decision", (event, ctx) => {
+    if (limit === undefined) return;
+    publish(ctx);
+    const cost = sessionCost(ctx);
+    if (cost >= limit || !Number.isFinite(event.warmCost) || cost + Math.max(0, event.warmCost) > limit) return { action: "stop" };
+  });
+
   pi.on("input", (event, ctx) => {
     if (!overLimit(ctx)) return;
     const error = `Session cost limit of ${formatCost(limit!)} reached (API prices). Raise it with /cost <amount> or remove it with /cost clear.`;

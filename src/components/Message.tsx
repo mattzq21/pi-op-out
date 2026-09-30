@@ -74,6 +74,7 @@ function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; e
     {runs().length > 0 ? <SubagentResults runs={runs()} /> : <>
       {input() !== undefined && <div class="tool-payload"><div class="tool-payload-label">In</div><div class="tool-input" aria-label="Tool arguments"><pre>{(input())!}</pre></div></div>}
       {output() && <div class="tool-payload"><div class="tool-payload-label">Out</div><div class="tool-output" aria-label="Tool output"><pre>{output()}</pre></div></div>}
+      {componentProps.message.nestedCalls && <div class="tool-payload"><div class="tool-payload-label">Nested calls</div><div class="tool-output" aria-label="Nested tool calls"><pre>{JSON.stringify(componentProps.message.nestedCalls, null, 2)}</pre></div></div>}
     </>}
     {componentProps.loading && <div role="status">Loading tool input and output…</div>}
     {componentProps.error && <div role="alert">{(componentProps.error)!} <button onClick={componentProps.retry}>Retry</button></div>}

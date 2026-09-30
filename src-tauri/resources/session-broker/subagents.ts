@@ -24,6 +24,12 @@ function completedSubagentOutput(last: AssistantMessage | undefined) {
   return output.length > 16_000 ? `${output.slice(0, 16_000)}\n[Result truncated. Full conversation is saved in the child transcript.]` : output;
 }
 
+function subagentEntryCost(entry: { type?: string; usage?: { cost?: { total?: number } }; message?: { usage?: { cost?: { total?: number } } } }) {
+  const source = entry.type === "message" ? entry.message : entry;
+  const amount = source?.usage?.cost?.total;
+  return typeof amount === "number" && Number.isFinite(amount) ? Math.max(0, amount) : 0;
+}
+
 async function subagentCompletion(run: SubagentRun, offset: number, reportUsage: (tokens: number) => void) {
   let last: AssistantMessage | undefined;
   let cost = 0;
@@ -34,11 +40,10 @@ async function subagentCompletion(run: SubagentRun, offset: number, reportUsage:
     for await (const line of lines) {
       let entry;
       try { entry = JSON.parse(line); } catch { continue; }
+      cost += subagentEntryCost(entry);
       if (entry.type !== "message") { tokens += goalTokens(entry.usage); continue; }
       if (entry.message?.role !== "assistant") continue;
       last = entry.message as AssistantMessage;
-      const amount = last.usage?.cost?.total;
-      if (Number.isFinite(amount) && amount >= 0) cost += amount;
       tokens += goalTokens(last.usage);
     }
   } finally { lines.close(); input.destroy(); reportUsage(tokens); }
@@ -128,6 +133,7 @@ export function registerSubagents(pi: ExtensionAPI) {
   const active = new Set<string>();
   pi.registerTool({
     name: "subagent", label: "Subagents",
+    exposure: "model-only",
     description: "Delegate 1–4 independent tasks in parallel and wait for their results. Each child has a fresh context, a saved transcript visible in piop, and the current working directory (files are shared). Supply all necessary context in task. Defaults to the current agent profile and model; agent selects a named piop profile. Resume a previous child with its returned sessionId. Child agents cannot delegate further. Avoid overlapping edits. Runs are cancelled when this tool is stopped and time out after ten minutes.",
     parameters: Type.Object({ tasks: Type.Array(Type.Object({ name: Type.String({ minLength: 1, maxLength: 120 }), task: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1 })), sessionId: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1, maxItems: 4 }) }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {

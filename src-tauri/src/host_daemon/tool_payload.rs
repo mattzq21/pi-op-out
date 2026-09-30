@@ -20,7 +20,7 @@ impl ToolPayload {
     pub fn new(message: Option<Value>) -> Result<Self> {
         let mut message = message.ok_or("Tool input and output are not available yet")?;
         let mut payload = json!({"content":message.get_mut("content").map(Value::take).filter(|item| !item.is_null()).unwrap_or(json!(""))});
-        for key in ["details", "toolInput"] {
+        for key in ["details", "toolInput", "nestedCalls"] {
             if let Some(value) = message.get_mut(key) {
                 payload[key] = value.take();
             }

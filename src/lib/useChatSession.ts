@@ -223,13 +223,16 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
       else if (event.message) { const rawMessage = (event.message ?? {}) as Record<string, unknown>; const roleKey = String((rawMessage as { role?: unknown }).role ?? "message"); let liveId = activeMessageIds.current.get(roleKey); if (!liveId) { liveId = nextLiveMessageId(roleKey); trackLiveId(roleKey, liveId); } const message = { ...normalizeMessage(rawMessage, undefined, undefined, liveId), streaming: true }; queue((current) => current.some((item) => item.id === message.id) ? current.map((item) => item.id === message.id ? message : item) : [...current, message]); }
     };
     const handleToolExecutionStart = () => {
+      if (event.parentToolCallId) return;
       const message: ChatMessage = { id: String(event.toolCallId), role: "tool", toolName: String(event.toolName), toolStatus: "running", content: "", timestamp: Date.now() };
       session.setMessages((current) => [...current.filter((item) => item.id !== message.id), message]);
     };
     const handleToolExecutionUpdate = () => {
+      if (event.parentToolCallId) return;
       queue((current) => current.map((item) => item.id === event.toolCallId ? { ...item, toolPayloadVersion: Number(event.sequence), toolStatus: "running" } : item));
     };
     const handleToolExecutionEnd = () => {
+      if (event.parentToolCallId) return;
       flush();
       session.setMessages((current) => current.map((item) => item.id === event.toolCallId ? { ...item, toolPayloadVersion: Number(event.sequence), toolStatus: event.isError ? "error" : "done" } : item));
     };

@@ -10,7 +10,7 @@ pub(super) fn client_payload(mut value: Value) -> Value {
     if value["role"] == "toolResult" {
         value["content"] = json!("");
         value["deferredToolPayload"] = value["toolCallId"].clone();
-        remove(&mut value, &["details", "toolInput"]);
+        remove(&mut value, &["details", "toolInput", "structuredContent", "nestedCalls"]);
     } else {
         value = client_tool_payload(value);
     }
