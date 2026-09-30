@@ -163,6 +163,7 @@ pub(super) fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, s
     let _lifecycle = client.lifecycle.lock().map_err(|_| "Runtime lifecycle lock was poisoned")?;
     let mutation = conversation_ownership::MutationGuard::acquire(&app, &host_id, &session_path, &client_id, false, "archive")?;
     retire_archived_session(&app, &client, &host_id, &session_path)?;
+    archive_descendants(&app, &client, &host_id, &session_path, &client_id)?;
     let worktree_cwd = archived_worktree_cwd(&app, &host_id, &session_path);
     archive_session_on_host(&app, &host_id, &session_path)?;
     let _ = stop_terminals(&runtime, &terminal_ids);
@@ -172,6 +173,40 @@ pub(super) fn archive_session(app: AppHandle, runtime: State<TerminalRuntime>, s
     }
     let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":session_path}));
     Ok(())
+}
+
+fn archive_descendants(app: &AppHandle, client: &PiRuntime, host_id: &str, session_path: &str, client_id: &str) -> Result<(), String> {
+    let descendants = session_descendants(app, host_id, session_path)?;
+    let mut mutations = Vec::new();
+    for child in &descendants {
+        mutations.push(conversation_ownership::MutationGuard::acquire(app, host_id, child, client_id, false, "archive")?);
+        retire_archived_session(app, client, host_id, child)?;
+    }
+    for (child, guard) in descendants.iter().zip(mutations).rev() {
+        archive_session_on_host(app, host_id, child)?;
+        guard.finish()?;
+        let _ = app.emit("pi://session-removed", json!({"hostId":host_id,"sessionPath":child}));
+    }
+    Ok(())
+}
+
+fn session_descendants(app: &AppHandle, host_id: &str, session_path: &str) -> Result<Vec<String>, String> {
+    let script = include_str!("../../resources/session-descendants.cjs");
+    let settings = load_app_settings(app.clone())?;
+    let root = if host_id == "local" { Some(desktop_sessions_dir(&home_dir()?)) } else { None };
+    let arguments = json!({"path":session_path,"root":root}).to_string();
+    let mut command = if host_id == "local" {
+        let mut command = node_command();
+        command.args(["-e", script, &arguments]);
+        command
+    } else {
+        let mut command = ssh(remote_host(&settings, host_id)?);
+        command.arg(remote_login_command(&format!("PIOP_STORAGE_DIRECTORY={STORAGE_DIRECTORY} node -e {} {}", shell_quote(script), shell_quote(&arguments))));
+        command
+    };
+    let output = run_limited(&mut command, MAX_SESSION_INDEX_BATCH_BYTES, "Could not find subagent conversations")?;
+    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
+    serde_json::from_slice(&output.stdout).map_err(|error| format!("Invalid subagent conversation list: {error}"))
 }
 
 pub(super) fn archive_remote_session(session_path: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
