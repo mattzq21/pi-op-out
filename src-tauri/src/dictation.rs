@@ -16,12 +16,13 @@ struct Engine {
 pub(crate) struct DictationRuntime {
     engine: Mutex<Option<Engine>>,
     loading: AtomicBool,
+    generation: std::sync::atomic::AtomicU64,
     busy: tokio::sync::Semaphore,
 }
 
 impl Default for DictationRuntime {
     fn default() -> Self {
-        Self { engine: Mutex::new(None), loading: AtomicBool::new(true), busy: tokio::sync::Semaphore::new(1) }
+        Self { engine: Mutex::new(None), loading: AtomicBool::new(true), generation: std::sync::atomic::AtomicU64::new(0), busy: tokio::sync::Semaphore::new(1) }
     }
 }
 
@@ -35,21 +36,34 @@ fn publish(app: &AppHandle) {
 }
 
 pub(crate) fn start(app: AppHandle) {
+    let runtime = app.state::<DictationRuntime>();
+    let generation = {
+        let Ok(mut engine) = runtime.engine.lock() else { return; };
+        *engine = None;
+        runtime.loading.store(true, Ordering::Release);
+        runtime.generation.fetch_add(1, Ordering::AcqRel) + 1
+    };
+    publish(&app);
     tokio::spawn(async move {
-        let settings_app = app.clone();
-        let found = tokio::task::spawn_blocking(move || candidates(&settings_app)).await;
-        if let Ok(Ok((executables, model))) = found {
-            for executable in executables {
-                let engine = Engine { executable, model: model.clone() };
-                if transcribe(&engine, &silent_wav(), Duration::from_secs(90)).await.is_ok() {
-                    if let Ok(mut current) = app.state::<DictationRuntime>().engine.lock() { *current = Some(engine); }
-                    break;
-                }
-            }
+        let loaded = load_engine(app.clone()).await;
+        let runtime = app.state::<DictationRuntime>();
+        {
+            let Ok(mut current) = runtime.engine.lock() else { return; };
+            if runtime.generation.load(Ordering::Acquire) != generation { return; }
+            *current = loaded;
+            runtime.loading.store(false, Ordering::Release);
         }
-        app.state::<DictationRuntime>().loading.store(false, Ordering::Release);
         publish(&app);
     });
+}
+
+async fn load_engine(app: AppHandle) -> Option<Engine> {
+    let (executables, model) = tokio::task::spawn_blocking(move || candidates(&app)).await.ok()?.ok()?;
+    for executable in executables {
+        let engine = Engine { executable, model: model.clone() };
+        if transcribe(&engine, &silent_wav(), Duration::from_secs(90)).await.is_ok() { return Some(engine); }
+    }
+    None
 }
 
 fn candidates(app: &AppHandle) -> Result<(Vec<PathBuf>, PathBuf), String> {

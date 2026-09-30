@@ -96,6 +96,9 @@ pub(super) fn read_settings_at(path: &Path) -> Result<AppSettings, String> {
 
 #[cfg_attr(feature = "desktop", tauri::command(async))]
 pub(super) fn save_app_settings(app: AppHandle, mut settings: AppSettings, agent_host_id: Option<String>) -> Result<Value, String> {
+    let previous_dictation_model = read_settings_at(&settings_path(&app)?)?.dictation_model_path;
+    settings.dictation_model_path = settings.dictation_model_path.map(|path| path.trim().to_owned()).filter(|path| !path.is_empty());
+    let reload_dictation = previous_dictation_model != settings.dictation_model_path;
     migrate_question_tool(&mut settings);
     migrate_goal_tools(&mut settings);
     for tool in session_operation_tools() {
@@ -109,6 +112,7 @@ pub(super) fn save_app_settings(app: AppHandle, mut settings: AppSettings, agent
     #[cfg(not(feature = "desktop"))]
     peers::invalidate(&app);
     let _ = app.emit("pi://settings-changed", &change);
+    if reload_dictation { crate::dictation::start(app.clone()); }
     Ok(change)
 }
 

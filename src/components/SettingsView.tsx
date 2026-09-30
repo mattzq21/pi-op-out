@@ -5,7 +5,7 @@ import { Dynamic } from "solid-js/web";
 import { accountModelNameLookup } from "../lib/providerAccounts";
 import { createDependencyEffect, createMemoFields, createRef, type JSXElement } from "../lib/solid";
 
-import { Bot, Check, CircleGauge, CirclePlus, Cpu, HardDrive, Keyboard, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Wrench, Zap } from "lucide-solid";
+import { Bot, Check, CircleGauge, CirclePlus, Cpu, HardDrive, Keyboard, Mic, PlugZap, RotateCcw, Save, Search, Server, Settings2, ShieldCheck, Trash2, Wrench, Zap } from "lucide-solid";
 import { uid } from "../lib/content";
 import { defaultKeybindings, keybindDefinitions, shortcutError, shortcutFromEvent, shortcutsConflict, type KeybindAction } from "../lib/keybindings";
 import { isMobile } from "../lib/platform";
@@ -16,9 +16,10 @@ import { StorageSettings } from "./StorageSettings";
 import { Toggle } from "./Toggle";
 import { RemoveMachineDialog } from "./RemoveMachineDialog";
 
-export type Section = "providers" | "general" | "models" | "storage" | "environment" | "agents" | "machines" | "keybinds" | "connections";
+export type Section = "providers" | "general" | "dictation" | "models" | "storage" | "environment" | "agents" | "machines" | "keybinds" | "connections";
 export const sections = [
   { id: "general" as const, label: "General", icon: Settings2 },
+  { id: "dictation" as const, label: "Dictation", icon: Mic },
   { id: "models" as const, label: "Models", icon: Cpu },
   { id: "providers" as const, label: "Providers", icon: ShieldCheck },
   { id: "storage" as const, label: "Storage", icon: HardDrive },
@@ -324,6 +325,7 @@ export function SettingsView(props: SettingsViewProps) {
         }}</Key>}
         {!draft().worktreeSetupScripts?.length && <div class="empty-small">Add scripts to prepare new worktrees and clean up their external resources before deletion.</div>}
       </SettingsSection>);
+      const renderDictation = () => (formValidation().visibleSection === "dictation" && <SettingsSection title="Dictation" description="Choose the speech model used by this daemon."><label class="field"><span>Model file path</span><input aria-label="Dictation model file path" placeholder="~/Models/speech-model.gguf" value={draft().dictationModelPath ?? ""} onInput={event => patch({ dictationModelPath: event.currentTarget.value })} /></label><p>Enter the path to a GGUF speech model on the daemon’s machine. Save to load it. Leave empty to disable dictation.</p></SettingsSection>);
       const renderGeneral = () => (formValidation().visibleSection === "general" && <SettingsSection title="General" description="Agent behavior.">
         <SettingRow icon={<CircleGauge />} title="Default context window cap" description="Applies to new conversations. Each conversation keeps its initial cap, including whether it is enabled."><div class="setting-cap-controls"><input class="setting-number" aria-label="Context window cap" aria-invalid={!nameValidation().contextWindowValid} disabled={!draft().contextWindowCapEnabled} type="number" min={1000} max={10000000} step={1000} value={draft().contextWindowCap} onInput={(event) => patch({ contextWindowCap: Number(event.target.value) })} /><Toggle label="Enable context window cap" checked={draft().contextWindowCapEnabled} onChange={(contextWindowCapEnabled) => patch({ contextWindowCapEnabled })} /></div></SettingRow>
         <SettingRow icon={<ShieldCheck />} title="Automatic retry" description="Retry transient provider and network errors."><Toggle label="Automatic retry" checked={draft().autoRetry} onChange={(autoRetry) => patch({ autoRetry })} /></SettingRow>
@@ -371,6 +373,7 @@ export function SettingsView(props: SettingsViewProps) {
         {formValidation().visibleSection === "providers" && <Rerun on={providerHostId}>{(_key) => <ProviderSettings  hosts={settingsProps().providerHosts ?? settingsProps().settings.hosts} initialHostId={settingsProps().providerHostId} fixedHost />}</Rerun>}
         {renderWorktreeScripts()}
         {renderGeneral()}
+        {renderDictation()}
         {renderModels()}
         {formValidation().visibleSection === "connections" && <SettingsSection title="Hosts" description="Saved daemon connections are stored on this device."><button class="secondary-button" disabled={dirty() || saving()} onClick={() => window.dispatchEvent(new Event("piop-mobile-disconnect"))}>Manage saved hosts</button>{dirty() && <p>Save your changes before switching hosts.</p>}</SettingsSection>}
         {renderAgents()}
