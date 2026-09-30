@@ -1,5 +1,5 @@
 import { createMemo, createSignal, Show } from "solid-js";
-import { CirclePause, CirclePlay, Maximize2, Minimize2, Target, Trash2 } from "lucide-solid";
+import { CirclePause, CirclePlay, Pencil, Target, Trash2 } from "lucide-solid";
 import "./goal-bar.css";
 
 type Goal = { objective: string; status: string; tokensUsed: number; tokenBudget: number | null; elapsedMs: number };
@@ -25,7 +25,6 @@ export function GoalBar(props: { value?: string; disabled: boolean; onCommand: (
     const current = readGoal(props.value);
     return current?.status === "complete" ? undefined : current;
   });
-  const [expanded, setExpanded] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string>();
   const run = async (action: string) => {
@@ -47,11 +46,10 @@ export function GoalBar(props: { value?: string; disabled: boolean; onCommand: (
           <Show when={current().status === "active"} fallback={<CirclePlay size={14} />}><CirclePause size={14} /></Show>
         </button>
       </Show>
-      <button type="button" title={expanded() ? "Collapse goal" : "Expand goal"} aria-label={expanded() ? "Collapse goal" : "Expand goal"} aria-expanded={expanded()} onClick={() => setExpanded(value => !value)}>
-        <Show when={expanded()} fallback={<Maximize2 size={13} />}><Minimize2 size={13} /></Show>
+      <button type="button" title="Edit goal" aria-label="Edit goal" disabled={props.disabled || busy()} onClick={() => void run("edit")}>
+        <Pencil size={13} />
       </button>
     </div>
-    <Show when={expanded()}><div class="goal-bar-details"><p>{current().objective}</p><span>{current().tokensUsed.toLocaleString()}{current().tokenBudget === null ? "" : ` / ${current().tokenBudget?.toLocaleString()}`} tokens</span></div></Show>
     <Show when={error()}><div class="goal-bar-error" role="alert">{error()}</div></Show>
   </section>}</Show>;
 }
