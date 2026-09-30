@@ -3,7 +3,10 @@ import type { ToolConfig } from "../types";
 import { createDependencyEffect, createRef } from "../lib/solid";
 import "./agent-tools.css";
 
-const toolGroups = [{ name: "Goal", tools: ["get_goal", "create_goal", "update_goal"] }];
+const toolGroups = [
+  { name: "Goal", tools: ["get_goal", "create_goal", "update_goal"] },
+  { name: "Subagents", tools: ["subagent", "wait_agent"] },
+];
 
 export function AgentTools(props: { tools: ToolConfig[]; selected: string[]; onChange: (tools: string[]) => void }) {
   const toggle = (names: string[], enabled: boolean) => props.onChange(enabled
