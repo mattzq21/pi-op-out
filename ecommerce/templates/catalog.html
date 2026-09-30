@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="hero">
+  <div class="hero-copy"><p class="eyebrow">THE EVERYDAY, REIMAGINED</p><h1>Little things.<br>Better days.</h1><p>Make room for the things that make you smile. Discover thoughtful finds for your home, your routines, and everything in between.</p><a class="button" href="#collection">Find your next favorite <span aria-hidden="true">↗</span></a><div class="hero-note"><span aria-hidden="true">✳</span> Good things, simply chosen.</div></div>
+  <div class="hero-art" aria-hidden="true"><div class="art-circle"></div><span class="art-label">THE JOY OF EVERYDAY</span><span class="art-emoji art-plant">🪴</span><span class="art-emoji art-cup">☕</span><span class="art-emoji art-basket">🧺</span><span class="art-sticker">a fresh<br>perspective ↗</span></div>
+</section>
+<div class="values-strip"><span>✳ &nbsp; Thoughtful everyday finds</span><span>♡ &nbsp; A little something for you</span><span>↗ &nbsp; Pay when it arrives</span></div>
+<section id="collection" class="collection">
+  <div class="section-heading"><div><p class="eyebrow">CURATED FOR YOUR EVERYDAY</p><h2>The collection</h2></div><p>{{ products|length }} {% if products|length == 1 %}find{% else %}finds{% endif %} to love</p></div>
+  <form class="filter-bar" method="get" action="{{ url_for('catalog') }}">
+    <div class="search-field"><label class="sr-only" for="search">Search the collection</label><span aria-hidden="true">⌕</span><input type="search" id="search" name="q" value="{{ q }}" placeholder="Find something lovely…"></div>
+    <div class="category-field"><label class="sr-only" for="category">Category</label><select id="category" name="category"><option value="">All categories</option>{% for name in categories %}<option value="{{ name }}" {% if category == name %}selected{% endif %}>{{ name }}</option>{% endfor %}</select></div>
+    <button class="button button-dark" type="submit">Explore</button>
+    {% if q or category %}<a class="text-link" href="{{ url_for('catalog') }}">Clear filters</a>{% endif %}
+  </form>
+  {% if q or category %}<p class="filter-description">{% if q %}Results for “{{ q }}”{% endif %}{% if category %} · {{ category }}{% endif %}</p>{% endif %}
+  <div class="product-grid">
+    {% for product in products %}
+    <article class="product-card">
+      <a class="product-art tone-{{ loop.index0 % 4 }}" href="{{ url_for('product_detail', product_id=product.id) }}" aria-label="View {{ product.name }}"><span class="product-emoji" aria-hidden="true">{{ product.emoji }}</span>{% if product.stock <= 0 %}<span class="badge">Sold out</span>{% else %}<span class="art-arrow" aria-hidden="true">↗</span>{% endif %}</a>
+      <div class="product-info"><p class="eyebrow">{{ product.category }}</p><div class="product-title"><h3><a href="{{ url_for('product_detail', product_id=product.id) }}">{{ product.name }}</a></h3><span>{{ product.price_cents|money }}</span></div><p class="product-description">{{ product.description }}</p></div>
+      <form method="post" action="{{ url_for('add_to_cart') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="product_id" value="{{ product.id }}"><input type="hidden" name="quantity" value="1"><button class="quick-add" type="submit" {% if product.stock <= 0 %}disabled{% endif %} aria-label="Add {{ product.name }} to bag">{% if product.stock > 0 %}Add to bag <span aria-hidden="true">+</span>{% else %}Currently unavailable{% endif %}</button></form>
+    </article>
+    {% else %}<div class="empty-state"><span class="empty-art" aria-hidden="true">🌱</span><h2>No finds just yet.</h2><p>Try a different search or take a look at the full collection.</p><a class="button" href="{{ url_for('catalog') }}">Browse everything</a></div>{% endfor %}
+  </div>
+</section>
+<section class="bottom-banner"><span aria-hidden="true">🌿</span><div><p class="eyebrow">LESS ORDINARY. MORE YOU.</p><h2>Everyday essentials, with a little soul.</h2><p>Discover something that feels right at home.</p></div></section>
+{% endblock %}
