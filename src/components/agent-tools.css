@@ -1,0 +1,4 @@
+.agent-tool-group { grid-column: 1 / -1; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+.agent-tool-group summary { cursor: pointer; color: var(--muted); }
+.agent-tool-group summary label { display: inline-flex; margin-left: 5px; color: var(--ink); }
+.agent-tool-group-members { display: grid; gap: 8px; padding: 12px 0 2px 22px; }
