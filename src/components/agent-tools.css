@@ -1,4 +1,3 @@
-.agent-tool-group { grid-column: 1 / -1; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
-.agent-tool-group summary { cursor: pointer; color: var(--muted); }
-.agent-tool-group summary label { display: inline-flex; margin-left: 5px; color: var(--ink); }
-.agent-tool-group-members { display: grid; gap: 8px; padding: 12px 0 2px 22px; }
+.agent-tool-group { grid-column: 1 / -1; border-top: 1px solid var(--line); margin-top: 5px; padding-top: 10px; }
+.agent-tool-group h4 { margin: 0 0 10px; color: var(--muted); font-size: 11px; font-weight: 600; }
+.agent-tool-group-members { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 12px; }
