@@ -19,6 +19,8 @@ pub(super) struct RemoteHost {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct AppSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) dictation_model_path: Option<String>,
     #[serde(default = "default_true")]
     pub(super) local_enabled: bool,
     #[serde(default)]
@@ -75,6 +77,7 @@ pub(super) fn default_agent() -> String { "general".into() }
 
 pub(super) fn default_settings() -> AppSettings {
     AppSettings {
+        dictation_model_path: None,
         local_enabled: true,
         worktree_setup_scripts: vec![],
         default_agent: default_agent(),

@@ -58,7 +58,6 @@ use crate::platform::AppHandle;
 #[cfg(feature = "desktop")]
 use tauri::{Emitter, Manager};
 use uuid::Uuid;
-use walkdir::WalkDir;
 #[cfg(test)]
 use std::time::SystemTime;
 #[cfg(test)]
