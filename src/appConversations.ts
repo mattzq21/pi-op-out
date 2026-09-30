@@ -204,9 +204,8 @@ export function createAppConversations(preloadChat: () => void) {
     if (!message) throw new Error(`No response exists ${number} responses back`);
     return { command, args, message };
   };
-  const sendBranchCommand = async (branchCommand: RegExpExecArray, images: ImageAttachment[]) => { const capturedSession = { ...chatSession() }; const capturedBranchConversation = branchConversation(); const capturedIsGitRepository = isGitRepository(); const capturedProjectCwd = projectCwd(); const capturedActiveHostId = activeHostId(); const capturedTransport = transport();
+  const sendBranchCommand = async (branchCommand: RegExpExecArray, images: ImageAttachment[]) => { const capturedBranchConversation = branchConversation(); const capturedIsGitRepository = isGitRepository(); const capturedProjectCwd = projectCwd(); const capturedActiveHostId = activeHostId(); const capturedTransport = transport();
     if (images.length) throw new Error("Branch commands do not accept attachments");
-    if (capturedSession.state.isStreaming || capturedSession.state.isPausing) throw new Error("Stop or pause the agent before branching");
     const { command, args, message } = parseBranchCommand(branchCommand);
     if (command === "branch-off") return capturedBranchConversation(message);
     if (!capturedIsGitRepository || !capturedProjectCwd) throw new Error("Open a Git project before creating a worktree");
