@@ -1,4 +1,5 @@
 import type { TerminalTarget } from "./appSupport";
+import { beginBranching } from "./lib/branchActivity";
 import { type Dispatch, type RefObject, type StateUpdate } from "./lib/solid";
 
 import { branchMessages, type PiEntry } from "./lib/messages";
@@ -95,6 +96,7 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
 
     };
     let forked = false;
+    const finishBranching = beginBranching();
     try {
       sourceDiffs = await runtimePool.captureMemoryDiffs(ownerTransport);
       if (!await forkSource()) return false;
@@ -115,6 +117,6 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
       if (!forked) throw reason;
       await rollbackBranch(reason);
       throw reason;
-    } finally { branchPending.current.delete(pendingKey); }
+    } finally { branchPending.current.delete(pendingKey); finishBranching(); }
   };
 }

@@ -96,6 +96,7 @@ export default function App() {
     {splitPane() && <Rerun on={() => splitSessionId()}>{(_key) => <FindInPage selector=".split-chat .chat-shell" scopeKey={splitSessionId()} onActivate={() => setActivePane("split")} active={activePane() === "split"} enabled={view() === "chat"} />}</Rerun>}
     {view() === "settings" && <FindInPage selector=".settings-shell" scopeKey="settings" />}
     {renderToastStack()}
+    <BranchActivity />
     {renderExtensionDialog()}
     {renderProjectDialog()}
     {renameSession() && <Rerun on={() => renameSession()?.session.id}>{(_key) => <ExtensionDialog request={{ type: "extension_ui_request", id: "rename-session", method: "input", title: "Rename conversation", prefill: (renameSession())!.session.name }} onRespond={async (response) => {
@@ -104,3 +105,4 @@ export default function App() {
     {renderWorktreeDialog()}
   </div>)}</SubagentNavigationContext.Provider>;
 }
+import { BranchActivity } from "./components/BranchActivity";
