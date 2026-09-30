@@ -10,7 +10,7 @@ pub(super) fn client_payload(mut value: Value) -> Value {
     if value["role"] == "toolResult" {
         value["content"] = json!("");
         value["deferredToolPayload"] = value["toolCallId"].clone();
-        remove(&mut value, &["details", "toolInput"]);
+        remove(&mut value, &["details", "toolInput", "structuredContent", "nestedCalls"]);
     } else {
         value = client_tool_payload(value);
     }
@@ -170,7 +170,7 @@ pub(super) fn saved_tool_payload(entries: &[Value], id: &str) -> Option<Value> {
 pub(super) fn tool_payload_page(message: Option<Value>, command: &Value) -> Result<Value> {
     let message = message.ok_or("Tool input and output are not available yet")?;
     let mut payload = json!({"content":message.get("content").filter(|item| !item.is_null()).cloned().unwrap_or(json!(""))});
-    for key in ["details", "toolInput"] {
+    for key in ["details", "toolInput", "nestedCalls"] {
         if let Some(value) = message.get(key) {
             payload[key] = value.clone();
         }

@@ -160,6 +160,13 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
   async function start(group: Group, ctx: ExtensionContext) {
     for (const handler of group.handlers.get("session_start") ?? []) await handler({ type: "session_start" }, ctx);
   }
+  function hideInactiveTools(group: Group | undefined, activeGroup: Group | undefined) {
+    const activeTools = new Set(tools(activeGroup));
+    for (const [name, args] of group?.registrations.get("registerTool") ?? []) {
+      if (activeTools.has(name)) continue;
+      pi.registerTool({ ...args[0] as Tool, exposure: "hidden", execute: async () => { throw new Error(`piop extension tool is inactive: ${name}`); } });
+    }
+  }
   async function shutdown(group: Group | undefined, ctx: ExtensionContext) {
     const active = current;
     current = group;
@@ -185,9 +192,11 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
       group.session = session;
       await shutdown(previous, ctx);
       stop(previous);
+      hideInactiveTools(previous, group);
     } catch (error) {
       await shutdown(group, ctx);
       stop(group); current = previous;
+      hideInactiveTools(group, previous);
       for (const [name, args] of previous?.registrations.get("registerTool") ?? []) publishRegistration("registerTool", name, args);
       throw error;
     }

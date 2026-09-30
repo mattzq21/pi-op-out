@@ -102,7 +102,7 @@ export class SessionMemory {
   private dropToolPayload(id: string) {
     this.loaded.delete(id);
     this.value = { ...this.value, messages: this.value.messages.map((message) => message.deferredToolPayload === id
-      ? { ...message, content: "", details: undefined, toolInput: undefined, toolPayloadLoaded: false } : message) };
+      ? { ...message, content: "", details: undefined, toolInput: undefined, nestedCalls: undefined, toolPayloadLoaded: false } : message) };
   }
 
   private trim() {
@@ -153,7 +153,7 @@ export class SessionMemory {
     const id = message.deferredToolPayload ?? message.toolCallId ?? message.id;
     const loadToolPayload = message.loadToolPayload ?? (() => this.loadToolPayload(id));
     if (message.toolPayloadLoaded) return { ...message, deferredToolPayload: id, loadToolPayload };
-    return { ...message, content: "", details: undefined, toolInput: undefined, deferredToolPayload: id, toolPayloadLoaded: false, loadToolPayload };
+    return { ...message, content: "", details: undefined, toolInput: undefined, nestedCalls: undefined, deferredToolPayload: id, toolPayloadLoaded: false, loadToolPayload };
   }
 
   markRevision(revision: string) { if (fifo.has(this)) this.revision = revision; }
@@ -188,7 +188,7 @@ export class SessionMemory {
       if (serialized.length >= page.length) break;
       if (!page.chunk) throw new Error("Incomplete tool payload");
     }
-    const output = JSON.parse(serialized) as Pick<ChatMessage, "content" | "details" | "toolInput">;
+    const output = JSON.parse(serialized) as Pick<ChatMessage, "content" | "details" | "toolInput" | "nestedCalls">;
     if (generation !== this.generation) return;
     this.reserved = 0;
     this.loaded.delete(id); this.loaded.add(id);
