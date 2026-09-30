@@ -2,7 +2,7 @@
 .image-preview img { display: block; max-width: 100%; max-height: 320px; object-fit: contain; }
 .image-preview:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .image-preview:active { opacity: .8; }
-.image-viewer { position: fixed; inset: 0; box-sizing: border-box; width: 100%; max-width: none; height: 100dvh; max-height: none; margin: 0; padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); border: 0; background: rgb(21 21 21 / 50%); color: #fff; overflow: hidden; }
+.image-viewer { position: fixed; inset: 0; box-sizing: border-box; width: 100%; max-width: none; height: 100dvh; max-height: none; margin: 0; padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); border: 0; background: rgb(21 21 21 / 75%); color: #fff; overflow: hidden; }
 .image-viewer[open] { display: flex; flex-direction: column; }
 .image-viewer::backdrop { background: transparent; }
 .image-viewer-toolbar { display: flex; justify-content: flex-end; gap: 8px; padding: 8px; flex-shrink: 0; }
