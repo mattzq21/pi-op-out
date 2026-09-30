@@ -154,8 +154,7 @@ export class GoalState {
 
   publish(ctx: ExtensionContext) {
     const goal = this.goal;
-    const status = goal?.status.replaceAll("_", " ");
-    const budget = goal?.tokenBudget == null ? `${goal?.tokensUsed ?? 0} tokens` : `${goal.tokensUsed} / ${goal.tokenBudget} tokens`;
-    ctx.ui.setWidget(GOAL_ENTRY, goal ? [`Goal ${status} · ${budget} · ${Math.floor(goal.elapsedMs / 1000)}s`, goal.objective.length > 180 ? `${goal.objective.slice(0, 180)}…` : goal.objective, "/goal · /goal pause · /goal resume · /goal clear"] : undefined);
+    ctx.ui.setWidget(GOAL_ENTRY, undefined);
+    ctx.ui.setStatus(GOAL_ENTRY, goal ? JSON.stringify(goal) : undefined);
   }
 }
