@@ -9,6 +9,10 @@ function persistent(ctx: ExtensionContext) {
   return !!path && !/(?:^|[\\/])pi-desktop-btw-[^/\\]+\.jsonl$/.test(path);
 }
 
+function providerErrorStatus(message: string | undefined): "usage_limited" | "blocked" {
+  return /usage[_\s-]*limit|rate[_\s-]*limit|insufficient[_\s-]*quota|quota[_\s-]*(?:exceeded|exhausted)|too many requests|out of budget|monthly usage limit|available balance|\b429\b/i.test(message ?? "") ? "usage_limited" : "blocked";
+}
+
 export function registerGoals(pi: ExtensionAPI) {
   const state = new GoalState(pi);
   const coordination = new GoalCoordination();
@@ -103,6 +107,10 @@ export function registerGoals(pi: ExtensionAPI) {
   pi.on("message_end", (event, ctx) => coordination.run(ctx, () => {
     if (event.message.role !== "assistant") return;
     emptyFinal ||= event.message.stopReason === "stop" && !event.message.content.some(part => part.type === "text" && part.text.trim());
+    if (event.message.stopReason !== "error") return;
+    try {
+      if (state.usageGoalId()) state.setStatus(ctx, providerErrorStatus(event.message.errorMessage));
+    } finally { ctx.abort(); }
   }));
   pi.on("tool_result", (event, ctx) => coordination.run(ctx, () => {
     activity = true;
