@@ -231,8 +231,13 @@ pub(super) fn create_project_worktree_at(cwd: &str, name: &str, host: Option<&Re
     let reservation = managed_worktree_target(&root, host, &branch)?;
     let target = &reservation.path;
     let output = if let Some(host) = host {
-        run_limited(ssh(host).arg(format!("git -C {} worktree add -b {} {} HEAD", shell_quote(&root.to_string_lossy()), shell_quote(&branch), shell_quote(&target.to_string_lossy()))), 64 * 1024, "Could not create Git worktree")?
+        run_limited(ssh(host).arg(format!("target={}; if [ -e \"$target\" ] || [ -L \"$target\" ]; then printf 'Worktree directory already exists: %s' \"$target\" >&2; exit 1; fi; git -C {} worktree add -b {} \"$target\" HEAD", shell_quote(&target.to_string_lossy()), shell_quote(&root.to_string_lossy()), shell_quote(&branch))), 64 * 1024, "Could not create Git worktree")?
     } else {
+        match fs::symlink_metadata(target) {
+            Ok(_) => return Err(format!("Worktree directory already exists: {}", target.display())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+            Err(error) => return Err(error.to_string()),
+        }
         run_limited(Command::new("git").arg("-C").arg(&root).args(["worktree", "add", "-b", &branch]).arg(target).arg("HEAD"), 64 * 1024, "Could not create Git worktree")?
     };
     if !output.status.success() {

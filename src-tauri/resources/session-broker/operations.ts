@@ -55,8 +55,8 @@ export function registerSessionOperations(pi: ExtensionAPI) {
   const result = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }], details: data });
   pi.registerTool({
     name: "fork_session", label: "Fork conversation",
-    description: "Create a separate saved conversation through a completed assistant response. Works with or without Git. Defaults to the latest completed response (empty history if none). Keeps the current agent running. Optionally use another existing directory or create a Git worktree with current files. Returns hostId/sessionId for send_message; does not start the child.",
-    parameters: Type.Object({ cwd: Type.Optional(Type.String({ description: "Existing destination directory; defaults to current directory. Files are not copied." })), worktree: Type.Optional(Type.String({ description: "New Git worktree name; mutually exclusive with cwd" })), entryId: Type.Optional(Type.String({ description: "Completed assistant entry on the current branch" })) }),
+    description: "Create a separate saved conversation through a completed assistant response. Works with or without Git. Defaults to the latest completed response (empty history if none). Keeps the current agent running. Optionally create a new directory or a Git worktree with current files. Existing destination paths are rejected. Returns hostId/sessionId for send_message; does not start the child.",
+    parameters: Type.Object({ cwd: Type.Optional(Type.String({ description: "New destination directory to create; its parent must exist and the destination must not exist. Omit to use the current directory. Files are not copied." })), worktree: Type.Optional(Type.String({ description: "New Git worktree name; mutually exclusive with cwd" })), entryId: Type.Optional(Type.String({ description: "Completed assistant entry on the current branch" })) }),
     async execute(_id, params, signal, _update, ctx) { return result(await fork(ctx, params, signal)); },
   });
   pi.registerTool({

@@ -22,15 +22,15 @@ function checkout(branch, trees) {
   const root = path.join(os.homedir(), storage, 'worktrees');
   const project = path.basename(trees[0].path);
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
-  for (let attempt = 0; attempt < 256; attempt++) {
-    const container = path.join(root, randomUUID().slice(0, 4));
-    try { fs.mkdirSync(container, { mode: 0o700 }); }
-    catch (error) { if (error.code === 'EEXIST') continue; throw error; }
-    const target = path.join(container, project);
-    try { git(['worktree', 'add', '--', target, branch]); return target; }
-    catch (error) { try { fs.rmdirSync(container); } catch { } throw error; }
-  }
-  throw new Error('Could not allocate worktree storage');
+  const container = path.join(root, randomUUID().slice(0, 4));
+  try { fs.mkdirSync(container, { mode: 0o700 }); }
+  catch (error) { if (error.code === 'EEXIST') throw new Error(`Worktree directory already exists: ${container}`); throw error; }
+  const target = path.join(container, project);
+  try {
+    try { fs.lstatSync(target); throw new Error(`Worktree directory already exists: ${target}`); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    git(['worktree', 'add', '--', target, branch]); return target;
+  } catch (error) { try { fs.rmdirSync(container); } catch { } throw error; }
 }
 
 try {

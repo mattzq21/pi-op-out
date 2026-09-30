@@ -321,17 +321,14 @@ async function checkpointWorktreeTarget(root: string, branch: string) {
   if (!project) throw new Error("Git repository directory has no name");
   const storage = join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "worktrees");
   await mkdir(storage, { recursive: true, mode: 0o700 });
-  for (let attempt = 0; attempt < 256; attempt++) {
-    const container = join(storage, randomUUID().slice(0, 4));
-    const target = join(container, project);
-    if (worktrees.includes(target)) continue;
-    try { await mkdir(container, { mode: 0o700 }); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") continue; throw error; }
-    try { await writeFile(join(container, "parent.json"), JSON.stringify({ branch, parentBranch }), { flag: "wx", mode: 0o600 }); }
-    catch (error) { await rmdir(container).catch(() => undefined); throw error; }
-    return target;
-  }
-  throw new Error("Could not allocate a unique worktree directory");
+  const container = join(storage, randomUUID().slice(0, 4));
+  const target = join(container, project);
+  if (worktrees.includes(target)) throw new Error(`Git worktree is already registered: ${target}`);
+  try { await mkdir(container, { mode: 0o700 }); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`Worktree directory already exists: ${container}`); throw error; }
+  try { await writeFile(join(container, "parent.json"), JSON.stringify({ branch, parentBranch }), { flag: "wx", mode: 0o600 }); }
+  catch (error) { await rmdir(container).catch(() => undefined); throw error; }
+  return target;
 }
 
 async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: string, afterResponse = false) {
