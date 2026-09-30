@@ -9,6 +9,7 @@ import { cancelRequest, currentHost, request } from "./client.ts";
 import { writeSessionFile } from "./session-file.ts";
 import { goalTokens } from "./goal-state.ts";
 import { listenSubagentUsage, registerSubagentUsage } from "./subagent-usage.ts";
+import { registerSubagentMailbox } from "./subagent-mailbox.ts";
 
 const SUBAGENT_RUN = "piop-subagent-run";
 const SUBAGENT_PARENT = "piop-subagent-parent";
@@ -155,11 +156,13 @@ function launchSubagent(task: SubagentTask, execution: Omit<SubagentExecution, "
 
 export function registerSubagents(pi: ExtensionAPI) {
   registerSubagentUsage(pi);
+  const mailbox = registerSubagentMailbox(pi);
   const active = new Set<string>();
   const pending = new Set<Promise<void>>();
   let controller = new AbortController();
   const stop = async () => {
     controller.abort();
+    mailbox.reset();
     await Promise.allSettled([...pending]);
     controller = new AbortController();
   };
@@ -168,7 +171,7 @@ export function registerSubagents(pi: ExtensionAPI) {
   pi.registerTool({
     name: "subagent", label: "Subagents",
     exposure: "model-only",
-    description: "Delegate 1–4 independent tasks in the background. Returns child session IDs once created, without waiting for results; completion or failure arrives automatically as a follow-up message. Continue other work while children run. Each child has a fresh context, a saved transcript visible in piop, and the current working directory (files are shared). Supply all necessary context in task. Defaults to the current agent profile and model; agent selects a named piop profile. Resume a finished child with its returned sessionId. Child agents cannot delegate further. Avoid overlapping edits. Runs are cancelled when the parent session closes or switches and time out after ten minutes.",
+    description: "Delegate 1–4 independent tasks in the background. Returns child session IDs once created, without waiting for results. Completion or failure is queued in the parent mailbox and does not start a new parent turn. Continue independent work while children run; call wait_agent when ready to wait for mailbox activity. Each child has a fresh context, a saved transcript visible in piop, and the current working directory (files are shared). Supply all necessary context in task. Defaults to the current agent profile and model; agent selects a named piop profile. Resume a finished child with its returned sessionId. Child agents cannot delegate further. Avoid overlapping edits. Runs are cancelled when the parent session closes or switches and time out after ten minutes.",
     parameters: Type.Object({ tasks: Type.Array(Type.Object({ name: Type.String({ minLength: 1, maxLength: 120 }), task: Type.String({ minLength: 1, maxLength: 100_000 }), agent: Type.Optional(Type.String({ minLength: 1 })), sessionId: Type.Optional(Type.String({ minLength: 1 })) }), { minItems: 1, maxItems: 4 }) }),
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       signal?.throwIfAborted();
@@ -182,9 +185,12 @@ export function registerSubagents(pi: ExtensionAPI) {
         if (backgroundSignal.aborted) return;
         if (run.status === "running") { onUpdate?.(subagentPayload(results)); return; }
         const payload = subagentPayload([run]);
-        pi.sendMessage({ customType: "piop-subagent-result", ...payload, display: true }, { triggerTurn: true, deliverAs: "followUp" });
+        const notificationId = randomUUID();
+        pi.sendMessage({ customType: "piop-subagent-result", ...payload, details: { ...payload.details, notificationId }, display: true }, { triggerTurn: false, deliverAs: "steer" });
+        mailbox.notify(notificationId);
       };
       await Promise.all(params.tasks.map((task) => launchSubagent(task, { pi, ctx, toolCallId, active, results, signal: backgroundSignal, publish }, pending)));
+      pi.setActiveTools([...new Set([...pi.getActiveTools(), "wait_agent"])]);
       return { ...subagentPayload(results), isError: results.some((run) => run.status === "failed" || run.status === "cancelled") };
     },
   });
