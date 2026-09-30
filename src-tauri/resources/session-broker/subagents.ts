@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { cancelRequest, currentHost, request } from "./client.ts";
 import { writeSessionFile } from "./session-file.ts";
 import { goalTokens } from "./goal-state.ts";
+import { watchSubagentUsage } from "./subagent-usage.ts";
 
 const SUBAGENT_RUN = "piop-subagent-run";
 const SUBAGENT_PARENT = "piop-subagent-parent";
@@ -84,18 +85,26 @@ async function dispatchSubagent(run: SubagentRun, requestId: string, execution: 
   const offset = (await stat(run.sessionPath)).size;
   const scope: { goalId?: string } = {};
   pi.events.emit("piop:goal-scope", scope);
-  const reportUsage = (tokens: number) => pi.events.emit("piop:goal-usage", { ...scope, tokens, ctx });
+  let reported = 0;
+  const reportUsage = (total: number) => {
+    const tokens = Math.max(0, total - reported);
+    reported = Math.max(reported, total);
+    if (tokens) pi.events.emit("piop:goal-usage", { ...scope, tokens, ctx });
+  };
+  const usageFailure = new AbortController();
+  const requestSignal = signal ? AbortSignal.any([signal, usageFailure.signal]) : usageFailure.signal;
+  const stopWatching = scope.goalId ? watchSubagentUsage(run.sessionPath, offset, reportUsage, error => { usageFailure.abort(error); void cancelRequest(requestId); }) : async () => {};
   const abort = () => { void cancelRequest(requestId); };
   signal?.addEventListener("abort", abort, { once: true });
   let dispatched = false;
   let last: AssistantMessage | undefined;
   try {
-    await request("/message", { hostId: run.hostId, sessionId: run.sessionId, message: run.task, requestId, deadline: Date.now() + SUBAGENT_TIMEOUT_MS }, signal, SUBAGENT_TIMEOUT_MS);
+    await request("/message", { hostId: run.hostId, sessionId: run.sessionId, message: run.task, requestId, deadline: Date.now() + SUBAGENT_TIMEOUT_MS }, requestSignal, SUBAGENT_TIMEOUT_MS);
     dispatched = true;
   } catch (error) { await cancelRequest(requestId); throw error; }
   finally {
     signal?.removeEventListener("abort", abort);
-    try { last = await subagentCompletion(run, offset, reportUsage); }
+    try { await stopWatching(); last = await subagentCompletion(run, offset, reportUsage); }
     catch (error) { if (dispatched) throw error; }
   }
   run.output = completedSubagentOutput(last);
