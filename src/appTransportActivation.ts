@@ -60,7 +60,7 @@ export function createTransportActivation(context: ActivationContext) {
   const retainDraft = (previousTransport: NativeTransport, previousKey: string) => {
       const hostId = previousTransport.currentHostId(); const id = previousKey.slice(hostId.length + 1); const draft = composerDrafts()[previousKey] ?? ""; const cwd = previousTransport.currentCwd() ?? "";
       runtimePool().bind(hostId, id, previousTransport);
-      runtimePool().setLiveSession(previousTransport, { id, hostId, isDraft: true, path: previousTransport.currentSessionPath() ?? "", cwd, project: cwd.split("/").filter(Boolean).at(-1) ?? "Workspace", name: hasVisibleText(draft) ? draft.slice(0, 60) : "Unsent draft", preview: draft, messageCount: 0, lastMessageAt: Date.now(), apiCost: 0 });
+      runtimePool().setLiveSession(previousTransport, { id, hostId, isDraft: transportHasDraft(previousTransport, previousKey), path: previousTransport.currentSessionPath() ?? "", cwd, project: cwd.split("/").filter(Boolean).at(-1) ?? "Workspace", name: hasVisibleText(draft) ? draft.slice(0, 60) : "Unsent draft", preview: draft, messageCount: 0, lastMessageAt: Date.now(), apiCost: 0 });
   };
   const discardTransport = (previousTransport: NativeTransport, previousKey: string | undefined) => {
       discardDraft(previousTransport, previousKey);
@@ -72,7 +72,7 @@ export function createTransportActivation(context: ActivationContext) {
       void runtimePool().release(previousTransport).finally(() => transportConversationKeys.current.delete(previousTransport));
   };
   const shouldDiscard = (previous: NativeTransport, next: NativeTransport, hasUnsentWork: boolean) => previous !== next && !runtimePool().isRetained(previous) && !chatSession().state.isStreaming && emptyConversation() && !hasUnsentWork;
-  const hasDraftWork = (owner: NativeTransport, key: string | undefined) => transportHasDraft(owner, key) || Boolean(owner.currentCwd() && !owner.isTemporaryChat()) || owner.hasTerminalActivity() || Boolean(key && conversationTerminalIds(key).length);
+  const hasDraftWork = (owner: NativeTransport, key: string | undefined) => transportHasDraft(owner, key) || owner.hasTerminalActivity() || Boolean(key && conversationTerminalIds(key).length);
   return (nextTransport: NativeTransport) => {
     const previousTransport = transport();
     const previousKey = transportConversationKeys.current.get(previousTransport);
