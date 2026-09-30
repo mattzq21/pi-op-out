@@ -309,6 +309,7 @@ async function loadConfig(pi: ExtensionAPI): Promise<Config> {
 function encode(value: unknown) { return Buffer.from(JSON.stringify(value), "utf8").toString("base64url"); }
 function decode<T>(value: string): T { return JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as T; }
 function safeName(value: string) { return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool"; }
+function workflowTools(pi: ExtensionAPI) { const request = { tools: [] as string[] }; pi.events.emit("piop:workflow-tools", request); return request.tools; }
 function desktopList(pi: ExtensionAPI, name: "tools" | "skills" | "explicitOnlySkills") { const request: { settings?: { tools: string[]; skills: string[]; explicitOnlySkills?: string[] } } = {}; pi.events.emit("piop:runtime-settings", request); return request.settings?.[name]; }
 function normalizedPath(value: string) { return resolve(value.startsWith("~/") ? join(homedir(), value.slice(2)) : value); }
 function agentSkills(pi: ExtensionAPI, agent: Agent) { const global = desktopList(pi, "skills"); if (!global) return agent.skills; const allowed = new Set(global.map(normalizedPath)); return agent.skills.filter((skill) => allowed.has(normalizedPath(skill))); }
@@ -463,7 +464,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     configureAgentEffort(agent);
     if (applyFastMode) pi.events.emit("piop:fast-mode", { apply: true, enabled: effectiveAgentFastMode(agent), restore: applyFastMode === "restore", ctx });
     pi.setActiveTools([]);
-    const tools = new Set([...agent.tools, ...extensions.tools()]);
+    const tools = new Set([...agent.tools, ...extensions.tools(), ...workflowTools(pi)]);
     const mcpError = await connectAgentMcp(agent, ctx, connectMcp, tools); if (mcpError) return mcpError;
     if (agent.name !== "terminal-agent") tools.delete("lookup_terminals");
     const required = { ctx, tools: [] as string[] }; pi.events.emit("piop:required-tools", required);
@@ -486,7 +487,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
       activeToolError = agentToolError(pi, agent, extensions.tools());
       const mcpTools = pi.getActiveTools().filter((name) => name.startsWith("mcp_"));
       const required = { ctx: request.ctx, tools: [] as string[] }; pi.events.emit("piop:required-tools", required);
-      pi.setActiveTools(activeToolError ? [] : [...new Set([...agent.tools, ...extensions.tools(), ...mcpTools, ...required.tools])]);
+      pi.setActiveTools(activeToolError ? [] : [...new Set([...agent.tools, ...extensions.tools(), ...mcpTools, ...required.tools, ...workflowTools(pi)])]);
       publish(request.ctx);
     });
   });

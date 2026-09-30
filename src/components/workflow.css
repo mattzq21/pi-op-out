@@ -1,0 +1,50 @@
+.workflow-sidebar { width: 100%; flex: 0 1 auto; min-height: 52px; max-height: 32%; overflow: auto; border-bottom: 1px solid var(--line); padding: 8px; }
+.workflow-group-title { display: flex; justify-content: space-between; align-items: center; }
+.workflow-group-title button, .workflow-row, .workflow-empty { background: transparent; border: 0; color: var(--ink); text-align: left; padding: 8px; border-radius: 6px; }
+.workflow-group-title button:first-child { flex: 1; font-weight: 600; }
+.workflow-group-title small, .workflow-row small { color: var(--muted); font-size: 10px; }
+.workflow-list { display: flex; flex-direction: column; gap: 2px; }
+.workflow-row { display: flex; align-items: center; gap: 7px; width: 100%; }
+.workflow-row > span:nth-child(2) { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workflow-row.active { background: var(--accent-14); }
+.workflow-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: 0 0 auto; }
+.workflow-dot.running { background: #79b8ff; }
+.workflow-dot.completed { background: #73c991; }
+.workflow-dot.failed, .workflow-dot.limited { background: #f48771; }
+.workflow-view { flex: 1; min-width: 0; overflow: auto; padding: 32px; color: var(--ink); }
+.workflow-view button:not(.primary-button) { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; }
+.workflow-view button[aria-pressed=true] { border-color: var(--accent); color: var(--accent); }
+.workflow-form { display: flex; flex-direction: column; gap: 16px; margin: 0; }
+.workflow-fields { display: flex; flex-direction: column; gap: 16px; }
+.workflow-fields:empty { display: none; }
+.workflow-form label { display: flex; flex-direction: column; gap: 7px; font-size: 13px; }
+.workflow-form textarea, .workflow-form input { width: 100%; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink); padding: 10px; font: inherit; }
+.workflow-form textarea { resize: vertical; min-height: 110px; }
+.workflow-note { color: var(--muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; margin: 0; }
+.workflow-run-controls { margin-top: 24px; }
+.workflow-summary { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; padding-bottom: 16px; font-size: 13px; }
+.workflow-summary button { margin-left: auto; }
+.workflow-status { text-transform: capitalize; }
+.workflow-inspector { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(260px, 1fr); gap: 24px; }
+.workflow-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.workflow-config, .workflow-diagram, .workflow-details { min-width: 0; padding: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.workflow-config { margin-bottom: 24px; }
+.workflow-config .workflow-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); }
+.workflow-diagram { align-self: start; }
+.workflow-diagram-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--muted); }
+.workflow-svg { overflow: auto; padding-top: 16px; }
+.workflow-svg svg { display: block; width: 100%; min-width: 260px; height: auto; margin: auto; }
+.workflow-svg g.node { cursor: pointer; }
+.workflow-svg g.node:focus { outline: 2px solid var(--accent); }
+.workflow-block-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.workflow-block-tabs button { font-size: 11px; }
+.workflow-details h2 { font-size: 18px; margin-top: 22px; }
+.workflow-details p { font-size: 13px; line-height: 1.6; }
+.workflow-block-detail { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 20px; }
+.workflow-block-detail h3 { font-size: 13px; margin: 0 0 6px; }
+.workflow-block-detail small { color: var(--muted); }
+.workflow-block-detail details { margin-top: 16px; }
+.workflow-view pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.6 monospace; }
+.workflow-result { padding: 16px; border: 1px solid var(--line); border-radius: 8px; }
+@media (max-width: 1050px) { .workflow-inspector { grid-template-columns: 1fr; } }
+@media (max-width: 700px) { .workflow-view { padding: 52px 16px 24px; } .workflow-form input, .workflow-form textarea { font-size: 16px; } }

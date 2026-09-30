@@ -38,7 +38,7 @@ export function createAppConversations(preloadChat: () => void) {
 
   const runtimePool = createMemo(() => new SessionRuntimePool());
   const [transport, setTransport] = createSignal((() => { const initial = runtimePool().create(initialWindowTarget()); runtimePool().activate(initial); return initial; })());
-  const [view, setView] = createSignal<"chat" | "settings">("chat");
+  const [view, setView] = createSignal<"chat" | "settings" | "workflow">("chat");
   const activeTransportRef = createRef(transport()); createComputed(() => { activeTransportRef.current = transport(); });
   const pendingSessionGroups = createRef(new WeakMap<NativeTransport, SessionGroup>());
   const initialConversationKey = createRef(`local:draft-${crypto.randomUUID()}`);
@@ -461,7 +461,7 @@ export function createAppConversations(preloadChat: () => void) {
   const activeDialog = createMemo(() => dialogs().find((item) => !isAskUserRequest(item.request)));
   const questionContext = createConversationQuestions(dialogs, item => setDialogs(current => current.filter(dialog => dialog !== item)));
   const projectCwd = createMemo(() => (selectedProjectCwd(activeCwd(), transport().isTemporaryChat())));
-  const mobileSidebarOpen = () => panelOpen() && view() === "chat";
+  const mobileSidebarOpen = () => panelOpen() && view() !== "settings";
   const sidebar = createSidebarState(() => [...sessions(), ...liveSessions().filter((live) => !archives.isArchived(live) && !sessions().some((saved) => saved.id === live.id && saved.hostId === live.hostId))], query);
   const chatAgentProps = () => { if (!extensionStateIsCurrent()) return { agents: [], activeAgent: composerControls.agent(), agentLocked: false, agentSaved: false, agentUnavailable: false }; return { agents: (definedAgents()?.config.agents ?? []), activeAgent: composerControls.agent(definedAgents()?.active), agentLocked: definedAgents()?.locked, agentSaved: definedAgents()?.saved, agentUnavailable: definedAgents()?.unavailable }; };
   const chatModels = createMemo(() => chatSession().models.filter(model => !settings()?.hiddenModels.includes(`${model.provider}/${model.id}`)));

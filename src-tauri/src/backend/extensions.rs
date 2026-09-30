@@ -71,6 +71,14 @@ pub(super) fn prepare_session_broker() -> Result<PathBuf, String> {
     Ok(path)
 }
 
+pub(super) fn prepare_workflow_agent() -> Result<PathBuf, String> {
+    let dir = generated_extension_root()?;
+    ensure_private_dir(&dir)?;
+    let path = dir.join("workflow-agent.ts");
+    atomic_write_private(&path, include_str!("../../resources/workflow-agent.ts").as_bytes())?;
+    Ok(path)
+}
+
 pub(super) fn prepare_trace_reader() -> Result<PathBuf, String> {
     let dir = generated_extension_root()?;
     ensure_private_dir(&dir)?;
