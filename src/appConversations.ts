@@ -342,7 +342,7 @@ export function createAppConversations(preloadChat: () => void) {
     if (repeat) await startNewSession(true, undefined, true);
     else if (empty) await openDraftSession(transport(), { cwd: transport().currentCwd(), hostId: activeHostId() }, transport, () => { setView("chat"); closeSplitPane(); }, reason => addNotice({ title: "Project unavailable", message: String(reason) }));
     else {
-      const draft = liveSessions().filter(session => session.isDraft && (session.hostId ?? "local") === activeHostId() && selectedProjectCwd(session.cwd, false) === projectCwd() && !sessions().some(saved => saved.messageCount > 0 && (saved.hostId ?? "local") === (session.hostId ?? "local") && (saved.id === session.id || Boolean(session.path && saved.path === session.path)))).sort((a, b) => b.lastMessageAt - a.lastMessageAt)[0];
+      const draft = liveSessions().filter(session => session.isDraft && !sessions().some(saved => saved.messageCount > 0 && (saved.hostId ?? "local") === (session.hostId ?? "local") && (saved.id === session.id || Boolean(session.path && saved.path === session.path)))).sort((a, b) => b.lastMessageAt - a.lastMessageAt)[0];
       if (draft) await openDraftSession(transport(), draft, transport, () => { selectSession(draft); }, reason => addNotice({ title: "Project unavailable", message: String(reason) }));
       else await startNewSession();
     }
