@@ -1,6 +1,6 @@
 {
   "categories": { "correctness": "off" },
-  "plugins": ["oxc"],
+  "plugins": ["oxc", "typescript"],
   "ignorePatterns": [
     "**/node_modules/**",
     "**/dist/**",
@@ -18,9 +18,19 @@
     "tools/oxlint/anti-slop/**"
   ],
   "jsPlugins": [
-    { "name": "anti-slop", "specifier": "./tools/oxlint/anti-slop/index.ts" }
+    { "name": "anti-slop", "specifier": "./tools/oxlint/anti-slop/index.ts" },
+    { "name": "local", "specifier": "./scripts/oxlint-local.mjs" }
   ],
   "rules": {
+    "local/no-comments": "error",
+    "local/no-assertions": "error",
+    "complexity": ["error", { "max": 10, "variant": "classic" }],
+    "max-lines": ["error", { "max": 750, "skipComments": true }],
+    "no-unused-vars": ["error", { "args": "all", "argsIgnorePattern": "^_", "caughtErrors": "all", "caughtErrorsIgnorePattern": "^_", "ignoreRestSiblings": true }],
+    "no-unreachable": "error",
+    "no-unused-labels": "error",
+    "typescript/no-explicit-any": "error",
+    "typescript/no-non-null-assertion": "error",
     "oxc/no-accumulating-spread": "error",
     "anti-slop/no-array-filter-map": "error",
     "anti-slop/no-reduce-accumulator-copy": "error",
@@ -40,5 +50,15 @@
     "anti-slop/no-widen-then-assert": "error",
     "anti-slop/require-readable-spacing": "error",
     "anti-slop/require-safety-comment-for-type-assertion": "off"
-  }
+  },
+  "overrides": [
+    {
+      "files": ["extensions/piop-runtime-settings/provider-accounts.mjs", "src-tauri/resources/provider-sdk.mjs"],
+      "rules": {
+        "no-unused-vars": "off",
+        "local/daemon-shared-bindings": "error",
+        "local/daemon-no-unused-vars": ["error", { "args": "all", "argsIgnorePattern": "^_", "caughtErrors": "all", "caughtErrorsIgnorePattern": "^_", "ignoreRestSiblings": true }]
+      }
+    }
+  ]
 }

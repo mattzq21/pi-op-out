@@ -5,9 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "lint": "node scripts/lint.mjs",
-    "lint:eslint": "eslint . --max-warnings 0",
-    "lint:oxlint": "oxlint . --max-warnings 0",
+    "lint": "oxlint . --max-warnings 0",
     "lint:rust": "npm run lint:rust:comments && npm run lint:rust:complexity && npm run build:extensions && vite build && cd src-tauri && cargo clippy --locked --all-targets --all-features -- -D warnings -D dead_code -D unused && cargo clippy --locked --all-targets --no-default-features --features daemon,test-home -- -D warnings -D dead_code -D unused",
     "lint:rust:comments": "node scripts/lint-rust-comments.mjs",
     "lint:rust:complexity": "node scripts/lint-rust-complexity.mjs",
@@ -68,7 +66,6 @@
     "@tauri-apps/cli": "^2.8.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "^26.2.0",
-    "@typescript-eslint/eslint-plugin": "^8.70.0",
     "@typescript-eslint/parser": "^8.70.0",
     "@wdio/cli": "^9.31.3",
     "@wdio/globals": "^9.31.3",
