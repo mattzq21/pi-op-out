@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext, AgentBeforeSettleEvent } from "@earendil-works/pi-coding-agent";
 import { GoalState, GOAL_CONTEXT, goalTokens } from "./goal-state.ts";
-import { goalBudgetPrompt, goalChangedPrompt, goalPrompt } from "./goal-prompts.ts";
+import { goalBudgetPrompt, goalChangedPrompt, goalInactivePrompt, goalPrompt } from "./goal-prompts.ts";
 import { registerGoalControls } from "./goal-controls.ts";
 
 function persistent(ctx: ExtensionContext) {
@@ -165,6 +165,6 @@ export function registerGoals(pi: ExtensionAPI) {
 function currentPrompt(state: GoalState) {
   const goal = state.require();
   if (goal.status === "active") return goalPrompt(goal);
-  if (goal.status === "budget_limited") return goalBudgetPrompt(goal);
+  if (goal.status === "budget_limited") return state.usageGoalId() === goal.id ? goalBudgetPrompt(goal) : goalInactivePrompt(goal);
   return goalChangedPrompt(goal);
 }

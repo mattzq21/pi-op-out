@@ -18,6 +18,10 @@ export function goalBudgetPrompt(goal: Goal) {
   return `The goal reached its token budget and is now budget_limited. ${budget(goal)} Stop new substantive work and wrap up: summarize progress, remaining work or blockers, and the next useful step. Only mark complete if the full objective is actually achieved. Pausing or blocking does not override the budget limit.`;
 }
 
+export function goalInactivePrompt(goal: Goal) {
+  return `The saved conversation goal is inactive with status ${goal.status}. ${budget(goal)} This budget applies only to that goal. Other user requests are independent of it.`;
+}
+
 export function goalChangedPrompt(goal: Goal | null) {
   if (!goal) return "The user cleared the conversation goal. Do not continue pursuing the removed goal automatically.";
   if (goal.status === "active") return `The user updated or resumed the goal. This objective supersedes the previous goal.\n${goalPrompt(goal)}`;
