@@ -22,6 +22,7 @@ export default [
       '**/mutants.out.old/**',
       'vite.config.js',
       'vite.config.d.ts',
+      'tools/oxlint/anti-slop/**',
     ],
   },
   {
@@ -45,6 +46,10 @@ export default [
     plugins: { '@typescript-eslint': tsPlugin },
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',
+      'no-restricted-syntax': ['error',
+        { selector: 'TSAsExpression, TSTypeAssertion', message: 'Type assertions are not allowed. Use inference, annotations, satisfies, or validated types.' },
+      ],
+      '@typescript-eslint/no-non-null-assertion': 'error',
       'no-unused-vars': 'off',
       '@typescript-eslint/no-unused-vars': ['error', unusedOptions],
     },
