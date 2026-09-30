@@ -2,11 +2,13 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "@earendil-works/pi-ai";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { writeSessionFile } from "./session-file.ts";
 
 type ReviewRecord = { sessionId: string; sessionPath: string; cwd: string; parentSessionId: string };
 
-async function createReview(ctx: ExtensionContext): Promise<ReviewRecord> {
+async function createReview(ctx: ExtensionContext, agentState: unknown): Promise<ReviewRecord> {
   const header = ctx.sessionManager.getHeader();
   if (!header || !ctx.sessionManager.getSessionFile()) throw new Error("Save the main conversation before starting a review");
   const timestamp = new Date().toISOString();
@@ -16,14 +18,15 @@ async function createReview(ctx: ExtensionContext): Promise<ReviewRecord> {
   await writeSessionFile(record.sessionPath, [
     { type: "session", version: header.version, id: sessionId, timestamp, cwd: ctx.cwd },
     { type: "custom", id: metadataId, parentId: null, timestamp, customType: "piop-review-parent", data: { parentSessionId: record.parentSessionId } },
-    { type: "session_info", id: randomUUID().slice(0, 8), parentId: metadataId, timestamp, name: "Code review" },
+    { type: "custom", id: `${metadataId}-agent`, parentId: metadataId, timestamp, customType: "pi-define-agents-state", data: agentState },
+    { type: "session_info", id: randomUUID().slice(0, 8), parentId: `${metadataId}-agent`, timestamp, name: "Code review" },
   ]);
   return record;
 }
 
-function openReview(ctx: ExtensionContext, record: ReviewRecord, start: boolean) {
+function openReview(ctx: ExtensionContext, record: ReviewRecord, task?: string) {
   ctx.ui.setStatus("review", "Opening code review…");
-  void ctx.ui.input("__pi_desktop_review__", JSON.stringify({ ...record, ...(start ? { task: reviewTask() } : {}) })).catch(error => {
+  void ctx.ui.input("__pi_desktop_review__", JSON.stringify({ ...record, ...(task ? { task } : {}) })).catch(error => {
     ctx.ui.notify(`/review failed: ${error instanceof Error ? error.message : String(error)}`, "error");
   }).finally(() => ctx.ui.setStatus("review", undefined));
 }
@@ -60,12 +63,14 @@ function registerReviewMessaging(pi: ExtensionAPI) {
   });
 }
 
-function reviewTask() {
-  return `You are the dedicated code review agent for this side conversation. Review code and report actionable findings. Do not modify files or run tests unless the user explicitly asks.
-
-Review this branch against the repository's default branch using the merge base. Discover the default branch from repository metadata; if the base cannot be determined, ask the user. Include only committed branch changes.
-
-Inspect the actual diff and surrounding code. Focus on concrete bugs introduced by the changes, regressions, security issues, and missing error handling. Verify each finding against the implementation; omit speculative concerns and style preferences. For each finding, give a priority (P0–P3), a concise title, a file path and narrow line range, the triggering conditions and impact, and a suggested fix. Do not invent findings. If none are found, say so and mention material limits of the review. Keep this reviewer role for follow-up questions.`;
+async function reviewSettings() {
+  let settings: { reviewAgent?: string; reviewPrompt?: string } = {};
+  try { settings = JSON.parse(await readFile(join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "settings.json"), "utf8")); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  const agent = settings.reviewAgent?.trim() || "general";
+  const prompt = settings.reviewPrompt ?? await readFile(new URL("./review-prompt.txt", import.meta.url), "utf8");
+  if (!prompt.trim()) throw new Error("Set a review prompt in Settings → Review");
+  return { agent, prompt };
 }
 
 export function registerReview(pi: ExtensionAPI) {
@@ -74,10 +79,14 @@ export function registerReview(pi: ExtensionAPI) {
     description: "Review this branch against its base in a side pane",
     handler: async (args, ctx) => {
       if (args.trim()) { ctx.ui.notify("Usage: /review — reviews the current branch", "warning"); return; }
-      const record = await createReview(ctx);
+      const settings = await reviewSettings();
+      const profile: { agent: string; state?: unknown; error?: string } = { agent: settings.agent };
+      pi.events.emit("piop:agents:subagent", profile);
+      if (!profile.state || profile.error) throw new Error(profile.error || `Review agent unavailable: ${settings.agent}`);
+      const record = await createReview(ctx, profile.state);
       pi.appendEntry("piop-review", record);
       pi.sendMessage({ customType: "piop-review-link", content: "Code review", display: true, details: record }, { triggerTurn: false });
-      openReview(ctx, record, true);
+      openReview(ctx, record, settings.prompt);
     },
   });
   pi.registerCommand("pi-orchestration-review-open", {
@@ -87,7 +96,7 @@ export function registerReview(pi: ExtensionAPI) {
       if (!entry || entry.type !== "custom") throw new Error("Review not found in this conversation");
       const record = entry.data as ReviewRecord;
       if (record.parentSessionId !== ctx.sessionManager.getSessionId()) throw new Error("This review belongs to another conversation");
-      openReview(ctx, record, false);
+      openReview(ctx, record);
     },
   });
 }

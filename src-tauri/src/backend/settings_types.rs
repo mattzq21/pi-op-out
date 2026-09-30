@@ -19,6 +19,10 @@ pub(super) struct RemoteHost {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct AppSettings {
+    #[serde(default = "default_agent")]
+    pub(super) review_agent: String,
+    #[serde(default = "default_review_prompt")]
+    pub(super) review_prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) dictation_model_path: Option<String>,
     #[serde(default = "default_true")]
@@ -74,9 +78,12 @@ pub(super) fn deserialize_context_window_cap<'de, D>(deserializer: D) -> Result<
 pub(super) const DEFAULT_MODEL: &str = if DEVELOPMENT { "openai-codex/gpt-6-luna" } else { "openai-codex/gpt-5.6-sol" };
 
 pub(super) fn default_agent() -> String { "general".into() }
+pub(super) fn default_review_prompt() -> String { include_str!("../../resources/session-broker/review-prompt.txt").trim().into() }
 
 pub(super) fn default_settings() -> AppSettings {
     AppSettings {
+        review_agent: default_agent(),
+        review_prompt: default_review_prompt(),
         dictation_model_path: None,
         local_enabled: true,
         worktree_setup_scripts: vec![],

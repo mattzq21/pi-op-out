@@ -13,13 +13,15 @@ import type { AgentConfig, AgentProfile, AppSettings, McpServer, Model, RemoteHo
 import { IconButton } from "./IconButton";
 import { ProviderSettings } from "./ProviderSettings";
 import { StorageSettings } from "./StorageSettings";
+import { ReviewSettings } from "./ReviewSettings";
 import { Toggle } from "./Toggle";
 import { RemoveMachineDialog } from "./RemoveMachineDialog";
 
-export type Section = "providers" | "general" | "dictation" | "models" | "storage" | "environment" | "agents" | "machines" | "keybinds" | "connections";
+export type Section = "providers" | "general" | "dictation" | "review" | "models" | "storage" | "environment" | "agents" | "machines" | "keybinds" | "connections";
 export const sections = [
   { id: "general" as const, label: "General", icon: Settings2 },
   { id: "dictation" as const, label: "Dictation", icon: Mic },
+  { id: "review" as const, label: "Review", icon: ShieldCheck },
   { id: "models" as const, label: "Models", icon: Cpu },
   { id: "providers" as const, label: "Providers", icon: ShieldCheck },
   { id: "storage" as const, label: "Storage", icon: HardDrive },
@@ -373,6 +375,7 @@ export function SettingsView(props: SettingsViewProps) {
         {formValidation().visibleSection === "providers" && <Rerun on={providerHostId}>{(_key) => <ProviderSettings  hosts={settingsProps().providerHosts ?? settingsProps().settings.hosts} initialHostId={settingsProps().providerHostId} fixedHost />}</Rerun>}
         {renderWorktreeScripts()}
         {renderGeneral()}
+        <Show when={formValidation().visibleSection === "review"}><SettingsSection title="Review" description="Agent and prompt used when starting /review on this machine. Existing reviews keep their agent and conversation."><ReviewSettings settings={draft()} agents={agentDrafts()} onChange={patch} /></SettingsSection></Show>
         {renderDictation()}
         {renderModels()}
         {formValidation().visibleSection === "connections" && <SettingsSection title="Hosts" description="Saved daemon connections are stored on this device."><button class="secondary-button" disabled={dirty() || saving()} onClick={() => window.dispatchEvent(new Event("piop-mobile-disconnect"))}>Manage saved hosts</button>{dirty() && <p>Save your changes before switching hosts.</p>}</SettingsSection>}
