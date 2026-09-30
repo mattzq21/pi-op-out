@@ -83,13 +83,14 @@ async function dispatchSubagent(run: SubagentRun, requestId: string, execution: 
   const { signal, pi, ctx } = execution;
   signal?.throwIfAborted();
   const offset = (await stat(run.sessionPath)).size;
-  const scope: { goalId?: string } = {};
+  const scope: { goalId?: string; ctx: ExtensionContext; ready?: Promise<void> } = { ctx };
   pi.events.emit("piop:goal-scope", scope);
+  await scope.ready;
   let reported = 0;
   const reportUsage = (total: number) => {
     const tokens = Math.max(0, total - reported);
     reported = Math.max(reported, total);
-    if (tokens) pi.events.emit("piop:goal-usage", { ...scope, tokens, ctx });
+    if (tokens) pi.events.emit("piop:goal-usage", { goalId: scope.goalId, tokens, ctx });
   };
   const usageFailure = new AbortController();
   const requestSignal = signal ? AbortSignal.any([signal, usageFailure.signal]) : usageFailure.signal;

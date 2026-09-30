@@ -2,9 +2,11 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@e
 import { Type } from "@earendil-works/pi-ai";
 import { GoalState, validateBudget } from "./goal-state.ts";
 import { materializeGoal } from "./goal-files.ts";
+import type { GoalCoordination } from "./goal-coordination.ts";
 
 export type GoalControls = {
   state: GoalState;
+  coordination: GoalCoordination;
   assertAvailable(ctx: ExtensionContext): void;
   changed(ctx: ExtensionContext): void;
   start(ctx: ExtensionContext): void;
@@ -22,54 +24,78 @@ function registerGoalTool(pi: ExtensionAPI, controls: GoalControls) {
     name: "get_goal", label: "Get goal", description: "Get the current goal, including status, budget, token and elapsed-time usage, and remaining token budget.",
     parameters: Type.Object({}, { additionalProperties: false }),
     async execute(_id, _params, signal, _update, ctx) {
-      signal?.throwIfAborted(); controls.assertAvailable(ctx); return result(ctx);
+      return controls.coordination.run(ctx, () => { signal?.throwIfAborted(); controls.assertAvailable(ctx); return result(ctx); });
     },
   });
   pi.registerTool({
     name: "create_goal", label: "Create goal", description: "Create a goal only when explicitly requested by the user or system/developer instructions; never infer goals from ordinary tasks. Set token_budget only when explicitly requested. Fails if an unfinished goal exists; use update_goal only for status.",
     parameters: Type.Object({ objective: Type.String(), token_budget: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })) }, { additionalProperties: false }),
     async execute(_id, params, signal, _update, ctx) {
+      return controls.coordination.run(ctx, () => {
       signal?.throwIfAborted(); controls.assertAvailable(ctx);
       controls.state.create(ctx, params.objective, params.token_budget ?? null);
       return result(ctx);
+      });
     },
   });
   pi.registerTool({
     name: "update_goal", label: "Update goal", description: goalToolDescription,
     parameters: Type.Object({ status: Type.Union([Type.Literal("complete"), Type.Literal("blocked"), Type.Literal("paused")]) }, { additionalProperties: false }),
     async execute(_id, params, signal, _update, ctx) {
+      return controls.coordination.run(ctx, () => {
       signal?.throwIfAborted(); controls.assertAvailable(ctx);
       controls.state.setStatus(ctx, params.status); controls.state.finishRun();
       return result(ctx, params.status === "complete");
+      });
     },
   });
 }
 
-async function editGoal(ctx: ExtensionCommandContext, controls: GoalControls) {
-  const goal = controls.state.require();
-  const objective = await ctx.ui.editor("Edit goal", goal.objective);
-  if (objective === undefined) return;
-  if (controls.state.goal?.id !== goal.id) throw new Error("The goal changed while the editor was open. Reopen /goal edit.");
-  controls.assertAvailable(ctx);
-  const draft = await materializeGoal(objective, ctx);
-  if (controls.state.goal?.id !== goal.id) { await draft.cleanup(); throw new Error("The goal changed. Reopen /goal edit."); }
-  controls.state.flushClock();
-  goal.objective = draft.objective;
-  if (["complete", "budget_limited"].includes(goal.status)) controls.state.setStatus(ctx, "active");
-  controls.changed(ctx);
+function snapshot(ctx: ExtensionContext, controls: GoalControls) {
+  const goal = controls.state.goal;
+  return JSON.stringify([ctx.sessionManager.getSessionId(), goal?.id, goal?.objective, goal?.status, goal?.tokenBudget]);
 }
 
-async function createGoal(args: string, ctx: ExtensionCommandContext, controls: GoalControls) {
-  controls.assertAvailable(ctx);
-  const previous = controls.state.goal;
-  if (previous && previous.status !== "complete") {
-    if (!await ctx.ui.confirm("Replace current goal?", "This starts a new objective with fresh usage and no token budget.")) return;
-    if (controls.state.goal?.id !== previous.id) throw new Error("The goal changed. Submit /goal again.");
+function commit(ctx: ExtensionCommandContext, controls: GoalControls, operation: () => void, start = true) {
+  return controls.coordination.run(ctx, () => {
+    operation();
+    const summary = goalSummary(controls.state);
+    controls.state.save(ctx);
+    if (start) controls.start(ctx);
+    return summary;
+  });
+}
+
+async function prepareGoal(args: string, ctx: ExtensionCommandContext, controls: GoalControls, editing: boolean) {
+  const captured = await controls.coordination.run(ctx, () => {
+    controls.assertAvailable(ctx);
+    if (editing) controls.state.require();
+    return { key: snapshot(ctx, controls), goal: controls.state.goal && { ...controls.state.goal } };
+  });
+  let objective: string | undefined = args;
+  if (editing) objective = await ctx.ui.editor("Edit goal", captured.goal!.objective);
+  else if (captured.goal && captured.goal.status !== "complete" && !await ctx.ui.confirm("Replace current goal?", "This starts a new objective with fresh usage and no token budget.")) return;
+  if (objective === undefined) return;
+  const draft = await materializeGoal(objective, ctx);
+  let applied = false;
+  try {
+    return await commit(ctx, controls, () => {
+      if (snapshot(ctx, controls) !== captured.key) throw new Error("The goal changed while preparing this operation. Submit /goal again.");
+      controls.assertAvailable(ctx);
+      applyDraft(ctx, controls, draft.objective, editing);
+      applied = true;
+    });
+  } finally { if (!applied) await draft.cleanup(); }
+}
+
+function applyDraft(ctx: ExtensionCommandContext, controls: GoalControls, objective: string, editing: boolean) {
+  if (editing) {
+    const goal = controls.state.require();
+    controls.state.flushClock(); goal.objective = objective;
+    if (["complete", "budget_limited"].includes(goal.status)) controls.state.setStatus(ctx, "active");
+  } else {
+    controls.state.clear(ctx); controls.state.create(ctx, objective, null);
   }
-  const draft = await materializeGoal(args, ctx);
-  if (controls.state.goal !== previous) { await draft.cleanup(); throw new Error("The goal changed. Submit /goal again."); }
-  controls.state.clear(ctx);
-  controls.state.create(ctx, draft.objective, null);
   controls.changed(ctx);
 }
 
@@ -80,18 +106,15 @@ function changeBudget(value: string, ctx: ExtensionCommandContext, controls: Goa
   controls.changed(ctx);
 }
 
-async function command(args: string, ctx: ExtensionCommandContext, controls: GoalControls) {
-  const value = args.trim();
+function applyCommand(value: string, ctx: ExtensionCommandContext, controls: GoalControls) {
   switch (value) {
     case "": return;
-    case "edit": await editGoal(ctx, controls); return;
     case "clear": controls.state.clear(ctx); controls.changed(ctx); return;
     case "pause": controls.state.setStatus(ctx, "paused"); controls.changed(ctx); return;
     case "resume": controls.assertAvailable(ctx); controls.state.setStatus(ctx, "active"); controls.changed(ctx); return;
     default:
       if (value.startsWith("budget ")) changeBudget(value.slice(7), ctx, controls);
-      else if (value === "budget") throw new Error(USAGE);
-      else await createGoal(value, ctx, controls);
+      else throw new Error(USAGE);
   }
 }
 
@@ -102,11 +125,10 @@ export function registerGoalControls(pi: ExtensionAPI, controls: GoalControls) {
     getArgumentCompletions: prefix => ["edit", "pause", "resume", "clear", "budget"].filter(value => value.startsWith(prefix.trim())).map(value => ({ value, label: value })),
     async handler(args, ctx) {
       try {
-        await command(args, ctx, controls);
-        const summary = goalSummary(controls.state);
-        controls.state.save(ctx);
-        pi.sendMessage({ customType: "piop-goal-summary", content: summary, display: true }, { triggerTurn: false });
-        if (args.trim()) controls.start(ctx);
+        const value = args.trim();
+        const preparing = value === "edit" || (value && !["clear", "pause", "resume", "budget"].includes(value) && !value.startsWith("budget "));
+        const summary = preparing ? await prepareGoal(value, ctx, controls, value === "edit") : await commit(ctx, controls, () => applyCommand(value, ctx, controls), Boolean(value));
+        if (summary) pi.sendMessage({ customType: "piop-goal-summary", content: summary, display: true }, { triggerTurn: false });
       } catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
     },
   });
