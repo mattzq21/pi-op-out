@@ -4,7 +4,7 @@ import { textOf } from "./lib/content";
 import { branchMessages, type PiEntry } from "./lib/messages";
 import type { NativeTransport } from "./lib/nativeTransport";
 import type { SessionRuntimePool } from "./lib/sessionRuntimePool";
-import { inheritSessionGroup } from "./lib/sessionGroups";
+import { inheritSessionGroup, updateSessionGroups } from "./lib/sessionGroups";
 import type { StateUpdate } from "./lib/solid";
 import type { AppSettings, ComposerUpload, SessionSummary } from "./types";
 
@@ -44,8 +44,17 @@ export function createWorktreeActions(context: WorktreeContext) {
     };
     if (!target.message) {
       const result = await target.transport.createProjectWorktree(target.cwd, name, target.hostId);
+      try {
+        await updateSessionGroups({ type: "project", project: {
+          id: `${target.hostId}:${result.path}`, name: result.branch, cwd: result.path,
+          hostId: target.hostId, projectKind: "worktree", branch: result.branch,
+        } });
+      } catch (reason) {
+        addNotice({ title: "Worktree created, but could not be added to the sidebar", message: `${result.path}\n${reason instanceof Error ? reason.message : String(reason)}` });
+      }
       await setup(result.path);
       setWorktreeTarget(undefined);
+      void syncSessionIndex();
       return result;
     }
     const sourceMessage = target.message;
