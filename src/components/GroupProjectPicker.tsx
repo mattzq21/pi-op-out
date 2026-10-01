@@ -15,6 +15,7 @@ interface Props {
   disabled: boolean;
   project?: GroupProject;
   onSelect: (project: GroupProject) => void;
+  onCancel: () => void;
 }
 
 export function GroupProjectPicker(props: Props) {
@@ -28,6 +29,6 @@ export function GroupProjectPicker(props: Props) {
 
   return <>
     <div class="project-picker group-project-picker"><button type="button" class={name() ? "selected" : undefined} title={props.project?.cwd ?? undefined} disabled={props.disabled} onClick={() => setOpen(true)}><FolderGit2 size={14} />{name() ?? "Choose project"}</button></div>
-    <Show when={open()}><ProjectDialog localEnabled={props.settings.localEnabled} hosts={props.settings.hosts.filter(host => host.enabled !== false)} initialPath={props.project?.cwd ?? ""} initialHostId={props.project?.hostId ?? props.hostId} onHomeDirectory={hostId => props.transport.homeDirectory(hostId)} onChooseDirectory={(path, hostId) => props.transport.listDirectories(hostId, path || undefined)} onOpen={select} onCancel={() => setOpen(false)} /></Show>
+    <Show when={open()}><ProjectDialog localEnabled={props.settings.localEnabled} hosts={props.settings.hosts.filter(host => host.enabled !== false)} initialPath={props.project?.cwd ?? ""} initialHostId={props.project?.hostId ?? props.hostId} onHomeDirectory={hostId => props.transport.homeDirectory(hostId)} onChooseDirectory={(path, hostId) => props.transport.listDirectories(hostId, path || undefined)} onOpen={select} onCancel={() => { setOpen(false); props.onCancel(); }} /></Show>
   </>;
 }
