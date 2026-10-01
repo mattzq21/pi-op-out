@@ -270,42 +270,6 @@ export function createAppConversations(preloadChat: () => void) {
     const capturedRuntimePool = runtimePool(); const capturedView = view(); const capturedTransport = transport();
     capturedRuntimePool.activate(capturedView === "chat" ? capturedTransport : undefined); }, () => [runtimePool(), transport(), view()]);
 
-  const parseBranchCommand = (branchCommand: RegExpExecArray) => {
-    const [, command, rawArgs = ""] = branchCommand;
-    const args = rawArgs.trim().split(/\s+/).filter(Boolean);
-    const hasNumber = args.length > 0 && /^[+-]?\d/.test(args[0]);
-    const number = hasNumber ? required(args.shift()) : "0";
-
-    if (!/^\d+$/.test(number) || !Number.isSafeInteger(Number(number))) throw new Error("The response number must be a non-negative integer");
-
-    if (command === "branch-off" && args.length) throw new Error("Usage: /branch-off [number]");
-    const responses = chatSession().messages.filter((message) => message.role === "assistant" && message.entryId && !message.streaming && message.stopReason !== "toolUse" && (message.stopReason === "aborted" || message.stopReason === "error" || (Array.isArray(message.content) ? message.content.some((part) => part.type === "text" && part.text?.trim()) : message.content.trim())));
-    const message = responses.at(-1 - Number(number));
-
-    if (!message) throw new Error(`No response exists ${number} responses back`);
-
-    return { command, args, message };
-  };
-
-  const sendBranchCommand = async (branchCommand: RegExpExecArray, images: ImageAttachment[]) => { const capturedBranchConversation = branchConversation(); const capturedIsGitRepository = isGitRepository(); const capturedProjectCwd = projectCwd(); const capturedActiveHostId = activeHostId(); const capturedTransport = transport();
-
-    if (images.length) throw new Error("Branch commands do not accept attachments");
-    const { command, args, message } = parseBranchCommand(branchCommand);
-
-    if (command === "branch-off") return capturedBranchConversation(message);
-
-    if (!capturedIsGitRepository || !capturedProjectCwd) throw new Error("Open a Git project before creating a worktree");
-    const target = { cwd: (capturedProjectCwd), hostId: capturedActiveHostId, message, transport: capturedTransport };
-
-    if (!args.length) { setWorktreeTarget(target);
-
-      return true; }
-
-    await createWorktree(target, args.join(" "));
-
-    return true;
-  };
-
   const send = async (text: string, behavior?: "steer" | "followUp", images: ImageAttachment[] = []) => { const capturedTransport = await prepareChatWorktree(transport(), async (cwd, host, onActivate) => { const group = pendingSessionGroups.current.get(transport()); await openProject(cwd, host, true, onActivate);
 
       if (group) pendingSessionGroups.current.set(transport(), group); }, transport, connected, error);
@@ -315,11 +279,6 @@ export function createAppConversations(preloadChat: () => void) {
     const imagePayload = images.length ? { images } : {};
 
     if (/^\/review(?:\s|$)/.test(text.trim())) reviewImages.set(capturedTransport, images);
-    const branchCommand = /^\/(worktree|branch-off)(?:\s+(.*))?$/s.exec(text.trim());
-
-    if (branchCommand) {
-      return sendBranchCommand(branchCommand, images);
-    }
 
     try {
       if (behavior) { await ownerTransport.submitPrompt({ type: behavior === "steer" ? "steer" : "follow_up", message: text, ...imagePayload });
@@ -705,7 +664,7 @@ export function createAppConversations(preloadChat: () => void) {
     return { agents: (definedAgents()?.config.agents ?? []), activeAgent: composerControls.agent(definedAgents()?.active), agentLocked: definedAgents()?.locked, agentSaved: definedAgents()?.saved, agentUnavailable: definedAgents()?.unavailable }; };
 
   const chatModels = createMemo(() => chatSession().models.filter(model => !settings()?.hiddenModels.includes(`${model.provider}/${model.id}`)));
-  const chatCommands = createMemo<SlashCommand[]>(() => [{ name: "branch-off", description: "Branch conversation [number back, default 0]", source: "builtin" }, { name: "worktree", description: "Create worktree [number back, default 0] [name]", source: "builtin" }, ...chatSession().commands.filter(command => !["branch-off", "worktree"].includes(command.name))]);
+  const chatCommands = createMemo<SlashCommand[]>(() => chatSession().commands);
   const chatWidgets = createMemo(() => extensionStateIsCurrent() ? Object.values(widgets()).flat() : []);
   const dirlessPending = new Set<string>();
   const [missingDirectoryDialog, setMissingDirectoryDialog] = createSignal<MissingDirectoryRequest>();

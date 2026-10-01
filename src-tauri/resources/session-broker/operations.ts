@@ -93,16 +93,6 @@ export function registerSessionOperations(pi: ExtensionAPI) {
     catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
   };
 
-  pi.registerCommand("fork-session", {
-    description: 'Fork conversation: /fork-session [directory] or /fork-session --worktree name', handler: async (args, ctx) => report(ctx, () => {
-      const value = args.trim();
-
-      if (value === "--worktree") throw new Error("Usage: /fork-session --worktree name");
-
-      return fork(ctx, value.startsWith("--worktree ") ? { worktree: value.slice(11).trim() } : { cwd: value || undefined });
-    })
-  });
-  pi.registerCommand("create-worktree", { description: "Create worktree with current files: /create-worktree name", handler: async (args, ctx) => report(ctx, () => create(ctx, args.trim())) });
   pi.registerCommand("remove-worktree", {
     description: "Remove unused clean worktree, keeping its branch: /remove-worktree path", handler: async (args, ctx) => report(ctx, () => {
       if (!args.trim()) throw new Error("Usage: /remove-worktree path");
