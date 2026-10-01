@@ -22,7 +22,7 @@ export function TerminalView(componentProps: Props) {
   const host = createRef<HTMLDivElement>(null); const terminal = createRef<Terminal | undefined>(undefined); const lastOutputEnd = createRef(0); const queuedOutputEnd = createRef(0); const tabRefs = createRef(new Map<string, HTMLButtonElement>());
   const callbacks = createRef({ onData: componentProps.onData, onResize: componentProps.onResize, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }); createComputed(() => { callbacks.current = { onData: componentProps.onData, onResize: componentProps.onResize, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }; });
 
-  createDependencyEffect(() => { const capturedCwd0 = componentProps.cwd; const capturedSnapshot1 = componentProps.snapshot; const capturedSnapshotEnd2 = componentProps.snapshotEnd; const capturedStarted3 = componentProps.started; const capturedActiveId4 = componentProps.activeId;
+  createDependencyEffect(() => { const capturedCwd0 = componentProps.cwd; const capturedSnapshot1 = componentProps.snapshot; const capturedSnapshotEnd2 = componentProps.snapshotEnd;
     const saveSnapshot = componentProps.onSnapshot;
 
     if (!capturedCwd0 || !host.current) return;
@@ -59,7 +59,6 @@ export function TerminalView(componentProps: Props) {
 
     if (capturedSnapshot1) { queuedOutputEnd.current = capturedSnapshotEnd2 ?? 0; instance.write((capturedSnapshot1), () => { if (terminal.current !== instance) return; lastOutputEnd.current = capturedSnapshotEnd2 ?? 0; restored = true; }); }
 
-    if (!capturedStarted3) callbacks.current.onStart(capturedActiveId4, instance.cols, instance.rows); else callbacks.current.onResize(instance.cols, instance.rows);
     instance.options.disableStdin = Boolean(componentProps.ownershipRequired);
     requestAnimationFrame(() => { if (terminal.current === instance && !componentProps.ownershipRequired) instance.focus(); });
     const data = instance.onData((value) => { if (!componentProps.ownershipRequired) callbacks.current.onData(value); }); const resize = instance.onResize(({ cols, rows }) => { if (!componentProps.ownershipRequired) callbacks.current.onResize(cols, rows); });
@@ -70,11 +69,14 @@ export function TerminalView(componentProps: Props) {
 
   createDependencyEffect(() => {
     const instance = terminal.current;
+
     if (!instance) return;
     instance.options.disableStdin = Boolean(componentProps.ownershipRequired);
+
     if (componentProps.ownershipRequired) instance.blur();
-    else { callbacks.current.onResize(instance.cols, instance.rows); }
-  }, () => [componentProps.ownershipRequired]);
+    else if (!componentProps.started && !componentProps.exited) callbacks.current.onStart(componentProps.activeId, instance.cols, instance.rows);
+    else if (componentProps.started) callbacks.current.onResize(instance.cols, instance.rows);
+  }, () => [componentProps.activeId, componentProps.cwd, componentProps.ownershipRequired]);
 
   createDependencyEffect(() => { const capturedOutputEnd0 = componentProps.outputEnd; const capturedOutput1 = componentProps.output;
     const instance = terminal.current;
