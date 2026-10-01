@@ -198,6 +198,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     for (name, content) in [
         ("git.ts", include_str!("../../../extensions/piop-diff-watch/git.ts")),
         ("schemas.ts", include_str!("../../../extensions/piop-diff-watch/schemas.ts")),
+        ("prompt-history.ts", include_str!("../../../extensions/piop-diff-watch/prompt-history.ts")),
     ] {
         remote.push_str(&format!(r#" && printf %s {} > "$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/{name}" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/{name}""#, shell_quote(content)));
     }

@@ -106,8 +106,8 @@ function snapshot(group, transaction) {
   if (group.branchRef && !group.branchRef.startsWith('refs/heads/')) throw new Error('Invalid worktree branch');
   group.metadata = path.join(transaction, `${randomUUID()}.git`);
   fs.cpSync(group.own, group.metadata, { recursive: true, verbatimSymlinks: true });
-  git(group.path, ['read-tree', '--empty'], { env });
-  git(group.path, ['add', '--all', '--force', '--', '.'], { env });
+  fs.copyFileSync(path.join(group.own, 'index'), index);
+  git(group.path, ['add', '--update', '--', '.'], { env });
   const tree = git(group.path, ['write-tree'], { env });
   group.commit = git(group.path, ['commit-tree', tree, '-p', head], { env, input: 'Archive conversation working directory\n' });
   fs.unlinkSync(index);
