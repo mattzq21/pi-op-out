@@ -1,13 +1,17 @@
 import { realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import type * as SDK from "@earendil-works/pi-coding-agent";
+import type { Provider } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 
 const extensionPathsSchema = Type.Array(Type.String({ pattern: "\\S" }));
 
-type Handler = (...args: unknown[]) => unknown;
+const eventDataSchema = Type.Unknown();
+
+type BusHandler = (data: Static<typeof eventDataSchema>) => void;
 
 type Tool = Parameters<ExtensionAPI["registerTool"]>[0];
 
@@ -22,9 +26,8 @@ type Registration = { method: "registerTool"; name: string; tool: Tool }
 
 type Group = {
   key: string;
-  handlers: Map<string, Handler[]>;
   registrations: Map<Registration["method"], Map<string, Registration>>;
-  listeners: Array<{ name: string; handler: Handler; removed?: boolean; unsubscribe?: () => void }>;
+  listeners: Array<{ name: string; handler: BusHandler; removed?: boolean; unsubscribe?: () => void }>;
   stops: Array<() => void>;
   ready: boolean;
   session?: string;
@@ -58,7 +61,88 @@ async function directoryEntry(directory: string): Promise<string> {
 
 export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
   let current: Group | undefined;
-  const dispatchedEvents = new Map<string, number>();
+
+  function channel<A extends unknown[], R>(subscribe: (handler: (...args: A) => R) => () => void, fallback: () => R) {
+    const groups = new WeakMap<Group, Array<((...args: A) => R) | undefined>>();
+    let dispatched = 0;
+    const handlers = (group?: Group) => group ? groups.get(group) ?? [] : [];
+
+    const publish = (group: Group) => {
+      for (; dispatched < handlers(group).length; dispatched++) {
+        const index = dispatched;
+        subscribe((...args) => {
+          const handler = handlers(current)[index];
+
+          return handler ? handler(...args) : fallback();
+        });
+      }
+    };
+
+    const add = (group: Group, handler: (...args: A) => R) => {
+      const list = groups.get(group) ?? [];
+      const index = list.push(handler) - 1;
+      groups.set(group, list);
+
+      if (group.ready && current === group) publishHandlers(group);
+
+      return () => { list[index] = undefined; };
+    };
+
+    return { add, publish, handlers };
+  }
+
+  const extensionChannel = <E, R = undefined>(subscribe: (handler: SDK.ExtensionHandler<E, R>) => () => void) =>
+    channel<[E, ExtensionContext], ReturnType<SDK.ExtensionHandler<E, R>>>(subscribe, () => undefined);
+
+  const channels = {
+    project_trust: channel<Parameters<SDK.ProjectTrustHandler>, ReturnType<SDK.ProjectTrustHandler>>(handler => pi.on("project_trust", handler), () => ({ trusted: "undecided" })),
+    resources_discover: extensionChannel<SDK.ResourcesDiscoverEvent, SDK.ResourcesDiscoverResult>(handler => pi.on("resources_discover", handler)),
+    session_start: extensionChannel<SDK.SessionStartEvent>(handler => pi.on("session_start", handler)),
+    session_info_changed: extensionChannel<SDK.SessionInfoChangedEvent>(handler => pi.on("session_info_changed", handler)),
+    session_before_switch: extensionChannel<SDK.SessionBeforeSwitchEvent, SDK.SessionBeforeSwitchResult>(handler => pi.on("session_before_switch", handler)),
+    session_before_fork: extensionChannel<SDK.SessionBeforeForkEvent, SDK.SessionBeforeForkResult>(handler => pi.on("session_before_fork", handler)),
+    session_before_compact: extensionChannel<SDK.SessionBeforeCompactEvent, SDK.SessionBeforeCompactResult>(handler => pi.on("session_before_compact", handler)),
+    session_compact: extensionChannel<SDK.SessionCompactEvent>(handler => pi.on("session_compact", handler)),
+    session_compact_failed: extensionChannel<SDK.SessionCompactFailedEvent>(handler => pi.on("session_compact_failed", handler)),
+    session_shutdown: extensionChannel<SDK.SessionShutdownEvent>(handler => pi.on("session_shutdown", handler)),
+    mcp_servers_change: extensionChannel<SDK.McpServersChangeEvent>(handler => pi.on("mcp_servers_change", handler)),
+    session_before_tree: extensionChannel<SDK.SessionBeforeTreeEvent, SDK.SessionBeforeTreeResult>(handler => pi.on("session_before_tree", handler)),
+    session_tree: extensionChannel<SDK.SessionTreeEvent>(handler => pi.on("session_tree", handler)),
+    context: extensionChannel<SDK.ContextEvent, SDK.ContextEventResult>(handler => pi.on("context", handler)),
+    context_with_system: extensionChannel<SDK.ContextWithSystemEvent, SDK.ContextEventResult>(handler => pi.on("context_with_system", handler)),
+    cache_warming_decision: extensionChannel<SDK.CacheWarmingDecisionEvent, SDK.CacheWarmingDecisionEventResult>(handler => pi.on("cache_warming_decision", handler)),
+    before_provider_request: extensionChannel<SDK.BeforeProviderRequestEvent, SDK.BeforeProviderRequestEventResult>(handler => pi.on("before_provider_request", handler)),
+    before_provider_headers: extensionChannel<SDK.BeforeProviderHeadersEvent>(handler => pi.on("before_provider_headers", handler)),
+    after_provider_response: extensionChannel<SDK.AfterProviderResponseEvent>(handler => pi.on("after_provider_response", handler)),
+    provider_stream_event: extensionChannel<SDK.ProviderStreamEvent>(handler => pi.on("provider_stream_event", handler)),
+    before_agent_start: extensionChannel<SDK.BeforeAgentStartEvent, SDK.BeforeAgentStartEventResult>(handler => pi.on("before_agent_start", handler)),
+    agent_start: extensionChannel<SDK.AgentStartEvent>(handler => pi.on("agent_start", handler)),
+    agent_end: extensionChannel<SDK.AgentEndEvent>(handler => pi.on("agent_end", handler)),
+    agent_before_settle: extensionChannel<SDK.AgentBeforeSettleEvent, SDK.AgentBeforeSettleEventResult>(handler => pi.on("agent_before_settle", handler)),
+    agent_settled: extensionChannel<SDK.AgentSettledEvent>(handler => pi.on("agent_settled", handler)),
+    ui_prompt_start: extensionChannel<SDK.UIPromptStartEvent>(handler => pi.on("ui_prompt_start", handler)),
+    ui_prompt_end: extensionChannel<SDK.UIPromptEndEvent>(handler => pi.on("ui_prompt_end", handler)),
+    turn_start: extensionChannel<SDK.TurnStartEvent>(handler => pi.on("turn_start", handler)),
+    turn_end: extensionChannel<SDK.TurnEndEvent, SDK.TurnEndEventResult>(handler => pi.on("turn_end", handler)),
+    message_start: extensionChannel<SDK.MessageStartEvent>(handler => pi.on("message_start", handler)),
+    message_update: extensionChannel<SDK.MessageUpdateEvent>(handler => pi.on("message_update", handler)),
+    message_end: extensionChannel<SDK.MessageEndEvent, SDK.MessageEndEventResult>(handler => pi.on("message_end", handler)),
+    tool_execution_start: extensionChannel<SDK.ToolExecutionStartEvent>(handler => pi.on("tool_execution_start", handler)),
+    tool_execution_update: extensionChannel<SDK.ToolExecutionUpdateEvent>(handler => pi.on("tool_execution_update", handler)),
+    tool_execution_end: extensionChannel<SDK.ToolExecutionEndEvent>(handler => pi.on("tool_execution_end", handler)),
+    model_select: extensionChannel<SDK.ModelSelectEvent>(handler => pi.on("model_select", handler)),
+    thinking_level_select: extensionChannel<SDK.ThinkingLevelSelectEvent>(handler => pi.on("thinking_level_select", handler)),
+    tool_call: extensionChannel<SDK.ToolCallEvent, SDK.ToolCallEventResult>(handler => pi.on("tool_call", handler)),
+    tool_result: extensionChannel<SDK.ToolResultEvent, SDK.ToolResultEventResult>(handler => pi.on("tool_result", handler)),
+    user_bash: extensionChannel<SDK.UserBashEvent, SDK.UserBashEventResult>(handler => pi.on("user_bash", handler)),
+    input: extensionChannel<SDK.InputEvent, SDK.InputEventResult>(handler => pi.on("input", handler)),
+  };
+
+  type EventHandlers = { [K in keyof typeof channels]: Parameters<typeof channels[K]["add"]>[1] };
+
+  type EventRegistrations = { [K in keyof EventHandlers]: { add: (group: Group, handler: EventHandlers[K]) => () => void } };
+
+  const eventRegistrations: EventRegistrations = channels;
   const prepared = new Map<string, Group>();
   const dispatchedCommands = new Set<string>();
   const managedTools = new Set<string>();
@@ -79,7 +163,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
     const cached = prepared.get(key);
 
     if (cached) return cached;
-    const group: Group = { key, handlers: new Map(), registrations: new Map(), listeners: [], stops: [], ready: false };
+    const group: Group = { key, registrations: new Map(), listeners: [], stops: [], ready: false };
     const loaded = new Set<string>();
     const visiting: string[] = [];
 
@@ -102,16 +186,142 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
 
     const isRegistration = (property: PropertyKey): property is keyof typeof registrationApi => Object.hasOwn(registrationApi, property);
 
-    const api = new Proxy(pi, {
-      get(target, property) {
-        if (property === "on") return (event: string, handler: Handler) => {
-          const list = group.handlers.get(event) ?? []; list.push(handler); group.handlers.set(event, list);
+    const ensureActive = (method: string) => {
+      if (!group.ready || current !== group) throw new Error(`piop extension API ${method} is unavailable before activation or after deactivation`);
+    };
 
-          if (group.ready && current === group) publishHandlers(group);
-        };
+    const forwardingApi: Pick<ExtensionAPI, "getFlag" | "registerMarkdownTransformer" | "sendMessage" | "sendUserMessage" | "appendEntry" | "setSessionName" | "getSessionName" | "setLabel" | "exec" | "getActiveTools" | "getAllTools" | "getSettings" | "setActiveTools" | "getCommands" | "setModel" | "getThinkingLevel" | "setThinkingLevel" | "registerProvider" | "unregisterProvider" | "registerMcpServer" | "unregisterMcpServer" | "getMcpServers" | "registerVirtualModel" | "unregisterVirtualModel"> = {
+      getFlag: (...args) => {
+        ensureActive("getFlag");
+
+        return pi.getFlag(...args);
+      },
+      registerMarkdownTransformer: (...args) => {
+        ensureActive("registerMarkdownTransformer");
+
+        return pi.registerMarkdownTransformer(...args);
+      },
+      sendMessage: (...args) => {
+        ensureActive("sendMessage");
+
+        return pi.sendMessage(...args);
+      },
+      sendUserMessage: (...args) => {
+        ensureActive("sendUserMessage");
+
+        return pi.sendUserMessage(...args);
+      },
+      appendEntry: (...args) => {
+        ensureActive("appendEntry");
+
+        return pi.appendEntry(...args);
+      },
+      setSessionName: (...args) => {
+        ensureActive("setSessionName");
+
+        return pi.setSessionName(...args);
+      },
+      getSessionName: (...args) => {
+        ensureActive("getSessionName");
+
+        return pi.getSessionName(...args);
+      },
+      setLabel: (...args) => {
+        ensureActive("setLabel");
+
+        return pi.setLabel(...args);
+      },
+      exec: (...args) => {
+        ensureActive("exec");
+
+        return pi.exec(...args);
+      },
+      getActiveTools: (...args) => {
+        ensureActive("getActiveTools");
+
+        return pi.getActiveTools(...args);
+      },
+      getAllTools: (...args) => {
+        ensureActive("getAllTools");
+
+        return pi.getAllTools(...args);
+      },
+      getSettings: (...args) => {
+        ensureActive("getSettings");
+
+        return pi.getSettings(...args);
+      },
+      setActiveTools: (...args) => {
+        ensureActive("setActiveTools");
+
+        return pi.setActiveTools(...args);
+      },
+      getCommands: (...args) => {
+        ensureActive("getCommands");
+
+        return pi.getCommands(...args);
+      },
+      setModel: (...args) => {
+        ensureActive("setModel");
+
+        return pi.setModel(...args);
+      },
+      getThinkingLevel: (...args) => {
+        ensureActive("getThinkingLevel");
+
+        return pi.getThinkingLevel(...args);
+      },
+      setThinkingLevel: (...args) => {
+        ensureActive("setThinkingLevel");
+
+        return pi.setThinkingLevel(...args);
+      },
+      registerProvider: (...args: [Provider] | Parameters<ExtensionAPI["registerProvider"]>) => {
+        ensureActive("registerProvider");
+
+        if (args.length === 1) pi.registerProvider(args[0]);
+        else pi.registerProvider(...args);
+      },
+      unregisterProvider: (...args) => {
+        ensureActive("unregisterProvider");
+
+        return pi.unregisterProvider(...args);
+      },
+      registerMcpServer: (...args) => {
+        ensureActive("registerMcpServer");
+
+        return pi.registerMcpServer(...args);
+      },
+      unregisterMcpServer: (...args) => {
+        ensureActive("unregisterMcpServer");
+
+        return pi.unregisterMcpServer(...args);
+      },
+      getMcpServers: (...args) => {
+        ensureActive("getMcpServers");
+
+        return pi.getMcpServers(...args);
+      },
+      registerVirtualModel: (...args) => {
+        ensureActive("registerVirtualModel");
+
+        return pi.registerVirtualModel(...args);
+      },
+      unregisterVirtualModel: (...args) => {
+        ensureActive("unregisterVirtualModel");
+
+        return pi.unregisterVirtualModel(...args);
+      },
+    };
+
+    const isForwarded = (property: PropertyKey): property is keyof typeof forwardingApi => Object.hasOwn(forwardingApi, property);
+
+    const api = new Proxy(pi, {
+      get(_target, property) {
+        if (property === "on") return <K extends keyof EventHandlers>(event: K, handler: EventHandlers[K]) => eventRegistrations[event].add(group, handler);
 
         if (property === "events") return {
-          on(name: string, handler: Handler) {
+          on(name: string, handler: BusHandler) {
             const listener: Group["listeners"][number] = { name, handler, removed: false }; group.listeners.push(listener);
             let unsubscribe: (() => void) | undefined;
 
@@ -134,15 +344,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
           return item?.method === "registerFlag" ? item.flag.default : undefined;
         };
 
-        const value = Reflect.get(target, property);
-
-        if (typeof value !== "function") return value;
-
-        return (...args: unknown[]) => {
-          if (!group.ready || current !== group) throw new Error(`piop extension API ${String(property)} is unavailable before activation or after deactivation`);
-
-          return value.apply(target, args);
-        };
+        return isForwarded(property) ? forwardingApi[property] : undefined;
       }
     });
 
@@ -189,15 +391,8 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
   }
 
   function publishHandlers(group: Group) {
-    for (const [event, handlers] of group.handlers) {
-      if (event === "session_start") continue;
-
-      for (let index = dispatchedEvents.get(event) ?? 0; index < handlers.length; index++) {
-        const subscribe = pi.on as unknown as (event: string, handler: Handler) => void;
-        subscribe.call(pi, event, (...args: unknown[]) => current?.handlers.get(event)?.[index]?.(...args));
-      }
-
-      dispatchedEvents.set(event, Math.max(dispatchedEvents.get(event) ?? 0, handlers.length));
+    for (const [event, registered] of Object.entries(channels)) {
+      if (event !== "session_start") registered.publish(group);
     }
   }
 
@@ -242,7 +437,7 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
   }
 
   async function start(group: Group, ctx: ExtensionContext) {
-    for (const handler of group.handlers.get("session_start") ?? []) await handler({ type: "session_start" }, ctx);
+    for (const handler of channels.session_start.handlers(group)) await handler?.({ type: "session_start", reason: "reload" }, ctx);
   }
 
   function hideInactiveTools(group: Group | undefined, activeGroup: Group | undefined) {
@@ -260,8 +455,8 @@ export function agentExtensions(pi: ExtensionAPI, baseDirectory: string) {
     current = group;
 
     try {
-      for (const handler of group?.handlers.get("session_shutdown") ?? []) {
-        try { await handler({ type: "session_shutdown" }, ctx); }
+      for (const handler of channels.session_shutdown.handlers(group)) {
+        try { await handler?.({ type: "session_shutdown", reason: "reload" }, ctx); }
         catch (error) { ctx.ui.notify(`piop extension cleanup failed: ${String(error)}`, "error"); }
       }
     } finally { current = active; }
