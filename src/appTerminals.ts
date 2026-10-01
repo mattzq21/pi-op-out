@@ -116,6 +116,9 @@ export function createTerminalController({ transport, sessionTransport, conversa
         const session = current[key];
         const tab = session?.tabs.find(value => value.id === event.terminalId);
         if (!tab || tab.generation !== event.generation) { resync = true; return current; }
+        if (event.type === "terminal_draft") {
+          return { ...current, [key]: { ...session, tabs: session.tabs.map(value => value.id === tab.id ? { ...value, inputDraft: event.data ?? "" } : value) } };
+        }
         if (event.type === "terminal_exit") {
           return { ...current, [key]: { ...session, tabs: session.tabs.map(value => value.id === tab.id ? { ...value, exited: true } : value) } };
         }
@@ -278,12 +281,17 @@ export function createTerminalController({ transport, sessionTransport, conversa
     void transport().writeTerminal(id, data).catch(reason => { addNotice({ title: "Terminal input failed", message: String(reason) }); void refreshShared(); });
   };
 
+  const updateDraft = (data: string) => {
+    if (!ready() || !owned()) return;
+    void nativeTerminals.write(state.activeTerminal.id, data, "draft").catch(reason => addNotice({ title: "Could not sync terminal input", message: String(reason) }));
+  };
+
   return {
     terminalOpen, setTerminalOpen, setTerminalTarget, terminalSessionId, terminalLocationState, state, ready, owned, takeOwnership,
     viewKey: createMemo(() => `${terminalSessionId()}:${state.activeTerminal.id}:${state.activeTerminal.generation ?? ""}`),
     startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal,
     queueTerminalOutput, flushOutput, exited, conversationTerminalIds, allTerminalIds, draftTerminalIds,
     forgetConversation, removeConversationTerminals, resetConversation, rekeyConversation,
-    toggleFor, toggle, close, write,
+    toggleFor, toggle, close, write, updateDraft,
   };
 }

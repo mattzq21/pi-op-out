@@ -3,6 +3,7 @@ import { isMobile } from "../lib/platform";
 
 export interface TerminalViewProps {
   ownershipRequired?: boolean; onTakeOwnership?: () => Promise<void>;
+  inputDraft?: string; onDraft: (value: string) => void;
   cwd?: string; terminals: { id: string; label: string }[]; activeId: string; output: string; outputEnd: number; snapshot?: string; snapshotEnd?: number; started: boolean; exited?: boolean;
   onAdd: () => void; onSelect: (id: string) => void; onStart: (id: string, cols: number, rows: number) => void;
   onData: (data: string) => void; onSnapshot: (value: string, outputEnd: number) => void; onDelete: () => void; onClose: () => void;

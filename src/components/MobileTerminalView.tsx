@@ -54,6 +54,7 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
   const send = () => {
     if (disabled()) return;
     const value = command();
+    componentProps.onDraft("");
     componentProps.onData(value + "\r");
 
     if (value && history.at(-1) !== value) {
@@ -70,6 +71,7 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
 
   const interrupt = () => {
     if (disabled()) return;
+    componentProps.onDraft("");
     componentProps.onData("\u0003"); setCommand(""); historyIndex = history.length; draft = "";
     input.current?.focus();
   };
@@ -87,6 +89,11 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
     input.current?.focus();
   };
 
+  const editCommand = (value: string) => {
+    setCommand(value);
+    componentProps.onDraft(value);
+  };
+
   return <section class="terminal-shell" aria-label="Session terminal"><header><div class="terminal-tabs">{<Key each={componentProps.terminals} by={(item) => item.id}>{(item, _index) => <button ref={(element) => { if (element) tabRefs.current.set(item().id, element); else tabRefs.current.delete(item().id); }}  class={`terminal-tab ${item().id === componentProps.activeId ? "active" : ""}`} aria-pressed={item().id === componentProps.activeId} onClick={() => componentProps.onSelect(item().id)}><TerminalSquare size={14} /><strong>{item().label}</strong></button>}</Key>}<IconButton label={canAdd() ? "Add terminal" : "Terminal limit reached"} disabled={componentProps.ownershipRequired || !canAdd()} onClick={componentProps.onAdd}><Plus size={16} /></IconButton></div><div>{componentProps.exited && <><span class="terminal-exited">exited</span><IconButton label="Restart terminal" disabled={componentProps.ownershipRequired} onClick={() => componentProps.onStart(componentProps.activeId, 80, 24)}><RotateCcw size={14} /></IconButton></>}<IconButton label="Delete terminal" disabled={componentProps.ownershipRequired} onClick={componentProps.onDelete}><Trash2 size={15} /></IconButton><IconButton label="Close terminal panel" onClick={componentProps.onClose}><X size={16} /></IconButton></div></header>
     {componentProps.cwd ? <div class="terminal-transcript-body">
       <div class="terminal-transcript" aria-label="Terminal output" tabIndex={0} ref={element => { host.current = element; }} onClick={event => {
@@ -101,7 +108,7 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
         if (element) followOutput = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
       }}><span><For each={transcript().segments}>{segment => <span style={segment.style}>{segment.text}</span>}</For></span>{!componentProps.ownershipRequired &&
         <form class="terminal-command" onSubmit={event => { event.preventDefault(); send(); }}>
-          <input ref={element => { input.current = element; }} aria-label="Terminal command" size={Math.max(1, command().length + 1)} value={command()} disabled={disabled()} autocomplete="off" autocapitalize="off" spellcheck={false} onInput={event => setCommand(event.currentTarget.value)} onKeyDown={event => {
+          <input ref={element => { input.current = element; }} aria-label="Terminal command" size={Math.max(1, command().length + 1)} value={command()} disabled={disabled()} autocomplete="off" autocapitalize="off" spellcheck={false} onInput={event => editCommand(event.currentTarget.value)} onKeyDown={event => {
             if (event.isComposing) return;
 
             if (event.ctrlKey && event.key.toLowerCase() === "c" && event.currentTarget.selectionStart === event.currentTarget.selectionEnd) { event.preventDefault(); interrupt(); }
@@ -111,7 +118,7 @@ export function MobileTerminalView(componentProps: TerminalViewProps) {
 
               if (historyIndex === history.length) draft = command();
               historyIndex = Math.max(0, Math.min(history.length, historyIndex + (event.key === "ArrowUp" ? -1 : 1)));
-              setCommand(historyIndex === history.length ? draft : history[historyIndex]);
+              editCommand(historyIndex === history.length ? draft : history[historyIndex]);
             }
           }} />
         </form>}

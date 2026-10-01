@@ -6,7 +6,7 @@ import { listen } from "./platform";
 const terminalEventSchema = z.object({ type: z.string().optional(), hostId: z.string().optional(), sessionId: z.string().optional(), terminalId: z.string().optional(), generation: z.string().optional(), outputEnd: z.number().optional(), data: z.string().optional() }).catch({});
 export type TerminalEvent = z.infer<typeof terminalEventSchema>;
 
-const sharedTerminalsSchema = z.array(z.object({ id: z.string(), output: z.string().nullable(), outputEnd: z.number(), generation: z.string(), owned: z.boolean(), started: z.boolean(), exited: z.boolean() }));
+const sharedTerminalsSchema = z.array(z.object({ id: z.string(), output: z.string().nullable(), outputEnd: z.number(), inputDraft: z.string().optional(), generation: z.string(), owned: z.boolean(), started: z.boolean(), exited: z.boolean() }));
 type SharedTerminal = z.infer<typeof sharedTerminalsSchema>[number] & { output: string };
 
 class NativeTerminals {
@@ -60,11 +60,11 @@ class NativeTerminals {
     return pending;
   }
 
-  write(terminalId: string, data: string) {
+  write(terminalId: string, data: string, action = "write") {
     const starting = this.starts.get(terminalId);
 
     const next = (this.writes.get(terminalId) ?? Promise.resolve()).catch(() => undefined)
-      .then(() => starting).then(() => this.command("write", terminalId, { data }));
+      .then(() => starting).then(() => this.command(action, terminalId, { data }));
 
     this.writes.set(terminalId, next);
     const clear = () => { if (this.writes.get(terminalId) === next) this.writes.delete(terminalId); };

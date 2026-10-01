@@ -13,6 +13,7 @@ pub(crate) struct Transcript {
     generation: Uuid,
     creation_order: u64,
     output: String,
+    input_draft: String,
     end: u64,
     text_end: u64,
     updated: SystemTime,
@@ -47,7 +48,7 @@ pub(crate) fn start(runtime: &TerminalRuntime, id: &str, session_key: &str, cwd:
         None => history.values().map(|item| item.creation_order).max().unwrap_or(0).checked_add(1).ok_or("Terminal creation order exhausted")?,
     };
     history.insert(id.into(), Transcript { session_id: session_id.into(), host_id: host_id.into(), owner: owner.into(), cwd: cwd.into(), generation, creation_order,
-        output: String::new(), end: 0, text_end: 0, updated: SystemTime::now(), running: true });
+        output: String::new(), input_draft: String::new(), end: 0, text_end: 0, updated: SystemTime::now(), running: true });
     Ok(())
 }
 
@@ -145,7 +146,7 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
         return Ok(json!(entries.into_iter().map(|(id, item)| {
             let known = &request["known"][id];
             let unchanged = known["generation"].as_str() == Some(item.generation.to_string().as_str()) && known["outputEnd"].as_u64() == Some(item.text_end);
-            json!({"id":id,"output":if unchanged { Value::Null } else { json!(item.output) },"outputEnd":item.text_end,
+            json!({"id":id,"output":if unchanged { Value::Null } else { json!(item.output) },"outputEnd":item.text_end,"inputDraft":item.input_draft,
                 "generation":item.generation.to_string(),"owned":owned && (!session_id.starts_with("draft-") || item.owner == owner),"started":true,"exited":!item.running})
         }).collect::<Vec<_>>()));
     }
@@ -180,6 +181,13 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
         return Err("Take ownership of the destination session first".into());
     }
     match action {
+        "draft" => {
+            let data = request["data"].as_str().ok_or("Missing terminal draft")?;
+            if data.len() > 1024 * 1024 { return Err("Terminal draft exceeds 1 MiB".into()); }
+            item.input_draft = data.into();
+            let _ = app.emit("pi://event", json!({"type":"terminal_draft","terminalId":id,
+                "sessionId":item.session_id,"hostId":item.host_id,"generation":item.generation.to_string(),"data":data}));
+        }
         "write" => {
             let data = request["data"].as_str().ok_or("Missing terminal input")?;
             if data.len() > 1024 * 1024 { return Err("Terminal input exceeds 1 MiB".into()); }
