@@ -222,15 +222,15 @@ function checkpointRepository(cwd) {
     let metadata;
     try { metadata = await fs.stat(cwd); }
     catch (error) {
-      if (error.code === "ENOENT") return { error: `Checkpoint repository no longer exists: ${cwd}` };
+      if (error.code === "ENOENT" || error.code === "ENOTDIR") return { gone: true, error: `Checkpoint repository no longer exists: ${cwd}` };
       return { error: `Checkpoint repository could not be inspected: ${cwd}: ${error.message}` };
     }
-    if (!metadata.isDirectory()) return { error: `Checkpoint repository is no longer a directory: ${cwd}` };
+    if (!metadata.isDirectory()) return { gone: true, error: `Checkpoint repository is no longer a directory: ${cwd}` };
     try {
       const common = await fs.realpath((await git(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"])).trim());
       return { common };
     } catch (error) {
-      if (error.message.startsWith("fatal: not a git repository")) return { error: `Checkpoint repository is no longer a Git repository: ${cwd}` };
+      if (error.message.startsWith("fatal: not a git repository")) return { gone: true, error: `Checkpoint repository is no longer a Git repository: ${cwd}` };
       return { error: `Checkpoint repository could not be inspected: ${cwd}: ${error.message}` };
     }
   })());
@@ -284,6 +284,7 @@ async function checkpointStorage(repositoryRoots, measuredDirectories) {
   for (const cwd of repositoryRoots) {
     try {
       const repository = await checkpointRepository(cwd);
+      if (repository.gone) continue;
       if (repository.error) { warnings.push(repository.error); continue; }
       const common = repository.common;
       if (repositories.has(common)) continue;
