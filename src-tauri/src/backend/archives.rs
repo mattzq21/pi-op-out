@@ -313,9 +313,8 @@ pub(super) fn restore_archived_session(app: AppHandle, session_path: String, hos
     let path = archived_session_file(&settings, &host_id, &session_path)?;
     let session_id = session_identity(&settings, &host_id, &path)?;
     let mut command = restore_worktree_command(&settings, &host_id, &path)?;
-    let output = run_limited(&mut command, 64 * 1024, "Could not restore archived conversation")?;
-    if !output.status.success() { return Err(String::from_utf8_lossy(&output.stderr).trim().to_string()); }
-    mutation.finish()?;
+    let result = run_worktree_restoration(&mut command)?;
+    mutation.finish_restore(result["sessionPath"].as_str().ok_or("Restored session path missing")?)?;
     let _ = app.emit("pi://session-restored", json!({"hostId":host_id,"sessionId":session_id}));
     let _ = app.emit("pi://sessions-changed", json!({}));
     Ok(())
@@ -332,7 +331,7 @@ pub(super) fn restore_archived_worktree(app: AppHandle, session_path: String, ho
     let mut command = restore_worktree_command(&settings, &host_id, &path)?;
     let session_id = session_identity(&settings, &host_id, &path)?;
     let result = run_worktree_restoration(&mut command)?;
-    mutation.finish()?;
+    mutation.finish_restore(result["sessionPath"].as_str().ok_or("Restored session path missing")?)?;
     let _ = app.emit("pi://session-restored", json!({"hostId":host_id,"sessionId":session_id}));
     let _ = app.emit("pi://sessions-changed", ());
     Ok(result)

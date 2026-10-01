@@ -18,6 +18,12 @@ impl MutationGuard {
         self.finished = true;
         Ok(())
     }
+
+    pub(super) fn finish_restore(mut self, path: &str) -> Result<(), String> {
+        self.daemon.request(json!({"type":"conversation_mutation_end","token":self.token,"success":true,"restoredPath":path}))?;
+        self.finished = true;
+        Ok(())
+    }
 }
 
 impl Drop for MutationGuard {

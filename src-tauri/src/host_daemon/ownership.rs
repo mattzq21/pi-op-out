@@ -64,6 +64,16 @@ impl Guard {
         }
     }
 
+    pub fn restored(mut self, ownership: &ConversationOwnership, path: &str) -> Result<()> {
+        let saved = ownership.locate(&self.id, Some(path), false, true)?.ok_or("Restored conversation is not in active storage")?;
+        self.record["path"] = json!(saved.path);
+        self.record["deleted"] = json!(false);
+        self.record["client"] = Value::Null;
+        ownership.write(&self.id, &self.record)?;
+        self.archived = false;
+        self.release(ownership, false)
+    }
+
     pub fn release(mut self, ownership: &ConversationOwnership, deleted: bool) -> Result<()> {
         if (deleted || self.archived) && self.owned && self.lock.is_some() {
             self.record["deleted"] = json!(true);
@@ -281,7 +291,7 @@ impl ConversationOwnership {
             .filter(|path| !path.is_empty())
             .or_else(|| previous["path"].as_str());
         let saved = self.locate(id, path, flag(options, "archived"), false)?;
-        if flag(previous, "deleted") && !flag(options, "archived") || saved.is_none() && !flag(options, "create") {
+        if saved.is_none() && !flag(options, "create") {
             return Err("This conversation has been deleted or archived".into());
         }
         Ok(saved)
