@@ -95,7 +95,7 @@ export function ZoomableImage(props: { src: string; alt: string }) {
   const [open, setOpen] = createSignal(false);
 
   return <>
-    <button type="button" class="image-preview" aria-label={`Enlarge image: ${props.alt}`} title="Click to enlarge" onClick={() => setOpen(true)}>
+    <button type="button" class="image-preview" aria-label={`Enlarge image: ${props.alt}`} onClick={() => setOpen(true)}>
       <img src={props.src} alt={props.alt} />
     </button>
     <Show when={open()}><ImageViewer src={props.src} alt={props.alt} onClose={() => setOpen(false)} /></Show>
