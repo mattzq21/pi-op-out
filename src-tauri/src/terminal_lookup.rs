@@ -111,8 +111,8 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
     }
     let owner = format!("{owner_prefix}{}", request["terminalClientId"].as_str().ok_or("Missing terminal client")?);
     let session_key = request["sessionKey"].as_str().unwrap_or_default();
+    let session_id = session_key.rsplit_once(':').map_or(session_key, |(_, id)| id);
     if action == "list" {
-        let session_id = session_key.rsplit_once(':').map_or(session_key, |(_, id)| id);
         let history = runtime.history.lock().map_err(|_| "Terminal history unavailable")?;
         let mut entries: Vec<_> = history.iter().filter(|(_, item)| item.session_id == session_id && item.host_id == "local").collect();
         entries.sort_by_key(|(_, item)| item.creation_order);
@@ -127,7 +127,7 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
     if action == "start" {
         runtime.ensure_owner(id, &owner)?;
         start_terminal_for_owner(app.clone(), owner, runtime, StartTerminalOptions {
-            terminal_id: id.into(), session_key: session_key.into(), cwd: request["cwd"].as_str().ok_or("Missing working directory")?.into(),
+            terminal_id: id.into(), session_key: format!("local:{session_id}"), cwd: request["cwd"].as_str().ok_or("Missing working directory")?.into(),
             cols: dimension(request, "cols")?, rows: dimension(request, "rows")?, host_id: Some("local".into()),
         })?;
         return Ok(Value::Null);
@@ -154,8 +154,8 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
             processes.get(id).ok_or("Terminal is not running")?.master.resize(PtySize { cols: dimension(request, "cols")?, rows: dimension(request, "rows")?, pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())?;
         }
         "reassign" => {
-            item.session_id = session_key.rsplit_once(':').map_or(session_key, |(_, id)| id).into();
-            if let Some(process) = processes.get_mut(id) { process.session_key = session_key.into(); }
+            item.session_id = session_id.into();
+            if let Some(process) = processes.get_mut(id) { process.session_key = format!("local:{session_id}"); }
         }
         "close" => {
             let process = processes.remove(id);
