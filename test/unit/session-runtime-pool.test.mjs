@@ -18,7 +18,7 @@ describe('session runtime pool', () => {
 
       if (result instanceof Error) throw result;
 
-      return typeof result === 'function' ? result(args) : result;
+      return result instanceof Function ? result(args) : result;
     }, { shouldMockEvents: true });
     pool = new SessionRuntimePool();
     pool.setErrorHandler(error => errors.push(error));

@@ -14,7 +14,7 @@ describe('chat session hook', () => {
 
     if (response instanceof Error) throw response;
 
-    return typeof response === 'function' ? response() : response; } };
+    return response instanceof Function ? response() : response; } };
     hook = await renderHook(value => useChatSession(value), transport);
   });
   afterEach(async () => { await hook.unmount(); dom.restore(); });

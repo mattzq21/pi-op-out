@@ -23,7 +23,7 @@ beforeEach(() => {
 
     if (result instanceof Error) throw result;
 
-    return typeof result === 'function' ? result(args) : result;
+    return result instanceof Function ? result(args) : result;
   }, { shouldMockEvents: true });
 });
 afterEach(async () => {
@@ -305,7 +305,7 @@ test('worktree setup exposes cancellation and always clears the callback on fail
   responses.set('run_worktree_setup', new Error('setup failed'));
   const callbacks = [];
   await assert.rejects(client.runWorktreeSetup('/repo', '/tree', 'remote', cancel => { callbacks.push(cancel); }), /setup failed/);
-  assert.equal(typeof callbacks[0], 'function');
+  assert.ok(callbacks[0] instanceof Function);
   assert.equal(callbacks[1], undefined);
   await callbacks[0]();
   assert.deepEqual(commands('cancel_worktree_setup')[0].args, { setupId: 'setup' });

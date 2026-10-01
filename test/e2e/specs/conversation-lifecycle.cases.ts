@@ -54,7 +54,12 @@ describe("Conversation lifecycle", () => {
     const openSplit = async () => {
       await app.conversationSearch.setValue(indexed.name);
       await expect($(".session-item")).toHaveText(expect.stringContaining(indexed.name));
-      await browser.execute(() => document.querySelector(".session-item")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 })));
+      await browser.execute(() => {
+      const item = document.querySelector(".session-item");
+
+      if (!item) throw new Error("Conversation item was not found");
+      item.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 }));
+    });
       await $('//div[@role="menu"]//button[normalize-space(.)="Split pane"]').click();
       const split = $(`section[aria-label="Split conversation: ${indexed.name}"]`);
       await expect(split).toBeDisplayed();

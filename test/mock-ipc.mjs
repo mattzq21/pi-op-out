@@ -8,7 +8,7 @@ export function mockIPC(handler, options) {
 
   return mockNativeIPC((command, args) => {
     if (command === 'daemon_invoke') {
-      assert.equal(typeof args.command, 'string');
+      assert.match(args.command, /^[a-z][a-z0-9_]*$/);
       command = args.command;
       args = args.args;
       assert.match(args.clientId, /^desktop:.+/);

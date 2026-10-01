@@ -197,7 +197,10 @@ for (const development of [false, true]) test(`first run creates private default
   const allTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'fork_session', 'create_worktree', 'remove_worktree', 'subagent'];
   const f = await agentFixture(t, { config: null, env, runtime: { tools: allTools, skills: [] }, tools: allTools, files: { 'home/.agents/AGENTS.md': 'Personal instructions' } });
   await f.load(); const config = await f.config();
-  assert.deepEqual(config.agents[0], { name: 'general', model: development ? 'openai-codex/gpt-6-luna' : '', effort: development ? 'medium' : 'high', ...(development ? { fastMode: false } : {}), extensions: [], path_systemprompt: 'sysprompt/default.md', path_agentprompt: `~/${development ? '.piop-dev' : '.piop'}/agents/default.md`, tools: allTools, skills: [], mcpServers: [] });
+  const expected = { name: 'general', model: development ? 'openai-codex/gpt-6-luna' : '', effort: development ? 'medium' : 'high', extensions: [], path_systemprompt: 'sysprompt/default.md', path_agentprompt: `~/${development ? '.piop-dev' : '.piop'}/agents/default.md`, tools: allTools, skills: [], mcpServers: [] };
+
+  if (development) expected.fastMode = false;
+  assert.deepEqual(config.agents[0], expected);
   assert.equal(config.webSearchDefaultApplied, true); assert.equal(config.sessionToolsDefaultApplied, true);
   const system = join(f.dir, 'sysprompt/default.md'), agent = join(f.home, development ? '.piop-dev' : '.piop', 'agents/default.md');
   assert.match(await readFile(system, 'utf8'), /^You are an expert coding assistant/); assert.equal(await readFile(agent, 'utf8'), 'Personal instructions');
@@ -282,7 +285,7 @@ test('normalization supplies defaults for absent arrays and filters malformed pr
 for (const state of [undefined, 'not JSON', { session: 'wrong', model: 'test/review/model', effort: 'low' }, { model: 7, effort: 'low' }, { model: 'test/review/model', effort: 7 }]) test(`runtime defaults reject stale or malformed cache ${JSON.stringify(state)}`, async t => {
   const f = await agentFixture(t);
 
-  if (state !== undefined) process.env.PI_DEFINE_AGENTS_RUNTIME_DEFAULTS = typeof state === 'string' ? state : JSON.stringify({ session: join(f.dir, 'session'), ...state });
+  if (state !== undefined) process.env.PI_DEFINE_AGENTS_RUNTIME_DEFAULTS = state === 'not JSON' ? state : JSON.stringify({ session: join(f.dir, 'session'), ...state });
   await f.load(); await f.start();
   assert.equal(f.state().snapshot.definition.model, 'test/default'); assert.equal(f.state().snapshot.definition.effort, 'high');
   assert.deepEqual(JSON.parse(process.env.PI_DEFINE_AGENTS_RUNTIME_DEFAULTS), { model: 'test/default', effort: 'high', session: join(f.dir, 'session') });

@@ -33,7 +33,7 @@ for (const mode of ['production', 'e2e', 'development']) test(`application short
     assert.deepEqual(commands, ['undo']);
 
     if (mode === 'development') {
-      assert.equal(typeof disposed, 'function'); disposed();
+      assert.ok(disposed instanceof Function); disposed();
       const afterDispose = new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true, cancelable: true });
       input.dispatchEvent(afterDispose);
       assert.equal(afterDispose.defaultPrevented, false);

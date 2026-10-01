@@ -21,7 +21,7 @@ describe('split conversation lifecycle', () => {
 
     if (result instanceof Error) throw result;
 
-    return typeof result === 'function' ? result(command) : result; } };
+    return result instanceof Function ? result(command) : result; } };
     transport.promptControls = new PromptControls();
     transport.setFastMode = async enabled => calls.push({ fastMode: enabled });
     transport.submitPrompt = async command => {

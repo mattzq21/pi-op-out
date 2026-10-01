@@ -13,7 +13,7 @@ describe('settings panels', () => {
 
     if (value instanceof Error) throw value;
 
-    return typeof value === 'function' ? value(args) : value; });
+    return value instanceof Function ? value(args) : value; });
   });
   afterEach(async () => { for (const view of views) await view.unmount(); clearMocks(); dom.restore(); });
 

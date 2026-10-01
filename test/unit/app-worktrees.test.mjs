@@ -99,7 +99,9 @@ test('failed worktree deletion propagates the failure without refreshing session
 for (const selected of ['u2', 'a2']) for (const entryId of [true, false]) test(`checkpoint worktree preserves state at ${selected}, entry ID ${entryId}`, async t => {
   const entries = ['u1', 'a1', 'u2', 'a2', 'u3'].map((id, i, ids) => ({ type: 'message', id, parentId: ids[i - 1] ?? null, message: { role: id.startsWith('u') ? 'user' : 'assistant', content: id, timestamp: i + 1 } }));
   const f = fixture(t, { entries });
-  const message = { ...entries.find(entry => entry.id === selected).message, ...(entryId ? { entryId: selected } : {}) };
+  const message = { ...entries.find(entry => entry.id === selected).message };
+
+  if (entryId) message.entryId = selected;
   assert.equal(await f.actions.createWorktree({ transport: f.owner, hostId: 'remote', cwd: '/parent', message }, 'experiment'), f.result);
   assert.deepEqual(f.calls.filter(call => call[0] === 'command'), [['command', { type: 'get_entries' }], ['command', { type: 'get_state' }], ['command', { type: 'branch_checkpoint', entryId: selected, name: 'experiment', afterResponse: selected === 'a2' }]]);
   const session = { id: 'child', path: '/sessions/child.jsonl', cwd: '/child', cwdExists: true, projectKind: 'worktree', projectRoot: '/parent', worktreeRoot: '/child', branch: 'experiment', project: 'parent', name: 'experiment', preview: '', messageCount: 0, lastMessageAt: 0, apiCost: 0, hostId: 'remote' };
