@@ -1,6 +1,7 @@
 import { Key } from "@solid-primitives/keyed";
 import { createMemo, createSignal, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
+import { DeleteArchivesDialog } from "./DeleteArchivesDialog";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
 import { Archive, Camera, Database, FolderClock, GitBranch, HardDrive, MessageSquare, RefreshCw, ShieldAlert, Trash2 } from "lucide-solid";
@@ -44,6 +45,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
   const [report, setReport] = createSignal<StorageReport>();
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string>();
+  const [archiveDeletion, setArchiveDeletion] = createSignal<{ host: HostStorage; archives: ArchivedConversation[] }>();
   const [deleting, setDeleting] = createSignal<Set<string>>((() => new Set())());
   const refreshGeneration = createRef(0);
   const pendingRefreshes = createRef(0);
@@ -101,11 +103,15 @@ export function StorageSettings(componentProps: { hostId?: string }) {
   };
   const deleteAll = (host: HostStorage) => {
     const archives = host.archives.filter((archive) => archive.deletable);
-    if (!archives.length || !window.confirm(`Permanently delete ${archives.length === host.archives.length ? `all ${archives.length}` : `the ${archives.length} safely readable`} archived conversations on ${host.hostName}? Their diff histories and project checkpoint refs will also be removed.`)) return;
-    void removeArchives(host, archives);
+    if (archives.length) setArchiveDeletion({ host, archives });
   };
 
   return <div class="settings-section storage-settings">
+    <Show when={archiveDeletion()}>{deletion => <DeleteArchivesDialog count={deletion().archives.length} hostName={deletion().host.hostName} onCancel={() => setArchiveDeletion(undefined)} onConfirm={() => {
+      const selected = deletion();
+      setArchiveDeletion(undefined);
+      void removeArchives(selected.host, selected.archives);
+    }} />}</Show>
     <div class="section-title"><div><h2>Storage</h2><p>See what piop stores on each machine and permanently remove archived conversations.</p></div><button class="storage-refresh" disabled={loading() || deleting().size > 0} onClick={() => void refresh()}><RefreshCw size={14} class={loading() ? "spinning" : ""} />{loading() ? "Scanning…" : "Refresh"}</button></div>
     {error() && <div class="storage-error" role="alert">{(error())!}</div>}
     {!report() && loading() && <div class="storage-loading" role="status"><HardDrive size={20} />Scanning storage…</div>}
