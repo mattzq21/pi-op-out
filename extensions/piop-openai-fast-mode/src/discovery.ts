@@ -94,7 +94,7 @@ function requestHeaders(model: Model, apiKey: string | undefined, extra: Record<
 
 export function createFastModeDiscovery() {
   const cache = new Map<string, CachedCatalog>();
-  let daemonCatalog: Promise<z.infer<typeof daemonCatalogSchema>> | undefined;
+  let daemonCatalog: Promise<z.infer<typeof daemonCatalogSchema> | undefined> | undefined;
   const daemonCatalogSchema = z.array(z.object({ provider: z.string(), model: z.string(), supported: z.boolean() }));
 
   async function startupCatalog(model: Model): Promise<Catalog | undefined> {
@@ -110,8 +110,10 @@ export function createFastModeDiscovery() {
       const body = z.object({ data: daemonCatalogSchema }).parse(await response.json());
 
       return body.data;
-    }).catch(() => []);
+    }).catch(() => undefined);
     const entries = await daemonCatalog;
+
+    if (!entries) return undefined;
 
     return new Map(entries.filter(entry => entry.provider === model.provider).map(entry => [entry.model, entry.supported]));
   }
@@ -136,7 +138,7 @@ export function createFastModeDiscovery() {
       for (const [key, entry] of cache) if (entry.expires <= Date.now()) cache.delete(key);
 
       const entry: CachedCatalog = {
-        expires: Date.now() + 300_000,
+        expires: process.env.PI_DESKTOP_BROKER_URL ? Infinity : Date.now() + 300_000,
         pending: fetch(url, { headers, signal: AbortSignal.timeout(5_000), redirect: "error" })
           .then(async response => {
             if (!response.ok) throw new Error("Model catalog unavailable");

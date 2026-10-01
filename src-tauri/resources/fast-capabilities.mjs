@@ -1,5 +1,5 @@
 function fastCatalogUrl(model, resolution) {
-  const url = new URL(resolution.baseUrl ?? model.baseUrl);
+  const url = new URL(resolution.auth.baseUrl ?? model.baseUrl);
   let path = url.pathname.replace(/\/+$/, '').replace(/\/responses$/, '');
 
   if (model.api === 'openai-codex-responses') {
@@ -62,7 +62,7 @@ function fastCatalogEntry(entry, provider) {
 
 async function fetchFastCatalog(runtime, model) {
   try {
-    const resolution = await runtime.getAuth(model.provider);
+    const resolution = await runtime.getAuth(model);
 
     if (!resolution) return [];
 
