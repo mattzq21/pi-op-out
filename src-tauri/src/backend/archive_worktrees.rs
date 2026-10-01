@@ -13,7 +13,7 @@ pub(super) fn archived_worktree_cwd(app: &AppHandle, host_id: &str, session_path
 }
 
 fn archive_worktree_command(settings: &AppSettings, host_id: &str, target: &WorktreeRemovalTarget, action: &str) -> Result<LimitedOutput, String> {
-    let script = include_str!("../../resources/archive-worktree.cjs");
+    let script = include_str!("../../resources/archive-worktree.bundle.mjs");
     let mut command = if host_id == "local" {
         let mut command = node_command();
         command.args(["-e", script, "--", action, &target.path, &target.source, STORAGE_DIRECTORY]); command

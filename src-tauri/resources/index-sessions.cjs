@@ -1,9 +1,17 @@
 const fs = require('node:fs');
 
+const { Type } = require('typebox');
+
+const { Check } = require('typebox/value');
+
+const parentSchema = Type.Object({ parentSessionId: Type.String() });
+
+const resumeSchema = Type.Object({ message: Type.String() });
+
 const PREVIEW_CODE_POINTS = 100;
 
 function text(message) {
-  return typeof message.content === 'string' ? message.content : Array.isArray(message.content) ? message.content.filter(p => p.type === 'text').map(p => p.text || '').join('\n') : '';
+  return Check(Type.String(), message.content) ? message.content : Array.isArray(message.content) ? message.content.filter(p => p.type === 'text').map(p => p.text || '').join('\n') : '';
 }
 
 function userPrompt(content) {
@@ -37,9 +45,9 @@ class SessionIndex {
     if (entry.type === 'custom') {
       const data = entry.data ?? {};
 
-      if (entry.customType === 'piop-subagent-parent' && typeof data.parentSessionId === 'string') this.subagentParentId = data.parentSessionId;
+      if (entry.customType === 'piop-subagent-parent' && Check(parentSchema, data)) this.subagentParentId = data.parentSessionId;
 
-      if (entry.customType === 'pi-desktop-resume' && typeof data.message === 'string') this.resumes.add(data.message);
+      if (entry.customType === 'pi-desktop-resume' && Check(resumeSchema, data)) this.resumes.add(data.message);
     }
 
     if (entry.type === 'session_info' && entry.name?.trim()) this.name = entry.name.trim().slice(0, 2000);

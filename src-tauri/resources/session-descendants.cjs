@@ -1,5 +1,11 @@
 const fs = require("node:fs/promises");
 
+const { Type } = require("typebox");
+
+const { Check } = require("typebox/value");
+
+const sessionIdSchema = Type.String();
+
 const { createReadStream } = require("node:fs");
 
 const { createInterface } = require("node:readline");
@@ -53,7 +59,7 @@ async function main() {
   if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || !source.endsWith(".jsonl")) throw new Error("Invalid conversation path");
   const parent = await metadata(source);
 
-  if (typeof parent.id !== "string") throw new Error("Conversation has no session ID");
+  if (!Check(sessionIdSchema, parent.id)) throw new Error("Conversation has no session ID");
   const sessions = await collect(root);
   process.stdout.write(JSON.stringify(descendants(sessions, parent.id, source)));
 }
@@ -67,7 +73,7 @@ function descendants(sessions, parentId, source) {
     added = false;
 
     for (const session of sessions) {
-      if (!files.has(session.file) && typeof session.id === "string" && ids.has(session.parent)) {
+      if (!files.has(session.file) && Check(sessionIdSchema, session.id) && ids.has(session.parent)) {
         files.add(session.file); ids.add(session.id); added = true;
       }
     }

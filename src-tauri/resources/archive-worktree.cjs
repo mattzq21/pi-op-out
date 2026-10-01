@@ -1,5 +1,11 @@
 const fs = require('node:fs');
 
+const { Type } = require('typebox');
+
+const { Check } = require('typebox/value');
+
+const parentSchema = Type.Object({ branch: Type.String(), parentBranch: Type.String({ pattern: '^refs/heads/' }) });
+
 const path = require('node:path');
 
 const os = require('node:os');
@@ -19,9 +25,7 @@ function parentMetadata() {
   if (path.dirname(container) !== root || !/^[a-f0-9]{4}$/.test(path.basename(container))) return null;
   const metadata = JSON.parse(fs.readFileSync(path.join(container, 'parent.json'), 'utf8'));
 
-  if (typeof metadata.branch !== 'string' || typeof metadata.parentBranch !== 'string') return null;
-
-  if (!metadata.parentBranch.startsWith('refs/heads/')) return null;
+  if (!Check(parentSchema, metadata)) return null;
   const branch = git(target, ['symbolic-ref', '--quiet', 'HEAD']).trim();
 
   if (branch !== `refs/heads/${metadata.branch}` || branch === metadata.parentBranch) return null;

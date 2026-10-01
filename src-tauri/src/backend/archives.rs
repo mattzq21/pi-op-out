@@ -191,7 +191,7 @@ fn archive_descendants(app: &AppHandle, client: &PiRuntime, host_id: &str, sessi
 }
 
 fn session_descendants(app: &AppHandle, host_id: &str, session_path: &str) -> Result<Vec<String>, String> {
-    let script = include_str!("../../resources/session-descendants.cjs");
+    let script = include_str!("../../resources/session-descendants.bundle.mjs");
     let settings = load_app_settings(app.clone())?;
     let root = if host_id == "local" { Some(desktop_sessions_dir(&home_dir()?)) } else { None };
     let arguments = json!({"path":session_path,"root":root}).to_string();
@@ -306,7 +306,7 @@ pub(super) fn delete_archived_session(app: AppHandle, runtime: State<PiRuntime>,
 }
 
 fn restore_worktree_command(settings: &AppSettings, host_id: &str, path: &str) -> Result<Command, String> {
-    let script = include_str!("../../resources/restore-archived-worktree.cjs");
+    let script = include_str!("../../resources/restore-archived-worktree.bundle.mjs");
     let command = if host_id == "local" {
         let mut command = node_command();
         command.env("PIOP_STORAGE_DIRECTORY", STORAGE_DIRECTORY).args(["-e", script, path]);
@@ -352,7 +352,7 @@ pub(super) fn relocate_session(app: AppHandle, session_path: String, cwd: String
 
 pub(super) fn relocate_remote_session(session_path: &str, cwd: &str, host_name: &str, command: impl FnOnce(String) -> Command) -> Result<(), String> {
     let session = shell_quote(session_path); let replacement = shell_quote(cwd.trim());
-    let relocate = shell_quote(include_str!("../../resources/relocate-session.cjs"));
+    let relocate = shell_quote(include_str!("../../resources/relocate-session.bundle.mjs"));
     let script = format!(r#"root=$(cd "$HOME/{STORAGE_DIRECTORY}/sessions" && pwd -P) || exit 1; path=$(realpath -- {session}) || exit 1; case "$path" in "$root"/*.jsonl) ;; *) printf 'Refusing to relocate a non-desktop session file' >&2; exit 1 ;; esac; replacement={replacement}; [ -d "$replacement" ] || {{ printf 'Project directory does not exist: %s' "$replacement" >&2; exit 1; }}; node -e {relocate} "$path" "$replacement""#);
     let output = run_limited(&mut command(script), 64 * 1024, &format!("Could not relocate conversation on {host_name}"))?;
     if output.status.success() { return Ok(()); }
@@ -364,7 +364,7 @@ pub(super) fn relocate_local_session(home: &Path, session_path: &str, cwd: &str)
     let replacement = PathBuf::from(cwd.trim());
     if !replacement.is_dir() { return Err(format!("Project directory does not exist: {}", replacement.display())); }
     let path = local_desktop_session_file_at(home, session_path)?;
-    let output = run_limited(node_command().arg("-e").arg(include_str!("../../resources/relocate-session.cjs")).arg(&path).arg(&replacement), 64 * 1024, "Could not relocate conversation")?;
+    let output = run_limited(node_command().arg("-e").arg(include_str!("../../resources/relocate-session.bundle.mjs")).arg(&path).arg(&replacement), 64 * 1024, "Could not relocate conversation")?;
     if output.status.success() { return Ok(()); }
     let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
     Err(if error.is_empty() { "Could not relocate conversation".into() } else { error })

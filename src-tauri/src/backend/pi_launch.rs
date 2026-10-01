@@ -65,7 +65,7 @@ pub(super) fn remote_directory_path(path: Option<&str>) -> String {
 }
 
 pub(super) fn remove_ephemeral_session(session: EphemeralSession) {
-    let script = include_str!("../../resources/cleanup-ephemeral-session.cjs");
+    let script = include_str!("../../resources/cleanup-ephemeral-session.bundle.mjs");
     let result = match session {
         EphemeralSession::Local(path) => node_command().args(["-e", script]).arg(path).output(),
         EphemeralSession::Remote { host, path } => ssh(&host).arg(remote_login_command(&format!("node -e {} {}", shell_quote(script), shell_quote(&path)))).output(),

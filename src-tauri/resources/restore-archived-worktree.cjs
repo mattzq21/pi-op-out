@@ -1,5 +1,13 @@
 const fs = require('node:fs');
 
+const { Type } = require('typebox');
+
+const { Check } = require('typebox/value');
+
+const checkpointSchema = Type.Object({ path: Type.String(), repositoryRoot: Type.String(), ref: Type.String({ pattern: '^refs/pi-session-snapshots/' }), commit: Type.String({ pattern: '^[a-f0-9]{40,64}$' }) });
+
+const locationSchema = Type.String();
+
 const path = require('node:path');
 
 const os = require('node:os');
@@ -18,17 +26,15 @@ const header = entries[0];
 
 const saved = header?.worktreeRestore;
 
-if (header?.type !== 'session' || !saved || !path.isAbsolute(saved.path ?? '') || !path.isAbsolute(saved.repositoryRoot ?? '')
-  || typeof saved.ref !== 'string' || !saved.ref.startsWith('refs/pi-session-snapshots/')
-  || !/^[a-f0-9]{40,64}$/.test(saved.commit ?? '')) throw new Error('No saved worktree checkpoint is available');
+if (header?.type !== 'session' || !Check(checkpointSchema, saved) || !path.isAbsolute(saved.path) || !path.isAbsolute(saved.repositoryRoot)) throw new Error('No saved worktree checkpoint is available');
 
-const owner = typeof header.id === 'string' ? header.id.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session' : undefined;
+const owner = Check(Type.String(), header.id) ? header.id.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session' : undefined;
 
 if (!owner || !saved.ref.startsWith(`refs/pi-session-snapshots/chats/${owner}/`)) throw new Error('The restoration checkpoint is not owned by this archive');
 
 const conversationPath = saved.conversationPath ?? header.cwd;
 
-if (typeof conversationPath !== 'string' || !path.isAbsolute(conversationPath)) throw new Error('Invalid archived conversation location');
+if (!Check(locationSchema, conversationPath) || !path.isAbsolute(conversationPath)) throw new Error('Invalid archived conversation location');
 
 const relative = path.relative(saved.path, conversationPath);
 

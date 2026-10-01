@@ -1,5 +1,11 @@
 const fs = require('node:fs');
 
+const { Type } = require('typebox');
+
+const { Check } = require('typebox/value');
+
+const snapshotSchema = Type.Object({ repositoryRoot: Type.String(), ref: Type.String({ pattern: '^refs/pi-session-snapshots/' }), commit: Type.String({ pattern: '^[a-fA-F0-9]{40,64}$' }) });
+
 const { randomUUID } = require('node:crypto');
 
 const { execFileSync } = require('node:child_process');
@@ -46,8 +52,7 @@ if (root) {
     const data = entry.data;
 
     if (entry.type !== 'custom' || entry.customType !== 'pi-project-files-watch-snapshot'
-      || typeof data?.repositoryRoot !== 'string' || typeof data.ref !== 'string' || !data.ref.startsWith('refs/pi-session-snapshots/')
-      || typeof data.commit !== 'string' || !/^[a-f0-9]{40,64}$/i.test(data.commit)) continue;
+      || !Check(snapshotSchema, data)) continue;
 
     if (!verified.has(data.ref)) {
       try { verified.set(data.ref, git(['rev-parse', '--verify', data.ref])); }

@@ -116,7 +116,7 @@ pub(super) fn read_session_summaries(candidates: &[(String, String, u64, u64)], 
 pub(super) fn read_session_summaries_with(candidates: &[(String, String, u64, u64)], host: Option<&RemoteHost>,
     mut command: impl FnMut(&str, &[(String, String, u64, u64)]) -> Command,
 ) -> Result<HashMap<String, CachedSession>, String> {
-    let script = include_str!("../../resources/index-sessions.cjs");
+    let script = include_str!("../../resources/index-sessions.bundle.mjs");
     let mut result = HashMap::new(); let mut cursor = 0;
     while cursor < candidates.len() {
         let mut end = cursor; let mut argument_bytes = 0;
