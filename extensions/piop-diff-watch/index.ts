@@ -1,5 +1,5 @@
 import { GitError, runGit } from "./git.ts";
-import { fileErrorSchema, sessionHeaderSchema, copiedSnapshotSchema, checkpointSchema, responseIdsSchema, responseCommitSchema, resumeSchema, branchRequestSchema, requestIdSchema, queuedContextSchema, type PromptCheckpoint } from "./schemas.ts";
+import { fileErrorSchema, sessionHeaderSchema, copiedSnapshotSchema, checkpointSchema, pendingCheckpointSchema, responseIdsSchema, responseCommitSchema, resumeSchema, branchRequestSchema, requestIdSchema, queuedContextSchema, type PromptCheckpoint } from "./schemas.ts";
 import { Check } from "typebox/value";
 import { lstat, mkdir, mkdtemp, open, realpath, rm, rmdir, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -261,11 +261,9 @@ async function promptRefs(root: string, sessionId: string) {
   });
 }
 
-async function capturePrompt(root: string, ctx: ExtensionContext): Promise<PromptCheckpoint> {
-  const sessionId = ctx.sessionManager.getSessionId();
+async function capturePrompt(root: string, sessionId: string, key: string, capturedAt: string): Promise<PromptCheckpoint> {
   const base = await resolveRef(root, "HEAD") ?? null;
   const captured = await worktreeTree(root);
-  const capturedAt = new Date().toISOString();
   let commit: string;
 
   try {
@@ -275,13 +273,36 @@ async function capturePrompt(root: string, ctx: ExtensionContext): Promise<Promp
     }, `Pi before prompt ${sessionId} ${capturedAt}\n`)).trim();
   } finally { await captured.cleanup(); }
 
-  const key = `${capturedAt.replace(/[-:.]/g, "")}-${randomUUID()}`;
   await runGit(root, ["update-ref", "--stdin"], {}, [
     "start", `create ${promptRef(sessionId, key)} ${commit}`,
     "prepare", "commit", "",
   ].join("\n"));
 
   return { key, owner: sessionId, commit, base, capturedAt, repositoryRoot: root };
+}
+
+async function resolvePromptHistory(history: CheckpointHistory, entries: CheckpointHistory, owner: string, sourceOwner?: string): Promise<CheckpointHistory> {
+  const completed = new Map(entries.flatMap((entry) => entry.type === "custom" && entry.customType === PROMPT_ENTRY
+    && Check(checkpointSchema, entry.data) ? [[entry.data.key, entry.data] as const] : []));
+
+  return Promise.all(history.map(async (entry) => {
+    if (entry.type !== "custom" || entry.customType !== PROMPT_ENTRY || !Check(pendingCheckpointSchema, entry.data)) return entry;
+    const pending = entry.data;
+    let checkpoint = completed.get(pending.key);
+
+    if (!checkpoint) {
+      const root = pending.repositoryRoot;
+      const commit = await resolveRef(root, promptRef(owner, pending.key)).catch(() => undefined)
+        ?? (sourceOwner ? await resolveRef(root, promptRef(sourceOwner, pending.key)).catch(() => undefined) : undefined);
+
+      if (commit) {
+        const [, parent] = (await runGit(root, ["rev-list", "--parents", "-n", "1", commit])).trim().split(/\s+/);
+        checkpoint = { key: pending.key, owner: sourceOwner ?? owner, repositoryRoot: root, capturedAt: pending.capturedAt, commit, base: parent ?? null };
+      }
+    }
+
+    return { ...entry, data: checkpoint ? { ...checkpoint, background: false } : { unavailable: true } };
+  }));
 }
 
 async function pinPromptHistory(root: string | undefined, sessionId: string, entries: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>, sourceOwner?: string) {
@@ -332,7 +353,7 @@ async function branchCheckpoint(ctx: ExtensionContext, entryId: string, name: st
   const root = await repositoryRoot(ctx.cwd);
 
   if (!root) throw new Error("Project is not a Git repository");
-  const history = ctx.sessionManager.getBranch(entryId);
+  const history = await resolvePromptHistory(ctx.sessionManager.getBranch(entryId), ctx.sessionManager.getEntries(), ctx.sessionManager.getSessionId());
   validateBranchMessage(history, entryId, afterResponse);
   let checkpoint = precedingCheckpoint(history, afterResponse);
   const owner = ctx.sessionManager.getSessionId();
@@ -407,7 +428,10 @@ function precedingCheckpoint(history: CheckpointHistory, afterResponse: boolean)
 
     if (entry.type === "message" && entry.message.role === "user") break;
 
-    if (entry.type === "custom" && entry.customType === PROMPT_ENTRY) { checkpoint = Check(checkpointSchema, entry.data) ? entry.data : undefined; break; }
+    if (entry.type === "custom" && entry.customType === PROMPT_ENTRY) {
+      if (Check(checkpointSchema, entry.data) && entry.data.background) continue;
+      checkpoint = Check(checkpointSchema, entry.data) ? entry.data : undefined; break;
+    }
   }
 
   return checkpoint;
@@ -534,7 +558,20 @@ export default function diffWatch(pi: ExtensionAPI) {
       await inheritSnapshot(ctx, ctx.sessionManager.getHeader()?.parentSession ?? event.previousSessionFile);
       const root = await repositoryRoot(ctx.cwd);
       const parentFile = ctx.sessionManager.getHeader()?.parentSession ?? event.previousSessionFile;
-      await pinPromptHistory(root, ctx.sessionManager.getSessionId(), ctx.sessionManager.getBranch(), parentFile ? await sessionIdFromFile(parentFile) : undefined);
+      const sourceOwner = parentFile ? await sessionIdFromFile(parentFile) : undefined;
+      const original = ctx.sessionManager.getBranch();
+      const entries = ctx.sessionManager.getEntries();
+      const history = await resolvePromptHistory(original, entries, ctx.sessionManager.getSessionId(), sourceOwner);
+      await pinPromptHistory(root, ctx.sessionManager.getSessionId(), history, sourceOwner);
+
+      for (const entry of history) {
+        if (entry.type !== "custom" || entry.customType !== PROMPT_ENTRY || !Check(checkpointSchema, entry.data)) continue;
+        const checkpoint = entry.data;
+
+        if (!entries.some((saved) => saved.type === "custom" && saved.customType === PROMPT_ENTRY && Check(checkpointSchema, saved.data) && saved.data.key === checkpoint.key)) {
+          pi.appendEntry(PROMPT_ENTRY, { ...checkpoint, background: true });
+        }
+      }
       lastError = "";
     }).catch((error) => reportError(ctx, error));
 
@@ -555,23 +592,28 @@ export default function diffWatch(pi: ExtensionAPI) {
     const resume = ctx.sessionManager.getBranch().some((entry) => entry.type === "custom" && entry.customType === "pi-desktop-resume" && Check(resumeSchema, entry.data) && entry.data.message === text);
 
     if (resume) return;
+    const sessionId = ctx.sessionManager.getSessionId();
+    const capturedAt = new Date().toISOString();
+    const key = `${capturedAt.replace(/[-:.]/g, "")}-${randomUUID()}`;
+    const cwd = ctx.cwd;
+    pi.appendEntry(PROMPT_ENTRY, { pending: true, unavailable: true, key, owner: sessionId, capturedAt, repositoryRoot: cwd });
     snapshotQueue = snapshotQueue.then(async () => {
       try {
-        const root = await repositoryRoot(ctx.cwd);
+        const root = await repositoryRoot(cwd);
 
-        if (!root) { pi.appendEntry(PROMPT_ENTRY, { unavailable: true });
+        if (!root) return;
 
-        return; }
-
-        pi.appendEntry(PROMPT_ENTRY, await capturePrompt(root, ctx));
+        pi.appendEntry(PROMPT_ENTRY, { ...await capturePrompt(root, sessionId, key, capturedAt), background: true });
       } catch (error) {
-        pi.appendEntry(PROMPT_ENTRY, { unavailable: true });
         reportError(ctx, error);
       }
     });
-
-    return snapshotQueue;
   });
+
+  pi.on("tool_call", async () => { await snapshotQueue; });
+  pi.on("session_before_switch", async () => { await snapshotQueue; });
+  pi.on("session_before_fork", async () => { await snapshotQueue; });
+  pi.on("session_before_tree", async () => { await snapshotQueue; });
 
 
   pi.registerCommand("pi-desktop-branch-checkpoint", {

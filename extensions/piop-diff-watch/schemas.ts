@@ -11,6 +11,13 @@ export const copiedSnapshotSchema = Type.Object({ repositoryRoot: Type.String(),
 export const checkpointSchema = Type.Object({
   repositoryRoot: Type.Optional(Type.String()), key: Type.String({ pattern: "^[a-zA-Z0-9-]+$" }),
   owner: Type.String(), commit: commitSchema, base: Type.Union([Type.Null(), commitSchema]), capturedAt: Type.Optional(Type.String()),
+  background: Type.Optional(Type.Boolean()),
+});
+
+export const pendingCheckpointSchema = Type.Object({
+  pending: Type.Literal(true), unavailable: Type.Literal(true),
+  key: Type.String({ pattern: "^[a-zA-Z0-9-]+$" }), owner: Type.String(),
+  repositoryRoot: Type.String(), capturedAt: Type.String(),
 });
 
 export const responseIdsSchema = Type.Object({ responseEntryIds: Type.Array(Type.String()) });
