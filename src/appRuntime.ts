@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { modelSchema } from "./lib/responseSchemas";
 import { required } from "./lib/required";
 import { encodeAgentValue } from "./lib/agentProtocol";
 import { createMemo, type Accessor } from "solid-js";
@@ -114,8 +116,8 @@ export async function configureConversationRuntime(value: AppSettings, transport
   if (!current()) return;
 
   const [modelResult] = await Promise.allSettled([
-    transport.command<{ models: Model[] }>({ type: "get_available_models" }),
-    transport.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }),
+    transport.command({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) })),
+    transport.command({ type: "get_available_thinking_levels" }, z.object({ levels: z.array(z.string()) })),
   ]);
 
   if (!current()) return;

@@ -3,6 +3,25 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { Check } from "typebox/value";
+
+declare module "@earendil-works/pi-coding-agent" {
+  interface EventBus {
+    on(channel: "piop:models-refreshed", handler: (event: { ctx: ExtensionContext }) => void): () => void;
+    emit(channel: "piop:models-refreshed", event: { ctx: ExtensionContext }): void;
+  }
+}
+
+const disabledSchema = Type.Object({ enabled: Type.Literal(false) });
+
+const configSchema = Type.Object({ contextWindowCap: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }) });
+
+const savedCapSchema = Type.Object({ cap: Type.Union([Type.Null(), Type.Integer({ minimum: 1000, maximum: Number.MAX_SAFE_INTEGER })]) });
+
+type SavedCapEntry = Extract<ReturnType<ExtensionContext["sessionManager"]["getEntries"]>[number], { type: "custom" }>;
+
+type CapSettingsRequest = { settings?: { contextWindowCap: number; contextWindowCapEnabled: boolean } };
 
 const configPath = join(dirname(fileURLToPath(import.meta.url)), "config.json");
 
@@ -12,33 +31,28 @@ async function loadCap(): Promise<number | undefined> {
   let config: unknown;
 
   try {
-    config = JSON.parse(await readFile(configPath, "utf8")) as unknown;
+    config = JSON.parse(await readFile(configPath, "utf8"));
   } catch (error) {
     throw new Error(`Could not read ${configPath}: ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  const values = config && typeof config === "object" ? config as Record<string, unknown> : {};
+  if (Check(disabledSchema, config)) return undefined;
 
-  if (values.enabled === false) return undefined;
-  const cap = values.contextWindowCap;
-
-  if (typeof cap !== "number" || !Number.isSafeInteger(cap) || cap <= 0) {
+  if (!Check(configSchema, config)) {
     throw new Error(`${configPath}: contextWindowCap must be a positive integer`);
   }
 
-  return cap;
+  return config.contextWindowCap;
 }
 
-function savedCap(data: unknown) {
-  const saved = (data as { cap?: unknown } | undefined)?.cap;
+function savedCap(entry: SavedCapEntry) {
+  if (!Check(savedCapSchema, entry.data)) throw new Error("Invalid saved session context cap");
 
-  if (saved !== null && (typeof saved !== "number" || !Number.isSafeInteger(saved) || saved < 1000)) throw new Error("Invalid saved session context cap");
-
-  return saved === null ? undefined : saved as number;
+  return entry.data.cap ?? undefined;
 }
 
 export default async function contextWindowCap(pi: ExtensionAPI) {
-  const settings = () => { const request: { settings?: { contextWindowCap: number; contextWindowCapEnabled: boolean } } = {}; pi.events.emit("piop:runtime-settings", request);
+  const settings = () => { const request: CapSettingsRequest = {}; pi.events.emit("piop:runtime-settings", request);
 
   return request.settings; };
 
@@ -63,8 +77,8 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
   const capModel = (model: { contextWindow: number } | undefined) => {
     if (!model) return;
 
-    if (!originalWindows.has(model)) originalWindows.set(model, model.contextWindow);
-    const original = originalWindows.get(model)!;
+    const original = originalWindows.get(model) ?? model.contextWindow;
+    originalWindows.set(model, original);
     model.contextWindow = cap === undefined ? original : Math.min(original, cap);
   };
 
@@ -72,7 +86,7 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
     const entry = ctx.sessionManager.getEntries().find((entry) => entry.type === "custom" && entry.customType === CAP_ENTRY);
 
     if (entry?.type === "custom") {
-      cap = savedCap(entry.data);
+      cap = savedCap(entry);
     } else {
       const defaults = settings();
 
@@ -85,7 +99,7 @@ export default async function contextWindowCap(pi: ExtensionAPI) {
   };
 
   pi.on("session_shutdown", () => { for (const [model, original] of originalWindows) model.contextWindow = original; });
-  const unsubscribeModels = pi.events.on("piop:models-refreshed", (value) => { capModel((value as { ctx: ExtensionContext }).ctx.model); });
+  const unsubscribeModels = pi.events.on("piop:models-refreshed", event => { capModel(event.ctx.model); });
   pi.on("session_shutdown", () => { unsubscribeModels(); });
 
   pi.on("session_start", (_event, ctx) => {

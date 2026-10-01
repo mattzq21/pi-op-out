@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { authFlowSchema, providerListingSchema } from "./responseSchemas";
 import { required } from "./required";
 import { type Accessor, createSignal } from "solid-js";
 import { createDependencyEffect, createRef } from "../lib/solid";
@@ -33,8 +35,6 @@ export interface AuthFlow {
   prompt?: { id: string; type: "text" | "secret" | "select" | "manual_code"; message: string; placeholder?: string; options?: Array<{ id: string; label: string; description?: string }> };
 }
 
-interface Listing { providers: ProviderAccount[]; warning?: string }
-
 export interface CustomProviderInput {
   providerId: string; name: string; baseUrl: string; api: string; apiKey: string; noKey: boolean; sessionAffinity: boolean;
 }
@@ -49,11 +49,11 @@ type ProviderAuthRequest = AuthFlowRequest
   | { action: "logout"; providerId: string }
   | ({ action: "create" } & CustomProviderInput);
 
-const call = <T>(hostId: string, request: ProviderAuthRequest) => invoke<T>("provider_auth", { hostId, request });
+const call = <S extends z.ZodType>(hostId: string, request: ProviderAuthRequest, schema: S) => invoke("provider_auth", { hostId, request }, schema);
 
 const message = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
 
-const cancelFlow = (hostId: string, flowId: string) => call<AuthFlow>(hostId, { action: "cancel", flowId });
+const cancelFlow = (hostId: string, flowId: string) => call(hostId, { action: "cancel", flowId }, authFlowSchema);
 
 const INTERRUPTED = "Provider login was interrupted on the host. Start again.";
 
@@ -91,7 +91,7 @@ export function useProviderAuth(hostId: Accessor<string>) {
     setLoading(true);
     const discover = refreshModels.current;
     refreshModels.current = false;
-    void call<Listing>(capturedHostId, { action: "list", refreshModels: discover }).then((listing) => { if (!cancelled) { setProviders(listing.providers);
+    void call(capturedHostId, { action: "list", refreshModels: discover }, providerListingSchema).then((listing) => { if (!cancelled) { setProviders(listing.providers);
 
     if (listing.warning) setError(listing.warning); } })
       .catch((reason) => { if (!cancelled) setError(message(reason)); })
@@ -103,11 +103,11 @@ export function useProviderAuth(hostId: Accessor<string>) {
   createDependencyEffect(() => { const capturedHostId = hostId();
     let unlisten: UnlistenFn | undefined;
     let cancelled = false;
-    void listen<{ hostId: string }>("pi://provider-auth-changed", ({ payload }) => {
+    void listen("pi://provider-auth-changed", ({ payload }) => {
       if (cancelled || payload.hostId !== capturedHostId) return;
       setTick((value) => value + 1);
       setRevision((value) => value + 1);
-    }).then((stop) => {
+    }, z.object({ hostId: z.string() })).then((stop) => {
       if (cancelled) void stop(); else unlisten = stop;
     }).catch(() => undefined);
 
@@ -130,7 +130,7 @@ export function useProviderAuth(hostId: Accessor<string>) {
 
     const poll = async () => {
       try {
-        const next = await call<AuthFlow>(capturedHostId, { action: "poll", flowId: (capturedFlow).flowId });
+        const next = await call(capturedHostId, { action: "poll", flowId: (capturedFlow).flowId }, authFlowSchema);
 
         if (cancelled) return;
         setError(undefined); setFlow(next);
@@ -174,7 +174,7 @@ export function useProviderAuth(hostId: Accessor<string>) {
     if (begin) setFlow(undefined);
 
     try {
-      const result = await call<AuthFlow>(capturedHostId, request);
+      const result = await call(capturedHostId, request, authFlowSchema);
 
       if (current === generation.current) receive(result);
       else if (begin) void cancelFlow(capturedHostId, result.flowId).catch(() => undefined);
@@ -190,7 +190,7 @@ export function useProviderAuth(hostId: Accessor<string>) {
     setWorking(true); setError(undefined); setFlow(undefined);
 
     try {
-      const result = await call<Listing>(capturedHostId, { action: "logout", providerId });
+      const result = await call(capturedHostId, { action: "logout", providerId }, providerListingSchema);
 
       if (current === generation.current) setProviders(result.providers);
     } catch (reason) { if (current === generation.current) setError(message(reason)); }
@@ -205,7 +205,7 @@ export function useProviderAuth(hostId: Accessor<string>) {
     setWorking(true); setError(undefined); setFlow(undefined);
 
     try {
-      const result = await call<{ created: boolean; warning?: string }>(capturedHostId, { action: "create", ...input });
+      const result = await call(capturedHostId, { action: "create", ...input }, z.object({ created: z.boolean(), warning: z.string().optional() }));
 
       if (current !== generation.current) return false;
       setError(result.warning); setRevision((value) => value + 1);

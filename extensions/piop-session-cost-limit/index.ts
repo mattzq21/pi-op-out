@@ -1,3 +1,5 @@
+import { Type } from "typebox";
+import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const STATUS_KEY = "piop-session-cost";
@@ -12,8 +14,18 @@ const USAGE = "Usage: /cost <amount in USD> or /cost clear";
 
 type CostContext = Pick<ExtensionContext, "sessionManager" | "ui">;
 
+const amountSchema = Type.Number({ minimum: MIN_LIMIT, maximum: MAX_LIMIT });
+
+const usageSchema = Type.Object({ cost: Type.Object({ total: Type.Number({ exclusiveMinimum: 0, maximum: Number.MAX_VALUE }) }) });
+
+const messageCostSchema = Type.Object({ message: Type.Object({ usage: usageSchema }) });
+
+const entryCostSchema = Type.Object({ usage: usageSchema });
+
+const savedLimitSchema = Type.Object({ limit: Type.Optional(Type.Unknown()) });
+
 function validAmount(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value >= MIN_LIMIT && value <= MAX_LIMIT;
+  return Check(amountSchema, value);
 }
 
 function parseAmount(raw: string): number {
@@ -27,18 +39,10 @@ function parseAmount(raw: string): number {
   return amount;
 }
 
-function entryUsage(entry: unknown) {
-  if (!entry || typeof entry !== "object") return 0;
-  const value = entry as { type?: string; message?: { usage?: { cost?: { total?: unknown } } }; usage?: { cost?: { total?: unknown } } };
+function entryCost(entry: ReturnType<CostContext["sessionManager"]["getBranch"]>[number]): number {
+  if (entry.type === "message") return Check(messageCostSchema, entry) ? entry.message.usage.cost.total : 0;
 
-  return value.type === "message" ? value.message?.usage : ["compaction", "usage", "branch_summary"].includes(value.type ?? "") ? value.usage : undefined;
-}
-
-function entryCost(entry: unknown): number {
-  const usage = entryUsage(entry);
-  const amount = typeof usage === "object" ? usage?.cost?.total : undefined;
-
-  return typeof amount === "number" && Number.isFinite(amount) && amount > 0 ? amount : 0;
+  return ["compaction", "usage", "branch_summary"].includes(entry.type) && Check(entryCostSchema, entry) ? entry.usage.cost.total : 0;
 }
 
 function sessionCost(ctx: CostContext): number {
@@ -60,16 +64,16 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
     const entry = [...ctx.sessionManager.getBranch()].reverse().find((entry) => entry.type === "custom" && entry.customType === LIMIT_ENTRY);
 
     if (entry?.type === "custom") {
-      const saved = (entry.data as { limit?: unknown } | undefined)?.limit;
+      const saved = Check(savedLimitSchema, entry.data) ? entry.data.limit : undefined;
 
       if (saved !== null && saved !== undefined && !validAmount(saved)) throw new Error("Invalid saved session cost limit");
-      limit = typeof saved === "number" ? saved : undefined;
+      limit = validAmount(saved) ? saved : undefined;
     } else {
       limit = undefined;
     }
   };
 
-  const overLimit = (ctx: CostContext) => limit !== undefined && sessionCost(ctx) >= limit;
+  const overLimit = (ctx: CostContext) => limit !== undefined && sessionCost(ctx) >= limit ? limit : undefined;
 
   const publish = (ctx: CostContext) => {
     if (limit === undefined) {
@@ -108,8 +112,10 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
   });
 
   pi.on("input", (event, ctx) => {
-    if (!overLimit(ctx)) return;
-    const error = `Session cost limit of ${formatCost(limit!)} reached (API prices). Raise it with /cost <amount> or remove it with /cost clear.`;
+    const reached = overLimit(ctx);
+
+    if (reached === undefined) return;
+    const error = `Session cost limit of ${formatCost(reached)} reached (API prices). Raise it with /cost <amount> or remove it with /cost clear.`;
     ctx.ui.setStatus("piop-input-rejected", JSON.stringify({ text: event.text, error }));
     ctx.ui.notify(error, "warning");
 
@@ -117,16 +123,20 @@ export default async function sessionCostLimit(pi: ExtensionAPI) {
   });
 
   pi.on("tool_call", (_event, ctx) => {
-    if (!overLimit(ctx)) return;
+    const reached = overLimit(ctx);
+
+    if (reached === undefined) return;
     publish(ctx);
 
-    return { block: true, terminate: true, reason: `Session cost limit of ${formatCost(limit!)} reached (API prices). Tool execution blocked.` };
+    return { block: true, terminate: true, reason: `Session cost limit of ${formatCost(reached)} reached (API prices). Tool execution blocked.` };
   });
   pi.on("turn_start", (_event, ctx) => {
-    if (!overLimit(ctx)) return;
+    const reached = overLimit(ctx);
+
+    if (reached === undefined) return;
     publish(ctx);
     ctx.abort();
-    ctx.ui.notify(`Session cost limit of ${formatCost(limit!)} reached (API prices). Raise it with /cost <amount> or remove it with /cost clear.`, "warning");
+    ctx.ui.notify(`Session cost limit of ${formatCost(reached)} reached (API prices). Raise it with /cost <amount> or remove it with /cost clear.`, "warning");
   });
 
   pi.registerCommand("cost", {

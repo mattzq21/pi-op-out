@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { agentStateSchema, entrySchema } from "./lib/responseSchemas";
 import { required } from "./lib/required";
 import { batch,createComputed,createMemo,createSignal } from "solid-js";
 import { createConversationArchive } from "./appArchive";
@@ -15,7 +17,7 @@ import { createConversationQuestions } from "./components/ConversationQuestions"
 import { type SessionAction } from "./components/SessionPanel";
 import { encodeAgentValue } from "./lib/agentProtocol";
 import { isConversationChanged } from "./lib/conversationChanged";
-import { branchMessages,type PiEntry } from "./lib/messages";
+import { branchMessages } from "./lib/messages";
 import { initialWindowTarget,NativeTransport,openSessionWindow } from "./lib/nativeTransport";
 import { seedChatSelection } from "./lib/newChatSelection";
 import { chatSubmission,prepareChatWorktree } from "./lib/newChatWorktree";
@@ -30,7 +32,7 @@ import { createSidebarState } from "./lib/sidebarState";
 import { createDependencyEffect,createMemoFields,createRef,createSubscription,type StateUpdate } from "./lib/solid";
 import { type SubagentTarget } from "./lib/subagentNavigation";
 import { useChatSession } from "./lib/useChatSession";
-import type { AgentState,AppSettings,ChatMessage,ComposerUpload,ImageAttachment,Model,SessionSummary,SlashCommand } from "./types";
+import type { AppSettings, ChatMessage, ComposerUpload, ImageAttachment, Model, SessionSummary, SlashCommand } from "./types";
 import { useAppEvents } from "./useAppEvents";
 import { useAppKeyboard } from "./useAppKeyboard";
 import { useAppUsage } from "./useAppUsage";
@@ -196,13 +198,13 @@ export function createAppConversations(preloadChat: () => void) {
 
   createDependencyEffect(() => {
     const unsubscribes = [
-      listen("pi://sessions-changed", () => { void syncSessionIndex(); }),
-      listen<{ hostId?: string; sessionPath: string }>("pi://session-removed", ({ payload }) => {
+      listen("pi://sessions-changed", () => { void syncSessionIndex(); }, z.unknown()),
+      listen("pi://session-removed", ({ payload }) => {
         runtimePool().removeSummary(payload.hostId ?? "local", payload.sessionPath);
         setSessions((current) => current.filter((session) => !runtimePool().isRemoved(session)));
         void syncSessionIndex();
-      }),
-      listen<{ hostId: string; line: string }>("pi://daemon-error", ({ payload }) => addNotice({ title: `Connection · ${payload.hostId}`, message: payload.line })),
+      }, z.object({ hostId: z.string().optional(), sessionPath: z.string() })),
+      listen("pi://daemon-error", ({ payload }) => addNotice({ title: `Connection · ${payload.hostId}`, message: payload.line }), z.object({ hostId: z.string(), line: z.string() })),
     ];
 
     return () => { for (const pending of unsubscribes) void pending.then((unlisten) => unlisten()); };
@@ -362,13 +364,13 @@ export function createAppConversations(preloadChat: () => void) {
 
     try {
       if (conversationBusy()) throw new Error("Wait for the current response and queued messages to finish first");
-      const result = await ownerTransport.command<{ cancelled?: boolean }>({ type: "fork_and_forget", entryId });
+      const result = await ownerTransport.command({ type: "fork_and_forget", entryId }, z.object({ cancelled: z.boolean().optional() }));
 
       if (result.cancelled) return;
 
       const [nextState, history] = await Promise.all([
-        ownerTransport.command<AgentState>({ type: "get_state" }),
-        ownerTransport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }),
+        ownerTransport.command({ type: "get_state" }, agentStateSchema),
+        ownerTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) })),
       ]);
 
       if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) {
@@ -585,13 +587,13 @@ export function createAppConversations(preloadChat: () => void) {
     const hostId = session.hostId ?? "local";
     const sourcePath = session.path; const previousKey = `${hostId}:${session.id}`;
 
-    try { await selectedTransport.connect(); const sourceDiffs = await capturedRuntimePool.captureMemoryDiffs(selectedTransport); const cloned = await selectedTransport.command<{ cancelled?: boolean }>({ type: "clone" });
+    try { await selectedTransport.connect(); const sourceDiffs = await capturedRuntimePool.captureMemoryDiffs(selectedTransport); const cloned = await selectedTransport.command({ type: "clone" }, z.object({ cancelled: z.boolean().optional() }));
 
-    if (cloned.cancelled) return; const nextState = await selectedTransport.command<AgentState>({ type: "get_state" }); await inheritSessionGroup(previousKey, `${hostId}:${nextState.sessionId}`, session); capturedRuntimePool.bind(hostId, nextState.sessionId, selectedTransport); rekeyConversationUi(previousKey, `${hostId}:${nextState.sessionId}`, selectedTransport, true, true);
+    if (cloned.cancelled) return; const nextState = await selectedTransport.command({ type: "get_state" }, agentStateSchema); await inheritSessionGroup(previousKey, `${hostId}:${nextState.sessionId}`, session); capturedRuntimePool.bind(hostId, nextState.sessionId, selectedTransport); rekeyConversationUi(previousKey, `${hostId}:${nextState.sessionId}`, selectedTransport, true, true);
 
     if (!selectedTransport.isEphemeral()) { const sourceTransport = capturedRuntimePool.forSession(session); drafts.copyUploads(selectedTransport, sourceTransport); }
 
-    const history = await selectedTransport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" }); const nextMessages = branchMessages(history.entries, history.leafId);
+    const history = await selectedTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) })); const nextMessages = branchMessages(history.entries, history.leafId);
 
     if (activeTransportRef.current === selectedTransport) { capturedSession.setState(nextState); capturedSession.setMessages(nextMessages); updateConnected(true); }
 

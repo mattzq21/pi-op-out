@@ -1,8 +1,11 @@
+import { z, type JSONType } from "zod";
+import { jsonResultSchema, remotePacketSchema, type NativeArguments, type RemotePacket } from "./transportSchemas";
+
 export interface HostConnection { url: string }
 
-export type RemoteEvent = { event: string; payload: unknown };
+export type RemoteEvent = { event: string; payload: JSONType | undefined };
 
-type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer?: ReturnType<typeof setTimeout> };
+type Pending = { resolve: (value: JSONType | undefined) => void; reject: (error: Error) => void; timer?: ReturnType<typeof setTimeout> };
 
 export function validateHost(connection: HostConnection): string {
   const url = new URL(connection.url);
@@ -39,9 +42,9 @@ export class RemoteClient {
       socket.onopen = () => socket.send(JSON.stringify({ type: "authenticate", mode: "tailscale" }));
       socket.onmessage = ({ data }) => {
         if (this.socket !== socket) return;
-        let message: Record<string, unknown>;
+        let message: RemotePacket;
 
-        try { message = JSON.parse(String(data)); } catch { socket.close();
+        try { message = remotePacketSchema.parse(JSON.parse(String(data))); } catch { socket.close();
 
         return; }
 
@@ -88,10 +91,10 @@ export class RemoteClient {
       };
     });
   }
-  publishLocalEvent(event: string, payload: unknown) { this.receive({ event, payload }); }
-  private receive(message: Record<string, unknown>) {
-    if (typeof message.event === "string") {
-      const event = message.payload as { type?: string; terminalId?: string } | undefined;
+  publishLocalEvent(event: string, payload: JSONType) { this.receive({ event, payload }); }
+  private receive(message: RemotePacket) {
+    if (message.event !== undefined) {
+      const event = z.object({ type: z.string().optional(), terminalId: z.string().optional() }).catch({}).parse(message.payload);
 
       if (message.event === "pi://event" && event?.type === "terminal_exit" && event.terminalId) this.terminals.delete(event.terminalId);
       this.listeners.get(message.event)?.forEach((listener) => listener({ event: String(message.event), payload: message.payload }));
@@ -104,9 +107,11 @@ export class RemoteClient {
     if (!request) return;
     clearTimeout(request.timer); this.pending.delete(Number(message.id));
 
-    if (typeof message.error === "string") request.reject(new Error(message.error)); else request.resolve(message.result);
+    if (message.error !== undefined) request.reject(new Error(message.error)); else request.resolve(message.result);
   }
-  invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
+  invoke<S extends z.ZodType>(command: string, args: NativeArguments | undefined, schema: S): Promise<z.output<S>>;
+  invoke(command: string, args?: NativeArguments): Promise<JSONType | undefined>;
+  invoke(command: string, args: NativeArguments = {}, schema: z.ZodType = jsonResultSchema) {
     const socket = this.socket;
 
     if (!this.ready || !socket || socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error("Connect to your Piop host first."));
@@ -115,18 +120,18 @@ export class RemoteClient {
 
     if (new TextEncoder().encode(packet).byteLength > 32 * 1024 * 1024) return Promise.reject(new Error("This message exceeds the host's 32 MiB request limit. Remove an attachment or shorten the message."));
 
-    if (command === "start_terminal" && typeof args.terminalId === "string") this.terminals.add(args.terminalId);
+    if (command === "start_terminal" && args.terminalId !== undefined) this.terminals.add(args.terminalId);
 
-    return new Promise<T>((resolve, reject) => {
+    return new Promise<JSONType | undefined>((resolve, reject) => {
       const timer = command === "run_worktree_setup" ? undefined : setTimeout(() => { this.pending.delete(id); reject(new Error("Host request timed out; it may still complete. Refresh before trying again.")); }, 660000);
-      this.pending.set(id, { resolve: (value) => resolve(value as T), reject, timer });
+      this.pending.set(id, { resolve, reject, timer });
 
       try { socket.send(packet); }
       catch (reason) { clearTimeout(timer); this.pending.delete(id); reject(reason); }
-    });
+    }).then(value => schema.parse(value));
   }
-  listen<T>(event: string, handler: (event: { event: string; payload: T; id: number }) => void): Promise<() => void> {
-    const listener = (value: RemoteEvent) => handler({ ...value, payload: value.payload as T, id: 0 });
+  listen<S extends z.ZodType>(event: string, handler: (event: { event: string; payload: z.output<S>; id: number }) => void, schema: S): Promise<() => void> {
+    const listener = (value: RemoteEvent) => handler({ ...value, payload: schema.parse(value.payload), id: 0 });
     const listeners = this.listeners.get(event) ?? new Set();
     listeners.add(listener); this.listeners.set(event, listeners);
 

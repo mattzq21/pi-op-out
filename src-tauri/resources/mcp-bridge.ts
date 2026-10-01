@@ -1,7 +1,8 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { createHash } from "node:crypto";
-import { Type, type JsonValue } from "@earendil-works/pi-ai";
+import { Type } from "@earendil-works/pi-ai";
+import { z } from "zod";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 type ServerConfig = {
@@ -75,14 +76,10 @@ async function discoverTools(client: Client, signal: AbortSignal) {
   return discovered;
 }
 
-function isStringSchema(value: unknown): boolean {
-  return value !== null && typeof value === "object" && !Array.isArray(value) && (value as { type?: unknown }).type === "string";
-}
-
 function toolParameters(inputSchema: Awaited<ReturnType<Client["listTools"]>>["tools"][number]["inputSchema"], inject = false) {
   const schema = inputSchema ?? { type: "object", properties: {} };
   const agentId = schema.properties?.agent_id;
-  const injectAgentId = inject && isStringSchema(agentId);
+  const injectAgentId = inject && z.object({ type: z.literal("string") }).safeParse(agentId).success;
 
   const parameters = injectAgentId ? {
     ...schema,
@@ -99,17 +96,18 @@ function safeName(value: string): string {
 
 function parseHeaders(value: ServerConfig["headers"]): Record<string, string> {
   if (!value) return {};
-  const parsed: unknown = typeof value === "string" ? JSON.parse(value) : value;
+  const text = z.string().safeParse(value);
+  const parsed = z.record(z.string(), z.unknown()).safeParse(text.success ? JSON.parse(text.data) : value);
 
-  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("HTTP headers must be a JSON object");
-  const headers: Record<string, string> = {};
+  if (!parsed.success) throw new Error("HTTP headers must be a JSON object");
 
-  for (const [name, headerValue] of Object.entries(parsed)) {
-    if (typeof headerValue !== "string") throw new Error(`HTTP header ${name} must be a string`);
-    headers[name] = headerValue;
-  }
+  return Object.fromEntries(Object.entries(parsed.data).map(([name, value]): [string, string] => {
+    const header = z.string().safeParse(value);
 
-  return headers;
+    if (!header.success) throw new Error(`HTTP header ${name} must be a string`);
+
+    return [name, header.data];
+  }));
 }
 
 async function connectClient(client: Client, config: ServerConfig, instanceId: string, signal: AbortSignal, diagnostic: (text: string) => void): Promise<void> {
@@ -147,22 +145,26 @@ async function connectClient(client: Client, config: ServerConfig, instanceId: s
   catch (error) { await client.close().catch(() => undefined); throw error; }
 }
 
-function contentPart(part: Record<string, unknown>): { type: "text"; text: string } | { type: "image"; data: string; mimeType: string } {
-  if (part.type === "text" && typeof part.text === "string") return { type: "text", text: part.text };
+type ToolResult = Awaited<ReturnType<Client["callTool"]>>;
 
-  if (part.type === "image" && typeof part.data === "string" && typeof part.mimeType === "string") return { type: "image", data: part.data, mimeType: part.mimeType };
+type ToolContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
+
+function contentPart(part: ToolResult["content"][number]): ToolContent {
+  if (part.type === "text") return { type: "text", text: part.text };
+
+  if (part.type === "image") return { type: "image", data: part.data, mimeType: part.mimeType };
 
   return { type: "text", text: JSON.stringify(part, null, 2) };
 }
 
-function resultContent(result: unknown) {
-  const content = (result as { content?: Array<Record<string, unknown>> })?.content ?? [];
+function resultContent(result: ToolResult): ToolContent[] {
+  const content = result.content ?? [];
   const mapped = content.map(contentPart);
-  const structured = (result as { structuredContent?: unknown })?.structuredContent;
+  const structured = result.structuredContent;
 
   if (structured !== undefined) mapped.push({ type: "text", text: JSON.stringify(structured, null, 2) });
 
-  return mapped.length ? mapped : [{ type: "text" as const, text: JSON.stringify(result, null, 2) }];
+  return mapped.length ? mapped : [{ type: "text", text: JSON.stringify(result, null, 2) }];
 }
 
 function startupTimeoutMs(server: ServerConfig): number {
@@ -175,16 +177,38 @@ function startupTimeoutMs(server: ServerConfig): number {
 
 type Selection = { servers: ServerConfig[]; agentName: string; sessionId: string; ready?: Promise<string[]> };
 
+declare module "@earendil-works/pi-coding-agent" {
+  interface EventBus {
+    on(channel: "piop:mcp:select", handler: (selection: Selection) => void): () => void;
+    emit(channel: "piop:mcp:select", selection: Selection): void;
+    on(channel: "piop:mcp:tools", handler: (request: { tools?: string[] }) => void): () => void;
+    emit(channel: "piop:mcp:tools", request: { tools?: string[] }): void;
+  }
+}
+
+type ServerStatus = { id: string; status: "stopped" | "starting" | "connected" | "error"; error?: string };
+
+function toolOutputSchema(schema: Awaited<ReturnType<Client["listTools"]>>["tools"][number]["outputSchema"]) {
+  const properties = new Map<string, z.JSONType>([
+    ["content", { type: "array", items: { type: "object" } }],
+    ["isError", { type: "boolean" }],
+  ]);
+
+  if (schema) properties.set("structuredContent", z.json().parse(schema));
+
+  return Type.Unsafe({ type: "object", properties: Object.fromEntries(properties), required: ["content"] });
+}
+
 type Connection = { client: Client; instanceId: string; tools: string[]; connected: boolean };
 
 const SELECT_EVENT = "piop:mcp:select";
 
 export default async function mcpBridge(pi: ExtensionAPI) {
-  const structuredResults = typeof pi.registerMcpServer === "function";
+  const structuredResults = pi.registerMcpServer !== undefined;
   let servers: ServerConfig[] = [];
   const connections = new Map<string, Connection>();
   const selectedTools = () => [...connections.values()].filter((connection) => connection.connected).flatMap((connection) => connection.tools);
-  const stopToolList = pi.events.on("piop:mcp:tools", (value) => { (value as { tools?: string[] }).tools = selectedTools(); });
+  const stopToolList = pi.events.on("piop:mcp:tools", request => { request.tools = selectedTools(); });
   const toolNames = new Map<string, string>();
   const toolOwners = new Map<string, string>();
 
@@ -208,7 +232,7 @@ export default async function mcpBridge(pi: ExtensionAPI) {
     return name;
   };
 
-  const statuses = new Map(servers.map((server) => [server.id, { id: server.id, status: "stopped" as "stopped" | "starting" | "connected" | "error", error: undefined as string | undefined }]));
+  const statuses = new Map<string, ServerStatus>();
   const shutdown = new AbortController();
   let preparing: AbortController | undefined;
   const cancelPreparation = pi.events.on("piop:cancel-preparation", () => preparing?.abort());
@@ -244,22 +268,21 @@ export default async function mcpBridge(pi: ExtensionAPI) {
             exposure: "direct",
             namespace: { name: `piop_mcp_${safeName(server.id)}`, description: server.name },
             annotations: tool.annotations,
-            outputSchema: Type.Unsafe({ type: "object", properties: {
-              content: { type: "array", items: { type: "object" } },
-              ...(tool.outputSchema ? { structuredContent: tool.outputSchema } : {}),
-              isError: { type: "boolean" },
-            }, required: ["content"] }),
+            outputSchema: toolOutputSchema(tool.outputSchema),
             async execute(_toolCallId, params, signal) {
               if (signal?.aborted) throw new Error("MCP tool call aborted");
 
               if (!connection.connected || connections.get(id) !== connection || !connection.tools.includes(name)) throw new Error(`MCP tool "${name}" is not available for this agent`);
-              const args = injectAgentId ? { ...params as Record<string, unknown>, agent_id: connection.instanceId } : params as Record<string, unknown>;
+              const supplied = z.record(z.string(), z.json()).parse(params);
+              const args = injectAgentId ? { ...supplied, agent_id: connection.instanceId } : supplied;
               const result = await client.callTool({ name: tool.name, arguments: args }, { signal, timeout: TOOL_TIMEOUT_MS });
 
               if (result.isError && !structuredResults) throw new Error(resultContent(result).map((part) => part.type === "text" ? part.text : "MCP image result").join("\n"));
               const { _meta: _metadata, ...scriptResult } = result;
 
-              return { content: resultContent(result), details: { server: server.name, tool: tool.name, result }, structuredContent: scriptResult as JsonValue, ...(result.isError ? { isError: true } : {}) };
+              const response = { content: resultContent(result), details: { server: server.name, tool: tool.name, result }, structuredContent: z.json().parse(scriptResult) };
+
+              return result.isError ? { ...response, isError: true } : response;
             },
           });
         }
@@ -339,8 +362,7 @@ export default async function mcpBridge(pi: ExtensionAPI) {
     return [...wanted].flatMap((id) => connections.get(id)?.tools ?? []);
   };
 
-  const unsubscribe = pi.events.on(SELECT_EVENT, (value) => {
-    const selection = value as Selection;
+  const unsubscribe = pi.events.on(SELECT_EVENT, selection => {
     selection.ready = pending.then(() => select(selection));
     pending = selection.ready.catch(() => undefined);
   });

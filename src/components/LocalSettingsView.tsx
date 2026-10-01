@@ -1,3 +1,4 @@
+import { modelSchema } from "../lib/responseSchemas";
 import { z } from "zod";
 import { required } from "../lib/required";
 import { Key, Rerun } from "@solid-primitives/keyed";
@@ -53,9 +54,9 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
     let cancelled = false;
 
     const listeners = [
-      listen<{ hostId: string }>("pi://provider-auth-changed", ({ payload }) => { if (!cancelled && payload.hostId === capturedHostId) setRevision((value) => value + 1); }),
-      listen("pi://settings-changed", () => { if (!cancelled && capturedHostId === "local") setRevision((value) => value + 1); }),
-      listen<{ hostId: string }>("pi://host-settings-changed", ({ payload }) => { if (!cancelled && payload.hostId === capturedHostId) setRevision((value) => value + 1); }),
+      listen("pi://provider-auth-changed", ({ payload }) => { if (!cancelled && payload.hostId === capturedHostId) setRevision((value) => value + 1); }, z.object({ hostId: z.string() })),
+      listen("pi://settings-changed", () => { if (!cancelled && capturedHostId === "local") setRevision((value) => value + 1); }, z.unknown()),
+      listen("pi://host-settings-changed", ({ payload }) => { if (!cancelled && payload.hostId === capturedHostId) setRevision((value) => value + 1); }, z.object({ hostId: z.string() })),
     ];
 
     return () => { cancelled = true;
@@ -94,8 +95,8 @@ function DaemonSettingsEditor(componentProps: Props & { target: string; label: s
         if (cancelled) return;
 
         const [models, levels] = await Promise.all([
-          reader.command<{ models: Model[] }>({ type: "get_available_models" }),
-          reader.command<{ levels: string[] }>({ type: "get_available_thinking_levels" }),
+          reader.command({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) })),
+          reader.command({ type: "get_available_thinking_levels" }, z.object({ levels: z.array(z.string()) })),
         ]);
 
         if (!config && capturedTarget0 !== "client") throw new Error("Agent definitions are unavailable");

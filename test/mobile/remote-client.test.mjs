@@ -1,6 +1,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
+import { z } from 'zod';
 
 const compiled = await build({ entryPoints: ['src/lib/remoteClient.ts'], bundle: true, write: false, format: 'esm', platform: 'node' });
 
@@ -49,7 +50,7 @@ test('forwards streamed events and unsubscribes cleanly', async () => {
   const { client, socket } = await connected(); const received = [];
 
   try {
-    const remove = await client.listen('pi://event', ({ payload }) => received.push(payload));
+    const remove = await client.listen('pi://event', ({ payload }) => received.push(payload), z.json().optional());
     socket.receive({ event: 'pi://event', payload: { type: 'message_update' } }); remove();
     socket.receive({ event: 'pi://event', payload: { type: 'message_end' } });
     assert.deepEqual(received, [{ type: 'message_update' }]);

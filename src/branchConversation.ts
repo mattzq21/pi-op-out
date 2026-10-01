@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { agentStateSchema, entrySchema } from "./lib/responseSchemas";
 import type { TerminalTarget } from "./appSupport";
 import { beginBranching } from "./lib/branchActivity";
 import { type Dispatch, type RefObject, type StateUpdate } from "./lib/solid";
@@ -49,7 +51,7 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
     const parentSession = [...sessions, ...runtimePool.liveSessionSummaries()].find((session) => session.path === sourcePath && (session.hostId ?? "local") === sourceHostId);
 
     const forkSource = async () => {
-      const fork = await ownerTransport.command<{ cancelled?: boolean }>({ type: "fork_after", entryId });
+      const fork = await ownerTransport.command({ type: "fork_after", entryId }, z.object({ cancelled: z.boolean().optional() }));
 
       if (fork.cancelled) return false;
 
@@ -80,8 +82,8 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
       if (activeTransportRef.current === ownerTransport) setActiveCwd(sourceCwd);
       const restoredSettings = await ownerTransport.loadSettings();
       await configureRuntime(restoredSettings);
-      const restoredState = await ownerTransport.command<AgentState>({ type: "get_state" });
-      const restoredHistory = await ownerTransport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" });
+      const restoredState = await ownerTransport.command({ type: "get_state" }, agentStateSchema);
+      const restoredHistory = await ownerTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) }));
       transportConversationKeys.current.set(ownerTransport, previousKey);
 
       if (activeTransportRef.current === ownerTransport) { activateConversationKey(previousKey); setState(restoredState); setMessages(branchMessages(restoredHistory.entries, restoredHistory.leafId)); updateConnected(true); }
@@ -93,7 +95,7 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
 
       if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === previousKey) updateConnected(false);
       await ownerTransport.disconnect(); await ownerTransport.connect(destinationCwd, nextState.sessionFile, sourceHostId);
-      const nextSettings = await ownerTransport.loadSettings(); await configureRuntime(nextSettings); nextState = await ownerTransport.command<AgentState>({ type: "get_state" }); const history = await ownerTransport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" });
+      const nextSettings = await ownerTransport.loadSettings(); await configureRuntime(nextSettings); nextState = await ownerTransport.command({ type: "get_state" }, agentStateSchema); const history = await ownerTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) }));
 
       return { nextState, history };
     };
@@ -125,8 +127,8 @@ export function createBranchConversation({ transport, activeConversationKeyRef, 
 
       if (!await forkSource()) return false;
       forked = true;
-      let nextState = await ownerTransport.command<AgentState>({ type: "get_state" });
-      let history = await ownerTransport.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" });
+      let nextState = await ownerTransport.command({ type: "get_state" }, agentStateSchema);
+      let history = await ownerTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) }));
       await copyBranchDiffs(nextState, history);
 
       if (destinationCwd) {

@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { dictationConfigurationSchema } from "./responseSchemas";
 import { createSignal, onCleanup, onMount } from "solid-js";
 import { invoke, listen } from "./platform";
 import type { DictationVad } from "./dictationVad";
@@ -27,7 +29,7 @@ export function useDictationEnabled() {
     const request = ++revision;
 
     try {
-      const state = await invoke<Configuration>("dictation_configuration");
+      const state = await invoke("dictation_configuration", undefined, dictationConfigurationSchema);
 
       if (!disposed && request === revision) apply(state);
     } catch { if (!disposed && request === revision) apply({ enabled: false, loading: false }); }
@@ -35,10 +37,10 @@ export function useDictationEnabled() {
 
   const focus = () => void refresh();
   onMount(() => {
-    void listen<Configuration>("pi://dictation", ({ payload }) => {
+    void listen("pi://dictation", ({ payload }) => {
       if (disposed) return;
       revision++; apply(payload);
-    }).then((stop) => { if (disposed) stop(); else unlisten = stop; }).catch(() => undefined);
+    }, dictationConfigurationSchema).then((stop) => { if (disposed) stop(); else unlisten = stop; }).catch(() => undefined);
     void refresh();
     window.addEventListener("focus", focus);
   });
@@ -181,4 +183,4 @@ export class DictationRecording {
   }
 }
 
-export const transcribeDictation = (audio: string) => invoke<{ text: string }>("dictation_transcribe", { audio });
+export const transcribeDictation = (audio: string) => invoke("dictation_transcribe", { audio }, z.object({ text: z.string() }));

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { z } from "zod";
 import { createServer } from "node:net";
 import { spawn, type ChildProcess } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
@@ -7,6 +8,14 @@ import { homedir, tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { mkdtempSync, mkdirSync, copyFileSync, chmodSync } from "node:fs";
 import { selectWindowBounds } from "./scripts/window-placement.mjs";
+
+declare global {
+  interface Screen { availLeft?: number; availTop?: number; }
+}
+
+const authSchema = z.record(z.string(), z.json());
+
+const sessionHeaderSchema = z.object({ type: z.string().optional(), id: z.string().optional(), cwd: z.string().optional() });
 
 if (process.platform === "linux") process.env.GDK_BACKEND = "x11";
 
@@ -55,16 +64,16 @@ const getOsAssignedPort = () => new Promise<number>((resolve, reject) => {
   server.unref();
   server.once("error", reject);
   server.listen(0, "127.0.0.1", () => {
-    const address = server.address();
+    const address = z.object({ port: z.number().int().min(1).max(65535) }).safeParse(server.address());
 
-    if (!address || typeof address === "string") {
+    if (!address.success) {
       server.close();
       reject(new Error("Could not allocate an ephemeral WebDriver port"));
 
       return;
     }
 
-    server.close((error) => error ? reject(error) : resolve(address.port));
+    server.close((error) => error ? reject(error) : resolve(address.data.port));
   });
 });
 
@@ -93,11 +102,12 @@ const stopFixtureDaemon = async () => {
   fixtureDaemon = undefined;
 
   if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+  const pid = child.pid;
   const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
 
   const signal = (name: NodeJS.Signals) => {
-    try { if (process.platform === "win32") child.kill(name); else process.kill(-child.pid!, name); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+    try { if (process.platform === "win32") child.kill(name); else process.kill(-pid, name); }
+    catch (error) { if (z.object({ code: z.string() }).safeParse(error).data?.code !== "ESRCH") throw error; }
   };
 
   signal("SIGTERM");
@@ -129,11 +139,11 @@ const verifyActualCallModel = () => {
   const modelId = modelParts.join("/");
   const agentRoot = path.join(homedir(), ".pi", "agent");
   let models: Record<string, { models?: Array<{ id?: string }> }>;
-  let auth: Record<string, unknown>;
+  let auth: z.infer<typeof authSchema>;
 
   try {
     models = JSON.parse(readFileSync(path.join(agentRoot, "models-store.json"), "utf8"));
-    auth = JSON.parse(readFileSync(path.join(agentRoot, "auth.json"), "utf8"));
+    auth = authSchema.parse(JSON.parse(readFileSync(path.join(agentRoot, "auth.json"), "utf8")));
   } catch (error) {
     throw new Error(`ACCEPTANCE TEST MODEL IS NOT AVAILABLE: could not read Pi's model catalog/authentication (${String(error)})`);
   }
@@ -162,9 +172,9 @@ const isFixtureProject = (cwd: string, id: string) => path.dirname(cwd) === path
 
 const cleanupTestSessions = () => {
   for (const sessionFile of sessionFiles().filter((file) => !baselineSessions.has(file))) {
-    let header: { type?: string; id?: string; cwd?: string } = {};
+    let header = sessionHeaderSchema.parse({});
 
-    try { header = JSON.parse(readFileSync(sessionFile, "utf8").split("\n", 1)[0]); } catch { }
+    try { header = sessionHeaderSchema.parse(JSON.parse(readFileSync(sessionFile, "utf8").split("\n", 1)[0])); } catch { }
 
     if (header.type !== "session" || !header.id || !header.cwd) continue;
     const cwd = path.resolve(header.cwd);
@@ -249,7 +259,7 @@ export const config: WebdriverIO.Config = {
     if (process.platform === "linux") return;
 
     const screenBounds = await browser.execute(() => {
-      const currentScreen = window.screen as Screen & { availLeft?: number; availTop?: number };
+      const currentScreen = window.screen;
 
       return {
         left: currentScreen.availLeft ?? 0,

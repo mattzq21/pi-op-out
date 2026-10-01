@@ -2,11 +2,24 @@ import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
+import { Type as Schema, type Static } from "typebox";
+import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-type Entry = { type?: string; id?: string; parentId?: string | null; message?: Message; customType?: string; data?: { message?: string; role?: string; text?: string; completed?: boolean } };
+const entrySchema = Schema.Object({
+  type: Schema.Optional(Schema.String()), id: Schema.Optional(Schema.String()), parentId: Schema.Optional(Schema.Union([Schema.String(), Schema.Null()])),
+  message: Schema.Optional(Schema.Unknown()), customType: Schema.Optional(Schema.String()), data: Schema.Optional(Schema.Unknown()),
+});
 
-type Message = { role?: string; content?: unknown; stopReason?: string };
+type Entry = Static<typeof entrySchema>;
+
+const contentSchema = Schema.Union([Schema.String(), Schema.Array(Schema.Unknown())]);
+
+const messageSchema = Schema.Object({ role: Schema.Optional(Schema.String()), content: Schema.Optional(contentSchema), stopReason: Schema.Optional(Schema.String()) });
+
+const textPartSchema = Schema.Object({ type: Schema.Literal("text"), text: Schema.String() });
+
+const resumeSchema = Schema.Object({ message: Schema.String() });
 
 type TraceFile = { path: string; modified: number };
 
@@ -79,12 +92,10 @@ async function findTrace(query: string, cwd: string): Promise<{ selected?: strin
   return { selected: exact.length === 1 ? exact[0].path : matches.length === 1 ? matches[0].path : undefined, matches };
 }
 
-function textContent(content: unknown): string {
-  if (typeof content === "string") return content.trim();
+function textContent(content: Static<typeof contentSchema> | undefined): string {
+  if (!Array.isArray(content)) return content?.trim() ?? "";
 
-  if (!Array.isArray(content)) return "";
-
-  return content.flatMap((part) => part && typeof part === "object" && (part as { type?: unknown }).type === "text" && typeof (part as { text?: unknown }).text === "string" ? [(part as { text: string }).text] : []).join("").trim();
+  return content.flatMap(part => Check(textPartSchema, part) ? [part.text] : []).join("").trim();
 }
 
 function syntheticUserMessage(text: string) {
@@ -95,7 +106,7 @@ function syntheticUserMessage(text: string) {
 }
 
 function rememberResume(entry: Entry, resumeMessages: Set<string>) {
-  if (entry.type === "custom" && entry.customType === "pi-desktop-resume" && typeof entry.data?.message === "string") resumeMessages.add(entry.data.message);
+  if (entry.type === "custom" && entry.customType === "pi-desktop-resume" && Check(resumeSchema, entry.data)) resumeMessages.add(entry.data.message);
 }
 
 function originalUserText(text: string, resumeMessages: Set<string>) {
@@ -107,20 +118,20 @@ export function cleanTrace(content: string): CleanMessage[] {
     try {
       const entry: unknown = JSON.parse(line);
 
-      return entry && typeof entry === "object" && !Array.isArray(entry) ? [entry as Entry] : [];
+      return Check(entrySchema, entry) ? [entry] : [];
     } catch { return []; }
   });
 
-  const indexed = new Map(entries.flatMap((entry) => typeof entry.id === "string" ? [[entry.id, entry] as const] : []));
+  const indexed = new Map(entries.flatMap((entry): Array<[string, Entry]> => entry.id !== undefined ? [[entry.id, entry]] : []));
   const branch: Entry[] = [];
-  let cursor = [...entries].reverse().find((entry) => typeof entry.id === "string")?.id;
+  let cursor = [...entries].reverse().find((entry) => entry.id !== undefined)?.id;
   const visited = new Set<string>();
 
   while (cursor && !visited.has(cursor)) {
     visited.add(cursor); const entry = indexed.get(cursor);
 
     if (!entry) break;
-    branch.unshift(entry); cursor = typeof entry.parentId === "string" ? entry.parentId : undefined;
+    branch.unshift(entry); cursor = entry.parentId ?? undefined;
   }
 
   const resumeMessages = new Set<string>();
@@ -128,7 +139,7 @@ export function cleanTrace(content: string): CleanMessage[] {
   return branch.flatMap((entry): CleanMessage[] => {
     rememberResume(entry, resumeMessages);
 
-    if (entry.type !== "message" || !entry.message) return [];
+    if (entry.type !== "message" || !Check(messageSchema, entry.message)) return [];
     let text = textContent(entry.message.content);
 
     if (entry.message.role === "user") text = text.replace(/^<skill(?:\s[^>]*|)>[\s\S]*?<\/skill>\s*/, "").trim();

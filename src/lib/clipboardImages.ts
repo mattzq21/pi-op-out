@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { isTauri, invoke } from "@tauri-apps/api/core";
 import { decodeBase64 } from "./base64";
 
@@ -15,7 +16,7 @@ export function pastedFiles(data: DataTransfer): File[] {
 
 export async function readClipboardImages(): Promise<File[]> {
   if (isTauri()) {
-    const image = await invoke<string | null>("read_clipboard_image");
+    const image = z.string().nullable().parse(await invoke("read_clipboard_image"));
 
     if (image) return [clipboardImageFile(image)];
   }

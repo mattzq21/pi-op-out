@@ -1,4 +1,5 @@
-import type { AppSettings, RpcEvent, SettingsChange } from "../types";
+import { appSettingsSchema, settingsChangeSchema, voidResultSchema } from "./responseSchemas";
+import type { AppSettings, RpcEvent } from "../types";
 import { preserveDaemonPreferences, saveClientSettings, withClientSettings } from "./clientSettings";
 import { keybindingsError } from "./keybindings";
 import type { NativeCall } from "./nativeCall";
@@ -25,14 +26,14 @@ export class NativeSettings {
 
   constructor(private call: NativeCall, private connection: SettingsConnection) {}
 
-  load() { return withClientSettings(this.call<AppSettings>("load_app_settings"), true); }
+  load() { return withClientSettings(this.call("load_app_settings", undefined, appSettingsSchema), true); }
 
   async loadHost() {
     const hostId = this.connection.target().hostId;
 
-    if (hostId === "local") return this.call<AppSettings>("load_app_settings");
+    if (hostId === "local") return this.call("load_app_settings", undefined, appSettingsSchema);
 
-    try { return await this.call<AppSettings>("load_host_settings", { hostId }); }
+    try { return await this.call("load_host_settings", { hostId }, appSettingsSchema); }
     catch (reason) {
       if (String(reason).includes("Command is not available on the daemon: load_host_settings")) throw new Error("The connected or selected remote Piop daemon is older than this client. Update the daemon to access remote settings.");
       throw reason;
@@ -42,7 +43,7 @@ export class NativeSettings {
   async saveHost(settings: AppSettings, agentsChanged = false) {
     const hostId = this.connection.target().hostId;
 
-    try { return await this.call<SettingsChange>("save_host_settings", { hostId, settings, agentsChanged }); }
+    try { return await this.call("save_host_settings", { hostId, settings, agentsChanged }, settingsChangeSchema); }
     catch (reason) {
       if (String(reason).includes("Command is not available on the daemon: save_host_settings")) throw new Error("The connected or selected remote Piop daemon needs updating before it can save remote settings.");
       throw reason;
@@ -61,11 +62,11 @@ export class NativeSettings {
     const shortcutError = keybindingsError(settings.keybindings);
 
     if (shortcutError) throw new Error(shortcutError);
-    const previous = await this.call<AppSettings>("load_app_settings");
+    const previous = await this.call("load_app_settings", undefined, appSettingsSchema);
     const target = this.connection.target();
     const daemonSettings = scope === "client" ? previous : preserveDaemonPreferences(settings, previous);
     const daemonChanged = JSON.stringify(daemonSettings) !== JSON.stringify(previous) || Boolean(agentHostId);
-    const change = daemonChanged ? await this.call<SettingsChange>("save_app_settings", { settings: daemonSettings, agentHostId }) : { settings: previous };
+    const change = daemonChanged ? await this.call("save_app_settings", { settings: daemonSettings, agentHostId }, settingsChangeSchema) : { settings: previous };
     await saveClientSettings(settings);
     change.settings = await withClientSettings(change.settings);
 
@@ -86,7 +87,7 @@ export class NativeSettings {
       await this.connection.disconnect();
       await this.connection.connect();
     } catch (reason) {
-      await this.call<void>("save_app_settings", { settings: previous });
+      await this.call("save_app_settings", { settings: previous }, voidResultSchema);
       this.connection.selectTarget(target);
 
       try { await this.connection.disconnect(); await this.connection.connect(); } catch { }

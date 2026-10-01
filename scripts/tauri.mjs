@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -20,8 +21,8 @@ if (args[0] === "dev") {
     const server = createServer();
     server.once("error", reject);
     server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      server.close(() => typeof address === "object" && address ? resolve(address.port) : reject(new Error("Could not allocate a development port")));
+      const address = z.object({ port: z.number().int().min(1).max(65535) }).safeParse(server.address());
+      server.close(() => address.success ? resolve(address.data.port) : reject(new Error("Could not allocate a development port")));
     });
   });
 

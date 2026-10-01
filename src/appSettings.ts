@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { settingsChangeSchema } from "./lib/responseSchemas";
 import { required } from "./lib/required";
 import type { Accessor } from "solid-js";
 import { createSignal } from "solid-js";
@@ -48,13 +50,13 @@ export function createAppSettings({ transport, runtimePool, chatSession, addNoti
       }).catch(reason => addNotice({ title: "Could not load client preferences", message: String(reason) }));
     };
 
-    const pending = listen<SettingsChange>("pi://settings-changed", ({ payload }) => {
+    const pending = listen("pi://settings-changed", ({ payload }) => {
       update(payload.settings);
-    });
+    }, settingsChangeSchema);
 
     const clientPending = listen("pi://client-settings-changed", () => { const current = pendingSettings ?? settings();
 
-    if (current) update(current); });
+    if (current) update(current); }, z.unknown());
 
     return () => { revision++; void pending.then((unlisten) => unlisten()); void clientPending.then((unlisten) => unlisten()); };
   }, () => [applyRuntimeSettings]);

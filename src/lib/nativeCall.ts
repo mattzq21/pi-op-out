@@ -1,33 +1,45 @@
 import { emit as emitNativeEvent } from "@tauri-apps/api/event";
-import type { RpcCommand, RpcEvent } from "../types";
+import { z, type JSONType } from "zod";
+import { rpcEventSchema } from "./rpcSchemas";
+import { jsonResultSchema, type NativeArguments } from "./transportSchemas";
 import { invoke } from "./platform";
 
-export type NativeCall = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
+export type NativeCall = typeof nativeCall;
 
-function responseKey(command: string, args?: Record<string, unknown>) {
-  return command === "pi_command" ? `${command}:${String((args?.command as RpcCommand)?.type)}` : command;
+const mockMetadataSchema = z.object({ error: z.string().optional(), events: z.array(rpcEventSchema).optional() }).catch({});
+
+function responseKey(command: string, args?: NativeArguments) {
+  return command === "pi_command" ? command + ":" + String(args?.command?.type) : command;
 }
 
-function mockResponse<T>(command: string, response: { error?: string; events?: RpcEvent[] }, args?: Record<string, unknown>) {
-  if (response?.error) return Promise.reject(new Error(response.error));
+async function mockResponse(command: string, response: JSONType, args?: NativeArguments) {
+  const metadata = mockMetadataSchema.parse(response);
 
-  if (command === "start_pi" && Array.isArray(response?.events)) {
-    return Promise.all(response.events.map((event: RpcEvent) => emitNativeEvent("pi://event", { runtimeId: args?.runtimeId, event })))
-      .then(() => new Promise<T>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(response as T)))));
+  if (metadata.error) throw new Error(metadata.error);
+
+  if (command === "start_pi" && metadata.events) {
+    await Promise.all(metadata.events.map(event => emitNativeEvent("pi://event", { runtimeId: args?.runtimeId, event })));
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   }
 
-  return Promise.resolve(response as T);
+  return response;
 }
 
-export const nativeCall = <T>(command: string, args?: Record<string, unknown>) => {
-  if (import.meta.env.MODE !== "e2e") return invoke<T>(command, args);
+export function nativeCall<S extends z.ZodType>(command: string, args: NativeArguments | undefined, schema: S): Promise<z.output<S>>;
+export function nativeCall(command: string, args?: NativeArguments): Promise<JSONType | undefined>;
+export async function nativeCall(command: string, args?: NativeArguments, schema: z.ZodType = jsonResultSchema) {
+  if (import.meta.env.MODE !== "e2e") return invoke(command, args, schema);
   const key = responseKey(command, args);
-  const responseField = document.querySelector<HTMLTextAreaElement>("#pi-e2e-responses"); const callField = document.querySelector<HTMLTextAreaElement>("#pi-e2e-calls");
-  const responses = JSON.parse(responseField?.value || "{}");
+  const responseField = document.querySelector<HTMLTextAreaElement>("#pi-e2e-responses");
+  const callField = document.querySelector<HTMLTextAreaElement>("#pi-e2e-calls");
+  const responses = z.record(z.string(), z.json()).parse(JSON.parse(responseField?.value || "{}"));
 
-  if (callField?.value) { const calls = JSON.parse(callField.value); calls.push({ command, args, mocked: key in responses }); callField.value = JSON.stringify(calls); }
+  if (callField?.value) {
+    const calls = z.array(z.json()).parse(JSON.parse(callField.value));
+    callField.value = JSON.stringify([...calls, { command, args, mocked: key in responses }]);
+  }
 
-  if (!(key in responses)) return invoke<T>(command, args);
+  if (!(key in responses)) return invoke(command, args, schema);
 
-  return mockResponse<T>(command, responses[key], args);
-};
+  return schema.parse(await mockResponse(command, responses[key], args));
+}

@@ -1,3 +1,4 @@
+import { projectDirectorySchema, projectFileSchema } from "./responseSchemas";
 import { invoke } from "./platform";
 import { webUrl } from "./webLinks";
 
@@ -9,11 +10,11 @@ export interface ProjectFile { path: string; content: string; revision: string; 
 
 export interface ProjectDirectory { path: string; parent: string | null; entries: Array<{ name: string; path: string; directory: boolean }>; }
 
-export const listProjectFiles = (project: FileProject, path = "") => invoke<ProjectDirectory>("list_project_files", { ...project, path });
+export const listProjectFiles = (project: FileProject, path = "") => invoke("list_project_files", { ...project, path }, projectDirectorySchema);
 
-export const readProjectFile = (project: FileProject, path: string) => invoke<ProjectFile>("read_project_file", { ...project, path });
+export const readProjectFile = (project: FileProject, path: string) => invoke("read_project_file", { ...project, path }, projectFileSchema);
 
-export const saveProjectFile = (project: FileProject, file: ProjectFile, content: string) => invoke<ProjectFile>("save_project_file", { ...project, path: file.path, content, revision: file.revision });
+export const saveProjectFile = (project: FileProject, file: ProjectFile, content: string) => invoke("save_project_file", { ...project, path: file.path, content, revision: file.revision }, projectFileSchema);
 
 function decodeFilePath(value: string) {
   let path = value.trim();

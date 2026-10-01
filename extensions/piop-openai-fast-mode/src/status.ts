@@ -68,13 +68,13 @@ export function canSetTuiStatus(ctx: StatusContext): boolean {
   if (ctx.mode !== undefined && ctx.mode !== "tui") return false;
 
   return (
-    typeof ctx.ui?.setWidget === "function" ||
-    typeof ctx.ui?.setStatus === "function"
+    ctx.ui?.setWidget !== undefined ||
+    ctx.ui?.setStatus !== undefined
   );
 }
 
 function setFastIndicator(ctx: StatusContext, text: StatusText): void {
-  if (typeof ctx.ui?.setWidget === "function") {
+  if (ctx.ui?.setWidget !== undefined) {
     ctx.ui.setStatus?.(STATUS_KEY, undefined);
     ctx.ui.setWidget(
       STATUS_KEY,

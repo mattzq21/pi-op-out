@@ -1,3 +1,4 @@
+import { agentStateSchema } from "./responseSchemas";
 import { required } from "./required";
 import { extensionUiSchema } from "./extensionUiSchema";
 import { wireMessageSchema } from "./messageSchemas";
@@ -123,7 +124,7 @@ export class SessionRuntimePool {
 
   private retainSession(transport: NativeTransport, prompt?: string, lastMessageAt?: number) {
     this.retainedTransports.add(transport);
-    void transport.command<import("../types").AgentState>({ type: "get_state" }).then((state) => {
+    void transport.command({ type: "get_state" }, agentStateSchema).then((state) => {
       if (!state.sessionId || !this.transports.has(transport)) return;
 
       if (state.sessionFile && this.removedPaths.has(`${transport.currentHostId()}:${state.sessionFile}`)) return;

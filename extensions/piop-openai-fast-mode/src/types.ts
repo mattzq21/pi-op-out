@@ -1,12 +1,14 @@
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+
 export const PACKAGE_NAME = "piop-openai-fast-mode";
 
 export const STATUS_KEY = PACKAGE_NAME;
 
 export const DEFAULT_SERVICE_TIER = "priority";
 
-export const SUPPORTED_PROVIDERS = ["openai", "openai-codex"] as const;
+export type SupportedProvider = "openai" | "openai-codex";
 
-export type SupportedProvider = (typeof SUPPORTED_PROVIDERS)[number];
+export const SUPPORTED_PROVIDERS: readonly SupportedProvider[] = ["openai", "openai-codex"];
 
 export type FastTarget = {
   provider: string;
@@ -30,3 +32,15 @@ export type ResolvedConfigPath = {
   scope: ConfigScope;
   path: string;
 };
+
+export interface FastModeRequest {
+  models?: string[]; ready?: Promise<void>; refresh?: boolean; apply?: boolean;
+  enabled?: boolean; restore?: boolean; ctx?: ExtensionContext;
+}
+
+declare module "@earendil-works/pi-coding-agent" {
+  interface EventBus {
+    on(channel: "piop:fast-mode", handler: (request: FastModeRequest) => void): () => void;
+    emit(channel: "piop:fast-mode", request: FastModeRequest): void;
+  }
+}

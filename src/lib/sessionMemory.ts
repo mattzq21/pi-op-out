@@ -260,7 +260,7 @@ export class SessionMemory {
     let revision: string | undefined;
 
     for (;;) {
-      const page = await this.transport.command<{ chunk: string; length: number; revision: string }>({ type: "get_tool_payload", toolCallId: id, offset: serialized.length, revision, limit: 2 * 1024 * 1024 });
+      const page = await this.transport.command({ type: "get_tool_payload", toolCallId: id, offset: serialized.length, revision, limit: 2 * 1024 * 1024 }, z.object({ chunk: z.string(), length: z.number(), revision: z.string() }));
 
       if (generation !== this.generation) return;
 

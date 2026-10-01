@@ -20,7 +20,7 @@ function preferences(settings: AppSettings): ClientSettings {
 }
 
 async function storedPreferences(): Promise<{ settings: StoredPreferences; persisted: boolean }> {
-  const stored = await invoke<ClientSettings | null>("load_client_settings");
+  const stored = await invoke("load_client_settings", undefined, clientSettingsSchema.nullable());
 
   if (stored) return { settings: clientSettingsSchema.parse(stored), persisted: true };
 

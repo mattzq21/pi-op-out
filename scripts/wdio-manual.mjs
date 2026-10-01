@@ -1,3 +1,4 @@
+import { z } from "zod";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { createServer } from "node:net";
@@ -22,10 +23,10 @@ const webdriverPort = await new Promise((resolve, reject) => {
   server.unref();
   server.once("error", reject);
   server.listen(0, "127.0.0.1", () => {
-    const address = server.address();
+    const address = z.object({ port: z.number().int().min(1).max(65535) }).safeParse(server.address());
     server.close((error) => {
       if (error) reject(error);
-      else if (typeof address === "object" && address) resolve(address.port);
+      else if (address.success) resolve(address.data.port);
       else reject(new Error("Could not allocate an ephemeral WebDriver port"));
     });
   });

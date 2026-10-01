@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { sessionSnapshotSchema, modelSchema, slashCommandSchema, agentStateSchema } from "./responseSchemas";
 import { ConversationChangedError } from "./conversationChanged";
 import { type Accessor, createComputed, createMemo, onCleanup, untrack } from "solid-js";
 import { createDependencyEffect, createRef } from "../lib/solid";
@@ -55,13 +57,13 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
   const loading = new AbortController();
   onCleanup(() => { owner.current = undefined; loading.abort(); });
 
-  const load = <T,>(command: Parameters<ReturnType<typeof transport>["command"]>[0]): Promise<T> => {
+  const load = <S extends z.ZodType>(command: Parameters<ReturnType<typeof transport>["command"]>[0], schema: S): Promise<z.output<S>> => {
     if (loading.signal.aborted) return Promise.reject(new ConversationChangedError());
 
-    return new Promise<T>((resolve, reject) => {
+    return new Promise<z.output<S>>((resolve, reject) => {
       const cancel = () => reject(new ConversationChangedError());
       loading.signal.addEventListener("abort", cancel, { once: true });
-      transport().command<T>(command).then(resolve, reject).finally(() => loading.signal.removeEventListener("abort", cancel));
+      transport().command(command, schema).then(resolve, reject).finally(() => loading.signal.removeEventListener("abort", cancel));
     });
   };
 
@@ -193,7 +195,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     const promise = (async () => { const capturedTransport = transport();
 
       try {
-        const { revision } = await load<{ revision: string }>({ type: "get_session_revision" });
+        const { revision } = await load({ type: "get_session_revision" }, z.object({ revision: z.string() }));
 
         if (owner.current !== capturedTransport) throw new ConversationChangedError();
 
@@ -205,13 +207,13 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
         }
 
         const request = ++capabilityRequest.current;
-        const snapshotRequest = load<SessionSnapshot>({ type: "get_snapshot" });
+        const snapshotRequest = load({ type: "get_snapshot" }, sessionSnapshotSchema);
 
         const capabilities = () => Promise.all([
-          load<{ models: Model[] }>({ type: "get_available_models" }).catch(() => undefined),
-          load<{ levels: string[] }>({ type: "get_available_thinking_levels" }).catch(() => undefined),
-          load<{ commands: SlashCommand[] }>({ type: "get_commands" }).catch(() => undefined),
-          load<{ contextUsage?: AgentState["contextUsage"] }>({ type: "get_session_stats" }).catch(() => undefined),
+          load({ type: "get_available_models" }, z.object({ models: z.array(modelSchema) })).catch(() => undefined),
+          load({ type: "get_available_thinking_levels" }, z.object({ levels: z.array(z.string()) })).catch(() => undefined),
+          load({ type: "get_commands" }, z.object({ commands: z.array(slashCommandSchema) })).catch(() => undefined),
+          load({ type: "get_session_stats" }, z.object({ contextUsage: agentStateSchema.shape["contextUsage"].optional() })).catch(() => undefined),
         ]);
 
         const snapshot = await snapshotRequest;
@@ -338,7 +340,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
     const handleAgentSettled = () => {
       session.setState((current) => ({ ...current, isStreaming: false, activity: undefined }));
       const revision = liveRevision.current;
-      void load<{ contextUsage?: AgentState["contextUsage"] }>({ type: "get_session_stats" }).then((stats) => {
+      void load({ type: "get_session_stats" }, z.object({ contextUsage: agentStateSchema.shape["contextUsage"].optional() })).then((stats) => {
         if (owner.current === transport() && revision === liveRevision.current && stats.contextUsage) session.setState((current) => ({ ...current, contextUsage: stats.contextUsage }));
       }).catch(() => undefined);
     };

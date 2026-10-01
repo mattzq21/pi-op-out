@@ -1,3 +1,4 @@
+import { sessionGroupsSchema } from "./responseSchemas";
 import { type Accessor, createMemo, createSignal } from "solid-js";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
@@ -162,7 +163,7 @@ export function useSessionGroups(sessions: Accessor<SessionSummary[]>) {
     const listener = (value: SessionGroups) => { setState(value); setError(undefined); };
 
     listeners.add(listener);
-    const stop = listen<SessionGroups>("pi://groups-changed", ({ payload }) => { eventRevision++; publish(payload); });
+    const stop = listen("pi://groups-changed", ({ payload }) => { eventRevision++; publish(payload); }, sessionGroupsSchema);
 
     return () => { mounted.current = false; listeners.delete(listener); void stop.then((unlisten) => unlisten()); };
   }, () => []);

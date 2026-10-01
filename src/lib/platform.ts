@@ -4,6 +4,8 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { Browser } from "@capacitor/browser";
 import { registerPlugin } from "@capacitor/core";
 import { remoteClient } from "./remoteClient";
+import { z, type JSONType } from "zod";
+import { jsonResultSchema, nativeArgumentsSchema, type NativeArguments } from "./transportSchemas";
 
 export type { UnlistenFn };
 
@@ -23,28 +25,32 @@ const conversationClientId = (() => {
   return fresh;
 })();
 
-export const listen = <T>(event: string, handler: EventCallback<T>): Promise<UnlistenFn> => isMobile ? remoteClient.listen(event, handler) : nativeListen(event, handler, { target: { kind: "WebviewWindow", label: getCurrentWebviewWindow().label } });
+export const listen = <S extends z.ZodType>(event: string, handler: EventCallback<z.output<S>>, schema: S): Promise<UnlistenFn> => isMobile ? remoteClient.listen(event, handler, schema) : nativeListen(event, value => handler({ ...value, payload: schema.parse(value.payload) }), { target: { kind: "WebviewWindow", label: getCurrentWebviewWindow().label } });
 
-export function invoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  args = { ...args, clientId: conversationClientId };
+export function invoke<S extends z.ZodType>(command: string, args: NativeArguments | undefined, schema: S): Promise<z.output<S>>;
+export function invoke(command: string, args?: NativeArguments): Promise<JSONType | undefined>;
+export async function invoke(command: string, args?: NativeArguments, schema: z.ZodType = jsonResultSchema) {
+  args = nativeArgumentsSchema.parse({ ...args, clientId: conversationClientId });
 
   if (!isMobile) {
     const local = ["load_client_settings", "save_client_settings", "new_window", "open_external_url", "open_project_directory", "open_rollout_file", "read_dropped_file"];
 
-    return local.includes(command) ? nativeInvoke<T>(command, args) : nativeInvoke<T>("daemon_invoke", { command, args });
+    const response = await (local.includes(command) ? nativeInvoke(command, args) : nativeInvoke("daemon_invoke", { command, args }));
+
+    return schema.parse(response);
   }
 
-  if (command === "load_client_settings") return clientPreferences.load().then(result => result.settings as T);
+  if (command === "load_client_settings") return clientPreferences.load().then(result => schema.parse(result.settings));
 
-  if (command === "save_client_settings") return clientPreferences.save({ settings: args.settings }).then(() => undefined as T);
+  if (command === "save_client_settings") return clientPreferences.save({ settings: args.settings }).then(() => schema.parse(undefined));
 
   if (command === "open_external_url") {
     const url = String(args?.url);
 
     if (!/^https?:\/\//i.test(url)) return Promise.reject(new Error("Only HTTP and HTTPS links can be opened."));
 
-    return Browser.open({ url }).then(() => undefined as T);
+    return Browser.open({ url }).then(() => schema.parse(undefined));
   }
 
-  return remoteClient.invoke<T>(command, args);
+  return remoteClient.invoke(command, args, schema);
 }

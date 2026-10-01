@@ -1,7 +1,9 @@
+import { z } from "zod";
+import { entrySchema } from "./lib/responseSchemas";
 import type { Accessor, Setter } from "solid-js";
 import type { WorktreeTarget } from "./appSupport";
 import { textOf } from "./lib/content";
-import { branchMessages, type PiEntry } from "./lib/messages";
+import { branchMessages } from "./lib/messages";
 import type { NativeTransport } from "./lib/nativeTransport";
 import type { SessionRuntimePool } from "./lib/sessionRuntimePool";
 import { inheritSessionGroup } from "./lib/sessionGroups";
@@ -24,7 +26,7 @@ type WorktreeContext = {
 async function sourceSession(target: WorktreeTarget) {
   const sourcePath = target.transport.currentSessionPath();
   const parent = (await target.transport.listSessions()).find((session) => session.path === sourcePath && (session.hostId ?? "local") === target.hostId);
-  const parentId = parent?.id ?? (await target.transport.command<{ sessionId: string }>({ type: "get_state" })).sessionId;
+  const parentId = parent?.id ?? (await target.transport.command({ type: "get_state" }, z.object({ sessionId: z.string() }))).sessionId;
   const projectRoot = parent?.projectRoot ?? parent?.cwd ?? target.cwd;
 
   return { parent, parentId, projectRoot };
@@ -60,7 +62,7 @@ export function createWorktreeActions(context: WorktreeContext) {
     const sourceMessage = target.message;
     const owner = target.transport;
     const beforePrompt = sourceMessage.role === "user";
-    const history = await owner.command<{ entries: PiEntry[]; leafId: string | null }>({ type: "get_entries" });
+    const history = await owner.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) }));
     const messages = branchMessages(history.entries, history.leafId);
     const message = messages.find((message) => message.role === sourceMessage.role && (sourceMessage.entryId ? message.entryId === sourceMessage.entryId : message.timestamp === sourceMessage.timestamp && textOf(message.content) === textOf(sourceMessage.content)));
 
@@ -68,7 +70,7 @@ export function createWorktreeActions(context: WorktreeContext) {
     const sourcePath = owner.currentSessionPath();
     const { parent, parentId, projectRoot } = await sourceSession(target);
     const sourceDiffs = await capturedRuntimePool.captureMemoryDiffs(owner);
-    const result = await owner.command<{ branch: string; path: string; sessionPath: string; sessionId: string }>({ type: "branch_checkpoint", entryId: message.entryId, name, afterResponse: !beforePrompt });
+    const result = await owner.command({ type: "branch_checkpoint", entryId: message.entryId, name, afterResponse: !beforePrompt }, z.object({ branch: z.string(), path: z.string(), sessionPath: z.string(), sessionId: z.string() }));
     await inheritSessionGroup(`${target.hostId}:${parentId}`, `${target.hostId}:${result.sessionId}`, parent);
     await setup(result.path);
     setWorktreeTarget(undefined);

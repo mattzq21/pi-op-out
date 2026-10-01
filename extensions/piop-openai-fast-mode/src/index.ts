@@ -1,4 +1,5 @@
 import { dirname } from "node:path";
+import { z } from "zod";
 import { fileURLToPath } from "node:url";
 import type {
   ExtensionAPI,
@@ -26,17 +27,22 @@ const DEFAULT_EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
 type SessionContext = Pick<ExtensionContext, "sessionManager">;
 
+const sessionValueSchema = z.object({
+  fastModeOverride: z.boolean().optional(), enabled: z.boolean().optional(),
+  snapshot: z.object({ definition: z.object({ fastMode: z.boolean().optional() }).optional() }).optional(),
+}).catch({});
+
 function savedSessionValue(ctx: SessionContext): boolean | undefined {
   for (const entry of [...ctx.sessionManager.getBranch()].reverse()) {
     if (entry.type !== "custom") continue;
-    const data = entry.data as { fastModeOverride?: boolean; enabled?: boolean; snapshot?: { definition?: { fastMode?: boolean } } };
+    const data = sessionValueSchema.parse(entry.data);
 
     if (entry.customType === "piop-fast-mode-state") return data.enabled;
 
     if (entry.customType === "pi-define-agents-state") {
       const enabled = data.fastModeOverride ?? data.snapshot?.definition?.fastMode;
 
-      if (typeof enabled === "boolean") return enabled;
+      if (enabled !== undefined) return enabled;
     }
   }
 }
@@ -66,12 +72,13 @@ export function createPiFastModeExtension(
     let loading: Promise<void> | undefined;
     const discover = createFastModeDiscovery();
     const effectiveConfig = () => ({ ...config, enabled: agentEnabled ?? config.enabled });
-    pi.events.on("piop:fast-mode", (value: unknown) => {
-      const request = value as { models?: string[]; ready?: Promise<void>; refresh?: boolean; apply?: boolean; enabled?: boolean; restore?: boolean; ctx?: ExtensionContext };
+    pi.events.on("piop:fast-mode", request => {
       request.models = config.targets.map((target) => `${target.provider}/${target.model}`);
 
-      if (request.refresh && request.ctx) request.ready = ensureLoaded(request.ctx).then(async () => {
-        await refreshTargets(request.ctx!);
+      const requestContext = request.ctx;
+
+      if (request.refresh && requestContext) request.ready = ensureLoaded(requestContext).then(async () => {
+        await refreshTargets(requestContext);
         request.models = config.targets.map((target) => `${target.provider}/${target.model}`);
       });
 
