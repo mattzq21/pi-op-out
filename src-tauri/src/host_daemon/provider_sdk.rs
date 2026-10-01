@@ -68,8 +68,9 @@ impl Sdk {
             return Ok(connection.clone());
         }
         let source = format!(
-            "{}\n{}",
+            "{}\n{}\n{}",
             include_str!("../../resources/provider-accounts.bundle.mjs"),
+            include_str!("../../resources/fast-capabilities.mjs"),
             include_str!("../../resources/provider-sdk.mjs")
         );
         let mut child = Command::new("node")

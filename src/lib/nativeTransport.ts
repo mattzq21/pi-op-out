@@ -76,6 +76,7 @@ export const loadStorageReport = async (hostId?: string) => {
 };
 
 export const deleteArchivedConversation = (sessionPath: string, hostId = "local") => call("delete_archived_session", { sessionPath, hostId }, z.array(z.string()));
+
 export const deleteArchivedConversations = (sessionPaths: string[], hostId = "local") => call("delete_archived_session", { sessionPath: sessionPaths[0], sessionPaths, hostId }, z.array(z.string()));
 
 export const restoreArchivedConversation = (sessionPath: string, hostId = "local") => call("restore_archived_session", { sessionPath, hostId }, voidResultSchema);

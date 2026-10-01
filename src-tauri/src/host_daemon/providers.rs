@@ -14,7 +14,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::{watch, Mutex as AsyncMutex};
+use tokio::sync::{watch, Mutex as AsyncMutex, OnceCell};
 use uuid::Uuid;
 
 struct Flow {
@@ -91,6 +91,7 @@ pub(super) struct ProviderService {
     runtime: AsyncMutex<Option<RuntimeInfo>>,
     checking: AsyncMutex<()>,
     catalogs: AsyncMutex<()>,
+    fast_capabilities: OnceCell<Result<Value>>,
     revision: AtomicU64,
     shutdown: watch::Sender<bool>,
 }
@@ -115,6 +116,7 @@ impl ProviderService {
             runtime: AsyncMutex::new(None),
             checking: AsyncMutex::new(()),
             catalogs: AsyncMutex::new(()),
+            fast_capabilities: OnceCell::new(),
             revision: AtomicU64::new(0),
             shutdown,
         })
@@ -125,6 +127,7 @@ impl ProviderService {
         let service = self.clone();
         let mut stopped = self.shutdown.subscribe();
         tokio::spawn(async move {
+            let _ = service.fast_capabilities().await;
             loop {
                 tokio::select! {
                     _ = async { let _ = stopped.wait_for(|stop| *stop).await; } => break,
@@ -132,6 +135,13 @@ impl ProviderService {
                 }
             }
         });
+    }
+
+    async fn fast_capabilities(&self) -> Result<Value> {
+        self.fast_capabilities
+            .get_or_init(|| self.sdk.request(json!({"method":"fast_capabilities"})))
+            .await
+            .clone()
     }
 
     fn state(&self) -> MutexGuard<'_, AuthState> {
@@ -198,6 +208,7 @@ impl ProviderService {
             return Err("Login owner is missing".into());
         }
         match request["action"].as_str() {
+            Some("fast_capabilities") => return self.fast_capabilities().await,
             Some("list") => return self.listing(flag(&request, "refreshModels")).await,
             Some("begin") => return self.begin(owner, request).await,
             Some("logout") => return self.logout(&text(&request, "providerId")).await,

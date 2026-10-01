@@ -85,15 +85,12 @@ function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; e
   const toolInput = createMemo(() => componentProps.message.toolInput);
   const input = createMemo(() => toolInputLines(z.json().optional().catch(undefined).parse(toolInput())));
   const output = createMemo(() => (textOf(componentProps.message.content)));
-  const runs = createMemo(() => componentProps.message.toolName === "subagent" ? subagentRuns(componentProps.message.details) : []);
   const needsLoad = () => !componentProps.loading && !componentProps.error && componentProps.message.deferredToolPayload && !componentProps.message.toolPayloadLoaded;
 
   return <>
-    {runs().length > 0 ? <SubagentResults runs={runs()} /> : <>
       {input() !== undefined && <div class="tool-payload"><div class="tool-payload-label">In</div><div class="tool-input" aria-label="Tool arguments"><pre>{(input())}</pre></div></div>}
       {output() && <div class="tool-payload"><div class="tool-payload-label">Out</div><div class="tool-output" aria-label="Tool output"><pre>{output()}</pre></div></div>}
       {componentProps.message.nestedCalls && <div class="tool-payload"><div class="tool-payload-label">Nested calls</div><div class="tool-output" aria-label="Nested tool calls"><pre>{JSON.stringify(componentProps.message.nestedCalls, null, 2)}</pre></div></div>}
-    </>}
     {componentProps.loading && <div role="status">Loading tool input and output…</div>}
     {componentProps.error && <div role="alert">{(componentProps.error)} <button onClick={componentProps.retry}>Retry</button></div>}
     {Array.isArray(componentProps.message.content) && <Index each={componentProps.message.content.filter((part) => part.type === "image")}>{(part) => part().type === "image" && part().data && /^image\/(png|jpeg|gif|webp)$/.test(part().mimeType ?? "") ? <ZoomableImage src={`data:${part().mimeType};base64,${part().data}`} alt="Tool result" /> : null}</Index>}
@@ -102,12 +99,14 @@ function ToolPayload(componentProps: { message: ChatMessage; loading: boolean; e
 }
 
 function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug">) {
+  const isSubagent = () => componentProps.message.toolName === "subagent";
+  const runs = createMemo(() => componentProps.message.toolName === "subagent" ? subagentRuns(componentProps.message.details) : []);
   const [open, setOpen] = createSignal(false);
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string>();
   const [retry, setRetry] = createSignal(0);
   createDependencyEffect(() => {
-    if (!open()) return;
+    if (!open() && !isSubagent()) return;
     let active = true; let pending = false;
     let failed: { version?: number } | undefined;
 
@@ -126,14 +125,17 @@ function ToolResult(componentProps: Pick<Props, "message" | "toolCount" | "debug
     refresh(); const timer = setInterval(refresh, 300);
 
     return () => { active = false; clearInterval(timer); };
-  }, () => [open(), retry()]);
+  }, () => [open(), retry(), isSubagent()]);
   const status = createMemo(() => (componentProps.message.toolStatus ?? "done"));
   const label = createMemo(() => (<ToolLabel message={componentProps.message} toolCount={componentProps.toolCount ?? 1} status={status()} />));
 
-  return <>{!componentProps.debug && componentProps.message.toolName !== "subagent" ? (<div class={`tool-event ${status()}`}><div class="tool-summary">{label()}</div></div>) : (<details class={`tool-event ${status()}`} open={open()} onToggle={(event) => setOpen(event.currentTarget.open)}>
+  return <>{!componentProps.debug && !isSubagent() ? (<div class={`tool-event ${status()}`}><div class="tool-summary">{label()}</div></div>) : (<details class={`tool-event ${status()}`} open={open()} onToggle={(event) => setOpen(event.currentTarget.open)}>
     <summary class="tool-summary">{label()}<ChevronRight size={12} class="tool-chevron" aria-hidden="true" /></summary>
     {open() && <ToolPayload message={componentProps.message} loading={loading()} error={error()} retry={() => setRetry((value) => value + 1)} />}
-  </details>)}</>;
+  </details>)}
+    {runs().length > 0 && <SubagentResults runs={runs()} />}
+    {isSubagent() && !open() && error() && <div role="alert">{error()} <button type="button" onClick={() => setRetry(value => value + 1)}>Retry</button></div>}
+  </>;
 }
 
 export function Message(componentProps: Props) {

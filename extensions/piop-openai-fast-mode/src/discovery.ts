@@ -10,6 +10,8 @@ type Catalog = Map<string, boolean>;
 
 type CachedCatalog = { expires: number; pending: Promise<Catalog> };
 
+const FAST_CATALOG_CLIENT_VERSION = "0.159.3";
+
 const tiersSchema = z.array(z.object({ id: z.string().optional() }).catch({})).nullish().catch(undefined);
 
 const speedsSchema = z.array(z.string().catch("")).nullish().catch(undefined);
@@ -54,10 +56,10 @@ function catalogUrl(model: Model, baseUrl = model.baseUrl): URL {
 
   if (model.api === "openai-codex-responses") {
     if (!path.endsWith("/codex")) path += "/codex";
-    url.searchParams.set("client_version", "0.142.2");
   }
 
   url.pathname = `${path}/models`;
+  url.searchParams.set("client_version", FAST_CATALOG_CLIENT_VERSION);
 
   return url;
 }
@@ -94,8 +96,35 @@ function requestHeaders(model: Model, apiKey: string | undefined, extra: Record<
 
 export function createFastModeDiscovery() {
   const cache = new Map<string, CachedCatalog>();
+  let daemonCatalog: Promise<z.infer<typeof daemonCatalogSchema> | undefined> | undefined;
+  const daemonCatalogSchema = z.array(z.object({ provider: z.string(), model: z.string(), supported: z.boolean() }));
+
+  async function startupCatalog(model: Model): Promise<Catalog | undefined> {
+    const broker = process.env.PI_DESKTOP_BROKER_URL;
+    const token = process.env.PI_DESKTOP_BROKER_TOKEN;
+
+    if (!broker || !token) return undefined;
+    daemonCatalog ??= fetch(`${broker}/fast-capabilities`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ hostId: process.env.PI_DESKTOP_HOST_ID || "local" }), signal: AbortSignal.timeout(30_000),
+    }).then(async response => {
+      if (!response.ok) throw new Error("Fast mode startup catalog unavailable");
+      const body = z.object({ data: z.object({ clientVersion: z.literal(FAST_CATALOG_CLIENT_VERSION), models: daemonCatalogSchema }) }).parse(await response.json());
+
+      return body.data.models;
+    }).catch(() => undefined);
+    const entries = await daemonCatalog;
+
+    if (!entries) return undefined;
+
+    return new Map(entries.filter(entry => entry.provider === model.provider).map(entry => [entry.model, entry.supported]));
+  }
 
   async function catalog(ctx: ExtensionContext, model: Model): Promise<Catalog> {
+    const startup = await startupCatalog(model);
+
+    if (startup) return startup;
+
     try {
       const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
 
@@ -111,7 +140,7 @@ export function createFastModeDiscovery() {
       for (const [key, entry] of cache) if (entry.expires <= Date.now()) cache.delete(key);
 
       const entry: CachedCatalog = {
-        expires: Date.now() + 300_000,
+        expires: process.env.PI_DESKTOP_BROKER_URL ? Infinity : Date.now() + 300_000,
         pending: fetch(url, { headers, signal: AbortSignal.timeout(5_000), redirect: "error" })
           .then(async response => {
             if (!response.ok) throw new Error("Model catalog unavailable");

@@ -174,6 +174,11 @@ fn enqueue_broker_message(app: AppHandle, broker: BrokerRuntime, stream: TcpStre
 
 fn respond_broker_request(app: AppHandle, broker: BrokerRuntime, stream: TcpStream, method: &str, path: &str, body: Vec<u8>) -> Result<(), String> {
     let result = match (method, path) {
+        ("POST", "/fast-capabilities") => (|| {
+            let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid Fast mode capability request")?;
+            let host_id = value["hostId"].as_str().ok_or("hostId is required")?;
+            crate::provider_auth::for_owner(app.clone(), "fast-mode-discovery".into(), Some(host_id.into()), json!({"action":"fast_capabilities"}))
+        })(),
         ("POST", "/terminals") => (|| {
             let value: Value = serde_json::from_slice(&body).map_err(|_| "Invalid terminal lookup request")?;
             let host_id = value["hostId"].as_str().ok_or("hostId is required")?;
