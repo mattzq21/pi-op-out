@@ -3,6 +3,7 @@ import type { SessionSummary } from "../types";
 
 export interface MissingDirectoryRequest {
   session: SessionSummary;
+  inspect: () => Promise<{ canRecoverRemote: boolean }>;
   recover: (action: "remote" | "empty", repository: string, branch: string) => Promise<void | { missingFields: string[] }>;
   cancel: () => void;
 }
@@ -15,7 +16,11 @@ export function MissingDirectoryDialog(props: { request: MissingDirectoryRequest
   const [remoteFailed, setRemoteFailed] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
-  onMount(() => dialog.showModal());
+  const [canRecoverRemote, setCanRecoverRemote] = createSignal(false);
+  onMount(() => {
+    dialog.showModal();
+    void props.request.inspect().then(result => setCanRecoverRemote(result.canRecoverRemote)).catch(reason => setError(reason instanceof Error ? reason.message : String(reason)));
+  });
 
   const recover = async (action: "remote" | "empty") => {
     if (busy()) return;
@@ -39,12 +44,12 @@ export function MissingDirectoryDialog(props: { request: MissingDirectoryRequest
     <h2 id="missing-directory-title">Working directory is missing</h2>
     <p>“{props.request.session.name}” has not been loaded. Choose how to recover its working directory.</p>
     <code class="missing-directory-path">{props.request.session.cwd}</code>
-    <p>Recover a branch from its remote into a new workdir, or continue in an empty directory under /tmp on this session’s machine.</p>
+    <p>{canRecoverRemote() ? "Recover a branch from its remote into a new workdir, or continue in an empty directory under /tmp on this session’s machine." : "Continue in an empty directory under /tmp on this session’s machine."}</p>
     {fields().includes("repository") && <label class="field"><span>Remote repository URL or existing local checkout</span><input value={repository()} disabled={busy()} onInput={(event) => setRepository(event.currentTarget.value)} /></label>}
     {fields().includes("branch") && <label class="field"><span>Branch</span><input value={branch()} disabled={busy()} onInput={(event) => setBranch(event.currentTarget.value)} /></label>}
     {error() && <p class="dialog-error" role="alert">{error()}</p>}
     {remoteFailed() && fields().length < 2 && <button disabled={busy()} onClick={() => setFields(["repository", "branch"])}>Edit recovery details</button>}
     {busy() && <p role="status">Recovering working directory…</p>}
-    <div class="dialog-actions"><button disabled={busy()} onClick={props.request.cancel}>Cancel</button><button disabled={busy()} onClick={() => void recover("empty")}>Create empty workdir</button><button class="primary-button" disabled={busy()} onClick={() => void recover("remote")}>Recover remote branch</button></div>
+    <div class="dialog-actions"><button disabled={busy()} onClick={props.request.cancel}>Cancel</button><button disabled={busy()} onClick={() => void recover("empty")}>Create empty workdir</button>{canRecoverRemote() && <button class="primary-button" disabled={busy()} onClick={() => void recover("remote")}>Recover remote branch</button>}</div>
   </dialog>;
 }

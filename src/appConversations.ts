@@ -718,7 +718,7 @@ export function createAppConversations(preloadChat: () => void) {
     let relocated: SessionSummary | undefined;
     const cancel = () => { dirlessPending.delete(key); setMissingDirectoryDialog(undefined); };
 
-    setMissingDirectoryDialog({ session, cancel, recover: async (mode, repository, branch) => {
+    setMissingDirectoryDialog({ session, cancel, inspect: () => client.inspectMissingSession(session.path, hostId), recover: async (mode, repository, branch) => {
         if (!relocated) {
           const result = await client.recoverMissingSession(session.path, mode, repository, branch, hostId);
 

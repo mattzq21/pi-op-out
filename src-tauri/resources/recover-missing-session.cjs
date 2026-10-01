@@ -15,6 +15,13 @@ catch (error) { if (error.code !== 'ENOENT') throw error; }
 
 const git = (args) => execFileSync('git', args, { encoding: 'utf8', timeout: 120000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
+if (request.action === 'inspect') {
+  const registryRequest = { action: 'get', sessionId: header.id, root: path.join(require('node:os').homedir(), request.storage) };
+  const saved = JSON.parse(execFileSync(process.execPath, ['-e', process.argv[3], JSON.stringify(registryRequest)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 15000 }));
+  process.stdout.write(JSON.stringify({ canRecoverRemote: Boolean(saved?.remote_url && saved?.upstream_branch) }));
+  process.exit(0);
+}
+
 let directory;
 
 let container;
