@@ -368,37 +368,26 @@ export function createAppConversations(preloadChat: () => void) {
 
   const conversationBusy = () => chatSession().state.isStreaming || chatSession().state.isPausing || chatSession().state.pendingMessageCount;
 
-  const forkAndForget = async (message: ChatMessage, restoreWorktree = false) => { const capturedTransport = transport(); const capturedSession = { ...chatSession() };
-    const ownerTransport = capturedTransport; const ownerKey = activeConversationKeyRef.current;
-    const entryId = message.entryId;
-
-    if (!entryId) { addNotice({ title: "Could not fork and forget", message: "Could not find the selected assistant response" });
-
-      return; }
-
-    const pendingKey = `${ownerKey}:forget:${entryId}`;
-
+  const forkAndForget = async (message: ChatMessage, withWorktree = false) => {
+    const owner = transport();
+    const sourcePath = owner.currentSessionPath();
+    const hostId = owner.currentHostId();
+    const source = sessions().find(item => item.path === sourcePath && (item.hostId ?? "local") === hostId);
+    const pendingKey = `${activeConversationKeyRef.current}:forget`;
     if (branchPending.current.has(pendingKey)) return;
     branchPending.current.add(pendingKey);
-
     try {
+      if (!source) throw new Error("Could not find the original saved conversation");
       if (conversationBusy()) throw new Error("Wait for the current response and queued messages to finish first");
-      const result = await ownerTransport.command({ type: restoreWorktree ? "rollback_and_forget" : "fork_and_forget", entryId }, z.object({ cancelled: z.boolean().optional() }));
-
-      if (result.cancelled) return;
-
-      const [nextState, history] = await Promise.all([
-        ownerTransport.command({ type: "get_state" }, agentStateSchema),
-        ownerTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) })),
-      ]);
-
-      if (activeTransportRef.current === ownerTransport && activeConversationKeyRef.current === ownerKey) {
-        capturedSession.discardPendingUpdates(); capturedSession.setState(nextState); capturedSession.setMessages(branchMessages(history.entries, history.leafId));
-      }
-
-      void syncSessionIndex();
-    } catch (reason) { addNotice({ title: "Could not fork and forget", message: reason instanceof Error ? reason.message : String(reason) }); }
-    finally { branchPending.current.delete(pendingKey); }
+      if (withWorktree) {
+        if (source.projectKind !== "worktree") throw new Error("Branch and forget is only available in linked worktrees");
+        await createWorktree({ cwd: source.cwd, hostId, message, transport: owner }, crypto.randomUUID().slice(0, 8));
+      } else if (!await branchConversation()(message)) return;
+      await archives.archiveSession(source, false);
+      await syncSessionIndex();
+    } catch (reason) {
+      addNotice({ title: "Could not copy and archive conversation", message: reason instanceof Error ? reason.message : String(reason) });
+    } finally { branchPending.current.delete(pendingKey); }
   };
 
   const canStartNewSession = () => !newSessionPending.current && canLeaveSettings();
@@ -745,6 +734,6 @@ export function createAppConversations(preloadChat: () => void) {
       } });
   };
 
- return { isArchiving: archives.isPending, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, gitDiffs, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, activeHostId, isGitRepository, codexUsage, usageClock, opencodeGoBadge, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, widgets, renameSession, setRenameSession, projectOpen, setProjectOpen, worktreeTarget, setWorktreeTarget, projectOpenRef, uploadsByTransport, setComposerDraft, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalSessionId, terminalLocationState, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToReview, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, createWorktree, deleteWorktree, branch, forkAndForget, startNewSession, newSession, clearChatProject, selectSession, setModel, setThinking, abortInteraction, pauseInteraction, resumeInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, reconnectMain, extensionStateIsCurrent, activeDialog, questionContext, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets };
+ return { archiveReplacedSession: (session: SessionSummary) => archives.archiveSession(session, false), isArchiving: archives.isPending, missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, gitDiffs, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, activeHostId, isGitRepository, codexUsage, usageClock, opencodeGoBadge, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, widgets, renameSession, setRenameSession, projectOpen, setProjectOpen, worktreeTarget, setWorktreeTarget, projectOpenRef, uploadsByTransport, setComposerDraft, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalSessionId, terminalLocationState, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToReview, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, createWorktree, deleteWorktree, branch, forkAndForget, startNewSession, newSession, clearChatProject, selectSession, setModel, setThinking, abortInteraction, pauseInteraction, resumeInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, reconnectMain, extensionStateIsCurrent, activeDialog, questionContext, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets };
 
 }

@@ -51,7 +51,7 @@ impl Session {
         }
         if matches!(
             kind(&command),
-            "set_model" | "set_thinking_level" | "set_session_name" | "fork_and_forget" | "rollback_and_forget" | "runtime_settings"
+            "set_model" | "set_thinking_level" | "set_session_name" | "fork_and_forget" | "runtime_settings"
         ) {
             self.publish(json!({"type":"session_info_changed"}), None);
         }

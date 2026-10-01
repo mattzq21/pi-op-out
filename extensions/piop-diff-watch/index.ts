@@ -1,5 +1,4 @@
 import { GitError, runGit } from "./git.ts";
-import { rollbackRequestSchema } from "./schemas.ts";
 import { fileErrorSchema, sessionHeaderSchema, copiedSnapshotSchema, checkpointSchema, responseIdsSchema, responseCommitSchema, resumeSchema, branchRequestSchema, requestIdSchema, queuedContextSchema, type PromptCheckpoint } from "./schemas.ts";
 import { Check } from "typebox/value";
 import { lstat, mkdir, mkdtemp, open, realpath, rm, rmdir, writeFile } from "node:fs/promises";
@@ -574,71 +573,6 @@ export default function diffWatch(pi: ExtensionAPI) {
     return snapshotQueue;
   });
 
-  pi.registerCommand("pi-desktop-rollback-and-forget", {
-    description: "Continue this session after a response and restore its worktree checkpoint",
-    async handler(args, ctx) {
-      let id: string | undefined;
-      try {
-        const request = JSON.parse(args);
-        id = Check(requestIdSchema, request) ? request.id : undefined;
-        if (ctx.mode !== "rpc" || !Check(rollbackRequestSchema, request)) throw new Error("Invalid rollback request");
-        const operation = snapshotQueue.then(async () => {
-          if (!ctx.isIdle()) throw new Error("Wait for the current response and queued messages to finish first");
-          const root = await repositoryRoot(ctx.cwd);
-          if (!root) throw new Error("Worktree rollback requires a Git repository");
-          validateBranchMessage(ctx.sessionManager.getBranch(request.entryId), request.entryId, true);
-          const owner = ctx.sessionManager.getSessionId();
-          const previousLeaf = ctx.sessionManager.getLeafId();
-          const checkpoint = await responseCheckpoint(ctx, root, request.entryId, owner);
-          await assertSnapshotCommitSafe(root);
-          const head = await resolveRef(root, "HEAD");
-          if (!head) throw new Error("The repository has no current commit");
-          const index = (await runGit(root, ["write-tree"])).trim();
-          const saved = await worktreeTree(root);
-          const recoveryRef = `${REF_ROOT}/recovery/${safeSessionId(owner)}/${randomUUID()}`;
-          let changed = false;
-          const restore = async () => {
-            await runGit(root, ["reset", "--hard", head]);
-            await runGit(root, ["read-tree", "--reset", "-u", saved.tree]);
-            await runGit(root, ["read-tree", index]);
-            if (previousLeaf && ctx.sessionManager.getLeafId() !== previousLeaf) {
-              const restored = await ctx.navigateTree(previousLeaf);
-              if (restored.cancelled) throw new Error("Restoring the original conversation was cancelled");
-            }
-            changed = false;
-          };
-          try {
-            await runGit(root, ["update-ref", recoveryRef, saved.tree]);
-            await runGit(root, ["update-ref", `${recoveryRef}-index`, index]);
-            await runGit(root, ["update-ref", `${recoveryRef}-head`, head]);
-            changed = true;
-            await runGit(root, ["read-tree", saved.tree]);
-            await runGit(root, ["reset", "--hard", checkpoint.commit]);
-            const result = await ctx.navigateTree(request.entryId);
-            if (result.cancelled) { await restore(); return result; }
-            const timestamp = new Date().toISOString();
-            const ref = `${sessionRefPrefix(owner)}${snapshotName(timestamp, checkpoint.commit)}`;
-            await runGit(root, ["update-ref", ref, checkpoint.commit]);
-            pi.appendEntry(SNAPSHOT_ENTRY, { version: 1, repositoryRoot: root, ref, commit: checkpoint.commit, capturedAt: timestamp, responseEntryIds: [request.entryId] });
-            pi.appendEntry("pi-desktop-fork-and-forget", { entryId: request.entryId, recoveryRef });
-            return result;
-          } catch (error) {
-            if (changed) {
-              try { await restore(); }
-              catch (recoveryError) { throw new Error(`${String(error)}; recovery failed: ${String(recoveryError)}. Saved worktree: ${recoveryRef}`); }
-            }
-            throw error;
-          } finally { await saved.cleanup(); }
-        });
-        snapshotQueue = operation.then(() => undefined, () => undefined);
-        const data = await operation;
-        ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id, success: true, data })}`);
-      } catch (error) {
-        if (id) ctx.ui.setStatus("pi-desktop-control-response", `json:${JSON.stringify({ type: "response", id, success: false, error: error instanceof Error ? error.message : String(error) })}`);
-        else reportError(ctx, error);
-      }
-    },
-  });
 
   pi.registerCommand("pi-desktop-branch-checkpoint", {
     description: "Create a worktree and conversation from a retained checkpoint",
