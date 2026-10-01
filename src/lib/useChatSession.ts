@@ -304,7 +304,7 @@ function createChatSession(transport: Accessor<Pick<NativeTransport, "command" |
 
           if (context.userTimestamp !== undefined) {
             liveRevision.current += 1;
-            session.setMessages((current) => current.map((message) => message.role === "user" && message.timestamp === context.userTimestamp && !message.promptContext ? { ...message, promptContext: context } : message));
+            session.setMessages((current) => current.map((message) => message.role === "user" && message.timestamp === context.userTimestamp && (!message.promptContext || (message.promptContext.inputTokens === undefined && context.inputTokens !== undefined)) ? { ...message, promptContext: context } : message));
           }
         } catch { }
       }

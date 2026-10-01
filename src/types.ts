@@ -29,6 +29,7 @@ export interface ChatMessage { contextCheckpoint?: boolean; }
 export interface ContextUsage { tokens: number | null; contextWindow: number; percent: number | null; }
 
 export interface PromptContextInfo {
+  inputTokens?: number;
   userTimestamp?: number;
   systemPrompt: string;
   instructions: Array<{ path: string; content: string }>;

@@ -444,6 +444,9 @@ function ConversationTurn(componentProps: ConversationTurnProps) {
   const retryPrompt = createMemo(() => (retryTurn()?.prompt));
   const retryImages = createMemo(() => (retryAttachments(retryTurn())));
   const firstResponseInputTokens = createMemo(() => {
+    const earlyTokens = componentProps.promptContexts[0]?.inputTokens;
+
+    if (earlyTokens !== undefined) return earlyTokens;
     const response = componentProps.messages.find(message => message.role === "assistant");
 
     return cacheHitStats(response?.usage)?.promptTokens;
