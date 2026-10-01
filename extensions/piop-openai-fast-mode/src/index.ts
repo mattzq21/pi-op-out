@@ -1,4 +1,5 @@
 import { dirname } from "node:path";
+import { z } from "zod";
 import { fileURLToPath } from "node:url";
 import type {
   ExtensionAPI,
@@ -23,26 +24,35 @@ export type FastModeExtensionOptions = {
 };
 
 const DEFAULT_EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
+
 type SessionContext = Pick<ExtensionContext, "sessionManager">;
+
+const sessionValueSchema = z.object({
+  fastModeOverride: z.boolean().optional(), enabled: z.boolean().optional(),
+  snapshot: z.object({ definition: z.object({ fastMode: z.boolean().optional() }).optional() }).optional(),
+}).catch({});
 
 function savedSessionValue(ctx: SessionContext): boolean | undefined {
   for (const entry of [...ctx.sessionManager.getBranch()].reverse()) {
     if (entry.type !== "custom") continue;
-    const data = entry.data as { fastModeOverride?: boolean; enabled?: boolean; snapshot?: { definition?: { fastMode?: boolean } } };
+    const data = sessionValueSchema.parse(entry.data);
+
     if (entry.customType === "piop-fast-mode-state") return data.enabled;
+
     if (entry.customType === "pi-define-agents-state") {
       const enabled = data.fastModeOverride ?? data.snapshot?.definition?.fastMode;
-      if (typeof enabled === "boolean") return enabled;
+
+      if (enabled !== undefined) return enabled;
     }
   }
 }
 
 function notifyError(
   ctx: Pick<ExtensionContext, "hasUI" | "ui">,
-  error: unknown,
+  cause: unknown,
 ): void {
   if (!ctx.hasUI) return;
-  const message = error instanceof Error ? error.message : String(error);
+  const message = cause instanceof Error ? cause.message : String(cause);
   ctx.ui.notify(message, "error");
 }
 
@@ -62,15 +72,19 @@ export function createPiFastModeExtension(
     let loading: Promise<void> | undefined;
     const discover = createFastModeDiscovery();
     const effectiveConfig = () => ({ ...config, enabled: agentEnabled ?? config.enabled });
-    pi.events.on("piop:fast-mode", (value: unknown) => {
-      const request = value as { models?: string[]; ready?: Promise<void>; refresh?: boolean; apply?: boolean; enabled?: boolean; restore?: boolean; ctx?: ExtensionContext };
+    pi.events.on("piop:fast-mode", request => {
       request.models = config.targets.map((target) => `${target.provider}/${target.model}`);
-      if (request.refresh && request.ctx) request.ready = ensureLoaded(request.ctx).then(async () => {
-        await refreshTargets(request.ctx!);
+
+      const requestContext = request.ctx;
+
+      if (request.refresh && requestContext) request.ready = ensureLoaded(requestContext).then(async () => {
+        await refreshTargets(requestContext);
         request.models = config.targets.map((target) => `${target.provider}/${target.model}`);
       });
+
       if (request.apply) {
         agentEnabled = request.enabled;
+
         if (request.ctx) updateFastStatus(request.ctx, effectiveConfig(), toModelRef(request.ctx.model) ?? currentModel);
       }
     });
@@ -96,8 +110,10 @@ export function createPiFastModeExtension(
       ctx: ExtensionContext,
     ): Promise<void> {
       if (loading) await loading;
+
       if (loadedSessionId !== ctx.sessionManager.getSessionId() || loadedCwd !== ctx.cwd) {
         loading = loadForContext(ctx);
+
         try { await loading; } finally { loading = undefined; }
       }
     }
@@ -106,6 +122,7 @@ export function createPiFastModeExtension(
       const targets = await discover(ctx, configuredTargets);
       const changed = JSON.stringify(targets) !== JSON.stringify(config.targets);
       config.targets = targets;
+
       if (changed) pi.events.emit("piop:fast-mode-models-changed", { ctx });
       updateFastStatus(ctx, effectiveConfig(), toModelRef(ctx.model) ?? currentModel);
     }
@@ -132,10 +149,13 @@ export function createPiFastModeExtension(
           await refreshTargets(ctx);
           refreshCurrentModel(ctx);
           const enabled = parseFastCommand(args, effectiveConfig().enabled);
+
           if (enabled === effectiveConfig().enabled) {
             updateFastStatus(ctx, effectiveConfig(), currentModel);
+
             return;
           }
+
           config.enabled = enabled;
           agentEnabled = undefined;
           pi.events.emit("piop:fast-mode-changed", { enabled });
@@ -176,6 +196,7 @@ export function createPiFastModeExtension(
 
     pi.on("before_provider_request", (event, ctx) => {
       const model = toModelRef(ctx.model) ?? currentModel;
+
       return getFastModePayload(effectiveConfig(), model, event.payload);
     });
 

@@ -2,7 +2,7 @@ import { $, browser, expect } from "@wdio/globals";
 import { readFileSync, writeFileSync } from "node:fs";
 
 import { decodeAgentValue } from "../../../src/lib/agentProtocol.js";
-import type { AgentConfig } from "../../../src/types.js";
+import { agentConfigSchema } from "../../../src/lib/agentSchemas.js";
 import { app } from "../pageobjects/app.page.js";
 import { installedAgentConfigPath, mockBackend, backendCalls, resetBackend, resetApp, emitPiEvent, defaultSettings, acceptanceAgents, enableAgents, connectedSessionResponses, startTemporaryConversation } from './acceptance-fixture.js';
 
@@ -37,9 +37,11 @@ describe("Agent profiles acceptance", () => {
     await mockBackend({ "pi_command:prompt": {} });
     await app.chooseComposerOption("Agent", "reviewer");
 
-    await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-define-agents-use ")));
-    const message = ((await backendCalls()).find(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-define-agents-use "))?.args.command as { message: string }).message;
-    expect(decodeAgentValue<string>(message.slice("/pi-define-agents-use ".length))).toBe("reviewer");
+    await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => String(args.command?.message).startsWith("/pi-define-agents-use ")));
+    const message = (await backendCalls()).find(({ args }) => String(args.command?.message).startsWith("/pi-define-agents-use "))?.args.command?.message;
+
+    if (!message) throw new Error("Agent selection command was not recorded");
+    expect(decodeAgentValue(message.slice("/pi-define-agents-use ".length))).toBe("reviewer");
   });
 
   it("creates an agent with inherited resources and editable instructions", async () => {
@@ -93,8 +95,10 @@ describe("Agent profiles acceptance", () => {
 
     await app.saveSettingsButton.click();
     await expect(app.saveSettingsButton).toHaveText("Saved");
-    const prompt = (await backendCalls()).find(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-define-agents-config "))?.args.command as { message: string };
-    const saved = decodeAgentValue<AgentConfig>(prompt.message.slice("/pi-define-agents-config ".length));
+    const prompt = (await backendCalls()).find(({ args }) => String(args.command?.message).startsWith("/pi-define-agents-config "))?.args.command;
+
+    if (!prompt?.message) throw new Error("Agent configuration command was not recorded");
+    const saved = agentConfigSchema.parse(decodeAgentValue(prompt.message.slice("/pi-define-agents-config ".length)));
     expect(saved.agents.find((agent) => agent.name === "reviewer")?.path_agentprompt).toBe("review-acceptance.md");
     expect((await backendCalls()).filter(({ command }) => command === "save_app_settings")).toHaveLength(1);
     expect((await backendCalls()).some(({ command }) => command === "stop_pi")).toBe(true);
@@ -104,11 +108,12 @@ describe("Agent profiles acceptance", () => {
   it("persists a GUI-created agent through a real native save", async () => {
     const originalConfig = readFileSync(installedAgentConfigPath);
     const agentName = "e2e-persisted-agent";
+
     try {
       writeFileSync(installedAgentConfigPath, JSON.stringify(acceptanceAgents().config, null, 2));
       await resetBackend();
       await browser.execute(async settings => {
-        const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<unknown> } }).__TAURI_INTERNALS__;
+        const tauri = window.__TAURI_INTERNALS__;
         await tauri.invoke("daemon_invoke", { command: "save_app_settings", args: { settings, clientId: "desktop:e2e-settings" } });
       }, defaultSettings);
       await app.refreshForReset();
@@ -128,12 +133,14 @@ describe("Agent profiles acceptance", () => {
 
       await browser.waitUntil(async () => {
         const error = $('.settings-save [role="alert"]');
+
         if (await error.isExisting()) throw new Error(await error.getText());
-        const saved = JSON.parse(readFileSync(installedAgentConfigPath, "utf8")) as AgentConfig;
+        const saved = agentConfigSchema.parse(JSON.parse(readFileSync(installedAgentConfigPath, "utf8")));
+
         return saved.agents.some((agent) => agent.name === agentName);
       }, { timeout: 30_000, timeoutMsg: "The GUI-created agent was not written to the installed agent config" });
       await expect(app.saveSettingsButton).toHaveText("Saved");
-      const saved = JSON.parse(readFileSync(installedAgentConfigPath, "utf8")) as AgentConfig;
+      const saved = agentConfigSchema.parse(JSON.parse(readFileSync(installedAgentConfigPath, "utf8")));
       expect(saved.agents.find((agent) => agent.name === agentName)).toMatchObject({
         path_agentprompt: "sysprompt/default.md",
         path_systemprompt: "sysprompt/default.md",
@@ -176,7 +183,13 @@ describe("Agent profiles acceptance", () => {
     const calls = await backendCalls();
     const settingsWrites = calls.filter(({ command }) => command === "save_app_settings");
     expect(settingsWrites).toHaveLength(0);
-    const configurations = calls.filter(({ args }) => String((args.command as { message?: string })?.message).startsWith("/pi-define-agents-config ")).map(({ args }) => decodeAgentValue<AgentConfig>((args.command as { message: string }).message.slice("/pi-define-agents-config ".length)));
+
+    const configurations = calls.flatMap(({ args }) => {
+      const message = args.command?.message;
+
+      return message?.startsWith("/pi-define-agents-config ") ? [agentConfigSchema.parse(decodeAgentValue(message.slice("/pi-define-agents-config ".length)))] : [];
+    });
+
     expect(configurations).toHaveLength(1);
     expect(configurations[0].agents.find((agent) => agent.name === "reviewer")?.path_agentprompt).toBe("rejected-change.md");
   });

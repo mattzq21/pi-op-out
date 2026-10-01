@@ -9,42 +9,69 @@ import { createSidebarState } from '../../src/lib/sidebarState.ts';
 
 function SessionPanelFixture(props) {
   const sidebar = createSidebarState(() => props.sessions, () => props.query);
+
   return createComponent(SessionPanel, mergeProps(props, { sidebar }));
 }
 
 describe('conversation sidebar', () => {
   let dom, view, props, groups, changes, nativeCalls, responses;
-  function responseFor(command) { const result = responses.get(command); if (result instanceof Error) throw result; return result; }
+
+  function responseFor(command) { const result = responses.get(command);
+
+  if (result instanceof Error) throw result;
+
+  return result; }
+
   const session = (id, name, extra = {}) => ({ id, name, path: `/sessions/${id}.jsonl`, cwd: '/repo', project: 'repo', projectRoot: '/repo', projectKind: 'main', ...extra });
   beforeEach(() => {
     dom = installDom(); HTMLElement.prototype.scrollTo = () => {};
+
     nativeCalls = []; responses = new Map();
     groups = { groups: [{ id: 'local:/repo', name: 'repo', cwd: '/repo', projectKind: 'main' }], assignments: { 'local:a': 'local:/repo', 'local:b': 'local:/repo' }, removedProjects: [] }; changes = [];
     mockIPC(async (command, args) => {
       nativeCalls.push({ command, args });
+
       if (responses.has(command)) return responseFor(command);
+
       if (command === 'load_session_groups') return structuredClone(groups);
+
       if (command === 'change_session_groups') {
         const change = args.change; changes.push(change);
+
         if (change.type === 'assign') groups.assignments[change.key] = change.group;
+
         if (change.type === 'create') groups.groups.push({ id: 'custom', name: change.name });
+
         if (change.type === 'rename') groups.groups = groups.groups.map(group => group.id === change.id ? { ...group, name: change.name } : group);
-        if (change.type === 'remove') { groups.groups = groups.groups.filter(group => group.id !== change.id); for (const key of Object.keys(groups.assignments)) if (groups.assignments[key] === change.id) groups.assignments[key] = null; }
+
+        if (change.type === 'remove') { groups.groups = groups.groups.filter(group => group.id !== change.id);
+
+        for (const key of Object.keys(groups.assignments)) if (groups.assignments[key] === change.id) groups.assignments[key] = null; }
+
         return structuredClone(groups);
       }
+
       throw new Error(`Unexpected command: ${command}`);
     }, { shouldMockEvents: true });
     props = { sessions: [session('b', 'Chat 10'), session('a', 'Chat 2')], query: '', onQuery: () => {}, onSelect: () => {}, onAction: () => {}, onNewChat: () => {}, onCreateWorktree: () => {}, onDeleteWorktree: async () => {} };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; clearMocks(); dom.restore(); });
-  async function render(extra = {}) { props = { ...props, ...extra }; if (view) await view.rerender(props); else { cacheSessionGroups(structuredClone(groups)); view = await renderComponent(SessionPanelFixture, props); } }
+
+  async function render(extra = {}) { props = { ...props, ...extra };
+
+  if (view) await view.rerender(props); else { cacheSessionGroups(structuredClone(groups)); view = await renderComponent(SessionPanelFixture, props); } }
+
   const control = label => document.querySelector(`[aria-label="${label}"]`);
   const row = id => document.querySelector(`[data-session-key="local:${id}"] .session-main`);
   const click = async element => act(async () => element.click());
   const key = async (element, key, extra = {}) => act(async () => element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra })));
   const menu = async id => act(async () => row(id).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 20 })));
   const mouse = async (target, type, x = 20, y = 20, extra = {}) => act(async () => target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, ...extra })));
-  function hit(element, top = 40) { document.elementFromPoint = () => element; if (element) element.getBoundingClientRect = () => ({ top, bottom: top + 40, height: 40, left: 0, right: 200, width: 200 }); }
+
+  function hit(element, top = 40) { document.elementFromPoint = () => element;
+
+  if (element) element.getBoundingClientRect = () => ({ top, bottom: top + 40, height: 40, left: 0, right: 200, width: 200 }); }
+
   const menuAction = text => [...document.querySelectorAll('[role=menuitem]')].find(item => item.textContent === text);
 
   test('child conversations remain manageable after their parent is archived', async () => {

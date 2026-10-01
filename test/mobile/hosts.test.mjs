@@ -3,8 +3,11 @@ import { test, beforeEach, afterEach } from 'node:test';
 import { build } from 'esbuild';
 
 const compiled = await build({ entryPoints: ['src/lib/mobileHosts.ts'], bundle: true, write: false, format: 'esm', platform: 'node' });
+
 const { readMobileHosts, saveMobileHost, removeMobileHost } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
+
 let stored, previousStorage;
+
 beforeEach(() => {
   stored = new Map(); previousStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
@@ -13,6 +16,7 @@ beforeEach(() => {
     removeItem: key => stored.delete(key),
   } });
 });
+
 afterEach(() => {
   if (previousStorage) Object.defineProperty(globalThis, 'localStorage', previousStorage);
   else delete globalThis.localStorage;
@@ -20,9 +24,11 @@ afterEach(() => {
 
 test('saved hosts tolerate corrupt storage and reject unsafe or malformed entries', () => {
   assert.deepEqual(readMobileHosts(), []);
+
   for (const value of ['{', '{}', 'null']) {
     stored.set('piop-mobile-hosts', value); assert.deepEqual(readMobileHosts(), []);
   }
+
   stored.set('piop-mobile-hosts', JSON.stringify([
     null, { name: 1, url: 'wss://valid.test' }, { name: 'Missing' },
     { name: 'Unsafe', url: 'ws://unsafe.test' }, { name: 'Secret', url: 'wss://user:pass@host.test' },

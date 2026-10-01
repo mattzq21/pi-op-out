@@ -8,10 +8,14 @@ describe('project directory palette', () => {
   beforeEach(() => {
     dom = installDom(); opened = []; requested = []; cancelled = 0;
     HTMLElement.prototype.scrollIntoView = function () {};
-    props = { initialPath: '', initialHostId: 'local', hosts: [{ id: 'remote', name: 'Remote' }], onHomeDirectory: async host => host === 'remote' ? '/remote' : '/home/me', onChooseDirectory: async (path, host) => { requested.push([path, host]); return { path, parent: '/home', directories: [`${path}alpha`, `${path}beta`, `${path}zalpha`] }; }, onOpen: async (...args) => opened.push(args), onCancel: () => cancelled++ };
+
+    props = { initialPath: '', initialHostId: 'local', hosts: [{ id: 'remote', name: 'Remote' }], onHomeDirectory: async host => host === 'remote' ? '/remote' : '/home/me', onChooseDirectory: async (path, host) => { requested.push([path, host]);
+
+    return { path, parent: '/home', directories: [`${path}alpha`, `${path}beta`, `${path}zalpha`] }; }, onOpen: async (...args) => opened.push(args), onCancel: () => cancelled++ };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; await dom.flushFrames(); dom.restore(); });
   const mount = async () => { view = await renderComponent(ProjectDialog, props); };
+
   const advance = async t => act(async () => t.mock.timers.tick(150));
   const input = () => document.querySelector('input');
   const key = async (key, extra = {}) => act(async () => input().dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra })));
@@ -38,7 +42,10 @@ describe('project directory palette', () => {
   });
 
   test('the current folder opens with Ctrl+Enter and duplicate open requests are suppressed', async t => {
-    const pending = Promise.withResolvers(); props.onOpen = (...args) => { opened.push(args); return pending.promise; };
+    const pending = Promise.withResolvers(); props.onOpen = (...args) => { opened.push(args);
+
+    return pending.promise; };
+
     t.mock.timers.enable({ apis: ['setTimeout'] }); await mount(); await advance(t);
     await key('Enter', { ctrlKey: true }); await key('Enter', { ctrlKey: true });
     assert.deepEqual(opened, [['/home/me/', 'local']]); assert.equal(input().readOnly, true);
@@ -58,18 +65,24 @@ describe('project directory palette', () => {
 
   test('home and listing failures explain the problem and do not enable opening', async t => {
     props.onHomeDirectory = async () => { throw new Error('home unavailable'); };
+
     t.mock.timers.enable({ apis: ['setTimeout'] }); await mount();
     assert.equal(document.querySelector('[role=alert]').textContent, 'home unavailable');
     assert.equal(document.querySelector('.directory-palette-open').disabled, true);
     await view.unmount(); view = undefined;
     props.onHomeDirectory = async () => '/home/me'; props.onChooseDirectory = async () => null;
     await mount(); await advance(t); assert.match(document.querySelector('[role=alert]').textContent, /Could not list this folder/);
-    props.onChooseDirectory = async () => { throw 'listing failed'; }; await view.rerender(props);
+    props.onChooseDirectory = async () => { throw 'listing failed'; };
+
+    await view.rerender(props);
     await enterText(input(), '/different/'); await advance(t); assert.equal(document.querySelector('[role=alert]').textContent, 'Could not list this folder. Try another path.');
   });
 
   test('Windows home paths expand separators and folders outside home open without suggestions', async t => {
-    props.initialPath = '~/project'; props.onHomeDirectory = async () => 'C:\\Users\\Me'; props.onChooseDirectory = async path => { requested.push(path); return { path, directories: [] }; };
+    props.initialPath = '~/project'; props.onHomeDirectory = async () => 'C:\\Users\\Me'; props.onChooseDirectory = async path => { requested.push(path);
+
+    return { path, directories: [] }; };
+
     t.mock.timers.enable({ apis: ['setTimeout'] }); await mount(); await advance(t);
     assert.equal(requested[0], 'C:\\Users\\Me\\project\\');
     assert.match(document.body.textContent, /No child folders/);

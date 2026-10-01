@@ -1,3 +1,5 @@
+import { z } from "zod";
+import type { BeforeProviderRequestEvent } from "@earendil-works/pi-coding-agent";
 import {
   DEFAULT_SERVICE_TIER,
   SUPPORTED_PROVIDERS,
@@ -8,18 +10,12 @@ import {
 
 const SUPPORTED_PROVIDER_SET = new Set<string>(SUPPORTED_PROVIDERS);
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+const modelRefSchema = z.object({ provider: z.string().min(1), id: z.string().min(1) });
 
-export function toModelRef(model: unknown): ModelRef | undefined {
-  if (!isRecord(model)) return undefined;
+const payloadSchema = z.record(z.string(), z.json().optional());
 
-  const { provider, id } = model;
-  if (typeof provider !== "string" || typeof id !== "string") return undefined;
-  if (!provider || !id) return undefined;
-
-  return { provider, id };
+export function toModelRef(model: ModelRef | undefined): ModelRef | undefined {
+  return modelRefSchema.safeParse(model).data;
 }
 
 export function isSupportedProvider(provider: string): boolean {
@@ -41,13 +37,15 @@ export function findMatchingTarget(
 }
 
 export function applyFastModePayload(
-  payload: unknown,
+  payload: BeforeProviderRequestEvent["payload"],
   serviceTier: string,
-): unknown | undefined {
-  if (!isRecord(payload)) return undefined;
+) {
+  const parsed = payloadSchema.safeParse(payload);
+
+  if (!parsed.success) return undefined;
 
   return {
-    ...payload,
+    ...parsed.data,
     service_tier: serviceTier || DEFAULT_SERVICE_TIER,
   };
 }
@@ -55,11 +53,12 @@ export function applyFastModePayload(
 export function getFastModePayload(
   config: FastModeConfig,
   model: ModelRef | undefined,
-  payload: unknown,
-): unknown | undefined {
+  payload: BeforeProviderRequestEvent["payload"],
+) {
   if (!config.enabled) return undefined;
 
   const target = findMatchingTarget(model, config.targets);
+
   if (!target) return undefined;
 
   return applyFastModePayload(

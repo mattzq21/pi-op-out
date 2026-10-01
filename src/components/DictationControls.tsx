@@ -9,33 +9,46 @@ export function DictationControls(props: { disabled: boolean; compact?: boolean;
   let recording: DictationRecording | undefined;
   let generation = 0;
   let transcriptionPending = false;
-  const cancel = () => { generation++; recording?.cancel(); recording = undefined; if (!transcriptionPending) setPhase("idle"); };
+
+  const cancel = () => { generation++; recording?.cancel(); recording = undefined;
+
+  if (!transcriptionPending) setPhase("idle"); };
+
   onCleanup(cancel);
   createEffect(() => { if (props.disabled) cancel(); });
   createEffect(() => { if (!enabled() && (phase() === "starting" || phase() === "recording")) cancel(); });
+
   const finish = async () => {
     if (phase() !== "recording" || !recording) return;
     const current = generation;
     setPhase("transcribing");
     transcriptionPending = true;
+
     try {
       const audio = recording.finish(); recording = undefined;
       const result = await transcribeDictation(audio);
+
       if (current === generation && !props.disabled && result.text.trim()) props.onText(result.text.trim());
     } catch (reason) { if (current === generation) setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { transcriptionPending = false; setPhase("idle"); }
   };
+
   const start = async () => {
     if (!enabled() || props.disabled || phase() !== "idle") return;
     const current = ++generation;
     const capture = new DictationRecording(); recording = capture;
     setError(undefined); setPhase("starting");
-    try { await capture.start(() => void finish()); if (current === generation) setPhase("recording"); }
+
+    try { await capture.start(() => void finish());
+
+    if (current === generation) setPhase("recording"); }
     catch (reason) {
       if (current === generation) { recording = undefined; setPhase("idle"); setError(reason instanceof Error ? reason.message : String(reason)); }
     }
   };
+
   const showLabel = () => !props.compact || phase() !== "idle";
+
   return <span class="dictation-controls">
     <Show when={enabled()}>
       <button type="button" class={phase() === "recording" ? "dictation-recording" : ""} aria-label={phase() === "recording" ? "Stop dictation" : "Dictate"} aria-pressed={phase() === "recording"} disabled={props.disabled || phase() === "starting" || phase() === "transcribing"} onClick={() => void (phase() === "recording" ? finish() : start())}>

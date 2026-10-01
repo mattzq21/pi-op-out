@@ -65,7 +65,7 @@ pub(super) fn remote_directory_path(path: Option<&str>) -> String {
 }
 
 pub(super) fn remove_ephemeral_session(session: EphemeralSession) {
-    let script = include_str!("../../resources/cleanup-ephemeral-session.cjs");
+    let script = include_str!("../../resources/cleanup-ephemeral-session.bundle.mjs");
     let result = match session {
         EphemeralSession::Local(path) => node_command().args(["-e", script]).arg(path).output(),
         EphemeralSession::Remote { host, path } => ssh(&host).arg(remote_login_command(&format!("node -e {} {}", shell_quote(script), shell_quote(&path)))).output(),
@@ -164,7 +164,7 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let rtk_extension = shell_quote(include_str!("../../../extensions/piop-rtk/rtk.ts"));
     let rtk_license = shell_quote(include_str!("../../../extensions/piop-rtk/LICENSE"));
     let runtime_settings_extension = shell_quote(include_str!("../../../extensions/piop-runtime-settings/index.ts"));
-    let provider_accounts = shell_quote(include_str!("../../../extensions/piop-runtime-settings/provider-accounts.mjs"));
+    let provider_accounts = shell_quote(include_str!("../../resources/provider-accounts.bundle.mjs"));
     let runtime_settings_config = shell_quote(&serde_json::to_string(&runtime_settings(settings)).map_err(|error| error.to_string())?);
     let broker = shell_quote(include_str!("../../resources/session-broker.ts"));
     let ask_user = shell_quote(include_str!("../../resources/ask-user.ts"));
@@ -193,6 +193,14 @@ fn stage_remote_extensions(host: &RemoteHost, settings: &AppSettings) -> Result<
     let remote = format!(r#"{remote} && printf %s {provider_accounts} > "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/provider-accounts.mjs""#);
     let remote = format!(r#"{remote} && printf %s {rtk_extension} > "$HOME/{STORAGE_DIRECTORY}/rtk.ts" && printf %s {rtk_license} > "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/rtk.ts" "$HOME/{STORAGE_DIRECTORY}/rtk.LICENSE""#);
     let mut remote = remote;
+    let agent_state = shell_quote(include_str!("../../../extensions/piop-define-agents/state.ts"));
+    remote.push_str(&format!(r#" && printf %s {agent_state} > "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/state.ts" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-define-agents/state.ts""#));
+    for (name, content) in [
+        ("git.ts", include_str!("../../../extensions/piop-diff-watch/git.ts")),
+        ("schemas.ts", include_str!("../../../extensions/piop-diff-watch/schemas.ts")),
+    ] {
+        remote.push_str(&format!(r#" && printf %s {} > "$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/{name}" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/piop-diff-watch/{name}""#, shell_quote(content)));
+    }
     remote.push_str(&format!(r#" && mkdir -p -m 700 "$HOME/{STORAGE_DIRECTORY}/session-broker""#));
     for (name, content) in SESSION_BROKER_MODULES {
         remote.push_str(&format!(r#" && printf %s {} > "$HOME/{STORAGE_DIRECTORY}/session-broker/{name}" && chmod 600 "$HOME/{STORAGE_DIRECTORY}/session-broker/{name}""#, shell_quote(content)));

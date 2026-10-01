@@ -49,6 +49,7 @@ test('skill switches save before reload and failed activation restores overrides
   await f.load(); await f.start();
   let reloads = 0;
   f.ctx.reload = async () => { reloads++; assert.equal(f.state().active, 'reviewer'); assert.equal(f.capability().active, 'reviewer'); };
+
   await f.select('reviewer'); assert.equal(reloads, 1); assert.equal(f.entries.length, 0);
   await f.pi.setModel({ provider: 'test', id: 'default' }); f.pi.setThinkingLevel('medium');
   const before = structuredClone(f.entries);
@@ -57,6 +58,7 @@ test('skill switches save before reload and failed activation restores overrides
   assert.deepEqual(f.pi.getActiveTools(), ['read']); assert.deepEqual(f.ctx.model, { provider: 'test', id: 'default' }); assert.equal(f.pi.getThinkingLevel(), 'medium');
   assert.deepEqual(await f.emit('resources_discover'), { skillPaths: ['/skills/review'] });
   f.ctx.reload = async () => { await f.emit('session_shutdown'); assert.ok(f.statuses.get('pi-define-agents')); throw new Error('reload failed'); };
+
   await assert.rejects(f.select('general'), /reload failed/);
   await f.emit('session_shutdown'); assert.equal(f.statuses.get('pi-define-agents'), undefined); assert.equal(process.env.PI_DEFINE_AGENTS_ACTIVE, undefined);
 });
@@ -77,8 +79,10 @@ for (const mode of ['missing', 'rejected', 'throw-error', 'throw-string']) test(
   const f = await agentFixture(t, { config: configured([profile(), profile('reviewer', { model: 'test/review/model' })]) });
   await f.load(); await f.start(); const before = structuredClone(f.entries);
   const expected = mode === 'missing' ? 'Agent "reviewer" cannot run because model test/review/model is unavailable' : mode === 'rejected' ? 'Agent "reviewer" cannot authenticate model test/review/model' : 'Agent "reviewer" could not select test/review/model: rejected';
+
   if (mode === 'missing') f.ctx.modelRegistry.find = () => undefined;
   else f.pi.setModel = async () => { if (mode === 'rejected') return false; throw mode === 'throw-error' ? new Error('rejected') : 'rejected'; };
+
   await assert.rejects(f.select('reviewer'), { message: expected });
   assert.deepEqual(f.entries, before); assert.equal(f.capability().active, 'general');
   f.entries.push({ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'reviewer' } }); await f.start();
@@ -91,10 +95,12 @@ for (const mode of ['missing', 'rejected', 'throw-error', 'throw-string']) test(
 test('missing prompt files reject input with their resolved path and recover after explicit selection', async t => {
   const f = await agentFixture(t, { config: configured([profile(), profile('reviewer', { path_systemprompt: 'absent-system.md' }), profile('writer', { path_agentprompt: 'absent-agent.md' })]) });
   await f.load(); await f.start();
+
   for (const [name, kind, file] of [['reviewer', 'system', 'absent-system.md'], ['writer', 'agent', 'absent-agent.md']]) {
     await assert.rejects(f.select(name), error => error.message.startsWith(`Agent "${name}" cannot read ${kind} prompt ${join(f.dir, file)}: ENOENT`));
     assert.equal(f.capability().active, 'general'); assert.deepEqual(f.pi.getActiveTools(), ['read']);
   }
+
   await f.file('absent-agent.md', 'Now available'); await f.select('writer'); assert.match((await f.prompt()).sections.instructions, /Now available/);
 });
 
@@ -126,11 +132,14 @@ test('MCP selections wait for readiness, deduplicate tools, and report unavailab
   const remove = f.pi.events.on('piop:mcp:select', request => { selection = request; request.ready = gate.promise; started.resolve(); });
   const pending = f.input('connect');
   let timer;
+
   try { await Promise.race([started.promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('MCP selection was not requested')), 1000); })]); }
   finally { clearTimeout(timer); }
+
   assert.deepEqual({ ...selection, ready: undefined }, { servers: [{ ...remoteMcp, url: undefined, headers: undefined, startupTimeoutSec: undefined, injectAgentId: undefined }], agentName: 'general', sessionId: 'session-id', ready: undefined });
   assert.deepEqual(f.pi.getActiveTools(), []);
   gate.resolve(['mcp_remote_read', 'read', 'mcp_remote_read']); assert.deepEqual(await pending, { action: 'continue' }); assert.deepEqual(f.pi.getActiveTools(), ['read', 'mcp_remote_read']); remove();
+
   for (const reason of [new Error('network lost'), 'network lost']) {
     const stop = f.pi.events.on('piop:mcp:select', request => { request.ready = Promise.reject(reason); });
     assert.deepEqual(await f.input('retry'), { action: 'handled' }); assert.equal(f.notices.at(-1).message, 'Agent "general" could not connect its MCP servers:\nnetwork lost'); assert.deepEqual(f.pi.getActiveTools(), []); stop();
@@ -174,10 +183,12 @@ test('configuration edits normalize resources and persist atomically without mod
   assert.equal((await stat(join(f.dir, 'config.json'))).mode & 0o777, 0o600);
   assert.equal((await readdir(f.dir)).some(name => name.endsWith('.tmp')), false);
   const before = await readFile(join(f.dir, 'config.json'), 'utf8');
+
   for (const change of [{ fastMode: 'yes' }, { path_systemprompt: '' }, { path_systemprompt: 7 }, { systemPrompt: 'inline' }, { developerPrompt: 'inline' }]) {
     await assert.rejects(f.configure(configured([profile('reviewer', change)])));
     assert.equal(await readFile(join(f.dir, 'config.json'), 'utf8'), before);
   }
+
   await assert.rejects(f.select('unknown'), { message: 'Unknown defined agent: unknown' });
 });
 
@@ -186,7 +197,10 @@ for (const development of [false, true]) test(`first run creates private default
   const allTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'web_search', 'fork_session', 'create_worktree', 'remove_worktree', 'subagent'];
   const f = await agentFixture(t, { config: null, env, runtime: { tools: allTools, skills: [] }, tools: allTools, files: { 'home/.agents/AGENTS.md': 'Personal instructions' } });
   await f.load(); const config = await f.config();
-  assert.deepEqual(config.agents[0], { name: 'general', model: development ? 'openai-codex/gpt-6-luna' : '', effort: development ? 'medium' : 'high', ...(development ? { fastMode: false } : {}), extensions: [], path_systemprompt: 'sysprompt/default.md', path_agentprompt: `~/${development ? '.piop-dev' : '.piop'}/agents/default.md`, tools: allTools, skills: [], mcpServers: [] });
+  const expected = { name: 'general', model: development ? 'openai-codex/gpt-6-luna' : '', effort: development ? 'medium' : 'high', extensions: [], path_systemprompt: 'sysprompt/default.md', path_agentprompt: `~/${development ? '.piop-dev' : '.piop'}/agents/default.md`, tools: allTools, skills: [], mcpServers: [] };
+
+  if (development) expected.fastMode = false;
+  assert.deepEqual(config.agents[0], expected);
   assert.equal(config.webSearchDefaultApplied, true); assert.equal(config.sessionToolsDefaultApplied, true);
   const system = join(f.dir, 'sysprompt/default.md'), agent = join(f.home, development ? '.piop-dev' : '.piop', 'agents/default.md');
   assert.match(await readFile(system, 'utf8'), /^You are an expert coding assistant/); assert.equal(await readFile(agent, 'utf8'), 'Personal instructions');
@@ -204,11 +218,14 @@ test('legacy prompt and tool migrations preserve content, remove inline fields a
   assert.equal(config.agents[0].path_systemprompt, `sysprompt/default-${hash}.md`);
   assert.equal(await readFile(join(f.dir, config.agents[0].path_systemprompt), 'utf8'), 'System\n\nDeveloper');
   assert.match(await readFile(join(f.dir, config.agents[1].path_systemprompt), 'utf8'), /^You are an expert coding assistant[\s\S]*\n\nDeveloper$/);
+
   for (const agent of config.agents.slice(0, 2)) {
     assert.equal(await readFile(join(f.dir, agent.path_agentprompt), 'utf8'), 'Agent notes');
     assert.deepEqual(agent.tools, ['read', 'bash', 'grep', 'find', 'ls', 'edit', 'write', 'web_search', 'fork_session']);
+
     for (const field of ['description', 'systemPrompt', 'developerPrompt', 'agentsMd']) assert.equal(field in agent, false);
   }
+
   config.agents[0].tools = ['read']; await f.file('config.json', JSON.stringify(config)); await f.load(); assert.deepEqual((await f.config()).agents[0].tools, ['read']);
   assert.equal((await readdir(join(f.dir, 'sysprompt'))).some(name => name.endsWith('.tmp')), false);
 });
@@ -237,6 +254,7 @@ test('prompt migration preserves intentional emptiness and distinguishes names a
     { name: '!!!', developerPrompt: 'Additional', tools: [] },
     { name: 'explicit', path_systemprompt: 'prompt.md', path_agentprompt: '', systemPrompt: 'Ignore this', agentsMd: 'Ignore this too', tools: [] },
   ] } });
+
   await f.load(); const agents = (await f.config()).agents;
   assert.equal(await readFile(join(f.dir, agents[0].path_systemprompt), 'utf8'), '');
   assert.equal(agents[0].path_agentprompt, '~/.piop/agents/default.md');
@@ -266,7 +284,8 @@ test('normalization supplies defaults for absent arrays and filters malformed pr
 
 for (const state of [undefined, 'not JSON', { session: 'wrong', model: 'test/review/model', effort: 'low' }, { model: 7, effort: 'low' }, { model: 'test/review/model', effort: 7 }]) test(`runtime defaults reject stale or malformed cache ${JSON.stringify(state)}`, async t => {
   const f = await agentFixture(t);
-  if (state !== undefined) process.env.PI_DEFINE_AGENTS_RUNTIME_DEFAULTS = typeof state === 'string' ? state : JSON.stringify({ session: join(f.dir, 'session'), ...state });
+
+  if (state !== undefined) process.env.PI_DEFINE_AGENTS_RUNTIME_DEFAULTS = state === 'not JSON' ? state : JSON.stringify({ session: join(f.dir, 'session'), ...state });
   await f.load(); await f.start();
   assert.equal(f.state().snapshot.definition.model, 'test/default'); assert.equal(f.state().snapshot.definition.effort, 'high');
   assert.deepEqual(JSON.parse(process.env.PI_DEFINE_AGENTS_RUNTIME_DEFAULTS), { model: 'test/default', effort: 'high', session: join(f.dir, 'session') });
@@ -289,6 +308,7 @@ test('session restore uses the latest state, ignores unrelated custom records, a
     { type: 'custom', customType: 'other', data: { active: 'missing' } },
     { type: 'message', message: { role: 'assistant' } },
   ] });
+
   await f.load(); await f.start(); assert.equal(f.capability().active, 'general'); assert.equal(f.capability().locked, true);
   assert.deepEqual(await f.input('hello'), { action: 'continue' });
   f.entries.length = 0; f.entries.push({ type: 'custom', customType: 'pi-define-agents-state', data: { active: 'missing' } });
@@ -401,6 +421,7 @@ test('tool alias migrations persist even when resource defaults were already app
 
 test('concurrent config creation preserves the fully written winning configuration', async t => {
   const winner = configured([profile('general', { effort: 'medium' })]);
+
   const adapter = `export { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
     import { link as actualLink, writeFile } from 'node:fs/promises';
     let injected = false;
@@ -408,6 +429,7 @@ test('concurrent config creation preserves the fully written winning configurati
       if (to.endsWith('/config.json') && !injected) { injected = true; await writeFile(to, ${JSON.stringify(JSON.stringify(winner))}); }
       return actualLink(from, to);
     }`;
+
   const f = await agentFixture(t, { config: null, files: { 'fs.mjs': adapter } });
   await f.load(); assert.deepEqual(await f.config(), winner); await f.start(); assert.equal(f.pi.getThinkingLevel(), 'medium');
   assert.equal((await readdir(f.dir)).some(name => name.endsWith('.tmp')), false);
@@ -422,6 +444,7 @@ test('atomic publication reports unexpected link failures and cleans temporary f
         if (to.endsWith(${JSON.stringify(`/${target}`)}) && !injected) { injected = true; throw Object.assign(new Error('publication denied'), { code: 'EACCES' }); }
         return actualLink(from, to);
       }`;
+
     const f = await agentFixture(t, { config: null, files: { 'fs.mjs': adapter } });
     await assert.rejects(f.load(), { message: 'publication denied', code: 'EACCES' });
     assert.equal((await readdir(f.dir)).some(name => name.endsWith('.tmp')), false);
@@ -442,6 +465,7 @@ test('model selection failures clear suppression markers before the user retries
     const f = await agentFixture(t, { config: configured([profile(), profile('reviewer', { model: 'test/review/model' })]) }); await f.load(); await f.start();
     const setModel = f.pi.setModel;
     f.pi.setModel = async () => { if (rejection === false) return false; throw rejection; };
+
     await assert.rejects(f.select('reviewer')); f.pi.setModel = setModel;
     const count = f.entries.length; await f.pi.setModel({ provider: 'test', id: 'review/model' });
     assert.equal(f.entries.length, count); assert.equal(f.state().modelOverride, 'test/review/model');
@@ -451,10 +475,15 @@ test('model selection failures clear suppression markers before the user retries
 test('startup publishes the selected definition before asynchronous model selection completes', async t => {
   const f = await agentFixture(t, { config: configured([profile('general', { model: 'test/review/model' })]) }); await f.load();
   const gate = Promise.withResolvers(), started = Promise.withResolvers();
-  f.pi.setModel = async model => { started.resolve(); await gate.promise; f.ctx.model = model; await f.emit('model_select', { model }); return true; };
+  f.pi.setModel = async model => { started.resolve(); await gate.promise; f.ctx.model = model; await f.emit('model_select', { model });
+
+  return true; };
+
   const pending = f.start(); let timer;
+
   try { await Promise.race([started.promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Model was not selected')), 1000); })]); assert.equal(f.capability().active, 'general'); }
   finally { clearTimeout(timer); gate.resolve(); await pending; }
+
   assert.equal(f.capability().saved, true);
 });
 
@@ -474,7 +503,9 @@ test('session restore selects the last matching custom record and preserves its 
     { type: 'custom', customType: 'pi-define-agents-state', data: { active: 'reviewer', locked: true } },
     { type: 'custom', customType: 'unrelated', data: { active: 'general', locked: false } },
     { type: 'other', customType: 'pi-define-agents-state', data: { active: 'general' } },
-  ] }); await f.load(); await f.start();
+  ] });
+
+  await f.load(); await f.start();
   assert.equal(f.capability().active, 'reviewer'); assert.equal(f.capability().locked, true);
   const count = f.entries.length; await f.input('go'); assert.equal(f.entries.length, count + 1);
   await f.input('again'); assert.equal(f.entries.length, count + 1);
@@ -520,7 +551,9 @@ test('shutdown removes agent extension listeners and missing-agent refresh clear
 
 test('configuration errors identify the invalid field instead of leaking incidental type errors', async t => {
   const f = await agentFixture(t); await f.load();
+
   for (const path_systemprompt of [null, 7, false, '', '   ']) await assert.rejects(f.configure(configured([profile('bad', { path_systemprompt })])), { message: 'Agent "bad" requires a nonempty path_systemprompt' });
+
   for (const field of ['systemPrompt', 'developerPrompt']) await assert.rejects(f.configure(configured([profile('bad', { [field]: 'inline' })])), { message: 'Agent "bad" must link a system prompt file using path_systemprompt' });
   await assert.rejects(f.configure(configured([profile('bad', { fastMode: 'yes' })])), { message: 'Agent "bad" fastMode must be a boolean' });
 });
@@ -528,6 +561,7 @@ test('configuration errors identify the invalid field instead of leaking inciden
 test('adding profiles supplies a missing general profile and inherited agent prompt paths', async t => {
   const f = await agentFixture(t); await f.load();
   await f.configure(configured([profile('reviewer')])); assert.deepEqual((await f.config()).agents.map(agent => agent.name), ['general', 'reviewer']);
+
   for (const name of ['general', 'default']) {
     const agent = profile(name); delete agent.path_agentprompt;
     await f.configure(configured([agent])); assert.equal((await f.config()).agents[0].path_agentprompt, '~/.piop/agents/default.md');
@@ -543,7 +577,9 @@ test('legacy prompt type errors and whitespace fall back to the default system p
   const f = await agentFixture(t, { config: { agents: [
     { name: 'general', systemPrompt: 7, tools: [] },
     { name: 'reviewer', systemPrompt: '   ', developerPrompt: 'Additional', tools: [] },
-  ] } }); await f.load(); const agents = (await f.config()).agents;
+  ] } });
+
+  await f.load(); const agents = (await f.config()).agents;
   assert.equal(agents[0].path_systemprompt, 'sysprompt/default.md');
   assert.match(await readFile(join(f.dir, agents[1].path_systemprompt), 'utf8'), /^You are an expert coding assistant[\s\S]*\n\nAdditional$/);
   assert.equal(await readFile(join(f.home, '.piop/agents/default.md'), 'utf8'), '');
@@ -554,7 +590,9 @@ test('MCP is deferred until input for selection, startup, and rollback', async t
   const calls = []; f.pi.events.on('piop:mcp:select', request => { calls.push(request); request.ready = Promise.resolve([]); });
   await f.load(); await f.start(); assert.equal(calls.length, 0);
   await f.select('reviewer'); assert.equal(calls.length, 0);
+
   for (const name of ['broken', 'broken-skills']) { await assert.rejects(f.select(name), /does not allow/); assert.equal(calls.length, 0); }
+
   await f.input('hello'); assert.equal(calls.length, 1);
 });
 
@@ -588,6 +626,7 @@ test('atomic writes reject colliding temporary files and preserve the original w
         }
         return actualWrite(path, contents, options);
       }`;
+
     const f = await agentFixture(t, { config: null, files: { 'fs.mjs': adapter } });
     await assert.rejects(f.load(), { code: mode === 'collision' ? 'EEXIST' : 'EACCES' });
     assert.equal((await readdir(f.dir)).some(name => name.endsWith('.tmp')), false);
@@ -597,6 +636,7 @@ test('atomic writes reject colliding temporary files and preserve the original w
 test('model and effort events can arrive before session defaults have been captured', async t => {
   for (const kind of ['model', 'effort']) await t.test(kind, async t => {
     const f = await agentFixture(t); await f.load();
+
     if (kind === 'model') { await f.pi.setModel({ provider: 'test', id: 'review/model' }); assert.deepEqual(JSON.parse(process.env.PI_DEFINE_AGENTS_RUNTIME_DEFAULTS), { session: '', model: 'test/review/model', effort: 'high' }); }
     else { f.pi.setThinkingLevel('low'); assert.deepEqual(JSON.parse(process.env.PI_DEFINE_AGENTS_RUNTIME_DEFAULTS), { session: '', model: '', effort: 'low' }); }
   });
@@ -616,7 +656,9 @@ test('migrated agent prompts with ambiguous name/content boundaries never share 
   const f = await agentFixture(t, { config: { agents: [
     { name: 'a', path_systemprompt: 'prompt.md', agentsMd: '!bc', tools: [] },
     { name: 'a!', path_systemprompt: 'prompt.md', agentsMd: 'bc', tools: [] },
-  ] } }); await f.load(); const agents = (await f.config()).agents.filter(agent => agent.name !== 'general');
+  ] } });
+
+  await f.load(); const agents = (await f.config()).agents.filter(agent => agent.name !== 'general');
   assert.notEqual(agents[0].path_agentprompt, agents[1].path_agentprompt);
   assert.equal(await readFile(join(f.dir, agents[0].path_agentprompt), 'utf8'), '!bc'); assert.equal(await readFile(join(f.dir, agents[1].path_agentprompt), 'utf8'), 'bc');
 });

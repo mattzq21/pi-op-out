@@ -9,14 +9,17 @@ import { transform } from 'esbuild';
 export async function fixture(t) {
   const dir = await mkdtemp(join(tmpdir(), 'piop-extensions-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
+
   for (const name of ['index', 'extension-loader', 'mcp-config']) {
     let source = await readFile(new URL(`../../extensions/piop-define-agents/${name}.ts`, import.meta.url), 'utf8');
     source = source.replace('./extension-loader.ts', './extension-loader.mjs').replace('./mcp-config.ts', './mcp-config.mjs').replace(/import \{ formatSkillsForPrompt, type BuildSystemPromptOptions \} from "@earendil-works\/pi-coding-agent";/, 'const formatSkillsForPrompt = () => "";');
     await writeFile(join(dir, `${name}.mjs`), (await transform(source, { loader: 'ts', format: 'esm' })).code);
   }
+
   const handlers = new Map(), commands = new Map(), tools = new Map(), listeners = new Map();
   const entries = [], messages = [], statuses = new Map();
   let activeTools = [];
+
   const pi = {
     on(name, handler) { const list = handlers.get(name) ?? []; list.push(handler); handlers.set(name, list); },
     registerTool(tool) { tools.set(tool.name, tool); },
@@ -26,10 +29,13 @@ export async function fixture(t) {
     appendEntry: (customType, data) => entries.push({ type: 'custom', customType, data }),
     sendMessage: value => messages.push(value),
     events: {
-      on(name, handler) { const set = listeners.get(name) ?? new Set(); set.add(handler); listeners.set(name, set); return () => set.delete(handler); },
+      on(name, handler) { const set = listeners.get(name) ?? new Set(); set.add(handler); listeners.set(name, set);
+
+      return () => set.delete(handler); },
       emit(name, value) { for (const handler of listeners.get(name) ?? []) handler(value); },
     },
   };
+
   const ctx = {
     isIdle: () => true,
     model: undefined, modelRegistry: { find() {} }, cwd: dir,
@@ -37,9 +43,21 @@ export async function fixture(t) {
     ui: { setStatus: (key, value) => statuses.set(key, value), notify() {} },
     reload: async () => { throw new Error('Unexpected reload'); },
   };
-  const emit = async (name, event = {}) => { let result; for (const handler of [...handlers.get(name) ?? []]) { const next = await handler(event, ctx); if (next !== undefined) result = next; } return result; };
-  const file = async (name, source) => { await writeFile(join(dir, name), source); return name; };
+
+  const emit = async (name, event = {}) => { let result;
+
+  for (const handler of [...handlers.get(name) ?? []]) { const next = await handler(event, ctx);
+
+  if (next !== undefined) result = next; }
+
+  return result; };
+
+  const file = async (name, source) => { await writeFile(join(dir, name), source);
+
+  return name; };
+
   const loader = (await import(pathToFileURL(join(dir, 'extension-loader.mjs')))).agentExtensions(pi, dir);
+
   return { dir, pi, ctx, loader, file, emit, commands, tools, entries, messages, statuses, activeTools: () => activeTools };
 }
 
@@ -214,6 +232,7 @@ async function invalidAgentFixture(t, position, source) {
   t.after(() => { for (const key of Object.keys(process.env)) if (!(key in previous)) delete process.env[key]; Object.assign(process.env, previous); });
   await (await import(pathToFileURL(join(f.dir, 'index.mjs')))).default(f.pi);
   await f.emit('session_start');
+
   return { ...f, invalidPath, rootPath };
 }
 
@@ -222,12 +241,16 @@ async function assertRejectedExtensionGroup(f, scenario) {
   const configuration = await readFile(join(f.dir, 'config.json'), 'utf8');
   await assert.rejects(f.commands.get('pi-define-agents-use').handler('invalid', f.ctx), reason => {
     assert.match(reason.message, scenario.error);
+
     if (scenario.name.startsWith("startup")) {
       assert.match(reason.message, /Agent "invalid" could not load its piop extensions/);
+
       return true;
     }
+
     assert.ok(reason.message.includes(join(f.dir, f.invalidPath)), 'error identifies the invalid extension');
     assert.ok(reason.message.includes(join(f.dir, f.rootPath)), 'error identifies the parent that could not load');
+
     return true;
   });
   assert.deepEqual(f.entries, entries, 'failed selection must not alter conversation history');
@@ -236,12 +259,16 @@ async function assertRejectedExtensionGroup(f, scenario) {
   assert.equal(capability.active, 'general', 'previous agent remains selected');
   assert.deepEqual(f.activeTools(), ['stable_tool']);
   assert.equal(await f.tools.get('stable_tool').execute(), 'stable');
+
   for (const name of ['parent', 'child', 'invalid']) {
     const tool = f.tools.get(`${name}_tool`);
+
     if (tool) await assert.rejects(async () => tool.execute(), /inactive/, `${name} tool must not run`);
     const command = f.commands.get(`${name}_command`);
+
     if (command) await assert.rejects(async () => command.handler('', f.ctx), /inactive/, `${name} command must not run`);
   }
+
   f.pi.events.emit('invalid-extension-probe', {});
   assert.deepEqual(await f.emit('input', { text: 'Continue with the previous agent' }), { action: 'continue' });
   assert.deepEqual(f.messages, ['stable:event', 'stable:input'], 'neither failed extension nor its dependency group may handle events');
@@ -268,11 +295,16 @@ async function sessionAgentFixture(t) {
   let effort = 'high';
   f.pi.getThinkingLevel = () => effort;
   f.pi.setThinkingLevel = level => { effort = level; };
+
   f.ctx.modelRegistry.find = (provider, id) => ({ provider, id });
-  f.pi.setModel = async model => { f.ctx.model = model; await f.emit('model_select', { model }); return true; };
+  f.pi.setModel = async model => { f.ctx.model = model; await f.emit('model_select', { model });
+
+  return true; };
+
   await (await import(pathToFileURL(join(f.dir, 'index.mjs')))).default(f.pi);
   f.select = name => f.commands.get('pi-define-agents-use').handler(name, f.ctx);
   f.capability = () => JSON.parse(Buffer.from(f.statuses.get('pi-define-agents').slice(5), 'base64url'));
+
   return f;
 }
 

@@ -13,6 +13,7 @@ describe('in-page search', () => {
     HTMLElement.prototype.getClientRects = () => [bounds];
     window.Range.prototype.getBoundingClientRect = () => ({ left: 10, right: 110, top: 20, bottom: 40, width: 100, height: 20 });
     window.Range.prototype.getClientRects = function () { return [this.getBoundingClientRect()]; };
+
     root = document.createElement('section'); root.id = 'chat'; root.className = 'chat-shell';
     root.innerHTML = '<div class="messages"><p>Alpha <em>beta</em> alpha</p><p>literal [a+b]</p><p hidden>alpha</p><p aria-hidden="true">alpha</p><p style="visibility:hidden">alpha</p><textarea>alpha</textarea><script>alpha</script><p>separate</p><p>blocks</p></div>';
     document.body.append(root); launcher = document.createElement('button'); root.append(launcher); launcher.focus();
@@ -20,11 +21,16 @@ describe('in-page search', () => {
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; delete globalThis.ResizeObserver; dom.restore(); });
   const render = async () => { view = await renderComponent(FindInPage, props); };
+
   const press = async (key, extra = {}, target = document.activeElement) => {
     const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra });
-    await act(async () => target.dispatchEvent(event)); return event;
+    await act(async () => target.dispatchEvent(event));
+
+    return event;
   };
+
   const open = async () => { await press('f', { ctrlKey: true }); await dom.flushFrames(); };
+
   const input = () => document.querySelector('.find-bar input');
   const count = () => document.querySelector('.find-count').textContent;
   const click = async label => act(async () => document.querySelector(`[aria-label="${label}"]`).click());

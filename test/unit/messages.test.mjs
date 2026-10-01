@@ -11,14 +11,17 @@ test('message normalization preserves content and selects stable identifiers and
   assert.equal(normalizeMessage({ role: 'assistant', timestamp: '100', content: '' }).id, 'live-assistant-100');
   assert.equal(normalizeMessage({ role: 'user', timestamp: '2026-01-01T00:00:00Z' }).timestamp, 1767225600000);
   const before = Date.now();
+
   for (const timestamp of [undefined, 'invalid']) {
     const result = normalizeMessage({ role: 'assistant', timestamp });
     assert.ok(result.timestamp >= before && result.timestamp <= Date.now());
     assert.equal(result.completedAt, undefined);
   }
+
   assert.equal(normalizeMessage({ role: 'toolResult', isError: true }).toolStatus, 'error');
   assert.equal(normalizeMessage({ role: 'toolResult' }).toolStatus, 'done');
   assert.equal(normalizeMessage({ role: 'toolResult' }).role, 'tool');
+
   for (const customType of ['pi-desktop-mcp-status', 'pi-desktop-catch-up']) assert.equal(normalizeMessage({ role: 'custom', customType }).role, 'system');
   assert.equal(normalizeMessage({ role: 'custom', customType: 'pi-desktop-btw' }).role, 'assistant');
   assert.equal(normalizeMessage({ role: 'custom', customType: 'other' }).role, 'custom');
@@ -31,6 +34,7 @@ test('streamed text and reasoning build immutable content and accept final repla
   assert.deepEqual(message.content, [{ type: 'text', text: 'existing text' }]);
   assert.equal(message.streaming, true);
   assert.equal(original.content, 'existing');
+
   for (const [type, property] of [['text', 'text'], ['thinking', 'thinking']]) {
     message = applyAssistantMessageEvent(message, { type: `${type}_start`, contentIndex: 2 });
     assert.deepEqual(message.content[2], { type, [property]: '' });
@@ -44,9 +48,11 @@ test('streamed text and reasoning build immutable content and accept final repla
     message = applyAssistantMessageEvent(message, { type: `${type}_end`, contentIndex: 2 });
     assert.equal(message.content[2][property], '');
   }
+
   assert.deepEqual(message.content[1], { type: 'text', text: '' });
   assert.deepEqual(applyAssistantMessageEvent({ ...original, content: [] }, { type: 'thinking_delta', contentIndex: 0, delta: 'reason' }).content, [{ type: 'thinking', thinking: 'reason' }]);
   assert.deepEqual(applyAssistantMessageEvent({ ...original, content: [{ type: 'thinking', thinking: 'private' }] }, { type: 'text_delta', contentIndex: 0, delta: 'public' }).content, [{ type: 'text', text: 'public' }]);
+
   for (const contentIndex of [undefined, -1, 0.5, '0', NaN]) assert.equal(applyAssistantMessageEvent(original, { type: 'text_start', contentIndex }), original);
 });
 
@@ -80,6 +86,7 @@ test('file-change snapshots attach to the last matching tool and sanitize extens
   assert.equal(messages[2].fileChanges[1].patch, 'old');
   assert.equal(appendFileChanges(messages, { ...entry, type: 'message' }), messages);
   assert.equal(appendFileChanges(messages, { ...entry, customType: 'other' }), messages);
+
   for (const invalid of [undefined, {}, { ...data, cwd: null }, { ...data, patch: null }, { ...data, toolCallIds: null }, { ...data, paths: null }, { ...data, toolCallIds: [] }]) assert.equal(appendFileChanges(messages, { ...entry, data: invalid }), messages);
   const minimal = appendFileChanges([messages[0]], { ...entry, data: { ...data, warnings: undefined, toolPaths: undefined } });
   assert.deepEqual(minimal[0].fileChanges[0].warnings, []);
@@ -89,6 +96,7 @@ test('file-change snapshots attach to the last matching tool and sanitize extens
 test('resume markers and checkpoints distinguish synthetic prompts from ordinary messages', () => {
   const marker = { type: 'custom', customType: 'pi-desktop-resume', data: { message: 'resume\nnow' } };
   assert.equal(resumeMarker(marker), 'resume\nnow');
+
   for (const entry of [{}, { ...marker, type: 'message' }, { ...marker, customType: 'other' }, { ...marker, data: { message: 1 } }]) assert.equal(resumeMarker(entry), undefined);
   const markers = new Set(['resume\nnow']);
   assert.equal(isResumeMessage({ role: 'user', content: 'resume\nnow' }, markers), true);
@@ -114,7 +122,9 @@ test('cache statistics include writes and enforce both relative and absolute hit
 });
 
 const msg = (id, parentId, role, content = '', extra = {}) => ({ type: 'message', id, parentId, message: { role, content, timestamp: 100, ...extra } });
+
 const custom = (id, parentId, customType, data) => ({ type: 'custom', id, parentId, customType, data });
+
 test('branch reconstruction follows ancestry, hides resume prompts and attaches context without eager tool inputs', () => {
   const entries = [
     msg('u', null, 'user', 'question'),
@@ -128,6 +138,7 @@ test('branch reconstruction follows ancestry, hides resume prompts and attaches 
     msg('final', 'synthetic', 'assistant', 'answer'),
     msg('sibling', 'u', 'assistant', 'other branch'),
   ];
+
   const result = branchMessages(entries, 'final');
   assert.deepEqual(result.map(message => message.id), ['u', 'a', 't', 'final']);
   assert.deepEqual(result[0].promptContext, { tokens: 100 });
@@ -152,6 +163,7 @@ test('branch reconstruction handles orphaned metadata, custom visibility and pau
     msg('t', 'unsupported', 'toolResult', '', { toolCallId: 'unknown' }),
     custom('unpaused', 't', 'pi-desktop-pause-state', { isPaused: false }),
   ];
+
   const result = branchMessages(entries, 'unpaused');
   assert.deepEqual(result.map(message => message.id), ['u', 's', 't']);
   assert.equal(result[0].contextCheckpoint, true);

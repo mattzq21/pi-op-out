@@ -1,21 +1,23 @@
-import type { AppSettings, RpcEvent, SettingsChange } from "../types";
+import { appSettingsSchema, settingsChangeSchema, voidResultSchema } from "./responseSchemas";
+import type { AppSettings, RpcEvent } from "../types";
 import { preserveDaemonPreferences, saveClientSettings, withClientSettings } from "./clientSettings";
 import { keybindingsError } from "./keybindings";
 import type { NativeCall } from "./nativeCall";
 
 type SettingsTarget = { cwd?: string; sessionPath?: string; sessionId?: string; hostId: string };
+
 type SettingsConnection = {
   target: () => SettingsTarget;
   selectTarget: (target: SettingsTarget) => void;
   resetToLocal: (fresh: boolean) => void;
-  disconnect: () => Promise<unknown>;
+  disconnect: () => Promise<boolean>;
   connect: () => Promise<void>;
   closed: () => boolean;
   emit: (event: RpcEvent) => void;
 };
 
 export class NativeSettings {
-  private lifecycle: Promise<unknown> = Promise.resolve();
+  private lifecycle: Promise<void> = Promise.resolve();
   private pending?: { settings: AppSettings };
   private daemonPending = false;
   private applying?: Promise<void>;
@@ -24,12 +26,14 @@ export class NativeSettings {
 
   constructor(private call: NativeCall, private connection: SettingsConnection) {}
 
-  load() { return withClientSettings(this.call<AppSettings>("load_app_settings"), true); }
+  load() { return withClientSettings(this.call("load_app_settings", undefined, appSettingsSchema), true); }
 
   async loadHost() {
     const hostId = this.connection.target().hostId;
-    if (hostId === "local") return this.call<AppSettings>("load_app_settings");
-    try { return await this.call<AppSettings>("load_host_settings", { hostId }); }
+
+    if (hostId === "local") return this.call("load_app_settings", undefined, appSettingsSchema);
+
+    try { return await this.call("load_host_settings", { hostId }, appSettingsSchema); }
     catch (reason) {
       if (String(reason).includes("Command is not available on the daemon: load_host_settings")) throw new Error("The connected or selected remote Piop daemon is older than this client. Update the daemon to access remote settings.");
       throw reason;
@@ -38,7 +42,8 @@ export class NativeSettings {
 
   async saveHost(settings: AppSettings, agentsChanged = false) {
     const hostId = this.connection.target().hostId;
-    try { return await this.call<SettingsChange>("save_host_settings", { hostId, settings, agentsChanged }); }
+
+    try { return await this.call("save_host_settings", { hostId, settings, agentsChanged }, settingsChangeSchema); }
     catch (reason) {
       if (String(reason).includes("Command is not available on the daemon: save_host_settings")) throw new Error("The connected or selected remote Piop daemon needs updating before it can save remote settings.");
       throw reason;
@@ -49,25 +54,30 @@ export class NativeSettings {
     const save = () => this.saveNow(settings, reconnect, agentHostId, scope);
     const result = this.lifecycle.then(save, save);
     this.lifecycle = result.then(() => undefined, () => undefined);
+
     return result;
   }
 
   private async saveNow(settings: AppSettings, reconnect: boolean, agentHostId: string | undefined, scope: "all" | "client") {
     const shortcutError = keybindingsError(settings.keybindings);
+
     if (shortcutError) throw new Error(shortcutError);
-    const previous = await this.call<AppSettings>("load_app_settings");
+    const previous = await this.call("load_app_settings", undefined, appSettingsSchema);
     const target = this.connection.target();
     const daemonSettings = scope === "client" ? previous : preserveDaemonPreferences(settings, previous);
     const daemonChanged = JSON.stringify(daemonSettings) !== JSON.stringify(previous) || Boolean(agentHostId);
-    const change = daemonChanged ? await this.call<SettingsChange>("save_app_settings", { settings: daemonSettings, agentHostId }) : { settings: previous };
+    const change = daemonChanged ? await this.call("save_app_settings", { settings: daemonSettings, agentHostId }, settingsChangeSchema) : { settings: previous };
     await saveClientSettings(settings);
     change.settings = await withClientSettings(change.settings);
+
     if (reconnect && daemonChanged) await this.reconnectAfterSave(settings, previous, target);
+
     return change;
   }
 
   private selectAvailableHost(settings: AppSettings, fresh: boolean) {
     const { hostId } = this.connection.target();
+
     if (hostId !== "local" && !settings.hosts.some(host => host.enabled !== false && host.id === hostId)) this.connection.resetToLocal(fresh);
   }
 
@@ -77,9 +87,11 @@ export class NativeSettings {
       await this.connection.disconnect();
       await this.connection.connect();
     } catch (reason) {
-      await this.call<void>("save_app_settings", { settings: previous });
+      await this.call("save_app_settings", { settings: previous }, voidResultSchema);
       this.connection.selectTarget(target);
+
       try { await this.connection.disconnect(); await this.connection.connect(); } catch { }
+
       throw reason;
     }
   }
@@ -87,6 +99,7 @@ export class NativeSettings {
   async reconnect(settings: AppSettings) {
     await this.connection.disconnect();
     this.selectAvailableHost(settings, true);
+
     try { await this.connection.connect(); }
     catch (reason) { this.connection.emit({ type: "disconnected" }); throw reason; }
   }
@@ -102,7 +115,8 @@ export class NativeSettings {
   }
 
   receive(event: RpcEvent) {
-    if (event.type === "settings_pending" && typeof event.pending === "boolean") this.daemonPending = event.pending;
+    if (event.type === "settings_pending" && (event.pending === true || event.pending === false)) this.daemonPending = event.pending;
+
     if (event.type === "disconnected") this.daemonPending = false;
   }
 
@@ -116,6 +130,7 @@ export class NativeSettings {
       while (this.pending && !this.connection.closed()) {
         const update = this.pending;
         await this.reconnect(update.settings);
+
         if (this.pending === update) this.pending = undefined;
         this.connection.emit({ type: "settings_applied" });
       }
@@ -131,6 +146,7 @@ export class NativeSettings {
   async runCommand<T>(command: () => Promise<T>): Promise<T> {
     if (this.applying) await this.applying;
     this.activeCommands += 1;
+
     try { return await command(); }
     finally { this.activeCommands -= 1; this.applyPending(); }
   }

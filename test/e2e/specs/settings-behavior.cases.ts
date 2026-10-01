@@ -10,6 +10,7 @@ describe("Settings behavior", () => {
 
   it("keeps edited settings and explains when the backend rejects saving", async () => {
     await mockBackend({ save_app_settings: { error: "Settings disk is read-only" } });
+
     try {
       await app.openSettings();
       const initialValue = await app.automaticRetryToggle.getAttribute("aria-checked");

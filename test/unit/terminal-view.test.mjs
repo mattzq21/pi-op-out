@@ -7,11 +7,17 @@ import { terminals } from '../terminal-runtime.mjs';
 describe('terminal view', () => {
   let dom, view, props, starts, resizes, snapshots;
   beforeEach(() => {
-    dom = installDom(); HTMLElement.prototype.scrollIntoView = () => {}; terminals.length = 0; starts = []; resizes = []; snapshots = [];
+    dom = installDom(); HTMLElement.prototype.scrollIntoView = () => {};
+
+    terminals.length = 0; starts = []; resizes = []; snapshots = [];
     props = { cwd: '/repo', terminals: [{ id: 'one', label: 'Shell' }], activeId: 'one', output: '', outputEnd: 0, started: false, onAdd: () => {}, onSelect: () => {}, onStart: (...args) => starts.push(args), onData: () => {}, onResize: (...args) => resizes.push(args), onSnapshot: (...args) => snapshots.push(args), onDelete: () => {}, onClose: () => {} };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; dom.restore(); });
-  async function render(extra = {}) { props = { ...props, ...extra }; if (view) await view.rerender(props); else view = await renderComponent(TerminalView, props); }
+
+  async function render(extra = {}) { props = { ...props, ...extra };
+
+  if (view) await view.rerender(props); else view = await renderComponent(TerminalView, props); }
+
   const control = label => document.querySelector(`[aria-label="${label}"]`);
   const click = async element => act(async () => element.click());
 
@@ -40,10 +46,16 @@ describe('terminal view', () => {
 
   test('copy shortcut copies selection and reports clipboard failures without intercepting ordinary keys', async () => {
     const copied = []; navigator.clipboard = { writeText: async value => copied.push(value) }; await render(); const terminal = terminals[0]; terminal.selection = 'selected';
-    const key = async extra => { const event = new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, shiftKey: true, cancelable: true, ...extra }); let result; await act(async () => { result = terminal.key(event); }); return { event, result }; };
+
+    const key = async extra => { const event = new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, shiftKey: true, cancelable: true, ...extra }); let result; await act(async () => { result = terminal.key(event); });
+
+    return { event, result }; };
+
     assert.equal((await key({ shiftKey: false })).result, true); assert.deepEqual(copied, []);
     const copiedEvent = await key({}); assert.equal(copiedEvent.result, false); assert.equal(copiedEvent.event.defaultPrevented, true); assert.deepEqual(copied, ['selected']);
-    navigator.clipboard.writeText = async () => { throw new Error('denied'); }; await key({}); assert.match(document.querySelector('[role=status]').textContent, /Could not copy terminal selection/);
+    navigator.clipboard.writeText = async () => { throw new Error('denied'); };
+
+    await key({}); assert.match(document.querySelector('[role=status]').textContent, /Could not copy terminal selection/);
     terminal.selection = ''; await key({}); assert.equal(document.querySelector('[role=status]'), null);
   });
 

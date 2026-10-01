@@ -10,29 +10,42 @@ export function BranchPickerDialog(props: { branches: string[]; current: string 
   const [query, setQuery] = createSignal("");
   const [active, setActive] = createSignal(0);
   const isActive = createSelector(active);
+
   const results = createMemo(() => {
     const search = query().trim().toLowerCase();
+
     return props.branches.filter(branch => branch.toLowerCase().includes(search));
   });
+
   onMount(() => {
     const returnFocus = document.activeElement;
     dialog.showModal(); input.focus();
-    onCleanup(() => { dialog.close(); if (returnFocus instanceof HTMLElement && returnFocus.isConnected) returnFocus.focus(); });
+    onCleanup(() => { dialog.close();
+
+    if (returnFocus instanceof HTMLElement && returnFocus.isConnected) returnFocus.focus(); });
   });
   createDependencyEffect(() => { setActive(0); }, () => [results()]);
   createDependencyEffect(() => { document.getElementById(`${id}-branch-${active()}`)?.scrollIntoView({ block: "nearest" }); }, () => [active()]);
   const cancel = () => { if (!props.pending) props.onCancel(); };
+
   const choose = (branch: string) => { if (!props.pending) props.onSelect(branch); };
+
   const navigate = (event: KeyboardEvent) => {
     if (event.isComposing || props.pending) return;
-    if (event.key === "Enter") { event.preventDefault(); const branch = results()[active()]; if (branch) choose(branch); }
+
+    if (event.key === "Enter") { event.preventDefault(); const branch = results()[active()];
+
+    if (branch) choose(branch); }
+
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault(); const count = results().length;
       setActive((index) => count ? (index + (event.key === "ArrowDown" ? 1 : -1) + count) % count : 0);
     }
   };
+
   return <Portal mount={document.querySelector(".app") ?? document.body}><dialog ref={dialog} class="extension-dialog directory-palette" aria-labelledby={`${id}-title`} onCancel={(event) => { event.preventDefault(); cancel(); }} onMouseDown={(event) => {
     const bounds = dialog.getBoundingClientRect();
+
     if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) cancel();
   }}>
     <header class="directory-palette-heading"><h2 id={`${id}-title`}>Choose a branch</h2><button type="button" class="directory-palette-escape" disabled={props.pending} onClick={cancel}>esc</button></header>

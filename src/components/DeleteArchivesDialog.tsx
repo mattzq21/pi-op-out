@@ -11,6 +11,7 @@ export function DeleteArchivesDialog(props: { count: number; hostName: string; o
     dialog.current?.showModal();
     onCleanup(() => {
       dialog.current?.close();
+
       if (returnFocus instanceof HTMLElement) returnFocus.focus();
     });
   });

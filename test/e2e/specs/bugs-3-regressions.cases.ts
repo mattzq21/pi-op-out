@@ -13,6 +13,7 @@ describe("BUGS-3 regressions", () => {
   });
   afterEach(async () => {
     if (await $(".error-toast").isExisting()) await $(".error-toast button").click();
+
     if (await app.terminalPanel.isExisting()) await app.closeTerminalButton.click();
     await app.conversationSearch.clearValue();
     await resetBackend();
@@ -23,7 +24,12 @@ describe("BUGS-3 regressions", () => {
     await mockBackend({ list_sessions: [indexed], ...connectedSessionResponses(indexed.id), "pi_command:set_session_name": { error: "Rename failed" } });
     await emitPiEvent({ type: "session_switched" });
     await app.conversationSearch.setValue(indexed.name);
-    await browser.execute(() => document.querySelector(".session-item")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 })));
+    await browser.execute(() => {
+      const item = document.querySelector(".session-item");
+
+      if (!item) throw new Error("Conversation item was not found");
+      item.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 100, clientY: 100 }));
+    });
     await $('//div[@role="menu"]//button[normalize-space(.)="Rename conversation"]').click();
 
     const input = $('input[aria-label="Rename conversation"]');
@@ -37,7 +43,8 @@ describe("BUGS-3 regressions", () => {
 
   it("isolates drafts and terminals between fresh conversations", async () => {
     const settings = { ...defaultSettings, defaultModel: "e2e/acceptance", defaultThinking: "high" };
-    await mockBackend({ create_temporary_chat: { cwd: "/tmp/bugs3-fresh", sessionId: "bugs3-fresh" }, start_pi: {}, stop_pi: {}, list_sessions: [], load_app_settings: settings, ...connectedSessionResponses(""), "pi_command:set_model": {}, start_terminal: {}, resize_terminal: {} });
+    await mockBackend({ create_temporary_chat: { cwd: "/tmp/bugs3-fresh", sessionId: "bugs3-fresh" }, list_sessions: [], load_app_settings: settings, ...connectedSessionResponses(""), "pi_command:set_model": {}, start_terminal: {}, resize_terminal: {} });
+
     try {
       await $('button[aria-label="New conversation"]').click();
       await app.composer.waitForEnabled();
@@ -62,6 +69,7 @@ describe("BUGS-3 regressions", () => {
 
   it("keeps a terminal tab when closing its process fails", async () => {
     await startTemporaryConversation({ start_terminal: {}, resize_terminal: {}, close_terminal: { error: "Terminal close failed" } });
+
     try {
       await expect(app.openTerminalButton).toBeEnabled();
       await app.openTerminalButton.click();
@@ -94,10 +102,12 @@ describe("BUGS-3 regressions", () => {
   it("does not enable debug mode when persistence fails", async () => {
     const toggle = $('button[aria-label="Enable debug mode"], button[aria-label="Disable debug mode"]');
     const initialLabel = await toggle.getAttribute("aria-label");
+
+    if (!initialLabel) throw new Error("Debug toggle has no accessible label");
     await withClientSettingsWriteFailure(async () => {
       await toggle.click();
       await expect($(".error-toast strong")).toHaveText("Could not change debug mode");
-      await expect(toggle).toHaveAttribute("aria-label", initialLabel!);
+      await expect(toggle).toHaveAttribute("aria-label", initialLabel);
       await expect($(".error-toast span")).toHaveText(expect.stringMatching(/directory|denied|exists/i));
     });
   });

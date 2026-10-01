@@ -5,6 +5,7 @@ import modelBase64 from "../assets/silero-vad.base64?raw";
 import { decodeBase64 } from "./base64";
 
 const SAMPLE_RATE = 16000;
+
 const FRAME_SIZE = 512;
 
 class SpeechEndpoint {
@@ -16,14 +17,18 @@ class SpeechEndpoint {
   accept(probability: number) {
     if (probability >= 0.5) this.active = true;
     else if (probability < 0.35) this.active = false;
+
     if (this.active) {
       this.voiceSamples += FRAME_SIZE;
       this.silentSamples = 0;
+
       if (this.voiceSamples >= SAMPLE_RATE * 0.1) this.confirmed = true;
     } else {
       this.voiceSamples = 0;
+
       if (this.confirmed) this.silentSamples += FRAME_SIZE;
     }
+
     return this.silentSamples >= SAMPLE_RATE * 1.5;
   }
 }
@@ -47,15 +52,18 @@ export class DictationVad {
     const model = decodeBase64(modelBase64.replace(/\s/g, ""));
     const session = await InferenceSession.create(model, { executionProviders: ["wasm"] });
     const vad = new DictationVad(session, sampleRate);
-    try { await vad.detect(true); return vad; }
+
+    try { await vad.detect(true);
+
+    return vad; }
     catch (error) { await session.release(); throw error; }
   }
 
-  push(chunk: Float32Array, onComplete: () => void, onError: (error: unknown) => void) {
+  push(chunk: Float32Array, onComplete: () => void, onError: (cause: unknown) => void) {
     this.pending = this.pending.then(async () => {
       if (this.closed) return;
       await this.consume(chunk, onComplete);
-    }).catch((error: unknown) => { if (!this.closed) onError(error); });
+    }).catch((cause: unknown) => { if (!this.closed) onError(cause); });
   }
 
   close() {
@@ -66,20 +74,28 @@ export class DictationVad {
 
   private async consume(chunk: Float32Array, onComplete: () => void) {
     const ratio = this.sampleRate / SAMPLE_RATE;
+
     for (const sample of chunk) {
       let remaining = 1;
+
       while (remaining > 1e-8) {
         const amount = Math.min(remaining, ratio - this.weight);
         this.sum += sample * amount;
         this.weight += amount;
         remaining -= amount;
+
         if (this.weight < ratio - 1e-8) continue;
         this.frame[this.frameOffset++] = this.sum / ratio;
         this.sum = 0; this.weight = 0;
+
         if (this.frameOffset !== FRAME_SIZE) continue;
         this.frameOffset = 0;
+
         if (this.closed) return;
-        if (await this.detect()) { onComplete(); return; }
+
+        if (await this.detect()) { onComplete();
+
+        return; }
       }
     }
   }
@@ -87,17 +103,24 @@ export class DictationVad {
   private async detect(warmup = false) {
     const input = new Float32Array(64 + FRAME_SIZE);
     input.set(this.context); input.set(this.frame, 64);
+
     const feeds = {
       input: new Tensor("float32", input, [1, input.length]),
       state: new Tensor("float32", this.state, [2, 1, 128]),
       sr: new Tensor("int64", BigInt64Array.of(16000n), [1]),
     };
+
     try {
       const outputs = await this.session.run(feeds);
+
       try {
         if (warmup) return false;
-        this.state.set(outputs.stateN.data as Float32Array);
+        const state = outputs.stateN.data;
+
+        if (!(state instanceof Float32Array)) throw new Error("Voice activity model returned an invalid state tensor");
+        this.state.set(state);
         this.context.set(this.frame.subarray(FRAME_SIZE - 64));
+
         return this.endpoint.accept(Number(outputs.output.data[0]));
       } finally { Object.values(outputs).forEach((tensor) => tensor.dispose()); }
     } finally { Object.values(feeds).forEach((tensor) => tensor.dispose()); }

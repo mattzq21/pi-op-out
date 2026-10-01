@@ -7,17 +7,22 @@ import { ConversationQuestions, ConversationQuestionsContext, createConversation
 test('question progress and typed answers survive switching conversations', async () => {
   const dom = installDom(); let view;
   const sent = []; const first = { command: async response => sent.push(response) }; const second = {};
+
   const request = { id: 'question', method: 'input', title: '__piop_request_user_input__', placeholder: JSON.stringify({ questions: [
     { id: 'one', header: 'First', question: 'Choose one', options: [{ label: 'Yes', description: '' }] },
     { id: 'two', header: 'Second', question: 'Explain', options: [] },
   ] }) };
+
   const item = { request, transport: first, owner: 'agent', queueId: 'queued' };
+
   function Questions(props) {
     const context = createConversationQuestions(() => [item], () => {});
+
     return createComponent(ConversationQuestionsContext.Provider, { value: context,
       get children() { return createComponent(ConversationQuestions, { get transport() { return props.transport; } }); },
     });
   }
+
   try {
     view = await renderComponent(Questions, { transport: first });
     await act(() => document.querySelector('.ask-user-option').click());

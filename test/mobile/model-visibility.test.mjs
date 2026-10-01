@@ -1,8 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
+
 const compiled = await build({ entryPoints: ['src/lib/modelVisibility.ts'], bundle: true, write: false, format: 'esm', platform: 'node' });
+
 const { recordSeenModels } = await import(`data:text/javascript;base64,${Buffer.from(compiled.outputFiles[0].text).toString('base64')}`);
+
 const settings = (overrides = {}) => ({ defaultModel: 'test/known', hiddenModels: [], ...overrides });
 
 test('first sight baselines without hiding anything', () => {

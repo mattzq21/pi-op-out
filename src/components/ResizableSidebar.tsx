@@ -2,18 +2,24 @@ import { createMemo, createSignal } from "solid-js";
 import { createDependencyEffect, createRef, type CSSProperties, type JSXElement } from "../lib/solid";
 
 const WIDTH_KEY = "pi-desktop-sidebar-width";
+
 const MIN_WIDTH = 200;
+
 const maximumWidth = () => Math.max(MIN_WIDTH, Math.floor(window.innerWidth / 2));
 
 export function ResizableSidebar(componentProps: { compact: boolean; children: JSXElement }) {
   const [maxWidth, setMaxWidth] = createSignal((maximumWidth)());
+
   const [width, setWidth] = createSignal((() => {
     try {
       const saved = Number(localStorage.getItem(WIDTH_KEY));
+
       if (Number.isFinite(saved) && saved >= MIN_WIDTH) return saved;
     } catch { }
+
     return window.innerWidth <= 1050 ? 232 : 260;
   })());
+
   const [dragging, setDragging] = createSignal(false);
   const drag = createRef<{ pointerId: number; x: number; width: number } | null>(null);
   const visibleWidth = createMemo(() => (Math.max(MIN_WIDTH, Math.min(maxWidth(), width()))));
@@ -22,22 +28,26 @@ export function ResizableSidebar(componentProps: { compact: boolean; children: J
   createDependencyEffect(() => {
     const onResize = () => setMaxWidth(maximumWidth());
     window.addEventListener("resize", onResize);
+
     return () => window.removeEventListener("resize", onResize);
   }, () => []);
 
   createDependencyEffect(() => { const capturedWidth = width();
+
     try { localStorage.setItem(WIDTH_KEY, String(capturedWidth)); } catch { }
   }, () => [width()]);
 
   createDependencyEffect(() => { const capturedDragging = dragging(); const capturedCompact0 = componentProps.compact;
+
     if (!capturedDragging || capturedCompact0) return;
     const { cursor, userSelect } = document.body.style;
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
+
     return () => { document.body.style.cursor = cursor; document.body.style.userSelect = userSelect; };
   }, () => [dragging(), componentProps.compact]);
 
-  return <aside class={`icon-rail ${componentProps.compact ? "compact" : ""}`} style={{ "--rail-width": `${visibleWidth()}px` } as CSSProperties}>
+  return <aside class={`icon-rail ${componentProps.compact ? "compact" : ""}`} style={{ "--rail-width": `${visibleWidth()}px` } satisfies CSSProperties}>
     {componentProps.children}
     {!componentProps.compact && <div
       class={`sidebar-resizer ${dragging() ? "dragging" : ""}`}
@@ -72,6 +82,7 @@ export function ResizableSidebar(componentProps: { compact: boolean; children: J
       onKeyDown={(event) => {
         const step = event.shiftKey ? 50 : 10;
         const next = event.key === "ArrowLeft" ? visibleWidth() - step : event.key === "ArrowRight" ? visibleWidth() + step : event.key === "Home" ? MIN_WIDTH : event.key === "End" ? maxWidth() : undefined;
+
         if (next === undefined) return;
         event.preventDefault();
         event.stopPropagation();

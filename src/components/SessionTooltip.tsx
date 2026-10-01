@@ -12,6 +12,7 @@ export function SessionTooltip(props: { session: SessionSummary; anchor: HTMLEle
     const top = anchor.bottom + bounds.height + 8 <= window.innerHeight ? anchor.bottom + 6 : anchor.top - bounds.height - 6;
     setPosition({ left: `${Math.max(8, Math.min(anchor.left, window.innerWidth - bounds.width - 8))}px`, top: `${Math.max(8, top)}px` });
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape") props.onClose(); };
+
     window.addEventListener("scroll", props.onClose, true);
     window.addEventListener("resize", props.onClose);
     window.addEventListener("keydown", escape);
@@ -21,6 +22,7 @@ export function SessionTooltip(props: { session: SessionSummary; anchor: HTMLEle
       window.removeEventListener("keydown", escape);
     });
   });
+
   return <Portal><div ref={element} class="session-tooltip" role="tooltip" style={position()}>
     <span><GitBranch size={14} aria-label="Branch" /><span>{props.session.branch}</span></span>
   </div></Portal>;

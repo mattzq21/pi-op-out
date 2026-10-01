@@ -11,10 +11,14 @@ describe('message rendering', () => {
   beforeEach(() => {
     dom = installDom(); copied = []; opened = []; openError = undefined;
     navigator.clipboard = { writeText: async text => copied.push(text) };
-    mockIPC(async (command, args) => { opened.push({ command, args }); if (openError) throw openError; });
+    mockIPC(async (command, args) => { opened.push({ command, args });
+
+    if (openError) throw openError; });
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; clearMocks(); dom.restore(); });
+
   async function render(message, extra = {}) { view = await renderComponent(Message, { message: { id: 'message-id', ...message }, ...extra }); }
+
   const click = async element => act(async () => element.click());
   const control = label => document.querySelector(`[aria-label="${label}"]`);
   const contextMenu = async link => act(async () => link.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 100, clientY: 100 })));
@@ -64,6 +68,7 @@ describe('message rendering', () => {
     t.mock.timers.enable({ apis: ['setTimeout'] }); await render({ role: 'assistant', content: '```js\nconst answer = 42;\n```' });
     await click(control('Copy code')); assert.deepEqual(copied, ['const answer = 42;']); assert.ok(control('Code copied'));
     await act(async () => t.mock.timers.tick(1800)); navigator.clipboard.writeText = async () => { throw new Error('denied'); };
+
     await click(control('Copy code')); assert.equal(document.querySelector('.code-block [role=status]').textContent, 'Could not copy');
   });
 
@@ -84,10 +89,12 @@ describe('message rendering', () => {
 
   test('context menus close on Escape, Tab, scrolling and outside clicks and keep focus inside while navigating', async () => {
     await render({ role: 'assistant', content: '[link](http://example.com)' }); const link = document.querySelector('a'); link.focus();
+
     for (const key of ['Escape', 'Tab']) {
       await contextMenu(link); const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }); await act(async () => document.activeElement.dispatchEvent(event));
       assert.equal(document.querySelector('[role=menu]'), null); assert.equal(document.activeElement, link); assert.equal(event.defaultPrevented, key === 'Escape');
     }
+
     await contextMenu(link); const arrow = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true }); await act(async () => document.activeElement.dispatchEvent(arrow)); assert.equal(arrow.defaultPrevented, true);
     await act(async () => window.dispatchEvent(new Event('scroll'))); assert.equal(document.querySelector('[role=menu]'), null);
     await contextMenu(link); await act(async () => document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))); assert.equal(document.querySelector('[role=menu]'), null);
@@ -107,7 +114,11 @@ describe('message rendering', () => {
   test('assistant actions serialize branching and forgetting and receive the original message', async () => {
     const pending = Promise.withResolvers(); const branches = [], forgotten = [], worktrees = [];
     const message = { id: 'assistant-id', role: 'assistant', content: 'answer' };
-    const extra = { onBranch: value => { branches.push(value); return pending.promise; }, onForkAndForget: async value => forgotten.push(value), onCreateWorktree: value => worktrees.push(value) };
+
+    const extra = { onBranch: value => { branches.push(value);
+
+    return pending.promise; }, onForkAndForget: async value => forgotten.push(value), onCreateWorktree: value => worktrees.push(value) };
+
     await render(message, extra); await click(document.querySelector('[title="Branch from here"]'));
     assert.equal(document.querySelector('[title="Fork and forget from here"]').disabled, true); assert.equal(branches.length, 1);
     await act(async () => pending.resolve()); await click(document.querySelector('[title="Fork and forget from here"]')); await click(control('Create Git worktree'));

@@ -1,7 +1,20 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
+import { Type as Schema } from "typebox";
+import { Check } from "typebox/value";
 
 type Activity = "mailbox" | "input" | "cancelled" | "timeout";
+
+const notificationSchema = Schema.Object({ notificationId: Schema.String() });
+
+interface RequiredToolsRequest { ctx: ExtensionContext; tools: string[] }
+
+declare module "@earendil-works/pi-coding-agent" {
+  interface EventBus {
+    on(channel: "piop:required-tools", handler: (request: RequiredToolsRequest) => void): () => void;
+    emit(channel: "piop:required-tools", request: RequiredToolsRequest): void;
+  }
+}
 
 function waitForActivity(listeners: Set<(activity: Activity) => void>, timeout: number, signal?: AbortSignal) {
   return new Promise<Activity>((resolve) => {
@@ -11,34 +24,39 @@ function waitForActivity(listeners: Set<(activity: Activity) => void>, timeout: 
       signal?.removeEventListener("abort", abort);
       resolve(activity);
     };
+
     const abort = () => finish("cancelled");
     const timer = setTimeout(() => finish("timeout"), timeout);
     listeners.add(finish);
     signal?.addEventListener("abort", abort, { once: true });
+
     if (signal?.aborted) abort();
   });
 }
 
-function waitResult(activity: Activity) {
+function waitResult(activity: Activity): AgentToolResult<{ timed_out: boolean }> {
   const messages: Record<Activity, string> = {
     mailbox: "Wait completed. Subagent results are delivered separately in the conversation.",
     input: "Wait interrupted by new input.",
     cancelled: "Wait cancelled.",
     timeout: "Wait timed out.",
   };
-  return { content: [{ type: "text" as const, text: messages[activity] }], details: { timed_out: activity === "timeout" } };
+
+  return { content: [{ type: "text", text: messages[activity] }], details: { timed_out: activity === "timeout" } };
 }
 
 export function registerSubagentMailbox(pi: ExtensionAPI) {
   const pending = new Set<string>();
   const listeners = new Set<(activity: Activity) => void>();
+
   const wake = (activity: Activity) => {
     for (const listener of [...listeners]) listener(activity);
   };
-  const unsubscribe = pi.events.on("piop:required-tools", value => {
-    const request = value as { ctx: ExtensionContext; tools: string[] };
+
+  const unsubscribe = pi.events.on("piop:required-tools", request => {
     if (request.ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-subagent-run")) request.tools.push("wait_agent");
   });
+
   pi.on("session_shutdown", unsubscribe);
   pi.on("input", event => {
     if (event.source !== "extension") wake("input");
@@ -46,8 +64,9 @@ export function registerSubagentMailbox(pi: ExtensionAPI) {
   pi.on("context", event => {
     for (const message of event.messages) {
       if (message.role !== "custom" || message.customType !== "piop-subagent-result") continue;
-      const details = message.details as { notificationId?: string } | undefined;
-      if (details?.notificationId) pending.delete(details.notificationId);
+      const details = message.details;
+
+      if (Check(notificationSchema, details) && details.notificationId) pending.delete(details.notificationId);
     }
   });
   pi.registerTool({
@@ -57,12 +76,17 @@ export function registerSubagentMailbox(pi: ExtensionAPI) {
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       signal?.throwIfAborted();
       const timeout = params.timeout_ms ?? 30_000;
+
       if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > 3_600_000) throw new Error("timeout_ms must be an integer between 0 and 3600000");
+
       if (pending.size) return waitResult("mailbox");
+
       if (ctx.hasPendingMessages()) return waitResult("input");
+
       return waitResult(await waitForActivity(listeners, Math.max(10_000, timeout), signal));
     },
   });
+
   return {
     notify(id: string) { pending.add(id); wake("mailbox"); },
     reset() { pending.clear(); wake("cancelled"); },

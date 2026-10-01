@@ -14,15 +14,16 @@ describe("Conversation acceptance", () => {
 
   it("opens, adds, deletes, and closes an ephemeral terminal", async () => {
     await mockBackend({ start_terminal: {}, resize_terminal: {}, close_terminal: {} });
+
     try {
       await app.openTerminalButton.click();
       await expect(app.terminalPanel).toBeDisplayed();
-      const before = await $$(".terminal-tab");
+      const before = await $$(".terminal-tab").length;
       await app.addTerminalButton.click();
-      await expect($$(".terminal-tab")).toBeElementsArrayOfSize(before.length + 1);
+      await expect($$(".terminal-tab")).toBeElementsArrayOfSize(before + 1);
 
       await app.deleteTerminalButton.click();
-      await expect($$(".terminal-tab")).toBeElementsArrayOfSize(before.length);
+      await expect($$(".terminal-tab")).toBeElementsArrayOfSize(before);
       await browser.waitUntil(async () => (await backendCalls()).some(({ command }) => command === "close_terminal"));
       expect((await backendCalls()).find(({ command }) => command === "close_terminal")?.mocked).toBe(true);
       await app.closeTerminalButton.click();
@@ -35,6 +36,7 @@ describe("Conversation acceptance", () => {
 
   it("sends the composed prompt to piop and clears the accepted draft", async () => {
     await mockBackend({ "pi_command:get_entries": { entries: [], leafId: null }, "pi_command:fork": {}, "pi_command:prompt": {} });
+
     try {
       await app.prepareMessage("Explain the failing build");
       await app.sendMessageButton.click();
@@ -51,9 +53,15 @@ describe("Conversation acceptance", () => {
 
   it("does not submit Shift+Enter and submits with Enter", async () => {
     await mockBackend({ "pi_command:prompt": {} });
+
     try {
       await app.prepareMessage("First line");
-      await browser.execute(() => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message piop"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true })));
+      await browser.execute(() => {
+        const element = document.querySelector('textarea[aria-label="Message piop"]');
+
+        if (!(element instanceof HTMLElement)) throw new Error("Expected page element was not found");
+        element.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true }));
+      });
       await expect(app.composer).toHaveValue("First line");
       expect((await backendCalls()).filter(({ args }) => isUserPrompt(args.command))).toHaveLength(0);
       await app.composer.setValue("First line\nSecond line");
@@ -71,6 +79,7 @@ describe("Conversation acceptance", () => {
 
   it("discovers and selects a slash command supplied by piop", async () => {
     await mockBackend({ ...connectedSessionResponses("command-session"), "pi_command:get_commands": { commands: [{ name: "review", description: "Review the current changes", source: "extension", sourceInfo: { source: "acceptance" } }] } });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       await app.prepareMessage("/rev");
@@ -95,6 +104,7 @@ describe("Conversation acceptance", () => {
         ]
       },
     });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       await app.prepareMessage("/");
@@ -118,6 +128,7 @@ describe("Conversation acceptance", () => {
       ],
       leafId: "retry-assistant",
     };
+
     await mockBackend({
       ...connectedSessionResponses("retry-session"),
       "pi_command:get_state": { ...connectedSessionResponses("retry-session")["pi_command:get_state"], sessionFile: "/tmp/retry-session.jsonl" },
@@ -127,6 +138,7 @@ describe("Conversation acceptance", () => {
       delete_session: {},
       list_sessions: [],
     });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       const retry = $('//div[@role="status"]//button[normalize-space(.)="Retry"]');
@@ -134,7 +146,7 @@ describe("Conversation acceptance", () => {
       await retry.click();
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => isUserPrompt(args.command)));
-      expect((await backendCalls()).filter(({ args }) => ["fork", "prompt"].includes(String((args.command as { type?: string })?.type))).map(({ args }) => args.command)).toEqual([
+      expect((await backendCalls()).filter(({ args }) => ["fork", "prompt"].includes(String(args.command?.type))).map(({ args }) => args.command)).toEqual([
         { type: "prompt", message: "Retry this acceptance request" },
       ]);
       expect((await backendCalls()).some(({ command }) => command === "delete_session")).toBe(false);
@@ -148,9 +160,12 @@ describe("Conversation acceptance", () => {
 
   it("includes an attached text file in the submitted prompt", async () => {
     await mockBackend({ "pi_command:get_entries": { entries: [], leafId: null }, "pi_command:fork": {}, "pi_command:prompt": {} });
+
     try {
       await browser.execute(() => {
-        const composer = document.querySelector(".composer")!;
+        const composer = document.querySelector(".composer");
+
+      if (!composer) throw new Error("Message composer was not found");
         const transfer = new DataTransfer(); transfer.items.add(new File(["Acceptance fixture content."], "acceptance-note.txt", { type: "text/plain" }));
         composer.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
       });
@@ -169,9 +184,12 @@ describe("Conversation acceptance", () => {
 
   it("escapes quotes in attached filenames before submitting them", async () => {
     await mockBackend({ "pi_command:prompt": {} });
+
     try {
       await browser.execute(() => {
-        const composer = document.querySelector(".composer")!;
+        const composer = document.querySelector(".composer");
+
+      if (!composer) throw new Error("Message composer was not found");
         const transfer = new DataTransfer(); transfer.items.add(new File(["Quoted filename content"], 'report "draft".txt', { type: "text/plain" }));
         composer.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
       });
@@ -187,8 +205,11 @@ describe("Conversation acceptance", () => {
 
   it("limits a single composer to twelve attachments", async () => {
     await browser.execute(() => {
-      const composer = document.querySelector(".composer")!;
+      const composer = document.querySelector(".composer");
+
+      if (!composer) throw new Error("Message composer was not found");
       const transfer = new DataTransfer();
+
       for (let index = 1; index <= 13; index += 1) transfer.items.add(new File([`fixture ${index}`], `fixture-${index}.txt`, { type: "text/plain", lastModified: index }));
       composer.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
     });
@@ -202,7 +223,9 @@ describe("Conversation acceptance", () => {
 
   it("removes an attachment before it can be submitted", async () => {
     await browser.execute(() => {
-      const composer = document.querySelector(".composer")!;
+      const composer = document.querySelector(".composer");
+
+      if (!composer) throw new Error("Message composer was not found");
       const transfer = new DataTransfer(); transfer.items.add(new File(["Do not send this fixture."], "discard-me.txt", { type: "text/plain" }));
       composer.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
     });
@@ -215,7 +238,9 @@ describe("Conversation acceptance", () => {
 
   it("rejects a text attachment larger than 200 KB", async () => {
     await browser.execute(() => {
-      const composer = document.querySelector(".composer")!;
+      const composer = document.querySelector(".composer");
+
+      if (!composer) throw new Error("Message composer was not found");
       const transfer = new DataTransfer(); transfer.items.add(new File([new Uint8Array(200_001)], "too-large.txt", { type: "text/plain" }));
       composer.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
     });
@@ -228,11 +253,14 @@ describe("Conversation acceptance", () => {
   it("submits an attached image with its encoded payload", async () => {
     const model = { provider: "e2e", id: "vision", name: "Vision model", input: ["text", "image"] };
     await mockBackend({ ...connectedSessionResponses("image-session"), "pi_command:get_state": { ...connectedSessionResponses("image-session")["pi_command:get_state"], model }, "pi_command:get_available_models": { models: [model] }, "pi_command:fork": {}, "pi_command:prompt": {} });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       await expect(app.modelPicker).toHaveAttribute("data-value", "e2e/vision");
       await browser.execute(() => {
-        const composer = document.querySelector(".composer")!;
+        const composer = document.querySelector(".composer");
+
+      if (!composer) throw new Error("Message composer was not found");
         const bytes = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="), (character) => character.charCodeAt(0));
         const transfer = new DataTransfer(); transfer.items.add(new File([bytes], "pixel.png", { type: "image/png" }));
         composer.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
@@ -241,7 +269,9 @@ describe("Conversation acceptance", () => {
       await app.sendMessageButton.click();
 
       await browser.waitUntil(async () => (await backendCalls()).some(({ args }) => isUserPrompt(args.command)));
-      const command = (await backendCalls()).find(({ args }) => isUserPrompt(args.command))?.args.command as { message: string; images: Array<{ data: string; mimeType: string; name: string }> };
+      const command = (await backendCalls()).find(({ args }) => isUserPrompt(args.command))?.args.command;
+
+      if (!command) throw new Error("Image prompt was not recorded");
       expect(command.message).toBe("");
       expect(command.images).toEqual([{ type: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", mimeType: "image/png", name: "pixel.png" }]);
     } finally {
@@ -251,6 +281,7 @@ describe("Conversation acceptance", () => {
 
   it("renders live assistant activity delivered through Tauri events", async () => {
     await startTemporaryConversation({});
+
     try {
       await emitPiEvent({ type: "agent_start" });
       await expect($(".stream-banner")).toHaveText(expect.stringContaining("piop is working"));
@@ -273,7 +304,9 @@ describe("Conversation acceptance", () => {
       entries: [{ type: "message", id: "incremental-final", parentId: null, message: { role: "assistant", content: "Incremental answer", timestamp: 200 } }],
       leafId: "incremental-final",
     };
+
     await mockBackend({ ...connectedSessionResponses("incremental-session"), "pi_command:get_entries": finalHistory });
+
     try {
       await emitPiEvent({ type: "agent_start" });
       await emitPiEvent({ type: "message_start", message: { role: "assistant", content: "", timestamp: 100 } });
@@ -301,7 +334,9 @@ describe("Conversation acceptance", () => {
       ],
       leafId: "error-assistant",
     };
+
     await mockBackend({ ...connectedSessionResponses("error-session"), "pi_command:get_entries": history });
+
     try {
       await emitPiEvent({ type: "session_switched" });
       const failure = $(".message-failure");
@@ -313,7 +348,9 @@ describe("Conversation acceptance", () => {
   });
 
   it("renders a tool call from running through completion", async () => {
-    const enableDebug = $('button[aria-label="Enable debug mode"]'); if (await enableDebug.isExisting()) await enableDebug.click();
+    const enableDebug = $('button[aria-label="Enable debug mode"]');
+
+    if (await enableDebug.isExisting()) await enableDebug.click();
     await expect($('button[aria-label="Disable debug mode"]')).toBeEnabled();
     await emitPiEvent({ type: "agent_start" });
     await emitPiEvent({ type: "tool_execution_start", toolCallId: "acceptance-tool", toolName: "acceptance_tool", args: { path: "README.md" } });

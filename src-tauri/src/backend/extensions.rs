@@ -36,7 +36,7 @@ pub(super) fn prepare_runtime_settings(settings: &AppSettings) -> Result<PathBuf
     let dir = generated_extension_root()?;
     ensure_private_dir(&dir)?;
     let path = dir.join("runtime-settings.ts");
-    atomic_write_private(&dir.join("provider-accounts.mjs"), include_str!("../../../extensions/piop-runtime-settings/provider-accounts.mjs").as_bytes())?;
+    atomic_write_private(&dir.join("provider-accounts.mjs"), include_str!("../../resources/provider-accounts.bundle.mjs").as_bytes())?;
     atomic_write_private(&path, include_str!("../../../extensions/piop-runtime-settings/index.ts").as_bytes())?;
     atomic_write_private(&dir.join("runtime-settings.json"), &serde_json::to_vec(&runtime_settings(settings)).map_err(|error| error.to_string())?)?;
     Ok(path)
@@ -195,7 +195,13 @@ pub(super) fn prepare_diff_watch_extension() -> Result<PathBuf, String> {
     let dir = generated_extension_root()?.join("piop-diff-watch");
     ensure_private_dir(&dir)?;
     let extension_path = dir.join("index.ts");
-    atomic_write_private(&extension_path, include_str!("../../../extensions/piop-diff-watch/index.ts").as_bytes())?;
+    for (name, content) in [
+        ("index.ts", include_str!("../../../extensions/piop-diff-watch/index.ts")),
+        ("git.ts", include_str!("../../../extensions/piop-diff-watch/git.ts")),
+        ("schemas.ts", include_str!("../../../extensions/piop-diff-watch/schemas.ts")),
+    ] {
+        atomic_write_private(&dir.join(name), content.as_bytes())?;
+    }
     remove_legacy_diff_assets(&dir)?;
     Ok(extension_path)
 }
@@ -235,6 +241,8 @@ pub(super) fn prepare_defined_agents_extension() -> Result<PathBuf, String> {
     for (name, source) in [
         ("mcp-config.ts", include_str!("../../../extensions/piop-define-agents/mcp-config.ts")),
         ("extension-loader.ts", include_str!("../../../extensions/piop-define-agents/extension-loader.ts")),
+        ("state.ts", include_str!("../../../extensions/piop-define-agents/state.ts")),
+        ("prompts.ts", include_str!("../../../extensions/piop-define-agents/prompts.ts")),
         ("../piop-diagrams.ts", include_str!("../../../extensions/piop-diagrams/index.ts")),
         ("index.ts", include_str!("../../../extensions/piop-define-agents/index.ts")),
     ] { atomic_write_private(&dir.join(name), source.as_bytes())?; }

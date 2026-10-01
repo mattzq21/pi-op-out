@@ -6,28 +6,45 @@ import { EventEmitter } from 'node:events';
 class FakeClient {
   constructor(info) { this.info = info; this.calls = []; this.closed = 0; globalThis.__MCP_TEST_CLIENTS__.push(this); }
   async connect(transport, options) { this.transport = transport; this.connectOptions = options; }
-  async listTools(params, options) { this.calls.push(['list', params, options]); return globalThis.__MCP_TEST_PAGES__[params?.cursor ?? 'first']; }
-  async callTool(params, options) { this.calls.push(['call', params, options]); return globalThis.__MCP_TEST_RESULT__; }
+  async listTools(params, options) { this.calls.push(['list', params, options]);
+
+  return globalThis.__MCP_TEST_PAGES__[params?.cursor ?? 'first']; }
+  async callTool(params, options) { this.calls.push(['call', params, options]);
+
+  return globalThis.__MCP_TEST_RESULT__; }
   async close() { this.closed++; this.onclose?.(); }
 }
+
 class FakeStdio { constructor(options) { this.options = options; this.stderr = new EventEmitter(); } }
+
 class FakeHTTP { constructor(url, options) { this.url = url; this.options = options; } }
+
 globalThis.__MCP_TEST_SDK__ = { Client: FakeClient, Stdio: FakeStdio, HTTP: FakeHTTP };
+
 const hooks = registerHooks({
   resolve(specifier, context, nextResolve) {
     if (context.parentURL?.endsWith('/resources/mcp-bridge.ts')) {
       if (specifier === '@modelcontextprotocol/client') return { url: 'data:text/javascript,export const Client = globalThis.__MCP_TEST_SDK__.Client; export const StreamableHTTPClientTransport = globalThis.__MCP_TEST_SDK__.HTTP;', shortCircuit: true };
+
       if (specifier === '@modelcontextprotocol/client/stdio') return { url: 'data:text/javascript,export const StdioClientTransport = globalThis.__MCP_TEST_SDK__.Stdio;', shortCircuit: true };
+
       if (specifier === '@earendil-works/pi-ai') return { url: 'data:text/javascript,export const Type = { Unsafe: value => value };', shortCircuit: true };
     }
+
     return nextResolve(specifier, context);
   },
   load(url, context, nextLoad) {
     const result = nextLoad(url, context);
+
     return url.endsWith('/resources/mcp-bridge.ts') ? { ...result, source: String(result.source).replaceAll('process.env', 'globalThis.__MCP_TEST_ENV__') } : result;
   },
 });
-const { default: mcpBridge } = await import('../../src-tauri/resources/mcp-bridge.ts'); hooks.deregister(); delete globalThis.__MCP_TEST_SDK__;
+
+const { default: mcpBridge } = await import('../../src-tauri/resources/mcp-bridge.ts');
+
+hooks.deregister();
+
+delete globalThis.__MCP_TEST_SDK__;
 
 async function fixture(servers, run, env = {}) {
   globalThis.__MCP_TEST_ENV__ = { ...env };
@@ -36,11 +53,19 @@ async function fixture(servers, run, env = {}) {
   globalThis.__MCP_TEST_RESULT__ = { content: [{ type: 'text', text: 'result' }] };
   const bus = new EventEmitter(), tools = new Map(), handlers = new Map(), commands = new Map(), statuses = [], notices = [], messages = [];
   let active = ['builtin'];
-  const pi = { events: { emit: (...args) => bus.emit(...args), on(name, handler) { bus.on(name, handler); return () => bus.off(name, handler); } },
+
+  const pi = { events: { emit: (...args) => bus.emit(...args), on(name, handler) { bus.on(name, handler);
+
+  return () => bus.off(name, handler); } },
     getAllTools: () => [...tools.values()], registerTool(tool) { tools.set(tool.name, tool); }, getActiveTools: () => active, setActiveTools(value) { active = value; },
     on(name, handler) { handlers.set(name, handler); }, registerCommand(name, command) { commands.set(name, command); }, sendMessage(message, options) { messages.push({ message, options }); } };
+
   const ctx = { sessionManager: { getSessionId: () => 'session' }, ui: { setStatus(key, value) { statuses.push({ key, value }); }, notify(...args) { notices.push(args); } } };
-  const select = (serverIds, agentName = 'agent', sessionId = 'session') => { const request = { servers: serverIds.map(id => servers.find(server => server.id === id)), agentName, sessionId }; bus.emit('piop:mcp:select', request); return request.ready; };
+
+  const select = (serverIds, agentName = 'agent', sessionId = 'session') => { const request = { servers: serverIds.map(id => servers.find(server => server.id === id)), agentName, sessionId }; bus.emit('piop:mcp:select', request);
+
+  return request.ready; };
+
   try {
     await mcpBridge(pi); handlers.get('session_start')?.({}, ctx);
     await run({ tools, handlers, commands, statuses, notices, messages, ctx, select, clients: globalThis.__MCP_TEST_CLIENTS__,
@@ -48,14 +73,20 @@ async function fixture(servers, run, env = {}) {
       update() { return select(servers.filter(server => server.enabled).map(server => server.id)); } });
   } finally {
     await handlers.get('session_shutdown')?.();
+
     for (const key of ['__MCP_TEST_ENV__', '__MCP_TEST_CLIENTS__', '__MCP_TEST_PAGES__', '__MCP_TEST_RESULT__']) delete globalThis[key];
   }
 }
+
 const stdio = { id: 'Server One', name: 'Server', enabled: true, command: '/tool executable', args: `one "two words" '' 'literal\\slash' escaped\\ space tail\\`, startupTimeoutSec: 23 };
 
 test('MCP disconnect reports bounded recent diagnostics and ignores close events from replaced clients', async () => fixture([stdio], async f => {
   const output = [];
-  const stderr = mock.method(process.stderr, 'write', chunk => { output.push(String(chunk)); return true; });
+
+  const stderr = mock.method(process.stderr, 'write', chunk => { output.push(String(chunk));
+
+  return true; });
+
   try {
     await f.select([stdio.id]); const first = f.clients[0];
     first.transport.stderr.emit('data', Buffer.from(`old-prefix${'x'.repeat(9000)}recent-tail\n`));
@@ -73,10 +104,15 @@ test('MCP disconnect reports bounded recent diagnostics and ignores close events
 test('MCP shutdown during discovery prevents late tool registration and closes the pending client', async () => fixture([stdio], async f => {
   let release, started;
   const entered = new Promise(resolve => { started = resolve; });
+
   const discovery = mock.method(FakeClient.prototype, 'listTools', async function () {
-    started(); return new Promise(resolve => { release = resolve; });
+    started();
+
+    return new Promise(resolve => { release = resolve; });
   });
+
   const stderr = mock.method(process.stderr, 'write', () => true);
+
   try {
     const selection = f.select([stdio.id]);
     const rejected = assert.rejects(selection, /MCP bridge has shut down/);

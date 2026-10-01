@@ -10,11 +10,16 @@ describe('chat session hook', () => {
   beforeEach(async () => {
     dom = installDom(); calls = [];
     responses = new Map([['get_session_revision', { revision: 'changed' }], ['get_tool_payload', { chunk: JSON.stringify({ content: 'persisted', details: { diff: 'patch' }, toolInput: { path: 'a' } }), length: 0, revision: 'payload' }], ['get_snapshot', snapshot()], ['get_available_models', { models: [{ id: 'model' }] }], ['get_available_thinking_levels', { levels: ['off', 'high'] }], ['get_commands', { commands: [] }], ['get_session_stats', { contextUsage: { tokens: 500, contextWindow: 1000, percent: 50 } }]]);
-    transport = { subscribe() { return () => {}; }, async command(command) { calls.push(command.type); const response = responses.get(command.type); if (response instanceof Error) throw response; return typeof response === 'function' ? response() : response; } };
+    transport = { subscribe() { return () => {}; }, async command(command) { calls.push(command.type); const response = responses.get(command.type);
+
+    if (response instanceof Error) throw response;
+
+    return response instanceof Function ? response() : response; } };
     hook = await renderHook(value => useChatSession(value), transport);
   });
   afterEach(async () => { await hook.unmount(); dom.restore(); });
   const send = async (...events) => { await act(async () => { events.forEach(event => hook.current.handleEvent(event)); }); };
+
   const message = (type, role, content, extra = {}) => ({ type, message: { role, content, timestamp: 100, ...extra } });
 
   test('streaming batches deltas and finalizes a stable assistant message without duplicates', async () => {

@@ -45,8 +45,11 @@ export function getStatusText(
 
 export function getRightAlignedStatusLine(text: string, width: number): string {
   const safeWidth = Math.max(0, Math.floor(width));
+
   if (safeWidth === 0) return "";
+
   if (text.length >= safeWidth) return text.slice(0, safeWidth);
+
   return `${" ".repeat(safeWidth - text.length)}${text}`;
 }
 
@@ -61,21 +64,24 @@ export function createFastIndicatorFactory(text: string): FastIndicatorFactory {
 
 export function canSetTuiStatus(ctx: StatusContext): boolean {
   if (!ctx.hasUI) return false;
+
   if (ctx.mode !== undefined && ctx.mode !== "tui") return false;
+
   return (
-    typeof ctx.ui?.setWidget === "function" ||
-    typeof ctx.ui?.setStatus === "function"
+    ctx.ui?.setWidget !== undefined ||
+    ctx.ui?.setStatus !== undefined
   );
 }
 
 function setFastIndicator(ctx: StatusContext, text: StatusText): void {
-  if (typeof ctx.ui?.setWidget === "function") {
+  if (ctx.ui?.setWidget !== undefined) {
     ctx.ui.setStatus?.(STATUS_KEY, undefined);
     ctx.ui.setWidget(
       STATUS_KEY,
       text === undefined ? undefined : createFastIndicatorFactory(text),
       { placement: "belowEditor" },
     );
+
     return;
   }
 
@@ -96,8 +102,10 @@ export function updateFastStatus(
           : undefined,
       );
     }
+
     return;
   }
+
   if (!canSetTuiStatus(ctx)) return;
   setFastIndicator(ctx, getStatusText(config, model));
 }
@@ -105,8 +113,10 @@ export function updateFastStatus(
 export function clearFastStatus(ctx: StatusContext): void {
   if (ctx.mode === "rpc") {
     if (ctx.hasUI) ctx.ui?.setStatus?.(DESKTOP_STATUS_KEY, undefined);
+
     return;
   }
+
   if (!canSetTuiStatus(ctx)) return;
   setFastIndicator(ctx, undefined);
 }

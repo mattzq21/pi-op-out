@@ -70,12 +70,14 @@ test('intraline matching skips unrelated or excessive pairs and retains unchange
   assert.equal(parseDiff(patch('a', '', 'new'))[0].lines[1].parts, undefined);
   assert.deepEqual(parseDiff(patch('a', '', ''))[0].lines[1].parts, []);
   assert.deepEqual(parseDiff(patch('a', 'same', 'same'))[0].lines[1].parts, [{ text: 'same', changed: false }]);
+
   for (const [before, after] of [['a b', 'a x b'], ['a x b', 'a b'], ['color #fff', 'color #000']]) {
     const [, removed, added] = parseDiff(patch('a', before, after))[0].lines;
     assert.equal(removed.parts.map(part => part.text).join(''), before);
     assert.equal(added.parts.map(part => part.text).join(''), after);
     assert.ok([...removed.parts, ...added.parts].some(part => part.changed));
   }
+
   const many = 'diff --git a/a b/a\n@@ -1,21 +1,21 @@\n' + '-a\n'.repeat(21) + '+b\n'.repeat(21);
   assert.ok(parseDiff(many)[0].lines.every(line => !line.parts));
   assert.equal(parseDiff(patch('a', 'x'.repeat(4001), 'x'.repeat(4000) + 'y'))[0].lines[1].parts, undefined);
@@ -100,6 +102,7 @@ test('diff rendering limits oversized input, lines and line counts', () => {
 test('turn diffs render daemon snapshots and tolerate absent patches', () => {
   for (const value of [undefined, '', { patch: '' }]) assert.deepEqual(turnDiff(value), { files: [], warnings: [] });
   const text = patch('a') + 'diff --git a/old b/new\nrename from old\nrename to new';
+
   for (const value of [text, { patch: text, repositoryRoot: '/repo' }]) {
     const result = turnDiff(value);
     assert.deepEqual(result.files.map(file => file.path), ['a', 'new']);

@@ -69,7 +69,7 @@ impl Sdk {
         }
         let source = format!(
             "{}\n{}",
-            include_str!("../../../extensions/piop-runtime-settings/provider-accounts.mjs"),
+            include_str!("../../resources/provider-accounts.bundle.mjs"),
             include_str!("../../resources/provider-sdk.mjs")
         );
         let mut child = Command::new("node")

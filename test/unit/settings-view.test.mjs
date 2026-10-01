@@ -11,7 +11,11 @@ describe('settings editor', () => {
     props = { settings: { worktreeSetupScripts: [], defaultAgent: 'general', defaultModel: 'p/model', hiddenModels: [], defaultThinking: 'off', defaultFastMode: false, contextWindowCap: 10000, contextWindowCapEnabled: true, autoCompaction: true, autoRetry: true, debugMode: false, keybindings: { ...defaultKeybindings }, tools: [], skills: [], hosts: [] }, onSave: async (...args) => saves.push(args), onDirtyChange: value => dirty.push(value) };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; dom.restore(); });
-  async function render(extra = {}) { props = { ...props, ...extra }; if (view) await view.rerender(props); else view = await renderComponent(SettingsView, props); }
+
+  async function render(extra = {}) { props = { ...props, ...extra };
+
+  if (view) await view.rerender(props); else view = await renderComponent(SettingsView, props); }
+
   const control = label => document.querySelector(`[aria-label="${label}"]`);
   const button = text => [...document.querySelectorAll('button')].find(item => item.textContent === text);
   const click = async element => act(async () => element.click());
@@ -23,7 +27,9 @@ describe('settings editor', () => {
 
   test('save tracks dirty state, deduplicates requests and preserves edits made while saving', async () => {
     const pending = Promise.withResolvers();
-    await render({ onSave: (...args) => { saves.push(args); return pending.promise; } }); assert.equal(save().disabled, true); assert.equal(dirty.at(-1), false);
+    await render({ onSave: (...args) => { saves.push(args);
+
+    return pending.promise; } }); assert.equal(save().disabled, true); assert.equal(dirty.at(-1), false);
     await click(control('Automatic retry')); assert.equal(dirty.at(-1), true);
     await act(async () => { save().click(); save().click(); }); assert.equal(saves.length, 1); assert.equal(saves[0][0].autoRetry, false); assert.equal(save().textContent, 'Saving…');
     await enterText(control('Context window cap'), '20000');
@@ -72,7 +78,9 @@ describe('settings editor', () => {
     assert.match(document.querySelector('.mcp-error').textContent, /valid HTTP URL/);
     await enterText(fields()[0], 'file:///tmp/x'); assert.match(document.querySelector('.mcp-error').textContent, /HTTP or HTTPS/);
     await enterText(fields()[0], 'https://example.com/mcp');
+
     for (const [headers, error] of [['{bad', 'valid JSON'], ['[]', 'string values'], ['{"a":3}', 'string values'], ['null', 'string values']]) { await enterText(fields()[1], headers); assert.match(document.querySelector('.mcp-error').textContent, new RegExp(error)); }
+
     await enterText(fields()[1], '{"Authorization":"test"}'); await enterText(control('Search startup timeout'), '0'); assert.match(document.querySelector('.mcp-error').textContent, /between 1 and 600/);
     await enterText(control('Search startup timeout'), '20'); await click(save()); assert.equal(saves[0][1].agents[0].mcpServers[0].startupTimeoutSec, 20); assert.equal(saves[0][1].agents[0].mcpServers[0].url, 'https://example.com/mcp');
     await click(button('stdio')); await enterText(document.querySelector('.stdio-fields input'), ''); assert.match(document.querySelector('.mcp-error').textContent, /Command is required/);
@@ -127,7 +135,11 @@ describe('settings editor', () => {
 
   test('shortcut recording detects collisions, allows clearing, and restores defaults', async () => {
     await render({ scope: 'client' }); await section('Keybinds'); const input = control('New conversation shortcut');
-    const key = async (key, extra = {}) => { const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra }); await act(async () => input.dispatchEvent(event)); return event; };
+
+    const key = async (key, extra = {}) => { const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra }); await act(async () => input.dispatchEvent(event));
+
+    return event; };
+
     assert.equal((await key('Tab')).defaultPrevented, false); await key('b', { ctrlKey: true }); assert.match(document.querySelector('[role=alert]').textContent, /assigned more than once/);
     await key('Backspace'); assert.equal(input.value, ''); assert.equal(document.querySelector('[role=alert]'), null);
     await key('k', { ctrlKey: true, shiftKey: true }); await click(save()); assert.equal(saves[0][0].keybindings.newConversation, 'Ctrl+Shift+K');
@@ -142,6 +154,7 @@ describe('settings editor', () => {
     await enterText(control('Agent name'), 'general'); assert.equal(control('Agent name').value, 'codereview');
     await select('Agent default model', 'p/model'); await select('Agent default effort', 'high'); await click(control('Agent fast mode'));
     await enterText(control('System prompt file'), 'review.md'); await enterText(control('Agent prompt file'), 'extra.md');
+
     for (const label of ['Allow read', 'Allow Research']) await click(control(label));
     await click(control('Allow read')); await click(control('Allow read')); await click(save());
     assert.deepEqual(saves[0][1].agents[1], profile('codereview', { model: 'p/model', effort: 'high', fastMode: true, path_systemprompt: 'review.md', path_agentprompt: 'extra.md', tools: ['read'], skills: ['/research'], mcpServers: [] }));

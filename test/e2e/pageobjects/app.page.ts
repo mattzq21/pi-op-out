@@ -1,6 +1,8 @@
 import { $, browser } from "@wdio/globals";
 
-type ConfirmationWindow = Window & { __e2eConfirmation?: { original: typeof window.confirm; messages: string[] } };
+declare global {
+  interface Window { __e2eConfirmation?: { original: typeof window.confirm; messages: string[] } }
+}
 
 class AppPage {
   get root() { return $(".app:not(.app-loading)"); }
@@ -54,31 +56,37 @@ class AppPage {
     if (await this.conversationsButton.isExisting()) {
       await this.confirmAction("Discard unsaved settings changes?", () => this.conversationsButton.click(), true);
     }
+
     await this.composer.waitForDisplayed();
   }
 
-  async confirmAction(message: string, action: () => Promise<unknown>, optional = false) {
+  async confirmAction<T>(message: string, action: () => Promise<T>, optional = false) {
     await browser.execute((expected) => {
-      const target = window as ConfirmationWindow;
-      target.__e2eConfirmation = { original: window.confirm, messages: [] };
+      const messages: string[] = [];
+      window.__e2eConfirmation = { original: window.confirm, messages };
       window.confirm = (value) => {
         const text = String(value);
-        target.__e2eConfirmation!.messages.push(text);
+        messages.push(text);
+
         return text === expected;
       };
     }, message);
     let messages: string[] = [];
+
     try {
       await action();
     } finally {
       messages = await browser.execute(() => {
-        const target = window as ConfirmationWindow;
-        const confirmation = target.__e2eConfirmation!;
+        const confirmation = window.__e2eConfirmation;
+
+        if (!confirmation) throw new Error("Confirmation capture was not installed");
         window.confirm = confirmation.original;
-        delete target.__e2eConfirmation;
+        delete window.__e2eConfirmation;
+
         return confirmation.messages;
       });
     }
+
     if ((!optional && messages.length !== 1) || messages.some((value) => value !== message)) {
       throw new Error(`Expected confirmation ${JSON.stringify(message)}, received ${JSON.stringify(messages)}`);
     }
@@ -103,8 +111,10 @@ class AppPage {
     if (!["Keybinds", "Models", "Hosts"].includes(label) && !(await this.settingsSection(label).isExisting())) {
       await $('//nav[contains(@class, "settings-nav")]//button[normalize-space(.)="This computer"]').click();
     }
+
     await this.settingsSection(label).click();
     await this.settingsSectionHeading.waitForDisplayed();
+
     if (label === "Agents") {
       try { await $('//button[normalize-space(.)="Add agent"]').waitForEnabled(); }
       catch (cause) { throw new Error(`Agent settings unavailable: ${await $("body").getText()}`, { cause }); }
@@ -124,10 +134,18 @@ class AppPage {
 
   async setProjectPath(path: string) {
     await this.openProjectButton.waitForEnabled();
+
     if (await this.projectDirectory.getAttribute("aria-label") === "Folder path relative to home") {
-      await browser.execute(() => document.querySelector('.directory-palette input')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", altKey: true, bubbles: true, cancelable: true })));
+      await browser.execute(() => {
+        const input = document.querySelector('.directory-palette input');
+
+        if (!input) throw new Error("Directory input was not found");
+
+        return input.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", altKey: true, bubbles: true, cancelable: true }));
+      });
       await browser.waitUntil(async () => await this.projectDirectory.getAttribute("aria-label") === "Search or type a folder path");
     }
+
     await this.projectDirectory.setValue(`${path.replace(/\/$/, "")}/`);
     await this.openProjectButton.waitForEnabled();
   }

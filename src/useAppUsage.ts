@@ -8,10 +8,15 @@ export function useAppUsage(transport: Accessor<NativeTransport>) {
   const [codexUsage, setCodexUsage] = createSignal<CodexUsage>();
   const [opencodeGoUsage, setOpencodeGoUsage] = createSignal<OpencodeGoUsage>();
   const [usageClock, setUsageClock] = createSignal(0);
-  const opencodeGoBadge = createMemo(() => { usageClock(); return goUsageBadge(opencodeGoUsage()); });
+
+  const opencodeGoBadge = createMemo(() => { usageClock();
+
+  return goUsageBadge(opencodeGoUsage()); });
+
   createDependencyEffect(() => {
     const capturedTransport = transport();
     let cancelled = false;
+
     const load = () => {
       void capturedTransport.loadCodexUsage().then(usage => {
         if (!cancelled) setCodexUsage(normalizeCodexUsage(usage));
@@ -20,9 +25,11 @@ export function useAppUsage(transport: Accessor<NativeTransport>) {
         if (!cancelled) setOpencodeGoUsage(normalizeOpencodeGoUsage(usage));
       }).catch(() => undefined);
     };
+
     load();
     const interval = window.setInterval(load, 60_000);
     window.addEventListener("focus", load);
+
     return () => {
       cancelled = true;
       window.clearInterval(interval);
@@ -30,5 +37,6 @@ export function useAppUsage(transport: Accessor<NativeTransport>) {
     };
   }, () => [transport()]);
   useUsageClock(() => (codexUsage()), () => (opencodeGoUsage()), () => (setUsageClock));
+
   return { codexUsage, opencodeGoBadge, usageClock };
 }

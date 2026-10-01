@@ -1,8 +1,14 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
+import { Type as Schema } from "typebox";
+import { Check, Parse } from "typebox/value";
 import { resolve } from "node:path";
 import { currentHost, request, MESSAGE_TIMEOUT_MS } from "./client.ts";
-import { forkConversation, type ForkOptions, type CreatedWorktree } from "./fork.ts";
+import { forkConversation, type ForkOptions, createdWorktreeSchema } from "./fork.ts";
+
+const branchRequestSchema = Schema.Object({ id: Schema.String(), entryId: Schema.String() });
+
+const requestIdSchema = Schema.Object({ id: Schema.String() });
 
 export function registerForkAndForget(pi: ExtensionAPI) {
   const statusKey = "pi-desktop-control-response";
@@ -11,10 +17,12 @@ export function registerForkAndForget(pi: ExtensionAPI) {
     async handler(args, ctx) {
       let id: string | undefined;
       let responseContext: ExtensionContext = ctx;
+
       try {
-        const request = JSON.parse(args) as { id?: string; entryId?: string };
-        id = request.id;
-        if (!id || ctx.mode !== "rpc" || typeof request.entryId !== "string") throw new Error("Invalid branch request");
+        const request = JSON.parse(args);
+        id = Check(requestIdSchema, request) ? request.id : undefined;
+
+        if (!id || ctx.mode !== "rpc" || !Check(branchRequestSchema, request)) throw new Error("Invalid branch request");
         const fork = await forkConversation(ctx, { entryId: request.entryId }, async () => { throw new Error("Unexpected worktree request"); });
         const result = await ctx.switchSession(fork.sessionPath, { withSession: async next => { responseContext = next; } });
         responseContext.ui.setStatus(statusKey, `json:${JSON.stringify({ type: "response", id, success: true, data: { cancelled: result.cancelled } })}`);
@@ -24,20 +32,26 @@ export function registerForkAndForget(pi: ExtensionAPI) {
       }
     },
   });
+
   const assertAssistantEntry = (ctx: ExtensionContext, entryId: string) => {
     const entry = ctx.sessionManager.getEntry(entryId);
+
     if (!entry || entry.type !== "message" || entry.message.role !== "assistant") throw new Error("Assistant response not found in this conversation");
   };
+
   pi.registerCommand("pi-desktop-fork-and-forget", {
     description: "Continue this session from an earlier assistant response",
     async handler(args, ctx) {
       let id: string | undefined;
+
       try {
-        const request = JSON.parse(args) as { id?: string; entryId?: string };
-        id = request.id;
-        if (!id || ctx.mode !== "rpc" || typeof request.entryId !== "string") throw new Error("Invalid fork-and-forget request");
+        const request = JSON.parse(args);
+        id = Check(requestIdSchema, request) ? request.id : undefined;
+
+        if (!id || ctx.mode !== "rpc" || !Check(branchRequestSchema, request)) throw new Error("Invalid fork-and-forget request");
         assertAssistantEntry(ctx, request.entryId);
         const result = await ctx.navigateTree(request.entryId);
+
         if (!result.cancelled) pi.appendEntry("pi-desktop-fork-and-forget", { entryId: request.entryId });
         ctx.ui.setStatus(statusKey, `json:${JSON.stringify({ type: "response", id, success: true, data: { cancelled: result.cancelled } })}`);
       } catch (error) {
@@ -49,10 +63,14 @@ export function registerForkAndForget(pi: ExtensionAPI) {
 }
 
 export function registerSessionOperations(pi: ExtensionAPI) {
-  const create = (ctx: ExtensionContext, name: string, signal?: AbortSignal) => request("/worktrees/create", { hostId: currentHost(), cwd: ctx.cwd, name }, signal, MESSAGE_TIMEOUT_MS) as Promise<CreatedWorktree>;
-  const fork = (ctx: ExtensionContext, options: ForkOptions, signal?: AbortSignal) => { signal?.throwIfAborted(); return forkConversation(ctx, options, (name) => create(ctx, name, signal)); };
+  const create = async (ctx: ExtensionContext, name: string, signal?: AbortSignal) => Parse(createdWorktreeSchema, await request("/worktrees/create", { hostId: currentHost(), cwd: ctx.cwd, name }, signal, MESSAGE_TIMEOUT_MS));
+
+  const fork = (ctx: ExtensionContext, options: ForkOptions, signal?: AbortSignal) => { signal?.throwIfAborted();
+
+  return forkConversation(ctx, options, (name) => create(ctx, name, signal)); };
+
   const remove = (cwd: string, deleteBranch = false, signal?: AbortSignal) => request("/worktrees/remove", { hostId: currentHost(), cwd, deleteBranch }, signal, MESSAGE_TIMEOUT_MS);
-  const result = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }], details: data });
+  const result = <T,>(data: T): AgentToolResult<T> => ({ content: [{ type: "text", text: JSON.stringify(data, null, 2) }], details: data });
   pi.registerTool({
     name: "fork_session", label: "Fork conversation",
     description: "Create a separate saved conversation through a completed assistant response. Works with or without Git. Defaults to the latest completed response (empty history if none). Keeps the current agent running. Optionally create a new directory or a Git worktree with current files. Existing destination paths are rejected. Returns hostId/sessionId for send_message; does not start the child.",
@@ -69,14 +87,18 @@ export function registerSessionOperations(pi: ExtensionAPI) {
     parameters: Type.Object({ cwd: Type.String(), deleteBranch: Type.Optional(Type.Boolean()) }),
     async execute(_id, params, signal, _update, ctx) { return result(await remove(resolve(ctx.cwd, params.cwd), params.deleteBranch, signal)); },
   });
-  const report = async (ctx: ExtensionContext, operation: () => Promise<unknown>) => {
+
+  const report = async <T,>(ctx: ExtensionContext, operation: () => Promise<T>) => {
     try { pi.sendMessage({ customType: "piop-session-operation", content: JSON.stringify(await operation(), null, 2), display: true }, { triggerTurn: false }); }
     catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
   };
+
   pi.registerCommand("fork-session", {
     description: 'Fork conversation: /fork-session [directory] or /fork-session --worktree name', handler: async (args, ctx) => report(ctx, () => {
       const value = args.trim();
+
       if (value === "--worktree") throw new Error("Usage: /fork-session --worktree name");
+
       return fork(ctx, value.startsWith("--worktree ") ? { worktree: value.slice(11).trim() } : { cwd: value || undefined });
     })
   });
@@ -84,6 +106,7 @@ export function registerSessionOperations(pi: ExtensionAPI) {
   pi.registerCommand("remove-worktree", {
     description: "Remove unused clean worktree, keeping its branch: /remove-worktree path", handler: async (args, ctx) => report(ctx, () => {
       if (!args.trim()) throw new Error("Usage: /remove-worktree path");
+
       return remove(resolve(ctx.cwd, args.trim()));
     })
   });

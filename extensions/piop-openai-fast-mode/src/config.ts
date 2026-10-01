@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { promises as fs } from "node:fs";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
@@ -16,12 +17,6 @@ export const DEFAULT_CONFIG: FastModeConfig = {
 };
 
 const SUPPORTED_PROVIDER_SET = new Set<string>(SUPPORTED_PROVIDERS);
-
-type RecordLike = Record<string, unknown>;
-
-function isRecord(value: unknown): value is RecordLike {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function cloneTarget(target: FastTarget): FastTarget {
   return {
@@ -47,47 +42,27 @@ export function syncSupportedTargets(config: FastModeConfig, targets: FastTarget
   };
 }
 
-function normalizeTarget(rawTarget: unknown): FastTarget | undefined {
-  if (!isRecord(rawTarget)) return undefined;
+const fastTargetSchema = z.object({
+  provider: z.string().trim().toLowerCase().refine(provider => SUPPORTED_PROVIDER_SET.has(provider)),
+  model: z.string().trim().min(1),
+  serviceTier: z.string().trim().min(1).catch(DEFAULT_SERVICE_TIER),
+});
 
-  const rawProvider = rawTarget.provider;
-  const rawModel = rawTarget.model;
+const targetsSchema = z.array(fastTargetSchema.optional().catch(undefined)).transform(items => items.flatMap(item => item ? [item] : []));
 
-  if (typeof rawProvider !== "string" || typeof rawModel !== "string") {
-    return undefined;
-  }
+const configSchema = z.object({ enabled: z.boolean().optional().catch(undefined), targets: targetsSchema.optional().catch(undefined) });
 
-  const provider = rawProvider.trim().toLowerCase();
-  const model = rawModel.trim();
+export function normalizeTargets(rawTargets: FastTarget[] | undefined): FastTarget[] | undefined {
+  const parsed = targetsSchema.safeParse(rawTargets);
 
-  if (!provider || !model || !SUPPORTED_PROVIDER_SET.has(provider)) {
-    return undefined;
-  }
-
-  const rawServiceTier = rawTarget.serviceTier;
-  const serviceTier =
-    typeof rawServiceTier === "string" && rawServiceTier.trim() !== ""
-      ? rawServiceTier.trim()
-      : DEFAULT_SERVICE_TIER;
-
-  return { provider, model, serviceTier };
-}
-
-export function normalizeTargets(
-  rawTargets: unknown,
-): FastTarget[] | undefined {
-  if (!Array.isArray(rawTargets)) return undefined;
-
+  if (!parsed.success) return undefined;
   const normalized: FastTarget[] = [];
   const seen = new Set<string>();
 
-  for (const rawTarget of rawTargets) {
-    const target = normalizeTarget(rawTarget);
-    if (!target) continue;
+  for (const target of parsed.data) {
+    const key = target.provider + "\u0000" + target.model;
 
-    const key = `${target.provider}\u0000${target.model}`;
     if (seen.has(key)) continue;
-
     seen.add(key);
     normalized.push(target);
   }
@@ -95,19 +70,13 @@ export function normalizeTargets(
   return normalized;
 }
 
-export function normalizeConfig(
-  raw: unknown,
-  fallback: FastModeConfig = DEFAULT_CONFIG,
-): FastModeConfig {
+export function normalizeConfig(raw: Partial<FastModeConfig> | null | undefined, fallback: FastModeConfig = DEFAULT_CONFIG): FastModeConfig {
   const safeFallback = cloneConfig(fallback);
+  const parsed = configSchema.safeParse(raw);
 
-  if (!isRecord(raw)) return safeFallback;
+  if (!parsed.success) return safeFallback;
 
-  const enabled =
-    typeof raw.enabled === "boolean" ? raw.enabled : safeFallback.enabled;
-  const targets = normalizeTargets(raw.targets) ?? safeFallback.targets;
-
-  return { enabled, targets };
+  return { enabled: parsed.data.enabled ?? safeFallback.enabled, targets: normalizeTargets(parsed.data.targets) ?? safeFallback.targets };
 }
 
 export function parseConfigJson(
@@ -160,6 +129,7 @@ export function selectConfigPath({
   exists = existsSync,
 }: SelectConfigPathOptions): ResolvedConfigPath {
   const projectPath = getProjectConfigPath(cwd);
+
   if (exists(projectPath)) {
     return { scope: "project", path: projectPath };
   }
@@ -185,6 +155,7 @@ export async function loadConfigFromPath(
 ): Promise<FastModeConfig> {
   try {
     const json = await fs.readFile(configPath, "utf8");
+
     return parseConfigJson(json, fallback);
   } catch {
     return cloneConfig(fallback);
@@ -194,12 +165,13 @@ export async function loadConfigFromPath(
 async function migrateConfigPath(path: string): Promise<void> {
   if (existsSync(path)) return;
   const legacy = join(dirname(dirname(path)), "pi-openai-fast-mode-piop", "config.json");
+
   try {
     const contents = await fs.readFile(legacy, "utf8");
     await fs.mkdir(dirname(path), { recursive: true });
     await fs.writeFile(path, contents, { flag: "wx", mode: 0o600 });
   } catch (error) {
-    if (!["ENOENT", "EEXIST"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+    if (!["ENOENT", "EEXIST"].includes(z.object({ code: z.string() }).safeParse(error).data?.code ?? "")) throw error;
   }
 }
 
@@ -209,10 +181,12 @@ export async function loadConfigForScope(
   await migrateConfigPath(getProjectConfigPath(options.cwd));
   await migrateConfigPath(getUserConfigPath(options.agentDir));
   const selected = selectConfigPath(options);
+
   const config = await loadConfigFromPath(
     selected.path,
     options.fallback ?? DEFAULT_CONFIG,
   );
+
   return { ...selected, config };
 }
 
@@ -235,5 +209,6 @@ export async function saveConfigForScope(
 ): Promise<ResolvedConfigPath> {
   const selected = selectConfigPath(options);
   await saveConfigToPath(selected.path, config);
+
   return selected;
 }

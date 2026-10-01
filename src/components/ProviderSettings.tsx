@@ -1,3 +1,4 @@
+import { required } from "../lib/required";
 import { Key, Rerun } from "@solid-primitives/keyed";
 import { createMemo, createSignal, Index } from "solid-js";
 import { createDependencyEffect } from "../lib/solid";
@@ -11,6 +12,7 @@ import type { RemoteHost } from "../types";
 import { CustomProviderForm } from "./CustomProviderForm";
 
 type AuthControls = ReturnType<typeof useProviderAuth>;
+
 type ProviderGroup = {
   key: string; name: string; base: ProviderAccount;
   method: ProviderAccount["methods"][number]; accounts: ProviderAccount[];
@@ -18,12 +20,15 @@ type ProviderGroup = {
 
 function providerGroups(providers: ProviderAccount[]): ProviderGroup[] {
   const families = new Map<string, ProviderAccount[]>();
+
   for (const provider of providers) {
     const accounts = families.get(provider.providerId) ?? [];
     accounts.push(provider); families.set(provider.providerId, accounts);
   }
+
   return [...families.values()].flatMap((accounts) => {
     const base = accounts.find((account) => account.number === 1) ?? accounts[0];
+
     return base.methods.map((method) => ({
       key: `${base.providerId}:${method.type}`,
       name: base.methods.length > 1 ? method.name : base.name.replace(/ #\d+$/, ""),
@@ -32,14 +37,17 @@ function providerGroups(providers: ProviderAccount[]): ProviderGroup[] {
     }));
   });
 }
+
 const localHostLabel = isMobile ? "Connected daemon" : "This computer";
+
 function selectedHostName(hosts: RemoteHost[], hostId: string) {
   return hostId === "local" ? localHostLabel : hosts.find((host) => host.id === hostId)?.name || hostId;
 }
 
 function LoginLink(componentProps: { url: string; label: string }) {
   const [error, setError] = createSignal<string>();
-  return <span class="provider-login-link"><button type="button" onClick={() => void openExternalUrl(componentProps.url).catch(() => setError("Could not open the browser. Copy the link and open it in your browser."))}><ExternalLink size={14} />{componentProps.label}</button><input aria-label="Login link" readOnly value={componentProps.url} onFocus={(event) => event.target.select()} />{error() && <small role="alert">{(error())!}</small>}</span>;
+
+  return <span class="provider-login-link"><button type="button" onClick={() => void openExternalUrl(componentProps.url).catch(() => setError("Could not open the browser. Copy the link and open it in your browser."))}><ExternalLink size={14} />{componentProps.label}</button><input aria-label="Login link" readOnly value={componentProps.url} onFocus={(event) => event.target.select()} />{error() && <small role="alert">{(error())}</small>}</span>;
 }
 
 function LoginNotice(componentProps: { notice: AuthNotice }) {
@@ -47,13 +55,14 @@ function LoginNotice(componentProps: { notice: AuthNotice }) {
     {componentProps.notice.message && <p>{componentProps.notice.message}</p>}
     {componentProps.notice.userCode && <p>Enter this code: <strong class="provider-device-code">{componentProps.notice.userCode}</strong></p>}
     {componentProps.notice.url && <LoginLink url={componentProps.notice.url} label="Open provider login" />}
-    {<Key each={componentProps.notice.links?.filter((link) => link.url)} by={(link) => link.url}>{(link, _index) => <LoginLink  url={link().url!} label={link().label || "Open provider page"} />}</Key>}
+    {<Key each={componentProps.notice.links?.filter((link) => link.url)} by={(link) => link.url}>{(link, _index) => <LoginLink  url={required(link().url)} label={link().label || "Open provider page"} />}</Key>}
   </div>;
 }
 
 function LoginPrompt(componentProps: { prompt: NonNullable<AuthFlow["prompt"]>; working: boolean; reply: (answer: string) => Promise<void> }) {
   const [answer, setAnswer] = createSignal("");
   const submit = () => { const value = answer(); setAnswer(""); void componentProps.reply(value); };
+
   return <form class="provider-login-prompt" onSubmit={(event) => { event.preventDefault(); submit(); }}>
     <label class="field"><span>{componentProps.prompt.message}</span>
       {componentProps.prompt.type === "select" ? <select autofocus value={answer()} onChange={(event) => setAnswer(event.target.value)} disabled={componentProps.working}><option value="">Select an option</option>{<Key each={componentProps.prompt.options} by={(option) => option.id}>{(option, _index) => <option  value={option().id}>{option().label}{option().description ? ` — ${option().description}` : ""}</option>}</Key>}</select>
@@ -78,11 +87,15 @@ export function ProviderSettings(componentProps: { hosts: RemoteHost[]; initialH
   const disabled = createMemo(() => (auth.working || active()));
   createDependencyEffect(() => {
     const capturedHostId = hostId(); const capturedFixedHost0 = componentProps.fixedHost; const capturedHosts1 = componentProps.hosts;
+
  if (!(capturedFixedHost0 === undefined ? false : capturedFixedHost0) && capturedHostId !== "local" && !capturedHosts1.some((host) => host.id === capturedHostId)) setHostId("local"); }, () => [hostId(), componentProps.hosts, (componentProps.fixedHost === undefined ? false : componentProps.fixedHost)]);
   const hostName = createMemo(() => (selectedHostName(componentProps.hosts, hostId())));
+
   const providers = createMemo(() => (providerGroups(auth.providers).filter((group) => `${group.name} ${group.base.providerId} ${group.accounts.map((account) => account.name).join(" ")}`.toLowerCase().includes(filter().toLowerCase().trim()))
     .sort((left, right) => Number(right.accounts.length > 0) - Number(left.accounts.length > 0))));
+
   const loadingProviders = () => auth.loading && !auth.providers.length;
+
   return <div class="settings-section provider-settings">
     <div class="section-title"><div><h2>Providers</h2><p>Sign in to providers on the machine running Pi. Credentials stay on that host and remain available after you disconnect.</p></div></div>
     <div class="provider-toolbar">
@@ -102,11 +115,12 @@ export function ProviderSettings(componentProps: { hosts: RemoteHost[]; initialH
 
 function LoginPanel(componentProps: { flow: AuthFlow; auth: AuthControls }) {
   const promptId = createMemo(() => componentProps.flow.prompt?.id);
+
   return <div class="provider-login-panel" aria-label="Provider login">
     <strong>{componentProps.flow.name ?? componentProps.auth.providers.find((provider) => provider.id === componentProps.flow.providerId)?.name ?? componentProps.flow.providerId}</strong>
     <FlowStatus flow={componentProps.flow} />
     {<Index each={componentProps.flow.notices}>{(notice, _index) => <LoginNotice  notice={notice()} />}</Index>}
-    {componentProps.flow.prompt && <Rerun on={promptId}>{(_key) => <LoginPrompt  prompt={componentProps.flow.prompt!} working={componentProps.auth.working} reply={componentProps.auth.reply} />}</Rerun>}
+    {componentProps.flow.prompt && <Rerun on={promptId}>{(_key) => <LoginPrompt  prompt={required(componentProps.flow.prompt)} working={componentProps.auth.working} reply={componentProps.auth.reply} />}</Rerun>}
     {componentProps.flow.status === "pending" && <button type="button" disabled={componentProps.auth.working} onClick={() => void componentProps.auth.cancel()}>Cancel login</button>}
   </div>;
 }

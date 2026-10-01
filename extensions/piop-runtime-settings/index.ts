@@ -1,3 +1,5 @@
+import { Type } from "typebox";
+import { Check, Parse } from "typebox/value";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -12,14 +14,55 @@ type Settings = {
   contextWindowCap: number;
   contextWindowCapEnabled: boolean;
 };
-type Update = { ctx: ExtensionContext; ready?: Promise<void> };
-const key = Symbol.for("piop.runtime-settings");
-const replyKey = Symbol.for("piop.runtime-settings.reply");
-const bootKey = Symbol.for("piop.runtime-settings.boot");
-const processState = globalThis as typeof globalThis & { [key]?: Settings; [replyKey]?: (value: string) => void; [bootKey]?: boolean };
 
-function isStringList(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
+type Update = { ctx: ExtensionContext; ready?: Promise<void> };
+
+const key = Symbol.for("piop.runtime-settings");
+
+const replyKey = Symbol.for("piop.runtime-settings.reply");
+
+const bootKey = Symbol.for("piop.runtime-settings.boot");
+
+const stringListSchema = Type.Array(Type.String());
+
+const settingsSchema = Type.Object({
+  tools: stringListSchema, skills: stringListSchema, explicitOnlySkills: Type.Optional(stringListSchema),
+  contextWindowCap: Type.Integer({ minimum: 1000, maximum: Number.MAX_SAFE_INTEGER }), contextWindowCapEnabled: Type.Boolean(),
+});
+
+const requestSchema = Type.Object({ id: Type.String(), settings: Type.Optional(Type.Unknown()), reloadAgents: Type.Optional(Type.Boolean()) });
+
+const idSchema = Type.Object({ id: Type.String() });
+
+const settingsPatchSchema = Type.Record(Type.String(), Type.Unknown());
+
+const setGlobal = <T>(property: symbol, value: T) => Object.defineProperty(globalThis, property, { value, writable: true, configurable: true, enumerable: true });
+
+function storedSettings() {
+  const value = Object.getOwnPropertyDescriptor(globalThis, key)?.value;
+
+  return Check(settingsSchema, value) ? value : undefined;
+}
+
+function reply(value: string) {
+  const handler = Object.getOwnPropertyDescriptor(globalThis, replyKey)?.value;
+
+  if (handler instanceof Function) handler(value);
+}
+
+type RuntimeSettingsRequest = { settings?: Settings };
+
+type RequiredToolsRequest = { ctx: ExtensionContext; tools: string[] };
+
+const readingTools: Array<"read" | "bash"> = ["read", "bash"];
+
+declare module "@earendil-works/pi-coding-agent" {
+  interface EventBus {
+    on(channel: "piop:runtime-settings", handler: (request: RuntimeSettingsRequest) => void): () => void;
+    emit(channel: "piop:runtime-settings", request: RuntimeSettingsRequest): void;
+    on(channel: "piop:required-tools", handler: (request: RequiredToolsRequest) => void): () => void;
+    emit(channel: "piop:required-tools", request: RequiredToolsRequest): void;
+  }
 }
 
 function skillsChanged(previous: Settings, next: Settings) {
@@ -27,34 +70,52 @@ function skillsChanged(previous: Settings, next: Settings) {
 }
 
 function validate(value: Settings): Settings {
-  if (value?.explicitOnlySkills !== undefined && !isStringList(value.explicitOnlySkills)) throw new Error("Invalid explicit skill policy");
-  if (!value || !isStringList(value.tools) || !isStringList(value.skills) || !Number.isSafeInteger(value.contextWindowCap) || value.contextWindowCap < 1000 || typeof value.contextWindowCapEnabled !== "boolean") throw new Error("Invalid runtime settings");
+  if (value?.explicitOnlySkills !== undefined && !Check(stringListSchema, value.explicitOnlySkills)) throw new Error("Invalid explicit skill policy");
+
+  if (!Check(settingsSchema, value)) throw new Error("Invalid runtime settings");
+
   return structuredClone(value);
 }
 
 export default async function runtimeSettings(pi: ExtensionAPI) {
   const accountProviders = new Map();
+
   const refreshAccounts = async () => {
     const existing = new Map(accountProviders);
     await loadAccountProviders(join(getAgentDir(), "auth.json"), () => ModelRuntime.create({ allowModelNetwork: false, refreshOnCreate: false }), accountProviders);
+
     for (const [id, provider] of accountProviders) if (existing.get(id) !== provider) pi.registerProvider(provider);
   };
+
   await refreshAccounts();
-  processState[key] ??= validate(JSON.parse(await readFile(process.env.PIOP_RUNTIME_SETTINGS_PATH || join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "runtime-settings.json"), "utf8")));
-  const current = () => processState[key]!;
-  const unsubscribe = pi.events.on("piop:runtime-settings", (value) => { (value as { settings?: Settings }).settings = structuredClone(current()); });
+
+  if (!storedSettings()) setGlobal(key, validate(JSON.parse(await readFile(process.env.PIOP_RUNTIME_SETTINGS_PATH || join(homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "runtime-settings.json"), "utf8"))));
+
+  const current = () => { const value = storedSettings();
+
+  if (!value) throw new Error("Runtime settings are unavailable");
+
+  return value; };
+
+  const unsubscribe = pi.events.on("piop:runtime-settings", (value) => { value.settings = structuredClone(current()); });
   pi.registerFlag("piop-runtime-settings", { description: "Inherited Piop runtime settings", type: "string" });
+
   const applyTools = (ctx: ExtensionContext) => {
-    const required = { ctx, tools: [] as string[] }; pi.events.emit("piop:required-tools", required);
+    const required: RequiredToolsRequest = { ctx, tools: [] }; pi.events.emit("piop:required-tools", required);
+
     if (process.env.PI_DEFINE_AGENTS_ACTIVE !== "1") pi.setActiveTools([...new Set([...current().tools, ...required.tools])].filter((name) => pi.getAllTools().some((tool) => tool.name === name)));
   };
+
   pi.on("session_start", (_event, ctx) => {
-    processState[replyKey] = (value) => ctx.ui.setStatus("pi-desktop-control-response", value);
-    if (!processState[bootKey]) {
+    setGlobal(replyKey, (value: string) => ctx.ui.setStatus("pi-desktop-control-response", value));
+
+    if (Object.getOwnPropertyDescriptor(globalThis, bootKey)?.value !== true) {
       const inherited = pi.getFlag("piop-runtime-settings");
-      if (typeof inherited === "string") processState[key] = validate(JSON.parse(inherited));
-      processState[bootKey] = true;
+
+      if (Check(Type.String(), inherited)) setGlobal(key, validate(JSON.parse(inherited)));
+      setGlobal(bootKey, true);
     }
+
     applyTools(ctx);
   });
   pi.on("resources_discover", () => process.env.PI_DEFINE_AGENTS_ACTIVE === "1" ? undefined : { skillPaths: current().skills });
@@ -63,45 +124,59 @@ export default async function runtimeSettings(pi: ExtensionAPI) {
     const normalize = (value: string) => resolve(value.startsWith("~/") ? join(homedir(), value.slice(2)) : value);
     const explicit = new Set(current().explicitOnlySkills?.map(normalize));
     const options = event.systemPromptOptions;
-    const readTool = (["read", "bash"] as const).find((tool) => (options.selectedTools ?? ["read", "bash"]).includes(tool));
+    const readTool = readingTools.find((tool) => (options.selectedTools ?? ["read", "bash"]).includes(tool));
+
     if (!readTool || !options.skills?.length) return;
     const original = formatSkillsForPrompt(options.skills, readTool);
     const filtered = formatSkillsForPrompt(options.skills.map((skill) => explicit.has(normalize(skill.filePath)) || explicit.has(normalize(skill.baseDir)) ? { ...skill, disableModelInvocation: true } : skill), readTool);
+
     if (original && original !== filtered) return { systemPrompt: event.systemPrompt.replace(original, filtered) };
   });
+
   const update = async (event: string, ctx: ExtensionContext) => {
     const request: Update = { ctx };
     pi.events.emit(event, request);
+
     if (!request.ready) throw new Error(`Live settings handler unavailable: ${event}`);
     await request.ready;
   };
+
   pi.registerCommand("piop-runtime-settings", {
     description: "Apply saved Piop runtime settings",
     handler: async (args, ctx) => {
-      const request = JSON.parse(args) as { id: string; settings: Settings; reloadAgents?: boolean };
+      const request = Parse(requestSchema, JSON.parse(args));
       const previous = current();
+
       try {
         if (ctx.mode !== "rpc" || !ctx.isIdle()) throw new Error("Runtime settings require an idle RPC session");
-        const next = validate({ ...previous, ...request.settings });
-        processState[key] = next;
+        const patch = request.settings ?? {};
+
+        if (!Check(settingsPatchSchema, patch)) throw new Error("Invalid runtime settings");
+        const next = validate({ ...previous, ...patch });
+        setGlobal(key, next);
+
         if (request.reloadAgents || skillsChanged(previous, next)) {
           await ctx.reload();
         } else {
           applyTools(ctx);
+
           if (process.env.PI_DEFINE_AGENTS_ACTIVE === "1") await update("piop:agents:refresh", ctx);
         }
-        processState[replyKey]?.(`json:${JSON.stringify({ type: "response", id: request.id, command: "runtime_settings", success: true })}`);
+
+        reply(`json:${JSON.stringify({ type: "response", id: request.id, command: "runtime_settings", success: true })}`);
       } catch (error) {
-        processState[key] = previous;
-        processState[replyKey]?.(`json:${JSON.stringify({ type: "response", id: request.id, command: "runtime_settings", success: false, error: error instanceof Error ? error.message : String(error) })}`);
+        setGlobal(key, previous);
+        reply(`json:${JSON.stringify({ type: "response", id: request.id, command: "runtime_settings", success: false, error: error instanceof Error ? error.message : String(error) })}`);
       }
     },
   });
   pi.registerCommand("piop-provider-auth-refresh", {
     description: "Refresh models after a host provider login changes",
     handler: async (args, ctx) => {
-      const request = JSON.parse(args) as { id: string };
+      const request = Parse(idSchema, JSON.parse(args));
+
       if (ctx.mode !== "rpc") return;
+
       try {
         await refreshAccounts();
         await ctx.modelRegistry.refresh({ allowNetwork: false });

@@ -25,6 +25,7 @@ test('agent values round-trip Unicode and use unpadded URL-safe base64', () => {
     assert.match(encoded, /^[\w-]+$/);
     assert.deepEqual(decodeAgentValue(encoded), value);
   }
+
   assert.throws(() => decodeAgentValue('!'));
   assert.throws(() => decodeAgentValue(btoa('not json')));
 });
@@ -32,6 +33,7 @@ test('agent values round-trip Unicode and use unpadded URL-safe base64', () => {
 test('compaction replaces valid usage estimates and preserves unknown or invalid usage', () => {
   const current = { tokens: 500, contextWindow: 1000, percent: 50, extra: true };
   assert.equal(contextUsageAfterCompaction(undefined, {}), undefined);
+
   for (const result of [null, {}, { estimatedTokensAfter: -1 }, { estimatedTokensAfter: Infinity }, { estimatedTokensAfter: NaN }, { estimatedTokensAfter: '20' }]) assert.equal(contextUsageAfterCompaction(current, { result }), current);
   assert.deepEqual(contextUsageAfterCompaction(current, { result: { estimatedTokensAfter: 125 } }), { ...current, tokens: 125, percent: 12.5 });
   assert.equal(contextUsageAfterCompaction(current, { result: { estimatedTokensAfter: 0 } }).percent, 0);
@@ -45,6 +47,7 @@ test('retry only replaces an aborted turn after a nonempty user prompt and no ch
   const user = { role: 'user', content: '  retry me  ' };
   const assistant = { role: 'assistant', stopReason: 'aborted' };
   assert.deepEqual(findReplaceableAbortedTurn([user, { role: 'tool' }, assistant]), { user, assistant, prompt: 'retry me' });
+
   for (const messages of [[], [user], [assistant], [user, { ...assistant, stopReason: 'stop' }], [user, { ...assistant, errorMessage: 'Response paused' }], [{ ...user, contextCheckpoint: true }, assistant], [{ ...user, content: ' ' }, assistant], [user, { ...assistant, errorMessage: 'Response paused' }, assistant]]) assert.equal(findReplaceableAbortedTurn(messages), undefined);
 });
 
@@ -58,6 +61,7 @@ test('terminal history bounds memory while retaining the complete output cursor'
 });
 
 const keyEvent = (key, modifiers = {}) => ({ key, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...modifiers });
+
 test('shortcut recording excludes normal typing and preserves all modifiers', () => {
   for (const key of ['Meta', 'Control', 'Alt', 'Shift', 'Tab', 'Escape', 'a', '🦆']) assert.equal(shortcutFromEvent(keyEvent(key)), null);
   assert.equal(shortcutFromEvent(keyEvent('a', { shiftKey: true })), null);
@@ -73,6 +77,7 @@ test('shortcut matching supports Mod on either platform and rejects extra modifi
   assert.ok(matchesShortcut(keyEvent('n', { ctrlKey: true }), 'Mod+N'));
   assert.ok(matchesShortcut(keyEvent(' ', { altKey: true }), 'Alt+Space'));
   assert.equal(matchesShortcut(keyEvent('F2'), 'F2'), false);
+
   for (const shortcut of ['', '+', 'Ctrl', 'N', 'Shift+N', 'Alt+N', 'Meta+N', 'Ctrl+Shift+N', 'Ctrl+B']) assert.equal(matchesShortcut(keyEvent('n', { ctrlKey: true }), shortcut), false);
   assert.equal(matchesShortcut(keyEvent('n'), 'Mod+N'), false);
   assert.equal(matchesShortcut(keyEvent('n', { ctrlKey: true, altKey: true }), 'Ctrl+N'), false);

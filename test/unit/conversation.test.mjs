@@ -10,7 +10,11 @@ describe('conversation behavior', () => {
     props = { readOnly: false, state: { isStreaming: false, messageCount: 0 }, messages: [], models: [], commands: [], thinkingLevels: [], widgets: [], statuses: {}, onSend: async () => {}, onBranch: () => {} };
   });
   afterEach(async () => { if (view) await view.unmount(); view = undefined; dom.restore(); });
-  async function render(extra = {}) { props = { ...props, ...extra, state: { model: null, thinkingLevel: 'off', isStreaming: false, messageCount: 0, ...(extra.state ?? props.state) } }; if (view) await view.rerender(props); else view = await renderComponent(ChatView, props); }
+
+  async function render(extra = {}) { props = { ...props, ...extra, state: { model: null, thinkingLevel: 'off', isStreaming: false, messageCount: 0, ...(extra.state ?? props.state) } };
+
+  if (view) await view.rerender(props); else view = await renderComponent(ChatView, props); }
+
   const user = (id, content = 'Question', timestamp = 0) => ({ id, role: 'user', content, timestamp });
   const assistant = (id, content = 'Answer', extra = {}) => ({ id, role: 'assistant', content, ...extra });
   const retryButton = () => document.querySelector('.message-failure button');
@@ -55,7 +59,9 @@ describe('conversation behavior', () => {
   test('retry resends attachments once, consumes the matching draft, and restores it after rejection', async () => {
     const image = { type: 'image', mimeType: 'image/png', data: 'aA==' };
     const pending = Promise.withResolvers(); const calls = [], drafts = [];
-    await render({ messages: [user('u', [{ type: 'text', text: 'Question' }, image]), assistant('a', '', { stopReason: 'aborted' })], draft: 'Question', onDraftChange: value => drafts.push(value), onSend: (...args) => { calls.push(args); return pending.promise; } });
+    await render({ messages: [user('u', [{ type: 'text', text: 'Question' }, image]), assistant('a', '', { stopReason: 'aborted' })], draft: 'Question', onDraftChange: value => drafts.push(value), onSend: (...args) => { calls.push(args);
+
+    return pending.promise; } });
     await act(async () => { retryButton().click(); retryButton().click(); });
     assert.deepEqual(calls, [['Question', undefined, [image]]]); assert.deepEqual(drafts, ['']); assert.equal(retryButton().disabled, true);
     await render({ draft: '' });
@@ -86,6 +92,7 @@ describe('conversation behavior', () => {
     await render({ statuses: { 'pi-desktop-mcp-loading': 'Loading database' } }); assert.equal(document.querySelector('.empty-chat'), null); assert.match(document.body.textContent, /Loading MCPs/);
     await render({ debug: true }); assert.match(document.body.textContent, /Loading database/);
     await render({ statuses: { 'pi-desktop-mcp-loading': 'json:[{"id":"a","name":"search"},null,{"id":2,"name":"invalid"}]' } }); assert.equal(document.querySelector('.mcp-loading-list').textContent, 'Loading search');
+
     for (const value of ['json:{broken', 'json:{}']) { await render({ statuses: { 'pi-desktop-mcp-loading': value } }); assert.equal(document.querySelector('.mcp-loading-list').textContent, ''); }
   });
 

@@ -8,5 +8,6 @@ export type SessionProjects = ReturnType<typeof useSessionProjects>;
 export function useSessionProjects(sessions: Accessor<SessionSummary[]>) {
   const groups = useSessionGroups(sessions);
   reconcileSessionGroupProjects(groups, sessions);
+
   return groups;
 }
