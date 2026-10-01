@@ -32,7 +32,7 @@ button { cursor: pointer; }
 .icon-rail.compact .codex-usage-left { display: none; }
 .icon-rail.compact .codex-usage-separator { display: none; }
 
-.session-panel { width: 100%; flex: 1 1 auto; min-height: 0; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
+.session-panel { width: 100%; flex: 1 1 auto; min-height: 0; background: var(--panel); display: flex; flex-direction: column; min-width: 0; }
 
 .archived-session-heading { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px 0; color: var(--muted); font-size: 13px; }
 .archived-session-heading > span { display: flex; align-items: center; gap: 7px; }
