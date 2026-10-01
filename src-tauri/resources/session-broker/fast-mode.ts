@@ -3,12 +3,16 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
+import { Type, type Static } from "typebox";
+import { Check } from "typebox/value";
+
+const fastConfigSchema = Type.Object({ enabled: Type.Boolean(), targets: Type.Array(Type.Object({ provider: Type.String(), model: Type.String() })) });
 
 export function registerFastModeStatus(pi: ExtensionAPI) {
   const packageName = "pi-openai-fast-mode";
   const statusKey = "pi-desktop-fast-mode";
 
-  type FastConfig = { enabled: boolean; targets: Array<{ provider: string; model: string }> };
+  type FastConfig = Static<typeof fastConfigSchema>;
 
   let config: FastConfig | undefined;
   let loaded = false;
@@ -17,9 +21,9 @@ export function registerFastModeStatus(pi: ExtensionAPI) {
 
   const loadConfig = async (path: string) => {
     try {
-      const value = JSON.parse(await readFile(path, "utf8")) as Partial<FastConfig>;
+      const value = JSON.parse(await readFile(path, "utf8"));
 
-      if (typeof value.enabled === "boolean" && Array.isArray(value.targets) && value.targets.every((target) => target && typeof target.provider === "string" && typeof target.model === "string")) config = value as FastConfig;
+      if (Check(fastConfigSchema, value)) config = value;
     } catch { }
   };
 

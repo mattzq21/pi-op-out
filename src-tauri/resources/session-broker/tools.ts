@@ -1,6 +1,10 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
+import { Type as Schema } from "typebox";
+import { Check } from "typebox/value";
 import { cancelRequest, currentHost, request, MESSAGE_TIMEOUT_MS } from "./client.ts";
+
+const replySchema = Schema.Object({ reply: Schema.Optional(Schema.Unknown()) });
 
 export function registerBrokerTools(pi: ExtensionAPI) {
   pi.registerTool({
@@ -37,7 +41,7 @@ export function registerBrokerTools(pi: ExtensionAPI) {
       try {
         const data = await request("/message", { ...params, requestId, deadline: Date.now() + MESSAGE_TIMEOUT_MS }, signal, MESSAGE_TIMEOUT_MS);
 
-        return { content: [{ type: "text", text: String((data as { reply?: unknown })?.reply ?? "") }], details: data };
+        return { content: [{ type: "text", text: String(Check(replySchema, data) ? data.reply ?? "" : "") }], details: data };
       } catch (error) { await cancelRequest(requestId); throw error; } finally { signal?.removeEventListener("abort", abort); }
     },
   });

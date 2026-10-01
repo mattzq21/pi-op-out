@@ -1,22 +1,31 @@
 import { randomUUID } from "node:crypto";
+import { Type, type Static } from "typebox";
+import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export const GOAL_ENTRY = "piop-goal";
 
 export const GOAL_CONTEXT = "piop-goal-context";
 
-export const GOAL_STATUSES = ["active", "paused", "blocked", "usage_limited", "budget_limited", "complete"] as const;
+const statusSchema = Type.Union([Type.Literal("active"), Type.Literal("paused"), Type.Literal("blocked"), Type.Literal("usage_limited"), Type.Literal("budget_limited"), Type.Literal("complete")]);
 
-export type GoalStatus = typeof GOAL_STATUSES[number];
+export type GoalStatus = Static<typeof statusSchema>;
 
-export type Goal = {
-  version: 1; id: string; sessionId: string; objective: string; status: GoalStatus;
-  tokenBudget: number | null; tokensUsed: number; elapsedMs: number; createdAt: number; updatedAt: number;
-};
+export const GOAL_STATUSES: GoalStatus[] = ["active", "paused", "blocked", "usage_limited", "budget_limited", "complete"];
+
+const accountingSchema = Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
+
+const goalSchema = Type.Object({
+  version: Type.Literal(1), id: Type.String({ minLength: 1 }), sessionId: Type.String({ minLength: 1 }),
+  objective: Type.String(), status: statusSchema, tokenBudget: Type.Union([Type.Null(), Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })]),
+  tokensUsed: accountingSchema, elapsedMs: accountingSchema, createdAt: accountingSchema, updatedAt: accountingSchema,
+});
+
+export type Goal = Static<typeof goalSchema>;
 
 type Usage = { input?: number; output?: number; cacheWrite?: number };
 
-const amount = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
+const amount = (value: number | undefined) => value !== undefined && Number.isFinite(value) && value > 0 ? value : 0;
 
 export const goalTokens = (usage?: Usage) => Math.ceil(amount(usage?.input) + amount(usage?.cacheWrite) + amount(usage?.output));
 
@@ -34,25 +43,11 @@ export function validateBudget(value: number | null) {
   return value;
 }
 
-function validateSaved(data: unknown): Goal | null {
+function validateSaved(data: Goal | null): Goal | null {
   if (data === null) return null;
+  validateObjective(data.objective);
 
-  if (!data || typeof data !== "object") throw new Error("Invalid saved goal");
-  const goal = data as Goal;
-
-  if (goal.version !== 1 || !goal.id || !goal.sessionId) throw new Error("Invalid saved goal identity");
-
-  if (!GOAL_STATUSES.includes(goal.status)) throw new Error("Invalid saved goal status");
-  validateObjective(goal.objective); validateBudget(goal.tokenBudget);
-  validateAccounting(goal);
-
-  return structuredClone(goal);
-}
-
-function validateAccounting(goal: Goal) {
-  for (const value of [goal.tokensUsed, goal.elapsedMs, goal.createdAt, goal.updatedAt]) {
-    if (!Number.isSafeInteger(value) || value < 0) throw new Error("Invalid saved goal accounting");
-  }
+  return structuredClone(data);
 }
 
 export class GoalState {
@@ -66,7 +61,10 @@ export class GoalState {
     this.clock = undefined;
     this.accountingGoalId = undefined;
     const entry = [...ctx.sessionManager.getEntries()].reverse().find(item => item.type === "custom" && item.customType === GOAL_ENTRY);
-    this.goal = validateSaved(entry?.type === "custom" ? entry.data : null);
+    const data = entry?.type === "custom" ? entry.data : null;
+
+    if (data !== null && !Check(goalSchema, data)) throw new Error("Invalid saved goal");
+    this.goal = validateSaved(data);
     this.saved = JSON.stringify(this.goal);
 
     if (this.goal?.status === "complete") { this.clear(ctx);

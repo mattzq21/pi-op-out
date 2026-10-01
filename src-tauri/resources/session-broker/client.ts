@@ -1,4 +1,14 @@
 import { randomUUID } from "node:crypto";
+import { Type } from "typebox";
+import { Parse } from "typebox/value";
+
+interface BrokerRequest {
+  hostId?: string; sessionId?: string; id?: string; cwd?: string; name?: string; deleteBranch?: boolean;
+  message?: string; requestId?: string; deadline?: number;
+  terminalId?: string; generation?: string; offset?: number; maxBytes?: number;
+}
+
+const responseSchema = Type.Object({ error: Type.Optional(Type.String()), data: Type.Optional(Type.Unknown()) });
 
 const url = process.env.PI_DESKTOP_BROKER_URL;
 
@@ -11,25 +21,25 @@ export async function cancelRequest(requestId: string) {
   await fetch(`${url}/cancel`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ requestId }), signal: AbortSignal.timeout(5_000) }).catch(() => undefined);
 }
 
-function requestOptions(body: unknown, signal: AbortSignal) {
-  return { method: body ? "POST" : "GET", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: body ? JSON.stringify({ ...(body as Record<string, unknown>), clientId: process.env.PIOP_CONVERSATION_CLIENT }) : undefined, signal };
+function requestOptions(body: BrokerRequest | undefined, signal: AbortSignal) {
+  return { method: body ? "POST" : "GET", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: body ? JSON.stringify({ ...body, clientId: process.env.PIOP_CONVERSATION_CLIENT }) : undefined, signal };
 }
 
 async function brokerResponse(response: Response) {
-  const result = await response.json() as { error?: string; data?: unknown };
+  const result = Parse(responseSchema, await response.json());
 
   if (!response.ok || result.error) throw new Error(result.error || `Session broker returned HTTP ${response.status}`);
 
   return result.data;
 }
 
-export async function request(path: string, body?: unknown, signal?: AbortSignal, timeoutMs = 10_000) {
+export async function request(path: string, body?: BrokerRequest, signal?: AbortSignal, timeoutMs = 10_000) {
   signal?.throwIfAborted();
   assertBrokerAvailable();
   const controller = new AbortController();
   const operationId = path.startsWith("/worktrees/") ? randomUUID() : undefined;
 
-  if (operationId) body = { ...(body as Record<string, unknown>), requestId: operationId, deadline: Date.now() + timeoutMs };
+  if (operationId) body = { ...body, requestId: operationId, deadline: Date.now() + timeoutMs };
   const timeout = setTimeout(() => controller.abort(new Error("Session broker request timed out")), timeoutMs);
   const cancelOperation = () => { if (operationId) void cancelRequest(operationId); };
 

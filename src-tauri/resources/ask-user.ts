@@ -1,22 +1,36 @@
 import { Type } from "@earendil-works/pi-ai";
+import { Type as Schema, type Static } from "typebox";
+import { Check, Parse } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const ENTRY = "piop-async-question";
 
 const STATUS = "piop-async-questions";
 
-type Question = { title: string; options?: string[] };
+const questionSchema = Schema.Object({ title: Schema.String(), options: Schema.Optional(Schema.Array(Schema.String())) });
 
-type Request = { id: string; questions: Question[]; resolved?: boolean; answers?: Record<string, { answers: string[] }> };
+const answersSchema = Schema.Record(Schema.String(), Schema.Object({ answers: Schema.Array(Schema.String()) }));
 
-type ResponseCommand = { id: string; requestId: string; action: "prepare" | "resolve"; value?: string; cancelled?: boolean };
+const requestSchema = Schema.Object({ id: Schema.String(), questions: Schema.Array(questionSchema), resolved: Schema.Optional(Schema.Boolean()), answers: Schema.Optional(answersSchema) });
+
+const commandSchema = Schema.Object({ id: Schema.String(), requestId: Schema.String(), action: Schema.Union([Schema.Literal("prepare"), Schema.Literal("resolve")]), value: Schema.Optional(Schema.String()), cancelled: Schema.Optional(Schema.Boolean()) });
+
+const responseSchema = Schema.Object({ answers: Schema.Optional(answersSchema) });
+
+const commandIdSchema = Schema.Object({ id: Schema.String() });
+
+type Question = Static<typeof questionSchema>;
+
+type Request = Static<typeof requestSchema>;
+
+type ResponseCommand = Static<typeof commandSchema>;
 
 function requests(ctx: ExtensionContext) {
   const items = new Map<string, Request>();
 
   for (const entry of ctx.sessionManager.getBranch()) {
     if (entry.type !== "custom" || entry.customType !== ENTRY) continue;
-    const item = entry.data as Request;
+    const item = Parse(requestSchema, entry.data);
     items.set(item.id, item);
   }
 
@@ -39,14 +53,14 @@ function validateQuestions(questions: Question[]) {
 
 function answerRequest(item: Request, command: ResponseCommand) {
   if (command.cancelled) return { answers: {}, message: undefined };
-  const response = JSON.parse(command.value ?? "{}") as { answers?: Record<string, { answers?: unknown }> };
+  const response = Parse(responseSchema, JSON.parse(command.value ?? "{}"));
 
   const answers = Object.fromEntries(item.questions.map((_question, index) => {
     const values = response.answers?.[`question_${index}`]?.answers;
 
-    if (!Array.isArray(values) || !values.every((value) => typeof value === "string")) throw new Error("Invalid question answer");
+    if (!values) throw new Error("Invalid question answer");
 
-    return [`question_${index}`, { answers: values as string[] }];
+    return [`question_${index}`, { answers: values }];
   }));
 
   const answered = item.questions.flatMap((question, index) => {
@@ -88,12 +102,12 @@ export function registerRequestUserInput(pi: ExtensionAPI) {
       let id: string | undefined;
 
       try {
-        const command = JSON.parse(args) as ResponseCommand;
-        id = command.id;
+        const value = JSON.parse(args);
+        id = Check(commandIdSchema, value) ? value.id : undefined;
+        const command = Parse(commandSchema, value);
 
         if (!id || ctx.mode !== "rpc") throw new Error("Question responses require an RPC request");
 
-        if (!["prepare", "resolve"].includes(command.action)) throw new Error("Invalid question response action");
         const item = requests(ctx).get(command.requestId);
 
         if (!item) throw new Error("This question is not part of the current conversation");

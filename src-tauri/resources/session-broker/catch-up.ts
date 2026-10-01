@@ -3,6 +3,10 @@ import { realpath } from "node:fs/promises";
 import { request } from "./client.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { Type } from "typebox";
+import { Parse } from "typebox/value";
+
+const agentsSchema = Type.Array(Type.Object({ sessionId: Type.Optional(Type.String()) }));
 
 const runFile = promisify(execFile);
 
@@ -20,7 +24,7 @@ export function registerCatchUp(pi: ExtensionAPI) {
   });
 
   const assertWorktreeIdle = async () => {
-    const agents = await request("/worktree-agents", { id: presenceId }) as Array<{ sessionId?: string }>;
+    const agents = Parse(agentsSchema, await request("/worktree-agents", { id: presenceId }));
 
     if (agents.length) throw new Error(`Another Pi UI agent is working in this worktree${agents[0].sessionId ? ` (session ${agents[0].sessionId})` : ""}. Stop or pause it before catching up.`);
   };

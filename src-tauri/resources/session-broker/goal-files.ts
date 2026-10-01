@@ -2,13 +2,23 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { validateObjective } from "./goal-state.ts";
+import { Type, type Static } from "typebox";
+import { Check } from "typebox/value";
 
-type Attachment = { name: string; text?: string; image?: { data: string; mimeType: string } };
+const imageSchema = Type.Object({ data: Type.String(), mimeType: Type.Union([Type.Literal("image/png"), Type.Literal("image/jpeg"), Type.Literal("image/gif"), Type.Literal("image/webp")]) });
+
+const attachmentSchema = Type.Object({ name: Type.String(), text: Type.Optional(Type.String()), image: Type.Optional(Type.Union([Type.Null(), imageSchema])) });
+
+const draftSchema = Type.Object({ objective: Type.String(), attachments: Type.Array(attachmentSchema) });
+
+type Attachment = Static<typeof attachmentSchema>;
 
 export async function materializeGoal(value: string, ctx: ExtensionContext) {
-  const draft: { objective: string; attachments: Attachment[] } = value.startsWith("__piop_draft ") ? JSON.parse(value.slice(13)) : { objective: value, attachments: [] };
+  const draft = value.startsWith("__piop_draft ") ? JSON.parse(value.slice(13)) : { objective: value, attachments: [] };
 
-  if (typeof draft.objective !== "string" || !draft.objective.trim() || !Array.isArray(draft.attachments)) throw new Error("Goal objective must not be empty.");
+  if (!Check(draftSchema, draft)) throw new Error("Invalid goal draft or attachment.");
+
+  if (!draft.objective.trim()) throw new Error("Goal objective must not be empty.");
 
   if (!draft.attachments.length && [...draft.objective.trim()].length <= 4000) return { objective: validateObjective(draft.objective), cleanup: async () => {} };
   const root = join(ctx.sessionManager.getSessionDir(), "attachments");
@@ -26,14 +36,14 @@ export async function materializeGoal(value: string, ctx: ExtensionContext) {
 }
 
 async function saveAttachment(directory: string, attachment: Attachment, index: number) {
-  const extensions: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
+  const extensions = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
   const image = attachment.image;
 
-  if (image && (!extensions[image.mimeType] || typeof image.data !== "string")) throw new Error("Unsupported goal image.");
+  const content = image ? Buffer.from(image.data, "base64") : attachment.text;
 
-  if (!image && typeof attachment.text !== "string") throw new Error("Invalid goal attachment.");
+  if (content === undefined) throw new Error("Invalid goal attachment.");
   const path = join(directory, `attachment-${index + 1}.${image ? extensions[image.mimeType] : "txt"}`);
-  await writeFile(path, image ? Buffer.from(image.data, "base64") : attachment.text!, { mode: 0o600, flag: "wx" });
+  await writeFile(path, content, { mode: 0o600, flag: "wx" });
 
   return `${attachment.name}: ${path}. Read this file before continuing.`;
 }

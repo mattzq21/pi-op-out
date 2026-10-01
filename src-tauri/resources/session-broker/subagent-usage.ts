@@ -1,26 +1,37 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { open, readFile, rm } from "node:fs/promises";
-import type { AddressInfo } from "node:net";
+import { Type, type Static } from "typebox";
+import { Check } from "typebox/value";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { goalTokens } from "./goal-state.ts";
 
-type Channel = { port: number; token: string };
+const channelSchema = Type.Object({ port: Type.Integer({ minimum: 1, maximum: 65535 }), token: Type.String() });
+
+const ownerSchema = Type.Object({ pid: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }) });
+
+const usageSchema = Type.Object({ total: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }) });
+
+const fileErrorSchema = Type.Object({ code: Type.String() });
+
+const addressSchema = Type.Object({ port: Type.Number() });
+
+type Channel = Static<typeof channelSchema>;
 
 const channelPath = (path: string) => `${path}.goal-usage.json`;
 
 async function claimChannel(path: string) {
   try {
-    const { pid } = JSON.parse(await readFile(path, "utf8")) as { pid: number };
+    const owner = JSON.parse(await readFile(path, "utf8"));
 
-    if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("Invalid existing subagent usage channel");
+    if (!Check(ownerSchema, owner)) throw new Error("Invalid existing subagent usage channel");
 
-    try { process.kill(pid, 0); }
+    try { process.kill(owner.pid, 0); }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      if (!Check(fileErrorSchema, error) || error.code !== "ESRCH") throw error;
       await rm(path);
     }
-  } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  } catch (error) { if (!Check(fileErrorSchema, error) || error.code !== "ENOENT") throw error; }
 
   return open(path, "wx", 0o600);
 }
@@ -42,13 +53,13 @@ async function receiveUsage(request: IncomingMessage, response: ServerResponse, 
     return; }
   }
 
-  const { total } = JSON.parse(body) as { total: number };
+  const usage = JSON.parse(body);
 
-  if (!Number.isSafeInteger(total) || total < 0) { response.writeHead(400).end();
+  if (!Check(usageSchema, usage)) { response.writeHead(400).end();
 
   return; }
 
-  report(total);
+  report(usage.total);
   response.writeHead(204).end();
 }
 
@@ -73,7 +84,10 @@ export async function listenSubagentUsage(path: string, report: (total: number) 
   try {
     await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", () => { server.removeListener("error", reject); resolve(); }); });
     server.on("error", failed);
-    const port = (server.address() as AddressInfo).port;
+    const address = server.address();
+
+    if (!Check(addressSchema, address)) throw new Error("Subagent usage server did not bind a TCP port");
+    const port = address.port;
     const file = await claimChannel(channelPath(path));
     owned = true;
 
@@ -90,12 +104,12 @@ async function loadChannel(ctx: ExtensionContext): Promise<Channel | undefined> 
   if (!path || !ctx.sessionManager.getEntries().some(entry => entry.type === "custom" && entry.customType === "piop-subagent-parent")) return;
 
   try {
-    const channel = JSON.parse(await readFile(channelPath(path), "utf8")) as Channel;
+    const channel = JSON.parse(await readFile(channelPath(path), "utf8"));
 
-    if (!Number.isInteger(channel.port) || channel.port < 1 || channel.port > 65535 || typeof channel.token !== "string") throw new Error("Invalid subagent usage channel");
+    if (!Check(channelSchema, channel)) throw new Error("Invalid subagent usage channel");
 
     return channel;
-  } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  } catch (error) { if (!Check(fileErrorSchema, error) || error.code !== "ENOENT") throw error; }
 }
 
 export function registerSubagentUsage(pi: ExtensionAPI) {
