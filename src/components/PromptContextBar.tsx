@@ -76,7 +76,7 @@ function contextSections(context: PromptContextInfo) {
   return { systemPrompt, instructions, tools, skills, userInvokedSkills };
 }
 
-export const PromptContextBar = function PromptContextBar(componentProps: { context: PromptContextInfo }) {
+export const PromptContextBar = function PromptContextBar(componentProps: { context: PromptContextInfo; inputTokens: number }) {
   const context = createMemo(() => separatePromptInstructions(promptContextSchema.parse(componentProps.context)));
   const [active, setActive] = createSignal<Section>();
   const [skillTab, setSkillTab] = createSignal<"tax" | "model" | "user">("model");
@@ -87,7 +87,6 @@ export const PromptContextBar = function PromptContextBar(componentProps: { cont
   const copySkills = () => skillTab() === "tax" ? taxText() : visibleSkills().map((item) => [item.name ?? item.filePath, item.description, item.filePath, item.content].filter(Boolean).join("\n")).join("\n\n") || emptySkills();
   const skillPercent = createMemo(() => skillPercentages(context()));
   const tokens = createMemo(() => contextTokens(context()));
-  const totalTokens = createMemo(() => Object.values(tokens()).reduce((sum, value) => sum + value, 0));
   const percent = createMemo(() => shares(tokens()));
   const wheelStyle = createMemo(() => ({ "--prompt-system": `${percent().system}%`, "--prompt-instructions": `${percent().system + percent().instructions}%`, "--prompt-tools": `${percent().system + percent().instructions + percent().tools}%` } satisfies CSSProperties));
   const toggle = (section: Section) => setActive((current) => current === section ? undefined : section);
@@ -127,7 +126,7 @@ export const PromptContextBar = function PromptContextBar(componentProps: { cont
       <button class="instructions" aria-expanded={active() === "instructions"} onClick={() => toggle("instructions")}>Instructions <small>{percent().instructions}%</small></button>
       <button class="tools" aria-expanded={active() === "tools"} onClick={() => toggle("tools")}>Tools <small>{percent().tools}%</small></button>
       <button class="skills" aria-expanded={active() === "skills"} onClick={() => toggle("skills")}>Skills <small>{percent().skills}%</small></button>
-      <ContextTokenDiagram tokens={totalTokens()} style={wheelStyle()} />
+      <ContextTokenDiagram tokens={componentProps.inputTokens} style={wheelStyle()} />
     </div>
     {renderPromptContextContent()}
   </section>;
