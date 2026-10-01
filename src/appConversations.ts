@@ -374,11 +374,15 @@ export function createAppConversations(preloadChat: () => void) {
     const hostId = owner.currentHostId();
     const source = sessions().find(item => item.path === sourcePath && (item.hostId ?? "local") === hostId);
     const pendingKey = `${activeConversationKeyRef.current}:forget`;
+
     if (branchPending.current.has(pendingKey)) return;
     branchPending.current.add(pendingKey);
+
     try {
       if (!source) throw new Error("Could not find the original saved conversation");
+
       if (conversationBusy()) throw new Error("Wait for the current response and queued messages to finish first");
+
       if (withWorktree) {
         if (source.projectKind !== "worktree") throw new Error("Branch and forget is only available in linked worktrees");
         await createWorktree({ cwd: source.cwd, hostId, message, transport: owner }, crypto.randomUUID().slice(0, 8));

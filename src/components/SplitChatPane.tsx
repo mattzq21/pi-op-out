@@ -244,9 +244,16 @@ export function SplitChatPane(componentProps: Props) {
 
  try { if (!message.entryId) throw new Error("Could not find the response to branch from"); const sourcePath = capturedTransport.currentSessionPath(); const sourceDiffs = await capturedRuntimePool0.captureMemoryDiffs(capturedTransport); const result = await capturedTransport.command({ type: "fork_after", entryId: message.entryId }, z.object({ cancelled: z.boolean().optional() }));
 
- if (result.cancelled) return false; const nextState = await capturedSession.refresh(); await inheritSessionGroup(`${capturedSession1.hostId ?? "local"}:${capturedSession1.id}`, `${capturedSession1.hostId ?? "local"}:${nextState.sessionId}`, capturedSession1); capturedRuntimePool0.bind(capturedSession1.hostId ?? "local", nextState.sessionId, capturedTransport); capturedOnSessionChange2({ ...capturedSession1, id: nextState.sessionId, path: nextState.sessionFile || "", name: nextState.sessionName || capturedSession1.name }, capturedTransport); const history = await capturedTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) })); await capturedRuntimePool0.copySavedDiffs(capturedTransport, sourcePath, capturedTransport.currentSessionPath(), new Set(branchMessages(history.entries, history.leafId).map((entry) => entry.id)), sourceDiffs); return true; } catch (reason) { reportControlError(reason); return false; } finally { finishBranching(); } };
+ if (result.cancelled) return false; const nextState = await capturedSession.refresh(); await inheritSessionGroup(`${capturedSession1.hostId ?? "local"}:${capturedSession1.id}`, `${capturedSession1.hostId ?? "local"}:${nextState.sessionId}`, capturedSession1); capturedRuntimePool0.bind(capturedSession1.hostId ?? "local", nextState.sessionId, capturedTransport); capturedOnSessionChange2({ ...capturedSession1, id: nextState.sessionId, path: nextState.sessionFile || "", name: nextState.sessionName || capturedSession1.name }, capturedTransport); const history = await capturedTransport.command({ type: "get_entries" }, z.object({ entries: z.array(entrySchema), leafId: z.union([z.string(), z.null()]) })); await capturedRuntimePool0.copySavedDiffs(capturedTransport, sourcePath, capturedTransport.currentSessionPath(), new Set(branchMessages(history.entries, history.leafId).map((entry) => entry.id)), sourceDiffs);
+
+ return true; } catch (reason) { reportControlError(reason);
+
+ return false; } finally { finishBranching(); } };
 
   const forgettingRef = createRef(false);
+
+  const conversationBusy = () => session().state.isStreaming || session().state.isPausing || session().state.pendingMessageCount;
+
   const forkAndForget = async (message: ChatMessage, withWorktree = false) => {
     if (forgettingRef.current) return;
     const owner = transport();
@@ -255,10 +262,12 @@ export function SplitChatPane(componentProps: Props) {
     const changeSession = componentProps.onSessionChange;
     const archiveOriginal = componentProps.onArchiveOriginal;
     forgettingRef.current = true;
+
     try {
       if (!message.entryId) throw new Error("Could not find the selected assistant response");
-      const state = session().state;
-      if (state.isStreaming || state.isPausing || state.pendingMessageCount) throw new Error("Wait for the current response and queued messages to finish first");
+
+      if (conversationBusy()) throw new Error("Wait for the current response and queued messages to finish first");
+
       if (withWorktree) {
         if (source.projectKind !== "worktree") throw new Error("Branch and forget is only available in linked worktrees");
         const hostId = source.hostId ?? "local";
@@ -277,6 +286,7 @@ export function SplitChatPane(componentProps: Props) {
       } else {
         if (!await branch(message)) return;
       }
+
       await archiveOriginal(source);
     } catch (reason) { reportControlError(reason); }
     finally { forgettingRef.current = false; }

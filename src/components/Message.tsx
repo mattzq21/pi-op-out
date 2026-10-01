@@ -204,9 +204,12 @@ export function Message(componentProps: Props) {
         const renderCopyResponse = () => (<IconButton title="Copy" label={copyState() === "copied" ? `${metadata().responseLabel} copied` : copyState() === "error" ? `Copy failed for ${metadata().responseLabel.toLowerCase()}` : `Copy ${metadata().responseLabel.toLowerCase()}`} onClick={copy}>{copyState() === "copied" ? <Check size={14} /> : copyState() === "error" ? <CircleAlert size={14} /> : <Copy size={14} />}</IconButton>);
         const renderBranchAction = () => (componentProps.onBranch && <button class="branch-button" aria-label="Fork" title="Fork" disabled={branching() || forgetting()} onClick={() => void branch()}><Split size={14} /></button>);
         const renderForkAndForgetAction = () => (componentProps.onForkAndForget && <button class="branch-button fork-and-forget-button" aria-label={`Fork and forget from ${metadata().responseLabel.toLowerCase()}`} title="Fork from here and archive original chat" disabled={branching() || forgetting()} onClick={() => void forkAndForget()}><Undo2 size={14} /></button>);
+        const renderBranchAndForgetAction = () => (componentProps.canRollback && componentProps.onForkAndForget && <button class="branch-button rollback-and-forget-button" aria-label="Branch and forget from here" title="Branch from here into a new worktree and archive original chat" disabled={branching() || forgetting()} onClick={() => void forkAndForget(true)}><FolderGit2 size={14} /></button>);
         const renderCacheHitRate = () => ((componentProps.debug === undefined ? false : componentProps.debug) && metadata().cache && <span class={`cache-hit-rate${required((metadata().cache)).low ? " low" : ""}`} tabIndex={0} aria-label={`Cache ${required((metadata().cache)).rate}%, ${required((metadata().cache)).cachedTokens}/${required((metadata().cache)).promptTokens}`}>Cache {required((metadata().cache)).rate}%<span class="cache-fraction-tooltip" aria-hidden="true"><span>{cacheTokenDigits(required((metadata().cache)).cachedTokens)}</span><span>{cacheTokenDigits(required((metadata().cache)).promptTokens)}</span></span></span>);
 
-        return ((componentProps.showActions === undefined ? true : componentProps.showActions) && !streaming() && (output().trim().length > 0 || componentProps.message.stopReason === "aborted" || componentProps.onForkAndForget || componentProps.onCreateWorktree) && <div class="message-actions">
+        const showActions = () => (componentProps.showActions === undefined ? true : componentProps.showActions) && !streaming() && (output().trim().length > 0 || componentProps.message.stopReason === "aborted" || componentProps.onForkAndForget || componentProps.onCreateWorktree);
+
+        return (showActions() && <div class="message-actions">
           {renderCopyResponse()}
           {copyState() === "error" && <span class="copy-feedback" role="status">Could not copy response</span>}
           {renderBranchAction()}
@@ -215,7 +218,7 @@ export function Message(componentProps: Props) {
           {renderCacheHitRate()}
           {metadata().responseTime && <span class="message-time">{required((metadata().responseTime)).short}</span>}
           {renderForkAndForgetAction()}
-          {componentProps.canRollback && componentProps.onForkAndForget && <button class="branch-button rollback-and-forget-button" aria-label="Branch and forget from here" title="Branch from here into a new worktree and archive original chat" disabled={branching() || forgetting()} onClick={() => void forkAndForget(true)}><FolderGit2 size={14} /></button>}
+          {renderBranchAndForgetAction()}
         </div>);
       };
 
