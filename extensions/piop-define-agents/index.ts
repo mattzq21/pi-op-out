@@ -1,6 +1,7 @@
 import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_AGENT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompt, ensureDefaultAgentPrompt, writeConfig } from "./prompts.ts";
-import { mcpServers, type McpServer } from "./mcp-config.ts";
-import type { Agent, AgentSnapshot, SessionAgentState } from "./contracts.ts";
+import { mcpServers } from "./mcp-config.ts";
+import type { Agent, AgentSnapshot, SessionAgentState, RuntimeSettingsRequest, RequiredToolsRequest, McpToolsRequest, McpSelection } from "./contracts.ts";
+import type { FastModeRequest } from "../piop-openai-fast-mode/src/types.ts";
 import { agentExtensions, extensionPaths } from "./extension-loader.ts";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -312,13 +313,13 @@ async function loadConfig(pi: ExtensionAPI): Promise<Config> {
   return config;
 }
 
-function encode(value: unknown) { return Buffer.from(JSON.stringify(value), "utf8").toString("base64url"); }
+function encode<T>(value: T) { return Buffer.from(JSON.stringify(value), "utf8").toString("base64url"); }
 
 function decode<T>(value: string): T { return JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as T; }
 
 function safeName(value: string) { return value.toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool"; }
 
-function desktopList(pi: ExtensionAPI, name: "tools" | "skills" | "explicitOnlySkills") { const request: { settings?: { tools: string[]; skills: string[]; explicitOnlySkills?: string[] } } = {}; pi.events.emit("piop:runtime-settings", request);
+function desktopList(pi: ExtensionAPI, name: "tools" | "skills" | "explicitOnlySkills") { const request: RuntimeSettingsRequest = {}; pi.events.emit("piop:runtime-settings", request);
 
 return request.settings?.[name]; }
 
@@ -370,13 +371,13 @@ export default async function defineAgents(pi: ExtensionAPI) {
   const findAgent = (name: string) => config.agents.find((agent) => agent.name === name);
   const currentAgent = () => snapshot?.definition ?? findAgent(active);
 
-  const currentMcpTools = () => { const request: { tools?: string[] } = {}; pi.events.emit("piop:mcp:tools", request);
+  const currentMcpTools = () => { const request: McpToolsRequest = {}; pi.events.emit("piop:mcp:tools", request);
 
   return request.tools ?? []; };
 
   pi.on("tool_call", (event, ctx) => {
     const agent = currentAgent();
-    const required = { ctx, tools: [] as string[] }; pi.events.emit("piop:required-tools", required);
+    const required: RequiredToolsRequest = { ctx, tools: [] }; pi.events.emit("piop:required-tools", required);
     const allowed = agent && !activeToolError && new Set([...agent.tools, ...extensions.tools(), ...currentMcpTools(), ...required.tools]);
 
     if (!allowed || !allowed.has(event.toolName) || (event.toolName === "lookup_terminals" && agent?.name !== "terminal-agent")) {
@@ -397,16 +398,20 @@ export default async function defineAgents(pi: ExtensionAPI) {
   });
 
   const restoredAgentName = (name: string | undefined) => !name || (name === "default" && !findAgent("default")) ? "general" : name;
-  const currentSkillPaths = () => [...new Set(currentAgent() ? agentSkills(pi, currentAgent()!).map(normalizedPath) : [])].sort();
+  const currentSkillPaths = () => {
+    const agent = currentAgent();
 
-  const fastModeModels = () => { const request: { models?: string[] } = {}; pi.events.emit("piop:fast-mode", request);
+    return [...new Set(agent ? agentSkills(pi, agent).map(normalizedPath) : [])].sort();
+  };
+
+  const fastModeModels = () => { const request: FastModeRequest = {}; pi.events.emit("piop:fast-mode", request);
 
   return request.models ?? []; };
 
   const fastModeError = (agent: Agent, model: string | undefined) => agent.fastMode === true && (!model || !fastModeModels().includes(model)) ? `Agent "${agent.name}" cannot run because model ${model || "(unset)"} does not support fast mode` : undefined;
 
   const refreshFastMode = async (ctx: ExtensionContext) => {
-    const request: { ctx: ExtensionContext; refresh: boolean; ready?: Promise<void> } = { ctx, refresh: true };
+    const request: FastModeRequest = { ctx, refresh: true };
     pi.events.emit("piop:fast-mode", request);
     await request.ready;
   };
@@ -535,7 +540,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   const connectAgentMcp = async (agent: Agent, ctx: ExtensionContext, connectMcp: boolean, tools: Set<string>) => {
     if (connectMcp) {
-      const selection: { servers: McpServer[]; agentName: string; sessionId: string; ready?: Promise<string[]> } = { servers: mcpServers(agent.mcpServers), agentName: agent.name, sessionId: ctx.sessionManager.getSessionId() };
+      const selection: McpSelection = { servers: mcpServers(agent.mcpServers), agentName: agent.name, sessionId: ctx.sessionManager.getSessionId() };
       pi.events.emit("piop:mcp:select", selection);
 
       if (!selection.ready && selection.servers.some((server) => server.enabled)) return `Agent "${agent.name}" cannot run because the MCP bridge is unavailable`;
@@ -579,7 +584,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     if (mcpError) return mcpError;
 
     if (agent.name !== "terminal-agent") tools.delete("lookup_terminals");
-    const required = { ctx, tools: [] as string[] }; pi.events.emit("piop:required-tools", required);
+    const required: RequiredToolsRequest = { ctx, tools: [] }; pi.events.emit("piop:required-tools", required);
 
     for (const tool of required.tools) tools.add(tool);
     pi.setActiveTools([...tools]);
@@ -598,8 +603,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
     return activeToolError;
   };
 
-  const stopRefresh = pi.events.on("piop:agents:refresh", (value) => {
-    const request = value as { ctx: ExtensionContext; ready?: Promise<void> };
+  const stopRefresh = pi.events.on("piop:agents:refresh", (request) => {
     request.ready = Promise.resolve().then(() => {
       const agent = currentAgent();
 
@@ -609,21 +613,20 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
       activeToolError = agentToolError(pi, agent, extensions.tools());
       const mcpTools = currentMcpTools();
-      const required = { ctx: request.ctx, tools: [] as string[] }; pi.events.emit("piop:required-tools", required);
+      const required: RequiredToolsRequest = { ctx: request.ctx, tools: [] }; pi.events.emit("piop:required-tools", required);
       pi.setActiveTools(activeToolError ? [] : [...new Set([...agent.tools, ...extensions.tools(), ...mcpTools, ...required.tools])]);
       publish(request.ctx);
     });
   });
 
-  const stopFastModeChanges = pi.events.on("piop:fast-mode-changed", (value) => {
-    const { enabled } = value as { enabled?: boolean };
+  const stopFastModeChanges = pi.events.on("piop:fast-mode-changed", ({ enabled }) => {
 
-    if (typeof enabled !== "boolean" || enabled === fastModeOverride) return;
+    if (enabled === undefined || enabled === fastModeOverride) return;
     fastModeOverride = enabled;
     saveState();
   });
 
-  const stopFastModelChanges = pi.events.on("piop:fast-mode-models-changed", (value) => publish((value as { ctx: ExtensionContext }).ctx));
+  const stopFastModelChanges = pi.events.on("piop:fast-mode-models-changed", ({ ctx }) => publish(ctx));
   pi.on("session_shutdown", () => { stopSubagentProfiles(); stopRefresh(); stopFastModeChanges(); stopFastModelChanges(); extensions.stop(); });
   pi.on("model_select", (event) => { const model = `${event.model.provider}/${event.model.id}`;
 
@@ -638,7 +641,7 @@ export default async function defineAgents(pi: ExtensionAPI) {
 
   effortOverride = event.level; saveState(); saveRuntimeDefaults({ model: runtimeDefaults?.model || "", effort: event.level }); });
 
-  const restoreSession = async (_event: unknown, ctx: ExtensionContext) => {
+  const restoreSession = async (ctx: ExtensionContext) => {
     restore(ctx);
     const branch = ctx.sessionManager.getBranch();
     const { states, stored, identity, fastMode } = readAgentState(branch, runtimeSession);
@@ -660,8 +663,8 @@ export default async function defineAgents(pi: ExtensionAPI) {
     pi.events.emit("piop:agents:ready", { ctx });
   };
 
-  pi.on("session_start", restoreSession);
-  pi.on("session_tree", restoreSession);
+  pi.on("session_start", (_event, ctx) => restoreSession(ctx));
+  pi.on("session_tree", (_event, ctx) => restoreSession(ctx));
   pi.on("session_shutdown", (_event, ctx) => { delete process.env.PI_DEFINE_AGENTS_ACTIVE;
 
   if (!reloading) ctx.ui.setStatus(STATUS_KEY, undefined); });
@@ -706,9 +709,10 @@ export default async function defineAgents(pi: ExtensionAPI) {
       throw new Error("This conversation's agent is fixed. Start a new conversation to use another agent.");
     }
 
-    if (!findAgent(name)) throw new Error(`Unknown defined agent: ${name}`);
+    const agent = findAgent(name);
+
+    if (!agent) throw new Error(`Unknown defined agent: ${name}`);
     restore(ctx);
-    const agent = findAgent(name)!;
     await refreshFastMode(ctx);
     const error = fastModeError(agent, agent.model.trim() || runtimeDefaults?.model);
 
