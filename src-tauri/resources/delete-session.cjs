@@ -189,7 +189,7 @@ async function archivedDirectory(source, header, target) {
   const saved = header.worktreeRestore;
   if (target.area !== "archived" || saved?.kind !== "directory") return undefined;
   const archive = await fs.realpath(target.root || path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || ".piop", "archived"));
-  const root = await fs.realpath(path.join(archive, '..', 'archived-worktrees'));
+  const root = await fs.realpath(path.join(archive, '..', 'archived-tmp'));
   let directory;
   try { directory = await fs.realpath(saved.storedPath); }
   catch (error) { if (error.code === "ENOENT") return undefined; throw error; }

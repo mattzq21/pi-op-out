@@ -47,7 +47,7 @@ if (header?.type === 'session' && !saved && path.isAbsolute(header.cwd ?? '')) {
   process.exit(0);
 }
 if (header?.type === 'session' && saved?.kind === 'directory') {
-  const storage = fs.realpathSync(path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop', 'archived-worktrees'));
+  const storage = fs.realpathSync(path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop', 'archived-tmp'));
   const stored = fs.realpathSync(saved.storedPath);
   if (path.dirname(stored) !== storage || !path.isAbsolute(saved.path ?? '') || !fs.lstatSync(stored).isDirectory()) throw new Error('Invalid archived directory');
   try { fs.lstatSync(saved.path); throw new Error('The original directory already exists; it will not be overwritten'); }

@@ -179,7 +179,7 @@ async function restorableWorktree(saved) {
         try { await fs.lstat(saved.path); return {}; }
         catch (error) { if (error.code !== 'ENOENT') throw error; }
         const stored = await fs.realpath(saved.storedPath);
-        const root = await fs.realpath(path.join(piopRoot, 'archived-worktrees'));
+        const root = await fs.realpath(path.join(piopRoot, 'archived-tmp'));
         if (path.dirname(stored) !== root || !(await fs.lstat(stored)).isDirectory()) return {};
         return { restorable: true };
       } catch (error) { return { restoreError: `Archived directory unavailable: ${error.message}` }; }
@@ -317,7 +317,7 @@ async function diskStorage(worktreeRoots) {
   let archivedDirectories = 0;
   const warnings = [];
   const root = await fs.realpath(piopRoot).catch(() => piopRoot);
-  const categories = { sessions: "active-conversations", archived: "archived-conversations", "git-snapshots": "git-diff-snapshots", tmp: "temporary-chats", worktrees: "worktrees", "archived-worktrees": "archived-worktrees" };
+  const categories = { sessions: "active-conversations", archived: "archived-conversations", "git-snapshots": "git-diff-snapshots", tmp: "temporary-chats", worktrees: "worktrees", "archived-tmp": "archived-worktrees" };
   async function visit(target, category) {
     try {
       const metadata = await fs.lstat(target);
@@ -334,7 +334,7 @@ async function diskStorage(worktreeRoots) {
       directories.add(target);
       const entries = await fs.readdir(target, { withFileTypes: true });
       if (['git-diff-snapshots', 'archived-git-diff-snapshots'].includes(category) && path.dirname(target).endsWith('.snapshots') && entries.some((entry) => entry.name === 'snapshot.json')) snapshotCounts.set(category, (snapshotCounts.get(category) || 0) + 1);
-      if (target === path.join(root, 'archived-worktrees')) archivedDirectories = entries.filter((entry) => entry.isDirectory()).length;
+      if (target === path.join(root, 'archived-tmp')) archivedDirectories = entries.filter((entry) => entry.isDirectory()).length;
       const managed = path.relative(path.join(root, "worktrees"), target).split(path.sep);
       if (category === "worktrees" && managed.length === 2 && !managed.includes("..") && entries.some((entry) => entry.name === ".git")) worktrees.add(target);
       for (const entry of entries) {
@@ -414,7 +414,7 @@ async function main() {
     'archived-git-diff-snapshots': archived.files.filter((file) => file.endsWith('.jsonl')).map((file) => file.replace(/\.jsonl$/, '.snapshots')),
     'temporary-chats': [path.join(piopRoot, 'tmp')],
     'worktrees': [path.join(piopRoot, 'worktrees'), ...[...worktreeRoots].filter((directory) => !directory.startsWith(path.join(piopRoot, 'worktrees') + path.sep))],
-    'archived-worktrees': [path.join(piopRoot, 'archived-worktrees')],
+    'archived-worktrees': [path.join(piopRoot, 'archived-tmp')],
     'other-storage': [piopRoot],
   };
   const categoryDirectories = Object.fromEntries(await Promise.all(Object.entries(directoryCandidates).map(async ([id, candidates]) => {

@@ -8,7 +8,7 @@ const request = JSON.parse(process.argv[1]);
 const root = fs.realpathSync(path.join(os.homedir(), process.env.PIOP_STORAGE_DIRECTORY || '.piop'));
 const sessions = fs.realpathSync(path.join(root, 'sessions'));
 const archive = path.join(root, 'archived');
-const storedDirectories = path.join(root, 'archived-worktrees');
+const storedDirectories = path.join(root, 'archived-tmp');
 const inside = (parent, child) => child === parent || child.startsWith(parent + path.sep);
 const safeId = (id) => id.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^\.+|\.+$/g, '') || 'session';
 function git(cwd, args, options = {}) {
