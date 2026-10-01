@@ -166,6 +166,14 @@ export function createPiFastModeExtension(
       },
     });
 
+    pi.registerCommand("piop-fast-refresh", {
+      description: "Refresh Fast mode capabilities for the model picker",
+      handler: async (_args, ctx) => {
+        await ensureLoaded(ctx);
+        await refreshTargets(ctx);
+      },
+    });
+
     pi.on("session_start", async (_event, ctx) => {
       try {
         currentModel = toModelRef(ctx.model);

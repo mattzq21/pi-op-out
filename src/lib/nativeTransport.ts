@@ -76,6 +76,7 @@ export const loadStorageReport = async (hostId?: string) => {
 };
 
 export const deleteArchivedConversation = (sessionPath: string, hostId = "local") => call("delete_archived_session", { sessionPath, hostId }, z.array(z.string()));
+
 export const deleteArchivedConversations = (sessionPaths: string[], hostId = "local") => call("delete_archived_session", { sessionPath: sessionPaths[0], sessionPaths, hostId }, z.array(z.string()));
 
 export const restoreArchivedConversation = (sessionPath: string, hostId = "local") => call("restore_archived_session", { sessionPath, hostId }, voidResultSchema);
@@ -355,6 +356,7 @@ export class NativeTransport {
     return this.disposal;
   }
   toggleFastMode() { return this.fastMode.toggle(); }
+  refreshFastModeCapabilities() { return this.fastMode.refreshCapabilities(); }
   setFastMode(enabled: boolean) { return this.fastMode.set(enabled); }
   command<S extends z.ZodType>(command: RpcCommand, schema: S): Promise<z.output<S>>;
   command(command: RpcCommand): Promise<z.output<typeof jsonResultSchema>>;
