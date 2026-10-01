@@ -178,13 +178,18 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .tool-chevron { flex: 0 0 auto; transition: transform .15s; }
 .tool-event[open] .tool-chevron { transform: rotate(90deg); }
 .work-group { margin: 0 0 8px; color: var(--muted); }
-.work-group > summary { display: flex; align-items: center; gap: 4px; width: fit-content; padding: 0; min-height: 20px; list-style: none; cursor: pointer; font: 11px/18px "DM Sans"; }
+.work-group > summary { display: flex; align-items: center; gap: 4px; width: fit-content; padding: 0; min-height: 20px; list-style: none; cursor: pointer; font: 12px/18px "DM Sans"; }
 .work-group > summary::-webkit-details-marker { display: none; }
 .work-group > summary:hover { color: var(--ink); }
 .work-group-chevron { flex: 0 0 auto; }
 .work-group[open] > summary .work-group-chevron { transform: rotate(90deg); }
 .work-group-content { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 9px; background: color-mix(in srgb, var(--paper) 50%, #f3f1ec); }
 .active-work-content { display: flex; flex-direction: column; gap: 3px; margin-bottom: 5px; }
+:is(.work-group-content, .active-work-content) .message-body { font-size: 16px; }
+:is(.work-group-content, .active-work-content) :is(.reasoning-text, .reasoning-text strong, .message-body code) { font-size: 14px; }
+:is(.work-group-content, .active-work-content) :is(.tool-event, .subagent-timeline) { font-size: 13px; }
+:is(.work-group-content, .active-work-content) .tool-event small { font-size: 11px; }
+:is(.work-group-content, .active-work-content) :is(.tool-event pre, .tool-payload-label) { font-size: 12px; }
 :is(.work-group-content, .active-work-content) > :is(.message, .tool-event) { margin: 0; }
 .work-group-content .message-body { display: flex; flex-direction: column; gap: 3px; }
 .work-group-content .message .message-body > * { margin-top: 0; margin-bottom: 0; }
