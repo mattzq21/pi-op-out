@@ -186,7 +186,14 @@ pub(crate) fn shared(app: &AppHandle, connection: &str, request: &Value) -> Resu
             processes.get(id).ok_or("Terminal is not running")?.writer.try_send(data.into()).map_err(|_| "Terminal input is busy".to_string())?;
         }
         "resize" => {
-            processes.get(id).ok_or("Terminal is not running")?.master.resize(PtySize { cols: dimension(request, "cols")?, rows: dimension(request, "rows")?, pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())?;
+            let cols = dimension(request, "cols")?;
+            let rows = dimension(request, "rows")?;
+            processes.get(id).ok_or("Terminal is not running")?.master.resize(PtySize { cols, rows, pixel_width: 0, pixel_height: 0 }).map_err(|error| error.to_string())?;
+            let data = format!("\u{1b}[8;{rows};{cols}t");
+            item.append(&data);
+            let _ = app.emit("pi://event", json!({"type":"terminal_output","terminalId":id,
+                "sessionId":item.session_id,"hostId":item.host_id,"generation":item.generation.to_string(),
+                "outputEnd":item.text_end,"data":data}));
         }
         "reassign" => {
             item.session_id = session_id.into();

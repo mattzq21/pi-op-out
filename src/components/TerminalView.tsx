@@ -20,6 +20,7 @@ interface Props {
 export function TerminalView(componentProps: Props) {
   const [copyError, setCopyError] = createSignal(false);
   const host = createRef<HTMLDivElement>(null); const terminal = createRef<Terminal | undefined>(undefined); const lastOutputEnd = createRef(0); const queuedOutputEnd = createRef(0); const tabRefs = createRef(new Map<string, HTMLButtonElement>());
+  const resizeToHost = createRef<(() => void) | undefined>(undefined);
   const callbacks = createRef({ onData: componentProps.onData, onResize: componentProps.onResize, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }); createComputed(() => { callbacks.current = { onData: componentProps.onData, onResize: componentProps.onResize, onStart: componentProps.onStart, onSnapshot: componentProps.onSnapshot }; });
 
   createDependencyEffect(() => { const capturedCwd0 = componentProps.cwd; const capturedSnapshot1 = componentProps.snapshot; const capturedSnapshotEnd2 = componentProps.snapshotEnd;
@@ -52,7 +53,22 @@ export function TerminalView(componentProps: Props) {
 
       return false;
     });
-    const fitAndResize = () => { try { fit.fit(); } catch { } };
+    const sizeHandler = instance.parser.registerCsiHandler({ final: "t" }, params => {
+      const [operation, rows, cols] = params;
+      if (operation !== 8 || typeof rows !== "number" || typeof cols !== "number" || rows < 1 || cols < 1) return false;
+      instance.resize(cols, rows);
+      return true;
+    });
+    const fitAndResize = () => {
+      if (componentProps.ownershipRequired) return;
+      try {
+        const size = fit.proposeDimensions();
+        if (!size) return;
+        if (componentProps.started) callbacks.current.onResize(size.cols, size.rows);
+        else instance.resize(size.cols, size.rows);
+      } catch { }
+    };
+    resizeToHost.current = fitAndResize;
 
     fit.fit();
     let restored = !capturedSnapshot1;
@@ -61,10 +77,10 @@ export function TerminalView(componentProps: Props) {
 
     instance.options.disableStdin = Boolean(componentProps.ownershipRequired);
     requestAnimationFrame(() => { if (terminal.current === instance && !componentProps.ownershipRequired) instance.focus(); });
-    const data = instance.onData((value) => { if (!componentProps.ownershipRequired) callbacks.current.onData(value); }); const resize = instance.onResize(({ cols, rows }) => { if (!componentProps.ownershipRequired) callbacks.current.onResize(cols, rows); });
+    const data = instance.onData((value) => { if (!componentProps.ownershipRequired) callbacks.current.onData(value); });
     const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(fitAndResize); observer?.observe(host.current); window.addEventListener("resize", fitAndResize);
 
-    return () => { saveSnapshot(restored ? serializer.serialize() : capturedSnapshot1 || "", restored ? lastOutputEnd.current : capturedSnapshotEnd2 ?? 0); observer?.disconnect(); window.removeEventListener("resize", fitAndResize); data.dispose(); resize.dispose(); instance.dispose(); terminal.current = undefined; lastOutputEnd.current = 0; queuedOutputEnd.current = 0; };
+    return () => { saveSnapshot(restored ? `\u001b[8;${instance.rows};${instance.cols}t${serializer.serialize()}` : capturedSnapshot1 || "", restored ? lastOutputEnd.current : capturedSnapshotEnd2 ?? 0); observer?.disconnect(); window.removeEventListener("resize", fitAndResize); data.dispose(); sizeHandler.dispose(); instance.dispose(); terminal.current = undefined; resizeToHost.current = undefined; lastOutputEnd.current = 0; queuedOutputEnd.current = 0; };
   }, () => [componentProps.activeId, componentProps.cwd]);
 
   createDependencyEffect(() => {
@@ -75,7 +91,7 @@ export function TerminalView(componentProps: Props) {
 
     if (componentProps.ownershipRequired) instance.blur();
     else if (!componentProps.started && !componentProps.exited) callbacks.current.onStart(componentProps.activeId, instance.cols, instance.rows);
-    else if (componentProps.started) callbacks.current.onResize(instance.cols, instance.rows);
+    else if (componentProps.started) resizeToHost.current?.();
   }, () => [componentProps.activeId, componentProps.cwd, componentProps.ownershipRequired]);
 
   createDependencyEffect(() => { const capturedOutputEnd0 = componentProps.outputEnd; const capturedOutput1 = componentProps.output;
