@@ -25,7 +25,11 @@ function retainedName(state: AgentState, prompt: string | undefined, previous: S
 }
 
 function retainedActivity(state: AgentState, previous: SessionSummary | undefined, prompt?: string, lastMessageAt?: number) {
-  return { preview: retainedPreview(prompt, previous), messageCount: Math.max(prompt ? 1 : 0, state.messageCount, previous?.messageCount ?? 0), lastMessageAt: lastMessageAt ?? previous?.lastMessageAt ?? 0, apiCost: previous?.apiCost ?? 0 };
+  return { isDraft: retainedDraft(state, previous, prompt), preview: retainedPreview(prompt, previous), messageCount: Math.max(prompt !== undefined ? 1 : 0, state.messageCount, previous?.messageCount ?? 0), lastMessageAt: lastMessageAt ?? previous?.lastMessageAt ?? 0, apiCost: previous?.apiCost ?? 0 };
+}
+
+function retainedDraft(state: AgentState, previous: SessionSummary | undefined, prompt: string | undefined) {
+  return prompt === undefined && (previous?.isDraft ?? state.messageCount === 0);
 }
 
 function retainedPreview(prompt: string | undefined, previous: SessionSummary | undefined) { return prompt ?? previous?.preview ?? ""; }
