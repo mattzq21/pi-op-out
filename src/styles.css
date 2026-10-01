@@ -33,6 +33,9 @@ button { cursor: pointer; }
 .icon-rail.compact .codex-usage-separator { display: none; }
 
 .session-panel { width: 100%; flex: 1 1 auto; min-height: 0; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
+.archived-session-heading { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px 0; color: var(--muted); font-size: 13px; }
+.archived-session-heading > span { display: flex; align-items: center; gap: 7px; }
+.archived-session-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
 .eyebrow { margin: 0 0 3px; text-transform: uppercase; letter-spacing: .15em; font: 500 11px "DM Sans"; color: var(--accent); }
 .search { margin: 14px 14px 12px; height: 35px; border: 1px solid #d5d1c9; background: #faf9f6b8; border-radius: 8px; display: flex; align-items: center; gap: 8px; padding: 0 9px; color: var(--faint); }
 .search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; font-size: 14px; }
