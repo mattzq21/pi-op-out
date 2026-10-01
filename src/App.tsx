@@ -122,7 +122,7 @@ export default function App() {
           {renderChatView()}
         </div>
         {renderSplitChatPane()}
-        {subagentPane() && <Rerun on={() => `${required(subagentPane()).hostId}:${required(subagentPane()).sessionId}`}>{(_key) => <SubagentPane target={required(subagentPane())} onClose={closeSplitPane} onActivate={() => setActivePane("split")} />}</Rerun>}
+        <Show when={subagentPane()} keyed>{(target) => <SubagentPane target={target} onClose={closeSplitPane} onActivate={() => setActivePane("split")} />}</Show>
       </div>);
     };
 
