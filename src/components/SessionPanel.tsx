@@ -354,7 +354,7 @@ export function SessionPanel(props: Props) {
             {renderProjectLabel()}
           </div>);
         };
-        return [renderDropZone(token()), <section data-sidebar-token={token()} class={`project ${!normalizedQuery() ? "reorderable" : ""} ${draggedProject() === projectKey ? "dragging" : ""} ${dropTarget()?.projectKey === projectKey && !(dropTarget())!.sessionKey && (dropTarget())!.layoutBefore === undefined ? "drop-project" : ""}`} >
+        return [renderDropZone(token()), <section data-sidebar-token={token()} class={`project ${!normalizedQuery() ? "reorderable" : ""} ${draggedProject() === projectKey ? "dragging" : ""} ${draggedSession() && dropTarget()?.projectKey === projectKey && dropTarget()?.layoutBefore === undefined ? "drop-project" : ""}`} >
           {renderProjectHeading()}
           <div id={groupId} hidden={collapsed()}><Key each={visibleSessions()} by={sessionKey}>{session => <SessionRow session={session()} projectKey={projectKey} />}</Key></div>
         </section>];
