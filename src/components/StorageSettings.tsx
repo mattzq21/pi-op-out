@@ -4,7 +4,7 @@ import { Dynamic } from "solid-js/web";
 import { createDependencyEffect, createRef } from "../lib/solid";
 
 import { Archive, Camera, Database, FolderClock, GitBranch, HardDrive, MessageSquare, RefreshCw, ShieldAlert, Trash2 } from "lucide-solid";
-import { deleteArchivedConversation, loadStorageReport, openGroupDirectory, removeArchivedWorktree, restoreArchivedWorktree } from "../lib/nativeTransport";
+import { deleteArchivedConversation, loadStorageReport, openGroupDirectory, restoreArchivedWorktree } from "../lib/nativeTransport";
 import type { ArchivedConversation, HostStorage, StorageCategory, StorageReport } from "../types";
 
 const categoryDetails: Record<StorageCategory["id"], { name: string; description: string; icon: typeof Archive; item: string }> = {
@@ -102,14 +102,12 @@ export function StorageSettings(componentProps: { hostId?: string }) {
     void removeArchives(host, [archive]);
   };
   const changeWorktree = async (host: HostStorage, archive: ArchivedConversation) => {
-    if (archive.worktreePath && !window.confirm(`Delete the worktree for “${archive.name}”? The archived chat and its checkpoints will be kept. Restore will use the last response's files. Dependencies and build outputs will need rebuilding.`)) return;
     const key = archiveKey(host, archive);
     setDeleting((current) => new Set([...current, key]));
     setError(undefined);
     let failure: string | undefined;
     try {
-      if (archive.worktreePath) await removeArchivedWorktree(archive.worktreePath, host.hostId);
-      else await restoreArchivedWorktree(archive.path, host.hostId);
+      await restoreArchivedWorktree(archive.path, host.hostId);
     } catch (reason) { failure = reason instanceof Error ? reason.message : String(reason); }
     finally { setDeleting((current) => { const next = new Set(current); next.delete(key); return next; }); }
     await refresh();
@@ -166,7 +164,7 @@ export function StorageSettings(componentProps: { hostId?: string }) {
           const key = createMemo(() => (archiveKey(host(), { ...archive(), name: name() }))); const pending = createMemo(() => (deleting().has(key())));
           const renderArchiveDetails = () => (<span><strong>{name()}</strong><small>{archive().deletable ? `${typeof archive().cwd === "string" ? archive().cwd : ""} · ${formatDate(archive().modifiedAt)}` : `Cleanup unavailable · ${archive().deleteError}`}</small></span>);
           const renderArchiveDelete = () => (<button aria-label={archive().deletable ? `Permanently delete ${name()}` : `Cannot safely delete ${name()}: ${archive().deleteError}`} disabled={!archive().deletable || deleting().size > 0 || loading()} onClick={() => deleteOne(host(), archive())}>{!archive().deletable ? <ShieldAlert size={14} /> : pending() ? <RefreshCw size={14} class="spinning" /> : <Trash2 size={14} />}</button>);
-          const renderWorktreeAction = () => ((archive().worktreePath || archive().restorable) && <button class="archive-worktree-action" disabled={deleting().size > 0 || loading()} onClick={() => void changeWorktree(host(), archive())}>{pending() ? "Working…" : archive().worktreePath ? "Delete worktree" : "Restore conversation"}</button>);
+          const renderWorktreeAction = () => ((!archive().worktreePath && archive().restorable) && <button class="archive-worktree-action" disabled={deleting().size > 0 || loading()} onClick={() => void changeWorktree(host(), archive())}>{pending() ? "Working…" : "Restore conversation"}</button>);
           return <div class={`archive-row${archive().deletable ? "" : " cleanup-unavailable"}`}  title={archive().deleteError || archive().path}>
             {renderArchiveDetails()}
             <code>{formatBytes(Number(archive().byteSize) || 0)}</code>
