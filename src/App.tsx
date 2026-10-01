@@ -49,7 +49,7 @@ export default function App() {
     const target = { cwd, hostId: activeHostId(), message, transport: transport() };
     const finish = beginBranching();
 
-    try { await createWorktree(target, `chat-${crypto.randomUUID().slice(0, 8)}`); }
+    try { await createWorktree(target, crypto.randomUUID().slice(0, 8)); }
     catch (reason) { addNotice({ title: "Could not branch conversation", message: String(reason) }); }
     finally { finish(); }
   };

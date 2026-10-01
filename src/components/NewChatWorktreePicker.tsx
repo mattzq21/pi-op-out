@@ -59,7 +59,7 @@ export function NewChatWorktreePicker(props: { transport: NativeTransport; listi
     const owner = props.transport; const cwd = props.listing.path; const host = owner.currentHostId();
     updateChatPreparation(owner, "Creating worktree");
 
-    if (!createdPath) createdPath = (await owner.createProjectWorktree(cwd, `chat-${crypto.randomUUID().slice(0, 8)}`, host)).path;
+    if (!createdPath) createdPath = (await owner.createProjectWorktree(cwd, crypto.randomUUID().slice(0, 8), host)).path;
     await owner.runWorktreeSetup(cwd, createdPath, host);
 
     if (disposed) throw new Error("Conversation changed");

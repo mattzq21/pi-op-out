@@ -85,6 +85,7 @@ pub(super) fn worktree_suffix(name: &str) -> Result<&str, String> {
 }
 
 pub(super) fn worktree_branch_name(parent: &str, name: &str) -> String {
+    let parent = parent.split_once('|').map_or(parent, |(base, _)| base);
     format!("{parent}|{name}")
 }
 
