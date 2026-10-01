@@ -14,8 +14,9 @@ import { MissingDirectoryDialog } from "./components/MissingDirectoryDialog";
 import { hasVisibleText } from "./lib/content";
 import { NativeTransport,resolveBranchGroup } from "./lib/nativeTransport";
 import { isMobile } from "./lib/platform";
+import { beginBranching, isBranching } from "./lib/branchActivity";
 import { SubagentNavigationContext } from "./lib/subagentNavigation";
-import type { SessionSummary } from "./types";
+import type { ChatMessage, SessionSummary } from "./types";
 
 export { formatCodexReset,normalizeCodexUsage,normalizeOpencodeGoUsage,usageWindowsDescription } from "./appSupport";
 
@@ -41,6 +42,18 @@ export default function App() {
  const { missingDirectoryDialog, archivesOpen, setArchivesOpen, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, gitDiffs, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, activeHostId, isGitRepository, codexUsage, usageClock, opencodeGoBadge, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, renameSession, setRenameSession, projectOpen, setProjectOpen, worktreeTarget, setWorktreeTarget, projectOpenRef, uploadsByTransport, setComposerDraft, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalSessionId, terminalLocationState, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToReview, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, createWorktree, deleteWorktree, branch, forkAndForget, startNewSession, newSession, clearChatProject, selectSession, setModel, setThinking, abortInteraction, pauseInteraction, resumeInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, reconnectMain, extensionStateIsCurrent, activeDialog, questionContext, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets } = createAppConversations(() => { void ChatView.preload().catch(() => undefined); });
 
   const renderMobileSidebarBackdrop = () => (panelOpen() && view() === "chat" && <button class="mobile-sidebar-backdrop" aria-label="Close conversations" onClick={() => setPanelOpen(false)} />);
+  const branchIntoWorktree = async (message: ChatMessage) => {
+    const cwd = projectCwd();
+
+    if (!cwd || isBranching()) return;
+    const target = { cwd, hostId: activeHostId(), message, transport: transport() };
+    const finish = beginBranching();
+
+    try { await createWorktree(target, `chat-${crypto.randomUUID().slice(0, 8)}`); }
+    catch (reason) { addNotice({ title: "Could not branch conversation", message: String(reason) }); }
+    finally { finish(); }
+  };
+
   const renderMobileSidebarToggle = () => <button type="button" class="mobile-sidebar-toggle" aria-label="Toggle conversations" aria-expanded={mobileSidebarOpen()} onClick={() => { if (canLeaveSettings()) { const open = !mobileSidebarOpen(); setView("chat"); setPanelOpen(open); } }}>☰</button>;
 
   const renderArchiveButton = () => {
@@ -67,7 +80,7 @@ export default function App() {
 
   const renderChatWorkspace = () => {
     const renderChatPanes = () => {
-      const renderChatView = () => (<Rerun on={chatViewKey}>{(_key) => <ChatView transport={transport()}  state={composerControls.state(chatSession().state)} messages={chatSession().messages} gitDiffs={gitDiffs()} debug={required((settings())).debugMode} {...chatAgentProps()} models={chatModels()} commands={chatCommands()} thinkingLevels={composerControls.thinkingLevels(chatSession().thinkingLevels)} widgets={chatWidgets()} statuses={composerControls.statuses(extensionStateIsCurrent() ? statuses() : {})} projectCwd={projectCwd()} controlsDisabled={!connected()} draft={composerState().composerDraft} onDraftChange={draftChangeFor(activeConversationKey(), transport())} focusRequest={mainComposerFocusRequest()} onActivate={() => setActivePane("main")} uploads={composerState().composerUploads} onUploadsChange={uploadsChangeFor(transport())} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abortInteraction} onPause={pauseInteraction} onResume={resumeInteraction} onOpenTerminal={() => toggleComposerTerminal("main", { sessionKey: activeConversationKey(), cwd: projectCwd(), hostId: activeHostId() })} onOpenProject={chooseChatProject} onClearProject={clearChatProject} onProjectBranch={(cwd) => openProject(cwd, activeHostId(), true)} onBranch={branch} onForkAndForget={isGitRepository() === false && projectCwd() ? forkAndForget : undefined} onCreateWorktree={isGitRepository() && projectCwd() ? (message) => setWorktreeTarget({ cwd: required((projectCwd())), hostId: activeHostId(), message, transport: transport() }) : undefined} onAgent={setAgent} onModel={setModel} onToggleFastMode={() => transport().promptControls.toggle(composerControls.statuses(statuses()))} onThinking={setThinking} />}</Rerun>);
+      const renderChatView = () => (<Rerun on={chatViewKey}>{(_key) => <ChatView transport={transport()}  state={composerControls.state(chatSession().state)} messages={chatSession().messages} gitDiffs={gitDiffs()} debug={required((settings())).debugMode} {...chatAgentProps()} models={chatModels()} commands={chatCommands()} thinkingLevels={composerControls.thinkingLevels(chatSession().thinkingLevels)} widgets={chatWidgets()} statuses={composerControls.statuses(extensionStateIsCurrent() ? statuses() : {})} projectCwd={projectCwd()} controlsDisabled={!connected()} draft={composerState().composerDraft} onDraftChange={draftChangeFor(activeConversationKey(), transport())} focusRequest={mainComposerFocusRequest()} onActivate={() => setActivePane("main")} uploads={composerState().composerUploads} onUploadsChange={uploadsChangeFor(transport())} onSend={send} onChangePending={(id, behavior) => transport().changePendingMessage(id, behavior)} onAbort={abortInteraction} onPause={pauseInteraction} onResume={resumeInteraction} onOpenTerminal={() => toggleComposerTerminal("main", { sessionKey: activeConversationKey(), cwd: projectCwd(), hostId: activeHostId() })} onOpenProject={chooseChatProject} onClearProject={clearChatProject} onProjectBranch={(cwd) => openProject(cwd, activeHostId(), true)} onBranch={branch} onForkAndForget={isGitRepository() === false && projectCwd() ? forkAndForget : undefined} onCreateWorktree={isGitRepository() && projectCwd() ? (message) => void branchIntoWorktree(message) : undefined} onAgent={setAgent} onModel={setModel} onToggleFastMode={() => transport().promptControls.toggle(composerControls.statuses(statuses()))} onThinking={setThinking} />}</Rerun>);
 
       const renderSplitChatPane = () => (<Show when={splitPane()}><Rerun on={() => splitPane()?.key}>{(_key) => {
         const pane = required(splitPane());
