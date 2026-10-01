@@ -10,6 +10,7 @@ import type { AgentState, AppSettings, DefinedAgentsCapability, ExtensionUiReque
 
 type AppEventsContext = {
   transport: NativeTransport;
+  prepareSession: (transport: NativeTransport) => Promise<boolean>;
   handleEvent: (event: RpcEvent) => void;
   setDialogs: Dispatch<StateUpdate<OwnedExtensionDialog[]>>;
   loadSettings: () => Promise<AppSettings>;
@@ -52,6 +53,7 @@ export function useAppEvents(options: Accessor<AppEventsContext>) {
     capturedOptions.setError(undefined);
     document.title = "piop"; capturedOptions.setStatuses({}); capturedOptions.setWidgets({});
     const loadSelectedSession = async () => {
+      if (!await capturedOptions.prepareSession(capturedOptions.transport) || !current()) return;
       const ready = await initializeSession(current, {
         connect: () => capturedOptions.transport.connect(),
         loadSettings: () => capturedOptions.loadSettings(),

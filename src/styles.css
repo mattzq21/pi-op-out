@@ -249,6 +249,10 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .storage-loading { min-height: 150px; display: grid; place-items: center; align-content: center; gap: 9px; color: var(--muted); font-size: calc(12px + var(--settings-font-offset, 0px)); }.storage-error, .storage-host-error, .storage-warning { border-radius: 7px; padding: 9px 11px; font-size: calc(11px + var(--settings-font-offset, 0px)); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }.storage-error, .storage-host-error { background: #d7786518; color: #c76854; }.storage-warning { margin-top: 9px; background: #b9852215; color: #9c762e; }
 .storage-host { overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: white; }.storage-host > header { min-height: 57px; padding: 10px 12px; display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: center; gap: 9px; border-bottom: 1px solid var(--line); }.storage-host > header > span:last-child, .archive-heading > span, .archive-row > span, .storage-category > span:nth-child(2) { min-width: 0; display: grid; gap: 3px; }.storage-host strong, .archive-heading strong, .archive-row strong, .storage-category strong { overflow: hidden; font-size: calc(12px + var(--settings-font-offset, 0px)); text-overflow: ellipsis; white-space: nowrap; }.storage-host small, .archive-heading small, .archive-row small, .storage-category small { overflow: hidden; color: var(--muted); font-size: calc(10px + var(--settings-font-offset, 0px)); text-overflow: ellipsis; white-space: nowrap; }
 .storage-group + .storage-group { border-top: 1px solid var(--line); }
+.missing-directory-dialog { width: min(600px, calc(100vw - 32px)); }
+.missing-directory-dialog .field { margin: 12px 0; }
+.missing-directory-path { display: block; overflow-wrap: anywhere; color: var(--muted); }
+.missing-directory-dialog .dialog-actions { flex-wrap: wrap; }
 .storage-directory-button { padding: 0; border: 1px solid transparent; }
 .storage-directory-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .storage-directory-button:disabled { opacity: .45; }

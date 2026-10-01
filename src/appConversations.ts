@@ -12,6 +12,7 @@ import { createBranchConversation } from "./branchConversation";
 import { isAskUserRequest } from "./components/AskUserDialog";
 import { createConversationQuestions } from "./components/ConversationQuestions";
 import { type SessionAction } from "./components/SessionPanel";
+import type { MissingDirectoryRequest } from "./components/MissingDirectoryDialog";
 import { encodeAgentValue } from "./lib/agentProtocol";
 import { isConversationChanged } from "./lib/conversationChanged";
 import { branchMessages,type PiEntry } from "./lib/messages";
@@ -21,7 +22,7 @@ import { chatSubmission,prepareChatWorktree } from "./lib/newChatWorktree";
 import { resolveNewSessionBranch } from "./lib/newSessionBranch";
 import { isMobile,listen } from "./lib/platform";
 import { sessionDebugAction } from "./lib/sessionDebugAction";
-import { DIRLESS_KEY,inheritSessionGroup,updateSessionGroups,type SessionGroup } from "./lib/sessionGroups";
+import { inheritSessionGroup,updateSessionGroups,type SessionGroup } from "./lib/sessionGroups";
 import { createCachedSessionList } from "./lib/sessionListCache";
 import { useSessionResume } from "./lib/sessionResume";
 import { SessionRuntimePool,useTurnDiffs } from "./lib/sessionRuntimePool";
@@ -197,7 +198,18 @@ export function createAppConversations(preloadChat: () => void) {
   const configureRuntime = (value: AppSettings) => configureConversationRuntime(value, transport(), () => activeTransportRef.current, projectControls);
   const reviewImages = new WeakMap<NativeTransport, ImageAttachment[]>();
   const resolveHomeDirectory = (hostId: string) => transport().homeDirectory(hostId);
-  useAppEvents(() => ({ transport: transport(), handleEvent: chatSession().handleEvent, setDialogs, loadSettings, refresh, queueTerminalOutput, terminalExited: terminals.exited, addNotice, activeTransportRef, pendingReviewRequest, reviewImages, setSplitPane, activeHostIdRef, setExtensionOwner, setDefinedAgents, refreshSession: chatSession().refresh, setStatuses, setWidgets, setComposerDraft, transportConversationKeys, terminalSessionId, setActivePane, setMainComposerFocusRequest, queueExtensionDialog, mainDialogOwnerRef, setActiveHostId, setActiveCwd, activateConversationKey, setTerminalOpen, setTerminalTarget, configureRuntime, setError, updateConnected, flushTerminalOutput: terminals.flushOutput }));
+  const prepareSession = async (owner: NativeTransport) => {
+    const target = owner.connectionTarget();
+    if (!target.sessionPath || !target.cwd) return true;
+    try { await owner.validateProjectDirectory(target.cwd, target.hostId ?? "local", true); return true; }
+    catch (reason) {
+      const session = (await owner.listSessions()).find(item => item.path === target.sessionPath && (item.hostId ?? "local") === (target.hostId ?? "local"));
+      if (!session || session.cwdExists !== false) throw reason;
+      if (transport() === owner) await openDirlessSession(session, "select");
+      return false;
+    }
+  };
+  useAppEvents(() => ({ transport: transport(), prepareSession, handleEvent: chatSession().handleEvent, setDialogs, loadSettings, refresh, queueTerminalOutput, terminalExited: terminals.exited, addNotice, activeTransportRef, pendingReviewRequest, reviewImages, setSplitPane, activeHostIdRef, setExtensionOwner, setDefinedAgents, refreshSession: chatSession().refresh, setStatuses, setWidgets, setComposerDraft, transportConversationKeys, terminalSessionId, setActivePane, setMainComposerFocusRequest, queueExtensionDialog, mainDialogOwnerRef, setActiveHostId, setActiveCwd, activateConversationKey, setTerminalOpen, setTerminalTarget, configureRuntime, setError, updateConnected, flushTerminalOutput: terminals.flushOutput }));
   createDependencyEffect(() => {
     const capturedTransport = transport(); const capturedRuntimePool = runtimePool();
  const shutdown = () => { for (const id of terminals.allTerminalIds()) void capturedTransport.closeTerminal(id).catch(() => undefined); void capturedRuntimePool.disconnectAll(); }; window.addEventListener("pagehide", shutdown); return () => window.removeEventListener("pagehide", shutdown); }, () => [runtimePool(), transport()]);
@@ -371,9 +383,9 @@ export function createAppConversations(preloadChat: () => void) {
     lastNewSessionSelection.current = undefined;
     if (window.matchMedia("(max-width: 700px)").matches) setPanelOpen(false);
     if (archives.isPending(session)) return undefined;
+    if (session.cwdExists === false) { void openDirlessSession(session, "select"); return undefined; }
     const hostId = session.hostId ?? "local"; if (isSelectedSession(session)) { if (!connected()) reconnectMain(); return transport(); }
     closeSplitForSession(session);
-    if (session.cwdExists === false) { void openDirlessSession(session, "select"); return undefined; }
     const nextTransport = runtimePool().forSession(session);
     const conversationKey = `${hostId}:${session.id}`; transportConversationKeys.current.set(nextTransport, conversationKey); activateConversationKey(conversationKey); chatSession().discardPendingUpdates(); setView("chat"); setTerminalOpen(false); updateConnected(false); setDefinedAgents(undefined); setActiveHostId(hostId); setActiveCwd(session.cwd); activateTransport(nextTransport); return nextTransport;
   };
@@ -483,21 +495,27 @@ export function createAppConversations(preloadChat: () => void) {
   const chatCommands = createMemo<SlashCommand[]>(() => [{ name: "branch-off", description: "Branch conversation [number back, default 0]", source: "builtin" }, { name: "worktree", description: "Create worktree [number back, default 0] [name]", source: "builtin" }, ...chatSession().commands.filter(command => !["branch-off", "worktree"].includes(command.name))]);
   const chatWidgets = createMemo(() => extensionStateIsCurrent() ? Object.values(widgets()).flat() : []);
   const dirlessPending = new Set<string>();
+  const [missingDirectoryDialog, setMissingDirectoryDialog] = createSignal<MissingDirectoryRequest>();
   const openDirlessSession = async (session: SessionSummary, action: SessionAction | "select") => {
     const hostId = session.hostId ?? "local"; const key = `${hostId}:${session.id}`;
-    if (dirlessPending.has(key)) return; dirlessPending.add(key);
+    if (dirlessPending.has(key) || missingDirectoryDialog()) return; dirlessPending.add(key);
     const client = transport(); const pool = runtimePool();
-    try {
-      await updateSessionGroups({ type: "assign", group: DIRLESS_KEY, key });
-      await client.relocateDirlessSession(session.path, hostId);
-      const relocated = (await client.listSessions()).find(item => item.id === session.id && (item.hostId ?? "local") === hostId);
-      if (!relocated) throw new Error("The conversation could not be found after moving it to Dirless.");
-      setSessions(current => current.map(item => item.id === session.id && (item.hostId ?? "local") === hostId ? relocated : item));
-      const owner = pool.forSession(session); pool.setLiveSession(owner, relocated);
+    let relocated: SessionSummary | undefined;
+    const cancel = () => { dirlessPending.delete(key); setMissingDirectoryDialog(undefined); };
+    setMissingDirectoryDialog({ session, cancel, recover: async (mode, repository, branch) => {
+      if (!relocated) {
+        const result = await client.recoverMissingSession(session.path, mode, repository, branch, hostId);
+        relocated = { ...session, cwd: result.cwd, cwdExists: true, projectRoot: mode === "remote" ? result.cwd : null, worktreeRoot: null, projectKind: mode === "remote" ? "main" : "no-repo", branch: mode === "remote" ? branch || null : null };
+      }
+      const recovered = relocated;
+      setSessions(current => current.map(item => item.id === session.id && (item.hostId ?? "local") === hostId ? recovered : item));
+      const owner = client.currentSessionPath() === session.path && client.currentHostId() === hostId ? client : pool.forSession(session);
+      pool.bind(hostId, session.id, owner); pool.setLiveSession(owner, relocated);
       await owner.restoreConnection({ cwd: relocated.cwd, sessionPath: session.path, hostId });
+      cancel();
       if (action === "select") selectSession(relocated); else await sessionAction(relocated, action);
-    } catch (reason) { addNotice({ title: "Could not open Dirless conversation", message: String(reason) }); }
-    finally { dirlessPending.delete(key); }
+      void syncSessionIndex();
+    } });
   };
- return { runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, gitDiffs, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, activeHostId, isGitRepository, codexUsage, usageClock, opencodeGoBadge, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, widgets, renameSession, setRenameSession, projectOpen, setProjectOpen, worktreeTarget, setWorktreeTarget, projectOpenRef, uploadsByTransport, setComposerDraft, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalSessionId, terminalLocationState, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToReview, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, createWorktree, deleteWorktree, branch, forkAndForget, startNewSession, newSession, clearChatProject, selectSession, setModel, setThinking, abortInteraction, pauseInteraction, resumeInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, reconnectMain, extensionStateIsCurrent, activeDialog, questionContext, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets };
+ return { missingDirectoryDialog, runtimePool, transport, view, setView, activeConversationKey, chatViewKey, runningSessions, unseenSessions, pendingSettingsCount, gitDiffs, chatSession, sessions, settings, settingsSaving, debugModeSaving, setSettingsDirty, panelOpen, setPanelOpen, query, setQuery, connected, error, setError, createGroupRequest, setCreateGroupRequest, handleCreateGroup, activeHostId, isGitRepository, codexUsage, usageClock, opencodeGoBadge, setDialogs, notices, setNotices, addNotice, queueExtensionDialog, resolveExtensionDialog, closeTransportDialogs, releaseSplitTransport, statuses, widgets, renameSession, setRenameSession, projectOpen, setProjectOpen, worktreeTarget, setWorktreeTarget, projectOpenRef, uploadsByTransport, setComposerDraft, setComposerUploads, splitPane, setSplitPane, subagentPane, hasSidePane, mainComposerFocusRequest, splitComposerFocusRequest, activePane, setActivePane, terminals, terminalOpen, terminalSessionId, terminalLocationState, startTerminal, addTerminal, selectTerminal, saveTerminalSnapshot, deleteTerminal, reconnectPending, splitSessionId, composerState, terminalViewKey, syncSessionIndex, composerControls, resolveHomeDirectory, send, respondToReview, closeSplitPane, openSubagent, canLeaveSettings, rekeyConversationUi, createWorktree, deleteWorktree, branch, forkAndForget, startNewSession, newSession, clearChatProject, selectSession, setModel, setThinking, abortInteraction, pauseInteraction, resumeInteraction, saveSettings, setAgent, openProject, chooseChatProject, sessionAction, draftChangeFor, uploadsChangeFor, toggleComposerTerminal, toggleDebugMode, reconnectMain, extensionStateIsCurrent, activeDialog, questionContext, projectCwd, mobileSidebarOpen, sidebar, chatAgentProps, chatModels, chatCommands, chatWidgets };
 }
