@@ -259,6 +259,8 @@ struct TemporaryChat {
 #[serde(rename_all = "camelCase")]
 struct StorageCategory {
     id: String,
+    #[serde(default)]
+    directories: Vec<String>,
     byte_size: u64,
     item_count: usize,
     #[serde(default)]

@@ -4,14 +4,13 @@ import { createComputed,createMemo,createSignal,Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect,createMemoFields,createRef,cssPixels,type KeyboardEvent,type MouseEvent } from "../lib/solid";
 
-import { AppWindow,Archive,ChevronDown,Copy,Ellipsis,FileText,Folder,FolderOpen,GitBranch,MessageSquarePlus,Pencil,Search,Trash2 } from "lucide-solid";
-import { gitWorktreeRoots,openGroupDirectory } from "../lib/nativeTransport";
+import { AppWindow,Archive,ChevronDown,Copy,Ellipsis,FileText,Folder,FolderOpen,MessageSquarePlus,Pencil,Search,Trash2 } from "lucide-solid";
+import { openGroupDirectory } from "../lib/nativeTransport";
 import type { SessionGroup } from "../lib/sessionGroups";
 import { groupLayoutToken,isFixedGroup,RECENT_KEY,sessionKey,sessionLayoutToken,type DraggedSession,type SidebarState } from "../lib/sidebarState";
 import type { SessionSummary } from "../types";
 import { BranchIcon } from "./BranchIcon";
 import { RemoveGroupDialog } from "./RemoveGroupDialog";
-import { RemoveWorktreeDialog } from "./RemoveWorktreeDialog";
 import { SessionTooltip } from "./SessionTooltip";
 
 export type SessionAction = "split" | "new-window" | "rename" | "clone" | "open-directory" | "archive" | "copy-id" | "open-rollout";
@@ -63,7 +62,6 @@ export function SessionPanel(props: Props) {
   const [menu, setMenu] = createSignal<{ session: SessionSummary; x: number; y: number; returnFocus?: HTMLElement }>();
   const [groupMenu, setGroupMenu] = createSignal<{ projectKey: string; label: string; x: number; y: number; returnFocus: HTMLElement }>();
   const [removingGroup, setRemovingGroup] = createSignal<{ id: string; name: string }>();
-  const [removingWorktree, setRemovingWorktree] = createSignal<{ id: string; name: string; cwd: string; hostId: string }>();
   const [groupSaving, setGroupSaving] = createSignal(false);
   const groupSavePending = createRef(false);
   const [groupActionError, setGroupActionError] = createSignal<string>();
@@ -372,38 +370,17 @@ export function SessionPanel(props: Props) {
     </div>;
   };
 
-  const prepareWorktreeRemoval = async (id: string, name: string, group: SessionGroup) => {
-    const cwd = required(group.cwd); const hostId = group.hostId ?? "local";
-    setGroupActionError(undefined);
-
-    try {
-      const [targetRoot] = await gitWorktreeRoots([cwd], hostId);
-
-      if (!targetRoot) throw new Error("Could not resolve the worktree directory");
-      setRemovingWorktree({ id, name, cwd: targetRoot, hostId });
-    } catch (reason) { setGroupActionError(reason instanceof Error ? reason.message : String(reason)); }
-  };
-
   const groupsByToken = createMemo(() => (new Map(groups().map((group): [string, typeof group] => [groupLayoutToken(group[0]), group]))));
-
-  const groupMenuDetails = () => {
-    const groupDirectory = groupMenu() ? groupDestination(required(groupMenu()).projectKey) : undefined;
-    const groupDirectorySession = groupDirectory && panel().sessions.find((session) => (session.hostId ?? "local") === (groupDirectory.hostId ?? "local") && session.cwd === groupDirectory.cwd);
-    const isWorktreeGroup = groupDirectory?.projectKind === "worktree" || groupDirectorySession?.projectKind === "worktree";
-
-    return { groupDirectory, isWorktreeGroup };
-  };
 
   const contextMenu = () => {
     const activeMenu = groupMenu() ?? menu();
-    const { groupDirectory, isWorktreeGroup } = groupMenuDetails();
+    const groupDirectory = groupMenu() ? groupDestination(required(groupMenu()).projectKey) : undefined;
 
     const menuItems = groupMenu() ? [
       { label: "Open directory", Icon: FolderOpen, disabled: !groupDirectory, run: () => { if (groupDirectory?.cwd) { setGroupActionError(undefined); void openGroupDirectory(groupDirectory.cwd, groupDirectory.hostId ?? "local").catch((reason) => setGroupActionError(String(reason))); } } },
-      { label: "Create worktree", Icon: GitBranch, disabled: !groupDirectory, run: () => { if (groupDirectory?.cwd) panel().onCreateWorktree(groupDirectory.cwd, groupDirectory.hostId ?? "local"); } },
-      ...(isWorktreeGroup && groupDirectory?.cwd ? [{ label: "Delete worktree…", Icon: Trash2, disabled: false, run: () => void prepareWorktreeRemoval(required((groupMenu())).projectKey, required((groupMenu())).label, groupDirectory) }] : []),
       { label: "Forget group", Icon: Trash2, disabled: false, run: () => setRemovingGroup({ id: required((groupMenu())).projectKey, name: required((groupMenu())).label }) },
     ] : menu() ? actions.flatMap(([action, Icon, label]) => !["copy-id", "open-rollout"].includes(action) || panel().debug ? [{ label, Icon, disabled: action === "open-rollout" && !required(menu()).session.path, run: () => panel().onAction(required((menu())).session, action) }] : []) : [];
+
 
     return { activeMenu, menuItems };
   };
@@ -492,15 +469,9 @@ export function SessionPanel(props: Props) {
   return <aside class="session-panel">
     {removingGroup() && <RemoveGroupDialog name={required((removingGroup())).name} onCancel={() => setRemovingGroup(undefined)} onRemove={async () => {
     const capturedRemovingGroup = removingGroup();
+
  await removeGroup(required((capturedRemovingGroup)).id); setRemovingGroup(undefined); }} />}
-    {removingWorktree() && <RemoveWorktreeDialog name={required((removingWorktree())).name} path={required((removingWorktree())).cwd} onCancel={() => setRemovingWorktree(undefined)} onRemove={async (deleteBranch) => { const capturedPanel = panel(); const capturedRemovingWorktree = removingWorktree();
-      await capturedPanel.onDeleteWorktree(required((capturedRemovingWorktree)).cwd, required((capturedRemovingWorktree)).hostId, deleteBranch);
 
-      try { await removeGroup(required((capturedRemovingWorktree)).id); }
-      catch (reason) { setGroupActionError(`Worktree deleted, but its sidebar group could not be forgotten: ${String(reason)}`); }
-
-      setRemovingWorktree(undefined);
-    }} />}
     <label class="search"><Search size={15} /><input ref={element => { searchRef.current = element; }} aria-label="Search conversations" placeholder="Search conversations" value={panel().query} onInput={(event) => panel().onQuery(event.target.value)} /><kbd>Ctrl G</kbd></label>
     {renderSessionScroll()}
     {renderConversationMenu()}
