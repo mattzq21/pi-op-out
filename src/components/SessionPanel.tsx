@@ -3,7 +3,7 @@ import { createComputed,createMemo,createSignal,Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import { createDependencyEffect,createMemoFields,createRef,cssPixels,type KeyboardEvent,type MouseEvent } from "../lib/solid";
 
-import { AppWindow,Archive,ChevronDown,Copy,Ellipsis,FileText,Folder,FolderOpen,GitBranch,MessageSquarePlus,Pencil,Search,Trash2 } from "lucide-solid";
+import { AppWindow,Archive,ChevronDown,Copy,Ellipsis,FileText,Folder,FolderOpen,MessageSquarePlus,Pencil,Search,Trash2 } from "lucide-solid";
 import { gitWorktreeRoots,openGroupDirectory } from "../lib/nativeTransport";
 import type { SessionGroup } from "../lib/sessionGroups";
 import { groupLayoutToken,isFixedGroup,RECENT_KEY,sessionKey,sessionLayoutToken,type DraggedSession,type SidebarState } from "../lib/sidebarState";
@@ -300,7 +300,6 @@ export function SessionPanel(props: Props) {
     const { groupDirectory, isWorktreeGroup } = groupMenuDetails();
     const menuItems = groupMenu() ? [
       { label: "Open directory", Icon: FolderOpen, disabled: !groupDirectory, run: () => { if (groupDirectory?.cwd) { setGroupActionError(undefined); void openGroupDirectory(groupDirectory.cwd, groupDirectory.hostId ?? "local").catch((reason) => setGroupActionError(String(reason))); } } },
-      { label: "Create worktree", Icon: GitBranch, disabled: !groupDirectory, run: () => { if (groupDirectory?.cwd) panel().onCreateWorktree(groupDirectory.cwd, groupDirectory.hostId ?? "local"); } },
       ...(isWorktreeGroup && groupDirectory?.cwd ? [{ label: "Delete worktree…", Icon: Trash2, disabled: false, run: () => void prepareWorktreeRemoval((groupMenu())!.projectKey, (groupMenu())!.label, groupDirectory) }] : []),
       { label: "Forget group", Icon: Trash2, disabled: false, run: () => setRemovingGroup({ id: (groupMenu())!.projectKey, name: (groupMenu())!.label }) },
     ] : menu() ? actions.filter(([action]) => !["copy-id", "open-rollout"].includes(action) || panel().debug).map(([action, Icon, label]) => ({ label, Icon, disabled: action === "open-rollout" && !menu()!.session.path, run: () => panel().onAction((menu())!.session, action) })) : [];
