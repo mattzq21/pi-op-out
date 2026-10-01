@@ -1,6 +1,7 @@
+import { STATE_ENTRY, DEFAULTS_ENV, DRAFT_STATE_ENV, type RuntimeDefaults, persistedAgentIdentity, storedRuntimeDefaults, sessionIsLocked, readAgentState } from "./state.ts";
 import { configPath, DEFAULT_PROMPT_PATH, DEFAULT_AGENT_PROMPT_PATH, DEFAULT_SYSTEM_PROMPT, resolvePromptPath, ensurePromptFile, snapshotPrompt, ensureDefaultAgentPrompt, writeConfig } from "./prompts.ts";
 import { mcpServers } from "./mcp-config.ts";
-import type { Agent, AgentSnapshot, SessionAgentState, RuntimeSettingsRequest, RequiredToolsRequest, McpToolsRequest, McpSelection } from "./contracts.ts";
+import type { Agent, AgentSnapshot, RuntimeSettingsRequest, RequiredToolsRequest, McpToolsRequest, McpSelection } from "./contracts.ts";
 import type { FastModeRequest } from "../piop-openai-fast-mode/src/types.ts";
 import { agentExtensions, extensionPaths } from "./extension-loader.ts";
 import { createHash } from "node:crypto";
@@ -12,29 +13,7 @@ import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@e
 
 export type { Agent } from "./contracts.ts";
 
-type RuntimeDefaults = { model: string; effort: string };
-
-function persistedAgentIdentity(state: SessionAgentState) {
-  const agent = state.snapshot?.definition;
-
-  return JSON.stringify([state.active, state.modelOverride || agent?.model, state.effortOverride || agent?.effort, state.fastModeOverride ?? agent?.fastMode ?? false]);
-}
-
 const STATUS_KEY = "pi-define-agents";
-
-const STATE_ENTRY = "pi-define-agents-state";
-
-const DEFAULTS_ENV = "PI_DEFINE_AGENTS_RUNTIME_DEFAULTS";
-
-const DRAFT_STATE_ENV = "PIOP_AGENT_DRAFT_STATE";
-
-function draftAgentState(session: string, identity: string | undefined): SessionAgentState | undefined {
-  try {
-    const draft = JSON.parse(process.env[DRAFT_STATE_ENV] || "null");
-
-    return draft?.session === session && draft.identity === identity ? draft.state : undefined;
-  } catch { return undefined; }
-}
 
 const sessionTools = ["fork_session", "create_worktree", "remove_worktree", "subagent"];
 
@@ -104,12 +83,6 @@ async function migrateAgentPrompt(agent: StoredAgent) {
   return agentPromptPath;
 }
 
-function storedRuntimeDefaults(session: string): RuntimeDefaults | undefined {
-  try { const stored = JSON.parse(process.env[DEFAULTS_ENV] || "null");
-
-  if (stored?.session === session && typeof stored.model === "string" && typeof stored.effort === "string") return { model: stored.model, effort: stored.effort }; } catch { }
-}
-
 async function migratePrompts(stored: StoredConfig, pi: ExtensionAPI): Promise<Config> {
   const agents = [];
 
@@ -122,33 +95,6 @@ async function migratePrompts(stored: StoredConfig, pi: ExtensionAPI): Promise<C
   }
 
   return normalize({ ...stored, agents }, pi);
-}
-
-function sessionIsLocked(states: SessionAgentState[], branch: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>) {
-  return states.some((state) => state?.locked === true) || branch.some((entry) => entry.type === "compaction" || (entry.type === "message" && ["user", "assistant"].includes(entry.message.role)));
-}
-
-function restoredFastMode(branch: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>) {
-  for (const entry of [...branch].reverse()) {
-    if (entry.type !== "custom" || !entry.data || typeof entry.data !== "object") continue;
-
-    if (entry.customType === STATE_ENTRY && Object.hasOwn(entry.data as object, "fastModeOverride")) return (entry.data as SessionAgentState).fastModeOverride ?? undefined;
-
-    if (entry.customType === "piop-fast-mode-state") {
-      const legacy = entry.data as { enabled?: boolean; manual?: boolean };
-
-      return legacy.manual === false ? undefined : legacy.enabled;
-    }
-  }
-}
-
-function readAgentState(branch: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>, session: string) {
-  const states = branch.flatMap(entry => entry.type === "custom" && entry.customType === STATE_ENTRY && entry.data && typeof entry.data === "object" ? [entry.data as SessionAgentState] : []);
-  const persisted = states.at(-1);
-  const identity = persisted ? persistedAgentIdentity(persisted) : undefined;
-  const stored = draftAgentState(session, identity) ?? persisted;
-
-  return { states, stored, identity, fastMode: stored?.fastModeOverride ?? restoredFastMode(branch) };
 }
 
 function promptPath(agent: Agent): string {

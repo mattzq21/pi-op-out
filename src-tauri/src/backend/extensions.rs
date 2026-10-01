@@ -241,6 +241,7 @@ pub(super) fn prepare_defined_agents_extension() -> Result<PathBuf, String> {
     for (name, source) in [
         ("mcp-config.ts", include_str!("../../../extensions/piop-define-agents/mcp-config.ts")),
         ("extension-loader.ts", include_str!("../../../extensions/piop-define-agents/extension-loader.ts")),
+        ("state.ts", include_str!("../../../extensions/piop-define-agents/state.ts")),
         ("prompts.ts", include_str!("../../../extensions/piop-define-agents/prompts.ts")),
         ("../piop-diagrams.ts", include_str!("../../../extensions/piop-diagrams/index.ts")),
         ("index.ts", include_str!("../../../extensions/piop-define-agents/index.ts")),
