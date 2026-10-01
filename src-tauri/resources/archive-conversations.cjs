@@ -63,6 +63,9 @@ function snapshot(group, transaction) {
   const env = { ...process.env, GIT_INDEX_FILE: index, GIT_AUTHOR_NAME: 'piop', GIT_AUTHOR_EMAIL: 'piop@localhost', GIT_COMMITTER_NAME: 'piop', GIT_COMMITTER_EMAIL: 'piop@localhost' };
   const head = git(group.path, ['rev-parse', '--verify', 'HEAD']);
   group.head = head;
+  try { group.branchRef = git(group.path, ['symbolic-ref', '--quiet', 'HEAD']); }
+  catch (error) { if (error.status !== 1) throw error; }
+  if (group.branchRef && !group.branchRef.startsWith('refs/heads/')) throw new Error('Invalid worktree branch');
   group.metadata = path.join(transaction, `${randomUUID()}.git`);
   fs.cpSync(group.own, group.metadata, { recursive: true, verbatimSymlinks: true });
   git(group.path, ['read-tree', '--empty'], { env });
@@ -92,6 +95,7 @@ function rollback(groups, records) {
       if (group.kind === 'directory') fs.renameSync(group.storedPath, group.path);
       else if (!group.removed) git(group.common, ['worktree', 'move', '--force', '--force', group.storedPath, group.path]);
       else {
+        if (group.branchDeleted) git(group.common, ['update-ref', '--stdin'], { input: `create ${group.branchRef} ${group.head}\n` });
         git(group.common, ['worktree', 'add', '--detach', group.path, group.head]);
         git(group.path, ['restore', '--source', group.commit, '--worktree', '--', '.']);
         const own = git(group.path, ['rev-parse', '--absolute-git-dir']);
@@ -156,7 +160,7 @@ function main() {
         if (group.kind === 'main') delete record.header.worktreeRestore;
         else record.header.worktreeRestore = {
           kind: group.kind, path: group.path, conversationPath: fs.realpathSync(record.header.cwd),
-          ...(group.kind === 'git' ? { repositoryRoot: group.common, commit: group.commit, ref: group.refs[index] } : { storedPath: group.storedPath }),
+          ...(group.kind === 'git' ? { repositoryRoot: group.common, commit: group.commit, ref: group.refs[index], branch: group.branchRef?.slice('refs/heads/'.length) } : { storedPath: group.storedPath }),
         };
         if (group.kind === 'git') record.entries.push({ id: randomUUID(), parentId: record.entries.at(-1)?.id, type: 'custom', customType: 'pi-project-files-watch-snapshot', data: { repositoryRoot: group.common, commit: group.commit, ref: group.refs[index] } });
         record.destination = path.join(archive, `${randomUUID()}-${path.basename(record.file)}`);
@@ -181,6 +185,12 @@ function main() {
     for (const group of groups.filter((candidate) => candidate.kind === 'git')) {
       git(group.common, ['worktree', 'remove', '--force', '--force', group.storedPath]);
       group.removed = true;
+      if (group.branchRef) {
+        const worktrees = git(group.common, ['worktree', 'list', '--porcelain', '-z']).split('\0');
+        if (worktrees.includes(`branch ${group.branchRef}`)) throw new Error('The branch is still checked out in another worktree');
+        git(group.common, ['update-ref', '-d', group.branchRef, group.head]);
+        group.branchDeleted = true;
+      }
     }
   } catch (error) {
     const failures = rollback(groups, records);

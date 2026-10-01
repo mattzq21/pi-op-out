@@ -84,7 +84,16 @@ if (!snapshot || snapshot.data.unavailable || snapshot.data.ref !== saved.ref ||
 try { fs.lstatSync(saved.path); throw new Error('The worktree path already exists; it will not be overwritten'); }
 catch (error) { if (error.code !== 'ENOENT') throw error; }
 const { randomUUID } = require('node:crypto');
-const branch = `piop-restored-${randomUUID()}`;
+let branch = saved.branch;
+if (branch !== undefined) {
+  if (typeof branch !== 'string' || !branch || branch.startsWith('-')) throw new Error('Invalid archived branch name');
+  git(['check-ref-format', `refs/heads/${branch}`]);
+  try {
+    git(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]);
+    branch = undefined;
+  } catch (error) { if (error.status !== 1) throw error; }
+}
+branch ??= `piop-restored-${randomUUID()}`;
 git(['worktree', 'add', '-b', branch, saved.path, saved.commit]);
 restoreSession(() => {
   git(['worktree', 'remove', '--force', saved.path]);
