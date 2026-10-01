@@ -165,6 +165,12 @@ export function SessionPanel(props: Props) {
     finally { groupSavePending.current = false; setGroupSaving(false); }
   };
 
+  const createProjectGroup = (project: GroupProject) => {
+    setGroupProject(project);
+    setNewGroupName(project.cwd?.split(/[\\/]/).filter(Boolean).at(-1) || project.cwd || "Project");
+    void finishGroup();
+  };
+
   const editGroup = (group: CustomGroup) => { groupDraftActive.current = true; setEditingGroupId(group.id); setGroupDraftError(undefined); setNewGroupName(group.name); requestAnimationFrame(() => groupNameRef.current?.select()); };
 
   const selectedProjectKey = () => {
@@ -407,7 +413,7 @@ export function SessionPanel(props: Props) {
   const renderSessionScroll = () => {
     const renderGroupError = () => ((storedGroups.error || groupActionError()) && <p class="group-error" role="alert">{storedGroups.error || groupActionError()}</p>);
     const renderGroupLoading = () => (!storedGroups.state && !storedGroups.error && <p class="empty-small">Loading groups…</p>);
-    const renderNewGroup = () => (<Show when={newGroupName() !== undefined && !editingGroupId()}><section class="project custom-group-draft"><div class="project-label"><input ref={element => { groupNameRef.current = element; }} disabled={groupSaving()} aria-label="Group name" aria-invalid={Boolean(groupDraftError())} aria-describedby={groupDraftError() ? "new-group-error" : undefined} placeholder="Group name" value={(newGroupName())} onInput={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} /></div><div class="group-draft-or">OR</div><GroupProjectPicker transport={props.transport} settings={props.settings} hostId={panel().activeHostId} disabled={groupSaving()} project={groupProject()} onCancel={() => void finishGroup(true)} onSelect={(project) => { setGroupProject(project); void finishGroup(); }} />{groupDraftError() && <small id="new-group-error" class="group-error">{(groupDraftError())}</small>}</section></Show>);
+    const renderNewGroup = () => (<Show when={newGroupName() !== undefined && !editingGroupId()}><section class="project custom-group-draft"><div class="project-label"><input ref={element => { groupNameRef.current = element; }} disabled={groupSaving()} aria-label="Group name" aria-invalid={Boolean(groupDraftError())} aria-describedby={groupDraftError() ? "new-group-error" : undefined} placeholder="Group name" value={(newGroupName())} onInput={(event) => { setNewGroupName(event.target.value); setGroupDraftError(undefined); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); finishGroup(); } else if (event.key === "Escape") { event.preventDefault(); finishGroup(true); } }} /></div><div class="group-draft-or">OR</div><GroupProjectPicker transport={props.transport} settings={props.settings} hostId={panel().activeHostId} disabled={groupSaving()} project={groupProject()} onCancel={() => void finishGroup(true)} onSelect={createProjectGroup} />{groupDraftError() && <small id="new-group-error" class="group-error">{(groupDraftError())}</small>}</section></Show>);
     const renderEmptyConversations = () => (storedGroups.state && !filtered().length && <div class="empty-small">{normalizedQuery() ? `No conversations match “${panel().query.trim()}”.` : "No conversations yet."}</div>);
 
     return (<div ref={element => { sessionScrollRef.current = element; }} class="session-scroll">
