@@ -31,7 +31,7 @@ export const sessionGroupsSchema = z.object({ groups: z.array(sessionGroupSchema
 
 export const projectBranchesSchema = z.object({ branches: z.array(z.string()), current: z.union([z.string(), z.null()]), path: z.string(), mainPath: z.string() });
 
-export const storageCategorySchema = z.object({ id: z.enum(["active-conversations", "archived-conversations", "archived-worktree-checkpoints", "project-checkpoints", "git-diff-snapshots", "archived-git-diff-snapshots", "temporary-chats", "worktrees", "archived-worktrees", "other-storage"]), byteSize: z.number(), itemCount: z.number(), estimated: z.boolean().optional(), directories: z.array(z.string()).optional() });
+export const storageCategorySchema = z.object({ id: z.enum(["active-conversations", "archived-conversations", "archived-project-checkpoints", "project-checkpoints", "git-diff-snapshots", "archived-git-diff-snapshots", "temporary-chats", "worktrees", "archived-worktrees", "other-storage"]), byteSize: z.number(), itemCount: z.number(), estimated: z.boolean().optional(), directories: z.array(z.string()).optional() });
 
 export const archivedConversationSchema = z.object({ id: z.string(), path: z.string(), name: z.string(), cwd: z.string(), modifiedAt: z.number(), byteSize: z.number(), deletable: z.boolean(), deleteError: z.string().optional(), worktreePath: z.string().optional(), restorable: z.boolean().optional(), restoreError: z.string().optional() });
 

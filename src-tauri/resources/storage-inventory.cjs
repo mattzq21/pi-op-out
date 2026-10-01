@@ -137,21 +137,11 @@ async function inspectSession(file, includeArchiveDetails) {
     }
   } finally { lines.close(); }
 
-  const result = { checkpointRepositories: [...checkpointRepositories.values()], cwd: validSessionHeader(header) ? header.cwd : undefined };
+  const result = { checkpointRepositories: [...checkpointRepositories.values()], cwd: validSessionHeader(header) ? header.cwd : undefined, sessionId: Check(Type.String(), header?.id) ? safeSessionId(header.id) : undefined };
 
   if (!includeArchiveDetails) return result;
 
-  Object.assign(result, archiveRecoveryCheckpoint(header, result.checkpointRepositories));
-
   return archiveDetails(file, header, explicitName, firstPrompt, malformed, checkpointError, result);
-}
-
-function archiveRecoveryCheckpoint(header, repositories) {
-  const saved = header?.worktreeRestore;
-
-  if (!saved?.ref || !saved?.commit) return {};
-
-  return { archiveCheckpoint: repositories.find((repository) => repository.expectedRefs.get(saved.ref) === saved.commit), archiveCheckpointRef: saved.ref };
 }
 
 async function archiveDetails(file, header, explicitName, firstPrompt, malformed, checkpointError, result) {
@@ -373,19 +363,11 @@ async function checkpointBytes(cwd, refs, snapshots) {
   return byteSize;
 }
 
-async function archiveRefsByCommonRepository(archivedCheckpointRefs) {
-  const archiveRefsByRepository = new Map();
+function archivedCheckpoint(ref, archivedSessionIds) {
+  const match = /^refs\/pi-session-snapshots\/chats\/([^/]+)\//.exec(ref)
+    ?? /^refs\/pi-session-snapshots\/([^/]+)$/.exec(ref);
 
-  for (const [root, refs] of archivedCheckpointRefs) {
-    const repository = await checkpointRepository(root);
-
-    if (repository.error) continue;
-
-    if (!archiveRefsByRepository.has(repository.common)) archiveRefsByRepository.set(repository.common, new Set());
-    refs.forEach((ref) => archiveRefsByRepository.get(repository.common).add(ref));
-  }
-
-  return archiveRefsByRepository;
+  return !!match && archivedSessionIds.has(match[1]);
 }
 
 function recordCheckpointCategory(category, refs, common) {
@@ -394,12 +376,11 @@ function recordCheckpointCategory(category, refs, common) {
   if (refs.length) category.directories.push(common);
 }
 
-async function checkpointStorage(repositoryRoots, measuredDirectories, archivedCheckpointRefs) {
+async function checkpointStorage(repositoryRoots, measuredDirectories, archivedSessionIds) {
   const repositories = new Set();
-  const general = { byteSize: 0, itemCount: 0, directories: [] };
+  const active = { byteSize: 0, itemCount: 0, directories: [] };
   const warnings = [];
   const archived = { byteSize: 0, itemCount: 0, directories: [] };
-  const archiveRefsByRepository = await archiveRefsByCommonRepository(archivedCheckpointRefs);
 
   for (const cwd of repositoryRoots) {
     try {
@@ -415,21 +396,21 @@ async function checkpointStorage(repositoryRoots, measuredDirectories, archivedC
       const snapshots = refs.filter((ref) => ref === "refs/pi-session-snapshots" || ref.startsWith("refs/pi-session-snapshots/"));
 
       if (!snapshots.length) continue;
-      const archiveRefs = archiveRefsByRepository.get(common) ?? new Set();
+      const archiveRefs = new Set(snapshots.filter((ref) => archivedCheckpoint(ref, archivedSessionIds)));
       const archivedSnapshots = snapshots.filter((ref) => archiveRefs.has(ref));
       const otherSnapshots = snapshots.filter((ref) => !archiveRefs.has(ref));
-      recordCheckpointCategory(general, otherSnapshots, common);
+      recordCheckpointCategory(active, otherSnapshots, common);
       recordCheckpointCategory(archived, archivedSnapshots, common);
 
       if (measuredDirectories.has(common)) continue;
       archived.byteSize += await checkpointBytes(cwd, refs, archivedSnapshots);
-      general.byteSize += await checkpointBytes(cwd, refs.filter((ref) => !archiveRefs.has(ref)), otherSnapshots);
+      active.byteSize += await checkpointBytes(cwd, refs.filter((ref) => !archiveRefs.has(ref)), otherSnapshots);
     } catch (error) {
       warnings.push(`${cwd}: ${error.message}`);
     }
   }
 
-  return { ...general, warnings, archived };
+  return { ...active, warnings, archived };
 }
 
 function snapshotCategory(target, category, metadata) {
@@ -529,20 +510,16 @@ async function collectUnreadableArchive(file, archives) {
   });
 }
 
-function collectArchiveCheckpoint(details, archivedCheckpointRefs) {
-  if (!details.archiveCheckpoint) return;
-  const root = details.archiveCheckpoint.root;
-
-  if (!archivedCheckpointRefs.has(root)) archivedCheckpointRefs.set(root, new Set());
-  archivedCheckpointRefs.get(root).add(details.archiveCheckpointRef);
+function collectArchivedSession(details, archived, archivedSessionIds) {
+  if (archived && details.sessionId) archivedSessionIds.add(details.sessionId);
 }
 
-async function collectSessions(sessionFiles, checkpointRoots, worktreeRoots, archives, archivedCheckpointRefs) {
+async function collectSessions(sessionFiles, checkpointRoots, worktreeRoots, archives, archivedSessionIds) {
   for (const candidate of sessionFiles) {
     try {
       const details = await inspectSession(candidate.file, candidate.archived);
       details.checkpointRepositories.forEach((repository) => checkpointRoots.add(repository.root));
-      collectArchiveCheckpoint(details, archivedCheckpointRefs);
+      collectArchivedSession(details, candidate.archived, archivedSessionIds);
 
       if (details.cwd) {
         const worktree = await currentWorktree(details.cwd);
@@ -580,7 +557,7 @@ async function main() {
   ]);
 
   const checkpointRoots = new Set();
-  const archivedCheckpointRefs = new Map();
+  const archivedSessionIds = new Set();
   const worktreeRoots = new Set();
   const archives = [];
 
@@ -589,16 +566,16 @@ async function main() {
     ...archived.files.filter((file) => file.endsWith(".jsonl")).map((file) => ({ file, archived: true })),
   ];
 
-  await collectSessions(sessionFiles, checkpointRoots, worktreeRoots, archives, archivedCheckpointRefs);
+  await collectSessions(sessionFiles, checkpointRoots, worktreeRoots, archives, archivedSessionIds);
 
   const disk = await diskStorage(worktreeRoots);
-  const checkpoints = await checkpointStorage(checkpointRoots, disk.directories, archivedCheckpointRefs);
+  const checkpoints = await checkpointStorage(checkpointRoots, disk.directories, archivedSessionIds);
 
   const directoryCandidates = {
     'active-conversations': [activeRoot],
     'archived-conversations': [archiveRoot],
     'project-checkpoints': checkpoints.directories,
-    'archived-worktree-checkpoints': checkpoints.archived.directories,
+    'archived-project-checkpoints': checkpoints.archived.directories,
     'git-diff-snapshots': [path.join(piopRoot, 'git-snapshots'), ...active.files.filter((file) => file.endsWith('.jsonl')).map((file) => file.replace(/\.jsonl$/, '.snapshots'))],
     'archived-git-diff-snapshots': archived.files.filter((file) => file.endsWith('.jsonl')).map((file) => file.replace(/\.jsonl$/, '.snapshots')),
     'temporary-chats': [path.join(piopRoot, 'tmp')],
@@ -625,7 +602,7 @@ async function main() {
       { id: "active-conversations", byteSize: storedBytes("active-conversations"), itemCount: active.itemCount },
       { id: "archived-conversations", byteSize: storedBytes("archived-conversations"), itemCount: archived.itemCount },
       { id: "project-checkpoints", byteSize: checkpoints.byteSize, itemCount: checkpoints.itemCount, estimated: true },
-      { id: "archived-worktree-checkpoints", byteSize: checkpoints.archived.byteSize, itemCount: checkpoints.archived.itemCount, estimated: true },
+      { id: "archived-project-checkpoints", byteSize: checkpoints.archived.byteSize, itemCount: checkpoints.archived.itemCount, estimated: true },
       { id: "git-diff-snapshots", byteSize: storedBytes("git-diff-snapshots"), itemCount: gitDiffSnapshots.itemCount + (snapshotCount("git-diff-snapshots")) },
       { id: "archived-git-diff-snapshots", byteSize: storedBytes("archived-git-diff-snapshots"), itemCount: snapshotCount("archived-git-diff-snapshots") },
       { id: "temporary-chats", byteSize: storedBytes("temporary-chats"), itemCount: temporaryChats.itemCount },
