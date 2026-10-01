@@ -79,7 +79,7 @@ export function createTerminalController({ transport, sessionTransport, conversa
               : { ...old, ...tab };
           });
           for (const tab of previous?.tabs ?? []) {
-            if (!tab.generation && !merged.some(value => value.id === tab.id) && (!tab.started || startingTerminals.current.has(tab.id))) merged.push(tab);
+            if (!tab.placeholder && !tab.generation && !merged.some(value => value.id === tab.id) && (!tab.started || startingTerminals.current.has(tab.id))) merged.push(tab);
           }
           if (!merged.length) {
             if (previous?.tabs.some(tab => tab.generation)) setTerminalOpen(false);
@@ -163,6 +163,18 @@ export function createTerminalController({ transport, sessionTransport, conversa
 
     if (!owned() || startingTerminals.current.has(terminalId)) return; startingTerminals.current.add(terminalId);
     const sessionKey = capturedTerminalSessionId;
+
+    if (state.activeTerminal.placeholder) {
+      await refreshShared();
+      const tab = terminalsBySession()[sessionKey]?.tabs.find(value => value.id === terminalId);
+
+      if (!owned() || !ready() || terminalSessionId() !== sessionKey || !tab?.placeholder) {
+        startingTerminals.current.delete(terminalId);
+
+        return;
+      }
+    }
+
     setTerminalsBySession((current) => { const session = current[sessionKey] ?? initialTerminals(sessionKey);
 
     return { ...current, [sessionKey]: { ...session, tabs: session.tabs.map((terminal) => terminal.id === terminalId ? { ...terminal, started: true, exited: false } : terminal) } }; });
