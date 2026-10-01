@@ -101,6 +101,11 @@ kbd { font: 11px "DM Sans"; border: 1px solid #d5d1c9; background: white; paddin
 .conversation-unowned .composer-interaction { filter: grayscale(1) brightness(.6); }
 .conversation-unowned .composer textarea { color: var(--muted); }
 .terminal-surface { position: relative; min-height: 0; min-width: 0; display: grid; }
+.terminal-shell-resizable { position: relative; }
+.terminal-panel-resizer { position: absolute; z-index: 5; top: -4px; left: 0; right: 0; height: 8px; cursor: row-resize; touch-action: none; user-select: none; }
+.terminal-panel-resizer::after { content: ""; position: absolute; top: 3px; left: 0; right: 0; height: 2px; background: transparent; }
+.terminal-panel-resizer:hover::after, .terminal-panel-resizer.dragging::after, .terminal-panel-resizer:focus-visible::after { background: var(--accent); }
+.terminal-panel-resizer:focus-visible { outline: none; }
 .terminal-surface.ownership-required .terminal-host { filter: brightness(.45); }
 .terminal-transcript-body { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .terminal-transcript { flex: 1; min-height: 0; margin: 0; padding: 8px 12px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
